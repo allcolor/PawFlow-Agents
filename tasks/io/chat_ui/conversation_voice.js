@@ -22,7 +22,11 @@ var _voicePlayTime = 0;
 var _voicePlaySources = [];
 var _voiceState = 'idle';
 
-var _VOICE_UPLINK_RATE = 16000;   // PCM16 mono sent to the bridge
+// OpenAI realtime `pcm16` is FIXED at 24 kHz mono little-endian in both
+// directions — the bridge relays frames verbatim, so the browser must
+// capture at that rate too (16 kHz uplink would play 1.5x fast provider-side
+// and wreck transcription).
+var _VOICE_UPLINK_RATE = 24000;   // PCM16 mono sent to the bridge
 var _VOICE_DOWNLINK_RATE = 24000; // PCM16 mono received from the bridge
 
 function _voiceConversationId() {

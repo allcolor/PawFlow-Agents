@@ -239,7 +239,7 @@ def _ffmpeg_bin() -> str:
 def _decode_audio_to_pcm16(audio_bytes: bytes, suffix: str = ".ogg") -> bytes:
     """Any container (OGG/Opus voice note, m4a, mp3) → raw PCM16 mono 24k."""
     import os
-    import subprocess
+    import subprocess  # nosec B404 - explicit ffmpeg argv, shell=False
     import tempfile
     ffmpeg = _ffmpeg_bin()
     if not ffmpeg:
@@ -268,7 +268,7 @@ def _decode_audio_to_pcm16(audio_bytes: bytes, suffix: str = ".ogg") -> bytes:
 def _encode_pcm16_to_ogg(pcm: bytes) -> bytes:
     """Raw PCM16 mono 24k → OGG/Opus (Telegram voice-note format)."""
     import os
-    import subprocess
+    import subprocess  # nosec B404 - explicit ffmpeg argv, shell=False
     import tempfile
     ffmpeg = _ffmpeg_bin()
     if not ffmpeg:
@@ -357,16 +357,29 @@ def _telegram_realtime_voice_reply(
             service, conversation_id=conversation_id, agent_name=agent_name,
             user_id=user_id, pcm16=pcm_in, user_channel="telegram")
 
-        if result.get("audio"):
-            ogg = _encode_pcm16_to_ogg(result["audio"])
+        # The turn succeeded: transcripts are already persisted, so from
+        # here on we NEVER fall back to the STT pipeline (it would process
+        # the same voice note a second time). An encode failure downgrades
+        # to a text reply instead.
+        try:
+            ogg = _encode_pcm16_to_ogg(result["audio"]) \
+                if result.get("audio") else b""
+        except Exception:
+            logger.warning("Telegram realtime voice: OGG encode failed — "
+                           "replying with text only", exc_info=True)
+            ogg = b""
+        if ogg:
             flowfile.set_attribute(
                 "telegram.tts_audio_base64",
                 base64.b64encode(ogg).decode("ascii"))
             flowfile.set_attribute("telegram.tts_content_type", "audio/ogg")
             flowfile.set_attribute("telegram.tts_filename", "voice_reply.ogg")
-        # The assistant transcript reaches Telegram as text through the live
-        # bridge (persisted message) — the direct reply carries only audio.
-        flowfile.set_content(b"")
+            # The assistant transcript reaches Telegram as text through the
+            # live bridge (persisted message) — the reply carries only audio.
+            flowfile.set_content(b"")
+        else:
+            flowfile.set_content(
+                str(result.get("agent_text") or "").encode("utf-8"))
         logger.info(
             "Telegram realtime voice turn done: user=%s service=%s conv=%s "
             "agent=%s audio=%dB", user_id, service_id, conversation_id[:8],

@@ -162,6 +162,7 @@ class RealtimeSessionBridge:
         self._started_at = time.monotonic()
         self._agent_text_parts = []
         self._tools = None
+        self._tools_inflight = 0
 
     # -- client frame helpers -------------------------------------------
 
@@ -310,7 +311,10 @@ class RealtimeSessionBridge:
             elif etype == "response_done":
                 self._emit({"type": "usage",
                             "usage": evt.get("usage") or {}})
-                self._emit({"type": "state", "state": "listening"})
+                # A function-call response also ends with `response_done`;
+                # keep the tool state until the dispatched call resolves.
+                if self._tools_inflight <= 0:
+                    self._emit({"type": "state", "state": "listening"})
             elif etype == "tool_call":
                 self._handle_tool_call(evt)
             elif etype == "error":
@@ -338,6 +342,7 @@ class RealtimeSessionBridge:
             return
         self._emit({"type": "tool", "name": name, "status": "running"})
         self._emit({"type": "state", "state": "tool"})
+        self._tools_inflight += 1
         adapter = self._adapter
         arguments = evt.get("arguments", "")
 
@@ -357,6 +362,8 @@ class RealtimeSessionBridge:
                 except Exception:
                     logger.debug("[realtime] tool error result failed",
                                  exc_info=True)
+            finally:
+                self._tools_inflight = max(0, self._tools_inflight - 1)
             self._emit({"type": "tool", "name": name, "status": status})
 
         threading.Thread(target=_run,
@@ -440,12 +447,20 @@ def realtime_ws_handler(sock, path_params: dict, meta: dict):
         _reject("conversation_id, service and agent are required")
         return
 
+    # A voice session requires a USER identity. The listener's WS auth also
+    # admits bare API keys and internal-auth callers, both of which arrive
+    # with an empty auth_user_id — for those the ownership check below
+    # would silently pass on ownerless/legacy conversations. Fail closed.
+    role = (meta.get("auth_role", "") or "").lower()
+    if not user_id and role != "admin":
+        _reject("voice sessions require a user session (not an API key)")
+        return
+
     # Conversation ownership: an authenticated user may only voice-attach
     # to their own conversations (admins may attach to any).
     try:
         from core.flow_runtime_access import conversation_owner
         owner = conversation_owner(conversation_id)
-        role = (meta.get("auth_role", "") or "").lower()
         if owner and owner != user_id and role != "admin":
             _reject("not your conversation")
             return

@@ -513,6 +513,32 @@ def test_stop_realtime_session_without_active_returns_false():
     assert stop_realtime_session("nope") is False
 
 
+def test_ws_handler_rejects_identityless_caller(monkeypatch):
+    """API-key / internal-auth WS connections carry no auth_user_id; a voice
+    session must refuse them even on an ownerless conversation."""
+    import services._realtime_bridge as rb
+    monkeypatch.setattr("core.flow_runtime_access.conversation_owner",
+                        lambda cid: "")  # ownerless/legacy conversation
+    server_sock, client_sock = socket.socketpair()
+    try:
+        handler = threading.Thread(
+            target=rb.realtime_ws_handler,
+            args=(server_sock, {"conversation_id": "conv1"},
+                  {"query": "service=rt&agent=claude",
+                   "auth_user_id": "", "auth_role": ""}),
+            daemon=True)
+        handler.start()
+        opcode, payload = _client_recv_frame(client_sock)
+        assert opcode == 0x1
+        msg = json.loads(payload)
+        assert msg["type"] == "error"
+        assert "user session" in msg["message"]
+        handler.join(timeout=5)
+        assert not handler.is_alive()
+    finally:
+        client_sock.close()
+
+
 def test_ws_handler_rejects_foreign_conversation(monkeypatch):
     import services._realtime_bridge as rb
     monkeypatch.setattr("core.flow_runtime_access.conversation_owner",

@@ -113,13 +113,19 @@ class TestRunVoiceTurn:
 
         import services._realtime_tools as rt_tools
         monkeypatch.setattr(rt_tools, "RealtimeToolBridge", _FakeToolBridge)
+        # Realistic provider ordering: the function-call response ends with
+        # its OWN response_done; the spoken answer follows as a second
+        # response with a second response_done. The turn must not stop at
+        # the first one (regression: it did when the user transcript had
+        # already arrived).
         adapter = _TurnAdapter([
             {"type": "transcript_user", "text": "2+2 ?", "final": True},
             {"type": "tool_call", "call_id": "c1", "name": "echo",
              "arguments": "{}"},
+            {"type": "response_done", "usage": {}},  # function-call response
             {"type": "audio", "data": b"\x05"},
             {"type": "transcript_agent", "text": "quatre", "final": True},
-            {"type": "response_done", "usage": {}},
+            {"type": "response_done", "usage": {}},  # spoken follow-up
         ])
         service = _TurnService(adapter)
         service.tool_profile = "echo"
@@ -130,11 +136,13 @@ class TestRunVoiceTurn:
         assert service.opened_tools and \
             service.opened_tools[0]["name"] == "echo"
         assert result["agent_text"] == "quatre"
+        assert result["audio"] == b"\x05"  # collected AFTER the first done
 
     def test_no_tools_refuses_stray_call(self, persisted):
         adapter = _TurnAdapter([
             {"type": "tool_call", "call_id": "c9", "name": "bash",
              "arguments": "{}"},
+            {"type": "response_done", "usage": {}},  # function-call response
             {"type": "transcript_agent", "text": "ok", "final": True},
             {"type": "response_done", "usage": {}},
             {"type": "transcript_user", "text": "hey", "final": True},
@@ -230,6 +238,46 @@ class TestTelegramRealtimeVoiceReply:
         assert ff.get_attribute("telegram.tts_filename") == "voice_reply.ogg"
         # text travels via the live bridge, not the direct reply
         assert ff.get_content() == b""
+
+    def test_encode_failure_downgrades_to_text_not_stt_fallback(
+            self, monkeypatch):
+        """After a SUCCESSFUL turn (transcripts persisted), an OGG encode
+        failure must reply with text and still return True — a False here
+        would push the same voice note through the STT pipeline again."""
+        import tasks.io._telegram_voice as tv
+        import services._realtime_turn as turn_mod
+
+        class _SvcDef:
+            service_type = "realtimeVoiceConnection"
+
+        class _Reg:
+            def resolve_definition(self, sid, **kw):
+                return _SvcDef()
+
+            def resolve(self, sid, **kw):
+                return object()
+
+        monkeypatch.setattr(tv, "_agent_realtime_service_id",
+                            lambda cid, agent: "rt-voice")
+        monkeypatch.setattr(
+            "core.service_registry.ServiceRegistry.get_instance",
+            staticmethod(lambda: _Reg()))
+        monkeypatch.setattr(tv, "_decode_audio_to_pcm16",
+                            lambda audio, suffix=".ogg": b"PCMIN")
+
+        def _bad_encode(pcm):
+            raise RuntimeError("no libopus")
+
+        monkeypatch.setattr(tv, "_encode_pcm16_to_ogg", _bad_encode)
+        monkeypatch.setattr(
+            turn_mod, "run_voice_turn",
+            lambda service, **kw: {"audio": b"PCMOUT", "user_text": "salut",
+                                   "agent_text": "bonjour"})
+        ff = FlowFile(content=b"")
+        assert tv._telegram_realtime_voice_reply(
+            ff, self._payload(), "quentin", "conv1", "claude") is True
+        assert ff.get_content() == b"bonjour"
+        assert not ff.get_attribute("telegram.tts_audio_base64")
 
     def test_turn_failure_falls_back(self, monkeypatch):
         import tasks.io._telegram_voice as tv

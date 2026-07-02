@@ -129,7 +129,7 @@ the private gateway. Query params: `service` (realtimeVoiceConnection id),
 `agent` (conversation agent name).
 
 Frames:
-- **binary uplink**: raw PCM16 mono mic chunks (16 kHz little-endian in P1;
+- **binary uplink**: raw PCM16 mono mic chunks (24 kHz little-endian — the OpenAI pcm16 native rate, relayed verbatim;
   the bridge forwards to the adapter which resamples/encodes if needed).
 - **binary downlink**: raw PCM16 mono 24 kHz agent audio chunks.
 - **text frames**: JSON control events, `{"type": …}`:
@@ -176,7 +176,7 @@ transcript.
 `tasks/io/chat_ui/conversation_voice.js` + a mic-wave button next to the
 STT button:
 - continuous capture: reuse the STT worklet path, downsample to PCM16
-  16 kHz, ship ~40 ms binary chunks on the WS;
+  24 kHz (OpenAI pcm16 native rate), ship ~40 ms binary chunks on the WS;
 - playback: dedicated `AudioContext` + worklet ring buffer (same pattern as
   `audio.js`), fed by binary downlink; `speech_started` flushes the ring;
 - live captions from `transcript_*` events; `state` drives the button UI;

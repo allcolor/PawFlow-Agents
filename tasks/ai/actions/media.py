@@ -432,6 +432,8 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                 try:
                     _defs = _reg.get_all(_scope, _sid_scope)
                 except Exception:
+                    logger.debug("[realtime] service scope %s listing failed",
+                                 _scope, exc_info=True)
                     continue
                 for _sid, _sdef in sorted(_defs.items()):
                     if getattr(_sdef, "service_type", "") != \

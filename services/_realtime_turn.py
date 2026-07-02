@@ -62,6 +62,10 @@ def run_voice_turn(service, *, conversation_id: str, agent_name: str,
     user_text = ""
     agent_text = ""
     response_done = False
+    # A tool call means the CURRENT response ends as a function call: its
+    # own `response_done` is not the end of the turn — the follow-up spoken
+    # response (triggered by send_tool_result) is. Count the dones to skip.
+    pending_tool_dones = 0
     error_message = ""
     deadline = time.monotonic() + timeout_s
 
@@ -112,7 +116,13 @@ def run_voice_turn(service, *, conversation_id: str, agent_name: str,
                         announce=lambda text: _persist("system", text),
                         soft_timeout_s=_TOOL_SOFT_TIMEOUT_S)
                 response_done = False  # a follow-up response is coming
+                pending_tool_dones += 1
             elif etype == "response_done":
+                if pending_tool_dones > 0:
+                    # `done` of the function-call response itself (may land
+                    # before OR after the tool executes) — not the turn end.
+                    pending_tool_dones -= 1
+                    continue
                 response_done = True
                 if grace_until is None:
                     grace_until = time.monotonic() + _TRANSCRIPT_GRACE_S

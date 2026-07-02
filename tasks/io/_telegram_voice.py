@@ -216,3 +216,164 @@ def _configured_tts_service_id(conversation_id: str, agent_name: str) -> str:
     if not isinstance(prefs, dict):
         return ""
     return str(prefs.get(agent_name or "agent") or prefs.get("*") or "").strip()
+
+
+# ── Realtime speech-to-speech voice notes (P2c) ─────────────────────────
+#
+# When the target agent carries a `realtime_voice_service` link, a Telegram
+# voice note is answered by a one-shot realtime turn (audio in → spoken
+# answer out as a voice note) instead of the STT → text agent → TTS
+# pipeline. Transcripts persist as normal messages (the assistant text
+# reaches Telegram through the live bridge), so only the voice note itself
+# travels on the direct reply. Any failure returns False and the caller
+# falls back to the STT pipeline.
+
+_REALTIME_TURN_RATE = 24000  # PCM16 mono, OpenAI realtime native rate
+
+
+def _ffmpeg_bin() -> str:
+    import shutil
+    return shutil.which("ffmpeg") or ""
+
+
+def _decode_audio_to_pcm16(audio_bytes: bytes, suffix: str = ".ogg") -> bytes:
+    """Any container (OGG/Opus voice note, m4a, mp3) → raw PCM16 mono 24k."""
+    import os
+    import subprocess
+    import tempfile
+    ffmpeg = _ffmpeg_bin()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg unavailable")
+    src = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as fh:
+            src = fh.name
+            fh.write(audio_bytes)
+        out = subprocess.run(  # nosec B603
+            [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", src,
+             "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "1",
+             "-ar", str(_REALTIME_TURN_RATE), "pipe:1"],
+            check=True, capture_output=True).stdout
+        if not out:
+            raise RuntimeError("ffmpeg produced no PCM output")
+        return out
+    finally:
+        if src:
+            try:
+                os.unlink(src)
+            except OSError:
+                pass
+
+
+def _encode_pcm16_to_ogg(pcm: bytes) -> bytes:
+    """Raw PCM16 mono 24k → OGG/Opus (Telegram voice-note format)."""
+    import os
+    import subprocess
+    import tempfile
+    ffmpeg = _ffmpeg_bin()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg unavailable")
+    dst = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as fh:
+            dst = fh.name
+        subprocess.run(  # nosec B603
+            [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "s16le", "-ar", str(_REALTIME_TURN_RATE), "-ac", "1",
+             "-i", "pipe:0", "-c:a", "libopus", "-b:a", "32k", dst],
+            check=True, input=pcm, capture_output=True)
+        with open(dst, "rb") as fh:
+            return fh.read()
+    finally:
+        if dst:
+            try:
+                os.unlink(dst)
+            except OSError:
+                pass
+
+
+def _agent_realtime_service_id(conversation_id: str, agent_name: str) -> str:
+    try:
+        from core.conv_agent_config import get_agent_config
+        return str(get_agent_config(conversation_id, agent_name).get(
+            "realtime_voice_service", "") or "").strip()
+    except Exception:
+        logger.debug("Telegram realtime link lookup failed", exc_info=True)
+        return ""
+
+
+def _telegram_realtime_voice_reply(
+    flowfile: FlowFile, content: str, user_id: str, conversation_id: str,
+    agent_name: str,
+) -> bool:
+    """Answer a Telegram voice note through a realtime speech-to-speech turn.
+
+    Returns True when handled (voice-note reply attached to `flowfile`);
+    False on any precondition/error so the STT pipeline takes over.
+    """
+    service_id = _agent_realtime_service_id(conversation_id, agent_name)
+    if not service_id:
+        return False
+    try:
+        payload = json.loads(content or "{}")
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict) or payload.get("type") not in {"voice", "audio"}:
+        return False
+    try:
+        audio_bytes = base64.b64decode(str(payload.get("data_base64") or ""))
+    except Exception:
+        return False
+    if not audio_bytes:
+        return False
+    try:
+        from core.service_registry import ServiceRegistry
+        reg = ServiceRegistry.get_instance()
+        svc_def = reg.resolve_definition(service_id, user_id=user_id,
+                                         conv_id=conversation_id)
+        if svc_def is None or getattr(svc_def, "service_type", "") != \
+                "realtimeVoiceConnection":
+            logger.warning(
+                "Telegram realtime voice skipped: '%s' is not a "
+                "realtimeVoiceConnection service", service_id)
+            return False
+        service = reg.resolve(service_id, user_id=user_id,
+                              conv_id=conversation_id)
+        if service is None:
+            logger.warning("Telegram realtime voice skipped: service '%s' "
+                           "could not connect", service_id)
+            return False
+        if hasattr(service, "set_runtime_context"):
+            service.set_runtime_context(
+                user_id=user_id, conversation_id=conversation_id,
+                agent_name=agent_name)
+
+        mime = str(payload.get("mime_type") or "audio/ogg").lower()
+        suffix = ".ogg" if ("ogg" in mime or "opus" in mime) else ".m4a"
+        pcm_in = _decode_audio_to_pcm16(audio_bytes, suffix=suffix)
+
+        from services._realtime_turn import run_voice_turn
+        result = run_voice_turn(
+            service, conversation_id=conversation_id, agent_name=agent_name,
+            user_id=user_id, pcm16=pcm_in, user_channel="telegram")
+
+        if result.get("audio"):
+            ogg = _encode_pcm16_to_ogg(result["audio"])
+            flowfile.set_attribute(
+                "telegram.tts_audio_base64",
+                base64.b64encode(ogg).decode("ascii"))
+            flowfile.set_attribute("telegram.tts_content_type", "audio/ogg")
+            flowfile.set_attribute("telegram.tts_filename", "voice_reply.ogg")
+        # The assistant transcript reaches Telegram as text through the live
+        # bridge (persisted message) — the direct reply carries only audio.
+        flowfile.set_content(b"")
+        logger.info(
+            "Telegram realtime voice turn done: user=%s service=%s conv=%s "
+            "agent=%s audio=%dB", user_id, service_id, conversation_id[:8],
+            agent_name, len(result.get("audio") or b""))
+        return True
+    except Exception as exc:
+        logger.warning(
+            "Telegram realtime voice turn failed (falling back to STT): %s",
+            exc, exc_info=True)
+        return False

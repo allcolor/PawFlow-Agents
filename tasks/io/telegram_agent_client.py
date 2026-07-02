@@ -103,6 +103,14 @@ class TelegramAgentClientTask(BaseTask):
             return [flowfile]
 
         if flowfile.get_attribute("telegram.message_type") in {"voice", "audio"}:
+            # Voice-native agent (realtime_voice_service link): answer with
+            # a speech-to-speech realtime turn — the reply is a voice note,
+            # transcripts persist as normal messages. Falls back to the
+            # STT pipeline below on any failure.
+            from tasks.io._telegram_voice import _telegram_realtime_voice_reply
+            if _telegram_realtime_voice_reply(
+                    flowfile, text, user_id, conversation_id, target_agent):
+                return [flowfile]
             transcribed, stt_error = _transcribe_telegram_voice_result(
                 text, user_id, conversation_id, target_agent)
             if stt_error:

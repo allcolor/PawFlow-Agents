@@ -89,7 +89,8 @@ def resolve_session_instructions(service, conversation_id: str,
 
 
 def persist_voice_transcript(conversation_id: str, agent_name: str,
-                             user_id: str, role: str, text: str) -> None:
+                             user_id: str, role: str, text: str,
+                             channel: str = "voice") -> None:
     """Persist one final voice transcript as a normal conversation message.
 
     Messages carry msg_id + ts at creation (store convention) and are
@@ -105,9 +106,13 @@ def persist_voice_transcript(conversation_id: str, agent_name: str,
     try:
         from core.llm_client import LLMMessage
         from core.conversation_writer import ConversationWriter
+        channel = channel or "voice"
         if role == "user":
+            # `channel` marks the ORIGIN: a Telegram voice-note transcript
+            # persists with channel='telegram' so the Telegram bridge does
+            # not echo it back to its own sender.
             source = {"type": "user", "name": user_id or "user",
-                      "target_agent": agent_name, "channel": "voice"}
+                      "target_agent": agent_name, "channel": channel}
         elif role == "system":
             source = {"type": "system", "name": "realtime_voice",
                       "channel": "voice"}

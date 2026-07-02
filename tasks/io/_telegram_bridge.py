@@ -356,6 +356,12 @@ class TelegramConversationBridgeTask(BaseTask):
         content = str(data.get("content") or "").strip()
         if not content:
             return
+        # Voice-channel transcripts already produced native speech audio
+        # (realtime session / voice-note reply) — synthesizing TTS on top
+        # would double the audio.
+        source = data.get("source") if isinstance(data.get("source"), dict) else {}
+        if source.get("channel") == "voice":
+            return
         flowfile = FlowFile(content=b"")
         _attach_telegram_tts_audio(
             flowfile, content, user_id, conversation_id,

@@ -90,14 +90,41 @@ OpenAI-realtime-compatible endpoint through the llmConnection `base_url`;
 further protocols plug in as adapters (`services/_realtime_adapters.py`).
 
 Once at least one service exists, the webchat input row shows a microphone
-voice-mode button. It opens an authenticated WebSocket to
+voice-mode button. Voice mode is a full-screen overlay: an orb that reacts
+to audio levels and session state (connecting / listening / thinking /
+speaking / using a tool), live captions of both sides, tool activity, mute
+and hang-up controls. The session runs over an authenticated WebSocket to
 `/ws/realtime/{conversation_id}` — session token + private gateway checks
 apply, and only the conversation owner (or an admin) may attach. Final
 transcripts of both sides are persisted as normal conversation messages, so
 every attached client (webchat, Telegram bridge, PawCode) sees the voice
 exchange live and the text agent resumes with full context after the
-session. Raw audio is not persisted. Tool execution inside voice sessions is
-not enabled yet (planned; see `docs/REALTIME_VOICE_PLAN.md`).
+session. Raw audio is not persisted.
+
+**Tools in voice sessions.** Set `tool_profile` on the service (comma-
+separated tool names, e.g. `recall,remember,web_search,read`) to expose
+PawFlow tools to the voice model. Approval is silent by design — a voice
+session shows no dialogs: approval-exempt tools and tools already granted
+`always allow`/session approval run; anything else is refused and the agent
+tells you to run it from the text chat. `permission_mode` `auto` and
+`read_only` are honored. A tool that takes longer than a few seconds
+detaches to the background: the agent says it started it and announces the
+result when it lands (or it arrives as a system message if the session
+ended first).
+
+**Voice-native agents.** An agent's conversation config can pin a
+`realtime_voice_service` (webchat agent editor → "Realtime voice service").
+The mic button is accented, the service picker disappears, and — on
+Telegram — voice notes to that agent are answered by a one-shot
+speech-to-speech turn through the same realtime session (same model, same
+voice, same tools) instead of the STT → text agent → TTS pipeline: you
+send a voice note, the agent replies with a voice note plus the text
+transcript. Requires `ffmpeg`. Any failure falls back to the STT pipeline
+automatically. Live duplex calls over Telegram are not possible through
+the Bot API.
+
+See `docs/REALTIME_VOICE_PLAN.md` for the architecture and what remains
+(Gemini Live adapter, session resumption, context digest injection).
 
 ## Audio and Voice Tools
 

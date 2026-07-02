@@ -210,10 +210,35 @@ STT button:
 
 ## Phasing
 
-- **P1 (this change)**: `realtimeVoiceConnection` service + OpenAI realtime
+- **P1 — SHIPPED**: `realtimeVoiceConnection` service + OpenAI realtime
   adapter + bridge + `/ws/realtime` route + webchat voice mode + transcripts
   + caps. No tools.
-- **P2**: tool bridging (`tool_profile`, approval policy, delegated long
-  tools), barge-in polish, reconnect.
-- **P3**: `gemini_live` adapter, voice settings UI, session resumption.
-- **Later**: Nova Sonic (HTTP/2 bidi), WebRTC transport option, SIP/telephony.
+- **P2 — SHIPPED**:
+  - **P2a tools**: `tool_profile` → `RealtimeToolBridge`
+    (`services/_realtime_tools.py`). Approval is SILENT
+    (`ToolApprovalGate.check(allow_prompt=False)`): exempt/pre-approved
+    tools run, anything needing a dialog is refused with a spoken-friendly
+    message; `permission_mode` auto/read_only honored. Long tools detach
+    past a soft timeout — interim result immediately, real result injected
+    back via `adapter.inject_context()` (or persisted as a system message
+    if the session ended). Voice approval ("yes go ahead") is deliberately
+    NOT implemented: the user transcript is an injection vector; revisit
+    with a confirmation UX.
+  - **P2b voice-native agents**: `realtime_voice_service` in the agent conv
+    config (editable in the webchat agent editor); `list_realtime_services`
+    returns `{services, linked}` — a linked agent pins its service. Webchat
+    voice mode is a full-screen overlay: state-reactive orb
+    (connecting/listening/thinking/speaking/tool), live captions, tool
+    activity, mute, hang-up.
+  - **P2c Telegram**: voice notes from a linked agent run a one-shot
+    speech-to-speech turn (`services/_realtime_turn.py`, manual VAD,
+    ffmpeg OGG/Opus ⇄ PCM16 24k). The reply is a `sendVoice` note; the
+    transcript reaches Telegram as text via the live bridge (user side
+    tagged `channel=telegram` to prevent echo; bridge TTS skipped for
+    voice-channel messages). Any failure falls back to the STT pipeline.
+    True duplex over Telegram is NOT possible via the Bot API — would need
+    MTProto group calls (tgcalls); parked as exploratory.
+- **P3**: `gemini_live` adapter, voice settings UI, session resumption,
+  compact conversation-summary injection at session start.
+- **Later**: Nova Sonic (HTTP/2 bidi), WebRTC transport option,
+  SIP/telephony, voice approval UX, Telegram group calls (tgcalls).

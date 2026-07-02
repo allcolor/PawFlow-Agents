@@ -19,6 +19,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Final transcripts persist as normal messages so all attached clients see
   the exchange and the text agent resumes seamlessly. Design and phasing in
   `docs/REALTIME_VOICE_PLAN.md`.
+- Realtime voice tools (P2a): the service's `tool_profile` exposes PawFlow
+  tools to the voice model through a silent approval gate (new
+  `ToolApprovalGate.check(allow_prompt=False)` probe — exempt/pre-approved
+  tools run, anything needing a dialog is refused with a spoken
+  explanation; `permission_mode` auto/read_only honored). Long tools detach
+  to the background with an immediate interim result; the real result is
+  injected back into the session, or persisted as a system message if the
+  session already ended.
+- Voice-native agents (P2b): agents can pin a `realtime_voice_service` in
+  their conversation config (webchat agent editor). The webchat voice mode
+  is now a full-screen overlay — state-reactive orb, live captions, tool
+  activity, mute and hang-up — and a linked agent skips the service picker.
+- Telegram speech-to-speech voice notes (P2c): a voice note sent to a
+  voice-native agent is answered by a one-shot realtime turn (ffmpeg
+  OGG/Opus ⇄ PCM16) — the reply is a Telegram voice note in the model's own
+  voice, the transcript arrives as text through the live bridge, and the
+  same tool bridge applies. Falls back to the STT pipeline on any failure;
+  the bridge no longer synthesizes TTS on top of voice-channel transcripts.
 
 ## [1.0.0-beta.1] — 2026-07-02
 

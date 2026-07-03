@@ -94,12 +94,19 @@ class TestGeminiOutbound:
         assert len(a._ws.sent) == 1
         assert "audio" in a._ws.sent[0]["realtimeInput"]
 
-    def test_send_tool_result_shape(self):
+    def test_send_tool_result_carries_the_function_name(self):
+        """FunctionResponse requires {id, name, response}; the bridge only
+        passes call_id, so the adapter must remember the name from the
+        toolCall it normalized (regression: name was missing — the
+        provider would reject the response and the call would hang)."""
         a = self._adapter()
+        a._normalize_message({"toolCall": {"functionCalls": [
+            {"id": "fc-1", "name": "recall", "args": {}}]}})
         a.send_tool_result("fc-1", "42")
         fr = a._ws.sent[-1]["toolResponse"]["functionResponses"][0]
-        assert fr["id"] == "fc-1"
-        assert fr["response"]["output"] == "42"
+        assert fr == {"id": "fc-1", "name": "recall",
+                      "response": {"output": "42"}}
+        assert "fc-1" not in a._call_names  # mapping released after use
 
     def test_inject_context_is_a_client_turn(self):
         a = self._adapter()
@@ -238,8 +245,10 @@ def test_service_requires_gemini_credentials_for_gemini_live(monkeypatch):
         svc._resolve_llm_service(user_id="u")
 
 
-def test_gemini_url_uses_api_key_and_default_host():
+def test_gemini_url_never_contains_the_api_key():
+    """The key travels in the x-goog-api-key handshake header — URLs leak
+    through proxy logs and exception messages."""
     a = GeminiLiveAdapter("", "secret-key")
     url = a._url()
     assert url.startswith("wss://generativelanguage.googleapis.com/ws/")
-    assert "key=secret-key" in url
+    assert "secret-key" not in url

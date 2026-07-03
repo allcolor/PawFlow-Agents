@@ -848,6 +848,10 @@ class TestRealtimeSessionBridge:
             self._read_until(client_sock, "usage")
             assert opened == ["", "h-1"]
             assert first.closed  # dead adapter released
+            # Events flowing on the resumed connection re-arm the budget:
+            # Gemini rotates connections periodically (goAway) — a long
+            # session must survive more than _MAX_RESUME_ATTEMPTS rotations.
+            assert bridge._resume_attempts == 0
             for _ in range(50):
                 if ("assistant", "back") in persisted:
                     break

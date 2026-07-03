@@ -261,11 +261,15 @@ STT button:
     seam, `gemini` llmConnection credentials, adapter-side 24k→16k uplink
     resampling. Not yet validated against the live Google endpoint.
   - **Session resumption**: the bridge's provider pump reconnects
-    transparently (max 2 attempts, browser session survives) when the
-    dropped adapter carries a resumption handle (`resumption_state()`,
-    Gemini Live); mic chunks sent during the gap are dropped, the client
-    sees `state: connecting` then `listening`. Protocols without handles
-    keep the original `provider_closed` teardown.
+    transparently when the dropped adapter carries a resumption handle
+    (`resumption_state()`, Gemini Live); mic chunks sent during the gap
+    are dropped, the client sees `state: connecting` then `listening`.
+    The 2-attempt budget re-arms once the resumed connection delivers
+    events (Gemini's periodic goAway rotations are normal — only
+    back-to-back failed resumes end the session). Protocols without
+    handles keep the original `provider_closed` teardown. Known debt: a
+    drop mid-turn loses that turn's unflushed partial transcripts (they
+    live in the dead adapter's accumulators).
   - **Voice settings UI**: right-click on the webchat mic button opens a
     settings panel — every realtime service with what it will do (model,
     voice, VAD mode, context_mode from `list_realtime_services`), one

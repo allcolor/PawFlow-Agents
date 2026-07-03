@@ -89,13 +89,16 @@ class GeminiLiveAdapter(RealtimeAdapter):
         self._agent_text = []         # output transcription accumulator
         self._usage = {}
         self._resume_handle = ""
+        # FunctionResponse requires the function NAME alongside the id; the
+        # bridge only carries call_id, so remember the mapping per call.
+        self._call_names = {}
 
     # -- helpers -------------------------------------------------------
 
     def _url(self) -> str:
-        import urllib.parse
-        return (f"wss://{self._host}{_BIDI_PATH}?"
-                + urllib.parse.urlencode({"key": self._api_key}))
+        # The key travels in the `x-goog-api-key` handshake header, NOT as
+        # a query param — URLs leak (proxy logs, exception messages).
+        return f"wss://{self._host}{_BIDI_PATH}"
 
     def _send_json(self, obj: dict):
         if self._ws is None:
@@ -119,7 +122,8 @@ class GeminiLiveAdapter(RealtimeAdapter):
     def connect(self, *, model, voice, instructions, tools, vad,
                 input_format, output_format, resume_handle=""):
         self._vad = vad or "server"
-        self._ws = RealtimeWSClient(self._url(), {}).connect()
+        self._ws = RealtimeWSClient(
+            self._url(), {"x-goog-api-key": self._api_key}).connect()
         model_path = model if model.startswith("models/") \
             else f"models/{model}"
         setup = {
@@ -185,6 +189,7 @@ class GeminiLiveAdapter(RealtimeAdapter):
     def send_tool_result(self, call_id: str, result: str):
         self._send_json({"toolResponse": {"functionResponses": [{
             "id": call_id,
+            "name": self._call_names.pop(call_id, ""),
             "response": {"output": result},
         }]}})
 
@@ -302,10 +307,14 @@ class GeminiLiveAdapter(RealtimeAdapter):
                 self._usage = {}
         tool_call = msg.get("toolCall") or {}
         for fc in tool_call.get("functionCalls") or []:
+            call_id = fc.get("id", "") or ""
+            name = fc.get("name", "") or ""
+            if call_id:
+                self._call_names[call_id] = name
             events.append({
                 "type": "tool_call",
-                "call_id": fc.get("id", "") or "",
-                "name": fc.get("name", "") or "",
+                "call_id": call_id,
+                "name": name,
                 "arguments": json.dumps(fc.get("args") or {}),
             })
         resumption = msg.get("sessionResumptionUpdate") or {}

@@ -402,6 +402,11 @@ class RealtimeSessionBridge:
                 break
             if evt is None:
                 continue
+            # The resumed connection is alive — re-arm the resume budget.
+            # Gemini Live rotates connections periodically (goAway), which
+            # is NORMAL for long sessions; only a loop of back-to-back
+            # failed resumes should exhaust the attempts.
+            self._resume_attempts = 0
             etype = evt.get("type")
             if etype == "audio":
                 if evt.get("data"):

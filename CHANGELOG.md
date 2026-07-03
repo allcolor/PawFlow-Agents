@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.2] — 2026-07-03
+
 ### Added
 
 - Realtime voice conversation (P1): new `realtimeVoiceConnection` LLM-family
@@ -37,6 +39,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   voice, the transcript arrives as text through the live bridge, and the
   same tool bridge applies. Falls back to the STT pipeline on any failure;
   the bridge no longer synthesizes TTS on top of voice-channel transcripts.
+- Voice mode UI: push-to-talk "Send" button for `vad=manual` sessions (the
+  bridge announces the VAD mode in the `ready` frame), and the voice-service
+  picker (right-click on the mic button) is now a clickable list instead of
+  a `prompt()` dialog.
+
+### Fixed
+
+- Realtime voice stack hardened across ten review passes (26 findings):
+  RFC 6455 fragmentation/reassembly and frame-size caps on both WS legs,
+  provider-stream desync under mid-frame timeouts, session-cap starvation
+  with a muted mic, force-stop wiring, `response.create` serialization
+  against the active response (silent agent after fast tool calls),
+  cross-session credential-scope race on shared service instances,
+  question→answer transcript ordering in both VAD modes, Telegram
+  double-processing of voice notes, ffmpeg timeouts, and socket/registry
+  leaks on failed session opens.
+- Audio WS proxy (`services/audio_proxy.py`, pre-existing): client frames
+  are now reassembled per RFC 6455 fragmentation rules and capped at 16 MiB
+  — a fragmented or hostile-length frame no longer corrupts the stream or
+  buffers unbounded.
 
 ## [1.0.0-beta.1] — 2026-07-02
 

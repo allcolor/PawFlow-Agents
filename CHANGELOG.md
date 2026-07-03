@@ -15,6 +15,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instructions, reusing the same context system as sub-agents
   (`resolve_context_messages`, extracted from the spawn handler). Applies
   to webchat sessions and Telegram voice-note turns.
+- Gemini Live adapter (P3): `protocol: gemini_live` on
+  `realtimeVoiceConnection` runs voice sessions through Google's Live API
+  (`BidiGenerateContent`), with credentials from a `gemini` llmConnection.
+  The adapter resamples PawFlow's 24 kHz uplink to Gemini's 16 kHz input
+  (pure Python, no new dependency), maps `toolCall`/`toolResponse` onto
+  the same PawFlow tool bridge, and handles server-side barge-in.
+- Realtime session resumption (P3): when a provider drops a session whose
+  adapter carries a resumption handle (Gemini Live
+  `sessionResumptionUpdate`), the bridge reconnects transparently (max 2
+  attempts) — the browser session, captions, and tool state survive the
+  disconnect instead of ending with `provider_closed`.
+- Voice settings panel (P3): right-click on the webchat mic button now
+  opens a settings panel listing every realtime voice service with its
+  model, voice, VAD mode, and context setting; one click selects, and the
+  choice is remembered per conversation.
 
 ## [1.0.0-beta.2] — 2026-07-03
 

@@ -1,6 +1,6 @@
 # Realtime Voice Conversation — Design & Implementation Plan
 
-Status: **P1 + P2 shipped** (released in 1.0.0-beta.2); **P3 in progress** — context injection shipped, gemini_live / settings UI / resumption open
+Status: **P1 + P2 shipped** (released in 1.0.0-beta.2); **P3 shipped** — context injection, gemini_live adapter, session resumption, voice settings UI (gemini_live pending a live-endpoint validation)
 Decided: 2026-07-02 — realtime voice is delivered as a new LLM-family service
 type `realtimeVoiceConnection`, multi-provider through protocol adapters.
 
@@ -64,7 +64,7 @@ Config schema (P1):
 | Key | Default | Notes |
 |---|---|---|
 | `llm_service` | required | id of the `llmConnection` supplying `api_key` + `base_url` |
-| `protocol` | `openai_realtime` | adapter selector; `gemini_live` in P3 |
+| `protocol` | `openai_realtime` | adapter selector: `openai_realtime` or `gemini_live` |
 | `model` | required | e.g. `gpt-realtime`, `gpt-4o-realtime-preview` |
 | `voice` | `alloy` | provider voice id |
 | `instructions_mode` | `agent` | `agent` = use the conversation agent's system prompt; `custom` = `instructions` field |
@@ -119,8 +119,17 @@ reads `response.output_audio.delta`, `response.output_audio_transcript.*`,
 OpenAI, Azure OpenAI, and every OpenAI-realtime-compatible endpoint via the
 `llmConnection.base_url` (`https://…` → `wss://…/realtime?model=…`).
 
-`GeminiLiveAdapter` (P3): `BidiGenerateContent` WS, PCM16 16 kHz in /
-24 kHz out, `toolCall`/`toolResponse`, session resumption. Proves the seam.
+`GeminiLiveAdapter` (`services/_realtime_gemini.py`, shipped): the
+`BidiGenerateContent` WS protocol. PCM16 16 kHz in (the adapter resamples
+PawFlow's 24 kHz uplink — pure-Python linear interpolation, no new
+dependency) / 24 kHz out (matches the downlink verbatim).
+`toolCall`/`toolResponse` map onto the same normalized `tool_call` events;
+transcription deltas accumulate and flush as finals on
+`turnComplete`/`interrupted` (user before agent — the bridge ordering
+contract); `interrupted` maps to `speech_started` and `interrupt()` is a
+no-op (barge-in is server-side). `sessionResumptionUpdate` handles are
+captured and exposed through `resumption_state()`. Credentials come from
+a `gemini` llmConnection (`api_key` required).
 
 ### 3. Browser ⇄ PawFlow WS contract
 
@@ -241,14 +250,25 @@ STT button:
     voice-channel messages). Any failure falls back to the STT pipeline.
     True duplex over Telegram is NOT possible via the Bot API — would need
     MTProto group calls (tgcalls); parked as exploratory.
-- **P3** (in progress):
-  - **Context injection — SHIPPED**: the service's `context_mode`
-    (default `summary:2000`; `isolated` disables) appends conversation
-    context to the session instructions in both instruction modes,
-    reusing the shared sub-agent context system
-    (`resolve_context_messages`). The block carries an explicit
-    treat-as-data guard (persisted content is untrusted).
-  - Remaining: `gemini_live` adapter, voice settings UI, session
-    resumption.
+- **P3 — SHIPPED**:
+  - **Context injection**: the service's `context_mode` (default
+    `summary:2000`; `isolated` disables) appends conversation context to
+    the session instructions in both instruction modes, reusing the
+    shared sub-agent context system (`resolve_context_messages`). The
+    block carries an explicit treat-as-data guard (persisted content is
+    untrusted).
+  - **`gemini_live` adapter**: see §2 — second protocol through the same
+    seam, `gemini` llmConnection credentials, adapter-side 24k→16k uplink
+    resampling. Not yet validated against the live Google endpoint.
+  - **Session resumption**: the bridge's provider pump reconnects
+    transparently (max 2 attempts, browser session survives) when the
+    dropped adapter carries a resumption handle (`resumption_state()`,
+    Gemini Live); mic chunks sent during the gap are dropped, the client
+    sees `state: connecting` then `listening`. Protocols without handles
+    keep the original `provider_closed` teardown.
+  - **Voice settings UI**: right-click on the webchat mic button opens a
+    settings panel — every realtime service with what it will do (model,
+    voice, VAD mode, context_mode from `list_realtime_services`), one
+    click selects, the pick persists per conversation (localStorage).
 - **Later**: Nova Sonic (HTTP/2 bidi), WebRTC transport option,
   SIP/telephony, voice approval UX, Telegram group calls (tgcalls).

@@ -236,8 +236,17 @@ class RealtimeAdapter:
 
     def connect(self, *, model: str, voice: str, instructions: str,
                 tools: list, vad: str, input_format: str,
-                output_format: str) -> None:
+                output_format: str, resume_handle: str = "") -> None:
+        """`resume_handle` resumes a previous provider session when the
+        protocol supports it (Gemini Live); adapters without resumption
+        ignore it."""
         raise NotImplementedError
+
+    def resumption_state(self) -> str:
+        """Opaque provider resumption handle, or "" when the protocol has
+        none / no handle was issued yet. The bridge uses it to reconnect
+        transparently after a provider-side disconnect."""
+        return ""
 
     def send_audio(self, pcm_chunk: bytes) -> None:
         raise NotImplementedError
@@ -328,7 +337,8 @@ class OpenAIRealtimeAdapter(RealtimeAdapter):
     # -- RealtimeAdapter -----------------------------------------------
 
     def connect(self, *, model, voice, instructions, tools, vad,
-                input_format, output_format):
+                input_format, output_format, resume_handle=""):
+        # resume_handle ignored: OpenAI realtime has no session resumption.
         self._vad = vad or "server"
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -497,5 +507,11 @@ def build_adapter(protocol: str, *, base_url: str, api_key: str,
         return OpenAIRealtimeAdapter(
             base_url, api_key, transcription_model=transcription_model,
             extra_headers=extra_headers)
+    if proto == "gemini_live":
+        # Imported lazily: _realtime_gemini imports RealtimeAdapter/WSClient
+        # from this module.
+        from services._realtime_gemini import GeminiLiveAdapter
+        return GeminiLiveAdapter(base_url, api_key)
     raise ValueError(
-        f"Unknown realtime protocol '{protocol}'. Supported: openai_realtime")
+        f"Unknown realtime protocol '{protocol}'. "
+        "Supported: openai_realtime, gemini_live")

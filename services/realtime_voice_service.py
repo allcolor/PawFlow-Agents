@@ -22,7 +22,10 @@ from services._realtime_adapters import build_adapter
 
 logger = logging.getLogger(__name__)
 
-REALTIME_PROTOCOLS = ("openai_realtime",)
+REALTIME_PROTOCOLS = ("openai_realtime", "gemini_live")
+
+# Which llmConnection provider each protocol takes its credentials from.
+_PROTOCOL_PROVIDERS = {"openai_realtime": "openai", "gemini_live": "gemini"}
 
 
 class RealtimeVoiceConnectionService(BaseService):
@@ -102,10 +105,12 @@ class RealtimeVoiceConnectionService(BaseService):
             raise ServiceError(
                 f"LLM service '{self.llm_service}' could not connect")
         provider = getattr(svc, "provider", "")
-        if provider != "openai":
+        required = _PROTOCOL_PROVIDERS.get(self.protocol, "openai")
+        if provider != required:
             raise ServiceError(
-                "realtimeVoiceConnection requires an openai llmConnection "
-                f"for credentials, got {provider or 'unknown'}")
+                f"protocol '{self.protocol}' requires a '{required}' "
+                f"llmConnection for credentials, got "
+                f"{provider or 'unknown'}")
         if not getattr(svc, "api_key", ""):
             raise ServiceError(
                 f"LLM service '{self.llm_service}' has no api_key")
@@ -115,7 +120,7 @@ class RealtimeVoiceConnectionService(BaseService):
 
     def open_session(self, *, instructions: str = "", tools: list = None,
                      vad: str = "", user_id: str = None,
-                     conversation_id: str = None):
+                     conversation_id: str = None, resume_handle: str = ""):
         """Connect a provider session and return the live adapter.
 
         `instructions` overrides the config-level instructions (the bridge
@@ -150,6 +155,7 @@ class RealtimeVoiceConnectionService(BaseService):
             vad=(vad or self.vad),
             input_format=self.input_audio_format,
             output_format=self.output_audio_format,
+            resume_handle=resume_handle,
         )
         return adapter
 
@@ -159,16 +165,16 @@ class RealtimeVoiceConnectionService(BaseService):
         return {
             "llm_service": {
                 "type": "service_ref", "service_type": "llmConnection",
-                "provider": "openai", "required": True,
-                "description": "OpenAI/API-compatible LLM service used for credentials and base URL.",
+                "required": True,
+                "description": "LLM service used for credentials/base URL: an 'openai' connection for openai_realtime, a 'gemini' connection (with api_key set) for gemini_live.",
             },
             "protocol": {
                 "type": "select", "required": False, "default": "openai_realtime",
                 "options": list(REALTIME_PROTOCOLS),
-                "description": "Realtime wire protocol adapter (openai_realtime also covers Azure OpenAI and compatible endpoints).",
+                "description": "Realtime wire protocol adapter: openai_realtime (also Azure OpenAI and compatibles) or gemini_live (Google Live API, supports session resumption).",
             },
             "model": {"type": "string", "required": True, "default": "gpt-realtime",
-                       "description": "Realtime voice model, e.g. gpt-realtime or gpt-4o-realtime-preview."},
+                       "description": "Realtime voice model, e.g. gpt-realtime, gpt-4o-realtime-preview, or gemini-2.5-flash-native-audio-preview-09-2025 for gemini_live."},
             "voice": {"type": "string", "required": False, "default": "alloy",
                        "description": "Provider voice id."},
             "instructions_mode": {

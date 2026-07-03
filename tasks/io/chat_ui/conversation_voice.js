@@ -69,9 +69,16 @@ function refreshRealtimeVoiceServices(done) {
     _voiceLinkedService = (!Array.isArray(res) && res && res.linked) || '';
     if (_voiceLinkedService) {
       _voiceSelectedService = _voiceLinkedService;
-    } else if ((!_voiceSelectedService || !_voiceServices.some(s => s.id === _voiceSelectedService))
-               && _voiceServices.length) {
-      _voiceSelectedService = _voiceServices[0].id;
+    } else {
+      // Restore the user's saved pick for this conversation (settings
+      // panel persists it); fall back to the first available service.
+      const saved = _voiceLoadServicePref();
+      if (saved && _voiceServices.some(s => s.id === saved)) {
+        _voiceSelectedService = saved;
+      } else if ((!_voiceSelectedService || !_voiceServices.some(s => s.id === _voiceSelectedService))
+                 && _voiceServices.length) {
+        _voiceSelectedService = _voiceServices[0].id;
+      }
     }
     _voiceUpdateButton();
     if (done) done();
@@ -427,9 +434,39 @@ function stopVoiceMode(reason) {
   _voiceUpdateButton();
 }
 
+// ── voice settings (P3) ──────────────────────────────────────────────
+// Right-click on the mic button. Shows every available realtime service
+// with what it will actually do (model, voice, VAD mode, context) and
+// persists the pick per conversation.
+
+function _voicePrefKey() {
+  return 'pf_voice_service_' + _voiceConversationId();
+}
+
+function _voiceLoadServicePref() {
+  try { return localStorage.getItem(_voicePrefKey()) || ''; } catch (_err) { return ''; }
+}
+
+function _voiceSaveServicePref(id) {
+  try { localStorage.setItem(_voicePrefKey(), id); } catch (_err) {}
+}
+
+function _voiceServiceDetails(s) {
+  const bits = [];
+  if (s.model) bits.push(s.model);
+  if (s.voice) bits.push('\uD83D\uDDE3 ' + s.voice);
+  bits.push(s.vad === 'manual'
+    ? _voiceT('voiceVadManual', 'push-to-talk')
+    : _voiceT('voiceVadServer', 'auto voice detection'));
+  if (s.context_mode && s.context_mode !== 'isolated') {
+    bits.push(_voiceT('voiceContextOn', 'context:') + ' ' + s.context_mode);
+  }
+  return bits.join(' \u00b7 ');
+}
+
 function showVoiceServiceDialog() {
   if (_voiceLinkedService) return; // voice-native agent: service is pinned
-  if (_voiceServices.length < 2) return;
+  if (!_voiceServices.length) return;
   const old = document.getElementById('voiceServicePick');
   if (old) { old.remove(); return; } // toggle
   const panel = document.createElement('div');
@@ -437,27 +474,38 @@ function showVoiceServiceDialog() {
   panel.style.cssText = 'position:fixed;bottom:70px;right:16px;z-index:9999;'
     + 'background:var(--pf-sidebar,#1c1e2a);border:1px solid var(--pf-border,#444);'
     + 'border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:2px;'
-    + 'box-shadow:0 4px 18px rgba(0,0,0,.5);';
+    + 'box-shadow:0 4px 18px rgba(0,0,0,.5);max-width:min(420px,90vw);';
   const title = document.createElement('div');
-  title.textContent = _voiceT('voicePickService', 'Voice service:');
+  title.textContent = _voiceT('voiceSettingsTitle', 'Voice settings');
   title.style.cssText = 'font-size:11px;color:var(--pf-muted,#8f96ad);padding:2px 6px 6px;';
   panel.appendChild(title);
   _voiceServices.forEach(function(s) {
     const b = document.createElement('button');
-    b.textContent = (s.id === _voiceSelectedService ? '✓ ' : '\u2003') + s.id
-      + (s.model ? ' (' + s.model + ')' : '');
     b.style.cssText = 'text-align:left;background:none;border:none;'
       + 'color:var(--pf-text,#e8ebf5);padding:6px 10px;border-radius:4px;'
-      + 'cursor:pointer;font-size:13px;';
+      + 'cursor:pointer;font-size:13px;display:block;width:100%;';
+    const name = document.createElement('div');
+    name.textContent = (s.id === _voiceSelectedService ? '\u2713 ' : '\u2003') + s.id;
+    const detail = document.createElement('div');
+    detail.textContent = '\u2003' + _voiceServiceDetails(s);
+    detail.style.cssText = 'font-size:11px;color:var(--pf-muted,#8f96ad);margin-top:1px;';
+    b.appendChild(name);
+    b.appendChild(detail);
     b.onmouseenter = function() { b.style.background = 'rgba(255,255,255,.08)'; };
     b.onmouseleave = function() { b.style.background = 'none'; };
     b.onclick = function() {
       _voiceSelectedService = s.id;
+      _voiceSaveServicePref(s.id);
       panel.remove();
       _voiceUpdateButton();
     };
     panel.appendChild(b);
   });
+  const hint = document.createElement('div');
+  hint.textContent = _voiceT('voiceSettingsHint',
+    'Edit models/voices in the Services panel.');
+  hint.style.cssText = 'font-size:10px;color:var(--pf-muted,#8f96ad);padding:6px 6px 2px;';
+  panel.appendChild(hint);
   document.body.appendChild(panel);
 }
 

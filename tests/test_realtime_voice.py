@@ -802,6 +802,83 @@ class TestRealtimeSessionBridge:
         finally:
             client.close()
 
+    def test_provider_drop_resumes_with_handle(self):
+        """A provider disconnect on an adapter carrying a resumption handle
+        (Gemini Live) must transparently reopen the session instead of
+        tearing the browser session down (P3 resumption)."""
+        persisted = []
+        first = _FakeAdapter([])
+        first.resumption_state = lambda: "h-1"
+        drop = threading.Event()
+
+        _orig_recv = first.recv_event
+
+        def _recv(timeout=1.0):
+            if drop.is_set():
+                raise ConnectionError("provider dropped")
+            return _orig_recv(timeout)
+
+        first.recv_event = _recv
+        second = _FakeAdapter([
+            {"type": "transcript_agent", "text": "back", "final": True},
+            {"type": "response_done", "usage": {}},
+        ])
+        service = _FakeService(first)
+        opened = []
+
+        _orig_open = service.open_session
+
+        def _open(**kw):
+            opened.append(kw.get("resume_handle", ""))
+            if kw.get("resume_handle"):
+                return second
+            return _orig_open(**kw)
+
+        service.open_session = _open
+        server_sock, client_sock = socket.socketpair()
+        bridge = RealtimeSessionBridge(server_sock, "conv1", "claude",
+                                       "quentin", service)
+        bridge._persist = lambda role, text: persisted.append((role, text))
+        thread = threading.Thread(target=bridge.run, daemon=True)
+        thread.start()
+        try:
+            self._read_until(client_sock, "ready")
+            drop.set()  # kill the first provider session
+            # The pump reconnects and keeps pumping the SECOND adapter.
+            self._read_until(client_sock, "usage")
+            assert opened == ["", "h-1"]
+            assert first.closed  # dead adapter released
+            for _ in range(50):
+                if ("assistant", "back") in persisted:
+                    break
+                time.sleep(0.05)
+            assert ("assistant", "back") in persisted
+            _client_send_frame(client_sock, 0x1, b'{"type": "stop"}')
+            self._read_until(client_sock, "closed")
+            thread.join(timeout=5)
+        finally:
+            client_sock.close()
+
+    def test_provider_drop_without_handle_still_closes(self):
+        """No resumption handle (OpenAI realtime) → the original behavior:
+        the session ends with provider_closed."""
+        adapter = _FakeAdapter([])
+        adapter.recv_event = lambda timeout=1.0: (_ for _ in ()).throw(
+            ConnectionError("gone"))
+        service = _FakeService(adapter)
+        server_sock, client_sock = socket.socketpair()
+        bridge = RealtimeSessionBridge(server_sock, "conv1", "claude",
+                                       "quentin", service)
+        bridge._persist = lambda role, text: None
+        thread = threading.Thread(target=bridge.run, daemon=True)
+        thread.start()
+        try:
+            msg, _ = self._read_until(client_sock, "closed")
+            assert msg["reason"] == "provider_closed"
+            thread.join(timeout=5)
+        finally:
+            client_sock.close()
+
     def test_fatal_provider_error_closes_session(self):
         persisted = []
         events = [{"type": "error", "message": "quota", "fatal": True}]
@@ -1091,6 +1168,9 @@ def test_chat_ui_voice_mode_is_wired():
     # Service picker is a clickable list, not a prompt().
     assert "prompt(" not in js
     assert 'voiceServicePick' in js
+    # P3 voice settings: per-conversation persisted pick + service details.
+    assert "pf_voice_service_" in js
+    assert "_voiceServiceDetails" in js
 
     for lang in ("en", "fr", "es"):
         data = json.loads(Path(f"tasks/io/chat_ui/i18n/{lang}.json")
@@ -1099,6 +1179,7 @@ def test_chat_ui_voice_mode_is_wired():
         assert "voiceStateListening" in data
         assert "realtimeVoiceService" in data
         assert "voiceSendTurn" in data  # manual-VAD send button
+        assert "voiceSettingsTitle" in data  # P3 voice settings panel
 
 
 def test_agent_editor_exposes_realtime_voice_link():

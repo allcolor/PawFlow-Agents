@@ -226,6 +226,12 @@ class RealtimeSessionBridge:
         self._transcript_lock = threading.Lock()
         self._pending_user = 0        # utterances awaiting transcription
         self._assistant_backlog = []  # [(monotonic_ts, text)]
+        # Transparent session resumption (P3): when the provider drops a
+        # session whose adapter carries a resumption handle (Gemini Live),
+        # the pump reconnects instead of tearing the browser session down.
+        self._tool_defs = []
+        self._reconnecting = False
+        self._resume_attempts = 0
 
     # -- client frame helpers -------------------------------------------
 
@@ -301,6 +307,7 @@ class RealtimeSessionBridge:
         max_seconds = int(getattr(self._service, "max_session_seconds", 600)
                           or 600)
         self._tools, tool_defs = self._build_tool_bridge()
+        self._tool_defs = tool_defs  # kept for transparent reconnects
         try:
             self._adapter = self._service.open_session(
                 instructions=self._instructions(), tools=tool_defs,
@@ -339,6 +346,8 @@ class RealtimeSessionBridge:
                     try:
                         self._adapter.send_audio(payload)
                     except Exception:
+                        if self._reconnecting:
+                            continue  # drop mic chunks while resuming
                         self.stop("provider_send_failed")
                         break
                 elif opcode == 0x1:
@@ -383,6 +392,8 @@ class RealtimeSessionBridge:
             try:
                 evt = self._adapter.recv_event(timeout=1.0)
             except ConnectionError:
+                if self._try_resume():
+                    continue
                 self.stop("provider_closed")
                 break
             except Exception:
@@ -443,6 +454,52 @@ class RealtimeSessionBridge:
                 if evt.get("fatal"):
                     self.stop("provider_error")
                     break
+
+    # -- session resumption (P3) ------------------------------------------
+
+    _MAX_RESUME_ATTEMPTS = 2
+
+    def _try_resume(self) -> bool:
+        """Reopen the provider session from its resumption handle.
+
+        Returns True when the pump should keep running on the fresh
+        adapter. False → no handle (protocol without resumption), session
+        already stopping, budget exhausted, or the reconnect itself
+        failed — the caller falls through to `provider_closed`.
+        """
+        adapter = self._adapter
+        handle = ""
+        try:
+            handle = adapter.resumption_state() if adapter is not None else ""
+        except Exception:
+            logger.debug("[realtime] resumption_state failed", exc_info=True)
+        if (not handle or self._stop_ev.is_set()
+                or time.monotonic() > self._deadline
+                or self._resume_attempts >= self._MAX_RESUME_ATTEMPTS):
+            return False
+        self._resume_attempts += 1
+        self._reconnecting = True  # handler thread drops mic chunks quietly
+        self._emit({"type": "state", "state": "connecting"})
+        try:
+            new_adapter = self._service.open_session(
+                instructions=self._instructions(), tools=self._tool_defs,
+                user_id=self._user_id, conversation_id=self._cid,
+                resume_handle=handle)
+        except Exception as exc:
+            logger.warning("[realtime] session resume failed for %s: %s",
+                           self._cid[:8], exc)
+            self._reconnecting = False
+            return False
+        try:
+            adapter.close()
+        except Exception:
+            logger.debug("Ignored exception", exc_info=True)
+        self._adapter = new_adapter
+        self._reconnecting = False
+        logger.info("[realtime] session resumed cid=%s (attempt %d)",
+                    self._cid[:8], self._resume_attempts)
+        self._emit({"type": "state", "state": "listening"})
+        return True
 
     # -- tools -----------------------------------------------------------
 

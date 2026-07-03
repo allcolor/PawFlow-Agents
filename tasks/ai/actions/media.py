@@ -441,9 +441,15 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                         continue
                     if any(e["id"] == _sid for e in _rt):
                         continue
+                    _cfg = _sdef.config or {}
                     _rt.append({"id": _sid, "scope": _scope,
-                                "model": (_sdef.config or {}).get("model", ""),
-                                "voice": (_sdef.config or {}).get("voice", "")})
+                                "model": _cfg.get("model", ""),
+                                "voice": _cfg.get("voice", ""),
+                                "protocol": _cfg.get("protocol",
+                                                     "openai_realtime"),
+                                "vad": _cfg.get("vad", "server"),
+                                "context_mode": _cfg.get("context_mode",
+                                                         "summary:2000")})
             # Agent link: a voice-native agent pins its service (no picker,
             # voice-first UI treatment in the webchat).
             _linked = ""

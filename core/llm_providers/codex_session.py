@@ -28,6 +28,7 @@ from core.llm_providers._codex_credentials import (  # noqa: F401
     _get_sessions_base,
     _persist_tokens_to_service,
     _validate_oauth_token,
+    OAuthRejectedError,
     parse_auth_json,
     recover_tokens_from_workdir,
     refresh_oauth_token,
@@ -262,10 +263,15 @@ class CodexSessionMixin:
             new = self._codex_refresh_oauth_token_coordinated(
                 refresh_token, service_id=svc_id, pool_index=pool_index,
                 user_id=uid, conv_id=cid)
-        except Exception as e:
+        except OAuthRejectedError as e:
             logger.warning("[codex force-refresh] pool[%d] failed: %s",
                            pool_index, e)
             _drop_dead_slot(f"refresh error: {e}")
+            return False
+        except Exception as e:
+            logger.warning(
+                "[codex force-refresh] pool[%d] transient failure, "
+                "credential kept: %s", pool_index, e)
             return False
         _new_at = new.get("access_token", "")
         _new_rt = new.get("refresh_token", refresh_token)
@@ -452,6 +458,7 @@ class CodexSessionMixin:
                 "during this stream. Re-authenticate via the Login button.")
 
         dead_indices = []
+        had_transient = False
         access_token = refresh_token = id_token = account = ""  # nosec B105
         expires_at = 0
         for _pidx in indices:
@@ -494,12 +501,22 @@ class CodexSessionMixin:
                         pool[_pidx]["refresh_token"] = refresh_token
                         pool[_pidx]["id_token"] = id_token
                         pool[_pidx]["expires_at"] = int(expires_at)
-                    except Exception as e:
+                    except OAuthRejectedError as e:
                         logger.warning(
-                            "[codex] pool[%d] refresh failed, dropping: %s",
+                            "[codex] pool[%d] refresh rejected, dropping: %s",
                             _pidx, e)
                         dead_indices.append(_pidx)
                         continue
+                    except Exception as e:
+                        had_transient = True
+                        if _remaining < 0:
+                            logger.warning(
+                                "[codex] pool[%d] expired; refresh temporarily "
+                                "failed, credential kept: %s", _pidx, e)
+                            continue
+                        logger.warning(
+                            "[codex] pool[%d] proactive refresh temporarily "
+                            "failed, using current token: %s", _pidx, e)
                 elif _remaining < 0 and not refresh_token:
                     logger.warning(
                         "[codex] pool[%d] expired, no refresh token", _pidx)
@@ -518,6 +535,11 @@ class CodexSessionMixin:
             pool = [c for i, c in enumerate(pool) if i not in dead_indices]
             _save_credentials_pool(
                 pool, service_id=svc_id, user_id=uid, conv_id=cid)
+            if had_transient:
+                raise LLMClientError(
+                    "Codex OAuth refresh is temporarily unavailable "
+                    "(network/server error). Your saved credentials are "
+                    "intact — retry in a moment.")
             raise LLMClientError(
                 "All codex credentials expired or refresh failed. "
                 "Re-authenticate via the Login button.")

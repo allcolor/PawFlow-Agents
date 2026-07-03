@@ -20,6 +20,15 @@ import time
 
 logger = logging.getLogger(__name__)
 
+
+class OAuthRejectedError(Exception):
+    """OpenAI explicitly rejected the OAuth refresh credential.
+
+    Only this error means the saved credential is dead and may be removed
+    from the pool. Network errors, 5xx, 429, or malformed responses are
+    transient and must not delete the user's login.
+    """
+
 # Auth0 endpoint used by the Codex CLI for the OAuth PKCE refresh flow.
 # Discovered via the publicly documented behaviour of `codex login` and
 # the openai/codex source. Refresh body is RFC 6749 standard.
@@ -74,6 +83,17 @@ def refresh_oauth_token(refresh_token: str) -> dict:
         conn.close()
 
     if resp.status != 200:
+        _err = ""
+        try:
+            _err = str(json.loads(resp_body).get("error", "") or "")
+        except Exception:
+            _err = ""
+        _rejected = resp.status in (401, 403) or (
+            resp.status == 400 and _err in (
+                "invalid_grant", "unauthorized_client", "invalid_client"))
+        if _rejected:
+            raise OAuthRejectedError(
+                f"Codex OAuth refresh rejected ({resp.status}): {resp_body[:200]}")
         raise RuntimeError(
             f"Codex OAuth refresh failed ({resp.status}): {resp_body[:200]}")
     data = json.loads(resp_body)

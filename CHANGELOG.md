@@ -42,6 +42,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   when compacting dead pool entries, and reindexes the selected pool slot
   after purge so Claude Code, Codex, and Gemini teardown recovery write back
   to the correct account.
+- Codex and Gemini OAuth refresh now distinguish rejected credentials from
+  transient network/server failures, matching Claude Code behavior: temporary
+  refresh failures no longer remove saved login slots from the provider pool.
 - Delegate and `flash_delegate` sub-agents using CLI-backed providers now keep
   the parent conversation/service scope when resolving LLM clients, so one
   OAuth login shared through an `llmCredentialOAuthProvider` is reused instead

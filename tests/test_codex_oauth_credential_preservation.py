@@ -144,6 +144,19 @@ class TestConcurrentCodexRefreshKeepsCredential(unittest.TestCase):
         self.assertTrue(pool[0]["access_token"])
         self.assertTrue(pool[0]["refresh_token"])
 
+    def test_transient_force_refresh_failure_keeps_credential(self):
+        store = _PoolStore([{"access_token": "AT0", "refresh_token": "RT0",
+                             "id_token": "ID0", "expires_at": 1}])
+        client = self._client()
+        with patch.object(cxs, "_load_credentials_pool", side_effect=store.load), \
+                patch.object(cxs, "_save_credentials_pool", side_effect=store.save), \
+                patch.object(cxs, "refresh_oauth_token",
+                             side_effect=RuntimeError("network down")):
+            ok = client._codex_force_refresh_pool_entry(0)
+
+        self.assertFalse(ok)
+        self.assertEqual(store.pool[0]["refresh_token"], "RT0")
+
 
 class TestCodexSetupCredentialsCompactsPoolSafely(unittest.TestCase):
     def test_refresh_survives_dead_slot_purge_and_reindexes_selected_slot(self):

@@ -19,6 +19,15 @@ import time
 
 logger = logging.getLogger(__name__)
 
+
+class OAuthRejectedError(Exception):
+    """Google explicitly rejected the OAuth refresh credential.
+
+    Only this error means the saved credential is dead and may be removed
+    from the pool. Network errors, 5xx, 429, or malformed responses are
+    transient and must not delete the user's login.
+    """
+
 # Google's standard OAuth2 token endpoint. Same one used by gcloud, the
 # Gemini CLI, and all GIS clients. Refresh is RFC 6749 standard.
 _GEMINI_TOKEN_ENDPOINT_HOST = "oauth2.googleapis.com"  # nosec B105
@@ -182,6 +191,17 @@ def refresh_oauth_token(refresh_token: str) -> dict:
         conn.close()
 
     if resp.status != 200:
+        _err = ""
+        try:
+            _err = str(json.loads(resp_body).get("error", "") or "")
+        except Exception:
+            _err = ""
+        _rejected = resp.status in (401, 403) or (
+            resp.status == 400 and _err in (
+                "invalid_grant", "unauthorized_client", "invalid_client"))
+        if _rejected:
+            raise OAuthRejectedError(
+                f"Gemini OAuth refresh rejected ({resp.status}): {resp_body[:200]}")
         raise RuntimeError(
             f"Gemini OAuth refresh failed ({resp.status}): {resp_body[:200]}")
     data = json.loads(resp_body)
@@ -394,10 +414,15 @@ class GeminiSessionMixin:
             new = self._gemini_refresh_oauth_token_coordinated(
                 refresh_token, service_id=svc_id, pool_index=pool_index,
                 user_id=uid, conv_id=cid)
-        except Exception as e:
+        except OAuthRejectedError as e:
             logger.warning("[gemini force-refresh] pool[%d] failed: %s",
                            pool_index, e)
             _drop_dead_slot(f"refresh error: {e}")
+            return False
+        except Exception as e:
+            logger.warning(
+                "[gemini force-refresh] pool[%d] transient failure, "
+                "credential kept: %s", pool_index, e)
             return False
         _new_at = new.get("access_token", "")
         _new_rt = new.get("refresh_token", refresh_token)
@@ -564,6 +589,7 @@ class GeminiSessionMixin:
                 "during this stream. Re-authenticate via the Login button.")
 
         dead_indices = []
+        had_transient = False
         access_token = refresh_token = account = ""  # nosec B105
         expires_at = 0
         for _pidx in indices:
@@ -595,12 +621,22 @@ class GeminiSessionMixin:
                         pool[_pidx]["access_token"] = access_token
                         pool[_pidx]["refresh_token"] = refresh_token
                         pool[_pidx]["expires_at"] = int(expires_at)
-                    except Exception as e:
+                    except OAuthRejectedError as e:
                         logger.warning(
-                            "[gemini] pool[%d] refresh failed, dropping: %s",
+                            "[gemini] pool[%d] refresh rejected, dropping: %s",
                             _pidx, e)
                         dead_indices.append(_pidx)
                         continue
+                    except Exception as e:
+                        had_transient = True
+                        if _remaining < 0:
+                            logger.warning(
+                                "[gemini] pool[%d] expired; refresh temporarily "
+                                "failed, credential kept: %s", _pidx, e)
+                            continue
+                        logger.warning(
+                            "[gemini] pool[%d] proactive refresh temporarily "
+                            "failed, using current token: %s", _pidx, e)
                 elif _remaining < 0 and not refresh_token:
                     dead_indices.append(_pidx)
                     continue
@@ -615,6 +651,11 @@ class GeminiSessionMixin:
             pool = [c for i, c in enumerate(pool) if i not in dead_indices]
             _save_credentials_pool(
                 pool, service_id=svc_id, user_id=uid, conv_id=cid)
+            if had_transient:
+                raise LLMClientError(
+                    "Gemini OAuth refresh is temporarily unavailable "
+                    "(network/server error). Your saved credentials are "
+                    "intact — retry in a moment.")
             raise LLMClientError(
                 "All gemini credentials expired or refresh failed. "
                 "Re-authenticate via the Login button.")

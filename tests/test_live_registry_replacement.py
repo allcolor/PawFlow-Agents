@@ -72,7 +72,7 @@ def test_gemini_register_releases_replaced_container(monkeypatch):
     monkeypatch.setattr("core.gemini_pool.GeminiPool.instance", staticmethod(lambda: _Pool()))
 
     reg = GeminiLiveRegistry()
-    key = ("u", "c", "gemini", "svc")
+    key = ("u", "c", "gemini", "svc", 0)
     first = reg.register(key, "container-a", "/tmp/work", service_id="svc")
     second = reg.register(key, "container-b", "/tmp/work", service_id="svc")
 
@@ -94,7 +94,7 @@ def test_gemini_live_sweeper_does_not_evict_active_turn(monkeypatch):
     monkeypatch.setattr("core.gemini_pool.GeminiPool.instance", staticmethod(lambda: _Pool()))
 
     reg = GeminiLiveRegistry()
-    key = ("u", "c", "gemini", "svc")
+    key = ("u", "c", "gemini", "svc", 0)
     session = reg.register(key, "container", "/tmp/work", service_id="svc", active_turn=True)
     session.last_used = 0
 

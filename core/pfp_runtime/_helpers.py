@@ -264,7 +264,7 @@ def _resolve_package_service(service_registry: Any, target: Dict[str, str], *,
 def _parent_conversation_ids(conversation_id: str) -> list[str]:
     conversation_id = str(conversation_id or "")
     ids = [conversation_id] if conversation_id else []
-    for marker in ("::task::", "::task_verify::", "::delegate::"):
+    for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
         if conversation_id and marker in conversation_id:
             parent = conversation_id.split(marker, 1)[0]
             if parent and parent not in ids:
@@ -274,7 +274,7 @@ def _parent_conversation_ids(conversation_id: str) -> list[str]:
 
 def _filter_conversation_id(conversation_id: str) -> str:
     conversation_id = str(conversation_id or "")
-    for marker in ("::task::", "::task_verify::", "::delegate::"):
+    for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
         if marker in conversation_id:
             return conversation_id.split(marker, 1)[0]
     return conversation_id

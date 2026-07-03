@@ -16,7 +16,9 @@ from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-GeminiLiveKey = Tuple[str, str, str, str]
+# Composite key mirrors CodexLiveKey: every dimension that would invalidate
+# reuse if it drifts, including the selected OAuth credential pool slot.
+GeminiLiveKey = Tuple[str, str, str, str, int]
 
 
 @dataclass
@@ -102,6 +104,29 @@ class GeminiLiveRegistry:
         with self._lock:
             return self._containers.get(key)
 
+    def get_compatible(self, user_id: str, conv_id: str, agent_name: str,
+                       service_id: str) -> Optional[Tuple[GeminiLiveKey, GeminiLiveContainer]]:
+        """Return the most recent live session for the base identity.
+
+        The exact key includes svc_pool_idx. If the pool extra is missing after
+        a restart or compact, reuse the warm ACP session and carry its slot
+        forward instead of spawning a second container with an unknown slot.
+        """
+        agent_name = agent_name or "default"
+        service_id = service_id or ""
+        with self._lock:
+            candidates = [
+                (k, e) for k, e in self._containers.items()
+                if k[0] == user_id
+                and k[1] == conv_id
+                and k[2] == agent_name
+                and (k[3] or "") == service_id
+            ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[1].last_used, reverse=True)
+        return candidates[0]
+
     def register(self, key: GeminiLiveKey,  # nosec B107
                  container_name: str, workdir: str,
                  service_id: str = "",
@@ -114,6 +139,10 @@ class GeminiLiveRegistry:
                  hb_state=None,
                  active_turn: bool = False) -> GeminiLiveContainer:
         previous_container = ""
+        try:
+            _svc_pool_idx = int(key[4]) if len(key) >= 5 else -1
+        except (TypeError, ValueError, IndexError):
+            _svc_pool_idx = -1
         with self._lock:
             existing = self._containers.get(key)
             if existing and existing.container_name == container_name:
@@ -141,7 +170,7 @@ class GeminiLiveRegistry:
                     _fmt_key(key), previous_container, container_name)
             entry = GeminiLiveContainer(
                 container_name=container_name, workdir=workdir,
-                service_id=service_id,
+                service_id=service_id, svc_pool_idx=_svc_pool_idx,
                 user_id=(key[0] if len(key) > 0 else ""),
                 conv_id=(key[1] if len(key) > 1 else ""),
                 session_id=session_id,
@@ -229,12 +258,13 @@ class GeminiLiveRegistry:
         with self._lock:
             out = []
             for key, entry in self._containers.items():
-                u, c, a, svc = key
+                u, c, a, svc, pool_idx = key
                 out.append({
                     "user_id": u,
                     "conv_id": c,
                     "agent_name": a,
                     "service_id": svc,
+                    "svc_pool_idx": pool_idx,
                     "container": entry.container_name,
                     "live": True,
                     "active_turn": bool(entry.active_turn),
@@ -298,5 +328,9 @@ class GeminiLiveRegistry:
 
 
 def _fmt_key(key: GeminiLiveKey) -> str:
-    u, c, a, s = key
-    return f"{u[:6] or '?'}/{c[:8] or '?'}/{a or 'default'}@{s or 'default'}"
+    try:
+        u, c, a, s, p = key
+    except ValueError:
+        u, c, a, s = key
+        p = -1
+    return f"{u[:6] or '?'}/{c[:8] or '?'}/{a or 'default'}@{s or 'default'}#{p}"

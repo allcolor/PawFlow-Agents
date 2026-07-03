@@ -19,7 +19,7 @@ class _ToolRelayCacheReqMixin:
     @staticmethod
     def _root_conversation_id(conversation_id: str) -> str:
         conversation_id = str(conversation_id or "")
-        for marker in ("::task::", "::task_verify::", "::delegate::"):
+        for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
             if marker in conversation_id:
                 return conversation_id.split(marker, 1)[0]
         return conversation_id

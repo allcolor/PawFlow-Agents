@@ -33,6 +33,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Gemini ACP live sessions now key warm containers by OAuth credential pool
+  slot and recover compatible sessions when the stored slot is missing, so
+  token recovery persists refresh-token changes back to the correct provider
+  account. Conversation-scoped helpers also recognize `::flash::` sub-convs
+  wherever normal delegate/task sub-convs were already supported.
 - Delegate and `flash_delegate` sub-agents using CLI-backed providers now keep
   the parent conversation/service scope when resolving LLM clients, so one
   OAuth login shared through an `llmCredentialOAuthProvider` is reused instead

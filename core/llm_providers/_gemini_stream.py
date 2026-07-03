@@ -132,8 +132,22 @@ class _GeminiStreamMixin:
                 live_reg.ensure_sweeper(
                     idle_ttl_seconds=int(_idle_ttl) if _idle_ttl else None,
                     recover=recover_tokens_from_workdir)
-                live_key = (user_id, conv_id, agent_name or "default", svc_id)
+                live_key = (user_id, conv_id, agent_name or "default", svc_id,
+                            int(resume_pool_idx))
                 live_session = live_reg.get(live_key)
+                if live_session is None:
+                    compatible = live_reg.get_compatible(
+                        user_id, conv_id, agent_name or "default", svc_id)
+                    if compatible is not None:
+                        live_key, live_session = compatible
+                        try:
+                            resume_pool_idx = int(live_key[4])
+                        except Exception:
+                            resume_pool_idx = -1
+                        logger.info(
+                            "[gemini-acp-live] restored live key conv=%s agent=%s service=%s pool_idx=%s session=%s",
+                            conv_id[:8] or "?", agent_name or "default", svc_id or "default",
+                            int(resume_pool_idx), (live_session.session_id or session_id)[:12] or "new")
                 if live_session is not None and not live_session.is_container_alive():
                     live_reg.evict(live_key, "dead_container")
                     live_session = None
@@ -187,6 +201,12 @@ class _GeminiStreamMixin:
                     store.set_extra(conv_id, pool_key, self._current_pool_index)
                 except Exception:
                     logger.debug("[gemini-acp] failed to persist pool index", exc_info=True)
+            if live_reg is not None and conv_id and not is_ephemeral:
+                try:
+                    live_key = (user_id, conv_id, agent_name or "default", svc_id,
+                                int(getattr(self, "_current_pool_index", resume_pool_idx)))
+                except Exception:
+                    live_key = None
             mcp_servers, internal_token = self._gemini_acp_mcp_servers(
                 user_id=user_id, conversation_id=conv_id, agent_name=agent_name)
             self._gemini_acp_write_settings(

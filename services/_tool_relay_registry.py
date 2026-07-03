@@ -82,7 +82,7 @@ class _ToolRelayRegistryMixin:
             try:
                 from core.tool_loader import load_tools_into_registry
                 _parent_cid = conversation_id or ""
-                for _sep in ("::task::", "::task_verify::", "::delegate::"):
+                for _sep in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
                     if _sep in _parent_cid:
                         _parent_cid = _parent_cid.split(_sep, 1)[0]
                         break

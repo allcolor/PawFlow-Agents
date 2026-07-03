@@ -166,6 +166,14 @@
     },
     {
       "@type": "Question",
+      "name": "Can I talk to an agent live, like a phone call?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Add a realtimeVoiceConnection service (OpenAI Realtime with a gpt-realtime model, or Gemini Live with a gemini connection that has an api_key) and click the microphone button in the webchat. You get a full-duplex spoken conversation with live captions, barge-in, optional push-to-talk, spoken tool use, and transcripts saved as normal conversation history. Agents pinned to a voice service also answer Telegram voice notes with voice notes."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Can I run PawFlow on a VPS?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -177,7 +185,7 @@
       "name": "Is PawFlow production-ready?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "It is alpha software with a substantial runtime, docs, tests, and deployment path. Treat internet-facing deployments carefully: use production env settings, HTTPS, strong secrets, restricted tools, budget caps, and reviewed OAuth redirects."
+        "text": "It is beta software with a substantial runtime, docs, tests, and deployment path. Treat internet-facing deployments carefully: use production env settings, HTTPS, strong secrets, restricted tools, budget caps, and reviewed OAuth redirects."
       }
     },
     {
@@ -219,8 +227,9 @@
       <details data-reveal><summary>Can agents edit my files?</summary><p>Only through configured tools and relays. Use narrow permissions, approval gates, Docker relays for untrusted work, and read-only inspection before allowing edits, shell commands, deletes, or desktop control.</p></details>
       <details data-reveal><summary>Can PawFlow generate media?</summary><p>Yes. Agents can use provider-backed image, video, audio, voice, 3D, try-on, lipsync, and upscaling tools. Outputs should be stored as FileStore URLs or real files, not embedded as base64 in conversation text.</p></details>
       <details data-reveal><summary>How do I enable TTS and STT?</summary><p>Add a TTS service such as Supertonic, Voicebox, LuxTTS, or a compatible hosted provider, then add an STT service such as OpenAI-compatible STT or Voicebox. The webchat speaker and microphone controls use those services, and agents can also call voice tools such as `speak`, `clone_voice`, and `speech_to_video` when configured.</p></details>
+      <details data-reveal><summary>Can I talk to an agent live, like a phone call?</summary><p>Yes. Add a <code>realtimeVoiceConnection</code> service (OpenAI Realtime with a <code>gpt-realtime</code> model, or Gemini Live with a <code>gemini</code> connection that has an <code>api_key</code>) and click the microphone button in the webchat. You get a full-duplex spoken conversation with live captions, barge-in, optional push-to-talk, spoken tool use, and transcripts saved as normal conversation history. Agents pinned to a voice service also answer Telegram voice notes with voice notes. See the <a href="howtos.html#realtime-voice">realtime voice how-to</a>.</p></details>
       <details data-reveal><summary>Can I run PawFlow on a VPS?</summary><p>Yes. Use the Docker install path, persistent volumes, HTTPS or a reverse proxy, strong secrets, the Private Gateway for exposed demos, and restrictive relay/tool permissions.</p></details>
-      <details data-reveal><summary>Is PawFlow production-ready?</summary><p>It is alpha software with a substantial runtime, docs, tests, and deployment path. Treat internet-facing deployments carefully: use production env settings, HTTPS, strong secrets, restricted tools, budget caps, and reviewed OAuth redirects.</p></details>
+      <details data-reveal><summary>Is PawFlow production-ready?</summary><p>It is beta software with a substantial runtime, docs, tests, and deployment path. Treat internet-facing deployments carefully: use production env settings, HTTPS, strong secrets, restricted tools, budget caps, and reviewed OAuth redirects.</p></details>
       <details data-reveal><summary>How do I update a Docker install?</summary><p>Pull the new image/tag and recreate the server container while keeping bind-mounted persistent data. Do not delete `~/pawflow` data unless you explicitly want a fresh install.</p></details>
     </div></section>
     <section class="section"><div class="container cta-panel" data-reveal><div><p class="eyebrow">Ready enough to try</p><h2>The fastest answer is still the quickstart.</h2><p>Install locally, open the wizard, configure one provider, and test a relay-backed conversation.</p></div><a class="button button-primary" href="quickstart.html">Install PawFlow</a></div></section>

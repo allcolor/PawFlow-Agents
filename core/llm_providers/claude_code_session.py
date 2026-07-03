@@ -560,6 +560,9 @@ class ClaudeCodeSessionMixin:
                             access_token, refresh_token, int(expires_at),
                             service_id=svc_id, pool_index=_pidx,
                             user_id=uid, conv_id=cid)
+                        pool[_pidx]["access_token"] = access_token
+                        pool[_pidx]["refresh_token"] = refresh_token
+                        pool[_pidx]["expires_at"] = int(expires_at)
                         logger.info("OAuth token [pool:%d] refreshed — expires in %.1fh",
                                     _pidx, (int(expires_at)/1000 - _time.time()) / 3600)
                     except OAuthRejectedError as e:
@@ -591,7 +594,8 @@ class ClaudeCodeSessionMixin:
                     continue
 
             # This credential works — use it
-            self._current_pool_index = _pidx
+            self._current_pool_index = _pidx - sum(
+                1 for _dead_idx in dead_indices if _dead_idx < _pidx)
 
             # Clean up dead credentials
             if dead_indices:

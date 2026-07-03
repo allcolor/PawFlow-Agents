@@ -592,6 +592,9 @@ class GeminiSessionMixin:
                             access_token, refresh_token, int(expires_at),
                             service_id=svc_id, pool_index=_pidx,
                             account=account, user_id=uid, conv_id=cid)
+                        pool[_pidx]["access_token"] = access_token
+                        pool[_pidx]["refresh_token"] = refresh_token
+                        pool[_pidx]["expires_at"] = int(expires_at)
                     except Exception as e:
                         logger.warning(
                             "[gemini] pool[%d] refresh failed, dropping: %s",
@@ -601,7 +604,8 @@ class GeminiSessionMixin:
                 elif _remaining < 0 and not refresh_token:
                     dead_indices.append(_pidx)
                     continue
-            self._current_pool_index = _pidx
+            self._current_pool_index = _pidx - sum(
+                1 for _dead_idx in dead_indices if _dead_idx < _pidx)
             if dead_indices:
                 pool = [c for i, c in enumerate(pool) if i not in dead_indices]
                 _save_credentials_pool(

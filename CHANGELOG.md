@@ -38,6 +38,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   token recovery persists refresh-token changes back to the correct provider
   account. Conversation-scoped helpers also recognize `::flash::` sub-convs
   wherever normal delegate/task sub-convs were already supported.
+- CLI provider credential setup now preserves freshly refreshed OAuth tokens
+  when compacting dead pool entries, and reindexes the selected pool slot
+  after purge so Claude Code, Codex, and Gemini teardown recovery write back
+  to the correct account.
 - Delegate and `flash_delegate` sub-agents using CLI-backed providers now keep
   the parent conversation/service scope when resolving LLM clients, so one
   OAuth login shared through an `llmCredentialOAuthProvider` is reused instead

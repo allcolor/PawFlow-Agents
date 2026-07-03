@@ -6,6 +6,7 @@ for the gemini provider.
 """
 
 import threading
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -138,6 +139,35 @@ class TestConcurrentGeminiRefreshKeepsCredential(unittest.TestCase):
         self.assertEqual(len(pool), 1)
         self.assertTrue(pool[0]["access_token"])
         self.assertTrue(pool[0]["refresh_token"])
+
+
+class TestGeminiSetupCredentialsCompactsPoolSafely(unittest.TestCase):
+    def test_refresh_survives_dead_slot_purge_and_reindexes_selected_slot(self):
+        gms.GeminiSessionMixin._gemini_refresh_locks.clear()
+        store = _PoolStore([
+            {"access_token": "", "refresh_token": "dead", "expires_at": 0},
+            {"access_token": "AT0", "refresh_token": "RT0", "expires_at": 1},
+        ])
+        client = LLMClient(provider="gemini", config={})
+        client._agent_service = "svc"
+
+        with tempfile.TemporaryDirectory() as workdir, \
+                patch.object(gms, "_load_credentials_pool", side_effect=store.load), \
+                patch.object(gms, "_save_credentials_pool", side_effect=store.save), \
+                patch.object(gms, "_persist_tokens_to_service", side_effect=store.persist), \
+                patch.object(gms, "refresh_oauth_token", return_value={
+                    "access_token": "AT1",
+                    "refresh_token": "RT1",
+                    "expires_at": 9_999_999_999_000,
+                }):
+            client._gemini_setup_credentials(workdir, user_id="u", conversation_id="c")
+
+        self.assertEqual(client._current_pool_index, 0)
+        pool = store.pool
+        self.assertEqual(len(pool), 1)
+        self.assertEqual(pool[0]["access_token"], "AT1")
+        self.assertEqual(pool[0]["refresh_token"], "RT1")
+        self.assertEqual(pool[0]["expires_at"], 9_999_999_999_000)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ slot — everything else keeps the refresh_token intact.
 """
 
 import threading
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -250,6 +251,35 @@ class TestConcurrentRefreshKeepsCredential(unittest.TestCase):
         self.assertEqual(len(pool), 1)
         self.assertTrue(pool[0]["access_token"])
         self.assertTrue(pool[0]["refresh_token"])
+
+
+class TestSetupCredentialsCompactsPoolSafely(unittest.TestCase):
+    def test_refresh_survives_dead_slot_purge_and_reindexes_selected_slot(self):
+        ccs.ClaudeCodeSessionMixin._refresh_locks.clear()
+        store = _PoolStore([
+            {"access_token": "", "refresh_token": "dead", "expires_at": 0},
+            {"access_token": "AT0", "refresh_token": "RT0", "expires_at": 1},
+        ])
+        client = LLMClient(provider="claude-code", config={})
+        client._agent_service = "svc"
+        client._refresh_oauth_token = lambda rt: {
+            "access_token": "AT1",
+            "refresh_token": "RT1",
+            "expires_at": 9_999_999_999_000,
+        }
+
+        with tempfile.TemporaryDirectory() as workdir, \
+                patch.object(ccs, "_load_credentials_pool", side_effect=store.load), \
+                patch.object(ccs, "_save_credentials_pool", side_effect=store.save), \
+                patch.object(ccs, "_persist_tokens_to_service", side_effect=store.persist):
+            client._setup_credentials(workdir, user_id="u", conversation_id="c")
+
+        self.assertEqual(client._current_pool_index, 0)
+        pool = store.pool
+        self.assertEqual(len(pool), 1)
+        self.assertEqual(pool[0]["access_token"], "AT1")
+        self.assertEqual(pool[0]["refresh_token"], "RT1")
+        self.assertEqual(pool[0]["expires_at"], 9_999_999_999_000)
 
 
 if __name__ == "__main__":

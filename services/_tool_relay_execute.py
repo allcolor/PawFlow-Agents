@@ -502,7 +502,9 @@ class _ToolRelayExecuteMixin:
         # on the SpawnAgentsHandler so sub_agent_* SSE events carry the
         # delegate_tc_id that the chat UI uses to render delegate-blocks
         # (otherwise the events fall back to a generic task-block).
-        if tool_name == "delegate":
+        # flash_delegate uses the same caller context by design: flash agents
+        # inherit the calling agent identity and llm_service.
+        if tool_name in {"delegate", "flash_delegate"}:
             try:
                 from core.handlers.resource_agent import SpawnAgentsHandler
                 _src_svc = ""

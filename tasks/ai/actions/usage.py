@@ -275,6 +275,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             logger.debug("gemini_live enrichment failed", exc_info=True)
 
         flowfile.set_content(json.dumps({
+            "conversation_id": conv_id,
             "active": active,
             "cc_live": cc_live_list,
             "cci_live": cci_live_list,

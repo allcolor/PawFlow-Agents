@@ -92,6 +92,17 @@ class AgentUtilsMixin(_AgentMediaMixin, _AgentMsgProcMixin):
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             client = svc.get_client(pool_index=pool_idx)
+            # CLI-backed providers resolve OAuth pools from the logical LLM
+            # service id. Main-agent setup sets this later, but delegates get
+            # their client directly from this resolver. Keep the id attached
+            # here so delegate / flash_delegate share the same credential pool
+            # as the parent instance instead of falling through to defaults.
+            try:
+                client._agent_service = service_id
+                client._user_id = user_id or ""
+                client._conversation_id = conversation_id or ""
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             # Store the pool index for this conversation (first use)
             if conversation_id and hasattr(client, '_active_pool_index'):
                 _pidx = client._active_pool_index

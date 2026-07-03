@@ -241,7 +241,6 @@ def test_active_agent_tool_hints_use_task_scoped_keys():
     """Task tool SSE hints must update the server-poll row, not create a ghost."""
     key_body = _extract_function_body(_ACTIVE_AGENTS_JS, "activeAgentKey")
     assert "agentName + '::' + taskId" in key_body
-
     tool_body = _extract_function_body(_ACTIVE_AGENTS_JS, "trackAgentTool")
     assert "activeAgentKey(agentName, taskId || '')" in tool_body
     assert "trackAgentStart(agentName, '', taskId || '')" in tool_body
@@ -262,6 +261,15 @@ def test_active_agent_tool_hints_use_task_scoped_keys():
     assert "trackAgentTool(tcAgent, data.tool, data.task_id || '')" in tool_call
     assert "trackAgentToolDone(data.agent_name, data.tool, data.task_id || '')" in tool_result
     assert "trackAgentDone(doneAgent, data.task_id)" in task_done
+
+
+def test_active_sync_is_conversation_bound_and_rejects_stale_responses():
+    """A delayed list_active response from another conversation must not repaint the current panel."""
+    body = _extract_function_body(_ACTIVE_AGENTS_JS, "syncActiveFromServer")
+    assert "const requestedConversationId = conversationId" in body
+    assert "action$('list_active', { conversation_id: requestedConversationId }" in body
+    assert "data.conversation_id && data.conversation_id !== conversationId" in body
+    assert "requestedConversationId !== conversationId" in body
 
 
 def test_compact_progress_done_does_not_publish_gauge():

@@ -346,6 +346,7 @@ function stopActiveSync() {
 function syncActiveFromServer(force) {
   if (!conversationId) return;
   if (!force && typeof document !== 'undefined' && document.hidden) return;
+  const requestedConversationId = conversationId;
   const now = Date.now();
   if (_syncActiveSub) {
     if (!force && now - _syncActiveStartedAt < _SYNC_ACTIVE_STALE_MS) return;
@@ -354,10 +355,12 @@ function syncActiveFromServer(force) {
   }
   _syncActiveStartedAt = now;
   const requestStartedAt = now;
-  _syncActiveSub = action$('list_active', {}, { silent: true }).subscribe(data => {
+  _syncActiveSub = action$('list_active', { conversation_id: requestedConversationId }, { silent: true }).subscribe(data => {
     _syncActiveSub = null;
     _syncActiveStartedAt = 0;
     if (data.error) return;  // silent — network may be down
+    if (data.conversation_id && data.conversation_id !== conversationId) return;
+    if (requestedConversationId !== conversationId) return;
     const serverActive = (data.active || []).filter(a => {
       const key = activeAgentKey(a.agent_name, a.task_id || '');
       const doneAt = _activeDoneAt[key] || 0;

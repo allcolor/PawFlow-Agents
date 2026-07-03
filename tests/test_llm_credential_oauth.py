@@ -12,6 +12,7 @@ from services.llm_credential_oauth import (
 )
 from core.service_registry import ServiceRegistry
 from core.llm_providers import claude_code_session, codex_session, gemini_session
+from core.llm_client import LLMClient
 
 
 def _sdef(service_id, service_type, config):
@@ -151,6 +152,51 @@ def test_cli_runtime_token_resolution_passes_scope_to_pool_loaders(monkeypatch):
         (codex_session.__name__, "scoped_llm_service", "alice", "conv-1"),
         (gemini_session.__name__, "scoped_llm_service", "alice", "conv-1"),
     ]
+
+
+def test_agent_llm_resolver_annotates_cli_client_with_service_scope(monkeypatch):
+    from tasks.ai.agent_utils import AgentUtilsMixin
+
+    class _Svc:
+        config = {}
+
+        def get_client(self, pool_index=-1):
+            return LLMClient(provider="codex-app-server", config={})
+
+    calls = []
+
+    class _Reg:
+        def resolve(self, service_id, user_id="", conv_id=""):
+            calls.append((service_id, user_id, conv_id))
+            return _Svc()
+
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        staticmethod(lambda: _Reg()),
+    )
+    holder = AgentUtilsMixin()
+    holder._services = {}
+
+    client, svc = holder._resolve_llm_service(
+        "codex_llm", "alice", "conv-1::task::task-a")
+
+    assert svc is not None
+    assert calls == [("codex_llm", "alice", "conv-1::task::task-a")]
+    assert client._agent_service == "codex_llm"
+    assert client._user_id == "alice"
+    assert client._conversation_id == "conv-1::task::task-a"
+
+
+def test_delegate_bootstrap_resolver_keeps_conversation_scope():
+    src = Path("tasks/ai/_agentctx_p1.py").read_text(encoding="utf-8")
+    assert "_resolve_llm_service(svc_id, uid, st.conversation_id)" in src
+
+
+def test_flash_subconversation_resolves_parent_scope():
+    from core.service_registry import _parent_conversation_id
+
+    assert _parent_conversation_id("conv-1::flash::audit") == "conv-1"
+    assert _parent_conversation_id("conv-1::task::t1::flash::audit") == "conv-1"
 
 
 def test_credential_pool_actions_pass_user_scope_to_cli_helpers():

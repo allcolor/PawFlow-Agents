@@ -23,7 +23,13 @@ class _Registry:
         return []
 
 
-def _fast_auto_permissions(key, default=None):
+def _fast_auto_permissions(*args, **_kwargs):
+    if len(args) >= 3:
+        key = args[1]
+        default = args[2]
+    else:
+        key = args[0] if args else ""
+        default = args[1] if len(args) > 1 else None
     if key == "permission_mode":
         return "auto"
     if key == "tool_permissions":
@@ -175,6 +181,48 @@ def test_registry_build_applies_llm_service_tool_result_limit(monkeypatch):
         assert fake_services.calls == [("agy_llm", "alice", "conv1")]
     finally:
         ToolRelayService.clear_registry_cache()
+
+
+def test_tool_relay_injects_source_context_for_flash_delegate(monkeypatch):
+    import core.conv_agent_config as agent_config_mod
+    from core.handlers.resource_agent import FlashAgentHandler
+
+    class _FlashProbe(FlashAgentHandler):
+        def execute(self, _arguments):
+            src_agent = getattr(self._local, "source_agent", "") or ""
+            src_svc = getattr(self._local, "source_llm_service", "") or ""
+            delegate_tc_id = getattr(self._local, "delegate_tc_id", "") or ""
+            return f"src={src_agent};svc={src_svc};tc={delegate_tc_id}"
+
+    class _FlashRegistry:
+        def __init__(self):
+            self.handler = _FlashProbe()
+
+        def get(self, name):
+            return self.handler if name == "flash_delegate" else None
+
+        def execute(self, name, arguments):
+            return self.get(name).execute(arguments)
+
+        def list_tools(self):
+            return [self.handler]
+
+    svc = ToolRelayService({"_service_id": "svc-flash", "file_base_url": ""})
+    registry = _FlashRegistry()
+    monkeypatch.setattr(svc, "_get_registry", lambda *_args, **_kwargs: registry)
+    monkeypatch.setattr(svc, "_conversation_extra_fast", _fast_auto_permissions)
+    monkeypatch.setattr(svc, "_conversation_has_hooks", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        agent_config_mod, "get_agent_config",
+        lambda conv_id, agent_name: {"llm_service": "svc_a"},
+    )
+
+    result = svc._do_execute(
+        "tc_flash", "flash_delegate", {"tasks": []},
+        "alice", "conv1", "agentA",
+    )
+
+    assert result["data"] == "src=agentA;svc=svc_a;tc=tc_flash"
 
 
 def test_read_only_search_does_not_resolve_full_env_for_plain_args(monkeypatch):

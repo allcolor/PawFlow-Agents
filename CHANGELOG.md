@@ -31,6 +31,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   model, voice, VAD mode, and context setting; one click selects, and the
   choice is remembered per conversation.
 
+### Fixed
+
+- Delegate and `flash_delegate` sub-agents using CLI-backed providers now keep
+  the parent conversation/service scope when resolving LLM clients, so one
+  OAuth login shared through an `llmCredentialOAuthProvider` is reused instead
+  of falling back to an empty credential pool.
+- `flash_delegate` now receives the caller's source agent and `llm_service`
+  context through the relay, matching normal `delegate` behavior. The Active
+  Agents poll is also conversation-bound and rejects stale responses, so a
+  delayed `list_active` response from another conversation cannot repaint the
+  current conversation's active-agent panel or context gauge.
+
 ## [1.0.0-beta.2] — 2026-07-03
 
 ### Added

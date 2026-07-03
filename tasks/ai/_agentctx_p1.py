@@ -57,7 +57,7 @@ class _PACPhase1Mixin:
         # Create a resolver closure for per-agent LLM service routing
         st._self = self
         def _client_resolver(svc_id, uid):
-            return st._self._resolve_llm_service(svc_id, uid)
+            return st._self._resolve_llm_service(svc_id, uid, st.conversation_id)
         # on_event callback for sub-agent visibility (SSE events)
         def _sub_on_event(event_type, data):
             try:

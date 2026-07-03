@@ -174,13 +174,25 @@ class _ToolRelayRegistryMixin:
             def _client_resolver(svc_id, uid):
                 _reg = _SR.get_instance()
                 _tried = []
+
+                def _annotated(_live):
+                    _client = _live.get_client()
+                    try:
+                        _client._agent_service = svc_id
+                        _client._user_id = uid or ""
+                        _client._conversation_id = conversation_id or ""
+                    except Exception:
+                        logging.getLogger(__name__).debug(
+                            "Ignored exception", exc_info=True)
+                    return _client, _live
+
                 # Canonical scope chain first (conv > user > global, parent
                 # conversations included) so conv-scoped LLM services resolve.
                 try:
                     _live = _reg.resolve(svc_id, user_id=uid,
                                          conv_id=conversation_id)
                     if _live and hasattr(_live, "get_client"):
-                        return _live.get_client(), _live
+                        return _annotated(_live)
                     _tried.append("resolve:no-live-instance")
                 except Exception as _re:
                     _tried.append(f"resolve:{type(_re).__name__}:{_re}")
@@ -192,7 +204,7 @@ class _ToolRelayRegistryMixin:
                             continue
                         _live = _reg.get_live_instance(_scope, _sid, svc_id)
                         if _live and hasattr(_live, "get_client"):
-                            return _live.get_client(), _live
+                            return _annotated(_live)
                         _tried.append(f"{_scope}/{_sid}:no-live-instance")
                     except Exception as _re:
                         _tried.append(f"{_scope}/{_sid}:{type(_re).__name__}:{_re}")

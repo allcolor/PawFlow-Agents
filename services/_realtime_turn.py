@@ -53,7 +53,7 @@ def run_voice_turn(service, *, conversation_id: str, agent_name: str,
 
     adapter = service.open_session(
         instructions=_bridge_mod.resolve_session_instructions(
-            service, conversation_id, agent_name),
+            service, conversation_id, agent_name, user_id=user_id),
         tools=tool_defs,
         vad="manual",  # one committed turn, no live VAD
         user_id=user_id, conversation_id=conversation_id,

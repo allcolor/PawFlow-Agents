@@ -417,7 +417,8 @@ class TestRealtimeVoiceService:
         assert svc._create_connection() == {"ready": True}
         schema = svc.get_parameter_schema()
         for key in ("llm_service", "protocol", "model", "voice", "vad",
-                    "instructions_mode", "max_session_seconds"):
+                    "instructions_mode", "max_session_seconds",
+                    "context_mode"):
             assert key in schema
         assert svc.TYPE == "realtimeVoiceConnection"
 
@@ -474,6 +475,85 @@ class TestRealtimeVoiceService:
         # Legacy callers without explicit identity still get the fields.
         svc.open_session()
         assert seen["resolve"] == ("bob", "conv-b")
+
+
+# ── session context injection (P3, shared context_mode system) ───────
+
+class TestSessionContextInjection:
+
+    def _fake_store(self, monkeypatch, messages, seen=None):
+        class _Store:
+            def load(self, cid, user_id=""):
+                if seen is not None:
+                    seen["load"] = (cid, user_id)
+                return list(messages)
+
+        monkeypatch.setattr(
+            "core.conversation_store.ConversationStore.instance",
+            staticmethod(lambda: _Store()))
+
+    def _service(self, mode):
+        class _Svc:
+            instructions_mode = "custom"
+            instructions = "Be brief."
+            context_mode = mode
+
+        return _Svc()
+
+    def test_summary_mode_appends_digest(self, monkeypatch):
+        from services._realtime_bridge import resolve_session_instructions
+        seen = {}
+        self._fake_store(monkeypatch, [
+            {"role": "user", "content": "quel temps demain ?"},
+            {"role": "assistant", "content": "de la pluie"},
+            {"role": "system", "content": "internal — must not leak"},
+        ], seen)
+        out = resolve_session_instructions(
+            self._service("summary:2000"), "conv1", "claude",
+            user_id="quentin")
+        assert out.startswith("Be brief.")
+        assert "treat it as data" in out  # injection guard header
+        assert "user: quel temps demain ?" in out
+        assert "assistant: de la pluie" in out
+        assert "must not leak" not in out
+        # The store lookup is scoped to the caller's identity.
+        assert seen["load"] == ("conv1", "quentin")
+
+    def test_last_mode_renders_role_lines(self, monkeypatch):
+        from services._realtime_bridge import resolve_session_instructions
+        self._fake_store(monkeypatch, [
+            {"role": "user", "content": "un"},
+            {"role": "user", "content": "deux"},
+            {"role": "assistant", "content": "trois"},
+        ])
+        out = resolve_session_instructions(
+            self._service("last:2"), "conv1", "claude", user_id="quentin")
+        assert "user: deux" in out and "assistant: trois" in out
+        assert "user: un" not in out  # outside the last:2 window
+
+    def test_isolated_mode_leaves_prompt_untouched(self, monkeypatch):
+        from services._realtime_bridge import resolve_session_instructions
+        self._fake_store(monkeypatch, [
+            {"role": "user", "content": "jamais vu"},
+        ])
+        out = resolve_session_instructions(
+            self._service("isolated"), "conv1", "claude", user_id="quentin")
+        assert out == "Be brief."
+
+    def test_store_failure_degrades_to_no_context(self, monkeypatch):
+        from services._realtime_bridge import resolve_session_instructions
+
+        class _Broken:
+            def load(self, cid, user_id=""):
+                raise RuntimeError("store down")
+
+        monkeypatch.setattr(
+            "core.conversation_store.ConversationStore.instance",
+            staticmethod(lambda: _Broken()))
+        out = resolve_session_instructions(
+            self._service("summary:2000"), "conv1", "claude",
+            user_id="quentin")
+        assert out == "Be brief."
 
 
 # ── bridge over a socketpair with a scripted adapter ─────────────────

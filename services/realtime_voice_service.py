@@ -55,6 +55,8 @@ class RealtimeVoiceConnectionService(BaseService):
         except (TypeError, ValueError):
             self.max_session_seconds = 600
         self.tool_profile = (self.config.get("tool_profile", "") or "").strip()
+        self.context_mode = (self.config.get("context_mode", "summary:2000")
+                             or "isolated").strip().lower()
         self._runtime_user_id = ""
         self._runtime_conversation_id = ""
 
@@ -191,6 +193,8 @@ class RealtimeVoiceConnectionService(BaseService):
                                      "description": "Hard cap on a single voice session; the bridge closes the session when reached."},
             "tool_profile": {"type": "string", "required": False, "default": "",
                               "description": "Comma-separated PawFlow tools exposed to the voice model (e.g. 'recall,remember,web_search,read'). Approval is silent: exempt/pre-approved tools run, anything needing a dialog is refused; long tools detach to the background and announce their result. Empty = no tools."},
+            "context_mode": {"type": "string", "required": False, "default": "summary:2000",
+                              "description": "Conversation context given to the voice model at session start — same modes as sub-agents: 'isolated' (none), 'last:N' (last N messages), 'summary:N' (compact summary, ~N tokens), 'full'."},
         }
 
 

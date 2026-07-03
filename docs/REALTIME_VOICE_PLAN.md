@@ -1,6 +1,6 @@
 # Realtime Voice Conversation — Design & Implementation Plan
 
-Status: **P1 + P2 shipped** (released in 1.0.0-beta.2; P3 open)
+Status: **P1 + P2 shipped** (released in 1.0.0-beta.2); **P3 in progress** — context injection shipped, gemini_live / settings UI / resumption open
 Decided: 2026-07-02 — realtime voice is delivered as a new LLM-family service
 type `realtimeVoiceConnection`, multi-provider through protocol adapters.
 
@@ -73,6 +73,7 @@ Config schema (P1):
 | `vad` | `server` | `server` (provider VAD) or `manual` (client push-to-talk commits) |
 | `max_session_seconds` | `600` | hard cap, bridge closes the session |
 | `tool_profile` | `""` (none) | P2: comma list / profile of PawFlow tools exposed as functions |
+| `context_mode` | `summary:2000` | P3: conversation context injected into the session instructions — the shared sub-agent vocabulary (`isolated`/`last:N`/`summary:N`/`full`, resolved by `core.handlers.spawn_agents.resolve_context_messages`) |
 
 Service methods: `open_session(session_config) -> RealtimeAdapter` plus
 `describe()`/health. Everything session-scoped lives on the adapter.
@@ -240,7 +241,14 @@ STT button:
     voice-channel messages). Any failure falls back to the STT pipeline.
     True duplex over Telegram is NOT possible via the Bot API — would need
     MTProto group calls (tgcalls); parked as exploratory.
-- **P3**: `gemini_live` adapter, voice settings UI, session resumption,
-  compact conversation-summary injection at session start.
+- **P3** (in progress):
+  - **Context injection — SHIPPED**: the service's `context_mode`
+    (default `summary:2000`; `isolated` disables) appends conversation
+    context to the session instructions in both instruction modes,
+    reusing the shared sub-agent context system
+    (`resolve_context_messages`). The block carries an explicit
+    treat-as-data guard (persisted content is untrusted).
+  - Remaining: `gemini_live` adapter, voice settings UI, session
+    resumption.
 - **Later**: Nova Sonic (HTTP/2 bidi), WebRTC transport option,
   SIP/telephony, voice approval UX, Telegram group calls (tgcalls).

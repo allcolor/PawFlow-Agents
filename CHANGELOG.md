@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Realtime voice context (P3): voice sessions now start knowing what was
+  discussed before — the `realtimeVoiceConnection` service's new
+  `context_mode` (default `summary:2000`; `isolated` disables, `last:N` /
+  `full` supported) appends conversation context to the session
+  instructions, reusing the same context system as sub-agents
+  (`resolve_context_messages`, extracted from the spawn handler). Applies
+  to webchat sessions and Telegram voice-note turns.
+
 ## [1.0.0-beta.2] — 2026-07-03
 
 ### Added

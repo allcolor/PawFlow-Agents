@@ -15,6 +15,55 @@ from core.handlers._spawn_delivery import _SpawnDeliveryMixin
 logger = logging.getLogger(__name__)
 
 
+def resolve_context_messages(mode: str, conversation_id: str,
+                             user_id: str) -> list:
+    """Resolve conversation-context messages for a `context_mode`.
+
+    The shared context vocabulary — 'isolated', 'last:N', 'summary:N',
+    'full' — used by sub-agent spawning, task assignment, and realtime
+    voice sessions.
+    """
+    from core.conversation_store import ConversationStore
+    store = ConversationStore.instance()
+
+    if mode == "full":
+        raw = store.load(conversation_id, user_id=user_id) or []
+        # Filter out system messages, keep user/assistant/tool
+        return [m for m in raw if m.get("role") != "system"]
+
+    if mode.startswith("last:"):
+        try:
+            n = int(mode.split(":")[1])
+        except (ValueError, IndexError):
+            n = 10
+        raw = store.load(conversation_id, user_id=user_id) or []
+        non_system = [m for m in raw if m.get("role") != "system"]
+        return non_system[-n:]
+
+    if mode.startswith("summary:"):
+        try:
+            max_tokens = int(mode.split(":")[1])
+        except (ValueError, IndexError):
+            max_tokens = 2000
+        raw = store.load(conversation_id, user_id=user_id) or []
+        # Build a simple text summary from recent messages
+        text_parts = []
+        for m in raw[-50:]:  # last 50 messages for summary input
+            role = m.get("role", "")
+            content = m.get("content", "")
+            if role in ("user", "assistant") and content:
+                text_parts.append(f"{role}: {content[:200]}")
+        summary = "\n".join(text_parts)
+        # Truncate to approximate token limit
+        if len(summary) > max_tokens * 4:
+            summary = summary[-(max_tokens * 4):]
+        return [{"role": "user",
+                 "content": f"[Context summary from parent conversation]"
+                            f"\n{summary}"}]
+
+    return []  # isolated
+
+
 class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
     """Spawn one or more sub-agents to work in parallel.
 
@@ -412,45 +461,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
     def _resolve_context(self, mode: str, conversation_id: str,
                          user_id: str) -> list:
         """Resolve context messages based on mode."""
-        from core.conversation_store import ConversationStore
-        store = ConversationStore.instance()
-
-        if mode == "full":
-            raw = store.load(conversation_id, user_id=user_id) or []
-            # Filter out system messages, keep user/assistant/tool
-            return [m for m in raw if m.get("role") != "system"]
-
-        if mode.startswith("last:"):
-            try:
-                n = int(mode.split(":")[1])
-            except (ValueError, IndexError):
-                n = 10
-            raw = store.load(conversation_id, user_id=user_id) or []
-            non_system = [m for m in raw if m.get("role") != "system"]
-            return non_system[-n:]
-
-        if mode.startswith("summary:"):
-            try:
-                max_tokens = int(mode.split(":")[1])
-            except (ValueError, IndexError):
-                max_tokens = 2000
-            raw = store.load(conversation_id, user_id=user_id) or []
-            # Build a simple text summary from recent messages
-            text_parts = []
-            for m in raw[-50:]:  # last 50 messages for summary input
-                role = m.get("role", "")
-                content = m.get("content", "")
-                if role in ("user", "assistant") and content:
-                    text_parts.append(f"{role}: {content[:200]}")
-            summary = "\n".join(text_parts)
-            # Truncate to approximate token limit
-            if len(summary) > max_tokens * 4:
-                summary = summary[-(max_tokens * 4):]
-            return [{"role": "user",
-                     "content": f"[Context summary from parent conversation]"
-                                f"\n{summary}"}]
-
-        return []  # isolated
+        return resolve_context_messages(mode, conversation_id, user_id)
 
     def _is_caller_a_delegate(self) -> bool:
         """True if the currently-executing agent was itself triggered by a

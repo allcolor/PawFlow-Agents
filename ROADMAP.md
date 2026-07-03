@@ -15,7 +15,7 @@ The beta release includes:
 - **90+ Built-in Tools** — Filesystem, bash, code editing, web fetch/search, desktop screen interaction, browser automation, image/video/audio/voice/3D generation, security scanning, memory, knowledge graph, plans, and resources.
 - **Shared Multi-Client Conversations** — Web chat, PawCode CLI, VS Code, API/channel clients, and flows can attach to the same conversation stream and state.
 - **Persistent Memory** — Semantic memory, knowledge graphs, agent diaries, project graphs that survive across conversations.
-- **Web Chat & Desktop Control** — SSE streaming, file explorer, context editor, 60+ slash commands, @file mentions, multi-agent switching, `/desktop`, VNC-style desktop sessions, screenshots, audio-capable remote desktop notes, voice in/out (STT/TTS), and a built-in IDE (code-server on the relay workspace via `/code`).
+- **Web Chat & Desktop Control** — SSE streaming, file explorer, context editor, 60+ slash commands, @file mentions, multi-agent switching, `/desktop`, VNC-style desktop sessions, screenshots, audio-capable remote desktop notes, voice in/out (STT/TTS), realtime speech-to-speech voice conversations, and a built-in IDE (code-server on the relay workspace via `/code`).
 - **Authentication & Private Gateway** — 9 OAuth providers, JWT tokens, API keys, RBAC, and a private gateway that keeps the server invisible until sign-in: camouflage skins, multi-provider sign-in (Google, GitHub, X, Telegram, Microsoft, Facebook, Amazon), and `trusted_proxies` support for reverse-proxy deployments.
 - **Telegram Agent Client** — Talk to your agents from Telegram with shared conversation history, streaming updates, consolidated thinking, voice messages (STT), and identity linking.
 - **Docker Support** — Containerized deployment with relay for isolated tool execution.
@@ -76,7 +76,7 @@ Telegram is shipped as a first-class agent client (shared history, streaming, vo
 The PFP package system, decentralized registries, package search/install/update, and external skill imports exist. Continue polishing review surfaces, provenance display, registry management, package dependency explanations, and Resources sidebar workflows.
 
 ### Voice UX polish
-Text-to-speech and media voice tooling exist; remaining work is tighter web chat playback controls, browser capture polish, and consistent voice UX across web, CLI, and desktop clients.
+Realtime speech-to-speech conversation shipped (OpenAI Realtime and Gemini Live adapters, webchat voice mode with barge-in and push-to-talk, tool use, Telegram voice-note replies, session resumption). Remaining work: live-endpoint validation of the Gemini adapter, more realtime providers (Nova Sonic, WebRTC transport), voice approval UX for gated tools, tighter web chat playback controls, and consistent voice UX across web, CLI, and desktop clients.
 
 ---
 
@@ -100,6 +100,7 @@ These were shipped as part of the alpha development cycle:
 - Built-in IDE: code-server served on the relay workspace via `/code`
 - Media generation hardening: hybrid webhook+poll completion (validated end-to-end with Pixazo), temporary public reference URLs for provider fetches, and public file share links from the chat
 - Voice input (STT) in web chat and Telegram, with TTS voice replies
+- Realtime voice conversation (`realtimeVoiceConnection`): speech-to-speech sessions over OpenAI Realtime or Gemini Live — webchat voice-mode overlay (live captions, barge-in, push-to-talk, settings panel), silent-approval tool use, conversation context injection, voice-native agents with Telegram voice-note replies, transparent session resumption
 - Hard cost cap per conversation (budget limits with 80% warning threshold)
 - Agent instructions file (`.md`) that survives context compaction
 - Permission modes (read-only / approve-edits / auto) with quick toggle

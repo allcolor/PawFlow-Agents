@@ -190,7 +190,7 @@ class RealtimeVoiceConnectionService(BaseService):
                 "description": "server = provider voice-activity detection; manual = client push-to-talk commits.",
             },
             "transcription_model": {"type": "string", "required": False, "default": "whisper-1",
-                                     "description": "Provider model used to transcribe user speech."},
+                                     "description": "openai_realtime only: model transcribing user speech (whisper-1, or gpt-4o-transcribe on newer endpoints). gemini_live ignores it — Gemini Live transcribes both sides natively."},
             "input_audio_format": {"type": "string", "required": False, "default": "pcm16",
                                     "description": "Provider-side input audio format."},
             "output_audio_format": {"type": "string", "required": False, "default": "pcm16",

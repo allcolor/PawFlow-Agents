@@ -79,23 +79,39 @@ speech, live captions, and barge-in (speaking over the agent cancels its
 answer). This is speech-to-speech through a provider realtime session — not
 the STT → text agent → TTS pipeline below, which remains available.
 
-Configure a `realtimeVoiceConnection` service referencing an `openai`
-`llmConnection` for credentials (`llm_service`), a `model` such as
-`gpt-realtime` or `gpt-4o-realtime-preview`, and optionally `voice`, `vad`
-(`server` or `manual` push-to-talk), `instructions_mode` (`agent` reuses the
-conversation agent's system prompt), `transcription_model`, and
-`max_session_seconds` (default 600 — hard session cap). The
-`protocol=openai_realtime` adapter also covers Azure OpenAI and any
-OpenAI-realtime-compatible endpoint through the llmConnection `base_url`;
-further protocols plug in as adapters (`services/_realtime_adapters.py`).
+Configure a `realtimeVoiceConnection` service with a `protocol`:
+
+- `openai_realtime` (default) references an `openai` `llmConnection` for
+  credentials (`llm_service`) and a `model` such as `gpt-realtime` or
+  `gpt-4o-realtime-preview`. It also covers Azure OpenAI and any
+  OpenAI-realtime-compatible endpoint through the llmConnection `base_url`.
+  `transcription_model` selects the model used to transcribe your speech
+  (`whisper-1` default; `gpt-4o-transcribe` works on newer endpoints).
+- `gemini_live` references a `gemini` `llmConnection` (its `api_key` must
+  be set) and a Live-capable model such as
+  `gemini-2.5-flash-native-audio-preview-09-2025`. Gemini transcribes both
+  sides natively (`transcription_model` is ignored) and rotates its
+  connections periodically — sessions survive this through transparent
+  resumption.
+
+Common options: `voice`, `vad` (`server` voice detection or `manual`
+push-to-talk — the overlay shows a Send button), `instructions_mode`
+(`agent` reuses the conversation agent's system prompt), `context_mode`
+(default `summary:2000` — how much of the ongoing conversation the voice
+agent knows at session start; same modes as sub-agents, `isolated`
+disables), and `max_session_seconds` (default 600 — hard session cap).
+Further protocols plug in as adapters (`services/_realtime_adapters.py`).
 
 Once at least one service exists, the webchat input row shows a microphone
-voice-mode button. Voice mode is a full-screen overlay: an orb that reacts
-to audio levels and session state (connecting / listening / thinking /
-speaking / using a tool), live captions of both sides, tool activity, mute
-and hang-up controls. The session runs over an authenticated WebSocket to
-`/ws/realtime/{conversation_id}` — session token + private gateway checks
-apply, and only the conversation owner (or an admin) may attach. Final
+voice-mode button — right-click it for the voice settings panel (every
+service with its model, voice, VAD mode and context setting; one click
+selects, the choice is remembered per conversation). Voice mode is a
+full-screen overlay: an orb that reacts to audio levels and session state
+(connecting / listening / thinking / speaking / using a tool), live
+captions of both sides, tool activity, mute and hang-up controls, plus a
+Send button in push-to-talk sessions. The session runs over an
+authenticated WebSocket to `/ws/realtime/{conversation_id}` — session
+token + private gateway checks apply, and only the conversation owner (or an admin) may attach. Final
 transcripts of both sides are persisted as normal conversation messages, so
 every attached client (webchat, Telegram bridge, PawCode) sees the voice
 exchange live and the text agent resumes with full context after the
@@ -123,8 +139,8 @@ transcript. Requires `ffmpeg`. Any failure falls back to the STT pipeline
 automatically. Live duplex calls over Telegram are not possible through
 the Bot API.
 
-See `docs/REALTIME_VOICE_PLAN.md` for the architecture and what remains
-(Gemini Live adapter, session resumption, context digest injection).
+See `docs/REALTIME_VOICE_PLAN.md` for the architecture; P1–P3 are shipped
+(the Gemini Live adapter still awaits a live-endpoint validation).
 
 ## Audio and Voice Tools
 

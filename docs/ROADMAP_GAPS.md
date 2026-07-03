@@ -31,10 +31,12 @@ relay-to-relay FUSE, rw; decided 2026-06-12).
 
 ---
 
-### A2. Voice input (push-to-talk / transcription)
-**Priority:** P1 — mobile & accessibility
-**Effort:** Medium (1-2 days)
-**Dependencies:** A2a depends on `see()` audio transcription (already implemented)
+### A2. Voice input (push-to-talk / transcription) — LARGELY SHIPPED
+**Status:** A2a shipped (webchat STT voice input + TTS replies), and superseded
+beyond the original scope by realtime speech-to-speech voice conversations
+(`realtimeVoiceConnection`: webchat voice mode with barge-in and push-to-talk,
+Telegram voice-note replies — see `docs/REALTIME_VOICE_PLAN.md`). Remaining:
+A2b (PawCode CLI voice), A2c (additional STT providers), VS Code plugin voice.
 
 **What:** User can speak instead of type. Audio → transcription → text message.
 

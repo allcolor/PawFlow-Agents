@@ -272,6 +272,7 @@ Operational notes:
 - Antigravity sessions live under `data/runtime/sessions/antigravity-observer/...` and use `agy --dangerously-skip-permissions` inside the shared CLI image.
 - Gemini stream-json is one-shot stdin. Preemption kills the active process and resumes from the provider session; it should not write to a closed stdin.
 - Configure `max_context_size` unless the Gemini CLI reports the context window.
+- A `gemini` llmConnection also serves as the credential source for realtime voice sessions (`realtimeVoiceConnection` with `protocol: gemini_live`). That path calls the Google Live API directly over WSS — it requires `api_key` to be set on the connection (the OAuth pool is CLI-only). See [Media Tools — Realtime Voice Conversation](media_tools.md#realtime-voice-conversation).
 
 ## Tooling Differences
 

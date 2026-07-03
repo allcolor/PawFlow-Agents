@@ -317,6 +317,14 @@ class GeminiLiveAdapter(RealtimeAdapter):
                 "name": name,
                 "arguments": json.dumps(fc.get("args") or {}),
             })
+            # Normalized-contract emulation: consumers expect each tool_call
+            # to come with the function-call response's OWN response_done
+            # (OpenAI semantics — the Telegram turn runner counts them to
+            # skip past tool turns). Gemini ends the whole spoken turn with
+            # a single turnComplete and emits nothing for the tool-call
+            # segment, so synthesize the expected done here. To confirm
+            # against the live endpoint.
+            events.append({"type": "response_done", "usage": {}})
         resumption = msg.get("sessionResumptionUpdate") or {}
         if resumption:
             if resumption.get("resumable") and resumption.get("newHandle"):

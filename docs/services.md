@@ -10,6 +10,7 @@ The chat service installer receives service type metadata grouped by category an
 |---|---|
 | `llmConnection` | LLM service configuration for direct API providers and CLI-backed providers (`openai`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, `gemini`). |
 | `llmCredentialOAuthProvider` | Encrypted OAuth credential pool for CLI-backed LLM providers. Canonical providers are `claude-code`, `codex-app-server`, and `gemini`; `claude-code-interactive` reuses `claude-code`, and `antigravity-interactive` reuses `gemini`. |
+| `realtimeVoiceConnection` | Speech-to-speech voice sessions with an agent (webchat voice mode, Telegram voice notes). Protocols: `openai_realtime` (OpenAI/Azure/compatibles) and `gemini_live`; credentials come from a referenced `llmConnection`. See [Media Tools — Realtime Voice Conversation](media_tools.md#realtime-voice-conversation). |
 | `httpClientService` | Reusable HTTP client. |
 | `httpListener` | Shared listener for inbound HTTP/webhook/SSE/VNC routes. |
 | `httpAuthValidator` | Bearer/basic/custom auth validator. |

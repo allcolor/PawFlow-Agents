@@ -61,6 +61,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - Agentic coding sessions against a linked workspace, with persistent context and auditable tool output.
 - Multi-agent operations where planners, coders, reviewers, researchers, and verifiers work in the same conversation.
 - Browser and desktop automation for workflows that do not have clean APIs.
+- Realtime voice conversations with your agents — speech-to-speech sessions (OpenAI Realtime or Gemini Live) with live captions, barge-in, tool use, and Telegram voice-note replies, persisted as normal conversation history.
 - Media pipelines that create images, video, audio, 3D assets, voice, and FileStore outputs.
 - Scheduled operational flows: daily digests, inbox triage, data transforms, reports, monitoring, and webhook-driven automation.
 - Reusable packages and registries for sharing internal or community agents, skills, tools, services, flow tasks, flows, and UI extensions.
@@ -368,7 +369,7 @@ pytest tests/ -v    # 2500+ tests across 100+ test files
 | [VS Code Extension](docs/vscode.md) | Editor client and resource panel |
 | [Multi-Client Conversations](docs/multi_client_conversations.md) | Shared runtime across web, CLI, VS Code, API, channels |
 | [Desktop/VNC](docs/desktop_vnc.md) | noVNC desktop, screen tool, audio notes |
-| [Media Tools](docs/media_tools.md) | Image/video/audio/3D/voice tools |
+| [Media Tools](docs/media_tools.md) | Image/video/audio/3D/voice tools, realtime voice conversation |
 | [Tool Catalog](docs/tool_catalog.md) | Agent-facing tools |
 | [Services Catalog](docs/services.md) | Service types and provider integrations |
 | [Task Catalog](docs/tasks.md) | Built-in flow tasks and tool tasks |

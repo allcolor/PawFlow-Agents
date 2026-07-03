@@ -164,12 +164,26 @@ class TestGeminiNormalize:
                 "final": True} in evts
         assert evts[-1] == {"type": "speech_started"}
 
-    def test_tool_calls(self):
+    def test_tool_calls_synthesize_their_response_done(self):
+        """Consumers expect OpenAI semantics: each tool_call is paired with
+        the function-call response's own response_done (the Telegram turn
+        runner counts them). Gemini sends nothing for the tool-call segment
+        — the adapter must synthesize it, or every tool call in a Telegram
+        voice turn would hang to the 120s timeout."""
         a = self._adapter()
         evts = a._normalize_message({"toolCall": {"functionCalls": [
             {"id": "fc-1", "name": "recall", "args": {"q": "x"}}]}})
-        assert evts == [{"type": "tool_call", "call_id": "fc-1",
-                         "name": "recall", "arguments": '{"q": "x"}'}]
+        assert evts == [
+            {"type": "tool_call", "call_id": "fc-1",
+             "name": "recall", "arguments": '{"q": "x"}'},
+            {"type": "response_done", "usage": {}},
+        ]
+        # One synthetic done per call when several arrive together.
+        evts = a._normalize_message({"toolCall": {"functionCalls": [
+            {"id": "a", "name": "x", "args": {}},
+            {"id": "b", "name": "y", "args": {}}]}})
+        assert [e["type"] for e in evts] == [
+            "tool_call", "response_done", "tool_call", "response_done"]
 
     def test_resumption_handle_captured(self):
         a = self._adapter()

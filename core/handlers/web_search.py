@@ -189,7 +189,7 @@ class WebSearchHandler(ToolHandler):
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
 
-    def _execute_remote_code(self, relay, code: str) -> str:
+    def _execute_remote_code(self, relay, code: str) -> Optional[str]:
         from core.handlers._fs_base import get_tool_relay_env
 
         import uuid as _uuid_exec
@@ -206,19 +206,26 @@ class WebSearchHandler(ToolHandler):
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         except Exception as e:
-            return f"Error executing web_search on relay: {e}"
+            logger.debug("relay web_search failed, falling back to local: %s", e)
+            return None
 
         if isinstance(result, dict):
-            stdout = result.get("stdout", "")
-            stderr = result.get("stderr", "")
-            output = stdout.rstrip()
-            if stderr:
-                output += f"\nSTDERR: {stderr.rstrip()}"
+            stdout = (result.get("stdout") or "").rstrip()
+            stderr = (result.get("stderr") or "").rstrip()
             exit_code = result.get("exit_code", 0)
-            if exit_code:
-                output += f"\n(exit code: {exit_code})"
-            return output or "Error: relay web_search returned no output"
-        return str(result)
+            if exit_code or not stdout:
+                # The relay payload imports PawFlow's core package, which only
+                # exists when the relay workspace is the PawFlow repo itself.
+                # On any other workspace the script dies (ModuleNotFoundError)
+                # -- fall back to the local provider chain instead of returning
+                # the traceback as the search result.
+                logger.debug("relay web_search unusable (exit=%s), falling "
+                             "back to local: %s", exit_code, stderr[-500:])
+                return None
+            if stderr:
+                stdout += f"\nSTDERR: {stderr}"
+            return stdout
+        return str(result) or None
 
     def _provider_chain(self, arguments: Dict[str, Any]) -> List[str]:
         raw = (

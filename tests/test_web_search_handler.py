@@ -121,6 +121,73 @@ def test_web_search_delegates_to_relay_when_available(monkeypatch):
     assert files == {}
 
 
+def test_web_search_falls_back_to_local_when_relay_payload_cannot_import_core(monkeypatch):
+    """The relay payload imports PawFlow's core package, which only exists when
+    the relay workspace is the PawFlow repo. On a user-project relay the script
+    dies with ModuleNotFoundError -- the handler must run the local provider
+    chain instead of returning the traceback as the search result."""
+    handler = WebSearchHandler()
+
+    class BrokenRelay:
+        def write_file(self, path, content):
+            pass
+
+        def exec(self, _path, _command, env=None):
+            return {
+                "stdout": "",
+                "stderr": (
+                    "Traceback (most recent call last):\n"
+                    "  File \".pawflow_web_search_x.py\", line 2, in <module>\n"
+                    "    from core.handlers.web_fetch import WebSearchHandler\n"
+                    "ModuleNotFoundError: No module named 'core'"
+                ),
+                "exit_code": 1,
+            }
+
+        def delete_file(self, path):
+            pass
+
+    def fake_search(provider, query, max_results):
+        return [{"title": "Local result", "url": "https://example.com",
+                 "snippet": "from local fallback"}]
+
+    monkeypatch.setattr(handler, "_search_provider", fake_search)
+    monkeypatch.setattr("core.handlers._fs_base.get_tool_relay_env", lambda: {})
+    handler.set_fs_resolver(lambda _svc_id: BrokenRelay())
+
+    out = handler.execute({"query": "quaternius cc0 assets"})
+
+    assert "Local result" in out
+    assert "ModuleNotFoundError" not in out
+
+
+def test_web_search_falls_back_to_local_when_relay_exec_raises(monkeypatch):
+    handler = WebSearchHandler()
+
+    class DeadRelay:
+        def write_file(self, path, content):
+            raise RuntimeError("relay disconnected")
+
+        def exec(self, _path, _command, env=None):
+            raise AssertionError("unreachable")
+
+        def delete_file(self, path):
+            pass
+
+    def fake_search(provider, query, max_results):
+        return [{"title": "Local result", "url": "https://example.com",
+                 "snippet": "from local fallback"}]
+
+    monkeypatch.setattr(handler, "_search_provider", fake_search)
+    monkeypatch.setattr("core.handlers._fs_base.get_tool_relay_env", lambda: {})
+    handler.set_fs_resolver(lambda _svc_id: DeadRelay())
+
+    out = handler.execute({"query": "test"})
+
+    assert "Local result" in out
+    assert "Error executing web_search on relay" not in out
+
+
 def test_web_search_deduplicates_results(monkeypatch):
     handler = WebSearchHandler()
 

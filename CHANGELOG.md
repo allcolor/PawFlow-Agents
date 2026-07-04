@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `web_search` no longer returns a `ModuleNotFoundError` traceback when the
+  connected relay's workspace is not the PawFlow repo: the relay payload
+  imports PawFlow's `core` package, which only exists on the dev relay. A
+  failed relay run (exception, non-zero exit, or empty output) now falls back
+  to the server-side provider chain instead of surfacing the error as the
+  search result.
+
 ## [1.0.0-beta.3] — 2026-07-04
 
 ### Added

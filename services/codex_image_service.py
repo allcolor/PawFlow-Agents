@@ -303,7 +303,9 @@ class CodexImageService(BaseImageGenerationService):
                          or getattr(client, "default_model", "")
                          or "")
             if hasattr(client, "_codex_setup_credentials"):
-                client._codex_setup_credentials(str(job_dir))
+                client._codex_setup_credentials(
+                    str(job_dir), user_id=self._runtime_user_id,
+                    conversation_id=self._runtime_conversation_id)
             reference_paths = self._write_reference_images(job_dir, image_urls or [])
             final_prompt = self._build_prompt(
                 prompt, output_name, edit=edit, width=width, height=height,
@@ -337,7 +339,9 @@ class CodexImageService(BaseImageGenerationService):
                 raise ServiceError(f"Codex image job timed out after {self.timeout}s") from exc
             rc = int(getattr(proc, "returncode", 0) or 0)
             if hasattr(client, "_codex_recover_tokens"):
-                client._codex_recover_tokens(str(job_dir))
+                client._codex_recover_tokens(
+                    str(job_dir), user_id=self._runtime_user_id,
+                    conversation_id=self._runtime_conversation_id)
             if rc != 0:
                 raise ServiceError(
                     f"Codex image job failed (exit {rc}): stdout={stdout[:500]!r} stderr={stderr[:500]!r}")

@@ -65,7 +65,9 @@ class _ALCLlmTurnMixin:
             if hasattr(st.client, '_recover_tokens') and hasattr(st.client, '_get_session_workdir'):
                 try:
                     st._wd = st.client._get_session_workdir(st.conversation_id, st._agent_name, st.user_id)
-                    st.client._recover_tokens(st._wd)
+                    st.client._recover_tokens(
+                        st._wd, user_id=st.user_id,
+                        conversation_id=st.conversation_id)
                 except Exception as _rt_err:
                     logger.debug("[agent:%s] token recovery after compact: %s",
                                  st.conversation_id[:8], _rt_err)

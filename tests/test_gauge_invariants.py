@@ -1783,6 +1783,24 @@ def test_sub_agent_provider_compact_is_provider_agnostic():
     assert "invalidate_claude_session_for_agent" in block
     assert "set_extra(\n                                _delegate_conv_id,\n                                f\"claude_session:" not in block
 
+    recover_block = src[
+        src.index("# Recover OAuth tokens"):
+        src.index("result.tokens_in += response.tokens_in")]
+    assert "client._recover_tokens(" in recover_block
+    assert "user_id=task.user_id" in recover_block
+    assert "conversation_id=_delegate_conv_id" in recover_block
+
+
+def test_main_agent_provider_compact_recovers_tokens_with_scope():
+    src = Path("tasks/ai/_alc_llm_turn.py").read_text(encoding="utf-8")
+    recover_block = src[
+        src.index("# Recover tokens BEFORE restarting"):
+        src.index("# Flush the async ConversationWriter queue")]
+
+    assert "st.client._recover_tokens(" in recover_block
+    assert "user_id=st.user_id" in recover_block
+    assert "conversation_id=st.conversation_id" in recover_block
+
 
 def test_flash_delegate_is_registered_and_prompted():
     registry_src = Path("core/tool_registry.py").read_text(encoding="utf-8")

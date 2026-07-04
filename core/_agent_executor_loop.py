@@ -490,7 +490,9 @@ class _SubAgentExecutorLoopMixin:
                                 _wd = client._get_session_workdir(
                                     _delegate_conv_id,
                                     task.agent_name, task.user_id)
-                                client._recover_tokens(_wd)
+                                client._recover_tokens(
+                                    _wd, user_id=task.user_id,
+                                    conversation_id=_delegate_conv_id)
                             except Exception:
                                 logger.debug("exception suppressed", exc_info=True)
 

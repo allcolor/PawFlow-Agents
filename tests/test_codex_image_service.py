@@ -11,8 +11,8 @@ class FakeClient:
         self.recovered = []
         self._agent_service = ""
 
-    def _codex_setup_credentials(self, workdir):
-        self.setup_workdirs.append(workdir)
+    def _codex_setup_credentials(self, workdir, user_id="", conversation_id=""):
+        self.setup_workdirs.append((workdir, user_id, conversation_id))
 
     def _codex_env(self, workdir=""):
         return {
@@ -22,8 +22,8 @@ class FakeClient:
             "UNRELATED": "ignored",
         }
 
-    def _codex_recover_tokens(self, workdir):
-        self.recovered.append(workdir)
+    def _codex_recover_tokens(self, workdir, user_id="", conversation_id=""):
+        self.recovered.append((workdir, user_id, conversation_id))
 
 
 class FakeLLMService:
@@ -152,6 +152,7 @@ def test_codex_image_generate_runs_through_codex_pool_and_llm_service(tmp_path, 
     assert client._agent_service == "codex_llm"
     assert client.setup_workdirs
     assert client.recovered == client.setup_workdirs
+    assert client.setup_workdirs[0][1:] == ("alice", "conv1")
     assert pool.acquire_calls == 1
     assert pool.release_calls == ["pf-codex-pool-test"]
     call = pool.exec_calls[0]

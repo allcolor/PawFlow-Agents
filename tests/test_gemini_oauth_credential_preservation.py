@@ -182,6 +182,37 @@ class TestGeminiSetupCredentialsCompactsPoolSafely(unittest.TestCase):
         self.assertEqual(pool[0]["refresh_token"], "RT1")
         self.assertEqual(pool[0]["expires_at"], 9_999_999_999_000)
 
+    def test_all_transient_failures_do_not_rewrite_pool(self):
+        """No dead slot -> no compaction save: a stale local pool copy must
+        not clobber a concurrent login/refresh when every failure was
+        transient."""
+        gms.GeminiSessionMixin._gemini_refresh_locks.clear()
+        store = _PoolStore([{"access_token": "AT0", "refresh_token": "RT0",
+                             "expires_at": 1}])
+        saves = []
+
+        def _save(pool, *a, **k):
+            saves.append(True)
+            store.save(pool, *a, **k)
+
+        client = LLMClient(provider="gemini", config={})
+        client._agent_service = "svc"
+
+        with tempfile.TemporaryDirectory() as workdir, \
+                patch.object(gms, "_load_credentials_pool", side_effect=store.load), \
+                patch.object(gms, "_save_credentials_pool", side_effect=_save), \
+                patch.object(gms, "refresh_oauth_token",
+                             side_effect=RuntimeError("network down")):
+            with self.assertRaises(Exception) as ctx:
+                # Explicit pool_index: keeps the shared round-robin counter
+                # untouched for the other tests in this class.
+                client._gemini_setup_credentials(
+                    workdir, pool_index=0, user_id="u", conversation_id="c")
+
+        self.assertIn("temporarily unavailable", str(ctx.exception))
+        self.assertEqual(saves, [])
+        self.assertEqual(store.pool[0]["refresh_token"], "RT0")
+
 
 if __name__ == "__main__":
     unittest.main()

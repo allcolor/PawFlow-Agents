@@ -648,9 +648,13 @@ class GeminiSessionMixin:
                     pool, service_id=svc_id, user_id=uid, conv_id=cid)
             break
         else:
-            pool = [c for i, c in enumerate(pool) if i not in dead_indices]
-            _save_credentials_pool(
-                pool, service_id=svc_id, user_id=uid, conv_id=cid)
+            # All credentials failed. Only genuinely-dead slots are dropped;
+            # a pool without dead slots is left untouched so a concurrent
+            # login/refresh is not clobbered by rewriting stale data.
+            if dead_indices:
+                pool = [c for i, c in enumerate(pool) if i not in dead_indices]
+                _save_credentials_pool(
+                    pool, service_id=svc_id, user_id=uid, conv_id=cid)
             if had_transient:
                 raise LLMClientError(
                     "Gemini OAuth refresh is temporarily unavailable "

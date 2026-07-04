@@ -135,7 +135,12 @@ class _GeminiStreamMixin:
                 live_key = (user_id, conv_id, agent_name or "default", svc_id,
                             int(resume_pool_idx))
                 live_session = live_reg.get(live_key)
-                if live_session is None:
+                # Fallback ONLY when the stored pool slot is missing (extra
+                # lost after restart/compact). A concrete resume_pool_idx that
+                # misses means the slot changed on purpose (rotation, slot
+                # removal) — reusing the old-slot container would resurrect
+                # the previous account's session.
+                if live_session is None and resume_pool_idx < 0:
                     compatible = live_reg.get_compatible(
                         user_id, conv_id, agent_name or "default", svc_id)
                     if compatible is not None:

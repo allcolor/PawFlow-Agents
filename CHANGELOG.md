@@ -33,6 +33,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The Gemini ACP warm-container fallback now only fires when the stored pool
+  slot is missing (restart/compact), so an intentional slot change (rotation,
+  slot removal) can no longer resurrect the previous account's live session.
+  Codex and Gemini credential setup also no longer rewrite the pool when every
+  refresh failure was transient (matching Claude Code), so a stale local copy
+  cannot clobber a concurrent login.
 - Gemini ACP live sessions now key warm containers by OAuth credential pool
   slot and recover compatible sessions when the stored slot is missing, so
   token recovery persists refresh-token changes back to the correct provider

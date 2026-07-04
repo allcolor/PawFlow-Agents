@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.3] — 2026-07-04
+
 ### Added
 
 - Realtime voice context (P3): voice sessions now start knowing what was

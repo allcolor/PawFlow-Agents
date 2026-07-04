@@ -1,6 +1,6 @@
 # Realtime Voice Conversation — Design & Implementation Plan
 
-Status: **P1 + P2 shipped** (released in 1.0.0-beta.2); **P3 shipped** — context injection, gemini_live adapter, session resumption, voice settings UI (gemini_live pending a live-endpoint validation)
+Status: **P1 + P2 shipped** (released in 1.0.0-beta.2); **P3 shipped** (released in 1.0.0-beta.3) — context injection, gemini_live adapter, session resumption, voice settings UI (gemini_live pending a live-endpoint validation)
 Decided: 2026-07-02 — realtime voice is delivered as a new LLM-family service
 type `realtimeVoiceConnection`, multi-provider through protocol adapters.
 

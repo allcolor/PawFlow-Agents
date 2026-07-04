@@ -1,6 +1,10 @@
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
+import pytest
+
+from core import ServiceError
 from services.codex_image_service import CodexImageService
 
 
@@ -56,6 +60,8 @@ class FakePool:
         self.exec_calls = []
         self.stdin_text = ""
         self.last_host_dir = None
+        self.proc_factory = None
+        self.killed = False
 
     def acquire(self):
         self.acquire_calls += 1
@@ -75,6 +81,8 @@ class FakePool:
             "extra_env": extra_env,
             "popen_kwargs": popen_kwargs,
         })
+        if self.proc_factory is not None:
+            return self.proc_factory(self)
         return FakeProc(self)
 
 
@@ -169,6 +177,36 @@ def test_codex_image_generate_runs_through_codex_pool_and_llm_service(tmp_path, 
     assert call["codex_args"][-1] == "-"
     assert "$imagegen" in pool.stdin_text
     assert "1280x512" in pool.stdin_text
+
+
+def test_codex_image_recovers_tokens_on_timeout(tmp_path, monkeypatch):
+    svc, client, pool = _service(tmp_path, monkeypatch, timeout=1)
+
+    class TimeoutProc:
+        returncode = None
+
+        def __init__(self, pool):
+            self.pool = pool
+
+        def communicate(self, stdin_text, timeout=None):
+            if self.pool.killed:
+                return "", ""
+            self.pool.stdin_text = stdin_text
+            raise subprocess.TimeoutExpired("codex", timeout)
+
+        def kill(self):
+            self.pool.killed = True
+
+    pool.proc_factory = TimeoutProc
+
+    with pytest.raises(ServiceError, match="timed out"):
+        svc.generate(prompt="Create a dashboard banner")
+
+    assert client.setup_workdirs
+    assert client.recovered == client.setup_workdirs
+    assert client.recovered[0][1:] == ("alice", "conv1")
+    assert pool.killed is True
+    assert pool.release_calls == ["pf-codex-pool-test"]
 
 
 def test_codex_image_service_reads_filestore_references_locally(monkeypatch):

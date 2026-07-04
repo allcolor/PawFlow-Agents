@@ -333,15 +333,33 @@ class CodexImageService(BaseImageGenerationService):
                 encoding="utf-8",
                 errors="replace",
             )
+
+            def _recover_job_tokens(*, suppress: bool = False):
+                if hasattr(client, "_codex_recover_tokens"):
+                    try:
+                        client._codex_recover_tokens(
+                            str(job_dir), user_id=self._runtime_user_id,
+                            conversation_id=self._runtime_conversation_id)
+                    except Exception:
+                        if not suppress:
+                            raise
+                        logger.debug(
+                            "[CODEX-IMAGE] token recovery failed", exc_info=True)
+
             try:
                 stdout, stderr = proc.communicate(final_prompt, timeout=self.timeout)
             except __import__("subprocess").TimeoutExpired as exc:  # nosec B404
+                try:
+                    proc.kill()
+                    proc.communicate()
+                except Exception:
+                    logger.debug(
+                        "[CODEX-IMAGE] failed to kill timed-out job",
+                        exc_info=True)
+                _recover_job_tokens(suppress=True)
                 raise ServiceError(f"Codex image job timed out after {self.timeout}s") from exc
             rc = int(getattr(proc, "returncode", 0) or 0)
-            if hasattr(client, "_codex_recover_tokens"):
-                client._codex_recover_tokens(
-                    str(job_dir), user_id=self._runtime_user_id,
-                    conversation_id=self._runtime_conversation_id)
+            _recover_job_tokens()
             if rc != 0:
                 raise ServiceError(
                     f"Codex image job failed (exit {rc}): stdout={stdout[:500]!r} stderr={stderr[:500]!r}")

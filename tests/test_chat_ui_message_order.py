@@ -455,7 +455,16 @@ def test_inline_audio_uses_stable_global_player():
     assert "function pawflowInlineAudioToggle(btn)" in MESSAGES_JS
     assert "function pawflowInlineAudioSeek(input)" in MESSAGES_JS
     assert "var _inlineAudioEl = null" in MESSAGES_JS
-    assert "new Audio(url)" in MESSAGES_JS
+    # No raw `new Audio(url)`: /files/<id> needs the bearer header a native
+    # media request omits in bearer-only sessions (token in storage, no
+    # cookie) -- the request 401s and the player never loads, the same bug
+    # inline video had. The bytes are fetched authed and played from a
+    # same-origin blob URL, like the file viewer and inline images.
+    assert "new Audio(url)" not in MESSAGES_JS
+    assert "new Audio()" in MESSAGES_JS
+    assert "function _authedAudioBlobUrl(url)" in MESSAGES_JS
+    # First click may land before the blob src resolved -- toggle must wait.
+    assert "if (audio.src) { _start(); }" in MESSAGES_JS
     assert "data-audio-url" in MESSAGES_JS
     assert "<audio controls" not in MESSAGES_JS
 

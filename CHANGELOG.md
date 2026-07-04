@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- chat-ui: inline audio players inserted in tool results never loaded (stuck
+  at `0:00 / --:--`) in bearer-only sessions, while the same file played fine
+  from the Files panel — the same 401 the inline video black-box bug had. The
+  June revert of the authed-blob video fix also removed the audio half and it
+  was never restored: the player used a raw `Audio(url)` src that sends
+  neither the `pawflow_token` cookie nor the bearer header. Inline audio now
+  fetches the bytes with the bearer header and plays from a same-origin blob
+  URL, like the file viewer and inline images (video stays lazy-native, blobs
+  would break range streaming there).
 - `web_search` no longer returns a `ModuleNotFoundError` traceback when the
   connected relay's workspace is not the PawFlow repo: the relay payload
   imports PawFlow's `core` package, which only exists on the dev relay. A

@@ -499,14 +499,38 @@ function _inlineAudioStartTimer() {
   }, 250);
 }
 
+// /files/<id> authenticates via the pawflow_token cookie or an
+// Authorization: Bearer header. An Audio element with a raw url src sends neither in a
+// bearer-only session (token in storage, no cookie), so the request 401s and
+// the player stays at 0:00 / --:-- — the same bug inline video had. Fetch the
+// bytes with the bearer header and play from a same-origin blob URL, exactly
+// like the file viewer and inline images do. (Video went lazy-native instead
+// because blobs break range streaming; audio files are small, blob is fine.)
+var _audioBlobCache = {};  // sourceUrl -> Promise<blobUrl>
+function _authedAudioBlobUrl(url) {
+  if (_audioBlobCache[url]) return _audioBlobCache[url];
+  const token = getToken();
+  const headers = {};
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const p = fetch(url, { headers, credentials: 'same-origin' })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+    .then(blob => URL.createObjectURL(blob));
+  p.catch(function() { delete _audioBlobCache[url]; });
+  _audioBlobCache[url] = p;
+  return p;
+}
+
 function _inlineAudioFor(url) {
   if (_inlineAudioEl && _inlineAudioUrl === url) return _inlineAudioEl;
   if (_inlineAudioEl) {
     try { _inlineAudioEl.pause(); } catch(e) {}
     if (_inlineAudioUrl) _inlineAudioSync(_inlineAudioUrl);
   }
-  const audio = new Audio(url);
+  const audio = new Audio();
   audio.preload = 'metadata';
+  _authedAudioBlobUrl(url).then(function(b) {
+    if (_inlineAudioEl === audio && !audio.src) audio.src = b;
+  }).catch(function(err) { console.warn('[inline-audio] load failed', err); });
   _inlineAudioEl = audio;
   _inlineAudioUrl = url;
   ['loadedmetadata', 'durationchange', 'timeupdate', 'play', 'pause', 'ended', 'error'].forEach(function(ev) {
@@ -525,13 +549,26 @@ function pawflowInlineAudioToggle(btn) {
     _inlineAudioSync(url);
     return;
   }
-  audio.play().then(function() {
-    _inlineAudioStartTimer();
-    _inlineAudioSync(url);
-  }).catch(function(err) {
-    console.warn('[inline-audio] play failed', err);
-    _inlineAudioSync(url);
-  });
+  const _start = function() {
+    audio.play().then(function() {
+      _inlineAudioStartTimer();
+      _inlineAudioSync(url);
+    }).catch(function(err) {
+      console.warn('[inline-audio] play failed', err);
+      _inlineAudioSync(url);
+    });
+  };
+  // First click can land before the authed blob src resolved -- wait for it.
+  if (audio.src) { _start(); }
+  else {
+    _authedAudioBlobUrl(url).then(function(b) {
+      if (!audio.src) audio.src = b;
+      _start();
+    }).catch(function(err) {
+      console.warn('[inline-audio] load failed', err);
+      _inlineAudioSync(url);
+    });
+  }
 }
 
 function pawflowInlineAudioSeek(input) {

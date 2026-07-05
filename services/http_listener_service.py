@@ -69,7 +69,7 @@ class HTTPListenerService(BaseService):
     TYPE = "httpListener"
     PARAMETERS = {
         "host": {
-            "type": "string", "required": False, "default": "0.0.0.0",
+            "type": "string", "required": False, "default": "0.0.0.0",  # nosec B104 - listener bind default is operator-configurable
             "description": "Bind address",
         },
         "port": {

@@ -42,7 +42,9 @@ class FlowManagerHandler(ToolHandler):
             "- start: Start a stopped flow instance\n"
             "- stop: Stop a running flow instance\n"
             "- status: Get flow instance status\n"
+            "- logs: Get task states, queue stats, and recent errors\n"
             "- update: Update flow instance parameters\n"
+            "- update_definition: Replace a flow definition and hot-swap if running\n"
             "- delete: Delete a flow instance\n\n"
             "IMPORTANT — Flow JSON structure for 'create' action:\n"
             "The 'definition' object MUST have this EXACT top-level structure:\n"
@@ -98,8 +100,8 @@ class FlowManagerHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": ["catalog", "deploy", "list", "list_all", "create",
-                             "start", "stop", "status", "update", "delete",
-                             "run"],
+                             "start", "stop", "status", "logs", "update",
+                             "update_definition", "delete", "run"],
                     "description": (
                         "Action to perform. 'run' loads a template by FQN, "
                         "executes it ONCE synchronously with the given "
@@ -118,7 +120,7 @@ class FlowManagerHandler(ToolHandler):
                 "definition": {
                     "type": "object",
                     "description": (
-                        "Flow JSON definition (for create action). "
+                        "Flow JSON definition (for create/update_definition actions). "
                         "MUST have top-level keys: id (string), name (string), "
                         "tasks (object with each task as a separate key), "
                         "relations (array of {from, to, type} objects). "
@@ -184,9 +186,18 @@ class FlowManagerHandler(ToolHandler):
             return self._stop_flow(flow_id)
         elif action == "status":
             return self._flow_status(flow_id)
+        elif action == "logs":
+            try:
+                limit = int(arguments.get("limit", 50) or 50)
+            except (TypeError, ValueError):
+                limit = 50
+            return self._flow_logs(flow_id, limit=limit)
         elif action == "update":
             params = arguments.get("parameters", {})
             return self._update_flow(flow_id, params)
+        elif action == "update_definition":
+            definition = arguments.get("definition", {})
+            return self._update_flow_definition(flow_id, definition)
         elif action == "delete":
             return self._delete_flow(flow_id)
         elif action == "run":
@@ -202,6 +213,16 @@ class FlowManagerHandler(ToolHandler):
 
     def _owner_tag(self) -> str:
         return self._user_id or None
+
+    def _with_runtime_params(self, params: Dict = None) -> Dict:
+        out = dict(params or {})
+        if self._user_id:
+            out.setdefault("_user_id", self._user_id)
+        if self._conversation_id:
+            out.setdefault("_conversation_id", self._conversation_id)
+        if getattr(self, "_agent_name", ""):
+            out.setdefault("_agent_name", self._agent_name)
+        return out
 
     def _flow_scope_chain(self):
         if self._conversation_id:
@@ -227,6 +248,45 @@ class FlowManagerHandler(ToolHandler):
             if flow_data is not None:
                 return flow_data, scope
         return None, ""
+
+    def _validate_flow_definition(self, definition: Dict) -> str:
+        if not definition or "id" not in definition:
+            return "Error: definition must include at least 'id' and 'tasks'"
+
+        tasks = definition.get("tasks", {})
+        if not isinstance(tasks, dict) or not tasks:
+            return (
+                "Error: 'tasks' must be a dict with each task as a separate key. "
+                "Example: {\"taskA\": {\"type\": \"fetchHTTP\", ...}, "
+                "\"taskB\": {\"type\": \"log\", ...}}"
+            )
+        for task_key, task_val in tasks.items():
+            if not isinstance(task_val, dict):
+                return f"Error: task '{task_key}' must be a dict with 'type' and 'parameters'"
+            if "type" not in task_val:
+                return (
+                    f"Error: task '{task_key}' is missing 'type'. "
+                    f"Each task must have a 'type' field. "
+                    f"Found keys: {list(task_val.keys())}"
+                )
+            params = task_val.get("parameters", {})
+            if isinstance(params, dict):
+                for pk, pv in params.items():
+                    if isinstance(pv, dict) and "type" in pv and pk not in (
+                        "headers", "attributes", "set", "conditions",
+                    ):
+                        return (
+                            f"Error: it looks like task '{pk}' is nested inside "
+                            f"task '{task_key}'.parameters. Tasks must be "
+                            f"SEPARATE top-level keys in the 'tasks' dict, "
+                            f"not nested inside other tasks."
+                        )
+        if not isinstance(definition.get("relations", []), list):
+            return (
+                "Error: 'relations' must be a top-level array, not inside tasks. "
+                "Example: [{\"from\": \"taskA\", \"to\": \"taskB\", \"type\": \"success\"}]"
+            )
+        return ""
 
     def _catalog(self) -> str:
         """List available flow templates from the repository."""
@@ -302,7 +362,7 @@ class FlowManagerHandler(ToolHandler):
             instance_id = dep_reg.deploy(
                 template_path=tmp.name,
                 owner=self._owner_tag(),
-                parameters=params or {},
+                parameters=self._with_runtime_params(params),
                 source="agent",
                 conversation_id=self._conversation_id,
                 agent_name=getattr(self, "_agent_name", "") or "",
@@ -348,7 +408,7 @@ class FlowManagerHandler(ToolHandler):
         # declared defaults before parsing — same merge order as the
         # deployment path.
         merged_params = dict(flow_data.get("parameters") or {})
-        merged_params.update(params or {})
+        merged_params.update(self._with_runtime_params(params))
         flow_data = dict(flow_data)
         flow_data["parameters"] = merged_params
         try:
@@ -408,47 +468,9 @@ class FlowManagerHandler(ToolHandler):
         return f"Your flow instances ({len(instances)}):\n" + "\n".join(lines)
 
     def _create_flow(self, definition: Dict) -> str:
-        if not definition or "id" not in definition:
-            return "Error: definition must include at least 'id' and 'tasks'"
-
-        # Validate structure
-        tasks = definition.get("tasks", {})
-        if not isinstance(tasks, dict) or not tasks:
-            return (
-                "Error: 'tasks' must be a dict with each task as a separate key. "
-                "Example: {\"taskA\": {\"type\": \"fetchHTTP\", ...}, "
-                "\"taskB\": {\"type\": \"log\", ...}}"
-            )
-        # Check for common LLM mistake: nesting tasks inside other tasks
-        for task_key, task_val in tasks.items():
-            if not isinstance(task_val, dict):
-                return f"Error: task '{task_key}' must be a dict with 'type' and 'parameters'"
-            if "type" not in task_val:
-                return (
-                    f"Error: task '{task_key}' is missing 'type'. "
-                    f"Each task must have a 'type' field. "
-                    f"Found keys: {list(task_val.keys())}"
-                )
-            # Detect tasks nested inside parameters of another task
-            params = task_val.get("parameters", {})
-            if isinstance(params, dict):
-                for pk, pv in params.items():
-                    if isinstance(pv, dict) and "type" in pv and pk not in (
-                        "headers", "attributes", "set", "conditions",
-                    ):
-                        return (
-                            f"Error: it looks like task '{pk}' is nested inside "
-                            f"task '{task_key}'.parameters. Tasks must be "
-                            f"SEPARATE top-level keys in the 'tasks' dict, "
-                            f"not nested inside other tasks."
-                        )
-        # Validate relations
-        rels = definition.get("relations", [])
-        if not isinstance(rels, list):
-            return (
-                "Error: 'relations' must be a top-level array, not inside tasks. "
-                "Example: [{\"from\": \"taskA\", \"to\": \"taskB\", \"type\": \"success\"}]"
-            )
+        validation_error = self._validate_flow_definition(definition)
+        if validation_error:
+            return validation_error
 
         flow_id = definition["id"]
         flow_name = definition.get("name", flow_id)
@@ -459,6 +481,8 @@ class FlowManagerHandler(ToolHandler):
         tmp_dir.mkdir(parents=True, exist_ok=True)
         # Strip internal fields
         clean_def = {k: v for k, v in definition.items() if not k.startswith("_")}
+        clean_def.setdefault("parameters", {}).update(
+            self._with_runtime_params(clean_def.get("parameters", {})))
         tmp_path = tmp_dir / f"{flow_id}.json"
         tmp_path.write_text(
             json.dumps(clean_def, ensure_ascii=False, indent=2),
@@ -471,7 +495,7 @@ class FlowManagerHandler(ToolHandler):
             instance_id = dep_reg.deploy(
                 template_path=str(tmp_path),
                 owner=self._owner_tag(),
-                parameters=definition.get("parameters", {}),
+                parameters=self._with_runtime_params(definition.get("parameters", {})),
                 source="agent",
                 conversation_id=self._conversation_id,
                 agent_name=getattr(self, "_agent_name", "") or "",
@@ -493,8 +517,9 @@ class FlowManagerHandler(ToolHandler):
             return f"Error: flow '{flow_id}' belongs to another user"
 
         # Merge parameters
-        if params:
-            inst.parameters.update(params)
+        runtime_params = self._with_runtime_params(params)
+        if runtime_params:
+            inst.parameters.update(runtime_params)
             dep_reg._save_instance(inst)
 
         # Try to start via executor registry
@@ -611,6 +636,113 @@ class FlowManagerHandler(ToolHandler):
             f"{template_info}{sched_info}"
         )
 
+    def _flow_logs(self, flow_id: str, limit: int = 50) -> str:
+        if not flow_id:
+            return "Error: flow_id is required"
+        limit = max(1, min(int(limit or 50), 500))
+
+        dep_reg = self._get_deployment_registry()
+        inst = dep_reg.get(flow_id)
+        if inst is None:
+            return f"Error: flow '{flow_id}' not found"
+        if inst.owner != self._owner_tag():
+            return f"Error: flow '{flow_id}' belongs to another user"
+
+        payload = {
+            "flow_id": flow_id,
+            "status": inst.status,
+            "error_message": inst.error_message,
+            "executor": None,
+            "task_states": {},
+            "queue_stats": [],
+            "bulletins": [],
+        }
+        try:
+            from core.executor_registry import ExecutorRegistry
+            reg = ExecutorRegistry.get_instance()
+            executor = reg.get(flow_id)
+            if executor:
+                payload["executor"] = executor.get_status()
+                payload["task_states"] = executor.get_all_task_states()
+                payload["queue_stats"] = executor.get_queue_stats()
+        except Exception as e:
+            payload["executor_error"] = str(e)
+
+        try:
+            from core.bulletin import BulletinBoard
+            task_ids = set(payload.get("task_states") or {})
+            bulletins = BulletinBoard.get_instance().get_messages(limit=max(limit, 1))
+            if task_ids:
+                bulletins = [
+                    b for b in bulletins
+                    if str(b.get("source", "")) in task_ids
+                    or str(b.get("source", "")).split(".")[-1] in task_ids
+                ]
+            payload["bulletins"] = bulletins[:limit]
+        except Exception as e:
+            payload["bulletin_error"] = str(e)
+
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def _update_flow_definition(self, flow_id: str, definition: Dict) -> str:
+        if not flow_id:
+            return "Error: flow_id is required"
+        validation_error = self._validate_flow_definition(definition)
+        if validation_error:
+            return validation_error
+
+        dep_reg = self._get_deployment_registry()
+        inst = dep_reg.get(flow_id)
+        if inst is None:
+            return f"Error: flow '{flow_id}' not found"
+        if inst.owner != self._owner_tag():
+            return f"Error: flow '{flow_id}' belongs to another user"
+
+        clean_def = {k: v for k, v in definition.items() if not k.startswith("_")}
+        clean_def.setdefault("parameters", {}).update(
+            self._with_runtime_params(clean_def.get("parameters", {})))
+        parse_def = dict(clean_def)
+        parse_def.setdefault("parameters", {}).update(inst.parameters or {})
+
+        try:
+            from tasks import register_all_tasks
+            from engine.parser import FlowParser
+            register_all_tasks()
+            flow = FlowParser.parse(parse_def)
+        except Exception as e:
+            return f"Error: parse failed for updated flow '{flow_id}': {e}"
+
+        from core.paths import RUNTIME_DIR
+        tmp_dir = RUNTIME_DIR / "agent_templates"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_path = tmp_dir / f"{flow_id}.json"
+        tmp_path.write_text(
+            json.dumps(clean_def, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        inst.flow_path = str(tmp_path)
+        inst.flow_id = clean_def.get("id", inst.flow_id)
+        inst.flow_name = clean_def.get("name", inst.flow_name or flow_id)
+        inst.flow_fqn = ""
+        inst.flow_scope = ""
+        dep_reg._save_instance(inst)
+
+        hot_swap = "not running"
+        try:
+            from core.executor_registry import ExecutorRegistry, _apply_service_bindings
+            reg = ExecutorRegistry.get_instance()
+            executor = reg.get(flow_id)
+            if executor:
+                _apply_service_bindings(
+                    flow, inst.service_overrides, inst.service_configs)
+                updated = executor.update_flow(flow)
+                hot_swap = "unchanged" if updated is None else "updated"
+        except Exception as e:
+            hot_swap = f"failed: {e}"
+
+        return f"Flow '{flow_id}' definition updated ({hot_swap})."
+
     def _delete_flow(self, flow_id: str) -> str:
         if not flow_id:
             return "Error: flow_id is required"
@@ -638,7 +770,7 @@ class FlowManagerHandler(ToolHandler):
         if inst.owner != self._owner_tag():
             return f"Error: flow '{flow_id}' belongs to another user"
 
-        inst.parameters.update(params)
+        inst.parameters.update(self._with_runtime_params(params))
         dep_reg._save_instance(inst)
         return f"Flow '{flow_id}' parameters updated: {json.dumps(params)}"
 

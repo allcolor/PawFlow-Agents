@@ -44,6 +44,31 @@ class RelayService(_RelayConnMixin, _RelayFsOpsMixin, BaseService):
     VERSION = "2.0.0"
     NAME = "Relay"
     DESCRIPTION = "Managed server relay or standalone WebSocket relay client"
+    PARAMETERS = {
+        "relay_id": {
+            "type": "string", "required": False, "default": "",
+            "description": "Existing linked/user relay id to reference from a flow instead of creating a new standalone relay",
+        },
+        "name": {
+            "type": "string", "required": False, "default": "",
+            "description": "Alias for relay_id",
+        },
+        "token": {
+            "type": "string", "required": False, "sensitive": True, "default": "",
+            "description": "Authentication token for a standalone external relay client. Managed server relays generate this token server-side.",
+        },
+        "mode": {
+            "type": "select", "required": False, "default": "readwrite",
+            "options": ["readwrite", "readonly"],
+            "description": "Access mode for file operations",
+        },
+    }
+    SERVICE_API = [
+        "exec(path, command, timeout=None, shell=True, env=None, local=False)",
+        "read_file(path, encoding='utf-8')",
+        "write_file(path, content, encoding='utf-8')",
+        "exists(path), list_dir(path), mkdir(path), delete(path), stat(path), grep(path, pattern)",
+    ]
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -106,14 +131,7 @@ class RelayService(_RelayConnMixin, _RelayFsOpsMixin, BaseService):
         self._ctx_sync_active = False
 
     def get_parameter_schema(self) -> Dict[str, Any]:
-        return {
-            "token": {"type": "string", "required": False, "sensitive": True,
-                      "default": "",
-                      "description": "Authentication token for a standalone external relay client. Managed server relays generate this token server-side."},
-            "mode": {"type": "select", "required": False, "default": "readwrite",
-                     "options": ["readwrite", "readonly"],
-                     "description": "Access mode for file operations"},
-        }
+        return self.PARAMETERS
 
     @property
     def service_id(self) -> str:

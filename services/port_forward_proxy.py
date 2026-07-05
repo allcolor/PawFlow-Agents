@@ -97,6 +97,26 @@ def remove_forward(forward_id: str) -> bool:
     return last
 
 
+def remove_forward_match(relay_id: str, port: int) -> Tuple[bool, bool]:
+    """Remove a forward by relay id and visible port.
+
+    Returns (removed, last). The visible slash command uses `(relay_id, ext_port)`
+    because users do not know the opaque `forward_id`; accept `int_port` as a
+    fallback for forwards where both labels are identical.
+    """
+    if not relay_id or not port:
+        return False, False
+    with _lock:
+        forward_id = next((
+            fid for fid, v in _forwards.items()
+            if v["relay_id"] == relay_id
+            and (v["ext_port"] == port or v["int_port"] == port)
+        ), "")
+    if not forward_id:
+        return False, False
+    return True, remove_forward(forward_id)
+
+
 def list_forwards() -> List[dict]:
     """List all active port forwards (with their capability URL)."""
     with _lock:

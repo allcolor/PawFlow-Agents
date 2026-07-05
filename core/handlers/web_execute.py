@@ -114,12 +114,13 @@ class ExecuteScriptHandler(ToolHandler):
         _secret_env = arguments.get("_secret_env") or {}
 
         # Explicit relay service name → execute remote
-        _dest = destination.strip().lower()
-        if _dest and _dest not in ("server", "sandbox", "local", ""):
-            return self._execute_remote(code, _dest, env=_secret_env)
+        _dest_raw = destination.strip()
+        _dest_kind = _dest_raw.lower()
+        if _dest_raw and _dest_kind not in ("server", "sandbox", "local", ""):
+            return self._execute_remote(code, _dest_raw, env=_secret_env)
 
         # Explicit sandbox request
-        if _dest in ("server", "sandbox"):
+        if _dest_kind in ("server", "sandbox"):
             return self._execute_sandbox(code, env=_secret_env)
 
         # Auto-detect: if a relay is connected, use it; else sandbox
@@ -149,6 +150,8 @@ class ExecuteScriptHandler(ToolHandler):
                     base_url=self._base_url,
                     vfs=self._vfs,
                     fs_resolver=self._fs_resolver,
+                    user_id=self._user_id,
+                    conversation_id=self._conversation_id,
                 )
         except Exception as e:
             return f"Error: {e}"

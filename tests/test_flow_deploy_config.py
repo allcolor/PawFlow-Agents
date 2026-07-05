@@ -234,3 +234,74 @@ def test_executor_service_bindings_apply_configs_and_overrides(monkeypatch):
 
     assert local.config["model"] == "qwen"
     assert flow.services["llm_local"] is forwarded
+
+
+def test_flow_parser_sets_service_id_and_resolves_relay_reference(monkeypatch):
+    from engine.parser import FlowParser
+    from services.filesystem_service import RelayService
+
+    live_relay = SimpleNamespace(_service_id="FallKartWS")
+
+    class _Registry:
+        def resolve(self, service_id, user_id="", conv_id=""):
+            assert (service_id, user_id, conv_id) == ("FallKartWS", "alice", "conv1")
+            return live_relay
+
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        staticmethod(lambda: _Registry()),
+    )
+
+    flow = FlowParser.parse({
+        "id": "relay-flow",
+        "parameters": {"_user_id": "alice", "_conversation_id": "conv1"},
+        "tasks": {"start": {"type": "generateFlowFile", "parameters": {}}},
+        "services": {
+            "fs": {"type": "relay", "parameters": {"relay_id": "FallKartWS"}},
+            "local": {"type": "relay", "parameters": {"token": "t"}},
+        },
+    })
+
+    assert flow.services["fs"] is live_relay
+    assert isinstance(flow.services["local"], RelayService)
+    assert flow.services["local"].service_id == "local"
+
+
+def test_manage_flow_create_injects_runtime_parameters(monkeypatch, tmp_path):
+    from core.handlers.flow_management import FlowManagerHandler
+
+    captured = {}
+
+    class _Deployments:
+        def deploy(self, **kwargs):
+            captured.update(kwargs)
+            return "flow1"
+
+    monkeypatch.setattr(
+        "core.deployment_registry.DeploymentRegistry.get_instance",
+        staticmethod(lambda: _Deployments()),
+    )
+    monkeypatch.setattr("core.paths.RUNTIME_DIR", tmp_path)
+
+    handler = FlowManagerHandler()
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    handler.set_agent_name("assistant")
+
+    result = handler.execute({
+        "action": "create",
+        "definition": {
+            "id": "flow1",
+            "parameters": {"custom": "x"},
+            "tasks": {"start": {"type": "generateFlowFile", "parameters": {}}},
+            "relations": [],
+        },
+    })
+
+    assert "created" in result
+    assert captured["parameters"] == {
+        "custom": "x",
+        "_user_id": "alice",
+        "_conversation_id": "conv1",
+        "_agent_name": "assistant",
+    }

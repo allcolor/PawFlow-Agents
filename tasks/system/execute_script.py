@@ -357,13 +357,22 @@ class ExecuteScriptTask(BaseTask):
 
         try:
             created_files: list = []
-            _uid = flowfile.get_attribute("http.auth.principal") or ""
-            _cid = flowfile.get_attribute("conversation_id") or ""
+            try:
+                from core.flow_runtime_access import runtime_context_from_task
+                _ctx = runtime_context_from_task(self)
+            except Exception:
+                _ctx = None
+            _uid = (getattr(_ctx, "user_id", "") if _ctx else "") or flowfile.get_attribute("http.auth.principal") or ""
+            _cid = (getattr(_ctx, "conversation_id", "") if _ctx else "") or flowfile.get_attribute("conversation_id") or ""
             sandbox_open = make_sandbox_open(
                 created_files=created_files,
                 user_id=_uid, conversation_id=_cid)
             globals_dict, print_buf = build_sandbox_globals(
                 sandbox_open=sandbox_open,
+                extra_vars={
+                    "_user_id": _uid,
+                    "_conversation_id": _cid,
+                },
             )
 
             # Inject FlowFile context into namespace
@@ -374,6 +383,8 @@ class ExecuteScriptTask(BaseTask):
                 'attributes': attributes,
                 'flowfile': flowfile,
                 'flow_file': flowfile,  # alias for compat
+                '_user_id': _uid,
+                '_conversation_id': _cid,
             }
 
             # Inject the scope-bounded PawFlow API facade, the same way `fs`
@@ -420,6 +431,9 @@ class ExecuteScriptTask(BaseTask):
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if fs_svc:
                 local_ns['fs'] = fs_svc
+            elif self.config.get('filesystem_service_id'):
+                raise TaskError(
+                    f"Filesystem service '{self.config.get('filesystem_service_id')}' not found or not connected")
 
             # Inject get_service(sid), bounded to THIS flow's declared services
             # (self._services), mirroring how `fs` is injected. Scripts can then

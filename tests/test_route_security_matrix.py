@@ -348,6 +348,23 @@ def test_port_forward_remove_requires_forward_id(cap_db):
     assert list_forwards() == []
 
 
+def test_port_forward_remove_by_relay_and_visible_port(cap_db):
+    from services.port_forward_proxy import (
+        add_forward, list_forwards, remove_forward_match,
+    )
+
+    add_forward(
+        "relay-A", 9000, None, ext_port=18080,
+        owner_user_id="alice")
+    assert len(list_forwards()) == 1
+
+    removed, last = remove_forward_match("relay-A", 18080)
+
+    assert removed is True
+    assert last is True
+    assert list_forwards() == []
+
+
 def test_logout_revokes_capabilities_for_session(cap_db):
     """Tokens minted with `login_session_id=L` are dropped when
     `revoke_session_capabilities(L)` is called — same path the real

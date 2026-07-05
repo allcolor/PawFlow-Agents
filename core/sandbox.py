@@ -437,7 +437,7 @@ def build_sandbox_globals(
         "classmethod": classmethod, "super": super,
         "issubclass": issubclass, "callable": callable,
         "iter": iter, "next": next, "repr": repr, "hash": hash,
-        "id": id, "frozenset": frozenset, "bytes": bytes,
+        "id": id, "dir": dir, "frozenset": frozenset, "bytes": bytes,
         "bytearray": bytearray, "memoryview": memoryview,
         "complex": complex, "divmod": divmod, "pow": pow,
         "chr": chr, "ord": ord, "hex": hex, "oct": oct, "bin": bin,
@@ -465,8 +465,11 @@ def build_sandbox_globals(
     }
 
     # Secret and variable accessors (read-only, never expose values in logs)
-    def _get_secret(key: str, user_id: str) -> str:
+    def _get_secret(key: str, user_id: str = "") -> str:
         """Get a decrypted secret by name. Usage: get_secret('my_api_key')"""
+        user_id = user_id or str((extra_vars or {}).get("_user_id", "") or "")
+        if not user_id:
+            raise KeyError(f"Secret '{key}' requires a user_id")
         import json as _j
         from core.paths import user_secrets_path
         secrets_path = user_secrets_path(user_id)
@@ -481,8 +484,11 @@ def build_sandbox_globals(
         from core.secrets import get_secrets_manager
         return get_secrets_manager().decrypt(encrypted)
 
-    def _get_variable(key: str, user_id: str) -> str:
+    def _get_variable(key: str, user_id: str = "") -> str:
         """Get a stored variable by name. Usage: get_variable('my_var')"""
+        user_id = user_id or str((extra_vars or {}).get("_user_id", "") or "")
+        if not user_id:
+            raise KeyError(f"Variable '{key}' requires a user_id")
         import json as _j
         from core.paths import user_params_path
         params_path = user_params_path(user_id)
@@ -542,6 +548,10 @@ def execute_sandboxed(
 
     globals_dict, print_buf = build_sandbox_globals(
         sandbox_open=sandbox_open,
+        extra_vars={
+            "_user_id": user_id,
+            "_conversation_id": conversation_id,
+        },
         base_url=base_url,
     )
 

@@ -12,7 +12,7 @@ code duplication.
 
 | Category | Count | Purpose |
 |----------|------:|---------|
-| **System** | 11+ | Core utilities: logging, attribute manipulation, scripting, scheduling |
+| **System** | 12+ | Core utilities: logging, attribute manipulation, scripting, scheduling |
 | **IO** | 50+ | External I/O: files, HTTP, messaging, email, relays, auth, admin UI |
 | **Data** | 25+ | Content transformation: JSON, CSV, XML, SQL, caching, LLM inference |
 | **Control** | 10+ | Flow logic: routing, splitting, merging, throttling, signaling, subflows |
@@ -20,11 +20,11 @@ code duplication.
 
 ---
 
-## System Tasks (11)
+## System Tasks (12)
 
 | Type | Description |
 |------|-------------|
-| `cronTrigger` | Generate a FlowFile on a CRON schedule |
+| `cronTrigger` | Generate a FlowFile on a CRON schedule; supports `skip_if_pending` and `max_queue` to avoid piling up downstream work |
 | `executeScript` | Execute a Python script on FlowFile content |
 | `fail` | Explicitly fail a FlowFile |
 | `generateFlowFile` | Generate new FlowFiles from inline content or a flow asset file |
@@ -33,6 +33,7 @@ code duplication.
 | `log` | Log a message with formatting |
 | `replace_text` | Replace text in FlowFile content |
 | `reporting` | Collect and report execution metrics as FlowFile content |
+| `shutdownTrigger` | Generate one FlowFile when a running flow is stopped, before services are disconnected |
 | `updateAttribute` | Modify FlowFile attributes (add, update, delete) |
 | `wait` | Wait for a configured duration before continuing |
 
@@ -334,7 +335,7 @@ For a fuller agent-facing catalog, including internal/control tools, see
 | `tool.ask_user` | Ask the user a question and wait for a reply |
 | `tool.delegate` | Spawn or delegate work to another agent |
 | `tool.show_file` | Display a file to the user |
-| `tool.manage_flow` | Manage flows (start, stop, status) |
+| `tool.manage_flow` | Manage flows (create, start, stop, status, logs, update parameters, update definitions) |
 | `tool.store_secret` | Store a secret securely |
 | `tool.list_secrets` | List stored secrets |
 | `tool.read_history` | Read conversation history |

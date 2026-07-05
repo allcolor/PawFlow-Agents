@@ -88,7 +88,10 @@ def find_fs_service(user_id: str, service_name: str = "", conversation_id: str =
                 default_id = ""
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             if service_name:
+                linked_by_lower = {str(s).lower(): s for s in linked}
                 if service_name not in linked:
+                    service_name = linked_by_lower.get(service_name.lower(), "")
+                if not service_name:
                     return None
             elif default_id and default_id in linked:
                 service_name = default_id

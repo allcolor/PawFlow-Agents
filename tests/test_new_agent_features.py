@@ -619,6 +619,45 @@ class TestFlowManagerHandler(unittest.TestCase):
         result = h.execute({"action": "status", "flow_id": "flow1"})
         self.assertIn("Test Flow", result)
 
+    def test_logs_flow_returns_task_state_json(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+
+        result = h.execute({"action": "logs", "flow_id": "flow1"})
+        data = json.loads(result)
+
+        self.assertEqual(data["flow_id"], "flow1")
+        self.assertIn("task_states", data)
+        self.assertIn("queue_stats", data)
+
+    def test_update_definition_replaces_template_path(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+        updated = self._sample_definition(name="Updated Flow")
+        updated["tasks"] = {
+            "t2": {"type": "generateFlowFile", "parameters": {"content": "v2"}}
+        }
+
+        result = h.execute({
+            "action": "update_definition",
+            "flow_id": "flow1",
+            "definition": updated,
+        })
+
+        self.assertIn("definition updated", result)
+        from core.deployment_registry import DeploymentRegistry
+        inst = DeploymentRegistry.get_instance().get("flow1")
+        self.assertEqual(inst.flow_name, "Updated Flow")
+        saved = json.loads(Path(inst.flow_path).read_text(encoding="utf-8"))
+        self.assertIn("t2", saved["tasks"])
+
+    def test_schema_exposes_logs_and_update_definition(self):
+        h = self._make_handler()
+        actions = h.parameters_schema["properties"]["action"]["enum"]
+
+        self.assertIn("logs", actions)
+        self.assertIn("update_definition", actions)
+
     def test_delete_flow(self):
         h = self._make_handler()
         h.execute({"action": "create", "definition": self._sample_definition()})
@@ -718,6 +757,26 @@ class TestPawFlowHelpHandler(unittest.TestCase):
     def test_service_detail_unknown(self):
         result = self.handler.execute({"topic": "service:nonExistentSvc123"})
         self.assertIn("not found", result)
+
+    def test_service_detail_http_listener_documents_auth_gateway(self):
+        from tasks import register_all_tasks
+        register_all_tasks()
+
+        result = self.handler.execute({"topic": "service:httpListener"})
+
+        self.assertIn("port", result)
+        self.assertIn("private_gateway_service_id", result)
+        self.assertIn("PrivateGateway", result)
+
+    def test_service_detail_relay_documents_existing_relay_and_api(self):
+        from tasks import register_all_tasks
+        register_all_tasks()
+
+        result = self.handler.execute({"topic": "service:relay"})
+
+        self.assertIn("relay_id", result)
+        self.assertIn("exec(path, command", result)
+        self.assertIn("read_file", result)
 
     def test_flow_guide(self):
         result = self.handler.execute({"topic": "flow_guide"})

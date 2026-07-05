@@ -67,6 +67,45 @@ class HTTPListenerService(BaseService):
     """
 
     TYPE = "httpListener"
+    PARAMETERS = {
+        "host": {
+            "type": "string", "required": False, "default": "0.0.0.0",
+            "description": "Bind address",
+        },
+        "port": {
+            "type": "integer", "required": True,
+            "description": "Listen port",
+        },
+        "max_dispatch_threads": {
+            "type": "integer", "required": False, "default": 128,
+            "description": "Maximum concurrent HTTP/WebSocket dispatch threads",
+        },
+        "header_read_timeout": {
+            "type": "float", "required": False, "default": 3.0,
+            "description": "Seconds to wait for request headers before closing slow or half-open clients",
+        },
+        "ssl_certfile": {
+            "type": "string", "required": False, "default": "",
+            "description": "Path to SSL certificate (PEM)",
+        },
+        "ssl_keyfile": {
+            "type": "string", "required": False, "default": "",
+            "description": "Path to SSL private key (PEM)",
+        },
+        "ssl_keyfile_password": {
+            "type": "string", "required": False, "default": "",
+            "description": "Password for encrypted key",
+        },
+        "ssl_service_id": {
+            "type": "string", "required": False, "default": "",
+            "description": "SSLContextService ID (alternative to certfile/keyfile)",
+        },
+        "private_gateway_service_id": {
+            "type": "service_ref", "service_type": "privateGateway",
+            "required": False, "default": "",
+            "description": "PrivateGateway service protecting this listener. Leave empty for no listener-level private gateway.",
+        },
+    }
 
     @classmethod
     def get_for_port(cls, port: int) -> Optional["HTTPListenerService"]:
@@ -154,17 +193,7 @@ class HTTPListenerService(BaseService):
                 self._server._sni_certs = self._sni_certs
 
     def get_parameter_schema(self) -> Dict[str, Any]:
-        return {
-            "host": {"type": "string", "required": False, "default": "0.0.0.0", "description": "Bind address"},  # nosec B104 - documented listener default.
-            "port": {"type": "integer", "required": True, "description": "Listen port"},
-            "max_dispatch_threads": {"type": "integer", "required": False, "default": 128, "description": "Maximum concurrent HTTP/WebSocket dispatch threads"},
-            "header_read_timeout": {"type": "float", "required": False, "default": 3.0, "description": "Seconds to wait for request headers before closing slow or half-open clients"},
-            "ssl_certfile": {"type": "string", "required": False, "default": "", "description": "Path to SSL certificate (PEM)"},
-            "ssl_keyfile": {"type": "string", "required": False, "default": "", "description": "Path to SSL private key (PEM)"},
-            "ssl_keyfile_password": {"type": "string", "required": False, "default": "", "description": "Password for encrypted key"},
-            "ssl_service_id": {"type": "string", "required": False, "default": "", "description": "SSLContextService ID (alternative to certfile/keyfile)"},
-            "private_gateway_service_id": {"type": "service_ref", "service_type": "privateGateway", "required": False, "default": "", "description": "PrivateGateway service protecting this listener"},
-        }
+        return self.PARAMETERS
 
     @property
     def port(self) -> int:

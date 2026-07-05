@@ -53,6 +53,33 @@ class TestStartupTriggerTask(unittest.TestCase):
         self.assertFalse(task.has_pending_input())
 
 
+class TestShutdownTriggerTask(unittest.TestCase):
+
+    def _task(self, config=None):
+        from tasks.system.shutdown_trigger import ShutdownTriggerTask
+        return ShutdownTriggerTask(config or {})
+
+    def test_registered(self):
+        from tasks import register_all_tasks
+        register_all_tasks()
+        from core import TaskFactory
+        self.assertIsNotNone(TaskFactory.get("shutdownTrigger"))
+
+    def test_arms_and_fires_once(self):
+        task = self._task({'content': 'cleanup'})
+        self.assertFalse(task.has_pending_input())
+        task.arm_shutdown()
+        self.assertTrue(task.has_pending_input())
+
+        results = task.execute(None)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].get_content(), b"cleanup")
+        self.assertEqual(results[0].get_attribute('shutdown.trigger'), 'true')
+        self.assertTrue(results[0].get_attribute('shutdown.fired_at'))
+        self.assertFalse(task.has_pending_input())
+        self.assertEqual(task.execute(None), [])
+
+
 class TestGenerateFlowFileTask(unittest.TestCase):
 
     def test_generate_single(self):

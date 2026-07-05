@@ -90,7 +90,29 @@ class FlowParser:
         # Parse services — resolve expressions (secrets, env, flow params)
         for service_id, service_config in config.get('services', {}).items():
             service_type = service_config.get('type')
-            service_parameters = resolved_services[service_id]
+            service_parameters = dict(resolved_services[service_id])
+            service_parameters.setdefault('_service_id', service_id)
+
+            if service_type == 'relay':
+                relay_ref = (service_parameters.get('relay_id')
+                             or service_parameters.get('name')
+                             or service_parameters.get('service_id')
+                             or '')
+                if relay_ref:
+                    try:
+                        from core.service_registry import ServiceRegistry
+                        relay = ServiceRegistry.get_instance().resolve(
+                            str(relay_ref),
+                            user_id=str(flow_parameters.get('_user_id') or ''),
+                            conv_id=str(flow_parameters.get('_conversation_id') or ''),
+                        )
+                        if relay is not None:
+                            flow.add_service(service_id, relay)
+                            continue
+                    except Exception:
+                        logging.getLogger(__name__).debug(
+                            "relay service reference resolution failed",
+                            exc_info=True)
 
             service_class = ServiceFactory.get(service_type)
             service = service_class(service_parameters)

@@ -175,6 +175,12 @@ class PawFlowHelpHandler(ToolHandler):
                 req = " (required)" if pdef.get("required") else ""
                 info.append(f"  - {pname}: {ptype} — {pdesc}{req}")
 
+        api = getattr(cls, "SERVICE_API", None) or []
+        if api:
+            info.append("\nAPI:")
+            for line in api:
+                info.append(f"  - {line}")
+
         return "\n".join(info)
 
     def _flow_guide(self) -> str:

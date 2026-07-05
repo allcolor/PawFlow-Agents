@@ -410,6 +410,15 @@ async function cmdAudio(text, parts) {
 /** Pick between Docker desktop and local screen. */
 // _pickDesktopMode removed — replaced by unified _pickMode
 
+function absoluteForwardUrl(url) {
+  if (!url) return url;
+  try {
+    return new URL(url, window.location.origin).toString();
+  } catch (_e) {
+    return url;
+  }
+}
+
 /** /port-forward command */
 async function cmdPortForward(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
@@ -421,7 +430,7 @@ async function cmdPortForward(text, parts) {
         if (!fwds.length) {
           addMsg('system', t('noActivePortForwards'));
         } else {
-          const lines = fwds.map(f => f.relay_id + ':' + f.int_port + (f.int_port !== f.ext_port ? ' (ext ' + f.ext_port + ')' : '') + ' \u2192 ' + f.url);
+          const lines = fwds.map(f => f.relay_id + ':' + f.int_port + (f.int_port !== f.ext_port ? ' (ext ' + f.ext_port + ')' : '') + ' \u2192 ' + absoluteForwardUrl(f.url));
           addMsg('system', t('activeForwards', { lines: lines.join('\n') }));
         }
       },
@@ -464,7 +473,7 @@ async function cmdPortForward(text, parts) {
         if (resp.error) {
           addMsg('system', '\u26a0 ' + resp.error);
         } else {
-          addMsg('system', t('portForwardAdded', { relay: relayId, port: port, url: resp.url }));
+          addMsg('system', t('portForwardAdded', { relay: relayId, port: port, url: absoluteForwardUrl(resp.url) }));
         }
       },
       error: (e) => {
@@ -515,7 +524,7 @@ async function cmdPortForward(text, parts) {
           addMsg('system', '\u26a0 ' + t('noForwardFor', { relay: relayId, port: port }));
           return;
         }
-        addBrowserTab(relayId + ':' + port, match.url);
+        addBrowserTab(relayId + ':' + port, absoluteForwardUrl(match.url));
       },
       error: (e) => addMsg('system', t('failedWithError', { error: e.message })),
     });

@@ -689,6 +689,9 @@ Open a noVNC virtual desktop on a relay.
 
 Forward a relay's local port through PawFlow.
 
+The generated URL is served by the PawFlow HTTP listener on `/fwd/...`; in the
+chat UI it is displayed as an absolute URL on the current PawFlow origin.
+
 ```
 /port-forward add my_relay 8080
 /port-forward remove my_relay 8080

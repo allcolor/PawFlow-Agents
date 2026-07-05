@@ -10,6 +10,8 @@ Tests cover:
 """
 
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core.sandbox import (
@@ -57,6 +59,33 @@ class TestExecuteSandboxed(unittest.TestCase):
         mock_fs_cls.instance.return_value = MagicMock(list_files=lambda: [])
         output, files, ns = execute_sandboxed("x + 1", local_vars={"x": 41})
         assert output == "42"
+
+    def test_execute_script_handler_preserves_destination_case(self):
+        from core.handlers.web_execute import ExecuteScriptHandler
+
+        seen = {}
+
+        class Relay:
+            def write_file(self, path, data):
+                seen["write_path"] = path
+
+            def exec(self, path, command, env=None):
+                return {"stdout": "ok", "stderr": "", "returncode": 0}
+
+            def delete_file(self, path):
+                seen["delete_path"] = path
+
+        def resolver(service_id):
+            seen["service_id"] = service_id
+            return Relay() if service_id == "FallKartWS" else None
+
+        handler = ExecuteScriptHandler()
+        handler.set_fs_resolver(resolver)
+
+        result = handler.execute({"code": "print('ok')", "destination": "FallKartWS"})
+
+        assert "ok" in result
+        assert seen["service_id"] == "FallKartWS"
 
 
 # ── Safe imports ────────────────────────────────────────────────────
@@ -175,7 +204,8 @@ class TestBuildSandboxGlobals(unittest.TestCase):
         for name in ("str", "int", "float", "list", "dict", "set", "tuple",
                       "range", "len", "bool", "enumerate", "zip", "sorted",
                       "sum", "min", "max", "abs", "round", "isinstance",
-                      "map", "filter", "reversed", "type", "hasattr", "getattr"):
+                      "map", "filter", "reversed", "type", "dir",
+                      "hasattr", "getattr"):
             assert name in builtins, f"Missing safe builtin: {name}"
 
     def test_dangerous_builtins_absent(self):
@@ -214,6 +244,24 @@ class TestBuildSandboxGlobals(unittest.TestCase):
     def test_extra_vars_injected(self):
         globals_dict, _ = build_sandbox_globals(extra_vars={"my_var": 42})
         assert globals_dict["my_var"] == 42
+
+    @patch("core.paths.user_params_path")
+    @patch("core.file_store.FileStore")
+    def test_get_variable_uses_injected_user_id(self, mock_fs_cls, mock_params_path):
+        mock_fs_cls.instance.return_value = MagicMock(list_files=lambda: [])
+        with tempfile.TemporaryDirectory() as tmp:
+            params_path = Path(tmp) / "params.json"
+            params_path.write_text('{"answer": {"value": "42"}}', encoding="utf-8")
+            mock_params_path.return_value = params_path
+
+            output, _, ns = execute_sandboxed(
+                "result = get_variable('answer') + ':' + _user_id",
+                user_id="alice",
+                conversation_id="conv1",
+            )
+
+        assert output == "42:alice"
+        assert ns["result"] == "42:alice"
 
     def test_open_without_sandbox_open_raises(self):
         globals_dict, _ = build_sandbox_globals(sandbox_open=None)

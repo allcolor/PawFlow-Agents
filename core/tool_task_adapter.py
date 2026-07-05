@@ -44,6 +44,13 @@ class ToolTaskAdapter(Task):
     DESCRIPTION = ""
     _handler_class = None
 
+    def set_runtime_context(self, *, user_id: str = "", conversation_id: str = "",
+                            scope: str = "", agent_name: str = ""):
+        from core.flow_runtime_access import set_runtime_context
+        set_runtime_context(
+            self, user_id=user_id, conversation_id=conversation_id,
+            scope=scope, agent_name=agent_name)
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         """Convert ToolHandler JSON Schema to PawFlow task schema."""
         if not self._handler_class:
@@ -62,9 +69,19 @@ class ToolTaskAdapter(Task):
 
     def _inject_context(self, handler, flowfile: FlowFile):
         """Inject runtime context from FlowFile attributes and task config."""
-        user_id = (flowfile.get_attribute("http.auth.principal")
+        try:
+            from core.flow_runtime_access import runtime_context_from_task
+            ctx = runtime_context_from_task(self)
+        except Exception:
+            ctx = None
+        user_id = ((getattr(ctx, "user_id", "") if ctx else "")
+                   or flowfile.get_attribute("http.auth.principal")
+                   or self.config.get("_user_id", "")
                    or self.config.get("user_id", ""))
-        conv_id = (flowfile.get_attribute("conversation.id")
+        conv_id = ((getattr(ctx, "conversation_id", "") if ctx else "")
+                   or flowfile.get_attribute("conversation.id")
+                   or flowfile.get_attribute("conversation_id")
+                   or self.config.get("_conversation_id", "")
                    or self.config.get("conversation_id", ""))
         base_url = self.config.get("file_base_url", "")
 
@@ -75,7 +92,15 @@ class ToolTaskAdapter(Task):
         if hasattr(handler, "set_base_url") and base_url:
             handler.set_base_url(base_url)
         if hasattr(handler, "set_agent_name"):
-            handler.set_agent_name(self.config.get("agent_name", "flow"))
+            handler.set_agent_name((getattr(ctx, "agent_name", "") if ctx else "")
+                                   or self.config.get("agent_name", "flow"))
+
+        if hasattr(handler, "set_fs_resolver"):
+            def _resolve_fs(service_id=""):
+                from core.handlers._fs_base import find_fs_service
+                return find_fs_service(
+                    user_id, str(service_id or ""), conversation_id=conv_id)
+            handler.set_fs_resolver(_resolve_fs)
 
         # Service resolvers for image/video generation
         if hasattr(handler, "set_service_resolver"):

@@ -282,14 +282,21 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
             # nudges browsers that drop the trailing slash.
             if first:
                 http_svc = _find_http_listener()
-                if http_svc:
-                    for method in ("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"):
-                        http_svc.register_route(method, "/fwd/{forward_id}/{token}/",
-                                                _ROUTE_OWNER, callback=fwd_http_proxy)
-                        http_svc.register_route(method, "/fwd/{forward_id}/{token}/{path+}",
-                                                _ROUTE_OWNER, callback=fwd_http_proxy)
-                    http_svc.register_route("GET", "/fwd/{forward_id}/{token}",
-                                            _ROUTE_OWNER, callback=fwd_root_redirect)
+                if not http_svc:
+                    from services.port_forward_proxy import remove_forward
+                    remove_forward(_fwd_id)
+                    flowfile.set_content(json.dumps({
+                        "error": "HTTP listener not available; /fwd routes were not registered",
+                    }).encode())
+                    flowfile.set_attribute("http.response.status", "503")
+                    return [flowfile]
+                for method in ("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"):
+                    http_svc.register_route(method, "/fwd/{forward_id}/{token}/",
+                                            _ROUTE_OWNER, callback=fwd_http_proxy)
+                    http_svc.register_route(method, "/fwd/{forward_id}/{token}/{path+}",
+                                            _ROUTE_OWNER, callback=fwd_http_proxy)
+                http_svc.register_route("GET", "/fwd/{forward_id}/{token}",
+                                        _ROUTE_OWNER, callback=fwd_root_redirect)
 
             _url = f"/fwd/{_fwd_id}/{_fwd_token}/"
             flowfile.set_content(json.dumps({
@@ -303,15 +310,27 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
 
     if action == "port_forward_remove":
         forward_id = body.get("forward_id", "") or ""
-        if not forward_id:
+        relay_id = body.get("relay_id", "") or ""
+        port = body.get("ext_port", 0) or body.get("port", 0) or body.get("int_port", 0)
+        if not forward_id and (not relay_id or not port):
             flowfile.set_content(json.dumps({
-                "error": "Missing forward_id",
+                "error": "Missing forward_id or relay_id and port",
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            from services.port_forward_proxy import remove_forward, _ROUTE_OWNER
-            last = remove_forward(forward_id=forward_id)
+            from services.port_forward_proxy import remove_forward, remove_forward_match, _ROUTE_OWNER
+            removed = True
+            if forward_id:
+                last = remove_forward(forward_id=forward_id)
+            else:
+                removed, last = remove_forward_match(relay_id, int(port))
+            if not removed:
+                flowfile.set_content(json.dumps({
+                    "error": f"No forward for {relay_id}:{port}",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
             if last:
                 http_svc = _find_http_listener()
                 if http_svc:

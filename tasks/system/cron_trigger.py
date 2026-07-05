@@ -6,6 +6,8 @@ ContinuousFlowExecutor alive and generates FlowFiles at scheduled times.
 Config:
     schedule: str  — CRON expression (minute hour day month weekday)
                      e.g. "0 7 * * *" = every day at 07:00
+    skip_if_pending: bool — skip new firings while downstream queue is non-empty
+    max_queue: int — skip new firings once direct downstream queues reach this size
 
 Output FlowFile attributes:
     cron.schedule    — the CRON expression
@@ -39,6 +41,16 @@ class CronTriggerTask(BaseTask):
             "type": "string",
             "description": "CRON expression: minute hour day month weekday (e.g. '0 7 * * *')",
             "required": True,
+        },
+        "skip_if_pending": {
+            "type": "boolean",
+            "description": "Skip a firing while any directly downstream FlowFile is still queued",
+            "default": False,
+        },
+        "max_queue": {
+            "type": "integer",
+            "description": "Skip a firing once direct downstream queues contain this many FlowFiles",
+            "required": False,
         },
     }
 
@@ -96,6 +108,17 @@ class CronTriggerTask(BaseTask):
                 "type": "string",
                 "required": True,
                 "description": "CRON expression: minute hour day month weekday",
+            },
+            "skip_if_pending": {
+                "type": "boolean",
+                "required": False,
+                "default": False,
+                "description": "Skip a firing while any directly downstream FlowFile is still queued",
+            },
+            "max_queue": {
+                "type": "integer",
+                "required": False,
+                "description": "Skip a firing once direct downstream queues contain this many FlowFiles",
             },
         }
 

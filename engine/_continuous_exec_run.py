@@ -20,6 +20,25 @@ logger = logging.getLogger(__name__)
 class _ContinuousExecRunMixin:
     """Scheduler loop + task execution/commit/rollback for ContinuousFlowExecutor."""
 
+    def _root_source_queue_size(self, task_id: str) -> int:
+        """Return queued FlowFiles directly downstream of a root source task."""
+        return sum(c.queue_size() for c in self._connections.get_outgoing(task_id))
+
+    def _should_schedule_root_source(self, task_id: str, task) -> bool:
+        """Apply optional root-source queue guards before scheduling."""
+        cfg = getattr(task, "config", {}) or {}
+        queue_size = self._root_source_queue_size(task_id)
+        if cfg.get("skip_if_pending") and queue_size > 0:
+            return False
+        max_queue = cfg.get("max_queue")
+        if max_queue is not None:
+            try:
+                if queue_size >= int(max_queue):
+                    return False
+            except (TypeError, ValueError):
+                logger.warning("Invalid max_queue for root source task '%s': %r", task_id, max_queue)
+        return True
+
     def _scheduler_loop(self):
         """Main scheduling loop.
 
@@ -59,6 +78,7 @@ class _ContinuousExecRunMixin:
                     task = self._tasks.get(task_id)
                     if (task and hasattr(task, 'has_pending_input') and
                             task.has_pending_input() and
+                            self._should_schedule_root_source(task_id, task) and
                             (self._enabled_one_shot_root_task_ids is None or
                              task_id in self._enabled_one_shot_root_task_ids)):
                         pass  # fall through to schedule

@@ -36,6 +36,61 @@ def make_flow(tasks_dict, relations):
 
 class TestContinuousFlowExecutor:
 
+    def test_root_source_skip_if_pending_checks_downstream_queue(self):
+        flow = make_flow(
+            {
+                "cron": {
+                    "type": "cronTrigger",
+                    "parameters": {"schedule": "* * * * *", "skip_if_pending": True},
+                },
+                "log": {"type": "log", "parameters": {"message": "${content}"}},
+            },
+            [{"from": "cron", "to": "log", "type": "success"}],
+        )
+        executor = ContinuousFlowExecutor(flow, enable_checkpoints=False)
+
+        assert executor._should_schedule_root_source("cron", flow.tasks["cron"]) is True
+        assert executor._connections.get_outgoing("cron")[0].enqueue(FlowFile(content=b"queued"))
+        assert executor._should_schedule_root_source("cron", flow.tasks["cron"]) is False
+
+    def test_root_source_max_queue_checks_downstream_queue(self):
+        flow = make_flow(
+            {
+                "cron": {
+                    "type": "cronTrigger",
+                    "parameters": {"schedule": "* * * * *", "max_queue": 2},
+                },
+                "log": {"type": "log", "parameters": {"message": "${content}"}},
+            },
+            [{"from": "cron", "to": "log", "type": "success"}],
+        )
+        executor = ContinuousFlowExecutor(flow, enable_checkpoints=False)
+        out = executor._connections.get_outgoing("cron")[0]
+
+        assert executor._should_schedule_root_source("cron", flow.tasks["cron"]) is True
+        assert out.enqueue(FlowFile(content=b"one"))
+        assert executor._should_schedule_root_source("cron", flow.tasks["cron"]) is True
+        assert out.enqueue(FlowFile(content=b"two"))
+        assert executor._should_schedule_root_source("cron", flow.tasks["cron"]) is False
+
+    def test_stop_fires_shutdown_trigger_before_cleanup(self):
+        flow = make_flow(
+            {
+                "shutdown": {
+                    "type": "shutdownTrigger",
+                    "parameters": {"content": "cleanup", "timeout": 1},
+                },
+                "out": {"type": "outputPort", "parameters": {"port_name": "done"}},
+            },
+            [{"from": "shutdown", "to": "out", "type": "success"}],
+        )
+        executor = ContinuousFlowExecutor(flow, enable_checkpoints=False, schedule_interval=0.01)
+
+        executor.start()
+        executor.stop()
+
+        assert [ff.get_content() for ff in executor._exit_results] == [b"cleanup"]
+
     def test_enabled_one_shot_root_task_ids_limits_manual_start(self):
         flow = make_flow(
             {

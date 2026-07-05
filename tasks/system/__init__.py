@@ -20,6 +20,7 @@ def register_system_tasks():
     from tasks.system.generate_flowfile import GenerateFlowFileTask
     from tasks.system.install_bootstrap import InstallBootstrapTask
     from tasks.system.cron_trigger import CronTriggerTask
+    from tasks.system.shutdown_trigger import ShutdownTriggerTask
 
     # Register tasks
     TaskFactory.register(LogTask)
@@ -30,3 +31,4 @@ def register_system_tasks():
     TaskFactory.register(GenerateFlowFileTask)
     TaskFactory.register(InstallBootstrapTask)
     TaskFactory.register(CronTriggerTask)
+    TaskFactory.register(ShutdownTriggerTask)

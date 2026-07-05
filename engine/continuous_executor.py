@@ -339,6 +339,8 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
 
     def stop(self):
         """Stop the scheduler and all tasks."""
+        self._run_shutdown_triggers()
+
         self._stop_event.set()
         self._schedule_wake.set()
 
@@ -379,6 +381,58 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
         self._save_checkpoint()
 
         logger.info("ContinuousFlowExecutor stopped")
+
+    def _run_shutdown_triggers(self):
+        """Fire shutdownTrigger roots before services and workers are stopped."""
+        if self._stop_event.is_set() or not self._pool:
+            return
+
+        triggers = [
+            (task_id, task) for task_id, task in self._tasks.items()
+            if getattr(task, "TYPE", "") == "shutdownTrigger"
+        ]
+        if not triggers:
+            return
+
+        timeout = 0.0
+        trigger_ids = {task_id for task_id, _task in triggers}
+        for _task_id, task in triggers:
+            try:
+                timeout = max(timeout, float((getattr(task, "config", {}) or {}).get("timeout", 10)))
+                if hasattr(task, "arm_shutdown"):
+                    task.arm_shutdown()
+            except Exception as exc:
+                logger.warning("shutdownTrigger arm error: %s", exc)
+
+        self._schedule_wake.set()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                any_in_flight = any(v > 0 for v in self._in_flight.values())
+            any_pending_trigger = any(
+                bool(getattr(task, "has_pending_input", lambda: False)())
+                for _task_id, task in triggers
+            )
+            if (not any_pending_trigger and not any_in_flight and
+                    self._downstream_queue_size(trigger_ids) == 0):
+                return
+            time.sleep(min(self._schedule_interval, 0.1))
+
+        logger.warning("shutdownTrigger cleanup timed out after %.1fs", timeout)
+
+    def _downstream_queue_size(self, source_task_ids):
+        """Return queued FlowFiles on connections reachable from source tasks."""
+        seen = set(source_task_ids or set())
+        frontier = list(seen)
+        total = 0
+        while frontier:
+            source_id = frontier.pop()
+            for conn in self._connections.get_outgoing(source_id):
+                total += conn.queue_size()
+                if conn.target_id not in seen:
+                    seen.add(conn.target_id)
+                    frontier.append(conn.target_id)
+        return total
 
     def _wake_scheduler(self):
         """Wake the scheduler when new work is available."""

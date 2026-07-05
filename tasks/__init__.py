@@ -192,6 +192,7 @@ def register_all_tasks():
     # Additional system tasks
     from tasks.system.generate_flowfile import GenerateFlowFileTask
     from tasks.system.startup_trigger import StartupTriggerTask
+    from tasks.system.shutdown_trigger import ShutdownTriggerTask
     from tasks.system.install_bootstrap import InstallBootstrapTask
     from tasks.system.hash_content import HashContentTask
     from tasks.system.list_files import ListFilesTask

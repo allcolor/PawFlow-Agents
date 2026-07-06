@@ -87,3 +87,42 @@ def test_relay_proxy_container_prefix_disables_local_fetch(monkeypatch):
         "url": "http://localhost:11434/v1/chat/completions",
         "local": False,
     }]
+
+
+def test_relay_proxy_accepts_public_source_ip_with_valid_token(monkeypatch):
+    monkeypatch.setattr("core.relay_proxy_auth.lookup_token",
+                        lambda token: ("alice", "relay1", "conv1"))
+    relay = _Relay()
+    relay.calls = []
+    monkeypatch.setattr(relay_proxy, "_resolve_relay_service",
+                        lambda user_id, relay_id, conv_id="": relay)
+
+    pending = _Pending()
+    pending.remote_addr = "203.0.113.10"
+    relay_proxy._relay_proxy_handler(pending)
+
+    assert pending.completed is None
+    assert pending.streamed[0] == 200
+
+
+def test_relay_proxy_route_is_gateway_exempt_not_private_only():
+    class _Http:
+        def __init__(self):
+            self.routes = []
+
+        def get_routes(self):
+            return []
+
+        def register_route(self, method, pattern, owner, **kwargs):
+            self.routes.append((method, pattern, owner, kwargs))
+
+    http = _Http()
+    relay_proxy._register_routes(http)
+
+    assert http.routes
+    for _method, pattern, owner, kwargs in http.routes:
+        assert pattern == "/relay-proxy/{relay_id}/{token}/{rest+}"
+        assert owner == "_relay_proxy"
+        assert kwargs["public"] is True
+        assert kwargs["private_only"] is False
+        assert kwargs["gateway_exempt"] is True

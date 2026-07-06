@@ -119,7 +119,11 @@ class LLMOpenaiMixin:
             )
 
             if response.status >= 400:
-                error_body = response.read().decode("utf-8")
+                try:
+                    error_body = response.read().decode("utf-8")
+                except Exception as exc:
+                    raise LLMClientError(
+                        f"LLM API error {response.status}: failed to read error body: {type(exc).__name__}: {exc}") from exc
                 if self._is_vision_rejected_error(error_body):
                     logger.warning(
                         "OpenAI-compatible endpoint rejected image input; retrying without native vision blocks")

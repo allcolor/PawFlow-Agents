@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 class _LLMClientDriverMixin:
     """complete / complete_stream / embed + abort control for LLMClient."""
 
+    @staticmethod
+    def _redact_relay_proxy_url(url: str) -> str:
+        """Hide relay proxy bearer tokens before writing URLs to logs."""
+        return re.sub(r"(/relay-proxy/[^/]+/)[^/]+/", r"\1<token>/", url or "")
+
     def _apply_call_identity(self, *, call_user_id=None,
                              call_conversation_id=None, call_agent_name=None,
                              call_event_cid=None) -> None:
@@ -345,10 +350,36 @@ class _LLMClientDriverMixin:
             self._circuit_before_call(mdl)
             start = time.time()
             if self.provider == "openai":
-                result = self._stream_openai(messages, mdl, temperature, max_tokens, tools, callback,
-                                              thinking_callback=thinking_callback,
-                                              call_user_id=call_user_id or "",
-                                              call_conversation_id=call_conversation_id or "")
+                try:
+                    result = self._stream_openai(messages, mdl, temperature, max_tokens, tools, callback,
+                                                  thinking_callback=thinking_callback,
+                                                  call_user_id=call_user_id or "",
+                                                  call_conversation_id=call_conversation_id or "")
+                except Exception as exc:
+                    base_url = self.base_url or ""
+                    err = f"{type(exc).__name__}: {exc}"
+                    is_relay_proxy = "/relay-proxy/" in base_url
+                    is_broken_pipe = ("BrokenPipeError" in err or "broken pipe" in err.lower())
+                    if not (is_relay_proxy and is_broken_pipe):
+                        raise
+                    logger.warning(
+                        "OpenAI relay streaming failed with broken pipe; retrying non-streaming fallback "
+                        "model=%s base_url=%s error=%s",
+                        mdl, self._redact_relay_proxy_url(base_url), err,
+                    )
+                    result = self._complete_openai(
+                        messages, mdl, temperature, max_tokens, None, tools,
+                        call_user_id=call_user_id or "",
+                        call_conversation_id=call_conversation_id or "",
+                    )
+                    if result.thinking and thinking_callback:
+                        thinking_callback(result.thinking)
+                    if result.content and callback:
+                        callback(result.content)
+                    logger.info(
+                        "OpenAI relay non-streaming fallback succeeded model=%s base_url=%s tokens_out=%s",
+                        result.model or mdl, self._redact_relay_proxy_url(base_url), result.tokens_out,
+                    )
             elif self.provider == "claude-code":
                 result = self._stream_claude_code(messages, mdl, temperature, max_tokens, tools, callback,
                                                   turn_callback=turn_callback,

@@ -92,6 +92,35 @@ def test_complete_stream_call_identity_is_available_for_relay_url_resolution(mon
     }
 
 
+def test_openai_relay_stream_broken_pipe_falls_back_to_non_stream(monkeypatch):
+    client = LLMClient(provider="openai", config={
+        "api_key": "sk-test",
+        "base_url": "http://127.0.0.1:9090/relay-proxy/relay1/tok/l/localhost:11434/v1",
+        "default_model": "local-model",
+        "max_retries": 1,
+    })
+    chunks = []
+
+    def fail_stream(*args, **kwargs):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def complete_fallback(*args, **kwargs):
+        return LLMResponse(content="fallback ok", model="local-model", finish_reason="stop", tokens_out=3)
+
+    monkeypatch.setattr(client, "_stream_openai", fail_stream)
+    monkeypatch.setattr(client, "_complete_openai", complete_fallback)
+
+    resp = client.complete_stream(
+        [LLMMessage("user", "hi", conversation_id="conv1")],
+        callback=chunks.append,
+        call_user_id="alice",
+        call_conversation_id="conv1",
+    )
+
+    assert resp.content == "fallback ok"
+    assert chunks == ["fallback ok"]
+
+
 class TestLLMConnectionService:
 
     def test_register(self):

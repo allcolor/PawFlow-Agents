@@ -187,6 +187,19 @@ def maybe_transform_relay_proxy_url(url: str, user_id: str = "",
     _url = f"{_scheme}://{_host}:{_port}/relay-proxy/{parts.relay_id}/{_token}/{_local_prefix}{_s_prefix}{_target}{parts.target_path}"
     if parts.query:
         _url += "?" + parts.query
+    logger.info(
+        "Relay proxy URL resolved relay=%s target=%s mode=%s scheme=%s listener=%s://%s:%s user=%s conv=%s path=%s",
+        parts.relay_id,
+        _target,
+        "local" if _local else "container" if _local is False else "default",
+        parts.target_scheme,
+        _scheme,
+        _host,
+        _port,
+        user_id,
+        conv_id,
+        parts.target_path,
+    )
     return _url
 
 

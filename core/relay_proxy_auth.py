@@ -56,7 +56,7 @@ def issue_token(user_id: str, relay_id: str, ttl: float = DEFAULT_TTL,
             conv_id=conv_id,
         )
         _gc_expired_locked()
-    logger.info("Proxy token issued for user=%s relay=%s", user_id, relay_id)
+    logger.debug("Proxy token issued for user=%s relay=%s conv=%s", user_id, relay_id, conv_id)
     return token
 
 

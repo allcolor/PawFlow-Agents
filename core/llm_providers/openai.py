@@ -90,6 +90,7 @@ class LLMOpenaiMixin:
         full_path = (
             parsed.path.rstrip("/") + self._chat_completions_endpoint(self.base_url)
         ).replace("//", "/")
+        safe_base_url = re.sub(r"(/relay-proxy/[^/]+/)[^/]+/", r"\1<token>/", self.base_url or "")
 
         if parsed.scheme == "https":
             ctx = ssl.create_default_context()
@@ -105,8 +106,16 @@ class LLMOpenaiMixin:
                 "Content-Type": "application/json",
                 "Content-Length": str(len(json_body)),
             }
+            logger.info(
+                "OpenAI stream request model=%s host=%s port=%s path=%s base_url=%s body_bytes=%d",
+                model, host, port, full_path, safe_base_url, len(json_body),
+            )
             conn.request("POST", full_path, body=json_body, headers=headers)
             response = conn.getresponse()
+            logger.info(
+                "OpenAI stream response status=%s reason=%s model=%s base_url=%s",
+                response.status, getattr(response, "reason", ""), model, safe_base_url,
+            )
 
             if response.status >= 400:
                 error_body = response.read().decode("utf-8")
@@ -248,6 +257,10 @@ class LLMOpenaiMixin:
                 thinking_callback(thinking)
             if content and callback:
                 callback(content)
+            logger.info(
+                "OpenAI stream completed model=%s finish_reason=%s text_chars=%d thinking_chars=%d tool_calls=%d base_url=%s",
+                resp_model, finish_reason, len(content), len(thinking), len(tool_calls), safe_base_url,
+            )
 
             # Use real usage from API if available, else estimate
             tokens_in = usage_data.get("prompt_tokens", 0)

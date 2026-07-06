@@ -256,7 +256,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
             conversation_id="test_conv", user_id="u")
         captured_bodies = []
 
-        def fake_post(_path, body, headers):
+        def fake_post(_path, body, headers=None, base_url=None):
             captured_bodies.append(json.loads(json.dumps(body)))
             if len(captured_bodies) == 1:
                 raise LLMClientError("LLM API error 404: No endpoints found that support image input")

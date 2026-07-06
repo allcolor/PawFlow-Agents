@@ -16,12 +16,43 @@ import tiktoken
 
 logger = logging.getLogger(__name__)
 
-_encoding = tiktoken.get_encoding("cl100k_base")
+_encoding = None
+_encoding_failed = False
+
+
+def _get_encoding():
+    """Return the tiktoken encoding, or None when its cache/download fails."""
+    global _encoding, _encoding_failed
+    if _encoding is not None:
+        return _encoding
+    if _encoding_failed:
+        return None
+    try:
+        _encoding = tiktoken.get_encoding("cl100k_base")
+        return _encoding
+    except Exception as exc:  # pragma: no cover - exercised with monkeypatch
+        _encoding_failed = True
+        logger.warning(
+            "tiktoken cl100k_base unavailable; falling back to approximate token counts: %s",
+            exc,
+        )
+        return None
+
+
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    # Conservative local fallback when tiktoken cannot load its BPE file.
+    return max(1, (len(text.encode("utf-8")) + 3) // 4)
 
 
 def count_tokens(text: str, multiplier: float = 1.0) -> int:
     """Count tokens precisely and scale by `multiplier`."""
-    raw = len(_encoding.encode(text, disallowed_special=()))
+    encoding = _get_encoding()
+    if encoding is None:
+        raw = _estimate_tokens(text)
+    else:
+        raw = len(encoding.encode(text, disallowed_special=()))
     if multiplier and multiplier != 1.0:
         return int(raw * multiplier)
     return raw

@@ -684,6 +684,21 @@ class TestTokenCounter:
         long = count_tokens("This is a significantly longer piece of text with many words")
         assert long > short
 
+    def test_count_tokens_falls_back_when_tiktoken_encoding_unavailable(self, monkeypatch):
+        from core import token_counter
+
+        monkeypatch.setattr(token_counter, "_encoding", None)
+        monkeypatch.setattr(token_counter, "_encoding_failed", False)
+
+        def fail_get_encoding(_name):
+            raise RuntimeError("busy")
+
+        monkeypatch.setattr(token_counter.tiktoken, "get_encoding", fail_get_encoding)
+
+        assert token_counter.count_tokens("Hello, world!") > 0
+        assert token_counter.count_tokens("") == 0
+        assert token_counter._encoding_failed is True
+
 
 from tools.fs_actions import action_edit as _action_edit
 

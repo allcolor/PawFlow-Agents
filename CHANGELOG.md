@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.6] — 2026-07-06
+
+### Fixed
+
+- Relay-routed `llmConnection` base URLs now expose an explicit `relay_local`
+  mode. Docker relays can route OpenAI-compatible endpoints such as Ollama at
+  `http://<relay>/localhost:11434/v1` through the host helper, while container
+  namespace targets remain available with `relay_local=false`.
+
 ## [1.0.0-beta.5] — 2026-07-06
 
 ### Fixed

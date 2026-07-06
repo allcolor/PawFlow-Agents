@@ -72,33 +72,35 @@ See [docs/development.md](docs/development.md) for a detailed guide.
 
 ## Releasing
 
-Releases are lightweight git tags named `1.0.0-alpha.<N>` on `main`. The
-version bump and changelog entry go in the **same commit**, *before* the
-tag, so the tagged commit carries the correct version.
+Releases are lightweight git tags named `1.0.0-beta.<N>` on `main`. The
+version bump and changelog entry go in the **same commit**, *before* the tag,
+so the tagged commit carries the correct version.
 
-Checklist (replace `aN` / `alpha.N` with the new number):
+Checklist (replace `bN` / `beta.N` with the new number):
 
-1. **Bump the version** in both places (single source of truth lives in
-   `core/__init__.py`; `pyproject.toml` must match):
-   - `core/__init__.py` → `__version__ = "1.0.0aN"`
-   - `pyproject.toml` → `version = "1.0.0aN"`
-2. **Update `CHANGELOG.md`**: add a `## [1.0.0-alpha.N] — YYYY-MM-DD`
+1. **Bump the package version** in `pyproject.toml`:
+   - `pyproject.toml` → `version = "1.0.0bN"`
+   - `core.__version__` is derived from `pyproject.toml` in source checkouts and
+     package metadata in installed builds; do not hardcode it in `core/__init__.py`.
+2. **Update release metadata** where applicable: `CHANGELOG.md`,
+   `PROJECT_SUMMARY.md`, and website fallback version metadata.
+3. **Update `CHANGELOG.md`**: add a `## [1.0.0-beta.N] — YYYY-MM-DD`
    section at the top (newest first), grouped into `Added` / `Fixed` /
    `Security`, summarizing the commits since the previous tag
-   (`git log --format='%h %s' 1.0.0-alpha.<N-1>..HEAD`).
-3. **Commit** the bump and changelog together:
-   `git commit -m "Release 1.0.0-alpha.N"`.
-4. **Verify**: `python cli.py --version` prints `1.0.0aN`, and
-   `pytest tests/ -q` is green.
-5. **Tag and push** the release commit:
+   (`git log --format='%h %s' 1.0.0-beta.<N-1>..HEAD`).
+4. **Commit** the bump and changelog together:
+   `git commit -m "Release 1.0.0-beta.N"`.
+5. **Verify**: `python cli.py --version` prints `1.0.0bN`, and the relevant
+   test suite is green.
+6. **Tag and push** the release commit:
    ```bash
    git push origin main
-   git tag 1.0.0-alpha.N
-   git push origin 1.0.0-alpha.N
+   git tag 1.0.0-beta.N
+   git push origin 1.0.0-beta.N
    ```
 
-Note: the version string is `1.0.0aN` (PEP 440, used in code/packaging)
-but the tag is `1.0.0-alpha.N` (SemVer pre-release).
+Note: the version string is `1.0.0bN` (PEP 440, used in packaging) but the
+tag is `1.0.0-beta.N` (SemVer pre-release).
 
 ## Reporting Issues
 

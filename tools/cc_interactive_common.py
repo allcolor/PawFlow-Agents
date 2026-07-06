@@ -15,8 +15,9 @@ import threading
 import time
 from urllib.parse import urlparse
 
-UPSTREAM_HOST = "api.anthropic.com"
-UPSTREAM_PORT = 443
+UPSTREAM_HOST = os.environ.get("PAWFLOW_ANTHROPIC_UPSTREAM_HOST", "api.anthropic.com")
+UPSTREAM_PORT = int(os.environ.get("PAWFLOW_ANTHROPIC_UPSTREAM_PORT", "443"))
+UPSTREAM_SCHEME = os.environ.get("PAWFLOW_ANTHROPIC_UPSTREAM_SCHEME", "https").lower()
 LISTEN_HOST = os.environ.get("PAWFLOW_CCI_PROXY_HOST", "0.0.0.0")  # nosec B104 - container-local TLS proxy bind.
 LISTEN_PORT = int(os.environ.get("PAWFLOW_CCI_PROXY_PORT", "443"))
 CERT_FILE = os.environ.get("PAWFLOW_CCI_LEAF_CERT", "/tmp/api-anthropic.crt")  # nosec B108 - container-local generated cert path.

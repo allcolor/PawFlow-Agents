@@ -8,9 +8,14 @@ proxy. The provider does not read Claude Code transcripts or terminal output.
 
 - PawFlow starts one persistent Docker container per user, conversation, agent,
   and LLM service.
-- The container maps `api.anthropic.com` to `127.0.0.1`.
-- A root-owned local TLS proxy listens on port `443` and forwards requests to
-  the real Anthropic endpoint with SNI `api.anthropic.com`.
+- The container maps the configured Anthropic-compatible host to
+  `127.0.0.1` (`api.anthropic.com` by default, or the `llmConnection.base_url`
+  host in API-key mode).
+- A root-owned local TLS proxy listens on the configured provider port (`443` by
+  default). Claude Code always connects to this proxy over HTTPS so the MITM
+  observer can keep seeing provider SSE events. The proxy then forwards to the
+  real upstream with the original `base_url` scheme, so `https://...` remains TLS
+  upstream and `http://...` becomes clear HTTP upstream after the local MITM.
 - Claude Code runs as user `pawflow` (uid 1000) inside tmux.
 - The session workdir is provisioned host-side by the server under the
   server's own uid with 755 dirs. The tmux launcher therefore pre-creates

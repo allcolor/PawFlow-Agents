@@ -145,6 +145,31 @@ class LLMConnectionService(BaseService):
             max_tokens = int(cfg_max)
         return temperature, max_tokens, model
 
+    @staticmethod
+    def _apply_call_context(client: LLMClient, call_kwargs: Dict[str, Any]) -> None:
+        """Attach per-call identity to an isolated client clone.
+
+        LLMClient.base_url resolves relay-aware templates such as
+        ``http://MyWorkspace/localhost:11434/v1`` from instance fields. The
+        service creates a fresh clone per call, so the clone must receive the
+        same identity that is also passed as ``call_*`` kwargs to providers.
+        """
+        try:
+            user_id = str(call_kwargs.get("call_user_id") or "")
+            conversation_id = str(call_kwargs.get("call_conversation_id") or "")
+            agent_name = str(call_kwargs.get("call_agent_name") or "")
+            event_cid = str(call_kwargs.get("call_event_cid") or "")
+            if user_id:
+                client._user_id = user_id
+            if conversation_id:
+                client._conversation_id = conversation_id
+            if agent_name:
+                client._agent_name = agent_name
+            if event_cid:
+                client._event_cid = event_cid
+        except Exception:
+            logger.debug("LLM call context propagation failed", exc_info=True)
+
     def complete(
         self,
         messages: List[LLMMessage],
@@ -168,6 +193,7 @@ class LLMConnectionService(BaseService):
         temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
         try:
             client = self.get_client()
+            self._apply_call_context(client, call_kwargs)
             resp = client.complete(messages, model, temperature, max_tokens,
                                    response_format, tools,
                                    thinking_budget=thinking_budget,
@@ -200,6 +226,7 @@ class LLMConnectionService(BaseService):
         temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
         try:
             client = self.get_client()
+            self._apply_call_context(client, call_kwargs)
             resp = client.complete_stream(
                 messages, model, temperature, max_tokens, tools, callback,
                 thinking_budget=thinking_budget,

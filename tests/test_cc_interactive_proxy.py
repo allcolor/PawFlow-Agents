@@ -42,6 +42,41 @@ def test_proxy_forwards_each_received_chunk_without_rewriting(monkeypatch):
     assert dst.shutdowns == [proxy.socket.SHUT_WR]
 
 
+def test_proxy_connects_to_clear_http_upstream_without_tls(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+
+    class RawSocket:
+        def __init__(self):
+            self.timeouts = []
+            self.options = []
+
+        def settimeout(self, value):
+            self.timeouts.append(value)
+
+        def setsockopt(self, *args):
+            self.options.append(args)
+
+    raw = RawSocket()
+    wrapped = []
+
+    monkeypatch.setattr(proxy, "UPSTREAM_HOST", "localhost")
+    monkeypatch.setattr(proxy, "UPSTREAM_PORT", 11434)
+    monkeypatch.setattr(proxy, "UPSTREAM_SCHEME", "http")
+    monkeypatch.setenv("PAWFLOW_ANTHROPIC_UPSTREAM_IPS", "127.0.0.1")
+    monkeypatch.setattr(proxy.socket, "create_connection", lambda address, timeout=0: raw)
+
+    class Ctx:
+        def wrap_socket(self, *args, **kwargs):
+            wrapped.append((args, kwargs))
+            raise AssertionError("HTTP upstream must not be TLS-wrapped")
+
+    monkeypatch.setattr(proxy.ssl, "create_default_context", lambda: Ctx())
+
+    assert proxy._connect_upstream() is raw
+    assert wrapped == []
+
+
 def test_proxy_request_observer_does_not_modify_forwarded_bytes(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")

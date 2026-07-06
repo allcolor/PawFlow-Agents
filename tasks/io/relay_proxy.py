@@ -26,6 +26,11 @@ from core.base_task import BaseTask
 logger = logging.getLogger(__name__)
 
 _ROUTE_OWNER = "_relay_proxy"
+_RESPONSE_HOP_BY_HOP_HEADERS = {
+    "connection", "keep-alive", "proxy-authenticate",
+    "proxy-authorization", "te", "trailer", "transfer-encoding",
+    "upgrade", "content-length",
+}
 
 
 def _get_http_listener():
@@ -140,7 +145,10 @@ def _relay_proxy_handler(pending_req):
     def _on_chunk(kind: str, data: Any):
         if kind == "start":
             _state["status"] = int(data.get("status", 200))
-            _state["headers"] = dict(data.get("headers") or {})
+            _state["headers"] = {
+                k: v for k, v in dict(data.get("headers") or {}).items()
+                if str(k).lower() not in _RESPONSE_HOP_BY_HOP_HEADERS
+            }
             import time as _t
             _stats["t0"] = _t.monotonic()
             _started.set()

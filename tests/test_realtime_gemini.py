@@ -63,6 +63,15 @@ class TestGeminiOutbound:
         a._vad = vad
         return a
 
+    def test_proxy_base_url_preserves_port_and_path_prefix(self):
+        a = GeminiLiveAdapter("https://gemini-proxy.local:8443/proxy", "key")
+
+        assert a._url() == (
+            "wss://gemini-proxy.local:8443/proxy/"
+            "ws/google.ai.generativelanguage.v1beta."
+            "GenerativeService.BidiGenerateContent"
+        )
+
     def test_send_audio_resamples_to_16k(self):
         a = self._adapter()
         a.send_audio(b"\x00\x00" * 300)  # 300 samples @24k

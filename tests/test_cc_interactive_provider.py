@@ -1836,6 +1836,39 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     assert "--resume" not in shell
 
 
+def test_interactive_pool_passes_custom_base_url_to_tmux(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = "true"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _Run()
+
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+
+    InteractiveClaudeCodePool()._start_claude_tmux(
+        name="container",
+        container_workdir="/cc_sessions_host/u/c/a",
+        mcp_path="/cc_sessions/c/a/.mcp.json",
+        model="opus",
+        ca_path="/cc_sessions/c/a/ca.crt",
+        session_token="s",
+        event_url="wss://events",
+        event_token="e",
+        internal_token="i",
+        anthropic_base_url="https://anthropic-proxy.local:8443/proxy",
+    )
+
+    assert "ANTHROPIC_BASE_URL=https://anthropic-proxy.local:8443/proxy" in calls[0][-1]
+
+
 def test_interactive_pool_maps_cli_uid_to_host_launcher(monkeypatch):
     """The in-container CLI must run as PAWFLOW_RUN_UID/GID (the host launcher),
     not a hardcoded 1000, so projects/ + memory/ it creates are owned by the
@@ -1916,6 +1949,129 @@ def test_interactive_pool_proxy_passes_wire_log_env(monkeypatch):
     assert "PAWFLOW_CCI_PROXY_WIRE_LOG=1" in cmd
     assert "PAWFLOW_CCI_PROXY_WIRE_LOG_PATHS=/v1/messages" in cmd
     assert not any(str(part).startswith("PAWFLOW_CCI_PROXY_WIRE_LOG_ALL=") for part in cmd)
+
+
+def test_interactive_pool_proxy_uses_custom_upstream(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _Run()
+
+    pool = InteractiveClaudeCodePool()
+    monkeypatch.setattr(pool, "_resolve_upstream_ips", lambda host="", port=0: ["203.0.113.8"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+
+    pool._start_proxy(
+        name="container",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token="session-token",
+        event_url="wss://events",
+        event_token="event-token",
+        internal_token="internal-token",
+        upstream_host="anthropic-proxy.local",
+        upstream_port=8443,
+    )
+
+    cmd = calls[0]
+    assert "PAWFLOW_ANTHROPIC_UPSTREAM_HOST=anthropic-proxy.local" in cmd
+    assert "PAWFLOW_ANTHROPIC_UPSTREAM_PORT=8443" in cmd
+    assert "PAWFLOW_ANTHROPIC_UPSTREAM_SCHEME=https" in cmd
+    assert "PAWFLOW_CCI_PROXY_PORT=443" in cmd
+    assert "PAWFLOW_ANTHROPIC_UPSTREAM_IPS=203.0.113.8" in cmd
+
+
+def test_interactive_pool_http_base_url_keeps_tls_to_mitm():
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    class Client:
+        base_url = "http://localhost:11434/v1"
+
+    host, upstream_port, upstream_scheme, claude_url, listen_port = (
+        InteractiveClaudeCodePool._anthropic_endpoint(Client()))
+
+    assert host == "localhost"
+    assert upstream_port == 11434
+    assert upstream_scheme == "http"
+    assert claude_url == "https://localhost:11434/v1"
+    assert listen_port == 11434
+
+
+def test_interactive_pool_proxy_can_target_clear_http_upstream(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _Run()
+
+    pool = InteractiveClaudeCodePool()
+    monkeypatch.setattr(pool, "_resolve_upstream_ips", lambda host="", port=0: ["127.0.0.1"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+
+    pool._start_proxy(
+        name="container",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token="session-token",
+        event_url="wss://events",
+        event_token="event-token",
+        internal_token="internal-token",
+        upstream_host="localhost",
+        upstream_port=11434,
+        upstream_scheme="http",
+        listen_port=11434,
+    )
+
+    cmd = calls[0]
+    assert "PAWFLOW_ANTHROPIC_UPSTREAM_HOST=localhost" in cmd
+    assert "PAWFLOW_ANTHROPIC_UPSTREAM_PORT=11434" in cmd
+    assert "PAWFLOW_ANTHROPIC_UPSTREAM_SCHEME=http" in cmd
+    assert "PAWFLOW_CCI_PROXY_PORT=11434" in cmd
+    assert "PAWFLOW_ANTHROPIC_UPSTREAM_IPS=127.0.0.1" in cmd
+
+
+def test_interactive_pool_spawn_maps_custom_anthropic_host(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    calls = []
+
+    class _Run:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _Run()
+
+    monkeypatch.setattr("core._cci_pool_spawn.to_host_path", lambda path: path)
+    monkeypatch.setattr("core._cci_pool_spawn.translate_path", lambda path: path)
+    monkeypatch.setattr("core._cci_pool_spawn.get_server_id", lambda: "server1234567890")
+    monkeypatch.setattr("core._cci_pool_spawn.ca_private_key_is_host_only", lambda mounts: True)
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+
+    InteractiveClaudeCodePool()._spawn_container(
+        user_id="u", conversation_id="c", agent_name="a",
+        upstream_host="anthropic-proxy.local")
+
+    assert "--add-host" in calls[0]
+    assert "anthropic-proxy.local:127.0.0.1" in calls[0]
 
 
 def test_interactive_pool_finds_latest_live_session(monkeypatch):
@@ -2119,6 +2275,37 @@ def test_cci_claim_pool_slot_is_exclusive_and_errors_when_full(monkeypatch):
         assert pool._claim_pool_slot_locked("svc", "u", "c2") == 1
         with pytest.raises(LLMClientError):
             pool._claim_pool_slot_locked("svc", "u", "c3")
+
+
+def test_cci_api_key_mode_does_not_claim_oauth_slot(monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool, InteractiveContainer
+
+    pool = InteractiveClaudeCodePool()
+    monkeypatch.setattr(pool, "ensure_sweeper", lambda idle_ttl_seconds=None: None)
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+
+    def fail_claim(*_args, **_kwargs):
+        raise AssertionError("API key mode must not claim an OAuth slot")
+
+    monkeypatch.setattr(pool, "_claim_pool_slot_locked", fail_claim)
+
+    class _Client:
+        api_key = "sk-test"
+        timeout = 0
+        _agent_service = "svc"
+
+    def fake_start(_client, _model, user_id, conversation_id, agent_name, key, pool_index=-2):
+        assert pool_index == -1
+        return InteractiveContainer(
+            key=key, name="container", workdir="/w",
+            container_workdir="/cc_sessions/c/a", session_token="s",
+            event_service_id="e", internal_token="i")
+
+    monkeypatch.setattr(pool, "_start_new", fake_start)
+
+    state = pool.ensure_started(_Client(), "opus", "u", "c", "a")
+
+    assert state.svc_pool_idx == -1
 
 
 def test_cci_teardown_recovers_rotated_token_to_pool_slot(monkeypatch):

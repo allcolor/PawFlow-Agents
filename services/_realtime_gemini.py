@@ -72,15 +72,18 @@ class GeminiLiveAdapter(RealtimeAdapter):
 
     def __init__(self, base_url: str, api_key: str):
         self._api_key = api_key or ""
-        # base_url of the backing llmConnection may point at a proxy;
-        # default to the public endpoint.
-        host = _GEMINI_HOST
+        # base_url of the backing llmConnection may point at a proxy; preserve
+        # host, port, and path prefix instead of collapsing to hostname only.
+        self._scheme = "wss"
+        self._netloc = _GEMINI_HOST
+        self._base_path = ""
         if base_url:
             import urllib.parse
             parsed = urllib.parse.urlparse(
                 base_url if "//" in base_url else "https://" + base_url)
-            host = parsed.hostname or _GEMINI_HOST
-        self._host = host
+            self._scheme = "wss" if parsed.scheme in ("https", "wss", "") else "ws"
+            self._netloc = parsed.netloc or parsed.path or _GEMINI_HOST
+            self._base_path = parsed.path.rstrip("/") if parsed.netloc else ""
         self._ws = None
         self._vad = "server"
         self._activity_open = False   # manual-VAD activityStart sent
@@ -98,7 +101,7 @@ class GeminiLiveAdapter(RealtimeAdapter):
     def _url(self) -> str:
         # The key travels in the `x-goog-api-key` handshake header, NOT as
         # a query param — URLs leak (proxy logs, exception messages).
-        return f"wss://{self._host}{_BIDI_PATH}"
+        return f"{self._scheme}://{self._netloc}{self._base_path}{_BIDI_PATH}"
 
     def _send_json(self, obj: dict):
         if self._ws is None:

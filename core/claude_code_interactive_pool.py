@@ -166,7 +166,12 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             # refresh_tokens are single-use, so two concurrent containers on one
             # slot race and invalidate the loser. Reserved under the lock so a
             # concurrent ensure_started for another conversation sees it taken.
-            claimed_idx = self._claim_pool_slot_locked(
+            api_key = getattr(client, "api_key", "")
+            if callable(api_key):
+                api_key = api_key()
+            elif isinstance(api_key, property):
+                api_key = ""
+            claimed_idx = -1 if api_key else self._claim_pool_slot_locked(
                 service_id, user_id, conversation_id)
         try:
             state = self._start_new(client, model, user_id, conversation_id,

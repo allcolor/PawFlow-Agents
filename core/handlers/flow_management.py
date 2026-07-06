@@ -690,6 +690,12 @@ class FlowManagerHandler(ToolHandler):
         validation_error = self._validate_flow_definition(definition)
         if validation_error:
             return validation_error
+        new_flow_id = str(definition.get("id", "") or "")
+        if new_flow_id != flow_id:
+            return (
+                f"Error: definition id '{new_flow_id}' must match target "
+                f"flow_id '{flow_id}'"
+            )
 
         dep_reg = self._get_deployment_registry()
         inst = dep_reg.get(flow_id)

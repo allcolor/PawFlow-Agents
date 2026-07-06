@@ -651,6 +651,18 @@ class TestFlowManagerHandler(unittest.TestCase):
         saved = json.loads(Path(inst.flow_path).read_text(encoding="utf-8"))
         self.assertIn("t2", saved["tasks"])
 
+    def test_update_definition_rejects_mismatched_definition_id(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+
+        result = h.execute({
+            "action": "update_definition",
+            "flow_id": "flow1",
+            "definition": self._sample_definition(flow_id="other_flow"),
+        })
+
+        self.assertIn("must match target flow_id", result)
+
     def test_schema_exposes_logs_and_update_definition(self):
         h = self._make_handler()
         actions = h.parameters_schema["properties"]["action"]["enum"]

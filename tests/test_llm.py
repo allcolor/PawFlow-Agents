@@ -62,6 +62,24 @@ def test_non_transport_cli_exit_is_not_retryable_marker():
     assert LLMClient._is_transient_transport_error(err) is False
 
 
+def test_clone_for_call_preserves_relay_url_identity():
+    client = LLMClient(provider="openai", config={
+        "api_key": "sk-test",
+        "base_url": "http://relay1/localhost:11434/v1",
+    })
+    client._user_id = "alice"
+    client._conversation_id = "conv1"
+    client._agent_name = "assistant"
+    client._agent_service = "local_ollama_service"
+
+    clone = client.clone_for_call()
+
+    assert clone._user_id == "alice"
+    assert clone._conversation_id == "conv1"
+    assert clone._agent_name == "assistant"
+    assert clone._agent_service == "local_ollama_service"
+
+
 class TestLLMConnectionService:
 
     def test_register(self):
@@ -195,6 +213,53 @@ class TestLLMConnectionService:
         }
         assert captured["transforms"] == ["middle-out"]
         assert captured["include_reasoning"] is True
+
+    def test_openai_stream_relay_base_url_uses_call_identity(self, monkeypatch):
+        from services import http_listener_service as _hl_mod
+
+        class _Listener:
+            is_ssl = False
+            public_hostname = ""
+
+        monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
+        monkeypatch.setattr("core.relay_proxy_auth.issue_token",
+                            lambda user_id, relay_id, conv_id="": f"tok-{user_id}-{relay_id}-{conv_id}")
+        monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
+        monkeypatch.setattr("core.relay_bindings.get_default",
+                            lambda cid, agent="": "relay1")
+
+        svc = LLMConnectionService({
+            "provider": "openai",
+            "api_key": "test-key",
+            "base_url": "http://MyWorkspace/localhost:11434/v1",
+            "default_model": "glm-5.2-cloud",
+            "max_retries": 1,
+        })
+        svc.connect()
+        captured = {}
+
+        def fake_stream(client, messages, model, temperature, max_tokens, tools, callback, **kwargs):
+            captured["base_url"] = client.base_url
+            captured["user_id"] = getattr(client, "_user_id", "")
+            captured["conversation_id"] = getattr(client, "_conversation_id", "")
+            return LLMResponse(content="ok", model=model, finish_reason="stop")
+
+        monkeypatch.setattr(LLMClient, "_stream_openai", fake_stream)
+
+        resp = svc.complete_stream(
+            messages=[LLMMessage("user", "Hello", conversation_id="conv1")],
+            call_user_id="alice",
+            call_conversation_id="conv1",
+            call_agent_name="assistant",
+        )
+
+        assert resp.content == "ok"
+        assert captured["user_id"] == "alice"
+        assert captured["conversation_id"] == "conv1"
+        assert captured["base_url"].startswith(
+            "http://10.0.0.2:9090/relay-proxy/")
+        assert "tok-alice-" in captured["base_url"]
+        assert "-conv1/localhost:11434/v1" in captured["base_url"]
 
     def test_llm_service_rules_hide_cli_fields_for_api_providers(self):
         rules = LLMConnectionService({}).get_parameter_rules()

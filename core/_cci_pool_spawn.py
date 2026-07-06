@@ -20,6 +20,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from core.cc_interactive_certs import generate_leaf, ca_private_key_is_host_only
 from core.docker_utils import get_host_ip, get_server_id, to_host_path, translate_path
@@ -78,6 +79,39 @@ class InteractiveContainer:
 class _InteractiveContainerSpawnMixin:
     """Container build/start machinery for InteractiveClaudeCodePool."""
 
+    @staticmethod
+    def _anthropic_base_url(client) -> str:
+        base_url = getattr(client, "base_url", "")
+        if callable(base_url):
+            base_url = base_url()
+        elif isinstance(base_url, property):
+            base_url = ""
+        return str(base_url or "").strip().rstrip("/")
+
+    @classmethod
+    def _anthropic_endpoint(cls, client) -> tuple[str, int, str, str, int]:
+        base_url = cls._anthropic_base_url(client)
+        if not base_url:
+            return "api.anthropic.com", 443, "https", "", 443
+        parsed = urlparse(base_url if "//" in base_url else "https://" + base_url)
+        scheme = (parsed.scheme or "https").lower()
+        if scheme not in ("http", "https", "ws", "wss"):
+            raise ValueError(
+                "claude-code-interactive MITM requires an HTTP(S) base_url; "
+                f"got {base_url!r}")
+        host = parsed.hostname or "api.anthropic.com"
+        upstream_port = parsed.port or (443 if scheme in ("https", "wss") else 80)
+        listen_port = upstream_port
+        netloc = parsed.netloc or host
+        if scheme in ("http", "ws"):
+            if parsed.port:
+                netloc = f"{host}:{parsed.port}"
+            else:
+                netloc = host
+        normalized = f"https://{netloc}{(parsed.path or '').rstrip('/')}"
+        upstream_scheme = "https" if scheme in ("https", "wss") else "http"
+        return host, upstream_port, upstream_scheme, normalized.rstrip("/"), listen_port
+
     def _start_new(self, client, model: str, user_id: str, conversation_id: str,
                    agent_name: str, key: tuple[str, str, str, str],
                    pool_index: int = -1) -> InteractiveContainer:
@@ -91,7 +125,13 @@ class _InteractiveContainerSpawnMixin:
                                    user_id=user_id, conversation_id=conversation_id)
         mcp_path, internal_token = client._setup_mcp_config(workdir, user_id, conversation_id, agent_name)
         cert_dir = Path(workdir) / ".pawflow_cci" / "certs"
-        generate_leaf(cert_dir)  # writes leaf cert/key + CA into cert_dir (side effect)
+        (upstream_host, upstream_port, upstream_scheme,
+         anthropic_base_url, listen_port) = self._anthropic_endpoint(client)
+        generate_leaf(
+            cert_dir,
+            common_name=upstream_host,
+            extra_dns=(() if upstream_host == "api.anthropic.com" else ("api.anthropic.com",)),
+        )  # writes leaf cert/key + CA into cert_dir (side effect)
 
         event_url, event_token, event_service = get_or_create_cc_interactive_event_service()
         host_ip = get_host_ip()
@@ -106,7 +146,7 @@ class _InteractiveContainerSpawnMixin:
 
         name = self._spawn_container(
             user_id=user_id, conversation_id=conversation_id,
-            agent_name=agent_name)
+            agent_name=agent_name, upstream_host=upstream_host)
         physical_container_workdir = self._physical_container_workdir(
             user_id, conversation_id, agent_name)
         container_workdir = self._container_workdir(user_id, conversation_id, agent_name)
@@ -134,6 +174,10 @@ class _InteractiveContainerSpawnMixin:
                 event_url=event_url,
                 event_token=event_token,
                 internal_token=internal_token,
+                upstream_host=upstream_host,
+                upstream_port=upstream_port,
+                upstream_scheme=upstream_scheme,
+                listen_port=listen_port,
             )
             state.proxy_started = True
             self._start_claude_tmux(
@@ -147,6 +191,7 @@ class _InteractiveContainerSpawnMixin:
                 event_url=event_url,
                 event_token=event_token,
                 internal_token=internal_token,
+                anthropic_base_url=anthropic_base_url,
             )
             state.claude_started = True
         except Exception:
@@ -155,7 +200,7 @@ class _InteractiveContainerSpawnMixin:
         return state
 
     def _spawn_container(self, *, user_id: str = "", conversation_id: str = "",
-                         agent_name: str = "") -> str:
+                         agent_name: str = "", upstream_host: str = "api.anthropic.com") -> str:
         _paths.CLAUDE_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         project_root = Path(__file__).resolve().parents[1]
         sessions_host = translate_path(to_host_path(str(_paths.CLAUDE_SESSIONS_DIR.resolve())))
@@ -189,7 +234,7 @@ class _InteractiveContainerSpawnMixin:
         run_args = [
             "-d", "--rm", "--name", name, "--init",
             *mounts,
-            "--add-host", "api.anthropic.com:127.0.0.1",
+            "--add-host", f"{upstream_host or 'api.anthropic.com'}:127.0.0.1",
             "--add-host", "host.docker.internal:host-gateway",
             "--cap-add", "SYS_ADMIN",
             *apparmor_security_opts(image),
@@ -244,14 +289,21 @@ class _InteractiveContainerSpawnMixin:
 
     def _start_proxy(self, *, name: str, container_workdir: str,
                      session_token: str, event_url: str, event_token: str,
-                     internal_token: str) -> None:
-        ips = self._resolve_upstream_ips()
+                     internal_token: str, upstream_host: str = "api.anthropic.com",
+                     upstream_port: int = 443, upstream_scheme: str = "https",
+                     listen_port: int = 443) -> None:
+        ips = self._resolve_upstream_ips(upstream_host, upstream_port)
+        upstream_scheme = "http" if str(upstream_scheme).lower() in {"http", "ws"} else "https"
         env = [
             "-e", f"PAWFLOW_CCI_SESSION_TOKEN={session_token}",
             "-e", f"PAWFLOW_CCI_EVENT_URL={event_url}",
             "-e", f"PAWFLOW_CCI_EVENT_TOKEN={event_token}",
             "-e", f"PAWFLOW_INTERNAL_TOKEN={internal_token}",
+            "-e", f"PAWFLOW_ANTHROPIC_UPSTREAM_HOST={upstream_host or 'api.anthropic.com'}",
+            "-e", f"PAWFLOW_ANTHROPIC_UPSTREAM_PORT={int(upstream_port or 443)}",
+            "-e", f"PAWFLOW_ANTHROPIC_UPSTREAM_SCHEME={upstream_scheme}",
             "-e", f"PAWFLOW_ANTHROPIC_UPSTREAM_IPS={','.join(ips)}",
+            "-e", f"PAWFLOW_CCI_PROXY_PORT={int(listen_port or 443)}",
             "-e", f"PAWFLOW_CCI_LEAF_CERT={container_workdir}/.pawflow_cci/certs/api-anthropic.crt",
             "-e", f"PAWFLOW_CCI_LEAF_KEY={container_workdir}/.pawflow_cci/certs/api-anthropic.key",
         ]
@@ -364,7 +416,8 @@ class _InteractiveContainerSpawnMixin:
                            mcp_path: str, model: str, effort: str = "",
                            ca_path: str,
                            session_token: str, event_url: str,
-                           event_token: str, internal_token: str) -> None:
+                           event_token: str, internal_token: str,
+                           anthropic_base_url: str = "") -> None:
         parts = container_workdir.lstrip("/").split("/")
         if len(parts) < 3 or parts[0] != "cc_sessions_host":
             raise ValueError(
@@ -392,6 +445,9 @@ class _InteractiveContainerSpawnMixin:
         quoted = " ".join(shlex.quote(a) for a in args)
         drop_privs = (f"setpriv --reuid={self.run_uid} --regid={self.run_gid} "
                       "--clear-groups --")
+        endpoint_env = (
+            f"ANTHROPIC_BASE_URL={shlex.quote(anthropic_base_url)} "
+            if anthropic_base_url else "")
         shell = (
             "mkdir -p /cc_sessions && "
             f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
@@ -415,6 +471,7 @@ class _InteractiveContainerSpawnMixin:
             f"PAWFLOW_CCI_EVENT_TOKEN={shlex.quote(event_token)} "
             f"PAWFLOW_INTERNAL_TOKEN={shlex.quote(internal_token)} "
             f"PAWFLOW_CCI_INJECTED_PROMPTS={shlex.quote(ns_workdir + '/.pawflow_cci/injected_prompts.jsonl')} "
+            f"{endpoint_env}"
             "CLAUDE_CODE_CERT_STORE=system TERM=xterm-256color "
             f"{quoted}'; "
             # Pin the window size so a webchat tmux viewer attaching/detaching
@@ -445,8 +502,8 @@ class _InteractiveContainerSpawnMixin:
                 f"{(probe.stderr or probe.stdout or '').strip()[:500]}")
 
     @staticmethod
-    def _resolve_upstream_ips() -> list[str]:
-        infos = socket.getaddrinfo("api.anthropic.com", 443, type=socket.SOCK_STREAM)
+    def _resolve_upstream_ips(host: str = "api.anthropic.com", port: int = 443) -> list[str]:
+        infos = socket.getaddrinfo(host or "api.anthropic.com", int(port or 443), type=socket.SOCK_STREAM)
         seen = []
         for info in infos:
             ip = info[4][0]

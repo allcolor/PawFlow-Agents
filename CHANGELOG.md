@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.8] — 2026-07-06
+
+### Fixed
+
+- `/relay-proxy/...` can now be reached through a public HTTP listener when the
+  URL carries a valid ephemeral relay token. This fixes relay-routed local LLM
+  calls returning `403 Forbidden` when the generated proxy URL uses the public
+  listener hostname.
+- Token counting no longer fails at import time when `tiktoken` cannot download
+  its `cl100k_base` BPE file in CI or offline environments; PawFlow falls back
+  to a deterministic local estimate.
+
 ## [1.0.0-beta.7] — 2026-07-06
 
 ### Added

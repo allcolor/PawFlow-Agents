@@ -244,6 +244,7 @@ class TestLLMConnectionService:
             "provider": "openai",
             "api_key": "test-key",
             "base_url": "http://MyWorkspace/localhost:11434/v1",
+            "relay_local": True,
             "default_model": "glm-5.2-cloud",
             "max_retries": 1,
         })
@@ -271,7 +272,7 @@ class TestLLMConnectionService:
         assert captured["base_url"].startswith(
             "http://10.0.0.2:9090/relay-proxy/")
         assert "tok-alice-" in captured["base_url"]
-        assert "-conv1/localhost:11434/v1" in captured["base_url"]
+        assert "-conv1/l/localhost:11434/v1" in captured["base_url"]
 
     def test_llm_service_rules_hide_cli_fields_for_api_providers(self):
         rules = LLMConnectionService({}).get_parameter_rules()
@@ -282,6 +283,7 @@ class TestLLMConnectionService:
         assert api_rule["set"]["docker_memory_limit"]["visible"] is False
         assert api_rule["set"]["effort"]["visible"] is False
         assert api_rule["set"]["extra_body"]["visible"] is False
+        assert api_rule["set"]["relay_local"]["visible"] is True
 
         openai_rule = next(r for r in rules if r["when"] == {"provider": ["openai"]})
         assert openai_rule["set"]["extra_body"]["visible"] is True

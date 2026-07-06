@@ -318,6 +318,12 @@ route creation path. The URL scheme is the protocol used by the relay to reach
 the target service; the protocol used to enter PawFlow's `/relay-proxy/...`
 listener comes from the HTTP listener configuration.
 
+For `llmConnection` services, `relay_local=true` makes relay-routed `base_url`
+requests execute through the relay host helper. Use this for endpoints such as
+Ollama on `http://localhost:11434/v1` when the relay itself runs in Docker. Set
+`relay_local=false` only when the target HTTP service runs inside the relay
+container network namespace.
+
 `voxcpmTTS` is an external VoxCPM client. PawFlow does not install, start, or
 stop VoxCPM; the user runs their own VoxCPM runtime on the PawFlow server or on
 a relay machine. The default `api_mode=openai` calls vLLM-Omni's

@@ -496,7 +496,8 @@ class _RelayFsOpsMixin:
 
     def http_fetch_stream(self, url: str, method: str = "GET",
                            headers: dict = None, body: bytes = b"",
-                           timeout: int = 300, on_output=None):
+                           timeout: int = 300, local: bool = True,
+                           on_output=None):
         """Fetch an HTTP URL through the relay with streaming response.
 
         on_output(kind, data) is called with kind in {"start", "chunk", "end"}.
@@ -512,7 +513,7 @@ class _RelayFsOpsMixin:
         return self._request_stream(
             "http_fetch", ".",
             on_output=on_output,
-            local=True,
+            local=local,
             url=url,
             method=method,
             headers=headers or {},

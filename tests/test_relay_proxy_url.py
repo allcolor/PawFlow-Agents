@@ -38,6 +38,22 @@ def test_transform_standard_relay_proxy_url(monkeypatch):
     assert url == "http://10.0.0.2:9090/relay-proxy/relay_a/tok/s/localhost:9443/v1?q=1"
 
 
+def test_transform_relay_proxy_url_with_local_mode(monkeypatch):
+    monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
+    monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
+
+    local_url = maybe_transform_relay_proxy_url(
+        "http://relay_a/localhost:11434/v1", user_id="alice",
+        relay_local=True)
+    container_url = maybe_transform_relay_proxy_url(
+        "http://relay_a/localhost:11434/v1", user_id="alice",
+        relay_local=False)
+
+    assert local_url == "http://10.0.0.2:9090/relay-proxy/relay_a/tok/l/localhost:11434/v1"
+    assert container_url == "http://10.0.0.2:9090/relay-proxy/relay_a/tok/c/localhost:11434/v1"
+
+
 def test_relay_shaped_url_validates_without_runtime_context():
     url = resolve_relay_aware_url(
         "http://${conv.relay}/localhost:7788",

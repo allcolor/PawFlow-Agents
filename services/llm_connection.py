@@ -387,6 +387,15 @@ class LLMConnectionService(BaseService):
                 "type": "string", "default": "",
                 "description": "Base URL (override for self-hosted/compatible APIs)",
             },
+            "relay_local": {
+                "type": "boolean", "default": True,
+                "description": (
+                    "For relay-routed base_url values, execute HTTP requests "
+                    "on the relay host helper instead of inside the relay "
+                    "Docker container. Disable only when the target service "
+                    "runs in the relay container namespace."
+                ),
+            },
             "default_model": {
                 "type": "string", "default": "",
                 "description": "Default model name",
@@ -548,6 +557,7 @@ class LLMConnectionService(BaseService):
                     "api_key":       {"visible": True, "required": True},
                     "credential_service_id": {"visible": False},
                     "base_url":      {"visible": True},
+                    "relay_local":   {"visible": True},
                     "max_retries":   {"visible": True},
                     "fallback_model": {"visible": True},
                     "supports_vision": {"visible": True},
@@ -570,6 +580,7 @@ class LLMConnectionService(BaseService):
                     "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth credential service)"},
                     "credential_service_id": {"visible": True},
                     "base_url":      {"visible": True, "description": "Anthropic-compatible endpoint (empty = api.anthropic.com)"},
+                    "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "supports_vision": {"visible": False},
@@ -588,6 +599,7 @@ class LLMConnectionService(BaseService):
                     "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth credential service)"},
                     "credential_service_id": {"visible": True},
                     "base_url":      {"visible": True, "description": "Anthropic-compatible endpoint for API-key mode (empty = provider default)"},
+                    "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "supports_vision": {"visible": False},
@@ -606,6 +618,7 @@ class LLMConnectionService(BaseService):
                     "api_key":       {"visible": True, "description": "Google AI Studio key (empty = Gemini OAuth credential service)"},
                     "credential_service_id": {"visible": True},
                     "base_url":      {"visible": True, "description": "Gemini-compatible endpoint for API-key mode (empty = provider default)"},
+                    "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "supports_vision": {"visible": False},
@@ -624,6 +637,7 @@ class LLMConnectionService(BaseService):
                     "api_key":       {"visible": True, "description": "OpenAI API key (empty = OAuth credential service)"},
                     "credential_service_id": {"visible": True},
                     "base_url":      {"visible": True, "description": "OpenAI-compatible endpoint for API-key mode (empty = provider default)"},
+                    "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "supports_vision": {"visible": False},
@@ -642,6 +656,7 @@ class LLMConnectionService(BaseService):
                     "api_key":       {"visible": True, "description": "Google AI Studio key (empty = OAuth credential service)"},
                     "credential_service_id": {"visible": True},
                     "base_url":      {"visible": True, "description": "Gemini-compatible endpoint for API-key mode (empty = provider default)"},
+                    "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "supports_vision": {"visible": False},

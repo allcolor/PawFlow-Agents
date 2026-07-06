@@ -32,6 +32,7 @@ class RelayProxyUrl:
     target_port: int
     target_path: str
     query: str = ""
+    relay_local: Optional[bool] = None
 
 
 def _service_error(message: str):
@@ -125,11 +126,12 @@ def _format_target_hostport(target_host: str, target_port: int) -> str:
 
 
 def maybe_transform_relay_proxy_url(url: str, user_id: str = "",
-                                    conv_id: str = "") -> Optional[str]:
+                                    conv_id: str = "",
+                                    relay_local: Optional[bool] = None) -> Optional[str]:
     """Return a PawFlow relay-proxy URL, or None when `url` is not proxy-shaped.
 
     Input format:  http(s)://<relay_id>/<host>:<port>/path
-    Output format: <pawflow>/relay-proxy/<relay_id>/<token>/[s/]<host>:<port>/path
+    Output format: <pawflow>/relay-proxy/<relay_id>/<token>/[l|c/][s/]<host>:<port>/path
     """
     try:
         parts = parse_relay_proxy_url(url)
@@ -179,8 +181,10 @@ def maybe_transform_relay_proxy_url(url: str, user_id: str = "",
     else:
         _host = get_host_ip()
     _target = _format_target_hostport(parts.target_host, parts.target_port)
+    _local = parts.relay_local if relay_local is None else bool(relay_local)
+    _local_prefix = "" if _local is None else ("l/" if _local else "c/")
     _s_prefix = "s/" if parts.target_scheme == "https" else ""
-    _url = f"{_scheme}://{_host}:{_port}/relay-proxy/{parts.relay_id}/{_token}/{_s_prefix}{_target}{parts.target_path}"
+    _url = f"{_scheme}://{_host}:{_port}/relay-proxy/{parts.relay_id}/{_token}/{_local_prefix}{_s_prefix}{_target}{parts.target_path}"
     if parts.query:
         _url += "?" + parts.query
     return _url

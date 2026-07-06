@@ -26,7 +26,10 @@ class _Pending:
 
 
 class _Relay:
-    def http_fetch_stream(self, *, url, method, headers, body, on_output):
+    calls = []
+
+    def http_fetch_stream(self, *, url, method, headers, body, local, on_output):
+        self.calls.append({"url": url, "local": local})
         assert url == "http://localhost:11434/v1/chat/completions"
         assert method == "POST"
         on_output("start", {
@@ -47,8 +50,10 @@ def test_relay_proxy_stream_drops_backend_hop_by_hop_headers(monkeypatch):
     monkeypatch.setattr("core.relay_proxy_auth.lookup_token",
                         lambda token: ("alice", "relay1", "conv1"))
     monkeypatch.setattr("core.relay_proxy_auth.is_private_ip", lambda ip: True)
+    relay = _Relay()
+    relay.calls = []
     monkeypatch.setattr(relay_proxy, "_resolve_relay_service",
-                        lambda user_id, relay_id, conv_id="": _Relay())
+                        lambda user_id, relay_id, conv_id="": relay)
 
     pending = _Pending()
     relay_proxy._relay_proxy_handler(pending)
@@ -58,3 +63,27 @@ def test_relay_proxy_stream_drops_backend_hop_by_hop_headers(monkeypatch):
     assert status == 200
     assert headers == {"Content-Type": "text/event-stream", "X-Model": "local"}
     assert chunks == [b"data: ok\n\n"]
+    assert relay.calls == [{
+        "url": "http://localhost:11434/v1/chat/completions",
+        "local": True,
+    }]
+
+
+def test_relay_proxy_container_prefix_disables_local_fetch(monkeypatch):
+    monkeypatch.setattr("core.relay_proxy_auth.lookup_token",
+                        lambda token: ("alice", "relay1", "conv1"))
+    monkeypatch.setattr("core.relay_proxy_auth.is_private_ip", lambda ip: True)
+    relay = _Relay()
+    relay.calls = []
+    monkeypatch.setattr(relay_proxy, "_resolve_relay_service",
+                        lambda user_id, relay_id, conv_id="": relay)
+
+    pending = _Pending()
+    pending.path_params = dict(pending.path_params)
+    pending.path_params["rest"] = "c/localhost:11434/v1/chat/completions"
+    relay_proxy._relay_proxy_handler(pending)
+
+    assert relay.calls == [{
+        "url": "http://localhost:11434/v1/chat/completions",
+        "local": False,
+    }]

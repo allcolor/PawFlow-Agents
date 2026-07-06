@@ -53,7 +53,7 @@ def _resolve_relay_service(user_id: str, relay_id: str, conv_id: str = ""):
 
 
 def _relay_proxy_handler(pending_req):
-    """Handle /relay-proxy/<relay_id>/<token>/[s/]<host>:<port>/<path>."""
+    """Handle /relay-proxy/<relay_id>/<token>/[l|c/][s/]<host>:<port>/<path>."""
     from core.relay_proxy_auth import lookup_token, is_private_ip
 
     relay_id = pending_req.path_params.get("relay_id", "")
@@ -88,11 +88,24 @@ def _relay_proxy_handler(pending_req):
                              b'{"error":"Token does not match relay"}')
         return
 
-    # Parse target from rest: [s/]host:port/path
+    # Parse target from rest: [l|c/][s/]host:port/path. Older generated URLs
+    # omitted l/c and used the host helper by default, so keep local=True.
+    target_local = True
     target_scheme = "http"
-    if rest.startswith("s/"):
-        target_scheme = "https"
-        rest = rest[2:]
+    while True:
+        if rest.startswith("l/"):
+            target_local = True
+            rest = rest[2:]
+            continue
+        if rest.startswith("c/"):
+            target_local = False
+            rest = rest[2:]
+            continue
+        if rest.startswith("s/"):
+            target_scheme = "https"
+            rest = rest[2:]
+            continue
+        break
     # First segment is host:port, remainder is the path to forward
     if "/" in rest:
         target_hostport, _, target_path = rest.partition("/")
@@ -124,8 +137,9 @@ def _relay_proxy_handler(pending_req):
     # in-flight request).
     _log_tag = f"relay-proxy[{token[:8]}]"
     logger.debug(
-        "%s IN %s → target=%s body=%dB",
-        _log_tag, method, target_url, len(pending_req.body or b""))
+        "%s IN %s → target=%s local=%s body=%dB",
+        _log_tag, method, target_url, target_local,
+        len(pending_req.body or b""))
 
     # Forward headers (minus hop-by-hop and Host)
     _drop = {"host", "connection", "content-length", "transfer-encoding",
@@ -184,6 +198,7 @@ def _relay_proxy_handler(pending_req):
             svc.http_fetch_stream(
                 url=target_url, method=method,
                 headers=fwd_headers, body=pending_req.body,
+                local=target_local,
                 on_output=_on_chunk,
             )
         except Exception as e:

@@ -45,7 +45,7 @@ class OpenAIImageService(BaseImageGenerationService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "https://api.openai.com/v1",
-                "description": "API base URL. Use http://${conv.relay}/host:port/v1 for relay-routed compatible endpoints.",
+                "description": "API base URL. Use relay://$" "{conv.relay}/host:port/v1 for relay-routed compatible endpoints.",
             },
             "allow_private_base_url": {
                 "type": "boolean", "required": False, "default": False,

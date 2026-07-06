@@ -150,7 +150,7 @@ class LLMConnectionService(BaseService):
         """Attach per-call identity to an isolated client clone.
 
         LLMClient.base_url resolves relay-aware templates such as
-        ``http://MyWorkspace/localhost:11434/v1`` from instance fields. The
+        ``relay://fs_user_relay/localhost:11434/v1`` from instance fields. The
         service creates a fresh clone per call, so the clone must receive the
         same identity that is also passed as ``call_*`` kwargs to providers.
         """

@@ -68,7 +68,7 @@ def test_voxcpm_schema_defaults_to_vllm_openai_mode():
     schema = svc.get_parameter_schema()
 
     assert schema["api_mode"]["default"] == "openai"
-    assert schema["base_url"]["default"] == "http://${conv.relay}/localhost:8000"
+    assert schema["base_url"]["default"] == "relay://$" "{conv.relay}/localhost:8000"
     assert svc.SUPPORTS_NATIVE_TTS_VOICES is True
 
 

@@ -205,11 +205,11 @@ receive the original `webm`/`ogg`/Opus payload instead of a pre-converted WAV.
 `openaiCompatibleSTT` is the generic HTTP transcription provider for OpenAI-style
 `POST /audio/transcriptions` endpoints. It supports OpenAI, Groq, local
 whisper.cpp/OpenAI-compatible servers, and relay-routed local URLs such as
-`http://${conv.relay}/localhost:1234/v1`. `api_key` is optional so trusted local
+`relay://&#36;{conv.relay}/localhost:1234/v1`. `api_key` is optional so trusted local
 or relay endpoints can be used without bearer authentication. Direct private,
 loopback, link-local, multicast, reserved, or unresolved DNS targets are blocked
 by default to avoid server-side request forgery from service configuration. Use
-the `${conv.relay}` URL form for local relay endpoints; set
+the `relay://&#36;{conv.relay}` URL form for local relay endpoints; set
 `allow_private_base_url=true` only when the endpoint is trusted and must be
 reached directly from the PawFlow server.
 
@@ -308,14 +308,15 @@ extra safeguard, if a generate POST returns an error status synchronously
 (invalid input URL, unsupported format, ...), the error is surfaced immediately
 instead of blocking on a callback the provider will never send.
 
-Relay-aware provider URLs use one standard shape everywhere:
-`http(s)://<relay_id>/<host>:<port>/<path>`. The first path segment containing
-`host:port` marks the URL as a PawFlow relay URL. `${conv.relay}` is only the
-standard expression shortcut for the conversation default relay, so
-`http://${conv.relay}/localhost:7788` and
-`http://fs_quentin.anciaux_f4a302e1/localhost:7788` follow the same parser and
-route creation path. The URL scheme is the protocol used by the relay to reach
-the target service; the protocol used to enter PawFlow's `/relay-proxy/...`
+Relay-aware provider URLs use one standard native shape everywhere:
+`relay://<relay_id>/<host>:<port>/<path>` for HTTP targets and
+`relays://<relay_id>/<host>:<port>/<path>` for HTTPS targets. Legacy
+`http(s)://<relay_id>/<host>:<port>/<path>` URLs are still accepted. The first
+path segment containing `host:port` marks the URL as a PawFlow relay URL.
+`&#36;{conv.relay}` is only the standard expression shortcut for the conversation
+default relay, so `relay://&#36;{conv.relay}/localhost:7788` and
+`relay://fs_quentin.anciaux_f4a302e1/localhost:7788` follow the same parser and
+route creation path. The protocol used to enter PawFlow's `/relay-proxy/...`
 listener comes from the HTTP listener configuration.
 
 For `llmConnection` services, `relay_local=true` makes relay-routed `base_url`

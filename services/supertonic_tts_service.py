@@ -65,7 +65,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "http://127.0.0.1:7788",
-                "description": "Supertonic server base URL. Use http://${conv.relay}/localhost:7788 for a relay-routed user endpoint.",
+                "description": "Supertonic server base URL. Use relay://$" "{conv.relay}/localhost:7788 for a relay-routed user endpoint.",
             },
             "allow_private_base_url": {
                 "type": "boolean", "required": False, "default": False,

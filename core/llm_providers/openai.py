@@ -61,8 +61,9 @@ class LLMOpenaiMixin:
         _re = self.reasoning_effort or None
         if _re:
             body["reasoning_effort"] = _re
+        base_url = self.base_url
         if max_tokens > 0:
-            tokens_key = self._openai_tokens_key(model, self.base_url)
+            tokens_key = self._openai_tokens_key(model, base_url)
             body[tokens_key] = max_tokens
         if tools:
             body["tools"] = [
@@ -78,19 +79,19 @@ class LLMOpenaiMixin:
             body["prompt_cache_retention"] = _pcr
         # Request streaming usage stats (OpenAI official API only —
         # local servers may not support stream_options)
-        if not self.base_url or "api.openai.com" in self.base_url:
+        if not base_url or "api.openai.com" in base_url:
             body["stream_options"] = {"include_usage": True}
         extra_body = self.extra_body
         if extra_body:
             body.update(extra_body)
 
-        parsed = urlparse(self.base_url)
+        parsed = urlparse(base_url)
         host = parsed.hostname
         port = parsed.port
         full_path = (
-            parsed.path.rstrip("/") + self._chat_completions_endpoint(self.base_url)
+            parsed.path.rstrip("/") + self._chat_completions_endpoint(base_url)
         ).replace("//", "/")
-        safe_base_url = re.sub(r"(/relay-proxy/[^/]+/)[^/]+/", r"\1<token>/", self.base_url or "")
+        safe_base_url = re.sub(r"(/relay-proxy/[^/]+/)[^/]+/", r"\1<token>/", base_url or "")
 
         if parsed.scheme == "https":
             ctx = ssl.create_default_context()
@@ -543,8 +544,9 @@ class LLMOpenaiMixin:
         _re = self.reasoning_effort or None
         if _re:
             body["reasoning_effort"] = _re
+        base_url = self.base_url
         if max_tokens > 0:
-            tokens_key = self._openai_tokens_key(model, self.base_url)
+            tokens_key = self._openai_tokens_key(model, base_url)
             body[tokens_key] = max_tokens
         if response_format == "json":
             body["response_format"] = {"type": "json_object"}
@@ -572,8 +574,9 @@ class LLMOpenaiMixin:
             body.update(extra_body)
 
         try:
+            self._http_post_base_url = base_url
             data = self._http_post(
-                self._chat_completions_endpoint(self.base_url),
+                self._chat_completions_endpoint(base_url),
                 body,
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             )
@@ -588,10 +591,12 @@ class LLMOpenaiMixin:
                 conversation_id=call_conversation_id,
                 allow_vision=False)
             data = self._http_post(
-                self._chat_completions_endpoint(self.base_url),
+                self._chat_completions_endpoint(base_url),
                 body,
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             )
+        finally:
+            self._http_post_base_url = ""
         choice = data.get("choices", [{}])[0]
         usage = data.get("usage", {})
         message = choice.get("message", {})

@@ -121,6 +121,71 @@ def test_openai_relay_stream_broken_pipe_falls_back_to_non_stream(monkeypatch):
     assert chunks == ["fallback ok"]
 
 
+def test_openai_stream_resolves_relay_base_url_once(monkeypatch):
+    from services import http_listener_service as _hl_mod
+
+    class _Listener:
+        is_ssl = False
+        public_hostname = ""
+
+    class _Response:
+        status = 200
+        reason = "OK"
+
+        def __init__(self):
+            self._chunks = [b"data: [DONE]\n\n", b""]
+
+        def read(self, _size):
+            return self._chunks.pop(0)
+
+    class _Connection:
+        requests = []
+
+        def __init__(self, host, port=None, timeout=None):
+            self.host = host
+            self.port = port
+            self.timeout = timeout
+
+        def request(self, method, path, body=None, headers=None):
+            self.requests.append((method, path, body, headers))
+
+        def getresponse(self):
+            return _Response()
+
+        def close(self):
+            pass
+
+    issued = []
+
+    def issue_token(user_id, relay_id, conv_id=""):
+        issued.append((user_id, relay_id, conv_id))
+        return f"tok{len(issued)}"
+
+    monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", issue_token)
+    monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
+    monkeypatch.setattr("core.llm_providers.openai.http.client.HTTPConnection", _Connection)
+
+    client = LLMClient(provider="openai", config={
+        "api_key": "sk-test",
+        "base_url": "http://relay1/localhost:11434/v1",
+        "relay_local": True,
+        "default_model": "glm-5.2:cloud",
+        "max_retries": 1,
+    })
+
+    resp = client.complete_stream(
+        [LLMMessage("user", "ping", conversation_id="conv1")],
+        max_tokens=10,
+        call_user_id="allcolor",
+        call_conversation_id="conv1",
+    )
+
+    assert resp.finish_reason == ""
+    assert issued == [("allcolor", "relay1", "conv1")]
+    assert "/relay-proxy/relay1/tok1/l/localhost:11434/v1/chat/completions" in _Connection.requests[0][1]
+
+
 class TestLLMConnectionService:
 
     def test_register(self):
@@ -272,7 +337,7 @@ class TestLLMConnectionService:
         svc = LLMConnectionService({
             "provider": "openai",
             "api_key": "test-key",
-            "base_url": "http://MyWorkspace/localhost:11434/v1",
+            "base_url": "relay://MyWorkspace/localhost:11434/v1",
             "relay_local": True,
             "default_model": "glm-5.2-cloud",
             "max_retries": 1,

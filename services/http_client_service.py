@@ -83,7 +83,7 @@ class HTTPClientService(BaseService):
         return {
             'base_url': {
                 'type': 'string', 'required': False, 'default': '',
-                'description': 'Base URL for requests. Relay URLs use http://${conv.relay}/host:port/path.',
+                'description': 'Base URL for requests. Relay URLs use relay://$' '{conv.relay}/host:port/path.',
             },
             'allow_private_base_url': {
                 'type': 'boolean', 'required': False, 'default': True,

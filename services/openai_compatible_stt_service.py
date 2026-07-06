@@ -63,20 +63,22 @@ class OpenAICompatibleSTTService(BaseSTTService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "https://api.openai.com/v1",
-                "description": "OpenAI-compatible API base URL, e.g. http://${conv.relay}/localhost:1234/v1.",
+                "description": "OpenAI-compatible API base URL, e.g. relay://$" "{conv.relay}/localhost:1234/v1.",
             },
-            "api_key": {
-                "type": "string", "required": False, "sensitive": True,
-                "description": "Bearer token. Leave empty for trusted local/relay endpoints.",
+            "model": {
+                "type": "string",
+                "default": "whisper-1",
+                "description": "Transcription model name",
             },
             "protocol": {
-                "type": "select", "required": False, "default": "auto",
-                "options": ["auto", "openai_multipart", "openrouter_json"],
+                "type": "string",
+                "default": "auto",
                 "description": "Request protocol. auto uses OpenRouter JSON when base_url points to openrouter.ai; otherwise OpenAI multipart.",
             },
             "allow_private_base_url": {
-                "type": "boolean", "required": False, "default": False,
-                "description": "Allow direct private/loopback base_url targets. Prefer http://${conv.relay}/host:port for local relay endpoints.",
+                "type": "boolean",
+                "default": False,
+                "description": "Allow direct private/loopback base_url targets. Prefer relay://$" "{conv.relay}/host:port for local relay endpoints.",
             },
             "model": {
                 "type": "string", "required": False,

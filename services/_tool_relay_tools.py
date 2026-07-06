@@ -91,7 +91,8 @@ class _ToolRelayToolsMixin:
                             continue
                         try:
                             from core.relay_proxy_url import maybe_transform_relay_proxy_url
-                            url = maybe_transform_relay_proxy_url(url, user_id=user_id) or url
+                            url = maybe_transform_relay_proxy_url(
+                                url, user_id=user_id, conv_id=conversation_id) or url
                         except Exception:
                             logger.debug("mcp relay-proxy URL transform failed", exc_info=True)
                         from core.tool_registry import discover_mcp_tools
@@ -114,6 +115,7 @@ class _ToolRelayToolsMixin:
                             local=bool(mcp_def.get("local")),
                             raw_url=mcp_def.get("url", ""),
                             user_id=user_id,
+                            conversation_id=conversation_id,
                         )
                         registry.register(h)
                     if disc_tools:

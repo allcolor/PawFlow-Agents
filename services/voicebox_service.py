@@ -74,7 +74,7 @@ class VoiceboxService(_VoiceboxBackendMixin, BaseVoiceCloneService, BaseSTTServi
             "base_url": {
                 "type": "string", "required": False,
                 "default": "http://127.0.0.1:17493",
-                "description": "Voicebox HTTP API base URL. Use http://${conv.relay}/localhost:17493 for a relay-routed user endpoint.",
+                "description": "Voicebox HTTP API base URL. Use relay://$" "{conv.relay}/localhost:17493 for a relay-routed user endpoint.",
             },
             "allow_private_base_url": {
                 "type": "boolean", "required": False, "default": False,

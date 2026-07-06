@@ -67,8 +67,8 @@ class VoxCPMTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
             },
             "base_url": {
                 "type": "string", "required": False,
-                "default": "http://${conv.relay}/localhost:8000",
-                "description": "VoxCPM HTTP server URL. Use http://${conv.relay}/localhost:8000 for vLLM-Omni.",
+                "default": "relay://$" "{conv.relay}/localhost:8000",
+                "description": "VoxCPM HTTP server URL. Use relay://$" "{conv.relay}/localhost:8000 for vLLM-Omni.",
             },
             "model": {
                 "type": "string", "required": False, "default": "openbmb/VoxCPM2",

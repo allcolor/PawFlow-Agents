@@ -27,6 +27,23 @@ def test_parse_standard_relay_proxy_url():
     assert parsed.query == "q=1"
 
 
+def test_parse_native_relay_proxy_url_schemes():
+    plain = parse_relay_proxy_url("relay://relay_a/localhost:11434/v1")
+    secure = parse_relay_proxy_url("relays://relay_a/api.example.test:443/v1?q=1")
+
+    assert plain.relay_id == "relay_a"
+    assert plain.target_scheme == "http"
+    assert plain.target_host == "localhost"
+    assert plain.target_port == 11434
+    assert plain.target_path == "/v1"
+    assert secure.relay_id == "relay_a"
+    assert secure.target_scheme == "https"
+    assert secure.target_host == "api.example.test"
+    assert secure.target_port == 443
+    assert secure.target_path == "/v1"
+    assert secure.query == "q=1"
+
+
 def test_transform_standard_relay_proxy_url(monkeypatch):
     monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
     monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
@@ -36,6 +53,35 @@ def test_transform_standard_relay_proxy_url(monkeypatch):
         "https://relay_a/localhost:9443/v1?q=1", user_id="alice")
 
     assert url == "http://10.0.0.2:9090/relay-proxy/relay_a/tok/s/localhost:9443/v1?q=1"
+
+
+def test_transform_native_relay_proxy_url(monkeypatch):
+    monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
+    monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
+
+    plain = maybe_transform_relay_proxy_url(
+        "relay://relay_a/localhost:11434/v1", user_id="alice", relay_local=True)
+    secure = maybe_transform_relay_proxy_url(
+        "relays://relay_a/api.example.test:443/v1?q=1", user_id="alice")
+
+    assert plain == "http://10.0.0.2:9090/relay-proxy/relay_a/tok/l/localhost:11434/v1"
+    assert secure == "http://10.0.0.2:9090/relay-proxy/relay_a/tok/s/api.example.test:443/v1?q=1"
+
+
+def test_resolve_native_relay_proxy_url(monkeypatch):
+    monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
+    monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
+
+    url = resolve_relay_aware_url(
+        "relay://relay_a/localhost:11434/v1",
+        user_id="alice",
+        conversation_id="conv1",
+        service_name="Test service",
+    )
+
+    assert url == "http://10.0.0.2:9090/relay-proxy/relay_a/tok/localhost:11434/v1"
 
 
 def test_transform_relay_proxy_url_with_local_mode(monkeypatch):

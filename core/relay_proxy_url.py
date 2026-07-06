@@ -1,9 +1,10 @@
 """Relay-aware provider URL helpers.
 
-PawFlow uses URLs shaped like `http(s)://<relay_id>/<host>:<port>/path` to
-route HTTP calls through a user's relay. The URL scheme is the target protocol
-used by the relay. The public URL minted here points back to PawFlow's
-`/relay-proxy/...` route with an ephemeral token.
+PawFlow uses URLs shaped like `relay(s)://<relay_id>/<host>:<port>/path`
+to route HTTP calls through a user's relay. Legacy
+`http(s)://<relay_id>/<host>:<port>/path` URLs are still accepted. The public
+URL minted here points back to PawFlow's `/relay-proxy/...` route with an
+ephemeral token.
 """
 
 from dataclasses import dataclass
@@ -77,13 +78,15 @@ def _resolve_url_template(raw_url: str, *, user_id: str = "",
 def parse_relay_proxy_url(url: str) -> Optional[RelayProxyUrl]:
     """Parse the standard PawFlow relay URL format, if present.
 
-    Standard format: `http(s)://<relay_id>/<host>:<port>/<path>`.
+    Standard format: `relay(s)://<relay_id>/<host>:<port>/<path>`.
+    Legacy format: `http(s)://<relay_id>/<host>:<port>/<path>`.
     The first path segment containing `host:port` is the discriminator between
     a normal HTTP URL and a PawFlow relay URL.
     """
     parsed = urllib.parse.urlparse(url or "")
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https", "relay", "relays"} or not parsed.netloc:
         return None
+    target_scheme = {"relay": "http", "relays": "https"}.get(parsed.scheme, parsed.scheme)
     first_segment = (parsed.path or "").lstrip("/").split("/", 1)[0]
     m = _TARGET_SEGMENT_RE.match(first_segment)
     if not m:
@@ -101,7 +104,7 @@ def parse_relay_proxy_url(url: str) -> Optional[RelayProxyUrl]:
     _first, sep, rest = stripped.partition("/")
     target_path = "/" + rest if sep else "/"
     return RelayProxyUrl(
-        target_scheme=parsed.scheme,
+        target_scheme=target_scheme,
         relay_id=relay_id,
         target_host=target_host,
         target_port=port,
@@ -130,7 +133,8 @@ def maybe_transform_relay_proxy_url(url: str, user_id: str = "",
                                     relay_local: Optional[bool] = None) -> Optional[str]:
     """Return a PawFlow relay-proxy URL, or None when `url` is not proxy-shaped.
 
-    Input format:  http(s)://<relay_id>/<host>:<port>/path
+    Input format:  relay(s)://<relay_id>/<host>:<port>/path
+                   or legacy http(s)://<relay_id>/<host>:<port>/path
     Output format: <pawflow>/relay-proxy/<relay_id>/<token>/[l|c/][s/]<host>:<port>/path
     """
     try:
@@ -221,8 +225,6 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
         agent_name=agent_name,
     )
     parsed = urllib.parse.urlparse(resolved)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise _service_error(f"invalid {service_name} base_url: {raw_url!r}")
     try:
         relay_url = parse_relay_proxy_url(resolved)
     except ValueError as exc:
@@ -236,6 +238,8 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
             raise _service_error(
                 f"could not create relay-proxy route for {service_name}; user_id and HTTP listener are required")
         return proxy.rstrip("/")
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise _service_error(f"invalid {service_name} base_url: {raw_url!r}")
 
     host = (parsed.hostname or "").strip().lower()
     if not host:
@@ -245,7 +249,8 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
     if host == "localhost" or host.endswith(".localhost") or _is_private_address(host):
         raise _service_error(
             f"{service_name} base_url targets a private/local network address. "
-            "Use a PawFlow relay URL such as https://${conv.relay}/localhost:1234, "
+            "Use a PawFlow relay URL such as relay://$"
+            "{conv.relay}/localhost:1234, "
             "or set allow_private_base_url=true only for a trusted endpoint."
         )
     try:
@@ -258,7 +263,8 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
         if _is_private_address(address):
             raise _service_error(
                 f"{service_name} base_url resolves to a private/local network address. "
-                "Use a PawFlow relay URL such as https://${conv.relay}/localhost:1234, "
+                "Use a PawFlow relay URL such as relay://$"
+                "{conv.relay}/localhost:1234, "
                 "or set allow_private_base_url=true only for a trusted endpoint."
             )
     return resolved.rstrip("/")

@@ -200,7 +200,8 @@ class LLMClient(
             _raw = _raw_template or ""
         if not _raw:
             _raw = self.DEFAULT_URLS.get(self.provider, "")
-        # Relay-proxy format: http(s)://<relay_id>/<host>:<port>/path.
+        # Relay-proxy format: relay(s)://<relay_id>/<host>:<port>/path.
+        # Legacy http(s)://<relay_id>/<host>:<port>/path remains supported.
         # Transform to a PawFlow-exposed proxy URL with an ephemeral token.
         try:
             from core.relay_proxy_url import maybe_transform_relay_proxy_url
@@ -390,7 +391,13 @@ class LLMClient(
         ))
 
     def _circuit_key(self, model: str) -> str:
-        return "|".join((self.provider or "", self.base_url or "", model or ""))
+        base = ""
+        if self._config_ref:
+            try:
+                base = str(dict.__getitem__(self._config_ref, "base_url") or "")
+            except KeyError:
+                base = ""
+        return "|".join((self.provider or "", base, model or ""))
 
     def _circuit_threshold(self) -> int:
         return max(1, int(self._cfg("circuit_breaker_failures", 3) or 3))

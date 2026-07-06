@@ -452,7 +452,8 @@ class MCPToolHandler(ConfigurableToolHandler):
                  relay_service=None,
                  local: bool = False,
                  raw_url: str = "",
-                 user_id: str = ""):
+                 user_id: str = "",
+                 conversation_id: str = ""):
         super().__init__(tool_name, tool_description, tool_parameters)
         self._server_url = server_url
         self._mcp_tool_name = mcp_tool_name or tool_name
@@ -467,6 +468,7 @@ class MCPToolHandler(ConfigurableToolHandler):
         # token baked in at discovery — which can expire on long conversations.
         self._raw_url = raw_url
         self._user_id = user_id
+        self._conversation_id = conversation_id
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         if self._transport == "stdio":
@@ -500,7 +502,8 @@ class MCPToolHandler(ConfigurableToolHandler):
             try:
                 from core.relay_proxy_url import maybe_transform_relay_proxy_url
                 fresh = maybe_transform_relay_proxy_url(
-                    self._raw_url, user_id=self._user_id)
+                    self._raw_url, user_id=self._user_id,
+                    conv_id=self._conversation_id)
                 if fresh:
                     return fresh
             except Exception:

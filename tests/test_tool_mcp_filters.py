@@ -211,9 +211,12 @@ def test_mcp_loader_uses_conversation_scope_local_and_proxy_hooks():
         assert "conversation_id=conversation_id" in src
         assert '"local": bool(mcp_def.get("local"))' in src
         assert "maybe_transform_relay_proxy_url" in src
+        assert "conv_id=conversation_id" in src
 
     assert "self._local = bool(local)" in agent_tools_src
     assert '"local": self._local' in agent_tools_src
+    assert "self._conversation_id = conversation_id" in agent_tools_src
+    assert "conv_id=self._conversation_id" in agent_tools_src
 
 
 def test_mcp_resource_form_exposes_http_and_stdio_configuration():

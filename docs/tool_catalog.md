@@ -188,7 +188,7 @@ must be explicitly checked. MCP servers are opt-in: none are enabled until they
 are checked at conversation level or in an agent override. Each agent can
 optionally override conversation defaults; without an override it inherits the
 conversation filter. HTTP MCP resources can target a user-local service through
-the relay-proxy URL form `http://${conv.relay}/localhost:<port>/<path>`. Stdio
+the relay-proxy URL form `relay://&#36;{conv.relay}/localhost:<port>/<path>`. Stdio
 MCP resources run via a relay, and `local=true` runs the command on the relay
 host helper instead of inside the relay container.
 

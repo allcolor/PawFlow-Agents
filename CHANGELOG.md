@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.9] — 2026-07-06
+
+### Added
+
+- Documented the LiveKit-first realtime migration plan. Future realtime work now
+  targets `realtimeVoiceConnection` with a LiveKit engine, sidecar worker,
+  worker-control WebSocket, feature-by-feature migration matrix, scoped LiveKit
+  tokens, ConversationEventBus/SSE event reuse, and explicit retirement of the
+  custom provider protocol bridge after parity.
+
+### Fixed
+
+- OpenAI vision-rejection retry tests now match the current `_http_post`
+  signature that receives a per-call `base_url`, keeping relay-aware URL
+  handling covered in CI.
+
 ## [1.0.0-beta.8] — 2026-07-06
 
 ### Fixed

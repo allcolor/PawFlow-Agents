@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.5] — 2026-07-06
+
+### Fixed
+
+- OpenAI-compatible `llmConnection` services can now reliably use relay-routed
+  local endpoints such as `http://MyWorkspace/localhost:11434/v1`; per-call
+  user/conversation identity is applied to isolated LLM clients before resolving
+  the relay proxy URL.
+- `/relay-proxy/...` now strips backend hop-by-hop streaming headers such as
+  `Content-Length`, `Transfer-Encoding`, and `Connection`, preventing broken
+  SSE/chunked responses from local OpenAI-compatible servers.
+- `claude-code-interactive` custom `base_url` handling now supports custom
+  HTTPS hosts/ports and local clear-HTTP upstreams behind the local TLS MITM.
+- LLM client clone isolation is preserved while still allowing relay-aware URL
+  resolution during `complete()` and `complete_stream()` calls.
+
 ## [1.0.0-beta.4] — 2026-07-06
 
 ### Added

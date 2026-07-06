@@ -6,8 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.4] — 2026-07-06
+
+### Added
+
+- Flow lifecycle controls: `shutdownTrigger`, cron backpressure controls
+  (`skip_if_pending`, `max_queue`), `manage_flow logs`, and
+  `update_definition` hot-swap support make long-running flows easier to
+  debug and stop cleanly.
+- Relay-backed port forwarding is now surfaced through the PawFlow HTTP
+  listener with absolute `/fwd/...` URLs in chat, plus slash-command support
+  for listing, opening, and removing forwards by relay and visible port.
+
 ### Fixed
 
+- Flow-deployed relay/script execution now preserves destination casing,
+  injects user/conversation context into sandboxed tasks, and resolves relay
+  filesystem services consistently.
+- `httpListener` and `relay` help sheets now expose static parameter metadata,
+  and the intentional `0.0.0.0` listener default is annotated for Bandit.
 - chat-ui: inline audio players inserted in tool results never loaded (stuck
   at `0:00 / --:--`) in bearer-only sessions, while the same file played fine
   from the Files panel — the same 401 the inline video black-box bug had. The

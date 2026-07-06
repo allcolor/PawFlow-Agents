@@ -8,7 +8,6 @@ import json
 import http.client
 import os
 import re
-import ssl
 from html import escape
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -264,16 +263,17 @@ class LLMCliSharedMixin:
         """Remove control characters that break JSON parsing on some APIs."""
         return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
 
-    def _http_post(self, path: str, body: dict, headers: dict) -> dict:
+    def _http_post(self, path: str, body: dict, headers: dict, *, base_url: str = "") -> dict:
         """Send POST and return parsed JSON."""
-        base_url = getattr(self, "_http_post_base_url", "") or self.base_url
+        base_url = base_url or self.base_url
         parsed = urlparse(base_url or "https://api.openai.com")
         host = parsed.hostname
         port = parsed.port
         scheme = parsed.scheme
 
         if scheme == "https":
-            ctx = ssl.create_default_context()
+            from core.relay_proxy_url import relay_proxy_ssl_context
+            ctx = relay_proxy_ssl_context(base_url)
             conn = http.client.HTTPSConnection(host, port, timeout=self.timeout, context=ctx)
         else:
             conn = http.client.HTTPConnection(host, port, timeout=self.timeout)

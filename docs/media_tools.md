@@ -316,8 +316,9 @@ path segment containing `host:port` marks the URL as a PawFlow relay URL.
 `&#36;{conv.relay}` is only the standard expression shortcut for the conversation
 default relay, so `relay://&#36;{conv.relay}/localhost:7788` and
 `relay://fs_quentin.anciaux_f4a302e1/localhost:7788` follow the same parser and
-route creation path. The protocol used to enter PawFlow's `/relay-proxy/...`
-listener comes from the HTTP listener configuration.
+route creation path. Generated `/relay-proxy/...` URLs use the listener's
+private address, the route stays `private_only`, and HTTPS certificate hostname
+verification is skipped only for that internal private proxy hop.
 
 For `llmConnection` services, `relay_local=true` makes relay-routed `base_url`
 requests execute through the relay host helper. Use this for endpoints such as

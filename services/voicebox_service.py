@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from core import ServiceFactory, ServiceError
-from core.relay_proxy_url import resolve_relay_aware_url
+from core.relay_proxy_url import CONV_RELAY_EXPR, resolve_relay_aware_url
 from services.base_stt import BaseSTTService
 from services.base_voice_clone import BaseVoiceCloneService
 from services._voicebox_backend import _VoiceboxBackendMixin
@@ -74,7 +74,7 @@ class VoiceboxService(_VoiceboxBackendMixin, BaseVoiceCloneService, BaseSTTServi
             "base_url": {
                 "type": "string", "required": False,
                 "default": "http://127.0.0.1:17493",
-                "description": "Voicebox HTTP API base URL. Use relay://$" "{conv.relay}/localhost:17493 for a relay-routed user endpoint.",
+                "description": f"Voicebox HTTP API base URL. Use relay://{CONV_RELAY_EXPR}/localhost:17493 for a relay-routed user endpoint.",
             },
             "allow_private_base_url": {
                 "type": "boolean", "required": False, "default": False,

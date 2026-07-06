@@ -12,6 +12,7 @@ import ipaddress
 import logging
 import re
 import socket
+import ssl
 from typing import Optional
 import urllib.parse
 
@@ -21,6 +22,24 @@ logger = logging.getLogger(__name__)
 
 _TARGET_SEGMENT_RE = re.compile(r"^(?:\[([^\]]+)\]|([^/:?#]+)):(\d{1,5})$")
 _EXPR_OPEN = "$" + "{"
+CONV_RELAY_EXPR = "$" + "{conv.relay}"
+CONV_RELAY_HTTP_URL = f"relay://{CONV_RELAY_EXPR}"
+
+
+def relay_proxy_ssl_context(url: str):
+    """Return an HTTPS context for PawFlow's internal relay-proxy hop.
+
+    Relay-proxy URLs are generated with the listener's private address so the
+    private-only route cannot be reached from the internet. When that listener
+    uses HTTPS, its public certificate normally does not match the private IP;
+    only this internal, token-authenticated hop skips certificate verification.
+    """
+    parsed = urllib.parse.urlparse(url or "")
+    host = (parsed.hostname or "").strip().lower()
+    is_private_host = host in {"localhost", "::1"} or _is_private_address(host)
+    if parsed.scheme == "https" and parsed.path.startswith("/relay-proxy/") and is_private_host:
+        return ssl._create_unverified_context()  # nosec B323 - internal relay-proxy hop only.
+    return ssl.create_default_context() if parsed.scheme == "https" else None
 
 
 @dataclass(frozen=True)
@@ -172,18 +191,19 @@ def maybe_transform_relay_proxy_url(url: str, user_id: str = "",
         logger.warning("Proxy token issue failed: %s", e)
         return None
 
+    _host = get_host_ip()
+    if not (_host in {"localhost", "::1"} or _is_private_address(_host)):
+        logger.warning(
+            "Refusing to build relay-proxy URL for non-private listener address %s",
+            _host,
+        )
+        return None
     if _is_ssl:
-        _host = (getattr(_listener, "public_hostname", "") or "").strip()
-        if not _host:
-            _host = get_host_ip()
-            logger.warning(
-                "relay-proxy URL using LAN IP %s with HTTPS: cert CN "
-                "validation will be skipped in the container. Configure "
-                "`public_hostname` on the HTTP listener (or a matching "
-                "SNI cert) so the container can verify normally.",
-                _host)
-    else:
-        _host = get_host_ip()
+        logger.debug(
+            "relay-proxy URL using private listener address %s with HTTPS; "
+            "relay-aware clients skip certificate hostname verification for this internal hop",
+            _host,
+        )
     _target = _format_target_hostport(parts.target_host, parts.target_port)
     _local = parts.relay_local if relay_local is None else bool(relay_local)
     _local_prefix = "" if _local is None else ("l/" if _local else "c/")
@@ -249,8 +269,7 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
     if host == "localhost" or host.endswith(".localhost") or _is_private_address(host):
         raise _service_error(
             f"{service_name} base_url targets a private/local network address. "
-            "Use a PawFlow relay URL such as relay://$"
-            "{conv.relay}/localhost:1234, "
+            f"Use a PawFlow relay URL such as {CONV_RELAY_HTTP_URL}/localhost:1234, "
             "or set allow_private_base_url=true only for a trusted endpoint."
         )
     try:
@@ -263,8 +282,7 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
         if _is_private_address(address):
             raise _service_error(
                 f"{service_name} base_url resolves to a private/local network address. "
-                "Use a PawFlow relay URL such as relay://$"
-                "{conv.relay}/localhost:1234, "
+                f"Use a PawFlow relay URL such as {CONV_RELAY_HTTP_URL}/localhost:1234, "
                 "or set allow_private_base_url=true only for a trusted endpoint."
             )
     return resolved.rstrip("/")

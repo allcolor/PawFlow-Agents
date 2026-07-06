@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Any, Dict
 
 from core import ServiceFactory, ServiceError, safe_float
-from core.relay_proxy_url import is_relay_proxy_url, resolve_relay_aware_url
+from core.relay_proxy_url import (
+    CONV_RELAY_EXPR, is_relay_proxy_url, relay_proxy_ssl_context,
+    resolve_relay_aware_url)
 from core.service_install import (
     assert_requirements,
     executable_requirement,
@@ -65,7 +67,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "http://127.0.0.1:7788",
-                "description": "Supertonic server base URL. Use relay://$" "{conv.relay}/localhost:7788 for a relay-routed user endpoint.",
+                "description": f"Supertonic server base URL. Use relay://{CONV_RELAY_EXPR}/localhost:7788 for a relay-routed user endpoint.",
             },
             "allow_private_base_url": {
                 "type": "boolean", "required": False, "default": False,
@@ -350,7 +352,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(probe, timeout=min(5, self.timeout)) as resp:  # nosec B310 - configured local/HTTP TTS endpoint.
+            with urllib.request.urlopen(probe, timeout=min(5, self.timeout), context=relay_proxy_ssl_context(base_url)) as resp:  # nosec B310 - configured local/HTTP TTS endpoint.
                 return resp.status < 500
         except urllib.error.HTTPError as exc:
             return exc.code < 500
@@ -425,7 +427,7 @@ class SupertonicTTSService(BaseAudioGenerationService, BaseTTSService):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured local/HTTP TTS endpoint.
+            with urllib.request.urlopen(req, timeout=self.timeout, context=relay_proxy_ssl_context(url)) as resp:  # nosec B310 - configured local/HTTP TTS endpoint.
                 content_type = resp.headers.get(
                     "Content-Type", _CONTENT_TYPES.get(body.get("response_format", "wav"), "audio/wav"))
                 return resp.read(), content_type

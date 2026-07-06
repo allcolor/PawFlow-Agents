@@ -114,7 +114,7 @@ def test_media_discovery_returns_conversation_scoped_openai_compatible_tts(monke
 def test_openai_compatible_tts_posts_openai_speech_json(monkeypatch):
     captured = {}
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         captured["url"] = req.full_url
         captured["headers"] = dict(req.header_items())
         captured["body"] = json.loads(req.data.decode("utf-8"))
@@ -151,7 +151,7 @@ def test_openai_compatible_tts_posts_openai_speech_json(monkeypatch):
 def test_openai_compatible_tts_supports_openrouter_model_and_provider_options(monkeypatch):
     captured = {}
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         captured["url"] = req.full_url
         captured["body"] = json.loads(req.data.decode("utf-8"))
         return _Resp(b"audio", "audio/mpeg")
@@ -186,7 +186,7 @@ def test_openai_compatible_tts_supports_openrouter_model_and_provider_options(mo
 def test_openai_compatible_tts_decodes_json_audio_response(monkeypatch):
     monkeypatch.setattr(
         "urllib.request.urlopen",
-        lambda req, timeout=0: _Resp(json.dumps({
+        lambda req, timeout=0, context=None: _Resp(json.dumps({
             "audio_base64": "ZGF0YQ==",
             "content_type": "audio/wav",
         }).encode(), "application/json"),

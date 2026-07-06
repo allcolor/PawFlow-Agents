@@ -6,6 +6,7 @@ from core import ServiceError
 from core.relay_proxy_url import (
     maybe_transform_relay_proxy_url,
     parse_relay_proxy_url,
+    relay_proxy_ssl_context,
     resolve_relay_aware_url,
 )
 from services import http_listener_service as _hl_mod
@@ -67,6 +68,34 @@ def test_transform_native_relay_proxy_url(monkeypatch):
 
     assert plain == "http://10.0.0.2:9090/relay-proxy/relay_a/tok/l/localhost:11434/v1"
     assert secure == "http://10.0.0.2:9090/relay-proxy/relay_a/tok/s/api.example.test:443/v1?q=1"
+
+
+def test_transform_relay_proxy_url_refuses_public_listener_address(monkeypatch):
+    monkeypatch.setattr(_hl_mod, "_instances", {9090: _Listener()})
+    monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
+    monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "8.8.8.8")
+
+    assert maybe_transform_relay_proxy_url(
+        "relay://relay_a/localhost:11434/v1", user_id="alice") is None
+
+
+def test_relay_proxy_ssl_context_only_skips_verification_for_private_proxy(monkeypatch):
+    monkeypatch.setattr(
+        "core.relay_proxy_url.ssl._create_unverified_context",
+        lambda: "unverified",
+    )
+    monkeypatch.setattr(
+        "core.relay_proxy_url.ssl.create_default_context",
+        lambda: "default",
+    )
+
+    assert relay_proxy_ssl_context(
+        "https://10.0.0.2:9090/relay-proxy/relay_a/tok/localhost:11434/v1"
+    ) == "unverified"
+    assert relay_proxy_ssl_context(
+        "https://example.com/relay-proxy/relay_a/tok/localhost:11434/v1"
+    ) == "default"
+    assert relay_proxy_ssl_context("https://10.0.0.2:9090/other") == "default"
 
 
 def test_resolve_native_relay_proxy_url(monkeypatch):

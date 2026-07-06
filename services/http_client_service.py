@@ -7,7 +7,7 @@ Shared HTTP client service with a persistent session.
 from typing import Any, Dict, Optional
 from core.base_service import BaseService
 from core import ServiceFactory, ServiceError
-from core.relay_proxy_url import is_relay_proxy_url, resolve_relay_aware_url
+from core.relay_proxy_url import CONV_RELAY_EXPR, is_relay_proxy_url, resolve_relay_aware_url
 
 try:
     import requests
@@ -83,7 +83,7 @@ class HTTPClientService(BaseService):
         return {
             'base_url': {
                 'type': 'string', 'required': False, 'default': '',
-                'description': 'Base URL for requests. Relay URLs use relay://$' '{conv.relay}/host:port/path.',
+                'description': f'Base URL for requests. Relay URLs use relay://{CONV_RELAY_EXPR}/host:port/path.',
             },
             'allow_private_base_url': {
                 'type': 'boolean', 'required': False, 'default': True,

@@ -36,7 +36,7 @@ def test_openai_compatible_stt_posts_openai_transcription_multipart(monkeypatch)
     monkeypatch.setattr("core.relay_proxy_auth.issue_token", lambda user_id, relay_id, conv_id="": "tok")
     monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         captured["url"] = req.full_url
         captured["headers"] = dict(req.header_items())
         captured["body"] = req.data
@@ -66,7 +66,7 @@ def test_openai_compatible_stt_posts_openai_transcription_multipart(monkeypatch)
 def test_openai_compatible_stt_supports_openrouter_json_protocol(monkeypatch):
     captured = {}
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         captured["url"] = req.full_url
         captured["headers"] = dict(req.header_items())
         captured["body"] = json.loads(req.data.decode("utf-8"))

@@ -16,6 +16,12 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.relay_proxy_url import CONV_RELAY_EXPR
+
+
+def _conv_relay_url(path: str) -> str:
+    return f"relay://{CONV_RELAY_EXPR}/{path.lstrip('/')}"
+
 
 OPENAI_BASE_URLS = [
     ("OpenAI", "https://api.openai.com/v1", "Native OpenAI API."),
@@ -25,7 +31,7 @@ OPENAI_BASE_URLS = [
     ("DashScope Beijing", "https://dashscope.aliyuncs.com/compatible-mode/v1", "Qwen OpenAI-compatible endpoint in Beijing."),
     ("DashScope Singapore", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "Qwen OpenAI-compatible endpoint in Singapore."),
     ("DashScope Virginia", "https://dashscope-us.aliyuncs.com/compatible-mode/v1", "Qwen OpenAI-compatible endpoint in Virginia."),
-    ("Local relay", "relay://$" "{conv.relay}/localhost:1234/v1", "Relay-routed local OpenAI-compatible server."),
+    ("Local relay", _conv_relay_url("localhost:1234/v1"), "Relay-routed local OpenAI-compatible server."),
 ]
 
 ANTHROPIC_BASE_URLS = [
@@ -34,9 +40,9 @@ ANTHROPIC_BASE_URLS = [
 ]
 
 LOCAL_BASE_URLS = [
-    ("Relay localhost 8000", "relay://$" "{conv.relay}/localhost:8000", "Relay-routed local HTTP endpoint."),
-    ("Relay localhost 7788", "relay://$" "{conv.relay}/localhost:7788", "Common Supertonic local endpoint."),
-    ("Relay localhost 17493", "relay://$" "{conv.relay}/localhost:17493", "Common Voicebox local endpoint."),
+    ("Relay localhost 8000", _conv_relay_url("localhost:8000"), "Relay-routed local HTTP endpoint."),
+    ("Relay localhost 7788", _conv_relay_url("localhost:7788"), "Common Supertonic local endpoint."),
+    ("Relay localhost 17493", _conv_relay_url("localhost:17493"), "Common Voicebox local endpoint."),
 ]
 
 LLM_MODELS = {
@@ -180,7 +186,7 @@ REPO_VALUES = [
 ]
 PACKAGE_VALUES = [("supertonic-tts", "Install Supertonic from pip."), (".", "Install the checked-out repository.")]
 RCLONE_PROVIDERS = [("AWS", "Amazon S3."), ("Cloudflare", "Cloudflare R2."), ("Minio", "MinIO/S3-compatible."), ("Other", "Generic S3-compatible backend.")]
-RCLONE_ENDPOINTS = [("https://s3.amazonaws.com", "AWS global endpoint."), ("https://<accountid>.r2.cloudflarestorage.com", "Cloudflare R2 endpoint template."), ("relay://$" "{conv.relay}/localhost:9000", "Relay-routed MinIO endpoint.")]
+RCLONE_ENDPOINTS = [("https://s3.amazonaws.com", "AWS global endpoint."), ("https://<accountid>.r2.cloudflarestorage.com", "Cloudflare R2 endpoint template."), (_conv_relay_url("localhost:9000"), "Relay-routed MinIO endpoint.")]
 RCLONE_REGIONS = [("auto", "Provider chooses region."), ("us-east-1", "AWS US East 1."), ("eu-west-1", "AWS EU West 1."), ("wnam", "Cloudflare R2 Western North America."), ("weur", "Cloudflare R2 Western Europe.")]
 OAUTH_SCOPES = [
     ("openid email profile", "Generic OpenID Connect profile scopes."),
@@ -542,7 +548,7 @@ def get_service_parameter_helper(
         elif parameter == "region":
             values = _values(RCLONE_REGIONS)
         elif parameter == "url":
-            values = _values([("https://example.org/webdav", "WebDAV endpoint template."), ("relay://$" "{conv.relay}/localhost:8080", "Relay-routed WebDAV endpoint.")])
+            values = _values([("https://example.org/webdav", "WebDAV endpoint template."), (_conv_relay_url("localhost:8080"), "Relay-routed WebDAV endpoint.")])
         elif parameter == "host":
             values = _values([("sftp.example.org", "SFTP host template."), ("${conv.relay}", "Conversation relay host expression.")])
         elif parameter == "port":

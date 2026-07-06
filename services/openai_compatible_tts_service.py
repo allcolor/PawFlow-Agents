@@ -8,7 +8,7 @@ import urllib.request
 from typing import Any, Dict
 
 from core import ServiceFactory, ServiceError, safe_float
-from core.relay_proxy_url import resolve_relay_aware_url
+from core.relay_proxy_url import relay_proxy_ssl_context, resolve_relay_aware_url
 from services.base_tts import BaseTTSService
 
 logger = logging.getLogger(__name__)
@@ -204,7 +204,7 @@ class OpenAICompatibleTTSService(BaseTTSService):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured TTS provider endpoint.
+            with urllib.request.urlopen(req, timeout=self.timeout, context=relay_proxy_ssl_context(url)) as resp:  # nosec B310 - configured TTS provider endpoint.
                 raw = resp.read()
                 content_type = resp.headers.get("Content-Type", "") or _CONTENT_TYPES.get(
                     body.get("response_format", "mp3"), "audio/mpeg")

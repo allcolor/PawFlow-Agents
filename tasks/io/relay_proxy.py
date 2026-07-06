@@ -6,8 +6,11 @@ WebSocket connection; the relay executes an http_fetch on the user's
 machine and streams the response back.
 
 Security:
-  - The token in the URL is an ephemeral (~1h) credential bound to
+  - The token in the URL is an ephemeral (~10 min) credential bound to
     (user_id, relay_id). See core/relay_proxy_auth.py.
+  - Only requests from private IPs (RFC 1918 / localhost) are accepted
+    even if the token is valid. Generated URLs use the listener's private
+    address, never its public hostname.
   - The token and route bypass the auth gateway because the CC container
     and server-side providers have no HTTP session to carry cookies.
 """
@@ -52,7 +55,7 @@ def _resolve_relay_service(user_id: str, relay_id: str, conv_id: str = ""):
 
 def _relay_proxy_handler(pending_req):
     """Handle /relay-proxy/<relay_id>/<token>/[l|c/][s/]<host>:<port>/<path>."""
-    from core.relay_proxy_auth import lookup_token
+    from core.relay_proxy_auth import lookup_token, is_private_ip
 
     relay_id = pending_req.path_params.get("relay_id", "")
     token = pending_req.path_params.get("token", "")
@@ -65,6 +68,13 @@ def _relay_proxy_handler(pending_req):
         "relay-proxy HIT method=%s path=%s src=%s relay=%s token_prefix=%s",
         pending_req.method, pending_req.path,
         pending_req.remote_addr, relay_id, token[:8])
+
+    src_ip = pending_req.remote_addr or ""
+    if not is_private_ip(src_ip):
+        logger.warning("relay-proxy: rejected request from public IP %s relay=%s", src_ip, relay_id)
+        pending_req.complete(403, {"Content-Type": "application/json"},
+                             b'{"error":"Forbidden: external IP"}')
+        return
 
     # Token check
     auth = lookup_token(token)
@@ -126,6 +136,11 @@ def _relay_proxy_handler(pending_req):
     # request, and already safe to log (it's only useful for this one
     # in-flight request).
     _log_tag = f"relay-proxy[{token[:8]}]"
+    logger.info(
+        "relay-proxy access src=%s method=%s relay=%s user=%s conv=%s target=%s local=%s body=%dB",
+        pending_req.remote_addr or "", method, relay_id, user_id, conv_id,
+        target_url, target_local, len(pending_req.body or b""),
+    )
     logger.debug(
         "%s IN %s → target=%s local=%s body=%dB",
         _log_tag, method, target_url, target_local,
@@ -242,19 +257,17 @@ def _relay_proxy_handler(pending_req):
 def _register_routes(http_svc) -> None:
     """Idempotent route registration on the shared HTTP listener.
 
-    The route is declared public=True and gateway_exempt=True because
-    server-side clients may reach the listener through its public hostname.
-    The ephemeral token in the URL is the actual credential.
+    The route is declared public=True so clients without a browser session can
+    call it, private_only=True so it is not reachable from the internet, and
+    gateway_exempt=True so the human private gateway does not return HTML to
+    non-browser clients. The ephemeral token in the URL is the credential.
     """
-    routes = http_svc.get_routes()
-    if any(r.get("owner") == _ROUTE_OWNER for r in routes):
-        return
     pattern = "/relay-proxy/{relay_id}/{token}/{rest+}"
     for method in ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"):
         http_svc.register_route(
             method, pattern, _ROUTE_OWNER,
             callback=_relay_proxy_handler,
-            public=True, private_only=False, gateway_exempt=True,
+            public=True, private_only=True, gateway_exempt=True,
         )
     logger.info("Relay HTTP proxy routes registered (%s)", pattern)
 

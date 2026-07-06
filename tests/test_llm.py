@@ -244,7 +244,7 @@ class TestLLMConnectionService:
 
         captured = {}
 
-        def mock_post(path, body, headers):
+        def mock_post(path, body, headers, *, base_url=""):
             captured.update(body)
             return ANTHROPIC_RESPONSE
 
@@ -271,7 +271,7 @@ class TestLLMConnectionService:
 
         captured = {}
 
-        def mock_post(path, body, headers):
+        def mock_post(path, body, headers, *, base_url=""):
             captured.update(body)
             return OPENAI_RESPONSE
 
@@ -303,7 +303,7 @@ class TestLLMConnectionService:
 
         captured = {}
 
-        def mock_post(path, body, headers):
+        def mock_post(path, body, headers, *, base_url=""):
             captured["path"] = path
             captured.update(body)
             return OPENAI_RESPONSE

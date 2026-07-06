@@ -4,14 +4,14 @@ Tokens are issued per Claude Code session (or any client that needs to
 reach a local service through a relay). They bind together:
   - the relay_id allowed to handle the call
   - the user_id owning the relay
-  - an expiry (default: 1h)
+  - an expiry (default: 10 minutes)
 
 Only the holder of the token and the server know its value. Tokens are
 stored in memory (no persistence) and revoked on session end.
 
-Additionally the route that consumes the token must check that the
-source IP is private (RFC 1918 or localhost) to block external abuse
-even if the URL leaks.
+The route that consumes the token is gateway-exempt for non-browser clients,
+but remains private-IP only. Generated URLs use the listener's private address.
+Keep the token short-lived.
 """
 
 import logging
@@ -35,7 +35,7 @@ class _ProxyTokenEntry:
 _tokens: Dict[str, _ProxyTokenEntry] = {}
 _lock = threading.Lock()
 
-DEFAULT_TTL = 3600.0  # 1 hour
+DEFAULT_TTL = 600.0  # 10 minutes
 
 
 def issue_token(user_id: str, relay_id: str, ttl: float = DEFAULT_TTL,

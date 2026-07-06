@@ -4,7 +4,6 @@ import json
 import http.client
 import logging
 import re
-import ssl
 import base64
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -94,7 +93,8 @@ class LLMOpenaiMixin:
         safe_base_url = re.sub(r"(/relay-proxy/[^/]+/)[^/]+/", r"\1<token>/", base_url or "")
 
         if parsed.scheme == "https":
-            ctx = ssl.create_default_context()
+            from core.relay_proxy_url import relay_proxy_ssl_context
+            ctx = relay_proxy_ssl_context(base_url)
             conn = http.client.HTTPSConnection(host, port, timeout=self.timeout, context=ctx)
         else:
             conn = http.client.HTTPConnection(host, port, timeout=self.timeout)
@@ -578,11 +578,11 @@ class LLMOpenaiMixin:
             body.update(extra_body)
 
         try:
-            self._http_post_base_url = base_url
             data = self._http_post(
                 self._chat_completions_endpoint(base_url),
                 body,
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                base_url=base_url,
             )
         except Exception as exc:
             if not self._is_vision_rejected_error(str(exc)):
@@ -598,9 +598,8 @@ class LLMOpenaiMixin:
                 self._chat_completions_endpoint(base_url),
                 body,
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                base_url=base_url,
             )
-        finally:
-            self._http_post_base_url = ""
         choice = data.get("choices", [{}])[0]
         usage = data.get("usage", {})
         message = choice.get("message", {})

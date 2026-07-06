@@ -12,7 +12,8 @@ import uuid
 import urllib.request
 
 from core import ServiceFactory, ServiceError
-from core.relay_proxy_url import resolve_relay_aware_url
+from core.relay_proxy_url import (
+    CONV_RELAY_EXPR, relay_proxy_ssl_context, resolve_relay_aware_url)
 from services.base_image_generation import BaseImageGenerationService
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class OpenAIImageService(BaseImageGenerationService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "https://api.openai.com/v1",
-                "description": "API base URL. Use relay://$" "{conv.relay}/host:port/v1 for relay-routed compatible endpoints.",
+                "description": f"API base URL. Use relay://{CONV_RELAY_EXPR}/host:port/v1 for relay-routed compatible endpoints.",
             },
             "allow_private_base_url": {
                 "type": "boolean", "required": False, "default": False,
@@ -209,15 +210,16 @@ class OpenAIImageService(BaseImageGenerationService):
                     prompt[:80], self.model, size)
 
         data = json.dumps(body).encode("utf-8")
+        base_url = self._effective_base_url()
         req = urllib.request.Request(
-            f"{self._effective_base_url()}/images/generations",
+            f"{base_url}/images/generations",
             data=data,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured OpenAI image API endpoint.
+        with urllib.request.urlopen(req, timeout=self.timeout, context=relay_proxy_ssl_context(base_url)) as resp:  # nosec B310 - configured OpenAI image API endpoint.
             result = json.loads(resp.read().decode("utf-8"))
 
         images = result.get("data", [])
@@ -282,15 +284,16 @@ class OpenAIImageService(BaseImageGenerationService):
             files.append(("image", filename, data, content_type))
 
         body, content_type = self._multipart_form(fields, files)
+        base_url = self._effective_base_url()
         req = urllib.request.Request(
-            f"{self._effective_base_url()}/images/edits",
+            f"{base_url}/images/edits",
             data=body,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": content_type,
             },
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured OpenAI image API endpoint.
+        with urllib.request.urlopen(req, timeout=self.timeout, context=relay_proxy_ssl_context(base_url)) as resp:  # nosec B310 - configured OpenAI image API endpoint.
             result = json.loads(resp.read().decode("utf-8"))
 
         images = result.get("data", [])

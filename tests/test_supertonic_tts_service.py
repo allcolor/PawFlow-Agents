@@ -118,7 +118,7 @@ def test_supertonic_external_relay_url_uses_proxy_route(monkeypatch):
     monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
     monkeypatch.setattr("core.relay_bindings.get_default", lambda cid, agent="": "relay1")
 
-    def fake_urlopen(req, timeout=None):
+    def fake_urlopen(req, timeout=None, context=None):
         captured["url"] = req.full_url
         captured["body"] = req.data
         return _Resp(b"WAV", "audio/wav")
@@ -148,12 +148,13 @@ def test_supertonic_rejects_unsupported_format():
 
 def test_supertonic_http_error_includes_preview(monkeypatch):
     svc = SupertonicTTSService({})
+    monkeypatch.setattr(svc, "ensure_connected", lambda: None)
 
     class _HTTPError(urllib.error.HTTPError):
         def read(self):
             return b'{"detail":"bad voice"}'
 
-    def raise_http_error(_req, timeout=None):
+    def raise_http_error(_req, timeout=None, context=None):
         raise _HTTPError("http://127.0.0.1:7788/v1/tts", 400, "Bad Request", {}, None)
 
     monkeypatch.setattr("services.supertonic_tts_service.urllib.request.urlopen", raise_http_error)

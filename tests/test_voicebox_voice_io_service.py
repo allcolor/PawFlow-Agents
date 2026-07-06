@@ -34,7 +34,7 @@ class _Listener:
 def test_voicebox_transcribe_posts_multipart(monkeypatch):
     captured = {}
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         if req.get_method() == "GET":
             return _Resp(b'{"ok":true}')
         captured["url"] = req.full_url
@@ -109,7 +109,7 @@ def test_voicebox_external_relay_url_uses_proxy_route(monkeypatch):
     monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
     monkeypatch.setattr("core.relay_bindings.get_default", lambda cid, agent="": "relay1")
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         captured["url"] = req.full_url
         captured["body"] = req.data
         return _Resp(b"MP3", "audio/mpeg")
@@ -135,7 +135,7 @@ def test_voicebox_external_relay_url_uses_proxy_route(monkeypatch):
 def test_voicebox_transcribe_normalizes_whisper_model_names(monkeypatch):
     captured = {}
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         if req.get_method() == "GET":
             return _Resp(b'{"ok":true}')
         captured["body"] = req.data
@@ -152,7 +152,7 @@ def test_voicebox_transcribe_normalizes_whisper_model_names(monkeypatch):
 
 
 def test_voicebox_transcribe_surfaces_model_download_status(monkeypatch):
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         if req.get_method() == "GET":
             if req.full_url.endswith("/tasks/active"):
                 return _Resp(json.dumps({
@@ -184,7 +184,7 @@ def test_voicebox_transcribe_surfaces_model_download_status(monkeypatch):
 
 
 def test_voicebox_transcribe_surfaces_active_download_error(monkeypatch):
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         if req.get_method() == "GET":
             if req.full_url.endswith("/tasks/active"):
                 return _Resp(json.dumps({
@@ -229,7 +229,7 @@ def test_voicebox_warmup_stt_only_checks_connection_once(monkeypatch):
 def test_voicebox_speak_posts_json_and_returns_audio(monkeypatch):
     captured = {}
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         if req.get_method() == "GET":
             return _Resp(b'{"ok":true}')
         captured["url"] = req.full_url
@@ -250,7 +250,7 @@ def test_voicebox_speak_posts_json_and_returns_audio(monkeypatch):
 def test_voicebox_speak_uses_async_speak_for_known_profile(monkeypatch):
     calls = []
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         calls.append((req.get_method(), req.full_url, req.data))
         if req.get_method() == "GET" and req.full_url.endswith("/health"):
             return _Resp(b'{"ok":true}')
@@ -289,7 +289,7 @@ def test_voicebox_speak_uses_async_speak_for_known_profile(monkeypatch):
 def test_voicebox_speak_resolves_preset_voice_id_to_profile(monkeypatch):
     captured = {}
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         if req.get_method() == "GET" and req.full_url.endswith("/health"):
             return _Resp(b'{"ok":true}')
         if req.get_method() == "GET" and req.full_url.endswith("/profiles"):
@@ -316,7 +316,7 @@ def test_voicebox_speak_resolves_preset_voice_id_to_profile(monkeypatch):
 def test_voicebox_speak_waits_for_async_speak_audio(monkeypatch):
     history_calls = 0
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         nonlocal history_calls
         if req.get_method() == "GET" and req.full_url.endswith("/health"):
             return _Resp(b'{"ok":true}')
@@ -354,7 +354,7 @@ def test_voicebox_speak_reads_local_audio_when_audio_endpoint_cannot_resolve_pat
     audio_path.parent.mkdir(parents=True)
     audio_path.write_bytes(b"RIFFlocal")
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         if req.get_method() == "GET" and req.full_url.endswith("/health"):
             return _Resp(b'{"ok":true}')
         if req.get_method() == "POST" and req.full_url.endswith("/speak"):
@@ -382,7 +382,7 @@ def test_voicebox_speak_reads_local_audio_when_audio_endpoint_cannot_resolve_pat
 def test_voicebox_speak_auto_creates_preset_default_profile(monkeypatch):
     created = {}
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         if req.get_method() == "GET" and req.full_url.endswith("/health"):
             return _Resp(b'{"ok":true}')
         if req.get_method() == "GET" and req.full_url.endswith("/profiles"):
@@ -472,7 +472,7 @@ def patched_update(tqdm_self, n=1):
 def test_voicebox_close_connection_shuts_down_existing_loopback_backend(monkeypatch):
     calls = []
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         calls.append((req.get_method(), req.full_url, timeout))
         return _Resp(b'{"message":"Shutting down..."}')
 

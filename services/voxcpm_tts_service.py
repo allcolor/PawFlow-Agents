@@ -18,7 +18,8 @@ import urllib.request
 from typing import Any, Dict
 
 from core import ServiceFactory, ServiceError, safe_float
-from core.relay_proxy_url import resolve_relay_aware_url
+from core.relay_proxy_url import (
+    CONV_RELAY_EXPR, relay_proxy_ssl_context, resolve_relay_aware_url)
 from services.base_audio_generation import BaseAudioGenerationService
 from services.base_voice_clone import BaseVoiceCloneService
 
@@ -67,8 +68,8 @@ class VoxCPMTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
             },
             "base_url": {
                 "type": "string", "required": False,
-                "default": "relay://$" "{conv.relay}/localhost:8000",
-                "description": "VoxCPM HTTP server URL. Use relay://$" "{conv.relay}/localhost:8000 for vLLM-Omni.",
+                "default": f"relay://{CONV_RELAY_EXPR}/localhost:8000",
+                "description": f"VoxCPM HTTP server URL. Use relay://{CONV_RELAY_EXPR}/localhost:8000 for vLLM-Omni.",
             },
             "model": {
                 "type": "string", "required": False, "default": "openbmb/VoxCPM2",
@@ -192,7 +193,7 @@ class VoxCPMTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
 
     def _post_audio_request(self, req, label: str) -> tuple[bytes, str]:
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured VoxCPM endpoint.
+            with urllib.request.urlopen(req, timeout=self.timeout, context=relay_proxy_ssl_context(req.full_url)) as resp:  # nosec B310 - configured VoxCPM endpoint.
                 raw = resp.read()
                 content_type = resp.headers.get("Content-Type", "audio/wav")
         except urllib.error.HTTPError as exc:

@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Dict
 
 from core import ServiceError
-from core.relay_proxy_url import is_relay_proxy_url, resolve_relay_aware_url
+from core.relay_proxy_url import (
+    is_relay_proxy_url, relay_proxy_ssl_context, resolve_relay_aware_url)
 from core.service_install import (
     assert_requirements,
     executable_requirement,
@@ -169,7 +170,7 @@ class _VoiceboxBackendMixin:
             req = urllib.request.Request(
                 base_url + path, headers=self._headers(), method="GET")
             try:
-                with urllib.request.urlopen(req, timeout=min(3, self.timeout)) as resp:  # nosec B310 - configured local Voicebox URL.
+                with urllib.request.urlopen(req, timeout=min(3, self.timeout), context=relay_proxy_ssl_context(base_url)) as resp:  # nosec B310 - configured local Voicebox URL.
                     if getattr(resp, "status", 200) < 500:
                         return True
             except urllib.error.HTTPError as exc:
@@ -534,7 +535,7 @@ class _VoiceboxBackendMixin:
         req = urllib.request.Request(
             url, data=data, headers=self._headers(headers), method=method)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured local Voicebox URL.
+            with urllib.request.urlopen(req, timeout=self.timeout, context=relay_proxy_ssl_context(url)) as resp:  # nosec B310 - configured local Voicebox URL.
                 body = resp.read()
                 ctype = resp.headers.get("Content-Type", "")
         except urllib.error.HTTPError as exc:

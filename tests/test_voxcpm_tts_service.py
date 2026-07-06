@@ -5,6 +5,7 @@ import json
 import pytest
 
 from core import ServiceError
+from core.relay_proxy_url import CONV_RELAY_EXPR
 from services import http_listener_service as _hl_mod
 from services.voxcpm_tts_service import VoxCPMTTSService
 
@@ -36,7 +37,7 @@ def test_voxcpm_speak_posts_to_openai_relay_url(monkeypatch):
     monkeypatch.setattr("core.relay_proxy_url.get_host_ip", lambda: "10.0.0.2")
     monkeypatch.setattr("core.relay_bindings.get_default", lambda cid, agent="": "relay1")
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         captured["url"] = req.full_url
         captured["body"] = json.loads(req.data.decode("utf-8"))
         return _Resp(b"WAV", "audio/wav")
@@ -68,7 +69,7 @@ def test_voxcpm_schema_defaults_to_vllm_openai_mode():
     schema = svc.get_parameter_schema()
 
     assert schema["api_mode"]["default"] == "openai"
-    assert schema["base_url"]["default"] == "relay://$" "{conv.relay}/localhost:8000"
+    assert schema["base_url"]["default"] == f"relay://{CONV_RELAY_EXPR}/localhost:8000"
     assert svc.SUPPORTS_NATIVE_TTS_VOICES is True
 
 

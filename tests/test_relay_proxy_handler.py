@@ -89,7 +89,7 @@ def test_relay_proxy_container_prefix_disables_local_fetch(monkeypatch):
     }]
 
 
-def test_relay_proxy_accepts_public_source_ip_with_valid_token(monkeypatch):
+def test_relay_proxy_rejects_public_source_ip_even_with_valid_token(monkeypatch):
     monkeypatch.setattr("core.relay_proxy_auth.lookup_token",
                         lambda token: ("alice", "relay1", "conv1"))
     relay = _Relay()
@@ -101,11 +101,12 @@ def test_relay_proxy_accepts_public_source_ip_with_valid_token(monkeypatch):
     pending.remote_addr = "203.0.113.10"
     relay_proxy._relay_proxy_handler(pending)
 
-    assert pending.completed is None
-    assert pending.streamed[0] == 200
+    assert pending.completed[0] == 403
+    assert pending.streamed is None
+    assert relay.calls == []
 
 
-def test_relay_proxy_route_is_gateway_exempt_not_private_only():
+def test_relay_proxy_route_is_gateway_exempt_and_private_only():
     class _Http:
         def __init__(self):
             self.routes = []
@@ -124,5 +125,28 @@ def test_relay_proxy_route_is_gateway_exempt_not_private_only():
         assert pattern == "/relay-proxy/{relay_id}/{token}/{rest+}"
         assert owner == "_relay_proxy"
         assert kwargs["public"] is True
-        assert kwargs["private_only"] is False
+        assert kwargs["private_only"] is True
         assert kwargs["gateway_exempt"] is True
+
+
+def test_relay_proxy_route_registration_updates_existing_owner_routes():
+    class _Http:
+        def __init__(self):
+            self.routes = []
+
+        def get_routes(self):
+            return [{
+                "method": "POST",
+                "pattern": "/relay-proxy/{relay_id}/{token}/{rest+}",
+                "owner": "_relay_proxy",
+                "private_only": False,
+            }]
+
+        def register_route(self, method, pattern, owner, **kwargs):
+            self.routes.append((method, pattern, owner, kwargs))
+
+    http = _Http()
+    relay_proxy._register_routes(http)
+
+    assert http.routes
+    assert all(route[3]["private_only"] is True for route in http.routes)

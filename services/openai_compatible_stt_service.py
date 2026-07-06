@@ -10,7 +10,8 @@ import urllib.request
 from typing import Dict
 
 from core import ServiceFactory, ServiceError
-from core.relay_proxy_url import resolve_relay_aware_url
+from core.relay_proxy_url import (
+    CONV_RELAY_EXPR, relay_proxy_ssl_context, resolve_relay_aware_url)
 from services.base_stt import BaseSTTService
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ class OpenAICompatibleSTTService(BaseSTTService):
             "base_url": {
                 "type": "string", "required": False,
                 "default": "https://api.openai.com/v1",
-                "description": "OpenAI-compatible API base URL, e.g. relay://$" "{conv.relay}/localhost:1234/v1.",
+                "description": f"OpenAI-compatible API base URL, e.g. relay://{CONV_RELAY_EXPR}/localhost:1234/v1.",
             },
             "model": {
                 "type": "string",
@@ -78,7 +79,7 @@ class OpenAICompatibleSTTService(BaseSTTService):
             "allow_private_base_url": {
                 "type": "boolean",
                 "default": False,
-                "description": "Allow direct private/loopback base_url targets. Prefer relay://$" "{conv.relay}/host:port for local relay endpoints.",
+                "description": f"Allow direct private/loopback base_url targets. Prefer relay://{CONV_RELAY_EXPR}/host:port for local relay endpoints.",
             },
             "model": {
                 "type": "string", "required": False,
@@ -220,7 +221,7 @@ class OpenAICompatibleSTTService(BaseSTTService):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured STT provider endpoint.
+            with urllib.request.urlopen(req, timeout=self.timeout, context=relay_proxy_ssl_context(base_url)) as resp:  # nosec B310 - configured STT provider endpoint.
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read()[:1000].decode("utf-8", errors="replace")
@@ -280,7 +281,7 @@ class OpenAICompatibleSTTService(BaseSTTService):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - configured STT provider endpoint.
+            with urllib.request.urlopen(req, timeout=self.timeout, context=relay_proxy_ssl_context(base_url)) as resp:  # nosec B310 - configured STT provider endpoint.
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read()[:1000].decode("utf-8", errors="replace")

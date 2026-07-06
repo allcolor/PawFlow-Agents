@@ -40,7 +40,7 @@ def test_openai_image_service_uses_relay_aware_base_url(monkeypatch):
     calls = []
     timeouts = []
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         calls.append(req.full_url)
         timeouts.append(timeout)
         if req.full_url.endswith("/images/generations"):
@@ -64,7 +64,7 @@ def test_openai_image_service_uses_relay_aware_base_url(monkeypatch):
 def test_openai_image_service_forwards_configured_timeout_to_api_and_download(monkeypatch):
     timeouts = []
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         timeouts.append(timeout)
         if req.full_url.endswith("/images/generations"):
             return _Resp(json.dumps({"data": [{"url": "https://cdn.example/i.png"}]}).encode())
@@ -82,7 +82,7 @@ def test_openai_image_service_forwards_configured_timeout_to_api_and_download(mo
 def test_openai_image_service_handles_gpt_image_base64(monkeypatch):
     bodies = []
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         bodies.append(json.loads(req.data.decode("utf-8")))
         payload = base64.b64encode(b"PNG").decode("ascii")
         return _Resp(json.dumps({"data": [{"b64_json": payload}]}).encode())
@@ -109,7 +109,7 @@ def test_openai_image_service_edits_filestore_image(monkeypatch, tmp_path):
         user_id="alice", conversation_id="conv1")
     calls = []
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         calls.append(req)
         payload = base64.b64encode(b"EDITED").decode("ascii")
         return _Resp(json.dumps({"data": [{"b64_json": payload}]}).encode())
@@ -146,7 +146,7 @@ def test_openai_image_service_edits_filestore_image(monkeypatch, tmp_path):
 def test_openai_image_service_uses_configured_timeout_for_external_edit_input(monkeypatch):
     timeouts = []
 
-    def fake_urlopen(req, timeout=0):
+    def fake_urlopen(req, timeout=0, context=None):
         timeouts.append(timeout)
         if req.full_url == "https://cdn.example/source.png":
             return _Resp(b"SOURCE", "image/png")

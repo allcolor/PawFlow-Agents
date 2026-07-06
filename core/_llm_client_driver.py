@@ -9,6 +9,7 @@ import logging
 import random
 import re
 import time
+import errno
 from typing import List, Optional
 
 from core._llm_types import (
@@ -29,6 +30,20 @@ class _LLMClientDriverMixin:
     def _redact_relay_proxy_url(url: str) -> str:
         """Hide relay proxy bearer tokens before writing URLs to logs."""
         return re.sub(r"(/relay-proxy/[^/]+/)[^/]+/", r"\1<token>/", url or "")
+
+    @staticmethod
+    def _is_broken_pipe_error(exc: BaseException) -> bool:
+        """Return True for direct or wrapped EPIPE/BrokenPipe failures."""
+        seen = set()
+        current = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, BrokenPipeError):
+                return True
+            if isinstance(current, OSError) and getattr(current, "errno", None) == errno.EPIPE:
+                return True
+            current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+        return False
 
     def _apply_call_identity(self, *, call_user_id=None,
                              call_conversation_id=None, call_agent_name=None,
@@ -359,7 +374,7 @@ class _LLMClientDriverMixin:
                     base_url = self.base_url or ""
                     err = f"{type(exc).__name__}: {exc}"
                     is_relay_proxy = "/relay-proxy/" in base_url
-                    is_broken_pipe = ("BrokenPipeError" in err or "broken pipe" in err.lower())
+                    is_broken_pipe = self._is_broken_pipe_error(exc)
                     if not (is_relay_proxy and is_broken_pipe):
                         raise
                     logger.warning(

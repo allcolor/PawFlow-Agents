@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.7] — 2026-07-06
+
+### Added
+
+- Relay-aware provider URLs now support native `relay://<relay>/<host>:<port>/path`
+  and `relays://<relay>/<host>:<port>/path` forms. Legacy
+  `http(s)://<relay>/<host>:<port>/path` URLs remain supported.
+
+### Fixed
+
+- OpenAI-compatible relay streaming now resolves the relay base URL once per
+  request, preventing repeated proxy token minting and inconsistent stream
+  routing. Broken relay streams fall back to non-streaming completion with
+  redacted diagnostic logs.
+- MCP HTTP relay URLs now preserve conversation scope when minted at discovery
+  time and re-minted at execution time.
+
 ## [1.0.0-beta.6] — 2026-07-06
 
 ### Fixed

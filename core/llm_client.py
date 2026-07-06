@@ -146,10 +146,6 @@ class LLMClient(
           * `_max_context_size` — set by agent_executor for sub-agents
             so the CC provider can publish context-fill % via
             message_meta. Per-call but propagated for SSE accuracy.
-          * Per-call identity fields (`_user_id`, `_conversation_id`,
-            `_agent_name`, `_agent_service`, `_event_cid`) — required by
-            relay-aware `base_url` resolution on OpenAI-compatible calls.
-
         State explicitly NOT propagated:
           * Pool-tracking attrs, _claude_proc, session ids, result
             flags, preempt state, stderr buffer — these are exactly
@@ -168,13 +164,6 @@ class LLMClient(
         _max_ctx = getattr(self, '_max_context_size', 0)
         if _max_ctx:
             clone._max_context_size = _max_ctx
-        for _name in (
-            '_user_id', '_conversation_id', '_agent_name',
-            '_agent_service', '_event_cid',
-        ):
-            _value = getattr(self, _name, None)
-            if _value:
-                setattr(clone, _name, _value)
         return clone
 
     def _cfg(self, key: str, default: Any = "") -> Any:

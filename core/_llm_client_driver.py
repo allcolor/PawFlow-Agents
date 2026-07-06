@@ -25,6 +25,24 @@ logger = logging.getLogger(__name__)
 class _LLMClientDriverMixin:
     """complete / complete_stream / embed + abort control for LLMClient."""
 
+    def _apply_call_identity(self, *, call_user_id=None,
+                             call_conversation_id=None, call_agent_name=None,
+                             call_event_cid=None) -> None:
+        """Attach per-call identity needed by relay-aware base_url resolution.
+
+        Call sites should still prefer isolated clients. This method only writes
+        non-empty call-scoped fields, keeping clone_for_call() itself free of
+        mutable parent stream state.
+        """
+        if call_user_id:
+            self._user_id = call_user_id
+        if call_conversation_id:
+            self._conversation_id = call_conversation_id
+        if call_agent_name:
+            self._agent_name = call_agent_name
+        if call_event_cid:
+            self._event_cid = call_event_cid
+
     def complete(
         self,
         messages: List[LLMMessage],
@@ -68,6 +86,12 @@ class _LLMClientDriverMixin:
                 f"Unknown provider '{self.provider}'. Supported: {', '.join(self.PROVIDERS)}"
             )
 
+        self._apply_call_identity(
+            call_user_id=call_user_id,
+            call_conversation_id=call_conversation_id,
+            call_agent_name=call_agent_name,
+            call_event_cid=call_event_cid,
+        )
         model = model or self.default_model
 
         def _do_complete(mdl):
@@ -309,6 +333,12 @@ class _LLMClientDriverMixin:
         if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
             raise LLMClientError("api_key is required")
 
+        self._apply_call_identity(
+            call_user_id=call_user_id,
+            call_conversation_id=call_conversation_id,
+            call_agent_name=call_agent_name,
+            call_event_cid=call_event_cid,
+        )
         model = model or self.default_model
 
         def _do_stream(mdl):

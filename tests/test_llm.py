@@ -62,22 +62,34 @@ def test_non_transport_cli_exit_is_not_retryable_marker():
     assert LLMClient._is_transient_transport_error(err) is False
 
 
-def test_clone_for_call_preserves_relay_url_identity():
+def test_complete_stream_call_identity_is_available_for_relay_url_resolution(monkeypatch):
     client = LLMClient(provider="openai", config={
         "api_key": "sk-test",
         "base_url": "http://relay1/localhost:11434/v1",
+        "max_retries": 1,
     })
-    client._user_id = "alice"
-    client._conversation_id = "conv1"
-    client._agent_name = "assistant"
-    client._agent_service = "local_ollama_service"
+    captured = {}
 
-    clone = client.clone_for_call()
+    def fake_stream(self, messages, model, temperature, max_tokens, tools, callback, **kwargs):
+        captured["user_id"] = getattr(self, "_user_id", "")
+        captured["conversation_id"] = getattr(self, "_conversation_id", "")
+        captured["agent_name"] = getattr(self, "_agent_name", "")
+        return LLMResponse(content="ok", model=model, finish_reason="stop")
 
-    assert clone._user_id == "alice"
-    assert clone._conversation_id == "conv1"
-    assert clone._agent_name == "assistant"
-    assert clone._agent_service == "local_ollama_service"
+    monkeypatch.setattr(LLMClient, "_stream_openai", fake_stream)
+
+    client.complete_stream(
+        [LLMMessage("user", "hi", conversation_id="conv1")],
+        call_user_id="alice",
+        call_conversation_id="conv1",
+        call_agent_name="assistant",
+    )
+
+    assert captured == {
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "agent_name": "assistant",
+    }
 
 
 class TestLLMConnectionService:

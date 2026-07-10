@@ -25,12 +25,14 @@ def _conv_relay_url(path: str) -> str:
 
 OPENAI_BASE_URLS = [
     ("OpenAI", "https://api.openai.com/v1", "Native OpenAI API."),
+    ("Ollama cloud", "https://ollama.com/v1", "Ollama-hosted cloud models; free tier available. Create an API key at https://ollama.com/settings/keys."),
     ("OpenRouter", "https://openrouter.ai/api/v1", "OpenAI-compatible gateway; model helper can use the public catalog."),
     ("DeepSeek", "https://api.deepseek.com", "OpenAI-compatible DeepSeek endpoint."),
     ("xAI", "https://api.x.ai/v1", "OpenAI-compatible xAI endpoint."),
     ("DashScope Beijing", "https://dashscope.aliyuncs.com/compatible-mode/v1", "Qwen OpenAI-compatible endpoint in Beijing."),
     ("DashScope Singapore", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "Qwen OpenAI-compatible endpoint in Singapore."),
     ("DashScope Virginia", "https://dashscope-us.aliyuncs.com/compatible-mode/v1", "Qwen OpenAI-compatible endpoint in Virginia."),
+    ("Ollama local relay", _conv_relay_url("localhost:11434/v1"), "Relay-routed local Ollama server."),
     ("Local relay", _conv_relay_url("localhost:1234/v1"), "Relay-routed local OpenAI-compatible server."),
 ]
 
@@ -81,6 +83,15 @@ LLM_MODELS = {
         ("qwen3.6-flash", "Qwen fast model."),
         ("deepseek-v4-pro", "Third-party model via DashScope."),
         ("kimi-k2.6", "Third-party model via DashScope."),
+    ],
+    "ollama": [
+        ("gpt-oss:120b", "Open-weight OpenAI model; light usage level, good free-tier default."),
+        ("gpt-oss:20b", "Small open-weight OpenAI model; cheapest on free-tier usage."),
+        ("qwen3-coder:480b", "Large Qwen coding model."),
+        ("deepseek-v4-flash", "Lower-latency DeepSeek model."),
+        ("deepseek-v4-pro", "DeepSeek reasoning model; heavy usage level."),
+        ("kimi-k2.6", "Moonshot Kimi general model."),
+        ("glm-5", "Zhipu GLM general model."),
     ],
 }
 
@@ -250,6 +261,8 @@ def _json_value(value: Any, label: str, description: str) -> Dict[str, Any]:
 def _provider_family(config: Dict[str, Any]) -> str:
     provider = str(config.get("provider") or "").lower()
     base_url = str(config.get("base_url") or "").lower()
+    if "ollama" in base_url or ":11434" in base_url:
+        return "ollama"
     if "openrouter" in base_url:
         return "openrouter"
     if "deepseek" in base_url:
@@ -443,6 +456,7 @@ def _live_model_values(
         headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
     else:
         endpoint = (base_url or {
+            "ollama": "https://ollama.com/v1",
             "openrouter": "https://openrouter.ai/api/v1",
             "deepseek": "https://api.deepseek.com",
             "xai": "https://api.x.ai/v1",

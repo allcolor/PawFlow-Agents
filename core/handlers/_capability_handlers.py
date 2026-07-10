@@ -234,20 +234,31 @@ class DescribeImageHandler(_CapabilityHandlerBase):
         image_url = str(arguments.get("image_url") or "").strip()
         if not image_url:
             return "Error: `image_url` is required"
-        try:
-            from core.service_registry import ServiceRegistry
-            svc = ServiceRegistry.get_instance().resolve(
-                service_id, user_id=self._user_id, conv_id=self._conversation_id)
-        except Exception as exc:
-            return f"Error: llm_service '{service_id}' failed to resolve: {exc}"
-        if not svc or getattr(svc, "TYPE", "") != "llmConnection":
-            return f"Error: llm_service '{service_id}' is not an llmConnection service"
-        client = svc.get_client() if hasattr(svc, "get_client") else None
-        if not client or not getattr(client, "supports_vision", False):
-            return f"Error: llm_service '{service_id}' does not have vision enabled"
+        from core.vision_describe import describe_image_b64, resolve_vision_service
+        svc, err = resolve_vision_service(
+            service_id, user_id=self._user_id,
+            conversation_id=self._conversation_id)
+        if not svc:
+            return f"Error: {err}"
         prompt = str(arguments.get("prompt") or "Describe this image precisely.")
         image_part = self._llm_image_part(image_url)
+        url = (image_part.get("image_url") or {}).get("url", "")
         try:
+            if url.startswith("data:") and ";base64," in url:
+                header, b64 = url.split(";base64,", 1)
+                mime = header[len("data:"):] or "image/png"
+                description = describe_image_b64(
+                    svc, mime, b64,
+                    user_id=self._user_id,
+                    conversation_id=self._conversation_id,
+                    agent_name=self._agent_name,
+                    prompt=prompt,
+                    model=str(arguments.get("model") or ""),
+                    max_tokens=int(arguments.get("max_tokens", 1200) or 1200),
+                )
+                return f"Image description: {description or '(no description)'}"
+            # Remote http(s) URL: let the vision provider fetch it itself
+            # (no local bytes to hash, so no cache for this path).
             from core.llm_client import LLMMessage
             response = svc.complete(
                 [LLMMessage(

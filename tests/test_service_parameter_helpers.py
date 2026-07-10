@@ -73,6 +73,64 @@ def test_openrouter_model_helper_allows_public_models_without_api_key(monkeypatc
     assert data["values"][0]["value"] == "openai/gpt-5.5"
 
 
+def test_base_url_helper_suggests_ollama_cloud_endpoint():
+    from core.service_parameter_helpers import get_service_parameter_helper
+
+    data = get_service_parameter_helper(
+        "llmConnection",
+        "base_url",
+        {"provider": "openai"},
+    )
+
+    ollama = [v for v in data["values"] if v["value"] == "https://ollama.com/v1"]
+    assert ollama and ollama[0]["label"] == "Ollama cloud"
+    assert "ollama.com/settings/keys" in ollama[0]["description"]
+
+
+def test_ollama_model_helper_lists_cloud_models_without_api_key(monkeypatch):
+    import core.service_parameter_helpers as helpers
+
+    seen = {}
+
+    def fake_fetch_json(url, headers, timeout=8):
+        seen["url"] = url
+        seen["headers"] = headers
+        return {"data": [{"id": "gpt-oss:120b"}, {"id": "deepseek-v4-flash"}]}
+
+    monkeypatch.setattr(helpers, "_fetch_json", fake_fetch_json)
+
+    data = helpers.get_service_parameter_helper(
+        "llmConnection",
+        "default_model",
+        {"provider": "openai", "base_url": "https://ollama.com/v1", "api_key": ""},
+    )
+
+    assert seen == {
+        "url": "https://ollama.com/v1/models",
+        "headers": {},
+    }
+    assert data["source"] == "live"
+    assert data["values"][0]["value"] == "gpt-oss:120b"
+
+
+def test_ollama_model_helper_falls_back_for_relay_local_daemon(monkeypatch):
+    import core.service_parameter_helpers as helpers
+
+    def fail_fetch_json(url, headers, timeout=8):
+        raise OSError("relay scheme not fetchable")
+
+    monkeypatch.setattr(helpers, "_fetch_json", fail_fetch_json)
+
+    data = helpers.get_service_parameter_helper(
+        "llmConnection",
+        "default_model",
+        {"provider": "openai", "base_url": "relay://ws/localhost:11434/v1", "api_key": ""},
+    )
+
+    assert data["source"] == "fallback"
+    assert any(v["value"] == "gpt-oss:120b" for v in data["values"])
+
+
 def test_openrouter_media_model_helpers_filter_by_output_modality(monkeypatch):
     import core.service_parameter_helpers as helpers
 

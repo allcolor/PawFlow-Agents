@@ -191,6 +191,7 @@ class LLMConnectionService(BaseService):
         """
         self.ensure_connected()
         temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
+        messages = self._maybe_apply_vision_fallback(messages, call_kwargs)
         try:
             client = self.get_client()
             self._apply_call_context(client, call_kwargs)
@@ -202,6 +203,33 @@ class LLMConnectionService(BaseService):
             return resp
         except LLMClientError as e:
             raise ServiceError(str(e))
+
+    def _maybe_apply_vision_fallback(self, messages, call_kwargs):
+        """Replace image parts with vision-service descriptions when this
+        connection has supports_vision=false and names a vision_llm_service.
+
+        Runs on the service-level complete/complete_stream path so every
+        provider (API and CLI-backed) benefits. Failures leave the
+        messages untouched — providers then degrade images to text links
+        as before.
+        """
+        try:
+            client = self.get_client()
+            if getattr(client, "supports_vision", True):
+                return messages
+            target = str(self.config.get("vision_llm_service") or "").strip()
+            if not target:
+                return messages
+            from core.vision_describe import apply_vision_fallback
+            return apply_vision_fallback(
+                messages, target,
+                source_service_id=self._service_id,
+                user_id=str(call_kwargs.get("call_user_id") or ""),
+                conversation_id=str(call_kwargs.get("call_conversation_id") or ""),
+                agent_name=str(call_kwargs.get("call_agent_name") or ""))
+        except Exception:
+            logger.debug("vision fallback pre-processing failed", exc_info=True)
+            return messages
 
     def complete_stream(
         self,
@@ -224,6 +252,7 @@ class LLMConnectionService(BaseService):
         """
         self.ensure_connected()
         temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
+        messages = self._maybe_apply_vision_fallback(messages, call_kwargs)
         try:
             client = self.get_client()
             self._apply_call_context(client, call_kwargs)
@@ -385,7 +414,11 @@ class LLMConnectionService(BaseService):
             },
             "base_url": {
                 "type": "string", "default": "",
-                "description": "Base URL (override for self-hosted/compatible APIs)",
+                "description": (
+                    "Base URL (override for self-hosted/compatible APIs). "
+                    "https://ollama.com/v1 serves Ollama cloud models with a "
+                    "free-tier API key from https://ollama.com/settings/keys."
+                ),
             },
             "relay_local": {
                 "type": "boolean", "default": True,
@@ -415,6 +448,18 @@ class LLMConnectionService(BaseService):
             "supports_vision": {
                 "type": "boolean", "default": True,
                 "description": "Send image attachments to this API provider as native vision input",
+            },
+            "vision_llm_service": {
+                "type": "service_ref",
+                "service_type": "llmConnection",
+                "default": "",
+                "description": (
+                    "Vision-enabled llmConnection used to describe images when "
+                    "supports_vision is false. Images sent to this model "
+                    "(uploads, see/read/browser tool results) are replaced by a "
+                    "detailed textual description with element coordinates, "
+                    "cached per image."
+                ),
             },
             "timeout": {
                 "type": "integer", "default": 0,
@@ -561,6 +606,7 @@ class LLMConnectionService(BaseService):
                     "max_retries":   {"visible": True},
                     "fallback_model": {"visible": True},
                     "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
                     "docker_image":  {"visible": False},
                     "docker_cpu_limit": {"visible": False},
                     "docker_memory_limit": {"visible": False},
@@ -583,7 +629,8 @@ class LLMConnectionService(BaseService):
                     "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
-                    "supports_vision": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
                     "max_concurrent": {"visible": False},
                     "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
@@ -602,7 +649,8 @@ class LLMConnectionService(BaseService):
                     "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
-                    "supports_vision": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
                     "max_concurrent": {"visible": False},
                     "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
@@ -621,7 +669,8 @@ class LLMConnectionService(BaseService):
                     "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
-                    "supports_vision": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
                     "max_concurrent": {"visible": False},
                     "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
@@ -640,7 +689,8 @@ class LLMConnectionService(BaseService):
                     "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
-                    "supports_vision": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
                     "max_concurrent": {"visible": False},
                     "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
@@ -659,7 +709,8 @@ class LLMConnectionService(BaseService):
                     "relay_local":   {"visible": True},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
-                    "supports_vision": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
                     "max_concurrent": {"visible": False},
                     "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
@@ -667,6 +718,16 @@ class LLMConnectionService(BaseService):
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": False},
                     "extra_body":    {"visible": False},
+                }
+            },
+            {
+                # Evaluated last so it wins over the per-provider defaults:
+                # the vision fallback picker appears as soon as native vision
+                # is unchecked, for every provider (a CLI provider's base_url
+                # can point at a non-vision model too).
+                "when": {"supports_vision": ["false", False]},
+                "set": {
+                    "vision_llm_service": {"visible": True},
                 }
             },
         ]

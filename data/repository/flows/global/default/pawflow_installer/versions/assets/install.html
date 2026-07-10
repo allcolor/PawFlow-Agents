@@ -90,6 +90,7 @@
 </section>
 <section class="screen" data-step="3">
 <h2>LLM Services</h2>
+<p class="muted">No paid API key or subscription yet? Ollama cloud has a free tier: sign up at <a href="https://ollama.com" target="_blank" rel="noopener">ollama.com</a>, create an API key at <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener">ollama.com/settings/keys</a>, then use provider <code>openai</code> with base URL <code>https://ollama.com/v1</code>. The default-model helper lists the available cloud models (e.g. <code>gpt-oss:120b</code>).</p>
 <div class="actions" style="justify-content:flex-start;margin:0 0 12px 0">
 <button type="button" id="add_llm_service">+ Add LLM service</button>
 </div>
@@ -262,7 +263,7 @@ const defaultCredentialIds = {'claude-code':'claude_code_oauth_credentials','cod
 const llmProviderOptions = ['codex-app-server','claude-code','gemini','antigravity-interactive','openai','anthropic'];
 const llmParamDefs = [
   ['base_url','Base URL','text',''], ['embedding_model','Embedding model','text',''], ['fallback_model','Fallback model','text',''],
-  ['supports_vision','Supports vision','checkbox',true], ['timeout','Timeout seconds','number',1800], ['max_retries','Max retries','number',2],
+  ['supports_vision','Supports vision','checkbox',true], ['vision_llm_service','Vision LLM service','text',''], ['timeout','Timeout seconds','number',1800], ['max_retries','Max retries','number',2],
   ['max_context_size','Max context size','number',200000], ['compact_target_tokens','Compact target tokens','number',25000], ['compact_threshold_pct','Compact threshold pct','number',95],
   ['max_iterations','Max iterations','number',0], ['temperature','Temperature','number',0], ['max_consecutive_tool_calls','Max consecutive tool calls','number',0],
   ['resilience_style','Resilience style','select',''], ['thinking_budget','Thinking budget','number',0], ['max_rounds','Max rounds','number',0],
@@ -280,8 +281,9 @@ const summarizerParamDefs = [
 ];
 const llmParamHelp = {
   default_model: 'Default model name used by this LLM service. Helper: live provider lookup is attempted when a usable API key/base URL is filled; otherwise bundled fallback values are shown.',
-  api_key: 'API key for OpenAI/Anthropic-compatible providers. For CLI-backed providers, leave empty when using an OAuth credential service.',
-  base_url: 'Base URL override for self-hosted or compatible APIs. Helper: suggests common OpenAI-compatible, Anthropic-compatible, OpenRouter, DeepSeek, xAI, DashScope, and local relay URLs.',
+  api_key: 'API key for OpenAI/Anthropic-compatible providers. For CLI-backed providers, leave empty when using an OAuth credential service. For Ollama cloud (free tier), create a key at https://ollama.com/settings/keys.',
+  base_url: 'Base URL override for self-hosted or compatible APIs. Helper: suggests common OpenAI-compatible, Anthropic-compatible, Ollama cloud, OpenRouter, DeepSeek, xAI, DashScope, and local relay URLs. Use https://ollama.com/v1 for free-tier Ollama cloud models.',
+  vision_llm_service: 'Vision-enabled LLM service id used to describe images when this service has vision disabled. Uploads and see/read/browser images are replaced by a detailed textual description (with element coordinates), cached per image.',
   embedding_model: 'Embedding model used when this service is selected for embeddings. Empty uses the client default embedding model.',
   fallback_model: 'Fallback model used when the primary model fails. Mostly useful for OpenAI-compatible API providers.',
   supports_vision: 'Send image attachments to this API provider as native vision input.',
@@ -450,14 +452,16 @@ function loginCliField(index, provider) {
   if (provider === 'claude-code') return '<div><label>Login CLI</label><input value="Claude Code" disabled></div>';
   return '';
 }
-function visibleLlmParam(name, provider) {
+function visibleLlmParam(name, provider, cfg) {
+  if (name === 'supports_vision') return true;
+  if (name === 'vision_llm_service') return (cfg || {}).supports_vision === false;
   const cli = isCredentialProvider(provider);
   const api = provider === 'openai' || provider === 'anthropic';
   if (name === 'credential_service_id') return cli;
   if (['docker_image','docker_cpu_limit','docker_memory_limit'].includes(name)) return cli;
   if (name === 'effort') return provider === 'claude-code' || provider === 'codex-app-server';
   if (name === 'extra_body') return provider === 'openai';
-  if (['fallback_model','supports_vision','max_retries','max_concurrent'].includes(name)) return api;
+  if (['fallback_model','max_retries','max_concurrent'].includes(name)) return api;
   if (name === 'base_url') return api || provider === 'claude-code';
   return true;
 }
@@ -547,7 +551,7 @@ function renderLlmServices() {
     const cfg = svc.config || {};
     const provider = cfg.provider || 'openai';
     const providerOptions = llmProviderOptions.map(p => '<option value="' + p + '"' + (p === provider ? ' selected' : '') + '>' + p + '</option>').join('');
-    const params = llmParamDefs.filter(d => visibleLlmParam(d[0], provider)).map(d => fieldHtml(index, d[0], d[1], d[2], cfg[d[0]] === undefined ? d[3] : cfg[d[0]])).join('');
+    const params = llmParamDefs.filter(d => visibleLlmParam(d[0], provider, cfg)).map(d => fieldHtml(index, d[0], d[1], d[2], cfg[d[0]] === undefined ? d[3] : cfg[d[0]])).join('');
     const cred = isCredentialProvider(provider) ? '<div class="panel" style="margin-top:12px"><strong>Credential provider</strong><div class="formgrid"><div><label>Credential service id</label><input data-llm-param="credential_service_id" data-llm-index="' + index + '" value="' + escapeHtml(cfg.credential_service_id || '') + '" placeholder="' + escapeHtml(defaultCredentialIds[provider] || '') + '"></div><div><label>Credential scope</label><select data-llm-cred-scope="' + index + '"><option value="global"' + (svc.credential_scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.credential_scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div>' + loginCliField(index, provider) + '</div><div class="actions" style="justify-content:flex-start"><button type="button" class="secondary" data-cred-add="' + index + '">+ Add credential service</button><button type="button" class="secondary" data-cred-login="' + index + '">Login via server</button><button type="button" class="secondary" data-cred-paste="' + index + '">Paste credentials JSON</button></div></div>' : '';
     return '<div class="panel" data-llm-card="' + index + '"><div class="actions" style="margin-top:0"><button type="button" class="secondary" data-llm-remove="' + index + '">Remove</button></div><div class="formgrid"><div><label>Service id</label><input data-llm-id="' + index + '" value="' + escapeHtml(svc.service_id) + '" required></div><div><label>Scope</label><select data-llm-scope="' + index + '"><option value="global"' + (svc.scope === 'global' ? ' selected' : '') + '>Global</option><option value="user"' + (svc.scope === 'user' ? ' selected' : '') + '>Admin user</option></select></div><div><label>Provider</label><select data-llm-provider="' + index + '">' + providerOptions + '</select></div>' + fieldHtml(index, 'default_model', 'Default model', 'text', cfg.default_model || '', true) + fieldHtml(index, 'api_key', 'API key', 'password', cfg.api_key || '') + '</div><div class="formgrid">' + params + '</div>' + cred + '</div>';
   }).join('');
@@ -904,7 +908,7 @@ document.getElementById('oauth_provider_list').addEventListener('change', handle
 document.getElementById('oauth_provider_list').addEventListener('input', handleOauthChange);
 document.getElementById('add_llm_service').addEventListener('click', () => { collectLlmEditorValues(); llmServices.push({service_id:'llm_service_' + (llmServices.length + 1), scope:'user', credential_scope:'user', config:{provider:'openai', default_model:'', supports_vision:true, timeout:1800, max_retries:2, max_context_size:200000, compact_target_tokens:25000, compact_threshold_pct:95, tool_result_max_chars:50000}}); renderLlmServices(); });
 document.getElementById('llm_services_editor').addEventListener('input', collectLlmEditorValues);
-document.getElementById('llm_services_editor').addEventListener('change', e => { collectLlmEditorValues(); if (e.target.closest('[data-llm-provider]')) renderLlmServices(); });
+document.getElementById('llm_services_editor').addEventListener('change', e => { collectLlmEditorValues(); if (e.target.closest('[data-llm-provider]') || (e.target.dataset || {}).llmParam === 'supports_vision') renderLlmServices(); });
 document.getElementById('llm_services_editor').addEventListener('click', e => {
   const remove = e.target.closest('[data-llm-remove]');
   const add = e.target.closest('[data-cred-add]');

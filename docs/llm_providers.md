@@ -142,6 +142,39 @@ For local or compatible endpoints, change `base_url`:
 }
 ```
 
+### Ollama cloud (free tier)
+
+Ollama's hosted API is the easiest zero-cost way to get a working `llmConnection` out of the box — no GPU, no local daemon, and the free plan includes cloud-model access (with 5-hour session and weekly usage limits, one concurrent model). Sign up at [ollama.com](https://ollama.com), create an API key at [ollama.com/settings/keys](https://ollama.com/settings/keys), then:
+
+```json
+{
+  "type": "llmConnection",
+  "provider": "openai",
+  "api_key": "${OLLAMA_API_KEY}",
+  "base_url": "https://ollama.com/v1",
+  "default_model": "gpt-oss:120b"
+}
+```
+
+The `default_model` parameter helper lists the available cloud models live from `https://ollama.com/v1/models` (this listing works even before the API key is filled). Models consume free-tier usage proportionally to their size — small models such as `gpt-oss:20b` stretch the quota furthest. A local Ollama daemon works the same way with `base_url` pointing at it, e.g. `http://localhost:11434/v1` when the PawFlow server can reach it directly, or a relay-routed URL such as `relay://&#36;{conv.relay}/localhost:11434/v1` when Ollama runs on a relay machine.
+
+### Vision fallback for non-vision models
+
+An `llmConnection` whose model cannot process images (`supports_vision: false`) can name a vision-enabled `llmConnection` in `vision_llm_service`. Every image reaching the non-vision model — user uploads, `see`/`read`/browser tool results, screenshots — is then sent to the vision service with a request for an exhaustive description (all visible text, UI elements with approximate pixel coordinates, states), and the description replaces the image in the model's context:
+
+```json
+{
+  "type": "llmConnection",
+  "provider": "openai",
+  "base_url": "https://ollama.com/v1",
+  "default_model": "glm-5.2",
+  "supports_vision": false,
+  "vision_llm_service": "vision_llm_service_id"
+}
+```
+
+In the service editor the `vision_llm_service` picker appears as soon as `supports_vision` is unchecked — for every provider, including CLI-backed ones whose `base_url` points at a non-vision model. Descriptions are cached by image content hash (in memory and in `data/runtime/vision_describe_cache.json`), so each unique image is described once, not once per turn; an unchanged screenshot re-sent by `see` reuses its cached description. The referenced service must have vision enabled and be a different service; when the fallback cannot run (service missing, vision disabled, describe error), images degrade to text links exactly as before. The stored conversation keeps the original image parts, so switching the conversation to a vision-enabled agent restores native vision on the same history.
+
 OpenAI-compatible providers receive the lazy meta-tools `get_tool_schema` and `use_tool`. The provider-facing `use_tool` schema uses `arguments_json`, a JSON object encoded as a string, instead of a nested free-form `arguments` object. The handler still accepts `arguments` internally for compatibility, but the exposed schema avoids the PawFlow bug where compatible backends repeatedly produced `{}` for nested tool arguments. The OpenAI provider logs tool calls whose `arguments` field is omitted or empty so tool-call regressions are visible.
 
 OpenAI-compatible services also support `extra_body`, a JSON object merged into the chat-completions request body after PawFlow builds its standard fields. This is intended for endpoint-specific options such as OpenRouter routing:

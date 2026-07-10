@@ -140,11 +140,12 @@ class _CCITurnCoordinator:
         self.effective_model = ""
         self.lifecycle_events: list[dict] = []
         self.current_block_type = None
-        self._text_block_buf = ""
-        self._thinking_block_buf = ""
-        self._thinking_redacted = False
-        self._thinking_start = 0.0
-        self._thinking_end = 0.0
+        self._block_types: dict[int, str] = {}
+        self._text_block_bufs: dict[int, str] = {}
+        self._thinking_block_bufs: dict[int, str] = {}
+        self._thinking_redacted: dict[int, bool] = {}
+        self._thinking_start: dict[int, float] = {}
+        self._thinking_end: dict[int, float] = {}
         self._request_stop_reasons: dict[str, str] = {}
         self._request_saw_model_content: dict[str, bool] = {}
         self._request_saw_tool_use: dict[str, bool] = {}
@@ -279,15 +280,17 @@ class _CCITurnCoordinator:
                 idx = int(payload.get("index", 0) or 0)
                 block_type = block.get("type")
                 self.current_block_type = block_type
+                if block_type:
+                    self._block_types[idx] = block_type
                 if block_type == "thinking":
                     thinking = (
                         block.get("thinking", "")
                         or block.get("text", "")
                         or block.get("reasoning_content", ""))
                     if thinking:
-                        self._append_thinking(thinking)
+                        self._append_thinking(thinking, idx)
                     elif block.get("signature"):
-                        self._mark_redacted_thinking()
+                        self._mark_redacted_thinking(idx)
                 elif block_type == "tool_use":
                     if request_id:
                         self._request_saw_tool_use[request_id] = True
@@ -304,7 +307,7 @@ class _CCITurnCoordinator:
                     if isinstance(tool_input, dict) and tool_input:
                         self.tool_blocks[idx]["json"] = json.dumps(tool_input, ensure_ascii=False)
                 elif block_type == "text":
-                    self._append_text(block.get("text", ""))
+                    self._append_text(block.get("text", ""), idx)
             elif ptype == "content_block_delta":
                 self._saw_model_content = True
                 if not self._first_model_content_at:
@@ -314,9 +317,10 @@ class _CCITurnCoordinator:
                 idx = int(payload.get("index", 0) or 0)
                 delta = payload.get("delta") or {}
                 dtype = delta.get("type", "")
+                block_type = self._block_types.get(idx) or self.current_block_type
                 if dtype == "signature_delta":
-                    if self.current_block_type == "thinking" or delta.get("signature"):
-                        self._mark_redacted_thinking()
+                    if block_type == "thinking" or delta.get("signature"):
+                        self._mark_redacted_thinking(idx)
                     continue
                 if dtype == "input_json_delta" and idx in self.tool_blocks:
                     self.tool_blocks[idx]["json"] += delta.get("partial_json", "")
@@ -326,17 +330,24 @@ class _CCITurnCoordinator:
                     or delta.get("reasoning_content", "")
                     or delta.get("reasoning", ""))
                 if dtype == "thinking_delta" or (
-                        self.current_block_type == "thinking" and thinking_text):
-                    self._append_thinking(thinking_text or delta.get("text", ""))
+                        block_type == "thinking" and thinking_text):
+                    self._append_thinking(thinking_text or delta.get("text", ""), idx)
                 else:
-                    self._append_text(delta.get("text", ""))
+                    self._append_text(delta.get("text", ""), idx)
             elif ptype == "content_block_stop":
                 idx = int(payload.get("index", 0) or 0)
                 if idx in self.tool_blocks:
                     self._emit_tool_use(idx)
-                self._flush_text_block()
-                self._flush_thinking_block()
-                self.current_block_type = None
+                block_type = self._block_types.pop(idx, self.current_block_type)
+                if block_type == "thinking":
+                    self._flush_thinking_block(idx)
+                elif block_type == "text":
+                    self._flush_text_block(idx)
+                else:
+                    self._flush_text_block(idx)
+                    self._flush_thinking_block(idx)
+                if not self._block_types:
+                    self.current_block_type = None
             elif ptype == "message_delta":
                 request_id = event.get("request_id", "") or ""
                 delta = payload.get("delta") or {}
@@ -390,15 +401,15 @@ class _CCITurnCoordinator:
     def _finish_turn_if_ready(self) -> bool:
         if not self._stop_seen:
             return False
-        self._flush_text_block()
-        self._flush_thinking_block()
+        self._flush_all_text_blocks()
+        self._flush_all_thinking_blocks()
         self._emit_pending_tool_uses()
         self._emit_turn_callback()
         return True
 
-    def _append_text(self, text: str) -> None:
+    def _append_text(self, text: str, idx: int = 0) -> None:
         if text:
-            self._text_block_buf += text
+            self._text_block_bufs[idx] = self._text_block_bufs.get(idx, "") + text
             self.text_parts.append(text)
             self._message_text_parts.append(text)
             if self.callback:
@@ -409,33 +420,37 @@ class _CCITurnCoordinator:
             self._last_message_text = "".join(self._message_text_parts)
             self._message_text_parts = []
 
-    def _append_thinking(self, text: str) -> None:
+    def _append_thinking(self, text: str, idx: int = 0) -> None:
         if text:
-            self._thinking_block_buf += text
+            self._thinking_block_bufs[idx] = self._thinking_block_bufs.get(idx, "") + text
             if self.thinking_callback:
                 self.thinking_callback(text)
 
-    def _mark_redacted_thinking(self) -> None:
-        self._thinking_redacted = True
-        if self._thinking_start == 0.0:
-            self._thinking_start = time.time()
-        self._thinking_end = time.time()
+    def _mark_redacted_thinking(self, idx: int = 0) -> None:
+        self._thinking_redacted[idx] = True
+        if self._thinking_start.get(idx, 0.0) == 0.0:
+            self._thinking_start[idx] = time.time()
+        self._thinking_end[idx] = time.time()
 
-    def _flush_text_block(self) -> None:
-        if not self._text_block_buf:
+    def _flush_text_block(self, idx: int) -> None:
+        if idx not in self._text_block_bufs:
             return
-        text = self._text_block_buf
-        self._text_block_buf = ""
+        text = self._text_block_bufs.pop(idx, "")
         if self.block_callback:
             self.block_callback("text", {"text": text})
 
-    def _flush_thinking_block(self) -> None:
-        if not self._thinking_block_buf and not self._thinking_redacted:
+    def _flush_all_text_blocks(self) -> None:
+        for idx in sorted(self._text_block_bufs):
+            self._flush_text_block(idx)
+
+    def _flush_thinking_block(self, idx: int) -> None:
+        redacted = self._thinking_redacted.get(idx, False)
+        if idx not in self._thinking_block_bufs and not redacted:
             return
-        thinking = self._thinking_block_buf
+        thinking = self._thinking_block_bufs.pop(idx, "")
         synthesized = False
-        if not thinking and self._thinking_redacted:
-            duration = max(0.0, self._thinking_end - self._thinking_start)
+        if not thinking and redacted:
+            duration = max(0.0, self._thinking_end.get(idx, 0.0) - self._thinking_start.get(idx, 0.0))
             thinking = (
                 f"[Thought for {duration:.1f}s - reasoning content redacted "
                 "by the Anthropic API; the signature is preserved by Claude Code.]"
@@ -443,21 +458,24 @@ class _CCITurnCoordinator:
             synthesized = True
             self.thinking_parts.append(thinking)
         elif len(thinking.strip()) <= 1:
-            self._thinking_block_buf = ""
-            self._thinking_redacted = False
-            self._thinking_start = 0.0
-            self._thinking_end = 0.0
+            self._thinking_redacted.pop(idx, None)
+            self._thinking_start.pop(idx, None)
+            self._thinking_end.pop(idx, None)
             return
         else:
             self.thinking_parts.append(thinking)
-        self._thinking_block_buf = ""
-        self._thinking_redacted = False
-        self._thinking_start = 0.0
-        self._thinking_end = 0.0
+        self._thinking_redacted.pop(idx, None)
+        self._thinking_start.pop(idx, None)
+        self._thinking_end.pop(idx, None)
         if synthesized and thinking and self.thinking_callback:
             self.thinking_callback(thinking)
         if self.block_callback and thinking:
             self.block_callback("thinking_content", {"text": thinking})
+
+    def _flush_all_thinking_blocks(self) -> None:
+        keys = set(self._thinking_block_bufs) | set(self._thinking_redacted)
+        for idx in sorted(keys):
+            self._flush_thinking_block(idx)
 
 
     def _emit_turn_callback(self) -> None:

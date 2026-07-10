@@ -128,6 +128,9 @@ class LLMAnthropicMixin:
             tool_calls: list = []
             current_tool: Optional[Dict] = None
             tool_input_str = ""
+            block_types: Dict[int, str] = {}
+            block_tools: Dict[int, Dict] = {}
+            block_tool_inputs: Dict[int, str] = {}
             finish_reason = ""
             resp_model = model
             tokens_in = 0
@@ -138,25 +141,24 @@ class LLMAnthropicMixin:
             thinking_signature = ""
             current_block_type = None
 
-            def _append_text_piece(text: str) -> None:
-                nonlocal _text_block_buf
+            def _append_text_piece(text: str, idx: int = 0) -> None:
                 if text:
                     content_parts.append(text)
-                    _text_block_buf += text
+                    _text_block_bufs[idx] = _text_block_bufs.get(idx, "") + text
 
-            def _append_thinking_piece(text: str) -> None:
-                nonlocal thinking_text, _thinking_block_buf
+            def _append_thinking_piece(text: str, idx: int = 0) -> None:
+                nonlocal thinking_text
                 if text:
                     thinking_text += text
-                    _thinking_block_buf += text
+                    _thinking_block_bufs[idx] = _thinking_block_bufs.get(idx, "") + text
 
             # Per-block buffers: callbacks fire ONCE per block (CC parity).
             # CC's SDK delivers whole blocks, so its `token`/`thinking_content`
             # SSE events arrive block-granular. Anthropic streams per-delta —
             # we accumulate here and invoke the callbacks on content_block_stop
             # so the UI sees the same cadence on every provider.
-            _text_block_buf = ""
-            _thinking_block_buf = ""
+            _text_block_bufs: Dict[int, str] = {}
+            _thinking_block_bufs: Dict[int, str] = {}
 
             buffer = ""
             while True:
@@ -190,71 +192,90 @@ class LLMAnthropicMixin:
                                 cache_read_tokens = usage.get("cache_read_input_tokens", 0) or 0
 
                             elif evt_type == "content_block_start":
+                                idx = int(data.get("index", 0) or 0)
                                 block = data.get("content_block", {})
                                 block_type = block.get("type")
+                                if block_type:
+                                    block_types[idx] = block_type
                                 if block_type == "thinking":
                                     current_block_type = "thinking"
                                     _append_thinking_piece(
                                         block.get("thinking", "")
                                         or block.get("text", "")
-                                        or block.get("reasoning_content", ""))
+                                        or block.get("reasoning_content", ""),
+                                        idx)
                                 elif block_type == "tool_use":
                                     current_block_type = "tool_use"
                                     current_tool = {
                                         "id": block.get("id", ""),
                                         "name": block.get("name", ""),
                                     }
+                                    block_tools[idx] = current_tool
                                     tool_input = block.get("input")
-                                    tool_input_str = (
+                                    block_tool_inputs[idx] = (
                                         json.dumps(tool_input, ensure_ascii=False)
                                         if isinstance(tool_input, dict) and tool_input else "")
+                                    tool_input_str = block_tool_inputs[idx]
                                 else:
                                     current_block_type = block_type
                                     if block_type == "text":
-                                        _append_text_piece(block.get("text", ""))
+                                        _append_text_piece(block.get("text", ""), idx)
 
                             elif evt_type == "content_block_delta":
+                                idx = int(data.get("index", 0) or 0)
                                 delta = data.get("delta", {})
                                 delta_type = delta.get("type", "")
+                                block_type = block_types.get(idx) or current_block_type
                                 if delta_type == "signature_delta":
                                     thinking_signature = delta.get("signature", "") or thinking_signature
                                 elif delta_type == "input_json_delta":
-                                    tool_input_str += delta.get("partial_json", "")
+                                    block_tool_inputs[idx] = (
+                                        block_tool_inputs.get(idx, "")
+                                        + delta.get("partial_json", ""))
+                                    tool_input_str = block_tool_inputs[idx]
                                 else:
                                     t_text = (
                                         delta.get("thinking", "")
                                         or delta.get("reasoning_content", "")
                                         or delta.get("reasoning", ""))
                                     if delta_type == "thinking_delta" or (
-                                            current_block_type == "thinking" and t_text):
-                                        _append_thinking_piece(t_text)
+                                            block_type == "thinking" and t_text):
+                                        _append_thinking_piece(t_text, idx)
                                     else:
-                                        _append_text_piece(delta.get("text", ""))
+                                        _append_text_piece(delta.get("text", ""), idx)
 
                             elif evt_type == "content_block_stop":
-                                if current_tool:
+                                idx = int(data.get("index", 0) or 0)
+                                block_type = block_types.pop(idx, current_block_type)
+                                block_tool = block_tools.pop(idx, current_tool if block_type == "tool_use" else None)
+                                if block_tool:
                                     from core.tool_json import parse_tool_arguments
+                                    raw_tool_input = block_tool_inputs.pop(idx, tool_input_str)
                                     args = parse_tool_arguments(
-                                        tool_input_str,
-                                        tool_name=current_tool["name"],
+                                        raw_tool_input,
+                                        tool_name=block_tool["name"],
                                         provider="anthropic",
                                         log=logger,
                                     )
                                     tool_calls.append(LLMToolCall(
-                                        id=current_tool["id"],
-                                        name=current_tool["name"],
+                                        id=block_tool["id"],
+                                        name=block_tool["name"],
                                         arguments=args,
                                     ))
-                                    current_tool = None
+                                    if block_tool is current_tool:
+                                        current_tool = None
                                     tool_input_str = ""
                                 # Fire block-level callbacks ONCE per closed block.
-                                if _text_block_buf and callback:
-                                    callback(_text_block_buf)
-                                    _text_block_buf = ""
-                                if _thinking_block_buf and thinking_callback:
-                                    thinking_callback(_thinking_block_buf)
-                                    _thinking_block_buf = ""
-                                current_block_type = None
+                                if idx in _text_block_bufs and (block_type in ("text", None) or block_type not in {"thinking", "tool_use"}):
+                                    text_block = _text_block_bufs.pop(idx)
+                                    if callback:
+                                        callback(text_block)
+                                if idx in _thinking_block_bufs and (block_type in ("thinking", None) or block_type not in {"text", "tool_use"}):
+                                    thinking_block = _thinking_block_bufs.pop(idx)
+                                    if thinking_callback:
+                                        thinking_callback(thinking_block)
+                                if not block_types:
+                                    current_block_type = None
 
                             elif evt_type == "message_delta":
                                 delta = data.get("delta", {})

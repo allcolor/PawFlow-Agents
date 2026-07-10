@@ -118,6 +118,52 @@ def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():
     assert turns == []
 
 
+def test_turn_coordinator_flushes_interleaved_blocks_by_index_order():
+    events = [
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking"},
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "plan first"},
+        }),
+        _sse("content_block_start", {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "text"},
+        }),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "text_delta", "text": "Visible "},
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "text_delta", "text": "answer"},
+        }),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 1}),
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    blocks = []
+    resp = _CCITurnCoordinator(
+        _Events(events), "sess",
+        block_callback=lambda event_type, payload: blocks.append((event_type, payload)),
+    ).run()
+
+    assert resp.content == "Visible answer"
+    assert resp.thinking == "plan first"
+    assert blocks == [
+        ("thinking_content", {"text": "plan first"}),
+        ("text", {"text": "Visible answer"}),
+    ]
+
+
 def test_turn_coordinator_final_content_is_last_api_message_text():
     """A CCI turn spans several API messages (narration -> tool -> answer).
 

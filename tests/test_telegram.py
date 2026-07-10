@@ -2080,6 +2080,27 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             f"💭 <i>assistant thinking</i>\n<blockquote>{full}</blockquote>",
         ]
 
+    def test_conversation_bridge_does_not_flush_delta_preview_before_tool_call(self):
+        """Regression: CCI may emit thinking_delta fragments before a tool_call
+        and only later publish the durable thinking_content. Telegram must not
+        expose the transient fragment as a standalone broken sentence."""
+        from tasks.io.telegram_agent_client import TelegramConversationBridgeTask
+        task = TelegramConversationBridgeTask({"service_id": "telegram_bot"})
+        task._send = MagicMock()
+        task._send_tool_media = MagicMock()
+
+        full = "I cannot access search results, so I am trying the website directly."
+        with patch.object(TelegramConversationBridgeTask, "_telegram_subscribers", return_value=[("alice", "chat-1")]):
+            task._on_event("conv1", "thinking_delta", {"agent_name": "assistant", "text": "I website"})
+            task._on_event("conv1", "tool_call", {"agent_name": "assistant", "tool": "fetch"})
+            task._on_event("conv1", "thinking_content", {"agent_name": "assistant", "text": full})
+            task._on_event("conv1", "done", {"agent_name": "assistant"})
+
+        assert [call.args[2] for call in task._send.call_args_list] == [
+            "🟩 <b>assistant</b>\n<blockquote>calling <code>fetch</code></blockquote>",
+            f"💭 <i>assistant thinking</i>\n<blockquote>{full}</blockquote>",
+        ]
+
     def test_conversation_bridge_flushes_delta_preview_when_no_content(self):
         """Fallback: if a thinking burst is streamed via deltas but never
         finalized with a thinking_content (e.g. cancelled turn), the preview

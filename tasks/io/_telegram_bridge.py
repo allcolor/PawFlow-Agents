@@ -102,7 +102,7 @@ class TelegramConversationBridgeTask(BaseTask):
         # which is why the final reasoning of each turn was missing while
         # webchat (which renders thinking_content directly) showed everything.
         if event_type in {"done", "error_event"}:
-            self._flush_all_pending_thinking(conversation_id)
+            self._flush_all_pending_thinking(conversation_id, include_preview=True)
             return
         if event_type not in {
                 "new_message", "thinking",
@@ -148,7 +148,8 @@ class TelegramConversationBridgeTask(BaseTask):
         # so keying on agent_name alone stranded the pre-answer thinking of
         # no-tool-call turns (buffered under :thinking:<agent>, flush looked up
         # :thinking:'').
-        self._flush_pending_thinking(conversation_id, self._agent_key(data))
+        self._flush_pending_thinking(
+            conversation_id, self._agent_key(data), include_preview=False)
 
         if (event_type == "new_message" and data.get("role") == "assistant"
                 and _telegram_assistant_msg_id_was_sent(conversation_id, data)):
@@ -203,7 +204,8 @@ class TelegramConversationBridgeTask(BaseTask):
         source = data.get("source") if isinstance(data.get("source"), dict) else {}
         return str(source.get("name") or "")
 
-    def _flush_all_pending_thinking(self, conversation_id: str) -> None:
+    def _flush_all_pending_thinking(self, conversation_id: str,
+                                    include_preview: bool = False) -> None:
         """Flush every agent's pending thinking for this conversation (turn end).
 
         Multiple agents may have open bursts; flush each so no final reasoning
@@ -212,23 +214,32 @@ class TelegramConversationBridgeTask(BaseTask):
         keys = set(self._thinking_buf) | set(self._thinking_preview)
         agent_keys = [k[len(prefix):] for k in keys if k.startswith(prefix)]
         for agent_key in agent_keys:
-            self._flush_pending_thinking(conversation_id, agent_key)
+            self._flush_pending_thinking(
+                conversation_id, agent_key, include_preview=include_preview)
 
-    def _flush_pending_thinking(self, conversation_id: str, agent_key: str) -> None:
+    def _flush_pending_thinking(self, conversation_id: str, agent_key: str,
+                                include_preview: bool = False) -> None:
         """Emit the accumulated thinking for one agent as a single consolidated
         Telegram message, then clear the buffer. No-op when nothing is pending."""
         key = f"{conversation_id}:thinking:{agent_key}"
         buf = self._thinking_buf.pop(key, "")
-        # Durable blocks win; a leftover preview (block streamed via deltas but
-        # never finalized with a thinking_content, e.g. cancel) is the fallback.
-        preview = self._thinking_preview.pop(key, "")
+        # Durable blocks win. Delta previews are transient and may be followed
+        # by tool_call/tool_result before the final thinking_content arrives;
+        # flushing them on those non-terminal events exposes sentence fragments
+        # like "I website" in Telegram. Only turn-end (`done`/`error_event`)
+        # may fall back to a preview that never got finalized.
+        preview = self._thinking_preview.pop(key, "") if include_preview else ""
         meta = self._thinking_meta.pop(key, None) or {}
         buf = _merge_thinking(buf, preview)
         if not buf.strip():
+            if meta and not include_preview:
+                self._thinking_meta[key] = meta
             return
         text = _telegram_thinking_message(meta, buf)
         if not text:
             return
+        if meta and not include_preview and key in self._thinking_preview:
+            self._thinking_meta[key] = meta
         for user_id, chat_id in self._telegram_subscribers(conversation_id, meta):
             self._send(user_id, chat_id, text)
 

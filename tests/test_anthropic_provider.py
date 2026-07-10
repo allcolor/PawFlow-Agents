@@ -224,6 +224,71 @@ def test_anthropic_stream_accepts_compatible_text_delta_without_type(monkeypatch
     assert resp.tokens_out == 2
 
 
+def test_anthropic_stream_flushes_interleaved_callbacks_by_block_index(monkeypatch):
+    client = LLMClient(provider="anthropic", config={"api_key": "test"})
+    events = [
+        {"type": "message_start", "message": {
+            "model": "claude-test",
+            "usage": {"input_tokens": 10},
+        }},
+        {"type": "content_block_start", "index": 0,
+         "content_block": {"type": "thinking"}},
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "thinking_delta", "thinking": "plan first"}},
+        {"type": "content_block_start", "index": 1,
+         "content_block": {"type": "text"}},
+        {"type": "content_block_delta", "index": 1,
+         "delta": {"type": "text_delta", "text": "Visible "}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "content_block_delta", "index": 1,
+         "delta": {"type": "text_delta", "text": "answer"}},
+        {"type": "content_block_stop", "index": 1},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+         "usage": {"output_tokens": 2}},
+        {"type": "message_stop"},
+    ]
+    payload = "".join("data: " + json.dumps(e) + "\n\n" for e in events).encode()
+
+    class _Resp:
+        status = 200
+
+        def __init__(self):
+            self._chunks = [payload, b""]
+
+        def read(self, _n=-1):
+            return self._chunks.pop(0)
+
+    class _Conn:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, *args, **kwargs):
+            pass
+
+        def getresponse(self):
+            return _Resp()
+
+        def close(self):
+            pass
+
+    import core.llm_providers.anthropic as anthropic_mod
+    monkeypatch.setattr(anthropic_mod.http.client, "HTTPSConnection", _Conn)
+
+    text_seen = []
+    thinking_seen = []
+    resp = client.complete_stream(
+        [LLMMessage(role="user", content="hi", conversation_id="conv-a")],
+        callback=text_seen.append,
+        thinking_callback=thinking_seen.append,
+        thinking_budget=1024,
+    )
+
+    assert resp.content == "Visible answer"
+    assert resp.thinking == "plan first"
+    assert thinking_seen == ["plan first"]
+    assert text_seen == ["Visible answer"]
+
+
 def test_anthropic_stream_does_not_replace_malformed_tool_json_with_empty_args(monkeypatch):
     from core.tool_json import PARSE_ERROR_KEY
 

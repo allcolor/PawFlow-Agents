@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.11] — 2026-07-10
+
+### Fixed
+
+- Claude Code interactive and Anthropic streaming now buffer indexed Anthropic
+  content blocks independently, so interleaved `thinking` and `text` blocks no
+  longer flush out of order or split visible words across Telegram messages.
+- Telegram conversation forwarding now treats `thinking_delta` as a transient
+  preview until the durable `thinking_content` arrives, preventing broken
+  fragments such as partial reasoning sentences from being posted before tool
+  calls.
+
 ## [1.0.0-beta.10] — 2026-07-10
 
 ### Added

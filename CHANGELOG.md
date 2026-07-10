@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.10] — 2026-07-10
+
+### Added
+
+- Native Tripo3D (`tripo3DGeneration`) and Meshy AI (`meshy3DGeneration`)
+  services against the vendor APIs: text-to-3D (Meshy preview + refine
+  workflow), image-to-3D, rigging, animation (Meshy action ids, Tripo
+  presets incl. quadruped/hexapod/serpentine variants), retexture, and
+  Tripo convert/stylize. New agent tools `rig_3d_model`,
+  `animate_3d_model` and `retexture_3d_model`; `generate_3d` now surfaces
+  the vendor `task_id` for chaining. See `docs/tripo_meshy.md`.
+- Vision fallback for non-vision LLMs: an `llmConnection` with
+  `supports_vision: false` can name a `vision_llm_service` that describes
+  incoming images (OCR, UI elements with coordinates) before the messages
+  reach the non-vision model, with memory + disk caching by image hash.
+  `supports_vision` is now configurable for all providers, including the
+  CLI ones whose `base_url` may point at a non-vision model.
+- Ollama cloud free-tier presets: live model listing from
+  `https://ollama.com/v1/models` in the service panel and install wizard,
+  plus documentation for the free out-of-the-box setup path.
+
 ## [1.0.0-beta.9] — 2026-07-06
 
 ### Added

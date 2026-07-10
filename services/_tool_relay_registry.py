@@ -275,12 +275,19 @@ class _ToolRelayRegistryMixin:
                 h.set_service_resolver(
                     self._make_media_resolver(
                         user_id, conversation_id, "audio", ("generate",)))
-            elif h.name in ("generate_3d",):
+            elif h.name in ("generate_3d", "rig_3d_model",
+                            "animate_3d_model", "retexture_3d_model"):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
+                _3d_methods = {
+                    "generate_3d": ("generate_3d",),
+                    "rig_3d_model": ("rig_3d",),
+                    "animate_3d_model": ("animate_3d",),
+                    "retexture_3d_model": ("retexture_3d",),
+                }[h.name]
                 h.set_service_resolver(
                     self._make_media_resolver(
-                        user_id, conversation_id, "3d", ("generate_3d",)))
+                        user_id, conversation_id, "3d", _3d_methods))
             elif h.name in ("upscale_image",):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)

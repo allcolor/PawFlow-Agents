@@ -20,6 +20,11 @@ from core.handlers._capability_base import (  # noqa: F401
     _provider_version,
     _voice_id_value,
 )
+from core.handlers._capability_3d_handlers import (  # noqa: F401
+    Animate3DModelHandler,
+    Retexture3DModelHandler,
+    Rig3DModelHandler,
+)
 from core.handlers._capability_handlers import (  # noqa: F401
     DescribeImageHandler,
     Generate3DHandler,

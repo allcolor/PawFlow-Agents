@@ -40,10 +40,13 @@ from core.handlers.agent_tools import (  # noqa: F401
     TaskToolHandler,
 )
 from core.handlers.capabilities import (  # noqa: F401
+    Animate3DModelHandler,
     CloneVoiceHandler,
     DeleteVoiceHandler,
     DescribeImageHandler,
     Generate3DHandler,
+    Retexture3DModelHandler,
+    Rig3DModelHandler,
     LipsyncHandler,
     RemixImageHandler,
     RemoveBackgroundHandler,
@@ -382,6 +385,9 @@ def create_default_registry() -> ToolRegistry:
     registry.register(VideoGenerationHandler())
     registry.register(AudioGenerationHandler())
     registry.register(Generate3DHandler())
+    registry.register(Rig3DModelHandler())
+    registry.register(Animate3DModelHandler())
+    registry.register(Retexture3DModelHandler())
     registry.register(UpscaleImageHandler())
     registry.register(UpscaleVideoHandler())
     registry.register(DescribeImageHandler())

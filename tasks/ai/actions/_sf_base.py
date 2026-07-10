@@ -86,6 +86,8 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "fishAudioVoiceClone": "voice",
     "wavespeedVoiceClone": "voice",
     "wavespeed3DGeneration": "3d",
+    "tripo3DGeneration": "3d",
+    "meshy3DGeneration": "3d",
     "wavespeedUpscale": "upscale",
     "wavespeedTryOn": "try-on",
     "wavespeedLipsync": "video",

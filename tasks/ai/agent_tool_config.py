@@ -151,7 +151,9 @@ class AgentToolConfigMixin:
                 h.set_service_resolver(self._make_audio_resolver(
                     user_id, conversation_id, agent_name,
                 ))
-            elif h.name in ("generate_3d", "upscale_image", "upscale_video",
+            elif h.name in ("generate_3d", "rig_3d_model",
+                             "animate_3d_model", "retexture_3d_model",
+                             "upscale_image", "upscale_video",
                              "remove_background", "try_on",
                              "lipsync", "train_image_model",
                              "clone_voice", "speak", "delete_voice"):
@@ -163,6 +165,9 @@ class AgentToolConfigMixin:
                     h.set_conversation_id(conversation_id)
                 _maker, _methods = {
                     "generate_3d": (self._make_3d_resolver, ("generate_3d",)),
+                    "rig_3d_model": (self._make_3d_resolver, ("rig_3d",)),
+                    "animate_3d_model": (self._make_3d_resolver, ("animate_3d",)),
+                    "retexture_3d_model": (self._make_3d_resolver, ("retexture_3d",)),
                     "upscale_image": (self._make_upscale_resolver, ("upscale",)),
                     "upscale_video": (self._make_upscale_resolver, ("upscale_video",)),
                     "remove_background": (self._make_upscale_resolver, ("remove_background",)),

@@ -112,6 +112,8 @@ run, so read/search-style calls do not restat or decrypt secrets repeatedly.
 | `wavespeedTryOn` | WaveSpeedAI virtual try-on. |
 | `wavespeedLipsync` | WaveSpeedAI lipsync. |
 | `wavespeedTrainer` | WaveSpeedAI model/LoRA training. |
+| `tripo3DGeneration` | Native Tripo3D API: text/image-to-3D, rigging, animation retargeting, retexture, convert, stylize. |
+| `meshy3DGeneration` | Native Meshy AI API: text/image-to-3D, rigging, animation, retexture. |
 | `fishAudioVoiceClone` | Fish Audio zero-shot voice clone/TTS. |
 | `elevenLabsVoiceClone` | ElevenLabs voice clone/TTS. |
 | `wavespeedVoiceClone` | WaveSpeedAI zero-shot voice clone/TTS. |

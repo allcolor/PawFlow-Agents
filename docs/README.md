@@ -34,6 +34,7 @@
 | [Provenance](provenance.md) | Data lineage and traceability |
 | [Voice Clone](voice_clone.md) | Voice clone cache, provider paradigms, deletion semantics |
 | [Pixazo](pixazo.md) | Raw Pixazo model/provider reference |
+| [Tripo3D & Meshy](tripo_meshy.md) | Native 3D providers: text/image-to-3D, rigging, animation, retexture |
 
 ## Deployment and Development
 

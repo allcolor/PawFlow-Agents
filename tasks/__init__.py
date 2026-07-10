@@ -89,6 +89,8 @@ def _register_all_services():
     # Extra media capability services (3D, upscale, try-on, lipsync, trainer)
     import services.pixazo_capability_services  # noqa: F401
     import services.wavespeed_capability_services  # noqa: F401
+    import services.tripo_capability_services  # noqa: F401
+    import services.meshy_capability_services  # noqa: F401
 
     # Relay & filesystem services
     import services.filesystem_service         # noqa: F401  — relay service (WS)

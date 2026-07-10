@@ -355,7 +355,10 @@ FileStore JSON artifact.
 
 | Tool | Purpose |
 |---|---|
-| `generate_3d` | Generate a GLB/GLTF/OBJ/USDZ model from an image or prompt. |
+| `generate_3d` | Generate a GLB/GLTF/OBJ/USDZ model from an image or prompt. Native Tripo3D/Meshy services also return a vendor `task_id` for chaining. |
+| `rig_3d_model` | Rig (add an animation skeleton to) a humanoid model. Pass the `task_id` from `generate_3d` (Tripo3D, Meshy) or a GLB `model_url` (Meshy). Returns a rig `task_id`. |
+| `animate_3d_model` | Apply an animation to a rigged character: `rig_task_id` + `animation` (Meshy numeric action id, or Tripo preset like `preset:walk`). |
+| `retexture_3d_model` | Re-texture an existing model from a text or image style (`task_id` or Meshy `model_url`). |
 | `try_on` | Virtual try-on: dress a person image with a garment image. |
 | `train_image_model` | Submit a dataset to train/fine-tune an image model/LoRA where supported. |
 
@@ -403,11 +406,13 @@ Supported service families include:
 - `wavespeedTryOn`
 - `wavespeedLipsync`
 - `wavespeedTrainer`
+- `tripo3DGeneration`
+- `meshy3DGeneration`
 - `fishAudioVoiceClone`
 - `elevenLabsVoiceClone`
 - `wavespeedVoiceClone`
 
-For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). For WaveSpeedAI model-specific schemas and pricing notes, see [WaveSpeedAI](wavespeed.md). For registered voice internals, see [Voice Clone](voice_clone.md).
+For the native Tripo3D and Meshy APIs (text-to-3D, image-to-3D, rigging, animation, retexture), see [Tripo3D & Meshy](tripo_meshy.md). For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). For WaveSpeedAI model-specific schemas and pricing notes, see [WaveSpeedAI](wavespeed.md). For registered voice internals, see [Voice Clone](voice_clone.md).
 
 ### OpenAI-Compatible Text-to-Speech Service
 

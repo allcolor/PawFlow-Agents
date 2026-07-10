@@ -66,7 +66,13 @@ class Generate3DHandler(_CapabilityHandlerBase):
             filename = arguments.get("path") or (
                 f"model_{int(time.time())}.{ext}")
             destination = arguments.get("destination", "filestore")
-            return self._persist(destination, filename, r, "3D model generated")
+            msg = self._persist(destination, filename, r, "3D model generated")
+            task_id = str(r.get("task_id") or "")
+            if task_id:
+                # Vendor task id — needed to chain rig_3d_model /
+                # retexture_3d_model on the same service.
+                msg += f"\ntask_id: {task_id}"
+            return msg
         except Exception as e:
             return f"Error generating 3D model: {e}"
 

@@ -128,6 +128,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     "size": len(raw),
                 }
             except Exception:
+                logger.warning("tool-result image store failed (user=%s conv=%s filename=%s)",
+                               user_id, conversation_id, filename, exc_info=True)
                 return {"type": "text", "text": "[image omitted: failed to store image result]"}
 
         out = []

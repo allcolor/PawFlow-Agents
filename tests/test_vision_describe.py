@@ -201,3 +201,129 @@ def test_service_complete_applies_fallback_only_when_vision_disabled(monkeypatch
     svc.get_client = lambda: VisionClient()
     msgs = ["m"]
     assert svc._maybe_apply_vision_fallback(msgs, {}) is msgs
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_agent_loop_direct_client_call_applies_service_vision_fallback(streaming):
+    from core.llm_client import LLMMessage
+    from tasks.ai.agent_core import AgentCoreMixin
+
+    original = LLMMessage(
+        role="user",
+        content=[
+            {"type": "text", "text": "describe"},
+            {"type": "image_ref", "file_id": "img-1"},
+        ],
+        conversation_id="c1",
+    )
+    transformed = LLMMessage(
+        role="user",
+        content=[{"type": "text", "text": "described image"}],
+        conversation_id="c1",
+    )
+    fallback_calls = []
+    provider_calls = []
+
+    class Service:
+        def _maybe_apply_vision_fallback(self, messages, call_kwargs):
+            fallback_calls.append((messages, call_kwargs))
+            return [transformed]
+
+    class Client:
+        def complete(self, **kwargs):
+            provider_calls.append(kwargs)
+            return SimpleNamespace(content="ok")
+
+        def complete_stream(self, **kwargs):
+            provider_calls.append(kwargs)
+            return SimpleNamespace(content="ok")
+
+    class Emitter:
+        is_streaming = streaming
+
+        @staticmethod
+        def get_token_callback(_poll_silent):
+            return None
+
+        @staticmethod
+        def get_thinking_callback(_poll_silent):
+            return None
+
+    st = SimpleNamespace(
+        user_id="alice",
+        conversation_id="c1",
+        ctx={
+            "active_agent_name": "assistant",
+            "_event_cid": "event-c1",
+            "temperature": 0.2,
+            "max_tokens": 500,
+        },
+        resolved_svc=Service(),
+        client=Client(),
+        emitter=Emitter(),
+        model="model",
+        tool_defs=[],
+        _tb=0,
+        _client_provider="openai",
+        _claude_code_turn_callback=None,
+        _cli_block_callback=None,
+    )
+
+    core = object.__new__(AgentCoreMixin)
+    response = core._alc_llm_call(st, [original], False)
+
+    assert response.content == "ok"
+    assert len(fallback_calls) == 1
+    assert fallback_calls[0][0] == [original]
+    assert fallback_calls[0][1] == {
+        "call_user_id": "alice",
+        "call_conversation_id": "c1",
+        "call_agent_name": "assistant",
+        "call_event_cid": "event-c1",
+        "call_ephemeral_stream": False,
+    }
+    assert provider_calls[0]["messages"] == [transformed]
+    # The transcript object passed into preprocessing remains image-backed.
+    assert original.content[1]["type"] == "image_ref"
+
+
+def test_agent_loop_vision_fallback_failure_is_fail_open():
+    from core.llm_client import LLMMessage
+    from tasks.ai.agent_core import AgentCoreMixin
+
+    message = LLMMessage(
+        role="user", content="plain", conversation_id="c1")
+    provider_calls = []
+
+    class BrokenService:
+        @staticmethod
+        def _maybe_apply_vision_fallback(_messages, _call_kwargs):
+            raise RuntimeError("vision service unavailable")
+
+    class Client:
+        @staticmethod
+        def complete(**kwargs):
+            provider_calls.append(kwargs)
+            return SimpleNamespace(content="ok")
+
+    st = SimpleNamespace(
+        user_id="alice",
+        conversation_id="c1",
+        ctx={
+            "active_agent_name": "assistant",
+            "temperature": 0.2,
+            "max_tokens": 500,
+        },
+        resolved_svc=BrokenService(),
+        client=Client(),
+        emitter=SimpleNamespace(is_streaming=False),
+        model="model",
+        tool_defs=[],
+        _tb=0,
+    )
+
+    core = object.__new__(AgentCoreMixin)
+    response = core._alc_llm_call(st, [message], False)
+
+    assert response.content == "ok"
+    assert provider_calls[0]["messages"] == [message]

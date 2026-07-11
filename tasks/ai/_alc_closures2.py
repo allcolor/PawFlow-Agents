@@ -17,6 +17,29 @@ logger = logging.getLogger(__name__)
 
 
 class _ALCClosures2Mixin:
+    def _alc_apply_vision_fallback(self, st, messages, call_kwargs):
+        """Apply the active llmConnection's vision fallback before a direct
+        LLMClient call.
+
+        The agent loop intentionally calls its per-turn client directly, so it
+        bypasses LLMConnectionService.complete[_stream] where this preprocessing
+        normally happens.  Delegate back to the resolved service's existing
+        fail-open helper without mutating the persisted conversation messages.
+        """
+        try:
+            service = (
+                getattr(st, "resolved_svc", None)
+                or st.ctx.get("resolved_svc")
+            )
+            fallback = getattr(service, "_maybe_apply_vision_fallback", None)
+            if fallback:
+                return fallback(messages, call_kwargs)
+        except Exception:
+            logger.debug(
+                "agent-loop vision fallback pre-processing failed",
+                exc_info=True)
+        return messages
+
     def _alc_with_provider_system_prompt(self, st, stored_msgs):
         prompt = st.ctx.get("_provider_system_prompt", "") or ""
         out = list(stored_msgs)
@@ -221,6 +244,8 @@ class _ALCClosures2Mixin:
             user_id=st.user_id,
             budget_config=getattr(st.ctx.get("resolved_svc"), "config", None),
             independent_context=bool(st.ctx.get("_independent_context"))))
+        _interrupt_messages = self._alc_apply_vision_fallback(
+            st, _interrupt_messages, _interrupt_call_kwargs)
         _irpt_resp = st.client.complete_stream(
             messages=_interrupt_messages,
             model=st.model or None,
@@ -602,6 +627,7 @@ class _ALCClosures2Mixin:
             "call_event_cid": st.ctx.get("_event_cid", st.conversation_id),
             "call_ephemeral_stream": False,
         }
+        msgs = self._alc_apply_vision_fallback(st, msgs, _call_kwargs)
         if st.emitter.is_streaming:
             return st.client.complete_stream(
                 messages=msgs, model=st.model or None,

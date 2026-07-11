@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.12] — 2026-07-11
+
+### Added
+
+- Pocket TTS (`pocketTTS`) local text-to-speech service for on-device voice
+  generation without external API dependencies.
+
+### Fixed
+
+- Vision fallback now triggers in the agent loop when the active LLM lacks
+  native vision support but has a `vision_llm_service` configured. Previously
+  the fallback only ran through `LLMConnectionService.complete[_stream]`,
+  which the agent loop bypasses by calling `LLMClient` directly — so image
+  attachments and `see`/`read` tool results were never described for
+  non-vision models. The fix delegates to the resolved service's existing
+  `_maybe_apply_vision_fallback` from both the main LLM call and the
+  interrupt-handling path.
+- Tool-result image materialization (`_materialize_tool_result_images`) now
+  logs the exception when FileStore storage fails instead of silently
+  returning `[image omitted: failed to store image result]`.
+
 ## [1.0.0-beta.11] — 2026-07-10
 
 ### Fixed

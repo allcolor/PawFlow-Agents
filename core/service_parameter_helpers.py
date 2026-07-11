@@ -170,6 +170,7 @@ STATIC_MODELS = {
         ("eleven_flash_v2_5", "ElevenLabs flash model."),
     ],
     "fishAudioVoiceClone": [("speech-1.6", "Fish Audio TTS model."), ("s1", "Fish Audio S1 model.")],
+    "pocketTTS": [("kyutai/pocket-tts", "Default Kyutai Pocket TTS model.")],
     "luxTTS": [("hnhx/lux-tts", "Default LuxTTS Hugging Face model.")],
     "voxcpmTTS": [("openbmb/VoxCPM2", "Default VoxCPM model."), ("openbmb/VoxCPM", "Legacy VoxCPM model.")],
     "voicebox": [("large-v3-turbo", "Whisper fast STT model."), ("large-v3", "Whisper large STT model."), ("small", "Whisper small STT model.")],
@@ -503,7 +504,7 @@ def _fallback_models(service_type: str, parameter: str, config: Dict[str, Any]) 
 def _base_url_values(service_type: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
     if service_type == "llmConnection" and str(config.get("provider") or "") == "anthropic":
         return _values(ANTHROPIC_BASE_URLS)
-    if service_type in {"supertonicTTS", "voicebox", "voxcpmTTS", "httpClientService"}:
+    if service_type in {"supertonicTTS", "pocketTTS", "voicebox", "voxcpmTTS", "httpClientService"}:
         return _values(LOCAL_BASE_URLS + OPENAI_BASE_URLS[:2])
     return _values(OPENAI_BASE_URLS)
 

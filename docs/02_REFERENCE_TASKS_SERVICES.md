@@ -531,6 +531,31 @@ otherwise the UI shows bundled fallback values and an explicit warning. Secret
 helpers list secret names only and fill `${secret_name}` references, never raw
 secret values.
 
+### 12.0.1. Pocket TTS Local (`pocketTTS`)
+
+**File**: `services/pocket_tts_service.py`
+**Description**: Managed Kyutai Pocket TTS daemon for CPU-friendly local TTS.
+PawFlow starts `pocket-tts serve` lazily, calls `POST /tts`, and returns WAV
+audio bytes for `speak` and `generate_audio`.
+
+**Parameters**:
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `base_url` | string | No | `http://127.0.0.1:8000` | Pocket TTS server URL; relay URLs are supported for user-local endpoints. |
+| `allow_remote_voice_urls` | boolean | No | false | Allow Pocket TTS to fetch HTTP(S) voice URLs; disabled by default to avoid local-daemon SSRF. |
+| `auto_start` | boolean | No | true | Start the local daemon when first used. |
+| `auto_install` | boolean | No | true | Prepare a managed Python runtime during service installation. |
+| `install_dir` | string | No | `data/runtime/pocket-tts` | Managed runtime directory. |
+| `package_spec` | string | No | `pocket-tts[audio]>=2.1.0` | pip package spec installed into the runtime. |
+| `language` | select | No | `english` | Model language loaded by the daemon. |
+| `voice` | string | No | `alba` | Built-in voice, `hf://` voice URL, HTTP(S) voice URL, or local voice file. |
+| `quantize` | boolean | No | false | Enable Pocket TTS int8 quantization. |
+| `timeout` | integer | No | 180 | HTTP timeout in seconds. |
+
+`speak(text, voice=...)` sends `voice` as Pocket TTS `voice_url`. Pass
+`reference_audio_bytes` or a local `reference_audio_url` to upload a one-shot
+`voice_wav` prompt for voice cloning.
+
 ### 12.1. Database Connection Pool (`dbConnectionPool`)
 
 **File**: `services/db_connection_pool.py`

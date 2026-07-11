@@ -73,6 +73,7 @@ def _register_all_services():
     import services.wavespeed_audio_service    # noqa: F401
     import services.suno_audio_service         # noqa: F401  — sunoapi.org wrapper
     import services.supertonic_tts_service     # noqa: F401  — local Supertonic TTS
+    import services.pocket_tts_service         # noqa: F401  — local Pocket TTS
     import services.voicebox_service           # noqa: F401  — local Voicebox voice I/O
     import services.voxcpm_tts_service         # noqa: F401  — external VoxCPM TTS
     import services.openai_compatible_tts_service  # noqa: F401  — OpenAI-compatible TTS

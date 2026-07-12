@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.14] — 2026-07-12
+
+### Fixed
+
+- Multimodal prompt-token fallbacks now use the shared message counter instead
+  of measuring Python's serialized image blocks. Image transport bytes no
+  longer inflate context usage when a provider omits usage metadata; only text
+  content and message overhead are estimated across API and CLI providers.
+- Delegated result-shape resolution now supports minimal tool registries that
+  expose `list_tools()` without `get()`, restoring targeted cancellation for
+  direct API-provider tool execution.
+- The Claude Code interactive no-proxy timeout regression test now patches the
+  coordinator's owning module, preventing the test from waiting for the
+  production 300-second timeout.
+
 ## [1.0.0-beta.13] — 2026-07-12
 
 ### Fixed

@@ -12,6 +12,7 @@ import time
 import errno
 from typing import List, Optional
 
+from core.token_counter import count_messages_tokens
 from core._llm_types import (
     CCCompactDetected,
     LLMClientError,
@@ -177,10 +178,7 @@ class _LLMClientDriverMixin:
                                                    call_conversation_id=call_conversation_id or "")
             result.duration_ms = (time.time() - start) * 1000
             if not result.tokens_in and messages:
-                result.tokens_in = sum(
-                    len(m.content) if isinstance(m.content, str) else
-                    sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                    else 0 for m in messages) // 4
+                result.tokens_in = count_messages_tokens(messages)
             if not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)
@@ -455,10 +453,7 @@ class _LLMClientDriverMixin:
                 raise LLMClientError(f"Unknown provider '{self.provider}'")
             result.duration_ms = (time.time() - start) * 1000
             if not result.tokens_in and messages:
-                result.tokens_in = sum(
-                    len(m.content) if isinstance(m.content, str) else
-                    sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                    else 0 for m in messages) // 4
+                result.tokens_in = count_messages_tokens(messages)
             if not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)

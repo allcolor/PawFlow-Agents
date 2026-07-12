@@ -1451,6 +1451,20 @@ class TestImageMarkerCapBypass(unittest.TestCase):
 
         self.assertEqual(out, big)
 
+    def test_result_shape_resolver_supports_minimal_registry(self):
+        from core.handlers.meta_tools import resolve_result_shape_handler
+
+        handler = MockHandler(name="see", result="")
+
+        class MinimalRegistry:
+            def list_tools(self):
+                return [handler]
+
+        self.assertIs(
+            resolve_result_shape_handler(MinimalRegistry(), "see", {}),
+            handler,
+        )
+
     def test_use_tool_does_not_trust_marker_from_regular_handler(self):
         from core.handlers.meta_tools import UseToolHandler
 

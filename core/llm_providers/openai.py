@@ -8,6 +8,8 @@ import base64
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
+from core.token_counter import count_messages_tokens
+
 logger = logging.getLogger(__name__)
 
 
@@ -272,9 +274,7 @@ class LLMOpenaiMixin:
             tokens_out = usage_data.get("completion_tokens", 0)
             total_tokens = usage_data.get("total_tokens", 0)
             if not tokens_in:
-                tokens_in = sum(len(m.content) if isinstance(m.content, str) else
-                             sum(len(str(p)) for p in m.content) if isinstance(m.content, list) else 0
-                             for m in messages) // 4
+                tokens_in = count_messages_tokens(messages)
             if not tokens_out:
                 tokens_out = len(content) // 4
 

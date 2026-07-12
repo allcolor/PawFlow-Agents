@@ -118,7 +118,19 @@ def resolve_result_shape_handler(registry, tool_name: str, tool_args):
         name = _canonical_tool_name(nested_name)
         args = nested_args
         unwrap_budget -= 1
-    return registry.get(name) if name else None
+    if not name:
+        return None
+    get_handler = getattr(registry, "get", None)
+    if callable(get_handler):
+        return get_handler(name)
+    list_tools = getattr(registry, "list_tools", None)
+    if callable(list_tools):
+        return next(
+            (handler for handler in list_tools()
+             if getattr(handler, "name", "") == name),
+            None,
+        )
+    return None
 
 
 def _normalize_tool_args(tool_name: str, tool_args: Dict[str, Any], schema: Dict[str, Any] = None) -> Dict[str, Any]:

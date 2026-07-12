@@ -385,7 +385,7 @@ def test_turn_coordinator_waits_for_delayed_proxy_event_after_stop_hook(monkeypa
 
 
 def test_turn_coordinator_times_out_when_stop_has_no_proxy_events(monkeypatch):
-    import core.llm_providers.claude_code_interactive as cci
+    import core.llm_providers._cci_turn as cci
 
     monkeypatch.setattr(cci, "_NO_PROXY_EVENT_TIMEOUT_SECONDS", 0)
 

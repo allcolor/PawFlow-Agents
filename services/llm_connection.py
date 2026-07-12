@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional
 from core.base_service import BaseService
 from core import ServiceFactory, ServiceError
 from core.llm_client import LLMClient, LLMMessage, LLMResponse, LLMClientError, LLMToolDefinition, LLMToolCall, LLMToolResult
+from core.token_counter import count_messages_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -295,11 +296,7 @@ class LLMConnectionService(BaseService):
 
         # Estimate if provider didn't return token counts
         if not tokens_in and messages:
-            # Rough estimate: ~4 chars per token
-            total_chars = sum(len(m.content or "") if isinstance(m.content, str)
-                              else sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                              else 0 for m in messages)
-            tokens_in = total_chars // 4
+            tokens_in = count_messages_tokens(messages)
         if not tokens_out and response.content:
             tokens_out = len(response.content) // 4
 

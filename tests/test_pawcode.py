@@ -678,6 +678,22 @@ class TestTokenCounter:
         result = count_messages_tokens(messages)
         assert result > 0
 
+    def test_count_messages_tokens_ignores_image_transport_size(self):
+        """Image transport bytes are never text tokens in the model context."""
+        from core.token_counter import count_messages_tokens
+
+        def messages(blob):
+            return [{"content": [
+                {"type": "text", "text": "Describe these images"},
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": "image/png", "data": blob}},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:image/png;base64,{blob}"}},
+            ]}]
+
+        assert count_messages_tokens(messages("A" * 16)) == count_messages_tokens(
+            messages("A" * 2_000_000))
+
     def test_count_tokens_longer_text_more_tokens(self):
         from core.token_counter import count_tokens
         short = count_tokens("Hi")

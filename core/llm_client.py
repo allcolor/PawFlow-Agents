@@ -14,6 +14,7 @@ import threading
 import time
 from typing import Dict, Any, Optional
 
+from core.token_counter import count_messages_tokens
 from core.llm_providers import (
     LLMCliSharedMixin,
     LLMOpenaiMixin,
@@ -494,12 +495,7 @@ class LLMClient(
         tokens_out = response.tokens_out
         # Estimate if provider didn't return counts
         if not tokens_in and messages:
-            total_chars = sum(
-                len(m.content) if isinstance(m.content, str)
-                else sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                else 0 for m in messages
-            )
-            tokens_in = total_chars // 4
+            tokens_in = count_messages_tokens(messages)
         if not tokens_out and response.content:
             tokens_out = len(response.content) // 4
         try:

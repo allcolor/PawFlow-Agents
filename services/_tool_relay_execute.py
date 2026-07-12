@@ -599,7 +599,9 @@ class _ToolRelayExecuteMixin:
         # gated on the handler's _returns_images flag. Without this gate, a
         # grep result matching the literal marker string would be wrongly
         # split into separate text/image blocks by the bridge.
-        _h_for_img = next((h for h in registry.list_tools() if h.name == tool_name), None)
+        from core.handlers.meta_tools import resolve_result_shape_handler
+        _h_for_img = resolve_result_shape_handler(
+            registry, tool_name, arguments)
         _returns_images = bool(getattr(_h_for_img, '_returns_images', False)) if _h_for_img else False
         if _returns_images and "__image_data__:" in result_str:
             blocks = []

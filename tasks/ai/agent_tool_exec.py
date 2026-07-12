@@ -67,36 +67,9 @@ class AgentToolExecMixin:
                     blocked.add(tc.name)
 
         def _handler_for_result_shape(tc):
-            tool_name = tc.name
-            tool_args = tc.arguments if isinstance(tc.arguments, dict) else {}
-            unwrap_budget = 3
-            wrapper_names = {"use_tool", "mcp__pawflow__use_tool", "mcp_pawflow_use_tool"}
-            while tool_name in wrapper_names and isinstance(tool_args, dict) and unwrap_budget > 0:
-                nested_name = (tool_args.get("tool_name")
-                               or tool_args.get("name")
-                               or tool_args.get("tool")
-                               or "")
-                nested_args = tool_args.get("arguments")
-                if nested_args is None:
-                    nested_args = tool_args.get("params")
-                if nested_args is None:
-                    nested_args = tool_args.get("input")
-                if nested_args is None:
-                    nested_args = {}
-                if isinstance(nested_args, str):
-                    from core.tool_json import (
-                        parse_tool_arguments, tool_argument_parse_error)
-                    nested_args = parse_tool_arguments(
-                        nested_args, tool_name=nested_name, provider="use_tool")
-                    if tool_argument_parse_error(nested_args):
-                        nested_args = {}
-                if not nested_name:
-                    break
-                tool_name = nested_name
-                tool_args = nested_args
-                unwrap_budget -= 1
-            return next((h for h in registry.list_tools()
-                         if getattr(h, "name", "") == tool_name), None)
+            from core.handlers.meta_tools import resolve_result_shape_handler
+            return resolve_result_shape_handler(
+                registry, tc.name, tc.arguments)
 
         def _exec_one(tc):
             if tc.name in blocked:

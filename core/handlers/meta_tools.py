@@ -80,6 +80,47 @@ def _canonical_tool_name(name: str) -> str:
     return _TOOL_ALIASES.get(name) or _TOOL_ALIASES.get(name.lower()) or name
 
 
+def resolve_result_shape_handler(registry, tool_name: str, tool_args):
+    """Return the handler that determines a tool result's trusted shape.
+
+    use_tool is only a transport wrapper. Image capability and other
+    result-shape decisions must come from the final delegated handler, not the
+    wrapper itself. Keep this resolver side-effect free so the registry cap,
+    agent executor, and MCP relay all make the same trust decision.
+    """
+    name = _canonical_tool_name(tool_name)
+    args = tool_args if isinstance(tool_args, dict) else {}
+    unwrap_budget = 3
+    while name in _WRAPPER_TOOL_NAMES and unwrap_budget > 0:
+        nested_name = (
+            args.get("tool_name")
+            or args.get("name")
+            or args.get("tool")
+            or ""
+        )
+        nested_args = args.get("arguments")
+        if nested_args is None:
+            nested_args = args.get("arguments_json")
+        if nested_args is None:
+            nested_args = args.get("params")
+        if nested_args is None:
+            nested_args = args.get("input")
+        if nested_args is None:
+            nested_args = {}
+        if isinstance(nested_args, str):
+            nested_args = parse_tool_arguments(
+                nested_args, tool_name=nested_name, provider="use_tool",
+                log=logger)
+            if tool_argument_parse_error(nested_args):
+                return None
+        if not nested_name or not isinstance(nested_args, dict):
+            return None
+        name = _canonical_tool_name(nested_name)
+        args = nested_args
+        unwrap_budget -= 1
+    return registry.get(name) if name else None
+
+
 def _normalize_tool_args(tool_name: str, tool_args: Dict[str, Any], schema: Dict[str, Any] = None) -> Dict[str, Any]:
     if "relay" in tool_args:
         tool_args = dict(tool_args)

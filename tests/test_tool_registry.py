@@ -1434,6 +1434,58 @@ class TestImageMarkerCapBypass(unittest.TestCase):
         out = reg.execute("see_no_marker", {})
         self.assertLessEqual(len(out), 50_000 + 500)
 
+    def test_use_tool_preserves_oversized_image_from_delegated_handler(self):
+        from core.handlers.meta_tools import UseToolHandler
+
+        big = "__image_data__:image/png:" + ("A" * 200_000)
+        image_handler = MockHandler(name="see", result=big)
+        image_handler._returns_images = True
+        reg = ToolRegistry()
+        reg.register(image_handler)
+        reg.register(UseToolHandler(reg))
+
+        out = reg.execute("use_tool", {
+            "tool_name": "see",
+            "arguments_json": "{}",
+        })
+
+        self.assertEqual(out, big)
+
+    def test_use_tool_does_not_trust_marker_from_regular_handler(self):
+        from core.handlers.meta_tools import UseToolHandler
+
+        big = "__image_data__:not-an-image:" + ("A" * 200_000)
+        reg = ToolRegistry()
+        reg.register(MockHandler(name="grep_like", result=big))
+        reg.register(UseToolHandler(reg))
+
+        out = reg.execute("use_tool", {
+            "tool_name": "grep_like",
+            "arguments_json": "{}",
+        })
+
+        self.assertLessEqual(len(out), 50_000 + 500)
+
+    def test_nested_use_tool_resolves_final_image_handler_for_cap(self):
+        from core.handlers.meta_tools import UseToolHandler
+
+        big = "__image_data__:image/png:" + ("A" * 200_000)
+        image_handler = MockHandler(name="see", result=big)
+        image_handler._returns_images = True
+        reg = ToolRegistry()
+        reg.register(image_handler)
+        reg.register(UseToolHandler(reg))
+
+        out = reg.execute("use_tool", {
+            "tool_name": "use_tool",
+            "arguments_json": json.dumps({
+                "tool_name": "view_image",
+                "arguments_json": "{}",
+            }),
+        })
+
+        self.assertEqual(out, big)
+
 
 if __name__ == "__main__":
     unittest.main()

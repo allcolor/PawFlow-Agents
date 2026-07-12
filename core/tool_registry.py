@@ -325,7 +325,10 @@ class ToolRegistry:
             # actually emit a marker — otherwise a grep match on the literal
             # "__image_data__:" string would wrongly bypass the cap.
             _max = getattr(handler, '_tool_result_max_chars', 50000)
-            _has_image = (getattr(handler, '_returns_images', False)
+            from core.handlers.meta_tools import resolve_result_shape_handler
+            _result_handler = (
+                resolve_result_shape_handler(self, name, args) or handler)
+            _has_image = (getattr(_result_handler, '_returns_images', False)
                           and isinstance(result, str)
                           and "__image_data__:" in result)
             if isinstance(result, str) and len(result) > _max and not _has_image:

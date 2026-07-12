@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.13] — 2026-07-12
+
+### Fixed
+
+- Image-producing tools invoked through `use_tool` now preserve oversized
+  image payloads across the registry safety cap, agent multimodal conversion,
+  and MCP relay serialization. The effective delegated handler is resolved
+  through aliases and nested wrappers while retaining the trusted
+  `_returns_images` gate, so ordinary text containing an image marker remains
+  capped.
+
 ## [1.0.0-beta.12] — 2026-07-11
 
 ### Added

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Webchat history pagination now uses the oldest rendered message as a cursor,
+  so **Load more** returns the immediately adjacent older messages even when
+  live-render trimming or technical message groups made the numeric offset drift.
+
 ## [1.0.0-beta.22] — 2026-07-13
 
 ### Added

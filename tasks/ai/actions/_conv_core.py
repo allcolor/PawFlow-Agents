@@ -43,6 +43,7 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
         conv_id = body.get("conversation_id", "")
         limit = int(body.get("limit", 50))
         offset = int(body.get("offset", 0))
+        before_msg_id = str(body.get("before_msg_id", "") or "")
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -61,7 +62,9 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             }, ensure_ascii=False).encode("utf-8"))
             return [flowfile]
 
-        page = store.load_page(conv_id, limit=limit, offset=offset, user_id=user_id)
+        page = store.load_page(
+            conv_id, limit=limit, offset=offset, user_id=user_id,
+            before_msg_id=before_msg_id)
         if page is None:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")

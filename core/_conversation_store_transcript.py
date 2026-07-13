@@ -123,12 +123,14 @@ class _CsTranscriptMixin:
         return all_msgs[start:end + 1]
 
     def load_page(self, cid: str, limit: int = 50, offset: int = 0,
-                  user_id: str = "") -> Optional[Dict]:
+                  user_id: str = "", before_msg_id: str = "") -> Optional[Dict]:
         """Load a paginated slice of the transcript.
 
         Reads from the END of the JSONL file — only parses the lines needed.
         For a 2000-message conversation with limit=50, offset=0, this reads
         ~50 lines from the tail instead of scanning all 2000.
+        When before_msg_id resolves, its exact position takes precedence over
+        offset so callers can continue from a rendered message without drift.
         """
         if not self.exists(cid):
             return None
@@ -149,18 +151,35 @@ class _CsTranscriptMixin:
             return {"messages": [], "total_count": 0, "offset": 0,
                     "limit": limit, "has_more": False}
         try:
-            result = self._read_tail(log, total, limit, offset)
-            if offset == 0 and total > 0 and not result.get("messages"):
+            resolved_offset = offset
+            if before_msg_id:
+                cursor_offset = self._offset_after_msg_id(log, before_msg_id)
+                if cursor_offset is not None:
+                    resolved_offset = cursor_offset
+            result = self._read_tail(log, total, limit, resolved_offset)
+            if resolved_offset == 0 and total > 0 and not result.get("messages"):
                 cached = self._reload_cache(cid)
                 corrected_total = int(cached.get("msg_count") or 0)
                 if corrected_total != total:
                     self._persist_recomputed_hot_metadata(cid, cached)
-                    result = self._read_tail(log, corrected_total, limit, offset)
+                    result = self._read_tail(log, corrected_total, limit, resolved_offset)
             return result
         except Exception as e:
             logger.error("[convstore] load_page failed %s: %s", cid, e)
             return {"messages": [], "total_count": total, "offset": offset,
                     "limit": limit, "has_more": False}
+
+    @staticmethod
+    def _offset_after_msg_id(log: SegmentedJsonl, msg_id: str) -> Optional[int]:
+        """Return the number of message rows at or after the requested message."""
+        offset = 0
+        for line in log.iter_rows_reverse():
+            if not line.get("role"):
+                continue
+            offset += 1
+            if line.get("msg_id") == msg_id:
+                return offset
+        return None
 
     def _read_tail(self, log: SegmentedJsonl, total_msgs: int, limit: int, offset: int) -> Dict:
         """Read the last (offset + limit) display rows from a logical JSONL."""

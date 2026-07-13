@@ -531,6 +531,13 @@ function _placeLoadMoreBanner(banner) {
   }
 }
 
+function _oldestRenderedMessageId() {
+  const container = document.getElementById('messages');
+  if (!container) return '';
+  const oldest = container.querySelector('[data-msgid]');
+  return oldest && oldest.dataset ? (oldest.dataset.msgid || '') : '';
+}
+
 function _updateLoadMoreBanner() {
   let banner = document.getElementById('loadMoreBanner');
   if (hasMoreMessages) {
@@ -559,13 +566,21 @@ function loadMoreMessages() {
   const prevHeight = container.scrollHeight;
   const nextOffset = currentOffset;
   const requestConversationId = conversationId;
+  const historyRequest = {
+    conversation_id: requestConversationId,
+    limit: displayWindow,
+    offset: nextOffset,
+  };
+  const beforeMsgId = _oldestRenderedMessageId();
+  if (beforeMsgId) historyRequest.before_msg_id = beforeMsgId;
 
-  action$('load_history', { conversation_id: requestConversationId, limit: displayWindow, offset: nextOffset })
+  action$('load_history', historyRequest)
     .subscribe(data => {
       if (requestConversationId !== conversationId) { loadingMore = false; return; }
       if (data.error) { loadingMore = false; _updateLoadMoreBanner(); return; }
       hasMoreMessages = data.has_more || false;
-      currentOffset += data.raw_count || (data.messages || []).length;
+      const rawCount = data.raw_count || (data.messages || []).length;
+      currentOffset = (Number(data.offset) || 0) + rawCount;
       const insertPoint = banner && banner.parentNode === container ? banner.nextSibling : container.firstChild;
       // Build elements in a fragment, then insert at the right position.
       // Task messages go into their task block (existing or new).

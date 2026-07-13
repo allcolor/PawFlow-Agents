@@ -365,6 +365,44 @@ class TestAgentLoopActions(unittest.TestCase):
         assert body["message_count"] == 3
         assert body["group_technical_messages"] is True
 
+    def test_load_history_cursor_returns_adjacent_older_messages(self):
+        from core.conv_agent_config import add_agent_to_conv
+
+        store = ConversationStore.instance()
+        store.save(
+            "c1",
+            [
+                {
+                    "role": "user",
+                    "content": f"m{i}",
+                    "msg_id": f"cursor-m{i}",
+                    "timestamp": float(i + 1),
+                }
+                for i in range(6)
+            ],
+            ttl=60,
+            user_id="alice@test.com",
+        )
+        add_agent_to_conv(
+            "c1", "assistant", llm_service="default", definition="assistant")
+
+        _ack, visible = self._execute_async_action({
+            "action": "load_history",
+            "conversation_id": "c1",
+            "limit": 2,
+        })
+        _ack, older = self._execute_async_action({
+            "action": "load_history",
+            "conversation_id": "c1",
+            "limit": 2,
+            "offset": 999,
+            "before_msg_id": visible["messages"][0]["msg_id"],
+        })
+
+        assert [m["content"] for m in visible["messages"]] == ["m4", "m5"]
+        assert [m["content"] for m in older["messages"]] == ["m2", "m3"]
+        assert older["offset"] == 2
+
     def test_load_history_does_not_prewarm_append_targets(self):
         """load_history must stay read-only and not pre-open writer paths."""
         from core.conv_agent_config import add_agent_to_conv

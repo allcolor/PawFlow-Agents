@@ -351,6 +351,18 @@ def test_clear_keeps_conversation_and_load_more_entrypoint():
     assert "_updateLoadMoreBanner()" in clear_block
 
 
+def test_load_more_uses_oldest_rendered_message_cursor():
+    load_more = CONVERSATIONS_JS[
+        CONVERSATIONS_JS.index("function _oldestRenderedMessageId()"):
+        CONVERSATIONS_JS.index("function loadMoreMessages()")
+        + len("function loadMoreMessages()")
+    ]
+    assert "container.querySelector('[data-msgid]')" in load_more
+    assert "historyRequest.before_msg_id = beforeMsgId" in CONVERSATIONS_JS
+    assert "currentOffset = (Number(data.offset) || 0) + rawCount" in CONVERSATIONS_JS
+    assert "_seenMsgIds.delete(msgId)" in MESSAGES_JS
+
+
 def test_message_actions_can_copy_id_and_restart_from_msg_id():
     attachments_js = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
     assert "copyMsgId(this)" in MESSAGES_JS

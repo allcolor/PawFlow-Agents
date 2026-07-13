@@ -21,6 +21,16 @@ function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
     if (excess <= 0) break;
     const mid = el.dataset && el.dataset.msgid;
     if (mid && typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.has(mid)) continue;
+    const evicted = [];
+    if (mid) evicted.push(mid);
+    if (el.querySelectorAll) {
+      for (const child of el.querySelectorAll('[data-msgid]')) {
+        if (child.dataset && child.dataset.msgid) evicted.push(child.dataset.msgid);
+      }
+    }
+    if (typeof _seenMsgIds !== 'undefined') {
+      for (const msgId of evicted) _seenMsgIds.delete(msgId);
+    }
     el.remove();
     excess--;
   }

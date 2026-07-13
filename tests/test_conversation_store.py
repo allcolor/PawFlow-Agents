@@ -699,6 +699,32 @@ class TestLoadPage:
         assert len(result["messages"]) == 5
         assert result["has_more"] is False
 
+    def test_load_page_cursor_returns_messages_immediately_before_visible_row(
+            self, conv):
+        store, cid, uid = conv
+        for i in range(10):
+            store.append_message(
+                cid,
+                _msg(
+                    content=f"m{i}",
+                    source={"type": "user", "name": uid, "target_agent": "bot"},
+                ),
+                user_id=uid,
+            )
+
+        visible = store.load_page(cid, limit=3, offset=0)
+        before_msg_id = visible["messages"][0]["msg_id"]
+        result = store.load_page(
+            cid,
+            limit=3,
+            offset=999,
+            before_msg_id=before_msg_id,
+        )
+
+        assert [m["content"] for m in result["messages"]] == ["m4", "m5", "m6"]
+        assert result["offset"] == 3
+        assert result["has_more"] is True
+
     def test_load_page_nonexistent(self, store):
         result = store.load_page("nonexistent", limit=10, offset=0)
         assert result is None

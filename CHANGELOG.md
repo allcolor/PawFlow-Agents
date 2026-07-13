@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.22] — 2026-07-13
+
+### Added
+
+- Added the `llmAggregator` service. It consults multiple direct
+  `llmConnection` advisors in parallel, injects their internal plans into a
+  separate final LLM, and exposes the composite anywhere an agent accepts an
+  LLM-capable service.
+- Added `best_effort` and `fail_fast` advisor failure policies, configurable
+  concurrency and iteration limits, per-turn report reuse, coordinated aborts,
+  and separate advisor usage/cost accounting that does not inflate the main
+  context gauge.
+- Added a complete multi-LLM setup guide, README example, website how-to, and
+  documentation-hub links.
+
+### Security
+
+- Advisor sub-contexts are silent, isolated, and ephemeral. Read-only
+  enforcement is enabled by default with a fail-closed tool allowlist, including
+  CLI-backed providers through their scoped MCP context; interactive and
+  state-mutating tools remain available only to the final LLM under the normal
+  conversation approval policy.
+
 ## [1.0.0-beta.21] — 2026-07-13
 
 ### Fixed

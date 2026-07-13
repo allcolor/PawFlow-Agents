@@ -17,21 +17,35 @@ import tiktoken
 logger = logging.getLogger(__name__)
 
 _encoding = None
-_encoding_failed = False
+_encoding_failed_at = 0.0  # monotonic timestamp of last failure; 0 = never tried
+
+# Retry tiktoken after this delay (seconds) so a transient network/cache
+# failure at startup doesn't permanently degrade token counting for the
+# entire server lifetime.
+_ENCODING_RETRY_SECONDS = 300.0  # 5 minutes
 
 
 def _get_encoding():
-    """Return the tiktoken encoding, or None when its cache/download fails."""
-    global _encoding, _encoding_failed
+    """Return the tiktoken encoding, or None when its cache/download fails.
+
+    A failure is not permanent: after _ENCODING_RETRY_SECONDS we retry so
+    a transient network issue at startup doesn't degrade all token counts
+    for the server's lifetime (which would inflate the context gauge by
+    ~1.1-2x depending on content).
+    """
+    global _encoding, _encoding_failed_at
     if _encoding is not None:
         return _encoding
-    if _encoding_failed:
+    import time as _time
+    now = _time.monotonic()
+    if _encoding_failed_at and (now - _encoding_failed_at) < _ENCODING_RETRY_SECONDS:
         return None
     try:
         _encoding = tiktoken.get_encoding("cl100k_base")
+        _encoding_failed_at = 0.0
         return _encoding
     except Exception as exc:  # pragma: no cover - exercised with monkeypatch
-        _encoding_failed = True
+        _encoding_failed_at = now
         logger.warning(
             "tiktoken cl100k_base unavailable; falling back to approximate token counts: %s",
             exc,

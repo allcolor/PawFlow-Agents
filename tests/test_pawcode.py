@@ -704,7 +704,7 @@ class TestTokenCounter:
         from core import token_counter
 
         monkeypatch.setattr(token_counter, "_encoding", None)
-        monkeypatch.setattr(token_counter, "_encoding_failed", False)
+        monkeypatch.setattr(token_counter, "_encoding_failed_at", 0.0)
 
         def fail_get_encoding(_name):
             raise RuntimeError("busy")
@@ -713,7 +713,7 @@ class TestTokenCounter:
 
         assert token_counter.count_tokens("Hello, world!") > 0
         assert token_counter.count_tokens("") == 0
-        assert token_counter._encoding_failed is True
+        assert token_counter._encoding_failed_at > 0.0
 
 
 from tools.fs_actions import action_edit as _action_edit

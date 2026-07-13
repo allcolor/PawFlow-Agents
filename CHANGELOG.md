@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.16] — 2026-07-13
+
+### Fixed
+
+- Pre-cache tiktoken `cl100k_base` BPE file at Docker build time in a persistent
+  path (`/app/data/tiktoken_cache`) so token counting never needs network at
+  runtime. The entrypoint seeds the cache into the `/app/data` bind mount on
+  first boot, preventing a `/tmp` cache wipe + network failure from permanently
+  degrading the context gauge.
+- Added diagnostic logging to the vision fallback path in the agent loop.
+  Both `_alc_apply_vision_fallback` and `LLMConnectionService._maybe_apply_vision_fallback`
+  now log the `supports_vision`, `vision_llm_service`, and image detection
+  results so a misconfigured fallback is immediately visible in server logs.
+
 ## [1.0.0-beta.15] — 2026-07-13
 
 ### Fixed

@@ -30,6 +30,17 @@ RUN set -eux; \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-cache tiktoken BPE file so token counting never needs network at runtime.
+# The cl100k_base encoding (1.7 MB) is downloaded once at build time and stored
+# in a path that survives bind mounts. Without this, a /tmp cache wipe + network
+# failure at startup permanently degrades the context gauge to an approximate
+# fallback.
+ENV TIKTOKEN_CACHE_DIR=/app/data/tiktoken_cache
+RUN mkdir -p /app/default-tiktoken-cache && \
+    TIKTOKEN_CACHE_DIR=/app/default-tiktoken-cache \
+    python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" && \
+    chmod -R 755 /app/default-tiktoken-cache
+
 # Browser automation / Scrapling support.
 RUN python -m playwright install --with-deps chromium \
     && python -m patchright install chromium

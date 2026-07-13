@@ -151,6 +151,13 @@ if [[ "$(id -u)" == "0" ]]; then
   sync_managed_repository_defaults
   seed_missing_tree /app/default-config /app/config
 
+  # Seed tiktoken BPE cache if missing (bind mount may mask the image copy).
+  # The cache file was pre-downloaded at Docker build time to /app/default-tiktoken-cache.
+  # /app/data is a persistent bind mount that masks the image's /app/data, so we
+  # copy the pre-cached BPE file into the mount on first boot.
+  mkdir -p /app/data/tiktoken_cache
+  cp -a -n /app/default-tiktoken-cache/. /app/data/tiktoken_cache/ 2>/dev/null || true
+
   if ! chown -R pawflow:"$(id -gn pawflow)" /app/data /app/config /app/certs /app/logs /app/plugins 2>/dev/null; then
     echo "WARN  Could not chown PawFlow bind mounts; container user may not be able to write persistent data." >&2
   fi

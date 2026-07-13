@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.19] — 2026-07-13
+
+### Fixed
+
+- Vision fallback now works end-to-end in the agent loop. The
+  `LLMConnectionService._maybe_apply_vision_fallback` method referenced
+  `self._service_id`, which does not exist on `BaseService` instances — the
+  attribute lives on `ServiceDefinition` (the registry wrapper). The resulting
+  `AttributeError` was silently caught at DEBUG level, making the fallback
+  appear to run but always return messages unchanged. Both call sites now use
+  `getattr(self, "_service_id", "")` so the fallback proceeds when
+  `supports_vision=false` and `vision_llm_service` is configured. Image
+  attachments and `see`/`read` tool results are now described by the vision
+  service before reaching a non-vision LLM.
+- Escalated vision fallback exception logging from DEBUG to WARNING so silent
+  failures are immediately visible in server logs.
+- Added early-return diagnostic logging in `apply_vision_fallback` to identify
+  which guard (recursion, no images, self-reference, unresolved service) skips
+  the description pass.
+
 ## [1.0.0-beta.18] — 2026-07-13
 
 ### Fixed

@@ -4,6 +4,7 @@ var COMMANDS = {
   // === Client-side commands ===
   '/new':         { handler: 'newChat' },
   '/conv':        { handler: 'loadConvs' },
+  '/conversations': { handler: 'loadConvs' },
   '/clear':       { handler: 'clearChat' },
   '/help':        { handler: 'showHelp' },
 
@@ -400,7 +401,7 @@ function dispatchCommand(text) {
   // commands are sent as raw text to the unified server parser; keeping a
   // second parser here caused stale action names and silent no-ops.
   var localCommands = {
-    '/new': 1, '/conv': 1, '/clear': 1,
+    '/new': 1, '/conv': 1, '/conversations': 1, '/clear': 1,
     '/upload': 1, '/copy': 1, '/paste': 1, '/files': 1,
     '/view': 1, '/login': 1, '/clear-files': 1, '/detach': 1,
     '/watch': 1, '/terminal': 1, '/term': 1, '/code': 1,

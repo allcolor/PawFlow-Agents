@@ -269,6 +269,20 @@ class TestPawCodeImports:
             },
         )
 
+    @pytest.mark.parametrize(
+        "command", ["/conv", "/conv list", "/conv LIST", "/conversations list"])
+    def test_conv_list_is_wired_through_main_command_dispatcher(self, command):
+        app, api = _fake_pawcode()
+
+        app._handle_command(command)
+
+        assert api.sent_actions == [("list_conversations", {})]
+        assert app.renderer.conversation_lists == [[{
+            "conversation_id": "targetconv",
+        }]]
+        assert app.conversation_id == "conv1"
+        assert app.renderer.errors == []
+
     def test_switch_conversation_hydrates_active_agent_and_gateway_cookie(self, monkeypatch):
         from pawflow_cli.commands import conversation as conv_cmd
 
@@ -377,6 +391,7 @@ class _FakeRenderer:
         self.system = []
         self.errors = []
         self.users = []
+        self.conversation_lists = []
 
     def print_system(self, text):
         self.system.append(text)
@@ -386,6 +401,9 @@ class _FakeRenderer:
 
     def print_user_message(self, text, target_agent=""):
         self.users.append((text, target_agent))
+
+    def print_conversation_list(self, conversations):
+        self.conversation_lists.append(conversations)
 
 
 class _FakeAPI:

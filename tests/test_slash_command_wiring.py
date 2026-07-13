@@ -206,6 +206,17 @@ def test_telegram_never_falls_back_to_raw_json_for_command_results():
     assert not rendered.lstrip().startswith("{")
 
 
+def test_telegram_client_only_result_never_leaks_internal_envelope():
+    rendered = _format_telegram_command_result(json.dumps({
+        "client_only": True,
+        "command": "/upload",
+        "arg": "",
+    }))
+
+    assert rendered == "/upload is not available in this Telegram client."
+    assert "Client Only" not in rendered
+
+
 def test_generic_command_formatter_handles_mapping_results():
     rendered = format_command_payload({"ok": True, "title": "Renamed"})
     assert rendered == "Title: Renamed"
@@ -244,8 +255,11 @@ def test_webchat_help_and_vscode_domain_commands_delegate_to_server():
     assert "'/task'" not in webchat.split("const _LOCAL_COMMANDS", 1)[1].split("]);", 1)[0]
     assert "'/audio'" not in webchat.split("const _LOCAL_COMMANDS", 1)[1].split("]);", 1)[0]
     assert "'/relay-audio'" in webchat.split("const _LOCAL_COMMANDS", 1)[1].split("]);", 1)[0]
+    assert "'/conversations': '/conv'" in webchat
     assert "if (data.display) {\n      addMsg('system', data.display);" in webchat
     assert "if (data.display) { addMsg('system', data.display); return; }" not in webchat
     assert "sendCmd('command', JSON.stringify({" in vscode_commands
     assert "if (!localCommands[cmd])" in vscode_commands
+    assert "'/conversations': { handler: 'loadConvs' }" in vscode_commands
+    assert "'/conversations': 1" in vscode_commands
     assert "else if (d.display) addMsg('system', d.display);" in vscode_chat

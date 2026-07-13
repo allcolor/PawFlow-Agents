@@ -8,11 +8,11 @@ def handle_conversation_commands(app, cmd, arg, text):
     """Handle conversation commands. Returns True if handled, False otherwise."""
 
     if cmd in ("/conv", "/conversations"):
-        if arg:
+        if arg and arg.strip().lower() != "list":
             # /conv <id> — switch to conversation
             _switch_conversation(app, arg.strip())
         else:
-            # /conv — list conversations
+            # /conv and /conv list — list conversations
             try:
                 data = app.api.send_action("list_conversations")
                 convs = data.get("conversations", [])

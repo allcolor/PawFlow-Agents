@@ -18,6 +18,20 @@ from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
 
 logger = logging.getLogger(__name__)
 
+_TELEGRAM_CLIENT_ONLY_GUIDANCE = {
+    "/clear": "Use Telegram's chat controls to clear this chat.",
+    "/clear-ui": "Use Telegram's chat controls to clear this chat.",
+    "/connect": "Manage relay connections from PawFlow webchat or the relay client.",
+    "/disconnect": "Manage relay connections from PawFlow webchat or the relay client.",
+    "/copy": "Use Telegram's copy action on the message you want to copy.",
+    "/paste": "Paste the text directly into this Telegram chat.",
+    "/upload": "Send a photo or document directly in this Telegram chat to upload it.",
+    "/files": "Browse conversation files from PawFlow webchat or PawCode.",
+    "/login": "Telegram uses your linked PawFlow identity. Manage account linking in PawFlow.",
+    "/exit": "Telegram has no persistent PawCode session to close.",
+    "/quit": "Telegram has no persistent PawCode session to close.",
+}
+
 # Mixin/helper modules — split for the <=800-line rule.
 # These imports also re-export the public + test-referenced surface so that
 # `from tasks.io.telegram_agent_client import X` keeps working (invariant 1).
@@ -268,7 +282,14 @@ class TelegramAgentClientTask(BaseTask):
         command = _telegram_command_name(text)
         if command == "/tts":
             return self._handle_tts_command(text, user_id)
-        if command != "/conv":
+        if command == "/new":
+            normalized = _normalize_telegram_command_text(text)
+            args = normalized.split(maxsplit=1)[1] if " " in normalized else ""
+            return self._handle_command(
+                f"/conv new {args}".rstrip(), user_id, chat_id)
+        if command in _TELEGRAM_CLIENT_ONLY_GUIDANCE:
+            return _TELEGRAM_CLIENT_ONLY_GUIDANCE[command]
+        if command not in ("/conv", "/conversations"):
             if text.startswith("/"):
                 return self._handle_dispatch_command(text, user_id)
             return None

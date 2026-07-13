@@ -153,6 +153,9 @@ def _format_telegram_command_result(raw: str) -> str:
         return raw
     if not isinstance(payload, dict):
         return str(payload)
+    if payload.get("client_only"):
+        command = str(payload.get("command") or "This command")
+        return f"{command} is not available in this Telegram client."
     if payload.get("help"):
         return _telegram_markdown_help(str(payload["help"]))
     if payload.get("display"):

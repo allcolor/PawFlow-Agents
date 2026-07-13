@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.21] — 2026-07-13
+
+### Fixed
+
+- Telegram slash commands no longer expose raw command-result JSON or internal
+  `client_only` envelopes. Supported local commands execute in the Telegram
+  client, unavailable UI operations return actionable guidance, and unknown or
+  failed commands return an explicit human-readable error.
+- `/new` now opens Telegram's native conversation wizard, and
+  `/conversations` is wired as a functional alias of `/conv` in Telegram,
+  PawCode, webchat, and the VS Code extension.
+- PawCode now treats `/conv list` as a conversation listing instead of trying
+  to select a conversation whose ID is `list`.
+
 ## [1.0.0-beta.20] — 2026-07-13
 
 ### Added

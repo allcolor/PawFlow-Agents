@@ -1,6 +1,8 @@
 import tempfile
 from pathlib import Path
 
+import pytest
+
 
 def test_conversation_event_bus_notifies_internal_listeners():
     from core.conversation_event_bus import ConversationEventBus
@@ -106,6 +108,10 @@ def test_telegram_agent_client_conv_commands(monkeypatch):
     assert created["reply_markup"]["inline_keyboard"]
     mod._clear_wizard("alice:chat1")
 
+    created = task._handle_command("/new@SomeBot", "alice", "chat1")
+    assert created and "Send the conversation title" in created["text"]
+    mod._clear_wizard("alice:chat1")
+
     captured = {}
 
     def create_from_command(args, user_id):
@@ -140,6 +146,40 @@ def test_telegram_agent_client_conv_commands(monkeypatch):
     listing = task._handle_command("/conv list", "alice", "chat1")
     assert listing and "Conversations:" in listing["text"]
     assert listing["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("conv:resume:")
+    alias_listing = task._handle_command(
+        "/conversations@SomeBot list", "alice", "chat1")
+    assert alias_listing and "Conversations:" in alias_listing["text"]
+
+    from core import FlowFile
+    flowfile = FlowFile(content=b"/conversations@SomeBot list")
+    flowfile.set_attribute("telegram.user_id", "tg1")
+    flowfile.set_attribute("telegram.chat_id", "chat1")
+    outputs = task.execute(flowfile)
+    assert outputs == [flowfile]
+    assert flowfile.get_content().decode("utf-8").startswith("Conversations:")
+    assert flowfile.get_attribute("telegram.reply_markup")
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("/upload", "Send a photo or document"),
+        ("/files", "Browse conversation files"),
+        ("/copy", "Telegram's copy action"),
+        ("/paste", "Paste the text directly"),
+        ("/login", "linked PawFlow identity"),
+        ("/connect", "Manage relay connections"),
+        ("/quit", "no persistent PawCode session"),
+    ],
+)
+def test_telegram_client_only_commands_return_native_guidance(command, expected):
+    from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+    result = TelegramAgentClientTask({})._handle_command(
+        command, "alice", "chat1")
+
+    assert expected in result
+    assert "Client Only" not in result
 
 
 def test_telegram_agent_client_dispatches_help_command(monkeypatch):
@@ -399,7 +439,6 @@ def test_telegram_relay_validation_uses_user_scope(monkeypatch):
 
 
 def test_telegram_new_conversation_wizard_builds_payload(monkeypatch):
-    from tasks.io import telegram_agent_client as mod
     from tasks.io.telegram_agent_client import TelegramAgentClientTask
 
     class ServiceDef:

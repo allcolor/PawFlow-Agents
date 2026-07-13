@@ -32,6 +32,7 @@ function parseQuotedArgs(text) {
 
 // ── Command aliases ─────────────────────────────────────────────
 const _CMD_ALIASES = {
+  '/conversations': '/conv',
   '/restart': '/restart_from',
   '/restart-from': '/restart_from',
   '/set_llm_service': '/llm',

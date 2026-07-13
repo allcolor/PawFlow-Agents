@@ -300,14 +300,17 @@ View what the LLM actually sees: messages, token estimate, divergence status. Th
 ```
 
 Start a fresh conversation, disconnecting from the current one.
+In Telegram, `/new` opens the same guided creation flow as `/conv new`.
 
 ### /conv
 
 ```
 /conv
+/conv list
 ```
 
-Show the conversation list / switch between conversations.
+Show the conversation list. Select from the sidebar in webchat or VS Code,
+use `/conv <id>` in PawCode, or `/conv select <n|id>` in Telegram.
 
 ### /history
 

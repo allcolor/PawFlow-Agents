@@ -26,12 +26,12 @@ HELP: Dict[str, Dict[str, str]] = {
         "detail": "Creates a new conversation and switches to it.",
     },
     "/conv": {
-        "usage": "/conv [list | select <id> | info]",
+        "usage": "/conv [list]",
         "short": "List or switch conversations",
         "detail": (
-            "  /conv list          — List all conversations\n"
-            "  /conv select <id>   — Switch to a conversation\n"
-            "  /conv info          — Show current conversation info"
+            "  /conv list          — List all conversations\n\n"
+            "Select from the sidebar in webchat or VS Code, use /conv <id> "
+            "in PawCode, or /conv select <n|id> in Telegram."
         ),
         "aliases": "/conversations",
     },

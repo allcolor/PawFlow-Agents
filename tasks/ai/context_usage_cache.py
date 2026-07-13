@@ -14,6 +14,12 @@ _DATA_URI_RE = re.compile(r'data:image/[^;\s]+;base64,[A-Za-z0-9+/=]+')
 _IMAGE_MARKER_RE = re.compile(r'__image_data__:image/[^:\s]+:[A-Za-z0-9+/=]+')
 _JSON_IMAGE_DATA_RE = re.compile(
     r'(["\'](?:data|content)["\']\s*:\s*["\'])[A-Za-z0-9+/=]{1000,}(["\'])')
+_CLI_BOOTSTRAP_CONTEXT_PATHS = (
+    "/.pawflow_cli/initial_context.md",
+    "/.pawflow_cci/initial_context.md",
+    "/.pawflow_ag/initial_context.md",
+)
+_CONTEXT_ACCOUNTING_VERSION = 2
 
 
 def _scrub_image_payloads(text: str) -> str:
@@ -40,6 +46,57 @@ def _message_id(msg: Any) -> str:
     if isinstance(msg, dict):
         return str(msg.get("msg_id") or msg.get("id") or "")
     return str(getattr(msg, "msg_id", "") or getattr(msg, "id", "") or "")
+
+
+def _message_tool_calls(msg: Any) -> List[Any]:
+    if isinstance(msg, dict):
+        return list(msg.get("tool_calls") or [])
+    return list(getattr(msg, "tool_calls", None) or [])
+
+
+def _tool_call_field(tool_call: Any, name: str) -> Any:
+    if isinstance(tool_call, dict):
+        return tool_call.get(name)
+    return getattr(tool_call, name, None)
+
+
+def _is_cli_bootstrap_read(tool_call: Any) -> bool:
+    """Return whether a native provider tool accesses PawFlow's bootstrap file.
+
+    The bootstrap body is a serialization of the PawFlow messages that the
+    gauge already counts.  Native reads are persisted for UI/history parity,
+    but counting their output would charge the same context a second time.
+    """
+    if str(_tool_call_field(tool_call, "tool_origin") or "").lower() != "native":
+        return False
+    arguments = _tool_call_field(tool_call, "arguments")
+    try:
+        rendered = json.dumps(arguments, sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        rendered = str(arguments or "")
+    normalized = re.sub(r"/+", "/", rendered.replace("\\", "/")).lower()
+    return any(path in normalized for path in _CLI_BOOTSTRAP_CONTEXT_PATHS)
+
+
+def _message_source(msg: Any) -> Dict[str, Any]:
+    if isinstance(msg, dict):
+        source = msg.get("source")
+    else:
+        source = getattr(msg, "source", None)
+    return source if isinstance(source, dict) else {}
+
+
+def _is_cli_bootstrap_boundary(msg: Any) -> bool:
+    return (_message_source(msg).get("context_usage_boundary")
+            == "cli_bootstrap_read")
+
+
+def _cli_bootstrap_boundary_index(messages: Iterable[Any]) -> int:
+    boundary = -1
+    for index, msg in enumerate(messages):
+        if _is_cli_bootstrap_boundary(msg):
+            boundary = index
+    return boundary
 
 
 def _content_text(content: Any) -> str:
@@ -69,7 +126,18 @@ def _content_text(content: Any) -> str:
 
 
 def _strip_for_count(messages: Iterable[Any]) -> List[Dict[str, str]]:
-    return [{"content": _content_text(_message_content(m))} for m in messages]
+    msg_list = list(messages or [])
+    boundary = _cli_bootstrap_boundary_index(msg_list)
+    stripped = []
+    for index, msg in enumerate(msg_list):
+        content = _content_text(_message_content(msg))
+        # On a cold CLI start the provider receives a small file reference,
+        # not the serialized PawFlow messages themselves.  Once the native
+        # read begins, only its real result belongs to provider context.
+        if index < boundary:
+            content = ""
+        stripped.append({"content": content})
+    return stripped
 
 
 def _marker(msg: Any) -> str:
@@ -85,6 +153,7 @@ def _marker(msg: Any) -> str:
 def _cache_params(max_context_size: int, token_multiplier: float,
                   overhead: int = 0) -> Dict[str, Any]:
     return {
+        "accounting_version": _CONTEXT_ACCOUNTING_VERSION,
         "max": int(max_context_size or 0),
         "token_multiplier": round(float(token_multiplier or 1.0), 6),
         "overhead": int(overhead or 0),
@@ -105,6 +174,7 @@ def context_usage_entry(messages: Iterable[Any], used: int,
                         token_multiplier: float = 1.0,
                         cache_mode: str = "full",
                         overhead: int = 0,
+                        bootstrap_context_start: Optional[int] = None,
                         updated_at: Optional[float] = None) -> Dict[str, Any]:
     """Build a context-usage entry.
 
@@ -128,6 +198,10 @@ def context_usage_entry(messages: Iterable[Any], used: int,
         "last_marker": _marker(msg_list[-1]) if msg_list else "",
         "cache_params": _cache_params(max_ctx, token_multiplier, overhead_i),
         "cache_mode": cache_mode,
+        "bootstrap_context_start": (
+            _cli_bootstrap_boundary_index(msg_list)
+            if bootstrap_context_start is None
+            else int(bootstrap_context_start)),
     }
 
 
@@ -167,11 +241,18 @@ def context_usage_from_cache(messages: Iterable[Any], max_context_size: int,
                     cache.get("last_marker") == _marker(msg_list[cached_n - 1])):
                 # cached_used already includes `overhead`; the delta is
                 # a raw recount of the appended suffix only.
-                delta = _count(msg_list[cached_n:], token_multiplier)
-                return context_usage_entry(
-                    msg_list, cached_used + delta, max_ctx,
-                    source=source, token_multiplier=token_multiplier,
-                    cache_mode="delta", overhead=overhead_i)
+                suffix = msg_list[cached_n:]
+                # A new cold-session boundary replaces the provider's prior
+                # representation, so it requires a full recount. Ordinary
+                # suffixes (including bootstrap read results) stay incremental.
+                if not any(_is_cli_bootstrap_boundary(msg) for msg in suffix):
+                    delta = _count(suffix, token_multiplier)
+                    return context_usage_entry(
+                        msg_list, cached_used + delta, max_ctx,
+                        source=source, token_multiplier=token_multiplier,
+                        cache_mode="delta", overhead=overhead_i,
+                        bootstrap_context_start=int(
+                            cache.get("bootstrap_context_start", -1) or -1))
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
@@ -193,6 +274,11 @@ def context_usage_append_delta(cache: Dict[str, Any], message: Any, *,
     if not isinstance(cache, dict):
         return None
     try:
+        if _is_cli_bootstrap_boundary(message):
+            # The old cached total represents the context serialized into the
+            # bootstrap file. Recount now so that representation is replaced
+            # before native read output starts arriving.
+            return None
         params = cache.get("cache_params") or {}
         max_ctx = int(cache.get("max", 0) or params.get("max", 0) or 0)
         if max_ctx <= 0:

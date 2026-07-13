@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.18] — 2026-07-13
+
+### Fixed
+
+- Corrected cold-session context accounting for Codex app-server, Gemini ACP,
+  Claude Code, Claude Code interactive, and Antigravity interactive. The
+  serialized PawFlow context is replaced at the first native bootstrap read
+  boundary, so only content actually loaded into the provider context is
+  counted and chunked reads remain additive.
+- Invalidated stale context-usage snapshots created by the previous accounting
+  formula, preventing an incorrect near-full gauge from surviving a restart.
+- Suppressed Bandit's B105 false positive for the
+  `conv_encrypt_passwd` action identifier without changing the public command
+  contract.
+
 ## [1.0.0-beta.17] — 2026-07-13
 
 ### Changed

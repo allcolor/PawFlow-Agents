@@ -84,7 +84,7 @@ def _parse_encrypt_command(arg: str, base: dict) -> dict:
         "disable": "conv_encrypt_disable",
         "unlock": "conv_encrypt_unlock",
         "lock": "conv_encrypt_lock",
-        "passwd": "conv_encrypt_passwd",
+        "passwd": "conv_encrypt_passwd",  # nosec B105 - action identifier, not a password
         "set-relay": "conv_encrypt_set_relay",
         "remove-relay": "conv_encrypt_remove_relay",
         "set-escrow": "conv_encrypt_set_escrow",

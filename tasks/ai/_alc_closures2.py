@@ -623,13 +623,28 @@ class _ALCClosures2Mixin:
                 arguments=_tool_args,
                 tool_origin=_tool_origin,
             )
+            _tool_src = _src
+            if (not st.ctx.get("_cli_has_session")
+                    and not st.ctx.get("_cli_bootstrap_read_seen")):
+                try:
+                    from tasks.ai.context_usage_cache import (
+                        _is_cli_bootstrap_read)
+                    if _is_cli_bootstrap_read(tc_obj):
+                        st.ctx["_cli_bootstrap_read_seen"] = True
+                        _tool_src = dict(_src)
+                        _tool_src["context_usage_boundary"] = (
+                            "cli_bootstrap_read")
+                except Exception:
+                    logger.debug(
+                        "CLI bootstrap context boundary detection failed",
+                        exc_info=True)
             st.tools_called.append(tc_obj.name)
             st.ctx["_last_tool"] = tc_obj.name
             msg = LLMMessage(
                 role="assistant", content="",
                 tool_calls=[tc_obj],
                 thinking=payload.get("thinking", "") or "",
-                source=_src,
+                source=_tool_src,
                 conversation_id=st.conversation_id)
             st._append(msg)
             return

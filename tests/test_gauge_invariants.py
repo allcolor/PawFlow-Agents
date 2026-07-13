@@ -14,6 +14,9 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
+
 from tests._agent_core_src import agent_core_src
 
 
@@ -554,6 +557,173 @@ def test_context_usage_cache_counts_suffix_then_resets():
     assert second["used"] > first["used"]
     assert compacted["cache_mode"] == "full"
     assert compacted["used"] < second["used"]
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        (
+            "codex_native_commandExecution",
+            {"command": "sed -n '1,240p' /cc_sessions/c/a/.pawflow_cli/initial_context.md"},
+        ),
+        (
+            "Read",
+            {"file_path": "/cc_sessions/c/a/.pawflow_cli/initial_context.md"},
+        ),
+        (
+            "Read",
+            {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md"},
+        ),
+        (
+            "view_file",
+            {"path": "/cc_sessions/c/a/.pawflow_ag/initial_context.md"},
+        ),
+        (
+            "read_file",
+            {"path": r"C:\cc_sessions\c\a\.pawflow_cli\initial_context.md"},
+        ),
+    ],
+)
+def test_cli_bootstrap_native_read_result_is_not_double_counted(
+        tool_name, arguments):
+    from core.llm_client import LLMMessage, LLMToolCall
+    from tasks.ai.context_usage_cache import (
+        _is_cli_bootstrap_read, context_usage_from_cache)
+
+    tool_call_id = f"bootstrap-{tool_name}"
+    serialized = "# PawFlow Initial Context\n" + ("serialized context " * 4000)
+    original = LLMMessage(
+        role="user",
+        conversation_id="conv-bootstrap",
+        content=serialized,
+    )
+    call = LLMMessage(
+        role="assistant",
+        conversation_id="conv-bootstrap",
+        source={
+            "type": "agent",
+            "name": "assistant",
+            "context_usage_boundary": "cli_bootstrap_read",
+        },
+        tool_calls=[LLMToolCall(
+            id=tool_call_id,
+            name=tool_name,
+            arguments=arguments,
+            tool_origin="native",
+        )],
+    )
+    result = LLMMessage(
+        role="tool",
+        conversation_id="conv-bootstrap",
+        tool_call_id=tool_call_id,
+        content=serialized,
+    )
+    usage = context_usage_from_cache(
+        [original, call, result], 200000, source="cold_cli")
+    doubled = context_usage_from_cache(
+        [original, LLMMessage(
+            role="assistant",
+            conversation_id="conv-bootstrap",
+            tool_calls=call.tool_calls,
+        ), result],
+        200000, source="unmarked_cold_cli")
+
+    assert _is_cli_bootstrap_read(call.tool_calls[0]) is True
+    assert usage["bootstrap_context_start"] == 1
+    assert usage["used"] < doubled["used"] * 0.6
+    assert usage["used"] > doubled["used"] * 0.4
+
+
+def test_cli_bootstrap_exclusion_survives_append_delta():
+    from core.llm_client import LLMMessage, LLMToolCall
+    from tasks.ai.context_usage_cache import (
+        context_usage_append_delta, context_usage_from_cache)
+
+    original = LLMMessage(
+        role="user",
+        conversation_id="conv-bootstrap",
+        content="serialized context " * 4000,
+    )
+    before = context_usage_from_cache(
+        [original], 200000, source="before_cold_cli")
+    call_id = "bootstrap-read"
+    call = LLMMessage(
+        role="assistant",
+        conversation_id="conv-bootstrap",
+        source={"context_usage_boundary": "cli_bootstrap_read"},
+        tool_calls=[LLMToolCall(
+            id=call_id,
+            name="Read",
+            arguments={
+                "file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md",
+            },
+            tool_origin="native",
+        )],
+    )
+    assert context_usage_append_delta(
+        before, call, source="append") is None
+    boundary = context_usage_from_cache(
+        [original, call], 200000, before, source="cold_cli")
+    after = context_usage_append_delta(
+        boundary,
+        LLMMessage(
+            role="tool",
+            conversation_id="conv-bootstrap",
+            tool_call_id=call_id,
+            content="serialized context " * 4000,
+        ),
+        source="append",
+    )
+
+    assert after is not None
+    assert boundary["used"] < before["used"] / 20
+    assert after["used"] > before["used"] * 0.8
+
+
+def test_non_native_bootstrap_read_result_stays_counted():
+    from core.llm_client import LLMMessage, LLMToolCall
+    from tasks.ai.context_usage_cache import context_usage_from_cache
+
+    call_id = "mcp-read"
+    usage = context_usage_from_cache(
+        [
+            LLMMessage(
+                role="assistant",
+                conversation_id="conv-bootstrap",
+                tool_calls=[LLMToolCall(
+                    id=call_id,
+                    name="read",
+                    arguments={
+                        "path": "/workspace/.pawflow_cli/initial_context.md",
+                    },
+                    tool_origin="mcp",
+                )],
+            ),
+            LLMMessage(
+                role="tool",
+                conversation_id="conv-bootstrap",
+                tool_call_id=call_id,
+                content="ordinary project file " * 4000,
+            ),
+        ],
+        200000,
+        source="mcp_read",
+    )
+
+    assert usage["bootstrap_context_start"] == -1
+    assert usage["used"] > 1000
+
+
+def test_cli_block_callback_marks_one_cold_bootstrap_boundary():
+    src = agent_core_src()
+    callback = src[
+        src.index("def _cli_block_callback"):
+        src.index("def _llm_call")]
+
+    assert "_is_cli_bootstrap_read(tc_obj)" in callback
+    assert 'ctx.get("_cli_has_session")' in callback
+    assert 'ctx.get("_cli_bootstrap_read_seen")' in callback
+    assert '"context_usage_boundary"' in callback
 
 
 def test_list_resources_does_not_transport_context_usage():

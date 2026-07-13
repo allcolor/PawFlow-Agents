@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.17] — 2026-07-13
+
+### Changed
+
+- Unified domain slash-command parsing and human-readable result rendering on
+  the server for webchat, Telegram, PawCode, and the VS Code extension. Client
+  implementations now retain only transport-specific UI operations.
+- Reserved `/audio` for server-side audio generation across clients and
+  renamed the webchat relay-stream control to `/relay-audio`.
+
+### Fixed
+
+- Restored broken or mismatched routing for conversation, agent, task, flow,
+  memory, tool, media, debug, loop, hook, and resource commands.
+- Preserved complete multi-word text in `/memory add` and `/memory search`,
+  and aligned PawCode `/msg` and `/btw` target parsing with the shared
+  syntax, accepting both `agent` and `@agent`.
+- Added consistent `display` output without suppressing structured client
+  state updates such as conversation switching after `/fork`.
+- Extended vision-fallback diagnostics to report early-return reasons.
+
 ## [1.0.0-beta.16] — 2026-07-13
 
 ### Fixed

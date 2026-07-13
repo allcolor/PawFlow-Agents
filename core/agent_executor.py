@@ -199,16 +199,30 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         agent_name: str = "",
         conversation_id: str = "",
         user_id: str = "",
+        read_only: bool = False,
     ) -> str:
         """Execute a single tool call with per-agent approval gate."""
+        if read_only:
+            from core.llm_client import unwrap_mcp_tool
+            from core.tool_approval import ToolApprovalGate
+
+            tool_name, arguments = unwrap_mcp_tool(
+                tc.name, tc.arguments or {})
+            if not ToolApprovalGate.is_advisor_read_only_allowed(
+                    tool_name, arguments):
+                return (f"Error: Tool '{tool_name}' is blocked for this "
+                        "read-only advisor.")
         handler = handlers.get(tc.name)
+        if read_only and handler is None:
+            return (f"Error: Tool '{tool_name}' was not exposed to this "
+                    "read-only advisor.")
         if handler is None:
             return self._registry.execute(tc.name, tc.arguments)
         # Set agent identity for ownership tracking (ManageResourceHandler)
         if agent_name and hasattr(handler, 'set_agent_name'):
             handler.set_agent_name(agent_name)
         # Permission check (per-agent scoped)
-        if conversation_id:
+        if conversation_id and not read_only:
             try:
                 from core.conversation_store import ConversationStore
                 _perm_mode = ConversationStore.instance().get_extra(

@@ -49,7 +49,7 @@ class _SubAgentExecutorLoopMixin:
 
         # Create display-only trace message in parent conversation
         _trace_created = False
-        if task.parent_conversation_id:
+        if task.parent_conversation_id and not task.internal:
             try:
                 from core.conversation_store import ConversationStore
                 _depth = _get_depth()
@@ -182,7 +182,10 @@ class _SubAgentExecutorLoopMixin:
         # "full" context mode = work directly in parent conv (no sub-context)
         sub_conv_id = ""
         _resumed = False
-        if task.parent_conversation_id and task.context_mode != "full":
+        if task.ephemeral:
+            from core.conversation_store import ConversationStore
+            sub_conv_id = ConversationStore.instance().generate_id()
+        elif task.parent_conversation_id and task.context_mode != "full":
             sub_conv_id = f"{task.parent_conversation_id}::task::{task.id}"
         elif not task.parent_conversation_id:
             # Orphan sub-agent (tests / standalone execution): mint an
@@ -190,6 +193,15 @@ class _SubAgentExecutorLoopMixin:
             # the run. Nothing is persisted since there's no parent.
             from core.conversation_store import ConversationStore
             sub_conv_id = ConversationStore.instance().generate_id()
+
+        # CLI providers reach PawFlow through their own MCP bridge instead of
+        # the Python handler map below. Mark the ephemeral advisor context so
+        # the relay applies the same fail-closed read-only allowlist. The
+        # normal sub-conversation cleanup removes this metadata after the run.
+        if task.read_only and sub_conv_id:
+            from core.conversation_store import ConversationStore
+            ConversationStore.instance().set_extra(
+                sub_conv_id, "permission_mode", "advisor_read_only")
 
         # Sub-agent runs on its OWN cloned client — fully isolated from
         # the parent's singleton. Each Claude Code stream already has
@@ -209,7 +221,7 @@ class _SubAgentExecutorLoopMixin:
             "call_conversation_id": _delegate_conv_id,
             "call_agent_name": task.agent_name or "",
             "call_event_cid": None,
-            "call_ephemeral_stream": False,
+            "call_ephemeral_stream": task.ephemeral,
         }
         try:
             # Expose max_context_size so CC provider can publish context-fill
@@ -294,7 +306,8 @@ class _SubAgentExecutorLoopMixin:
         # call from the same caller to the same agent PREEMPTS this
         # running sub-agent (via client.send_user_message) instead of
         # spawning a parallel one.
-        if task.parent_conversation_id and task.source_agent and task.agent_name:
+        if (not task.internal and task.parent_conversation_id
+                and task.source_agent and task.agent_name):
             register_live_delegate(
                 task.parent_conversation_id,
                 task.source_agent, task.agent_name,
@@ -324,7 +337,7 @@ class _SubAgentExecutorLoopMixin:
         try:
             from tasks.ai.agent_loop import AgentLoopTask
             _active_inst = AgentLoopTask._live_instance
-            if _active_inst:
+            if _active_inst and not task.internal:
                 _ctx_cid = sub_conv_id or task.parent_conversation_id or ""
                 _active_ctx_key = f"{_ctx_cid}:{task.agent_name}"
                 _active_ctx = {
@@ -601,7 +614,7 @@ class _SubAgentExecutorLoopMixin:
                     tool_result = self._execute_tool(
                         tc, tool_handlers, task.agent_name,
                         conversation_id=task.parent_conversation_id,
-                        user_id=task.user_id)
+                        user_id=task.user_id, read_only=task.read_only)
                     # Emit tool result for delegate block display
                     _result_preview = (tool_result[:500] if isinstance(tool_result, str)
                                        else str(tool_result)[:500])
@@ -622,7 +635,7 @@ class _SubAgentExecutorLoopMixin:
                     ))
 
                 # Persist sub-conversation after each iteration
-                if sub_conv_id:
+                if sub_conv_id and not task.ephemeral:
                     try:
                         from core.conversation_store import ConversationStore
                         _store = ConversationStore.instance()
@@ -687,7 +700,8 @@ class _SubAgentExecutorLoopMixin:
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
             # Clear live-delegate slot so the next delegate call spawns fresh.
-            if task.parent_conversation_id and task.source_agent and task.agent_name:
+            if (not task.internal and task.parent_conversation_id
+                    and task.source_agent and task.agent_name):
                 try:
                     unregister_live_delegate(
                         task.parent_conversation_id,

@@ -157,7 +157,7 @@ def guess_llm_service(agent_name: str, conv_id: str = "",
     Looks for services named:
       {agent_name}_llm_service → exact match
       {agent_name}_llm → fallback match
-      Otherwise → first enabled llmConnection service
+      Otherwise → first enabled LLM-capable service
     Resolved across the canonical scope chain (conv > user > global).
     Returns "" if nothing found.
     """
@@ -168,10 +168,12 @@ def guess_llm_service(agent_name: str, conv_id: str = "",
                                    enabled_only=True)
         for candidate in (f"{agent_name}_llm_service", f"{agent_name}_llm"):
             sdef = all_defs.get(candidate)
-            if sdef and sdef.service_type == "llmConnection":
+            if sdef and sdef.service_type in {"llmConnection", "llmAggregator"}:
                 return candidate
-        all_llm = reg.resolve_by_type("llmConnection", user_id=user_id,
-                                      conv_id=conv_id)
+        all_llm = [
+            sdef for sdef in all_defs.values()
+            if sdef.service_type in {"llmConnection", "llmAggregator"}
+        ]
         if all_llm:
             return all_llm[0].service_id
     except Exception:

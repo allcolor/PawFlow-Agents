@@ -261,6 +261,7 @@ class _ALCClosures2Mixin:
             "call_agent_name": st.ctx.get("active_agent_name", ""),
             "call_event_cid": st.ctx.get("_event_cid", st.conversation_id),
             "call_ephemeral_stream": False,
+            "call_is_initial_user_turn": st.iteration == 1,
         }
         _interrupt_messages = st._with_provider_system_prompt(self._compact(
             copy.deepcopy(st.messages), st.compact_client,

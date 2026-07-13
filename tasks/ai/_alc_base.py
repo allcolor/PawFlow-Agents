@@ -74,7 +74,11 @@ def _svc_rates(ctx):
     $/1M tokens, parsed via safe_float to accept French decimals.
     """
     from core import safe_float
-    svc_cfg = getattr(ctx.get("resolved_svc"), 'config', {}) or {}
+    client = ctx.get("client")
+    if client is not None and hasattr(client, "get_cost_config"):
+        svc_cfg = client.get_cost_config()
+    else:
+        svc_cfg = getattr(ctx.get("resolved_svc"), 'config', {}) or {}
     cost_in = safe_float(svc_cfg.get("cost_per_1m_input", 0), 0.0)
     cost_out = safe_float(svc_cfg.get("cost_per_1m_output", 0), 0.0)
     cr_cfg = svc_cfg.get("cost_per_1m_cache_read")
@@ -93,6 +97,7 @@ def _usage_cost_usd(ctx, total_in, total_out,
         + total_out / 1_000_000 * cost_out
         + total_cache_read / 1_000_000 * cost_cache_read
         + total_cache_write / 1_000_000 * cost_cache_write
+        + float(ctx.get("_additional_usage_cost_usd", 0) or 0)
     )
 
 

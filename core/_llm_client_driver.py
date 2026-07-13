@@ -79,6 +79,7 @@ class _LLMClientDriverMixin:
         call_agent_name: Optional[str] = None,
         call_event_cid: Optional[str] = None,
         call_ephemeral_stream: Optional[bool] = None,
+        call_is_initial_user_turn: Optional[bool] = None,
     ) -> LLMResponse:
         """Send a completion request to the LLM.
 
@@ -336,6 +337,7 @@ class _LLMClientDriverMixin:
         call_agent_name: Optional[str] = None,
         call_event_cid: Optional[str] = None,
         call_ephemeral_stream: Optional[bool] = None,
+        call_is_initial_user_turn: Optional[bool] = None,
     ) -> LLMResponse:
         """Streaming completion — calls callback(token: str) for each token.
 

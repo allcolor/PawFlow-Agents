@@ -44,6 +44,8 @@ class _PACPhase1Mixin:
 
         st.registry = self.get_tool_registry()
         # Handlers are fully configured later (after conversation_id/user_id are known)
+        if st.client and hasattr(st.client, "set_tool_registry"):
+            st.client.set_tool_registry(st.registry)
 
         # Wire embedding function for semantic memory handlers
         if st.client:
@@ -58,6 +60,8 @@ class _PACPhase1Mixin:
         st._self = self
         def _client_resolver(svc_id, uid):
             return st._self._resolve_llm_service(svc_id, uid, st.conversation_id)
+        if st.client and hasattr(st.client, "set_llm_resolver"):
+            st.client.set_llm_resolver(_client_resolver)
         # on_event callback for sub-agent visibility (SSE events)
         def _sub_on_event(event_type, data):
             try:

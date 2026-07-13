@@ -421,6 +421,14 @@ class _ToolRelayExecuteMixin:
                 # per-tool override below (it would be redundant for
                 # an allowlisted read tool).
                 _tool_perm = ""
+            elif _perm_mode == "advisor_read_only":
+                from core.tool_approval import ToolApprovalGate
+                if not ToolApprovalGate.is_advisor_read_only_allowed(
+                        tool_name,
+                        arguments if isinstance(arguments, dict) else None):
+                    return {"type": "result", "request_id": request_id,
+                            "data": f"Error: tool '{tool_name}' is not allowed for a read-only advisor."}
+                _tool_perm = ""
 
             # Per-tool override (only consulted outside read_only).
             if _tool_perm == "deny":

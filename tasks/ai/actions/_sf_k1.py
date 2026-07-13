@@ -87,7 +87,8 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
 
     if action == "list_services":
         # Canonical service listing. Optional `service_type` filter returns
-        # only services of that type (e.g. 'llmConnection', 'tool_relay_service').
+        # only services of that type. The `llm` capability includes direct and
+        # aggregate LLM services for agent pickers.
         # Consumers needing a subset (LLM dropdowns, relay pickers, etc.) call
         # this action with the appropriate filter — never embedded inside
         # unrelated actions.
@@ -95,6 +96,12 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             filter_type = body.get("service_type", "") or ""
+            def _matches_filter(sdef):
+                if not filter_type:
+                    return True
+                if filter_type == "llm":
+                    return sdef.service_type in {"llmConnection", "llmAggregator"}
+                return sdef.service_type == filter_type
             conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
             services = []
             from core import admin_scope
@@ -115,7 +122,7 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                         _ref_prefix = f"conv:{_sid_scope}:"
                     for sid, sdef in sorted(
                             reg.get_all(_scope, _sid_scope).items()):
-                        if filter_type and sdef.service_type != filter_type:
+                        if not _matches_filter(sdef):
                             continue
                         services.append({
                             "service_id": sid,
@@ -140,7 +147,7 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                 }, ensure_ascii=False).encode())
                 return [flowfile]
             for sid, sdef in sorted(reg.get_all("global", "").items()):
-                if filter_type and sdef.service_type != filter_type:
+                if not _matches_filter(sdef):
                     continue
                 _enabled = getattr(sdef, "enabled", True)
                 try:
@@ -159,7 +166,7 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                     "install_state": _service_install_state_for_listing("global", "", sid),
                 })
             for sid, sdef in sorted(reg.get_all("user", user_id).items()):
-                if filter_type and sdef.service_type != filter_type:
+                if not _matches_filter(sdef):
                     continue
                 try:
                     _started = _service_started_for_listing(reg, "user", user_id, sid, sdef)
@@ -187,7 +194,7 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                 services.append(entry)
             if conv_id:
                 for sid, sdef in sorted(reg.get_all("conv", conv_id).items()):
-                    if filter_type and sdef.service_type != filter_type:
+                    if not _matches_filter(sdef):
                         continue
                     try:
                         _started = _service_started_for_listing(reg, "conv", conv_id, sid, sdef)

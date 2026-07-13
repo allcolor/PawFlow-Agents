@@ -90,6 +90,9 @@ class ToolApprovalGate:
         # User interaction (no data modification)
         "notify_user", "ask_user",
     })
+    ADVISOR_READ_ONLY_ALLOWED = READ_ONLY_ALLOWED - frozenset({
+        "notify_user", "ask_user",
+    })
 
     # ── See tool: file read is exempt, screenshot needs approval ──────
 
@@ -435,6 +438,15 @@ class ToolApprovalGate:
             _path = (arguments.get("path", "") or "").lower().strip()
             return _path not in cls._SEE_SCREEN_PATHS
         return False
+
+    @classmethod
+    def is_advisor_read_only_allowed(
+            cls, tool_name: str,
+            arguments: Optional[dict] = None) -> bool:
+        """Read-only policy for silent internal planning advisors."""
+        if tool_name in {"notify_user", "ask_user"}:
+            return False
+        return cls.is_read_only_allowed(tool_name, arguments)
 
     @classmethod
     def get_mode(cls, conversation_id: str) -> str:

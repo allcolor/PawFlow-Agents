@@ -1221,6 +1221,32 @@ class TestAgentServiceActions:
         assert by_id["db1"]["description"] == "Main DB"
         assert by_id["db2"]["enabled"] is False
 
+    def test_service_list_llm_capability_includes_direct_and_aggregator(self):
+        self.reg.install(
+            self.SCOPE, "testuser", "direct_llm", "llmConnection",
+            config={"provider": "openai", "api_key": "test-key"})
+        self.reg.install(
+            self.SCOPE, "testuser", "council", "llmAggregator",
+            config={
+                "aggregator_llm_service": "direct_llm",
+                "advisor_llm_services": ["advisor_llm"],
+            })
+        self.reg.install(self.SCOPE, "testuser", "db1", SVC_TYPE)
+
+        from tasks.ai.actions.service_flow import _handle_service_flow
+        ff = self._make_flowfile({
+            "action": "list_services", "service_type": "llm"})
+        result = _handle_service_flow(
+            None, "list_services", json.loads(ff.get_content()),
+            None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+        by_id = {service["service_id"]: service
+                 for service in data["services"]}
+
+        assert by_id["direct_llm"]["service_type"] == "llmConnection"
+        assert by_id["council"]["service_type"] == "llmAggregator"
+        assert "db1" not in by_id
+
     def test_service_list_marks_stateless_tts_started_when_enabled(self):
         self.reg.install(
             self.SCOPE, "testuser", "openai_TTS", "openaiCompatibleTTS",

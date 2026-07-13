@@ -102,6 +102,40 @@ class TestAgentTask:
         assert task.max_depth == 1
         assert task.timeout == 300
         assert task.tools is None
+        assert task.internal is False
+        assert task.ephemeral is False
+        assert task.read_only is False
+
+    def test_internal_ephemeral_task_has_no_trace_or_persistence(self):
+        client = make_client_mock([simple_response("plan")])
+        registry = make_registry()
+        executor = SubAgentExecutor(
+            client, registry,
+            client_resolver=lambda *_args: (client, None),
+            on_event=None)
+        store = MagicMock()
+        store.generate_id.return_value = "ephemeral-conv"
+        task = AgentTask(
+            id="internal-1", agent_name="advisor", message="analyze",
+            system_prompt="plan only", llm_service="advisor_llm",
+            user_id="alice", parent_conversation_id="parent-conv",
+            internal=True, ephemeral=True, read_only=True)
+
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store):
+            result = executor.execute_agent(task)
+
+        assert result.status == "completed"
+        store.create_display_trace.assert_not_called()
+        store.load.assert_not_called()
+        store.save.assert_not_called()
+        store.set_extra.assert_called_once_with(
+            "ephemeral-conv", "permission_mode", "advisor_read_only")
+        store.delete.assert_called_once_with(
+            "ephemeral-conv", user_id="alice")
+        assert client.complete_stream.call_args.kwargs[
+            "call_ephemeral_stream"] is True
+        executor.shutdown()
 
 
 class TestAgentResult:
@@ -137,6 +171,24 @@ class TestSingleAgentExecution:
         assert metrics["echo"]["calls"] == 1
         assert metrics["echo"]["successes"] == 1
         assert metrics["missing"]["errors"] == 1
+
+    def test_read_only_task_blocks_unadvertised_tool(self):
+        registry = make_registry(EchoToolHandler())
+        executor = SubAgentExecutor(make_client_mock([]), registry)
+
+        result = executor._execute_tool(
+            LLMToolCall(
+                id="call_echo", name="echo", arguments={"text": "write"}),
+            {}, read_only=True,
+        )
+
+        assert "blocked for this read-only advisor" in result
+
+        unexposed = executor._execute_tool(
+            LLMToolCall(id="call_notify", name="notify_user", arguments={}),
+            {}, read_only=True,
+        )
+        assert "blocked for this read-only advisor" in unexposed
 
     def test_simple_response(self):
         """Agent gets a direct response (no tool calls)."""

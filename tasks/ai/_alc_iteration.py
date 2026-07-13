@@ -312,6 +312,13 @@ class _ALCIterationMixin:
         st.total_tokens_out += st.response.tokens_out
         st.total_cache_read += getattr(st.response, 'cache_read_tokens', 0)
         st.total_cache_write += getattr(st.response, 'cache_creation_tokens', 0)
+        st._aggregation_usage = (st.response.raw or {}).get(
+            "_pawflow_aggregation", {})
+        st.ctx["_additional_usage_cost_usd"] = (
+            float(st.ctx.get("_additional_usage_cost_usd", 0) or 0)
+            + float(st._aggregation_usage.get(
+                "advisor_cost_usd_delta", 0) or 0)
+        )
         st.final_model = st.response.model
         st.finish_reason = st.response.finish_reason
 

@@ -386,6 +386,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                         cost_per_1m_cache_read=st._ccr,
                         cost_per_1m_cache_write=st._ccw,
                     )
+                    st._turn_cost_ref[0] += float(
+                        st.ctx.get("_additional_usage_cost_usd", 0) or 0)
                 except Exception as _cost_err:
                     logger.debug("[agent:%s] cost tracking error: %s",
                                  st.conversation_id[:8], _cost_err)

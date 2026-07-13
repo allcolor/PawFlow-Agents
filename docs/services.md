@@ -9,6 +9,7 @@ The chat service installer receives service type metadata grouped by category an
 | Type | Purpose |
 |---|---|
 | `llmConnection` | LLM service configuration for direct API providers and CLI-backed providers (`openai`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, `gemini`). |
+| `llmAggregator` | Composite LLM service that runs several `llmConnection` advisors in parallel, then gives their internal plans to a final `llmConnection` which answers or executes the user request. |
 | `llmCredentialOAuthProvider` | Encrypted OAuth credential pool for CLI-backed LLM providers. Canonical providers are `claude-code`, `codex-app-server`, and `gemini`; `claude-code-interactive` reuses `claude-code`, and `antigravity-interactive` reuses `gemini`. |
 | `realtimeVoiceConnection` | Speech-to-speech voice sessions with an agent (webchat voice mode, Telegram voice notes). Protocols: `openai_realtime` (OpenAI/Azure/compatibles) and `gemini_live`; credentials come from a referenced `llmConnection`. See [Media Tools — Realtime Voice Conversation](media_tools.md#realtime-voice-conversation). |
 | `httpClientService` | Reusable HTTP client. |
@@ -23,6 +24,22 @@ The chat service installer receives service type metadata grouped by category an
 | `distributedMapCache` | Distributed key/value cache. |
 | `fileTracking` | Tracks processed files for list/watch flows. |
 | `packageRuntime` | Runtime proxy for PFP `service_provider` objects executed through the relay package runner. |
+
+### LLM Aggregator
+
+`llmAggregator` is selectable anywhere an agent accepts an LLM-capable service.
+Its `aggregator_llm_service` is the only provider that streams the visible final
+answer. `advisor_llm_services` is a JSON array of `llmConnection` service IDs;
+the advisors run concurrently, can use the active conversation's configured
+tools, and return internal planning reports. Reports are generated once for a
+new user turn and reused during subsequent tool-result iterations.
+
+Advisors are technically read-only by default. `enforce_read_only=true` exposes
+only PawFlow's fail-closed read-only tool allowlist and applies the same mode to
+CLI providers through their ephemeral MCP context. Set it to false only when
+prompt-only guidance with every configured tool is explicitly desired.
+Use `failure_policy=best_effort` to continue when one advisor fails, or
+`fail_fast` to abort before calling the final LLM.
 
 `authGateway` supports standard OAuth providers through `/auth/callback` and
 Telegram through the Telegram Login Widget. Telegram requires a BotFather bot

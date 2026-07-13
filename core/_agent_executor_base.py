@@ -123,6 +123,9 @@ class AgentTask:
     delegate_tc_id: str = ""  # tool_call ID of the delegate call in parent conversation
     persist: bool = False  # keep sub-conversation after completion (for multi-turn delegates)
     source_task_id: str = ""  # task ID when delegate is spawned from within a task
+    internal: bool = False  # suppress UI traces and active-agent registration
+    ephemeral: bool = False  # do not load or persist a sub-conversation
+    read_only: bool = False  # fail-closed tool allowlist for internal planning
 
 
 @dataclass

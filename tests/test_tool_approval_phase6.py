@@ -54,6 +54,13 @@ def test_read_only_denies_empty_tool_name():
     assert not ToolApprovalGate.is_read_only_allowed(None)
 
 
+def test_advisor_read_only_is_silent_and_fail_closed():
+    assert ToolApprovalGate.is_advisor_read_only_allowed("read")
+    assert not ToolApprovalGate.is_advisor_read_only_allowed("notify_user")
+    assert not ToolApprovalGate.is_advisor_read_only_allowed("ask_user")
+    assert not ToolApprovalGate.is_advisor_read_only_allowed("new_tool")
+
+
 def test_read_only_filesystem_dispatch():
     """filesystem.<action> must defer to _FS_EXEMPT, not the top-level
     allowlist (filesystem itself isn't in READ_ONLY_ALLOWED)."""

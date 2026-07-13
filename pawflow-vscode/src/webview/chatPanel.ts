@@ -211,7 +211,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     try {
       const [agentsResp, svcResp, relayResp] = await Promise.all([
         api.sendAction('list_repo_agents', { conversation_id: '' }),
-        api.sendAction('list_services', { service_type: 'llmConnection', conversation_id: '' }),
+        api.sendAction('list_services', { service_type: 'llm', conversation_id: '' }),
         api.sendAction('relay_list_available', {}),
       ]);
       const agents = ((agentsResp as any).agents || [])

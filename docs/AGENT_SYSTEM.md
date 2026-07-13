@@ -76,7 +76,15 @@ Agents can be created through:
 
 ### LLM Service Reference
 
-The `llm_service` field points to a configured `llmConnection` service. Built-in providers are `openai`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, and `gemini`; OpenAI-compatible and Anthropic-compatible endpoints use `base_url` on the corresponding direct API provider. Expression language references like `${llm_default_service}` are resolved at runtime from the expression cascade: flow -> conversation -> user -> global.
+The `llm_service` field points to an LLM-capable service: either a direct
+`llmConnection` or a composite `llmAggregator`. Built-in direct providers are
+`openai`, `anthropic`, `claude-code`, `claude-code-interactive`,
+`antigravity-interactive`, `codex-app-server`, and `gemini`; OpenAI-compatible
+and Anthropic-compatible endpoints use `base_url` on the corresponding direct
+API provider. An `llmAggregator` consults its configured advisor connections in
+parallel and passes their internal plans to its final connection. Expression
+language references like `${llm_default_service}` are resolved at runtime from
+the expression cascade: flow -> conversation -> user -> global.
 
 ---
 

@@ -638,7 +638,28 @@ val = cache.get("key")
 }
 ```
 
-### 12.5. Distributed Map Cache Client (`distributedMapCache`)
+### 12.5. LLM Aggregator (`llmAggregator`)
+
+**File**: `services/llm_aggregator.py`
+**Description**: Parallel advisor fan-out followed by synthesis or execution through a final LLM connection.
+
+**Parameters**:
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `aggregator_llm_service` | service reference | Yes | - | Final `llmConnection` used for the visible answer and tool-loop |
+| `advisor_llm_services` | JSON array | Yes | `[]` | `llmConnection` IDs consulted concurrently |
+| `max_parallel_advisors` | integer | No | 4 | Maximum concurrent advisor calls |
+| `advisor_max_iterations` | integer | No | 20 | Maximum tool-loop iterations per advisor |
+| `failure_policy` | select | No | `best_effort` | Continue with partial reports or fail on any advisor error |
+| `enforce_read_only` | boolean | No | true | Enforce PawFlow's fail-closed read-only tool allowlist for every advisor |
+
+Advisor traces and sub-conversations are silent and ephemeral. Their reports
+are generated once on the first LLM call for a user turn, then cached while the
+final LLM consumes tool results. Only final-LLM tokens populate the main
+`LLMResponse` counters; advisor usage is attached separately to internal raw
+response metadata and remains tracked by each underlying service.
+
+### 12.6. Distributed Map Cache Client (`distributedMapCache`)
 
 **File**: `services/distributed_cache.py`
 **Description**: Distributed cache compatible with NiFi DistributedMapCacheClient

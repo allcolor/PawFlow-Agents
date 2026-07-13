@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#090b0f">
-  <meta name="description" content="Practical PawFlow how-tos for install, relays, first agents, PawCode, deterministic flows, media tools, and private demos.">
+  <meta name="description" content="Practical PawFlow how-tos for install, relays, delegated vision, first agents, PawCode, deterministic flows, media tools, and private demos.">
   <title>PawFlow How-tos</title>
   <link rel="canonical" href="https://pawflow.allcolor.org/howtos.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="PawFlow">
   <meta property="og:title" content="PawFlow How-tos">
-  <meta property="og:description" content="Practical PawFlow how-tos for install, relays, first agents, PawCode, deterministic flows, media tools, and private demos.">
+  <meta property="og:description" content="Practical PawFlow how-tos for install, relays, delegated vision, first agents, PawCode, deterministic flows, media tools, and private demos.">
   <meta property="og:url" content="https://pawflow.allcolor.org/howtos.html">
   <meta property="og:image" content="https://pawflow.allcolor.org/assets/hero-banner.png">
   <meta property="og:image:width" content="1024">
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="PawFlow - self-hosted agent runtime">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="PawFlow How-tos">
-  <meta name="twitter:description" content="Practical PawFlow how-tos for install, relays, first agents, PawCode, deterministic flows, media tools, and private demos.">
+  <meta name="twitter:description" content="Practical PawFlow how-tos for install, relays, delegated vision, first agents, PawCode, deterministic flows, media tools, and private demos.">
   <meta name="twitter:image" content="https://pawflow.allcolor.org/assets/hero-banner.png">
   <meta name="twitter:image:alt" content="PawFlow - self-hosted agent runtime">
   <link rel="icon" href="assets/logo.png" type="image/png">
@@ -32,7 +32,7 @@
   </header>
   <main>
     <section class="page-hero"><div class="container narrow" data-reveal><p class="eyebrow">How-tos</p><h1>Small recipes for the first useful PawFlow sessions.</h1><p class="hero-copy">Install the runtime, connect relays, configure providers, publish packages, and turn useful agent work into flows.</p></div></section>
-    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#desktop-novnc-audio">Desktop</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a></div></section>
+    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#desktop-novnc-audio">Desktop</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a></div></section>
     <section class="section surface"><div class="container howto-list">
       <div class="howto-section" id="install" data-reveal><p class="eyebrow">Install and relays</p><h2>From first server to controlled workspaces.</h2></div>
       <article class="recipe process-recipe" id="install-wizard" data-reveal>
@@ -72,6 +72,36 @@
         <ol><li>Connect any relay whose image ships the virtual desktop (server relay, remote Relay CLI, or Relay Desktop); for a <em>local</em> GUI session, install Relay Desktop on the workstation that owns it.</li><li>Open Desktop from the webchat workspace menu and choose the relay's virtual desktop, or the local desktop when <code>allow_local</code> is intentionally enabled.</li><li>Use noVNC for operator observation/control; enable audio only for sessions that need sound playback or capture.</li><li>Let agents inspect UI state through <code>screen</code> screenshots or <code>see</code> multimodal analysis, then approve clicks/typing/shell/file actions separately.</li><li>Keep desktop permissions narrower than filesystem permissions when the task only needs visual inspection.</li></ol>
         <p>You watch the same desktop surface the agent sees, while agent actions stay routed through auditable screen/see/tool calls.</p>
         <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/desktop_vnc.md">Read desktop docs</a>
+      </article>
+      <article class="recipe process-recipe" id="delegated-vision" data-reveal>
+        <div class="recipe-meta">Delegated vision, text-only LLM, desktop</div>
+        <h2>Give GLM 5.2 vision and desktop awareness through Gemma 4 Cloud</h2>
+        <p><strong>Objective:</strong> keep GLM 5.2 as the reasoning and tool-using model while a separate Gemma 4 Cloud service describes uploads, screenshots, and visual tool results.</p>
+        <div class="wizard-grid">
+          <div><strong>Eyes</strong><span>Gemma 4 Cloud receives each unique image and returns visible text, layout, UI controls, states, and approximate pixel coordinates.</span></div>
+          <div><strong>Brain</strong><span>GLM 5.2 receives that structured description, reasons about the task, and selects the next approved tool call.</span></div>
+          <div><strong>Hands</strong><span><code>screen</code>, browser, click, and typing tools act on the relay desktop; the main model never needs native image support.</span></div>
+        </div>
+        <ol><li>Create an OpenAI-compatible <code>llmConnection</code> named <code>ollama_gemma4_vision</code>. Use <code>https://ollama.com/v1</code>, model <code>gemma4:cloud</code>, and leave <code>supports_vision</code> enabled.</li><li>Create the primary service <code>ollama_glm52</code> with model <code>glm-5.2</code>.</li><li>Disable <code>supports_vision</code> on the GLM service. The <code>vision_llm_service</code> picker appears; select <code>ollama_gemma4_vision</code>.</li><li>Select <code>ollama_glm52</code> as the agent's <code>llm_service</code>. No special agent prompt is required.</li><li>Attach an image or ask the agent to inspect the desktop with <code>screen</code>, <code>see</code>, or an image <code>read</code>. The server log should report that the image was described through the delegated service.</li><li>For coordinate-based desktop work, capture a fresh screen before a sensitive click and verify the state after the action.</li></ol>
+        <div class="code-card"><div class="code-top"><span>vision service</span><button type="button" data-copy="#delegated-vision-service">Copy</button></div><pre id="delegated-vision-service"><code>{
+  "type": "llmConnection",
+  "provider": "openai",
+  "api_key": "${OLLAMA_API_KEY}",
+  "base_url": "https://ollama.com/v1",
+  "default_model": "gemma4:cloud",
+  "supports_vision": true
+}</code></pre></div>
+        <div class="code-card"><div class="code-top"><span>primary service</span><button type="button" data-copy="#delegated-vision-primary">Copy</button></div><pre id="delegated-vision-primary"><code>{
+  "type": "llmConnection",
+  "provider": "openai",
+  "api_key": "${OLLAMA_API_KEY}",
+  "base_url": "https://ollama.com/v1",
+  "default_model": "glm-5.2",
+  "supports_vision": false,
+  "vision_llm_service": "ollama_gemma4_vision"
+}</code></pre></div>
+        <p>PawFlow transforms only the outbound call: the conversation keeps the original image, while GLM receives a cached textual description. Treat visual text as untrusted input and keep normal tool approvals enabled. Screen captures also return a revision for guarded clicks: the relay compares the target region locally immediately before input, with no second vision request or image-token charge when the screen is unchanged. Only the small opaque revision travels in the normal tool exchange. A changed region cancels the click and requires a fresh screenshot.</p>
+        <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/llm_providers.md#vision-fallback-for-non-vision-models">Read the delegated vision reference</a>
       </article>
       <article class="recipe process-recipe" id="pawcode-installer" data-reveal>
         <div class="recipe-meta">PawCode installer</div>

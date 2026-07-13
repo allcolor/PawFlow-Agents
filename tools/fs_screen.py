@@ -8,6 +8,8 @@ is unavailable.
 Auto-starts a virtual desktop (Xvfb+openbox) if no DISPLAY is available.
 """
 
+import base64
+import io
 import os
 import shutil
 import subprocess  # nosec B404
@@ -59,6 +61,7 @@ def _xdo(*args, timeout=5):
 
 
 _BUTTON_MAP = {"left": "1", "middle": "2", "right": "3"}
+_SCREEN_GUARD_MAX_DIFFERENCE = 0.06
 
 _KEY_MAP = {
     "enter": "Return", "return": "Return",
@@ -85,6 +88,96 @@ def _map_key(key):
         parts = [_KEY_MAP.get(k.strip().lower(), k.strip()) for k in key.split("+")]
         return "+".join(parts)
     return _KEY_MAP.get(key.lower(), key)
+
+
+def _capture_guard_region_png(region):
+    """Capture one physical-pixel region immediately before guarded input."""
+    x = int(region["x"])
+    y = int(region["y"])
+    width = int(region["width"])
+    height = int(region["height"])
+    if width <= 0 or height <= 0:
+        raise ValueError("screen guard region is empty")
+    try:
+        import mss
+        with mss.mss() as sct:
+            image = sct.grab({
+                "left": x, "top": y, "width": width, "height": height,
+            })
+            from mss.tools import to_png
+            return to_png(image.rgb, image.size)
+    except ImportError:
+        import pyautogui
+        screenshot = pyautogui.screenshot(region=(x, y, width, height))
+        output = io.BytesIO()
+        screenshot.save(output, format="PNG")
+        return output.getvalue()
+
+
+def _screen_difference_score(expected_png, current_png):
+    """Return a bounded perceptual difference score without external services."""
+    from PIL import Image
+
+    with Image.open(io.BytesIO(expected_png)) as expected_source:
+        expected_source.load()
+        expected = expected_source.convert("RGB")
+    with Image.open(io.BytesIO(current_png)) as current_source:
+        current_source.load()
+        current = current_source.convert("RGB")
+    if expected.size != current.size:
+        return 1.0
+
+    expected.thumbnail((256, 256))
+    resampling = getattr(Image, "Resampling", Image).BILINEAR
+    current = current.resize(expected.size, resampling)
+    expected_pixels = list(
+        expected.get_flattened_data()
+        if hasattr(expected, "get_flattened_data") else expected.getdata())
+    current_pixels = list(
+        current.get_flattened_data()
+        if hasattr(current, "get_flattened_data") else current.getdata())
+    if not expected_pixels:
+        return 1.0
+
+    absolute_total = 0
+    changed = 0
+    for before, now in zip(expected_pixels, current_pixels):
+        deltas = tuple(abs(a - b) for a, b in zip(before, now))
+        absolute_total += sum(deltas)
+        if max(deltas) >= 24:
+            changed += 1
+    mean_delta = absolute_total / (len(expected_pixels) * 3 * 255)
+    changed_fraction = changed / len(expected_pixels)
+    return min(1.0, max(mean_delta * 2, changed_fraction))
+
+
+def _validate_screen_guard(req):
+    """Return a stale-screen result or None when local validation succeeds."""
+    guard = req.get("_screen_guard")
+    if not isinstance(guard, dict):
+        return {
+            "stale_screen": True,
+            "reason": "missing_screen_guard",
+        }
+    try:
+        region = guard["region"]
+        expected = base64.b64decode(guard["expected_image"], validate=True)
+        current = _capture_guard_region_png(region)
+        difference = _screen_difference_score(expected, current)
+    except Exception as exc:
+        return {
+            "stale_screen": True,
+            "reason": f"screen_guard_failed: {exc}",
+        }
+    if difference > _SCREEN_GUARD_MAX_DIFFERENCE:
+        return {
+            "stale_screen": True,
+            "reason": "target_region_changed",
+            "difference": round(difference, 6),
+            "threshold": _SCREEN_GUARD_MAX_DIFFERENCE,
+            "screen_revision": guard.get("revision", ""),
+        }
+    return None
 
 
 def action_screen_screenshot(root_dir, abs_path, req):
@@ -133,6 +226,9 @@ def action_screen_screenshot_region(root_dir, abs_path, req):
 
 def action_screen_click(root_dir, abs_path, req):
     _ensure_desktop()
+    stale = _validate_screen_guard(req)
+    if stale:
+        return stale
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
     button = req.get("button", "left")
     btn = _BUTTON_MAP.get(button, "1")
@@ -143,6 +239,9 @@ def action_screen_click(root_dir, abs_path, req):
 
 def action_screen_double_click(root_dir, abs_path, req):
     _ensure_desktop()
+    stale = _validate_screen_guard(req)
+    if stale:
+        return stale
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
     _xdo("mousemove", str(x), str(y))
     _xdo("click", "--repeat", "2", "--delay", "50", "1")

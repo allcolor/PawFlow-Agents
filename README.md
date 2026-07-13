@@ -52,6 +52,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - **Durable context**: conversations, shared context, per-agent context, memory, knowledge graphs, diaries, project graphs, files, and buckets survive restarts.
 - **Encryption at rest (opt-in)**: per-conversation passphrase encryption of message content, thinking, and tool I/O (and conv-scoped relay workspaces via CryFS); keys live in RAM only, so a stopped server leaves only ciphertext on disk. Off by default and transparent to conversations that don't use it.
 - **Multi-provider agents**: mix Codex app-server, Claude Code, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation.
+- **Delegated vision**: pair a strong text-only reasoning model with a separate vision-enabled LLM so uploads, screenshots, and desktop views become detailed descriptions with UI coordinates before the reasoning turn.
 - **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, API clients, or channel integrations.
 - **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
 - **Package ecosystem**: distribute agents, skills, tools, services, flow tasks, flows, and UI extensions as signed `.pfp` packages or import skills from supported marketplaces.
@@ -61,6 +62,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - Agentic coding sessions against a linked workspace, with persistent context and auditable tool output.
 - Multi-agent operations where planners, coders, reviewers, researchers, and verifiers work in the same conversation.
 - Browser and desktop automation for workflows that do not have clean APIs.
+- Vision-guided desktop agents built from a text-only reasoning model and an independently selected vision model.
 - Realtime voice conversations with your agents — speech-to-speech sessions (OpenAI Realtime or Gemini Live) with live captions, barge-in, tool use, and Telegram voice-note replies, persisted as normal conversation history.
 - Media pipelines that create images, video, audio, 3D assets, voice, and FileStore outputs.
 - Scheduled operational flows: daily digests, inbox triage, data transforms, reports, monitoring, and webhook-driven automation.
@@ -225,6 +227,20 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **OpenAI-compatible** | Direct HTTP | Local/self-hosted and third-party compatible endpoints via `base_url` |
 
 Switch providers per agent, per conversation, or globally. API keys normally use direct `openai`/`anthropic` services; subscription logins use the matching CLI-backed provider (`codex-app-server`, `claude-code-interactive`, or `antigravity-interactive`). Self-hosted and third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override). See [LLM Providers](docs/llm_providers.md).
+
+### Delegated Vision for Text-Only Models
+
+An LLM service with `supports_vision: false` can delegate every incoming image to another vision-enabled `llmConnection`. PawFlow asks that service for visible text, layout, UI controls, states, and approximate pixel coordinates, then replaces the image with that description only for the text model's outbound call. The stored conversation retains the original image.
+
+```json
+{
+  "default_model": "glm-5.2",
+  "supports_vision": false,
+  "vision_llm_service": "ollama_gemma4_vision"
+}
+```
+
+This lets a model such as GLM 5.2 inspect uploads and use `screen`/`see`/`read` results through Gemma 4 Cloud, while GLM remains the agent's reasoning model and desktop-tool caller. Descriptions are cached by image content hash. See the [GLM 5.2 + Gemma 4 how-to](https://pawflow.allcolor.org/howtos.html#delegated-vision) and the [technical provider reference](docs/llm_providers.md#vision-fallback-for-non-vision-models).
 
 ## Agent Capabilities
 

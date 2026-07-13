@@ -222,10 +222,11 @@
         <div class="feature-grid">
           <article class="feature" data-reveal><span>01</span><h3>Agentic coding</h3><p>Run coding agents against a linked workspace with relay-backed read, edit, shell, grep, browser, and project graph tools.</p></article>
           <article class="feature" data-reveal><span>02</span><h3>Multi-agent work</h3><p>Delegate tasks, assign plans, verify outputs, and run different providers in the same conversation.</p></article>
-          <article class="feature" data-reveal><span>03</span><h3>Desktop and browser tasks</h3><p>Operate controlled desktops, browsers, VNC sessions, and forwarded local services from the same runtime.</p></article>
-          <article class="feature" data-reveal><span>04</span><h3>Media generation</h3><p>Generate and transform images, video, audio, voice, 3D assets, try-on outputs, and upscaled media into FileStore.</p></article>
-          <article class="feature" data-reveal><span>05</span><h3>Deterministic automations</h3><p>Run NiFi-style JSON flows with 100+ task types across IO, data, control, system, and AI categories.</p></article>
-          <article class="feature" data-reveal><span>06</span><h3>Self-hosted security model</h3><p>Use explicit relays, stored secrets, provider boundaries, private gateways, and per-agent permissions.</p></article>
+          <article class="feature" data-reveal><span>03</span><h3>Delegated vision</h3><p>Give a text-only reasoning model visual and desktop awareness through a separate vision LLM that returns text, layout, states, and UI coordinates.</p></article>
+          <article class="feature" data-reveal><span>04</span><h3>Desktop and browser tasks</h3><p>Operate controlled desktops, browsers, VNC sessions, and forwarded local services from the same runtime.</p></article>
+          <article class="feature" data-reveal><span>05</span><h3>Media generation</h3><p>Generate and transform images, video, audio, voice, 3D assets, try-on outputs, and upscaled media into FileStore.</p></article>
+          <article class="feature" data-reveal><span>06</span><h3>Deterministic automations</h3><p>Run NiFi-style JSON flows with 100+ task types across IO, data, control, system, and AI categories.</p></article>
+          <article class="feature" data-reveal><span>07</span><h3>Self-hosted security model</h3><p>Use explicit relays, stored secrets, provider boundaries, private gateways, and per-agent permissions.</p></article>
         </div>
       </div>
     </section>
@@ -275,12 +276,13 @@
         <div data-reveal>
           <p class="eyebrow">Built-in cloud desktop</p>
           <h2>A real self-hosted cloud desktop, one click from the chat.</h2>
-          <p class="lead">Every desktop-capable relay — including the server relay built into PawFlow itself — ships a full Linux virtual desktop. Open it as a noVNC tab from the webchat workspace menu, stream its audio, and keep working: no extra VM, no third-party remote-desktop service, everything stays on your infrastructure.</p>
+          <p class="lead">Every desktop-capable relay — including the server relay built into PawFlow itself — ships a full Linux virtual desktop. Open it as a noVNC tab from the webchat workspace menu, stream its audio, and keep working: no extra VM, no third-party remote-desktop service, everything stays on your infrastructure. Text-only agents can delegate screenshots to a separate vision LLM, then reason over its UI description and coordinates.</p>
           <div class="compare-row">
             <div><strong>For you</strong><span>noVNC desktop and audio streaming in a browser tab, next to the conversation.</span></div>
             <div><strong>For agents</strong><span>The same desktop through <code>screen</code> and <code>see</code> tools, with approved clicks, typing, and shell.</span></div>
           </div>
           <a class="inline-link" href="howtos.html#desktop-novnc-audio">Use the relay desktop</a>
+          <a class="inline-link" href="howtos.html#delegated-vision">Pair a text model with delegated vision</a>
         </div>
         <figure class="visual-card" data-reveal>
           <img src="assets/media/product/desktop-relay-session.webp" onerror="this.onerror=null;this.src='assets/feature-channels.png';" alt="Self-hosted relay cloud desktop open in the browser through noVNC">

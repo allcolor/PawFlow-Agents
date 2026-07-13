@@ -1,15 +1,18 @@
-"""Screen interaction tool — screenshots, clicks, typing via relay."""
-import json
+"""Screen interaction tool — screenshots, guarded clicks, typing via relay."""
 import logging
 from typing import Any, Dict
 
 from core.handlers._fs_base import BaseFsHandler
+from core.handlers._screen_guard import (
+    SCREENSHOT_TTL_SECONDS,
+    prepare_click_guard,
+    screen_route_key,
+    store_screen_capture,
+)
+
+__all__ = ["SCREENSHOT_TTL_SECONDS", "ScreenHandler"]
 
 logger = logging.getLogger(__name__)
-SCREENSHOT_TTL_SECONDS = 5 * 60
-_SCREENSHOT_TTL_KEYS = ("screenshot_ttl_seconds", "webchat_screenshot_ttl_seconds")
-
-
 class ScreenHandler(BaseFsHandler):
     """Control the desktop: screenshots, mouse, keyboard.
 
@@ -41,8 +44,11 @@ class ScreenHandler(BaseFsHandler):
             "or local=false (default) for the Docker virtual screen.\n"
             "COORDINATES: x,y are in physical pixels matching the screenshot resolution. "
             "Always take a screenshot first — the result includes the screen resolution "
-            "(e.g. 2560x1440). Use those pixel dimensions to calculate click/move coordinates; "
-            "never use coordinates from the resized screenshot image rendered in chat."
+            "and an opaque screen revision. Use those pixel dimensions to calculate "
+            "click/move coordinates; never use coordinates from the resized screenshot "
+            "image rendered in chat. click/double_click require the revision and the relay "
+            "compares the target region locally immediately before acting, without another "
+            "LLM or vision call."
         )
 
     @property
@@ -68,6 +74,23 @@ class ScreenHandler(BaseFsHandler):
                 "key": {"type": "string", "description": "Key name: Enter, Tab, Escape, Space, Backspace, Delete, Up, Down, Left, Right, F1-F12, ctrl+c, alt+tab, etc."},
                 "button": {"type": "string", "description": "Mouse button: left (default), right, middle"},
                 "amount": {"type": "integer", "description": "Scroll amount (positive=down, negative=up, default 3)"},
+                "expected_screen_revision": {
+                    "type": "string",
+                    "description": (
+                        "Opaque revision returned by the screenshot used to choose x,y. "
+                        "Required for click and double_click; copy it exactly."
+                    ),
+                },
+                "target_bbox": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "description": (
+                        "Optional target bounds [x, y, width, height] in physical screenshot "
+                        "pixels. Improves the local stale-layout comparison."
+                    ),
+                },
                 "timeout": {"type": "number", "description": "Maximum seconds to wait for the relay screen action before cancelling it (default 30)."},
                 "relay": {"type": "string", "description": "Relay service name. Omit to auto-select."},
                 "local": {"type": "boolean", "description": "If true, act on the user's REAL desktop (relay → host helper). If false (default), act on the Docker virtual desktop (relay's Xvfb / container, i.e. the one started via /desktop docker)."},
@@ -141,6 +164,26 @@ class ScreenHandler(BaseFsHandler):
         """Execute screen action via relay. `local` flag is passed through."""
         req_args = {k: v for k, v in arguments.items()
                     if k not in ("action", "relay")}
+        route_key = screen_route_key(svc, bool(req_args.get("local", False)))
+        if action in ("click", "double_click"):
+            revision = str(req_args.pop("expected_screen_revision", "") or "")
+            target_bbox = req_args.pop("target_bbox", None)
+            try:
+                x = int(req_args["x"])
+                y = int(req_args["y"])
+                req_args["_screen_guard"] = prepare_click_guard(
+                    revision,
+                    user_id=self._user_id,
+                    conversation_id=self._conversation_id,
+                    route_key=route_key,
+                    x=x,
+                    y=y,
+                    target_bbox=target_bbox,
+                )
+            except KeyError:
+                return "Error: x and y are required for click actions"
+            except (TypeError, ValueError, FileNotFoundError) as exc:
+                return f"Error: {exc}"
         try:
             timeout = float(req_args.pop("timeout", 30) or 30)
         except (TypeError, ValueError):
@@ -163,9 +206,9 @@ class ScreenHandler(BaseFsHandler):
         if isinstance(result, dict) and not result.get("ok", True):
             return f"Error: {result.get('error', 'unknown error')}"
 
-        return self._handle_result(action, result)
+        return self._handle_result(action, result, route_key=route_key)
 
-    def _handle_result(self, action: str, data) -> str:
+    def _handle_result(self, action: str, data, *, route_key: str = "") -> str:
         """Process screen action result — store screenshots, format responses."""
         # Screenshot: accept both raw base64 string and {image, width, height} dict
         if action == "screenshot":
@@ -181,27 +224,37 @@ class ScreenHandler(BaseFsHandler):
                 try:
                     import base64
                     img_bytes = base64.b64decode(b64_data)
-                    from core.file_store import FileStore
-                    from core.file_ttl import resolve_ttl_seconds
-                    import time
                     conversation_id = getattr(self, '_conversation_id', '') or ''
-                    fname = f"screenshot_{int(time.time())}.png"
-                    fid = FileStore.instance().store(
-                        fname, img_bytes, "image/png",
+                    url, revision = store_screen_capture(
+                        img_bytes,
                         user_id=self._user_id,
                         conversation_id=conversation_id,
-                        ttl=resolve_ttl_seconds(
-                            conversation_id=conversation_id,
-                            conv_keys=_SCREENSHOT_TTL_KEYS,
-                            env_key="PAWFLOW_SCREENSHOT_TTL_SECONDS",
-                            default=SCREENSHOT_TTL_SECONDS),
-                        category="screenshot")
-                    url = f"fs://filestore/{fid}/{fname}"
+                        route_key=route_key)
                     size_info = f"\nScreen resolution: {width}x{height}" if width and height else ""
-                    coord_hint = f" — use these physical pixel dimensions for x,y coordinates; do not use the resized chat preview" if width else ""
-                    return f"Screenshot captured: {url}\n{len(img_bytes):,} bytes, {b64_data[:20]}...{size_info}{coord_hint}"
+                    coord_hint = " — use these physical pixel dimensions for x,y coordinates; do not use the resized chat preview" if width else ""
+                    return (
+                        f"Screenshot captured: {url}\n"
+                        f"Screen revision: {revision}\n"
+                        "Pass this exact revision as expected_screen_revision for the next "
+                        "click/double_click based on this image.\n"
+                        f"{len(img_bytes):,} bytes, {b64_data[:20]}..."
+                        f"{size_info}{coord_hint}"
+                    )
                 except Exception as e:
                     return f"Screenshot captured but storage failed: {e}"
+
+        if isinstance(data, dict) and data.get("stale_screen"):
+            difference = data.get("difference")
+            difference_text = (
+                f" (difference={float(difference):.4f})"
+                if isinstance(difference, (int, float)) else "")
+            return (
+                "STALE_SCREEN: click cancelled before any mouse input because the "
+                f"target region changed{difference_text}. Take a new screenshot, "
+                "re-evaluate the target, and use its new screen revision."
+            )
+        if isinstance(data, dict) and data.get("error"):
+            return f"Error: {data['error']}"
 
         if action == "mouse_position" and isinstance(data, dict):
             return f"Mouse position: x={data.get('x', '?')}, y={data.get('y', '?')}"

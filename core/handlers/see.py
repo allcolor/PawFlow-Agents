@@ -152,15 +152,31 @@ class SeeHandler(BaseFsHandler):
             try:
                 import base64
                 img_bytes = base64.b64decode(b64_data)
+                from core.handlers._screen_guard import (
+                    screen_route_key, store_screen_capture,
+                )
+                _url, revision = store_screen_capture(
+                    img_bytes,
+                    user_id=self._user_id,
+                    conversation_id=self._conversation_id,
+                    route_key=screen_route_key(svc, local),
+                )
                 rendered = self._see_image("screenshot.png", img_bytes, "png")
+                revision_hint = (
+                    f"Screen revision: {revision}\n"
+                    "Pass this exact revision as expected_screen_revision for the next "
+                    "screen click/double_click based on this image. The relay validates "
+                    "the target locally without another vision call.\n"
+                )
                 if width and height:
                     return (
-                        f"Screen resolution: {width}x{height}. Use physical screen "
+                        revision_hint
+                        + f"Screen resolution: {width}x{height}. Use physical screen "
                         "pixels for screen click/move/scroll coordinates; do not "
                         "derive coordinates from the resized image rendered in chat.\n"
                         + rendered
                     )
-                return rendered
+                return revision_hint + rendered
             except Exception as e:
                 return f"Error: screen capture decode failed: {e}"
 

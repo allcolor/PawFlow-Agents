@@ -50,18 +50,20 @@ Actions:
 
 | Action | Parameters | Purpose |
 |---|---|---|
-| `screenshot` | `local`, `relay` | Capture current screen to FileStore. |
-| `click` | `x`, `y`, `button` | Click at physical pixel coordinates. |
-| `double_click` | `x`, `y`, `button` | Double click. |
+| `screenshot` | `local`, `relay` | Capture current screen to FileStore and return an opaque screen revision. |
+| `click` | `x`, `y`, `button`, `expected_screen_revision`, optional `target_bbox` | Click only if the target region still matches the referenced screenshot. |
+| `double_click` | `x`, `y`, `button`, `expected_screen_revision`, optional `target_bbox` | Double click only if the target region is unchanged. |
 | `type` | `text` | Type text. |
 | `key` | `key` | Press a key or chord such as `Enter`, `Tab`, `ctrl+c`. |
 | `move` | `x`, `y` | Move the pointer. |
 | `scroll` | `x`, `y`, `amount` | Scroll at a coordinate. |
 | `mouse_position` | - | Read current pointer location. |
 
-Always take a screenshot first. The result includes the screen resolution, and all coordinates are physical pixels in that screenshot coordinate space. Do not derive click positions from the resized screenshot preview rendered inside the chat; use the returned resolution, for example `2560x1440`, as the coordinate space for `x` and `y`.
+Always take a screenshot first. The result includes the screen resolution and an opaque `screen revision`; all coordinates are physical pixels in that screenshot coordinate space. Do not derive click positions from the resized screenshot preview rendered inside the chat; use the returned resolution, for example `2560x1440`, as the coordinate space for `x` and `y`.
 
-Use `see(path="screen", local=true)` or `see(path="screenshot", local=true)` when the agent needs to inspect the real desktop through the multimodal vision path. The shortcut accepts the relay screenshot format `{image, width, height}` and includes the same physical-pixel coordinate hint before the image payload.
+`click` and `double_click` require the exact revision associated with the image used to select the coordinates. PawFlow resolves that revision server-side, extracts a small reference crop around `target_bbox` (or around `x,y` when no box is supplied), and sends the crop privately to the relay. Immediately before any mouse movement, the relay captures the same region and compares the two images locally. A changed region returns `STALE_SCREEN` and performs no input; an unchanged region proceeds. This optimistic check does not call the primary or vision LLM and adds no second image-token charge; only the small opaque revision travels in the normal tool exchange. Only a rejected stale action requires the agent to inspect a new screenshot.
+
+Use `see(path="screen", local=true)` or `see(path="screenshot", local=true)` when the agent needs to inspect the real desktop through the multimodal vision path. The shortcut accepts the relay screenshot format `{image, width, height}` and includes both the screen revision and the same physical-pixel coordinate hint before the image payload. The original full-resolution capture is retained for the guard even when the image sent to the model is resized.
 
 ## VNC Proxy
 
@@ -75,6 +77,9 @@ Related implementation:
 - `static/novnc/`
 - `/desktop` slash command
 - `core/handlers/screen.py`
+- `core/handlers/_screen_guard.py`
+- `tools/fs_screen.py`
+- `tools/screen_actions.py`
 
 ## Audio Notes
 

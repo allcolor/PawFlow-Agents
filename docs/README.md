@@ -6,7 +6,7 @@
 |----------|-------------|
 | [Architecture](architecture.md) | Internal architecture: FlowFile, Task, Service, Flow, engine |
 | [Agent System](AGENT_SYSTEM.md) | Agent loop, context management, plans, multi-agent, streaming |
-| [LLM Providers](llm_providers.md) | Provider selection matrix for API keys and subscriptions: OpenAI/Anthropic APIs, Claude Code, Codex app-server, Antigravity/Agy, Gemini CLI, and compatible endpoints |
+| [LLM Providers](llm_providers.md) | Provider selection, API/subscription credentials, compatible endpoints, and delegated vision for text-only models |
 | [Claude Code Interactive](CLAUDE_CODE_INTERACTIVE.md) | Experimental MITM-backed Claude Code interactive provider |
 | [PawCode CLI](pawcode.md) | Terminal client, stream-JSON mode, shared conversations |
 | [VS Code Extension](vscode.md) | Editor client, resource panel, approvals |

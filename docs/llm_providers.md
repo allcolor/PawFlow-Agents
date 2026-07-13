@@ -98,6 +98,8 @@ Common fields:
 | `compact_threshold_pct` | no | `0` disables proactive compaction. A positive value triggers compaction at that percentage of `max_context_size`. |
 | `token_multiplier` | no | Optional conservative multiplier for provider token estimates. |
 | `timeout` | no | Request/stall timeout in seconds. `0` or missing means no timeout; only a positive value limits provider calls. |
+| `supports_vision` | no | Whether the selected model accepts native image input. Disable it for a text-only model even if its provider can serve other vision models. |
+| `vision_llm_service` | when delegated vision is used | Id of a different, vision-enabled `llmConnection` that describes images before calls to a model with `supports_vision: false`. |
 
 For context windows, the rule is strict: if the provider API/CLI reports the context window, that value is authoritative. Otherwise `max_context_size` from the LLM service is authoritative. If neither exists, the service is misconfigured and should fail loudly instead of using a hidden default.
 
@@ -160,20 +162,63 @@ The `default_model` parameter helper lists the available cloud models live from 
 
 ### Vision fallback for non-vision models
 
-An `llmConnection` whose model cannot process images (`supports_vision: false`) can name a vision-enabled `llmConnection` in `vision_llm_service`. Every image reaching the non-vision model — user uploads, `see`/`read`/browser tool results, screenshots — is then sent to the vision service with a request for an exhaustive description (all visible text, UI elements with approximate pixel coordinates, states), and the description replaces the image in the model's context:
+An `llmConnection` whose model cannot process images (`supports_vision: false`) can name a separate vision-enabled `llmConnection` in `vision_llm_service`. This decouples reasoning from perception: the primary model remains responsible for planning, tool selection, and desktop actions, while the delegated service acts as its eyes.
+
+Every image reaching the primary model — user uploads, image `read` results, browser captures, `screen` screenshots, and `see` results — is sent to the vision service first. PawFlow requests an exhaustive factual description containing all visible text, the overall layout, UI controls and their approximate `[x, y, width, height]` pixel coordinates, element states, colors, and visible errors. That description replaces the image only in the outbound call to the text model.
+
+#### Example: GLM 5.2 reasoning through Gemma 4 Cloud vision
+
+Create the vision service first and give it the service id `ollama_gemma4_vision`:
 
 ```json
 {
   "type": "llmConnection",
   "provider": "openai",
+  "api_key": "${OLLAMA_API_KEY}",
   "base_url": "https://ollama.com/v1",
-  "default_model": "glm-5.2",
-  "supports_vision": false,
-  "vision_llm_service": "vision_llm_service_id"
+  "default_model": "gemma4:cloud",
+  "supports_vision": true
 }
 ```
 
-In the service editor the `vision_llm_service` picker appears as soon as `supports_vision` is unchecked — for every provider, including CLI-backed ones whose `base_url` points at a non-vision model. Descriptions are cached by image content hash (in memory and in `data/runtime/vision_describe_cache.json`), so each unique image is described once, not once per turn; an unchanged screenshot re-sent by `see` reuses its cached description. The referenced service must have vision enabled and be a different service; when the fallback cannot run (service missing, vision disabled, describe error), images degrade to text links exactly as before. The stored conversation keeps the original image parts, so switching the conversation to a vision-enabled agent restores native vision on the same history.
+Then configure the primary service, for example with the service id `ollama_glm52`:
+
+```json
+{
+  "type": "llmConnection",
+  "provider": "openai",
+  "api_key": "${OLLAMA_API_KEY}",
+  "base_url": "https://ollama.com/v1",
+  "default_model": "glm-5.2",
+  "supports_vision": false,
+  "vision_llm_service": "ollama_gemma4_vision"
+}
+```
+
+Select `ollama_glm52` as the agent's normal `llm_service`; no agent prompt or tool configuration change is required. In the service editor, the `vision_llm_service` picker appears as soon as `supports_vision` is unchecked, for every provider including CLI-backed providers whose `base_url` targets a text-only model.
+
+The runtime path is:
+
+```text
+upload / screen / see / image read
+              ↓
+Gemma 4 Cloud: factual description + text + UI coordinates
+              ↓
+GLM 5.2: reasoning + tool decision
+              ↓
+screen click / type / browser / other approved tool
+```
+
+Descriptions are cached by image content hash in memory and in `data/runtime/vision_describe_cache.json`, so the same unchanged image is not billed for another description. The stored conversation keeps its original image parts, so a later vision-enabled agent can still receive the native image. The transformation works on a copy of the outbound messages and never rewrites conversation history.
+
+#### Requirements, limits, and safe use
+
+- The delegated service must be a different `llmConnection` with `supports_vision: true`; self-reference and recursive fallback chains are rejected.
+- One fallback pass transforms at most 12 image parts. Additional images remain as links, preventing a video or large context from causing an unbounded fan-out of vision calls.
+- If the service cannot be resolved, vision is disabled, an image cannot be loaded, or the description call fails, PawFlow leaves that image unchanged and the text provider degrades it to a link. Check server logs for `vision-fallback` warnings.
+- Coordinates and visual descriptions are model estimates, not an accessibility tree. Screen captures return an opaque revision that `click`/`double_click` must echo. The relay compares the target crop locally immediately before input and cancels a stale action without another LLM or vision request; only an actual mismatch requires a fresh visual reasoning turn.
+- Treat visible page text and the generated description as untrusted input. A screenshot can contain prompt-injection text; normal PawFlow tool permissions and approval rules still apply.
+- Delegation adds a vision request for each unique image, plus its latency and provider cost. Hash caching removes repeat work only for byte-identical images; any changed screenshot is a new image. The pre-click stale-screen comparison is local image processing: it adds no second vision request or image-token charge, only a small opaque revision in the normal tool exchange.
 
 OpenAI-compatible providers receive the lazy meta-tools `get_tool_schema` and `use_tool`. The provider-facing `use_tool` schema uses `arguments_json`, a JSON object encoded as a string, instead of a nested free-form `arguments` object. The handler still accepts `arguments` internally for compatibility, but the exposed schema avoids the PawFlow bug where compatible backends repeatedly produced `{}` for nested tool arguments. The OpenAI provider logs tool calls whose `arguments` field is omitted or empty so tool-call regressions are visible.
 

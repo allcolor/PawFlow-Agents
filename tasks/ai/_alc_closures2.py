@@ -31,9 +31,36 @@ class _ALCClosures2Mixin:
                 getattr(st, "resolved_svc", None)
                 or st.ctx.get("resolved_svc")
             )
+            if service is None:
+                return messages
+            # Check if there are image parts before delegating — skip the
+            # service round-trip when there is nothing to describe.
+            has_images = any(
+                isinstance(getattr(m, "content", None), list) and any(
+                    isinstance(p, dict) and p.get("type") in ("image_ref", "image_url", "image")
+                    for p in m.content
+                ) for m in messages
+            )
+            if not has_images:
+                return messages
             fallback = getattr(service, "_maybe_apply_vision_fallback", None)
             if fallback:
-                return fallback(messages, call_kwargs)
+                result = fallback(messages, call_kwargs)
+                if result is not messages:
+                    logger.info(
+                        "[agent-loop] vision fallback applied via '%s' — "
+                        "messages transformed",
+                        getattr(service, "_service_id", "") or type(service).__name__)
+                else:
+                    logger.info(
+                        "[agent-loop] vision fallback returned messages unchanged "
+                        "(supports_vision=%s, vision_llm_service=%s)",
+                        getattr(service, "config", {}).get("supports_vision", "(unset)"),
+                        getattr(service, "config", {}).get("vision_llm_service", "(unset)"))
+                return result
+            logger.debug(
+                "[agent-loop] resolved service has no _maybe_apply_vision_fallback: %s",
+                type(service).__name__)
         except Exception:
             logger.debug(
                 "agent-loop vision fallback pre-processing failed",

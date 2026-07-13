@@ -216,9 +216,17 @@ class LLMConnectionService(BaseService):
         """
         try:
             client = self.get_client()
-            if getattr(client, "supports_vision", True):
-                return messages
+            sv = getattr(client, "supports_vision", True)
             target = str(self.config.get("vision_llm_service") or "").strip()
+            logger.info(
+                "[vision-fallback] check: supports_vision=%s vision_llm_service=%s "
+                "images_in_msgs=%s",
+                sv, target or "(none)",
+                any(isinstance(getattr(m, "content", None), list) and any(
+                    isinstance(p, dict) and p.get("type") in ("image_ref", "image_url", "image")
+                    for p in m.content) for m in messages))
+            if sv:
+                return messages
             if not target:
                 return messages
             from core.vision_describe import apply_vision_fallback

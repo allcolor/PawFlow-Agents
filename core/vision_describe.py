@@ -239,10 +239,12 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
     part is kept (providers degrade it to a text link as before).
     """
     if getattr(_tls, "active", False):
+        logger.info("[vision-fallback] skipping: recursion guard active")
         return messages
     if not any(isinstance(getattr(m, "content", None), list) and any(
             isinstance(p, dict) and p.get("type") in ("image_ref", "image_url")
             for p in m.content) for m in messages):
+        logger.info("[vision-fallback] skipping: no image_ref/image_url parts found")
         return messages
     if source_service_id and vision_service_id == source_service_id:
         logger.warning("vision fallback: '%s' references itself; skipping",
@@ -254,6 +256,8 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
         logger.warning("vision fallback disabled for '%s': %s",
                        source_service_id or "llm service", err)
         return messages
+    logger.info("[vision-fallback] proceeding: vision_svc=%s, describing images...",
+                getattr(vision_svc, "_service_id", "") or type(vision_svc).__name__)
 
     described = 0
     truncated = False

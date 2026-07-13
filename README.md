@@ -228,6 +228,24 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 
 Switch providers per agent, per conversation, or globally. API keys normally use direct `openai`/`anthropic` services; subscription logins use the matching CLI-backed provider (`codex-app-server`, `claude-code-interactive`, or `antigravity-interactive`). Self-hosted and third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override). See [LLM Providers](docs/llm_providers.md).
 
+### Multi-LLM Advisor Aggregation
+
+An `llmAggregator` consults several direct `llmConnection` services in parallel before a final LLM answers or performs the requested work. Each advisor inspects the request and returns an internal implementation plan; only the final aggregator streams to the user and runs the normal visible tool loop.
+
+```json
+{
+  "type": "llmAggregator",
+  "aggregator_llm_service": "llm_final",
+  "advisor_llm_services": ["llm_architect", "llm_reviewer"],
+  "max_parallel_advisors": 2,
+  "advisor_max_iterations": 20,
+  "failure_policy": "best_effort",
+  "enforce_read_only": true
+}
+```
+
+Advisor contexts are silent and ephemeral. With `enforce_read_only: true` (the default), advisors receive a fail-closed read-only tool set, including through CLI-backed providers; the final LLM keeps the conversation's normal tools and approval policy. Advisor usage is tracked separately so it does not inflate the main context gauge. See the [multi-LLM aggregator how-to](https://pawflow.allcolor.org/howtos.html#multi-llm-aggregator) and [technical guide](docs/llm_aggregator.md).
+
 ### Delegated Vision for Text-Only Models
 
 An LLM service with `supports_vision: false` can delegate every incoming image to another vision-enabled `llmConnection`. PawFlow asks that service for visible text, layout, UI controls, states, and approximate pixel coordinates, then replaces the image with that description only for the text model's outbound call. The stored conversation retains the original image.

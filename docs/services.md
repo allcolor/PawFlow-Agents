@@ -41,6 +41,9 @@ prompt-only guidance with every configured tool is explicitly desired.
 Use `failure_policy=best_effort` to continue when one advisor fails, or
 `fail_fast` to abort before calling the final LLM.
 
+For setup, operating behavior, cost accounting, and troubleshooting, see the
+[Multi-LLM Aggregator guide](llm_aggregator.md).
+
 `authGateway` supports standard OAuth providers through `/auth/callback` and
 Telegram through the Telegram Login Widget. Telegram requires a BotFather bot
 token and bot username; its signed callback data is validated by the gateway and

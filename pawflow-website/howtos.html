@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#090b0f">
-  <meta name="description" content="Practical PawFlow how-tos for install, relays, delegated vision, first agents, PawCode, deterministic flows, media tools, and private demos.">
+  <meta name="description" content="Practical PawFlow how-tos for install, relays, multi-LLM aggregation, delegated vision, first agents, PawCode, deterministic flows, media tools, and private demos.">
   <title>PawFlow How-tos</title>
   <link rel="canonical" href="https://pawflow.allcolor.org/howtos.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="PawFlow">
   <meta property="og:title" content="PawFlow How-tos">
-  <meta property="og:description" content="Practical PawFlow how-tos for install, relays, delegated vision, first agents, PawCode, deterministic flows, media tools, and private demos.">
+  <meta property="og:description" content="Practical PawFlow how-tos for install, relays, multi-LLM aggregation, delegated vision, first agents, PawCode, deterministic flows, media tools, and private demos.">
   <meta property="og:url" content="https://pawflow.allcolor.org/howtos.html">
   <meta property="og:image" content="https://pawflow.allcolor.org/assets/hero-banner.png">
   <meta property="og:image:width" content="1024">
@@ -18,7 +18,7 @@
   <meta property="og:image:alt" content="PawFlow - self-hosted agent runtime">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="PawFlow How-tos">
-  <meta name="twitter:description" content="Practical PawFlow how-tos for install, relays, delegated vision, first agents, PawCode, deterministic flows, media tools, and private demos.">
+  <meta name="twitter:description" content="Practical PawFlow how-tos for install, relays, multi-LLM aggregation, delegated vision, first agents, PawCode, deterministic flows, media tools, and private demos.">
   <meta name="twitter:image" content="https://pawflow.allcolor.org/assets/hero-banner.png">
   <meta name="twitter:image:alt" content="PawFlow - self-hosted agent runtime">
   <link rel="icon" href="assets/logo.png" type="image/png">
@@ -32,7 +32,7 @@
   </header>
   <main>
     <section class="page-hero"><div class="container narrow" data-reveal><p class="eyebrow">How-tos</p><h1>Small recipes for the first useful PawFlow sessions.</h1><p class="hero-copy">Install the runtime, connect relays, configure providers, publish packages, and turn useful agent work into flows.</p></div></section>
-    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#desktop-novnc-audio">Desktop</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a></div></section>
+    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#desktop-novnc-audio">Desktop</a><a href="#multi-llm-aggregator">Multi-LLM</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a></div></section>
     <section class="section surface"><div class="container howto-list">
       <div class="howto-section" id="install" data-reveal><p class="eyebrow">Install and relays</p><h2>From first server to controlled workspaces.</h2></div>
       <article class="recipe process-recipe" id="install-wizard" data-reveal>
@@ -102,6 +102,31 @@
 }</code></pre></div>
         <p>PawFlow transforms only the outbound call: the conversation keeps the original image, while GLM receives a cached textual description. Treat visual text as untrusted input and keep normal tool approvals enabled. Screen captures also return a revision for guarded clicks: the relay compares the target region locally immediately before input, with no second vision request or image-token charge when the screen is unchanged. Only the small opaque revision travels in the normal tool exchange. A changed region cancels the click and requires a fresh screenshot.</p>
         <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/llm_providers.md#vision-fallback-for-non-vision-models">Read the delegated vision reference</a>
+      </article>
+      <article class="recipe process-recipe" id="multi-llm-aggregator" data-reveal>
+        <div class="recipe-meta">Agents, parallel advisors, synthesis</div>
+        <h2>Combine several LLM advisors behind one final agent</h2>
+        <p><strong>Objective:</strong> ask complementary LLMs for detailed internal plans in parallel, then let one final LLM synthesize their findings and complete the user's request.</p>
+        <div class="wizard-grid">
+          <div><strong>Advisors</strong><span>Direct <code>llmConnection</code> services inspect the request concurrently and return internal plans. Their contexts are silent and ephemeral.</span></div>
+          <div><strong>Aggregator</strong><span>A separate direct <code>llmConnection</code> receives the reports, streams the only visible response, and owns the final tool loop.</span></div>
+          <div><strong>Boundaries</strong><span>Advisors are fail-closed read-only by default. The final LLM keeps the conversation's normal tools and approvals.</span></div>
+        </div>
+        <ol><li>Create at least two enabled <code>llmConnection</code> services: one or more advisors and a different final LLM.</li><li>In Resources &rarr; Services, create an <strong>LLM Aggregator Service</strong>.</li><li>Select the final connection in <code>aggregator_llm_service</code> and enter the advisor service IDs in <code>advisor_llm_services</code>.</li><li>Keep <code>enforce_read_only</code> enabled. Choose <code>best_effort</code> when partial advice is useful or <code>fail_fast</code> when every advisor is mandatory.</li><li>Set <code>max_parallel_advisors</code> to the concurrency your providers can sustain, then select the aggregator as the agent or conversation LLM service.</li><li>Send a planning or implementation request. PawFlow runs advisors only once for that user turn, reuses their reports through later tool results, and shows only the final LLM's stream.</li></ol>
+        <div class="code-card"><div class="code-top"><span>LLM aggregator service</span><button type="button" data-copy="#multi-llm-aggregator-config">Copy</button></div><pre id="multi-llm-aggregator-config"><code>{
+  "type": "llmAggregator",
+  "aggregator_llm_service": "llm_final",
+  "advisor_llm_services": [
+    "llm_architect",
+    "llm_reviewer"
+  ],
+  "max_parallel_advisors": 2,
+  "advisor_max_iterations": 20,
+  "failure_policy": "best_effort",
+  "enforce_read_only": true
+}</code></pre></div>
+        <p>The final connection cannot also be an advisor, and every reference must target a direct <code>llmConnection</code>. Advisor calls add provider usage but are tracked separately from the final turn and do not inflate the main context gauge. Disable read-only enforcement only when you explicitly trust every advisor with all conversation tools.</p>
+        <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/llm_aggregator.md">Read the complete multi-LLM guide</a>
       </article>
       <article class="recipe process-recipe" id="pawcode-installer" data-reveal>
         <div class="recipe-meta">PawCode installer</div>

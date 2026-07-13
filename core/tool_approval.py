@@ -448,6 +448,37 @@ class ToolApprovalGate:
             return False
         return cls.is_read_only_allowed(tool_name, arguments)
 
+    # ── Advisor conversations: in-process registry ────────────────────
+    # Ephemeral advisor sub-conversations are never persisted, so their
+    # permission mode cannot live in ConversationStore extras (set_extra
+    # no-ops for a conv that has no file). The executor loop registers
+    # the conv id here for the run's duration and always unregisters in
+    # its finally block — nothing leaks to disk.
+
+    _advisor_read_only_convs: set = set()
+    _advisor_convs_lock = threading.Lock()
+
+    @classmethod
+    def mark_advisor_read_only(cls, conversation_id: str) -> None:
+        if not conversation_id:
+            return
+        with cls._advisor_convs_lock:
+            cls._advisor_read_only_convs.add(conversation_id)
+
+    @classmethod
+    def unmark_advisor_read_only(cls, conversation_id: str) -> None:
+        if not conversation_id:
+            return
+        with cls._advisor_convs_lock:
+            cls._advisor_read_only_convs.discard(conversation_id)
+
+    @classmethod
+    def is_advisor_read_only_conv(cls, conversation_id: str) -> bool:
+        if not conversation_id:
+            return False
+        with cls._advisor_convs_lock:
+            return conversation_id in cls._advisor_read_only_convs
+
     @classmethod
     def get_mode(cls, conversation_id: str) -> str:
         """Get the permission mode for a conversation.

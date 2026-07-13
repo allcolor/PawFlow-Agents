@@ -415,7 +415,11 @@ class LLMAnthropicMixin:
         while i < len(messages):
             m = messages[i]
             if m.role == "system":
-                system_text = m.text_content if isinstance(m.content, list) else m.content
+                # Concatenate: a later system message (e.g. injected advisor
+                # reports) must never replace the agent's system prompt.
+                _sys = m.text_content if isinstance(m.content, list) else m.content
+                if _sys:
+                    system_text = f"{system_text}\n\n{_sys}" if system_text else _sys
             elif m.role == "tool":
                 # Anthropic requires all results for one assistant tool_use
                 # turn to be in the immediately-following user message. PawFlow

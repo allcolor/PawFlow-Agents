@@ -505,7 +505,11 @@ class _ALCClosures2Mixin:
                 # untrusted content before persisting.
                 tr_content = _result or "(no output)"
                 _tool_max = int(getattr(st, "_tool_max", 0) or 50000)
-                if isinstance(tr_content, str) and len(tr_content) > _tool_max:
+                # Same image exemption as the ToolRegistry cap: truncating a
+                # string that carries an inline image payload would cut the
+                # base64 mid-stream and destroy the image.
+                if (isinstance(tr_content, str) and len(tr_content) > _tool_max
+                        and "__image_data__:" not in tr_content):
                     tr_content = (tr_content[:_tool_max]
                                   + f"\n\n[... truncated — {len(tr_content):,} chars total]")
                 tr_content = self._materialize_tool_result_images(
@@ -654,7 +658,11 @@ class _ALCClosures2Mixin:
             _tool_name = payload.get("tool", "") or ""
             _result = payload.get("result", "") or "(no output)"
             _tool_max = int(getattr(st, "_tool_max", 0) or 50000)
-            if isinstance(_result, str) and len(_result) > _tool_max:
+            # Same image exemption as the ToolRegistry cap: truncating a
+            # string that carries an inline image payload would cut the
+            # base64 mid-stream and destroy the image.
+            if (isinstance(_result, str) and len(_result) > _tool_max
+                    and "__image_data__:" not in _result):
                 _result = (_result[:_tool_max]
                            + f"\n\n[... truncated — {len(_result):,} chars total]")
             _result = self._materialize_tool_result_images(

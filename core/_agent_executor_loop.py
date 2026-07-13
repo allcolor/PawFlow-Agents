@@ -195,13 +195,14 @@ class _SubAgentExecutorLoopMixin:
             sub_conv_id = ConversationStore.instance().generate_id()
 
         # CLI providers reach PawFlow through their own MCP bridge instead of
-        # the Python handler map below. Mark the ephemeral advisor context so
-        # the relay applies the same fail-closed read-only allowlist. The
-        # normal sub-conversation cleanup removes this metadata after the run.
+        # the Python handler map below. Register the ephemeral advisor context
+        # in the in-process ToolApprovalGate registry so the relay applies the
+        # same fail-closed read-only allowlist. Extras cannot be used here:
+        # set_extra silently no-ops for a conv that was never persisted.
+        # Unregistered in this run's finally block.
         if task.read_only and sub_conv_id:
-            from core.conversation_store import ConversationStore
-            ConversationStore.instance().set_extra(
-                sub_conv_id, "permission_mode", "advisor_read_only")
+            from core.tool_approval import ToolApprovalGate
+            ToolApprovalGate.mark_advisor_read_only(sub_conv_id)
 
         # Sub-agent runs on its OWN cloned client — fully isolated from
         # the parent's singleton. Each Claude Code stream already has
@@ -707,6 +708,13 @@ class _SubAgentExecutorLoopMixin:
                         task.parent_conversation_id,
                         task.source_agent, task.agent_name,
                         task.id)
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
+            # Drop the advisor read-only registration for this run.
+            if task.read_only and sub_conv_id:
+                try:
+                    from core.tool_approval import ToolApprovalGate
+                    ToolApprovalGate.unmark_advisor_read_only(sub_conv_id)
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
 

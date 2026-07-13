@@ -180,8 +180,9 @@ def test_service_complete_applies_fallback_only_when_vision_disabled(monkeypatch
     monkeypatch.setattr("core.vision_describe.apply_vision_fallback", fake_apply)
 
     svc = object.__new__(LLMConnectionService)
-    svc.config = {"vision_llm_service": "vision_svc"}
-    svc._service_id = "glm_svc"
+    # _service_id lives in the config injected by the ServiceRegistry —
+    # it is never an instance attribute on LLMConnectionService.
+    svc.config = {"vision_llm_service": "vision_svc", "_service_id": "glm_svc"}
 
     class NoVisionClient:
         supports_vision = False

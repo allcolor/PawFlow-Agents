@@ -160,6 +160,7 @@ def _screen_difference_score(expected_png, current_png):
     expected.thumbnail((256, 256))
     resampling = getattr(Image, "Resampling", Image).BILINEAR
     current = current.resize(expected.size, resampling)
+    # get_flattened_data replaces getdata (deprecated, removed in Pillow 14).
     expected_pixels = list(
         expected.get_flattened_data()
         if hasattr(expected, "get_flattened_data") else expected.getdata())

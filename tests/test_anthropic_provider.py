@@ -452,3 +452,25 @@ def test_anthropic_response_preserves_thinking_signature(monkeypatch):
     assert resp.thinking == "need file"
     assert resp.thinking_signature == "sig_abc"
     assert resp.tool_calls[0].name == "read"
+
+
+def test_anthropic_concatenates_multiple_system_messages():
+    """A later system message (e.g. injected context) must never replace
+    the agent's system prompt -- Anthropic takes one system body, so the
+    builder concatenates them in order."""
+    client = LLMClient(provider="anthropic", config={"api_key": "test"})
+    messages = [
+        LLMMessage(role="system", content="Agent identity and rules.",
+                   conversation_id="conv-s"),
+        LLMMessage(role="user", content="Do the thing",
+                   conversation_id="conv-s"),
+        LLMMessage(role="system", content="[Injected advisor reports]",
+                   conversation_id="conv-s"),
+    ]
+
+    system_text, api_messages = client._build_anthropic_messages(
+        messages, user_id="u", conversation_id="conv-s")
+
+    assert system_text == (
+        "Agent identity and rules.\n\n[Injected advisor reports]")
+    assert [m["role"] for m in api_messages] == ["user"]

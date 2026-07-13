@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Webchat history pagination now uses the oldest rendered message as a cursor,
   so **Load more** returns the immediately adjacent older messages even when
   live-render trimming or technical message groups made the numeric offset drift.
+- `LLMConnectionService` now reads its service id from the config injected by
+  the registry instead of a never-set instance attribute, restoring per-service
+  API-key-pool stickiness (`llm_api_key_idx:<id>` no longer collides across
+  services) and the vision-fallback self-reference guard.
+- The LLM aggregator injects advisor reports into the last user message instead
+  of appending a trailing system message, which Anthropic-API connections
+  treated as a replacement for the agent's system prompt and CLI session
+  serialization dropped entirely. The Anthropic message builder now also
+  concatenates multiple system messages instead of keeping only the last one.
+- Read-only advisor conversations register their permission mode in an
+  in-process `ToolApprovalGate` registry: `set_extra` silently no-ops for
+  ephemeral (never-persisted) conversations, so CLI-provider advisors reaching
+  tools through the MCP relay were not actually restricted to the fail-closed
+  read-only allowlist. The registration is removed when the run finishes.
+- CLI tool-result truncation now exempts results carrying inline
+  `__image_data__:` payloads (same rule as the ToolRegistry cap), so oversized
+  screenshots are no longer cut mid-base64.
 
 ## [1.0.0-beta.22] — 2026-07-13
 

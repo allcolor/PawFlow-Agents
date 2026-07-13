@@ -121,16 +121,30 @@ class TestAgentTask:
             user_id="alice", parent_conversation_id="parent-conv",
             internal=True, ephemeral=True, read_only=True)
 
+        from core.tool_approval import ToolApprovalGate
+        marked = []
+        _orig_mark = ToolApprovalGate.mark_advisor_read_only.__func__
+
+        def _spy_mark(cls, conversation_id):
+            marked.append(conversation_id)
+            _orig_mark(cls, conversation_id)
+
         with patch("core.conversation_store.ConversationStore.instance",
-                   return_value=store):
+                   return_value=store), \
+             patch.object(ToolApprovalGate, "mark_advisor_read_only",
+                          classmethod(_spy_mark)):
             result = executor.execute_agent(task)
 
         assert result.status == "completed"
         store.create_display_trace.assert_not_called()
         store.load.assert_not_called()
         store.save.assert_not_called()
-        store.set_extra.assert_called_once_with(
-            "ephemeral-conv", "permission_mode", "advisor_read_only")
+        # The read-only mode lives in the in-process ToolApprovalGate
+        # registry (extras would silently no-op for an unpersisted conv)
+        # and is always unregistered when the run finishes.
+        store.set_extra.assert_not_called()
+        assert marked == ["ephemeral-conv"]
+        assert not ToolApprovalGate.is_advisor_read_only_conv("ephemeral-conv")
         store.delete.assert_called_once_with(
             "ephemeral-conv", user_id="alice")
         assert client.complete_stream.call_args.kwargs[

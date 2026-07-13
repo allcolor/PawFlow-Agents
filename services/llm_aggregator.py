@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import uuid
@@ -297,12 +298,32 @@ class AggregatingLLMClient:
             else:
                 body = f"[Advisor unavailable: {result.error or result.status}]"
             blocks.append(f"\n<advisor service=\"{service_id}\">\n{body}\n</advisor>")
+        report_text = "\n".join(blocks)
+        # Inject into the last user message instead of appending a trailing
+        # system message: several providers either keep only one system text
+        # (Anthropic body) or drop mid-list system messages entirely (CLI
+        # session serialization), which would lose the reports or clobber
+        # the agent's system prompt. The original message object is never
+        # mutated — the transcript keeps the clean user request.
+        out = list(messages)
+        for index in range(len(out) - 1, -1, -1):
+            message = out[index]
+            if getattr(message, "role", "") != "user":
+                continue
+            content = message.content
+            if isinstance(content, list):
+                new_content = list(content) + [
+                    {"type": "text", "text": report_text}]
+            else:
+                new_content = f"{content}\n\n{report_text}" if content else report_text
+            out[index] = dataclasses.replace(message, content=new_content)
+            return out
         conversation_id = (self._conversation_id or next(
             (getattr(message, "conversation_id", "") for message in reversed(messages)
              if getattr(message, "conversation_id", "")), "")
             or uuid.uuid4().hex)
-        return list(messages) + [LLMMessage(
-            role="system", content="\n".join(blocks),
+        return out + [LLMMessage(
+            role="user", content=report_text,
             conversation_id=conversation_id)]
 
     def _attach_usage(self, response: LLMResponse,

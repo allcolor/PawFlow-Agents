@@ -209,11 +209,16 @@ def test_advisors_use_tools_once_and_reports_are_cached_for_tool_loop():
     assert second.raw["_pawflow_aggregation"][
         "advisor_cost_usd_delta"] == 0
 
+    # Reports are appended to the last user message (never a trailing
+    # system message — providers may drop or last-wins those) and the
+    # original message object stays untouched.
     report_message = final.calls[0]["messages"][-1]
-    assert report_message.role == "system"
+    assert report_message.role == "user"
+    assert report_message.content.startswith("Implement the feature")
     assert "Plan A" in report_message.content
     assert "Plan B" in report_message.content
     assert "untrusted analysis" in report_message.content
+    assert messages[0].content == "Implement the feature"
 
 
 def test_best_effort_passes_advisor_failure_to_final_llm():

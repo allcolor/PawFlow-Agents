@@ -403,6 +403,13 @@ class _ToolRelayExecuteMixin:
                 _tperms = self._conversation_extra_fast(
                     _perm_cid, "tool_permissions", {}) or {}
                 _tool_perm = _tperms.get(tool_name, "")
+                # Ephemeral advisor conversations are never persisted, so
+                # their read-only mode lives in the in-process registry,
+                # not in extras.
+                from core.tool_approval import ToolApprovalGate
+                if ToolApprovalGate.is_advisor_read_only_conv(_perm_cid):
+                    _perm_mode = "advisor_read_only"
+                    _tool_perm = ""
 
             # read_only mode takes precedence over EVERY per-tool
             # override — a stale `allow` permission left from a

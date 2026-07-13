@@ -7,8 +7,7 @@ facade imports these parsers and routes to them from _parse_command.
 import shlex
 from typing import List
 
-from tasks.ai.actions._cmd_help import _extract_at_agent
-
+from tasks.ai.actions._cmd_help import _extract_at_agent, _extract_target
 
 def _parse_agent_command(arg: str, base: dict, agent_name: str) -> dict:
     """Parse /agent subcommands. @agent convention for all agent params."""
@@ -19,35 +18,35 @@ def _parse_agent_command(arg: str, base: dict, agent_name: str) -> dict:
     if subcmd == "list":
         return {"action": "list_agents", **base}
     if subcmd == "create":
-        return {"action": "create_agent_interactive", **base}
+        return {"display": "Agent creation is interactive. Open Resources → Agents → Create agent.", **base}
     if subcmd == "select":
-        agt, _ = _extract_at_agent(rest, "")
+        agt, _ = _extract_target(rest, "")
         return {"action": "select_agent", "agent_name": agt, "name": agt, **base}
     if subcmd == "delete":
-        agt, _ = _extract_at_agent(rest, "")
-        return {"action": "delete_agent", "agent_name": agt, **base}
+        agt, _ = _extract_target(rest, "")
+        return {"action": "delete_agent", "name": agt, **base}
     if subcmd == "msg":
-        target, msg = _extract_at_agent(rest, agent_name)
+        target, msg = _extract_target(rest, agent_name)
         if target.upper() == "ALL":
             return {"action": "broadcast_agents", "message": msg, **base}
         return {"action": "agent_msg", "target_agent": target, "message": msg, **base}
     if subcmd == "interrupt":
-        agt, _ = _extract_at_agent(rest, agent_name)
+        agt, _ = _extract_target(rest, agent_name)
         return {"action": "interrupt", "agent_name": agt, **base}
     if subcmd == "btw":
-        target, question = _extract_at_agent(rest, agent_name)
+        target, question = _extract_target(rest, agent_name)
         return {"action": "btw", "agent_name": target, "question": question, **base}
     if subcmd == "resume":
-        agt, _ = _extract_at_agent(rest, agent_name)
+        agt, _ = _extract_target(rest, agent_name)
         return {"action": "resume_agent", "agent_name": agt, **base}
     if subcmd == "setname":
-        real, nick = _extract_at_agent(rest, agent_name)
-        return {"action": "set_nickname", "agent_name": real, "nickname": nick.strip(),
+        real, nick = _extract_target(rest, agent_name)
+        return {"action": "set_agent_nickname", "agent_name": real,
+                "nickname": nick.strip(),
                 **base}
     # Unknown subcommand — treat as select (supports @agent or plain name)
-    agt, _ = _extract_at_agent(arg, subcmd)
-    return {"action": "select_agent", "agent_name": agt, **base}
-
+    agt, _ = _extract_target(arg, subcmd)
+    return {"action": "select_agent", "agent_name": agt, "name": agt, **base}
 
 def _parse_skill_sugar_command(text: str, base: dict, agent_name: str = "") -> dict:
     """Parse //skill-name [@agent] [args...] as /skill run syntax."""
@@ -73,7 +72,6 @@ def _parse_skill_sugar_command(text: str, base: dict, agent_name: str = "") -> d
         "arguments": arguments,
         **base,
     }
-
 
 def _skill_short_description(body: str) -> str:
     """Derive a concise manifest description from a skill body.
@@ -414,95 +412,202 @@ def _parse_pfp_registry_command(tokens: List[str], base: dict) -> dict:
 
 
 def _parse_task_command(arg: str, base: dict) -> dict:
-    p = arg.split(None, 1)
-    subcmd = p[0] if p else "list"
-    rest = p[1] if len(p) > 1 else ""
-
-    if subcmd == "list":
-        return {"action": "list_tasks", **base}
-    if subcmd in ("create", "assign", "delete", "pause", "resume", "cancel"):
-        return {"action": f"task_{subcmd}", "args": rest, **base}
-    return {"action": "list_tasks", **base}
-
-
-def _parse_goal_command(arg: str, base: dict, agent_name: str) -> dict:
-    import shlex
     try:
         tokens = shlex.split(arg or "")
-    except ValueError as e:
-        return {"action": "goal", "prompt": "", "error": str(e), **base}
-    target = ""
-    prompt_parts = []
+    except ValueError as exc:
+        return {"display": f"Invalid /task arguments: {exc}", **base}
+    subcmd = tokens[0].lower() if tokens else "list"
+    rest = tokens[1:]
+
+    if subcmd in ("list", "status"):
+        result = {"action": "task_status", "include_library": True, **base}
+        if rest:
+            result["agent_name"] = rest[0].lstrip("@")
+        return result
+
+    if subcmd == "create":
+        if not rest:
+            return {"display": "Usage: /task create <name> \"<prompt>\" [--criteria \"...\"] [--interval XX]", **base}
+        name = rest[0]
+        flags, positional = _parse_named_flags(rest[1:])
+        prompt = str(flags.get("prompt") or " ".join(positional)).strip()
+        if not prompt:
+            return {"display": "Usage: /task create <name> \"<prompt>\" [--criteria \"...\"] [--interval XX]", **base}
+        return {
+            "action": "create_task_def", "name": name,
+            "data": {
+                "prompt": prompt,
+                "criteria": flags.get("criteria", ""),
+                "default_interval": flags.get("interval", "6/1m"),
+                "interactive": bool(flags.get("interactive", False)),
+            },
+            **base,
+        }
+
+    if subcmd == "assign":
+        if len(rest) < 2:
+            return {"display": "Usage: /task assign <agent> <task_def_name> [--var k=v] [--verifier <agent>]", **base}
+        flags, _ = _parse_named_flags(rest[2:])
+        result = {
+            "action": "assign_task",
+            "agent_name": rest[0].lstrip("@"),
+            "task_def_name": rest[1],
+            **base,
+        }
+        _apply_task_flags(result, flags)
+        return result
+
+    if subcmd in ("delete", "del"):
+        target = rest[0].lstrip("@") if rest else ""
+        if not target:
+            return {"display": "Usage: /task delete <task_def_name|task_id>", **base}
+        if target.startswith("t_"):
+            return {"action": "delete_task", "task_id": target, **base}
+        return {"action": "delete_task_def", "name": target, **base}
+
+    if subcmd in ("pause", "resume", "cancel"):
+        target = rest[0].lstrip("@") if rest else ""
+        if not target:
+            return {"display": f"Usage: /task {subcmd} <task_id|agent>", **base}
+        return {
+            "action": f"{subcmd}_task",
+            "task_id": target if target.startswith("t_") else "",
+            "agent_name": "" if target.startswith("t_") else target,
+            **base,
+        }
+
+    if subcmd in ("edit", "set"):
+        target = rest[0] if rest else ""
+        if not target:
+            return {"display": "Usage: /task edit <task_id> [--budget X] [--interval X] [--max N]", **base}
+        flags, _ = _parse_named_flags(rest[1:])
+        result = {"action": "edit_task", "task_id": target, **base}
+        _apply_task_flags(result, flags)
+        return result
+
+    return {"display": "Usage: /task create | assign | list | edit | delete | pause | resume | cancel", **base}
+
+
+def _parse_named_flags(tokens: List[str]) -> tuple[dict, List[str]]:
+    """Parse ``--name value``, boolean flags and repeated ``--var k=v``."""
+    flags: dict = {}
+    positional: List[str] = []
     variables = {}
-    result = {"action": "goal", **base}
     i = 0
-    if tokens and tokens[0].startswith("@"):
-        target = tokens[0][1:]
-        i = 1
     while i < len(tokens):
-        tok = tokens[i]
-        if tok == "--criteria" and i + 1 < len(tokens):
-            result["criteria"] = tokens[i + 1]; i += 2; continue
-        if tok == "--interval" and i + 1 < len(tokens):
-            result["interval"] = tokens[i + 1]; i += 2; continue
-        if tok == "--verifier" and i + 1 < len(tokens):
-            v = tokens[i + 1]
-            result["verifier"] = v[1:] if v.startswith("@") else v
-            i += 2; continue
-        if tok == "--budget" and i + 1 < len(tokens):
-            result["max_budget"] = tokens[i + 1]; i += 2; continue
-        if tok == "--turn-time" and i + 1 < len(tokens):
-            result["max_turn_time"] = tokens[i + 1]; i += 2; continue
-        if tok == "--total-time" and i + 1 < len(tokens):
-            result["max_total_time"] = tokens[i + 1]; i += 2; continue
-        if tok == "--max-reschedules" and i + 1 < len(tokens):
-            try:
-                result["max_reschedules"] = int(tokens[i + 1])
-            except ValueError:
-                result["max_reschedules"] = 0
-            i += 2; continue
-        if tok == "--max" and i + 1 < len(tokens):
-            try:
-                result["max_iterations"] = int(tokens[i + 1])
-            except ValueError:
-                result["max_iterations"] = 0
-            i += 2; continue
-        if tok == "--context" and i + 1 < len(tokens):
-            result["context"] = tokens[i + 1]; i += 2; continue
-        if tok == "--var" and i + 1 < len(tokens):
-            kv = tokens[i + 1]
-            if "=" in kv:
-                k, v = kv.split("=", 1)
-                if k:
-                    variables[k] = v
-            i += 2; continue
-        if tok == "--auto-allow":
-            result["auto_allow"] = True; i += 1; continue
-        if tok == "--interactive":
-            result["interactive"] = True; i += 1; continue
-        prompt_parts.append(tok)
-        i += 1
-    result["agent_name"] = target or agent_name
-    result["prompt"] = " ".join(prompt_parts).strip()
+        token = tokens[i]
+        if not token.startswith("--"):
+            positional.append(token)
+            i += 1
+            continue
+        key = token[2:].replace("-", "_")
+        if key in ("interactive", "auto_allow"):
+            flags[key] = True
+            i += 1
+            continue
+        value = tokens[i + 1] if i + 1 < len(tokens) else ""
+        if key == "var":
+            name, sep, variable_value = value.partition("=")
+            if sep and name:
+                variables[name] = variable_value
+        else:
+            flags[key] = value
+        i += 2
     if variables:
-        result["variables"] = variables
-    return result
+        flags["variables"] = variables
+    return flags, positional
+
+
+def _apply_task_flags(result: dict, flags: dict) -> None:
+    aliases = {
+        "criteria": "completion_criteria",
+        "budget": "max_budget",
+        "turn_time": "max_turn_time",
+        "total_time": "max_total_time",
+        "max": "max_iterations",
+    }
+    integer_fields = {"max_iterations", "max_reschedules"}
+    for key, value in flags.items():
+        target = aliases.get(key, key)
+        if target in integer_fields:
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                value = 0
+        if target == "verifier":
+            value = str(value).lstrip("@")
+        result[target] = value
 
 
 def _parse_service_command(arg: str, base: dict, user_id: str) -> dict:
-    p = arg.split(None, 1)
-    subcmd = p[0] if p else "list"
+    try:
+        tokens = shlex.split(arg or "")
+    except ValueError as exc:
+        return {"display": f"Invalid /service arguments: {exc}", **base}
+    subcmd = tokens[0].lower() if tokens else "list"
+    rest = tokens[1:]
     if subcmd == "list":
         return {"action": "list_services", **base}
-    return {"action": "service_command", "subcommand": subcmd,
-            "args": p[1] if len(p) > 1 else "", **base}
+    if subcmd in ("install", "add"):
+        if len(rest) < 2:
+            return {"display": "Usage: /service install <type> <name> [config]", **base}
+        return {
+            "action": "service_install", "service_type": rest[0],
+            "service_name": rest[1], "config_str": " ".join(rest[2:]),
+            **base,
+        }
+    if subcmd in ("uninstall", "delete", "del"):
+        if not rest:
+            return {"display": f"Usage: /service {subcmd} <service_id>", **base}
+        return {"action": "service_uninstall", "service_id": rest[0], **base}
+    if subcmd in ("enable", "disable"):
+        if not rest:
+            return {"display": f"Usage: /service {subcmd} <service_id>", **base}
+        return {"action": f"service_{subcmd}", "service_id": rest[0], **base}
+    if subcmd in ("show", "detail", "test"):
+        if not rest:
+            return {"display": f"Usage: /service {subcmd} <service_id>", **base}
+        return {"action": "get_service_detail", "service_id": rest[0], **base}
+    return {"display": "Usage: /service list | install | uninstall | enable | disable | detail", **base}
 
 
 def _parse_flow_command(arg: str, base: dict) -> dict:
-    p = arg.split(None, 1)
-    subcmd = p[0] if p else "list"
-    return {"action": "flow_command", "subcommand": subcmd,
-            "args": p[1] if len(p) > 1 else "", **base}
+    try:
+        tokens = shlex.split(arg or "")
+    except ValueError as exc:
+        return {"display": f"Invalid /flow arguments: {exc}", **base}
+    subcmd = tokens[0].lower() if tokens else "list"
+    rest = tokens[1:]
+    if subcmd == "list":
+        return {"action": "list_conv_flows", **base}
+    if subcmd == "templates":
+        return {"action": "list_available_flows", **base}
+    if subcmd == "deploy":
+        if not rest:
+            return {"display": "Usage: /flow deploy <template_id> [user|conversation]", **base}
+        return {"action": "deploy_flow", "template_id": rest[0],
+                "scope": rest[1] if len(rest) > 1 else "user", **base}
+    if subcmd in ("start", "stop", "undeploy", "params", "promote"):
+        if not rest:
+            return {"display": f"Usage: /flow {subcmd} <instance_id>", **base}
+        action = {
+            "start": "start_flow", "stop": "stop_flow",
+            "undeploy": "undeploy_flow", "params": "get_flow_instance",
+            "promote": "promote_flow",
+        }[subcmd]
+        result = {"action": action, "instance_id": rest[0], **base}
+        if subcmd == "start":
+            parameters = {}
+            for item in rest[1:]:
+                name, sep, value = item.partition("=")
+                if sep and name:
+                    parameters[name] = value
+            if parameters:
+                result["parameters"] = parameters
+        if subcmd == "promote":
+            result["target_scope"] = rest[1] if len(rest) > 1 else "user"
+        return result
+    return {"display": "Usage: /flow list | templates | deploy | start | stop | params | undeploy | promote", **base}
 
 
 def _parse_memory_command(arg: str, base: dict, agent_name: str) -> dict:
@@ -510,12 +615,12 @@ def _parse_memory_command(arg: str, base: dict, agent_name: str) -> dict:
     subcmd = p[0] if p else "list"
     if subcmd == "list":
         return {"action": "list_memories",
-                "agent_name": p[1] if len(p) > 1 else agent_name, **base}
+                "agent_name": p[1].lstrip("@") if len(p) > 1 else agent_name, **base}
     if subcmd == "add":
-        return {"action": "add_memory", "text": p[1] if len(p) > 1 else "",
-                "agent_name": agent_name, **base}
+        return {"action": "add_memory", "text": " ".join(p[1:]) if len(p) > 1 else "",
+                "agent": agent_name, **base}
     if subcmd == "search":
-        return {"action": "search_memories", "query": p[1] if len(p) > 1 else "",
+        return {"action": "search_memories", "query": " ".join(p[1:]) if len(p) > 1 else "",
                 "agent_name": agent_name, **base}
     if subcmd == "del":
         return {"action": "delete_memory", "memory_id": p[1] if len(p) > 1 else "",
@@ -569,17 +674,33 @@ def _parse_schedules_command(arg: str, base: dict) -> dict:
 
 def _parse_autoconv_command(arg: str, base: dict, agent_name: str) -> dict:
     p = arg.split()
-    agt = p[0] if p else agent_name
-    subcmd = p[1] if len(p) > 1 else "status"
-    if subcmd in ("on", "enable"):
-        min_iv = int(p[2]) if len(p) > 2 else 60
-        max_iv = int(p[3]) if len(p) > 3 else min_iv * 4
-        return {"action": "autoconv", "agent_name": agt, "enabled": True,
-                "min_interval": min_iv, "max_interval": max_iv, **base}
-    if subcmd in ("off", "disable"):
-        return {"action": "autoconv", "agent_name": agt, "enabled": False,
-                **base}
-    return {"action": "autoconv_status", "agent_name": agt, **base}
+    # Accept both documented forms:
+    #   /autoconv <agent> on [min] [max]
+    #   /autoconv on @<agent> [frequency]
+    if p and p[0].lower() in ("on", "off", "status", "now", "enable", "disable"):
+        subcmd = p[0].lower()
+        agt = p[1].lstrip("@") if len(p) > 1 else agent_name
+        rest = p[2:]
+    else:
+        agt = p[0].lstrip("@") if p else agent_name
+        subcmd = p[1].lower() if len(p) > 1 else "status"
+        rest = p[2:]
+    subcmd = {"enable": "on", "disable": "off"}.get(subcmd, subcmd)
+    result = {"action": "random_thought", "sub": subcmd,
+              "agent": agt, **base}
+    if subcmd == "on":
+        if rest and "/" in rest[0]:
+            result["frequency"] = rest[0]
+        elif rest:
+            try:
+                minimum = int(rest[0])
+                maximum = int(rest[1]) if len(rest) > 1 else minimum * 4
+            except ValueError:
+                return {"display": "Intervals must be seconds or a frequency such as 6/1m.", **base}
+            result["frequency"] = f"{minimum}-{maximum}s"
+        else:
+            result["frequency"] = "6/1m"
+    return result
 
 
 def _parse_media_service_command(arg: str, base: dict, media_type: str) -> dict:
@@ -603,14 +724,12 @@ def _parse_hooks_command(arg: str, base: dict) -> dict:
     p = arg.split(None, 2)
     subcmd = p[0] if p else "list"
     if subcmd == "list":
-        return {"action": "list_hooks", **base}
+        return {"action": "get_conversation_hooks", **base}
     if subcmd == "add":
-        return {"action": "add_hook", "spec": p[1] if len(p) > 1 else "",
-                "command": p[2] if len(p) > 2 else "", **base}
+        return {"display": "Hooks are signed agent-hook resources. Install or create one in Resources, then bind it to this conversation.", **base}
     if subcmd == "del":
-        return {"action": "delete_hook", "hook_id": p[1] if len(p) > 1 else "",
-                **base}
-    return {"action": "list_hooks", **base}
+        return {"display": "Remove hook bindings from the Resources panel; hook resources are managed by scope.", **base}
+    return {"display": "Usage: /hooks list", **base}
 
 
 # ── Main handler ──────────────────────────────────────────────────────

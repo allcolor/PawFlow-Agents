@@ -1,5 +1,5 @@
 // \xe2\x94\x80\xe2\x94\x80 Terminal engine: xterm.js loader + relay/mode pickers + I/O helpers \xe2\x94\x80\xe2\x94\x80
-// Command handlers (/terminal, /code, /desktop, /audio, /port-forward, /vm,
+// Command handlers (/terminal, /code, /desktop, /relay-audio, /port-forward, /vm,
 // and agent tmux) are in terminal_commands.js, loaded right after this file.
 // Everything here is a global (no ES modules) \xe2\x80\x94 see _JS_MODULES order.
 

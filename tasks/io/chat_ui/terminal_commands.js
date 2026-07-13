@@ -353,7 +353,7 @@ async function cmdDesktop(text, parts) {
   return true;
 }
 
-/** /audio command — forward audio only (no VNC). Reuses open_desktop backend. */
+/** /relay-audio command — forward audio only (no VNC). Reuses open_desktop backend. */
 async function cmdAudio(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
   if (sub === 'stop' || sub === 'close') {

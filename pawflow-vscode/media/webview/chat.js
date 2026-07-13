@@ -699,6 +699,7 @@ window.addEventListener('message', function(e) {
       else if (msg.action === 'update_plan_step') { loadPlansPanel(); }
       else if (msg.action === 'assign_plan') { addMsg('system', '\u2705 Plan assigned'); loadPlansPanel(); }
       else if (msg.action === 'create_plan_user') { addMsg('system', '\u2705 Plan created: ' + (d.plan ? d.plan.title : '')); loadPlansPanel(); }
+      else if (d.display) addMsg('system', d.display);
       else if (d.result || d.message) addMsg('system', d.result || d.message);
       else if (typeof d === 'string') addMsg('system', d);
       else addMsg('system', JSON.stringify(d).slice(0, 500));

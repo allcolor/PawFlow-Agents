@@ -35,6 +35,7 @@ from tasks.ai.actions.cc_live import _handle_cc_live
 from tasks.ai.actions.codex_live import _handle_codex_live
 from tasks.ai.actions.gemini_live import _handle_gemini_live
 from tasks.ai.actions.command_dispatch import _handle_command_dispatch
+from tasks.ai.actions._command_result import decorate_command_flowfiles
 from tasks.ai.actions.pfp_ui import _handle_pfp_ui
 from tasks.ai._agent_actions_conv import _AgentActionsConvMixin
 
@@ -344,6 +345,8 @@ class AgentActionsMixin(_AgentActionsConvMixin):
             for handler in _ACTION_HANDLERS:
                 result = handler(self, action, body, store, user_id, flowfile)
                 if result is not None:
+                    if result_action == "command":
+                        decorate_command_flowfiles(result)
                     return result
             return None
 
@@ -361,6 +364,8 @@ class AgentActionsMixin(_AgentActionsConvMixin):
         a chat conversation context), the result is returned inline in the
         HTTP response instead.
         """
+        if action == "command":
+            decorate_command_flowfiles(result)
         if not reply_conversation_id:
             if isinstance(result, list):
                 return result
@@ -460,6 +465,8 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                 for handler in _ACTION_HANDLERS:
                     result = handler(self, action, _body, store, user_id, _bg_ff)
                     if result is not None:
+                        if result_action == "command":
+                            decorate_command_flowfiles(result)
                         _content = ""
                         if isinstance(result, list) and result:
                             if result[0].get_attribute("suppress_command_result") == "1":

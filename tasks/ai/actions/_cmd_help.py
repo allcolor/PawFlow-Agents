@@ -71,6 +71,17 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
         "aliases": "/branch",
     },
+    "/encrypt": {
+        "usage": "/encrypt status | on <passphrase> | off | unlock <passphrase> | lock",
+        "short": "Manage conversation encryption at rest",
+        "detail": (
+            "  /encrypt status                 — Show encryption state\n"
+            "  /encrypt on <passphrase>        — Enable encryption\n"
+            "  /encrypt unlock <passphrase>    — Unlock the conversation\n"
+            "  /encrypt lock                   — Lock it\n"
+            "  /encrypt off                    — Disable encryption after unlocking"
+        ),
+    },
 
     # ── Agent management ──
     "/agent": {
@@ -394,7 +405,7 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/service": {
-        "usage": "/service list | add | delete | test",
+        "usage": "/service list | install | uninstall | enable | disable | detail",
         "short": "Manage LLM and external services",
         "detail": "Manage LLM services, image/video services, filesystem services, etc.",
     },
@@ -707,14 +718,9 @@ HELP: Dict[str, Dict[str, str]] = {
         "detail": "Delete stored files for the current agent or all agents.",
     },
     "/hooks": {
-        "usage": "/hooks [list | add | del]",
-        "short": "Manage tool execution hooks",
-        "detail": (
-            "Configure scripts that run before/after tool execution.\n\n"
-            "  /hooks list                           — List active hooks\n"
-            "  /hooks add pre:write eslint --fix ${path}\n"
-            "  /hooks del <hook_id>"
-        ),
+        "usage": "/hooks list",
+        "short": "List installed and active agent hooks",
+        "detail": "List signed agent-hook resources and their bindings for this conversation.",
     },
 }
 
@@ -752,5 +758,17 @@ def _extract_at_agent(arg: str, default_agent: str) -> tuple:
         remaining = (arg[:m.start()] + arg[m.end():]).strip()
         return agent, remaining
     return default_agent, arg
+
+
+def _extract_target(arg: str, default_agent: str = "") -> tuple:
+    """Consume a documented first positional target, with or without ``@``."""
+    import shlex
+    try:
+        parts = shlex.split(arg or "")
+    except ValueError:
+        parts = (arg or "").split()
+    if not parts:
+        return default_agent, ""
+    return parts[0].lstrip("@"), " ".join(parts[1:])
 
 

@@ -18,12 +18,13 @@ from typing import Any, Dict, Optional
 
 from core import FlowFile
 
-from tasks.ai.actions._cmd_help import ALIASES, EFFORT_MAP, HELP, _extract_at_agent
+from tasks.ai.actions._cmd_help import (
+    ALIASES, EFFORT_MAP, HELP, _extract_at_agent, _extract_target,
+)
 from tasks.ai.actions._cmd_parsers import (
     _parse_agent_command,
     _parse_autoconv_command,
     _parse_flow_command,
-    _parse_goal_command,
     _parse_hooks_command,
     _parse_media_service_command,
     _parse_memory_command,
@@ -33,6 +34,12 @@ from tasks.ai.actions._cmd_parsers import (
     _parse_skill_command,
     _parse_skill_sugar_command,
     _parse_task_command,
+)
+from tasks.ai.actions._cmd_parsers_extra import (
+    _parse_encrypt_command,
+    _parse_goal_command,
+    _parse_loop_command,
+    _parse_tool_call_command,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,14 +77,17 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     # ── Conversation ──
     if cmd == "/new":
-        return {"action": "new_conversation", **base}
+        return {"_client_only": True, "command": cmd, "arg": arg}
+
+    if cmd in ("/conv", "/conversations"):
+        return {"_client_only": True, "command": "/conv", "arg": arg}
 
     if cmd == "/delete":
         target = arg.strip() or conversation_id
         return {"action": "delete_conversation", "conversation_id": target}
 
     if cmd == "/rename":
-        return {"action": "rename_conversation", "name": arg.strip(), **base}
+        return {"action": "set_conv_title", "title": arg.strip(), **base}
 
     if cmd == "/export":
         fmt = arg.strip().lower() or "markdown"
@@ -93,10 +103,18 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
     if cmd == "/fork":
         return {"action": "fork_conversation", "name": arg.strip(), **base}
 
+    if cmd == "/encrypt":
+        return _parse_encrypt_command(arg, base)
+
     # ── Context ──
     if cmd == "/compact":
         # Parse: /compact [@agent] [--force] [-- instructions]
         agent, rest = _extract_at_agent(arg, agent_name)
+        if "@" not in arg and arg.strip() and not arg.lstrip().startswith("--"):
+            before_instructions = arg.split("--", 1)[0].strip()
+            if before_instructions:
+                agent = before_instructions.split()[0]
+                rest = arg[len(before_instructions.split()[0]):].strip()
         force = False
         if "--force" in rest:
             force = True
@@ -112,7 +130,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return {"action": "git_prune", **base}
 
     if cmd == "/context":
-        agent, _ = _extract_at_agent(arg, agent_name)
+        agent, _ = _extract_target(arg, agent_name)
         return {"action": "view_context", "agent_name": agent, **base}
 
     if cmd == "/model":
@@ -121,7 +139,12 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     if cmd in ("/llm", "/set_llm_service"):
         agent, svc = _extract_at_agent(arg, agent_name)
-        return {"action": "set_llm_service", "service": svc.strip(), "agent": agent,
+        if "@" not in arg:
+            parts = arg.split()
+            svc = parts[0] if parts else ""
+            agent = parts[1] if len(parts) > 1 else agent_name
+        return {"action": "set_llm_service", "llm_service": svc.strip(),
+                "agent_name": agent,
                 **base}
 
     if cmd == "/effort":
@@ -144,7 +167,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return {"action": "rebuild", **base}
 
     if cmd == "/rebuild-full":
-        agt, _ = _extract_at_agent(arg, agent_name)
+        agt, _ = _extract_target(arg, agent_name)
         return {"action": "rebuild_full", "agent_name": agt, **base}
 
     if cmd in ("/restart", "/restart_from"):
@@ -176,38 +199,40 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         for part in rest.split():
             if part.isdigit():
                 tokens = int(part)
+            elif not part.startswith("-"):
+                agt = part.lstrip("@")
         return {"action": "resume_conversation", "max_tokens": tokens,
                 "agent_name": agt, **base}
 
     if cmd == "/cc_restart":
         # Optional single positional arg = agent name. Empty = all agents.
         _arg = arg.strip()
-        agt = _arg if _arg else ""
+        agt = _arg.lstrip("@") if _arg else ""
         return {"action": "cc_restart", "agent_name": agt, **base}
 
     if cmd == "/cc_live":
         _arg = arg.strip()
-        agt = _arg if _arg else ""
+        agt = _arg.lstrip("@") if _arg else ""
         return {"action": "cc_live_status", "agent_name": agt, **base}
 
     if cmd == "/codex_restart":
         _arg = arg.strip()
-        agt = _arg if _arg else ""
+        agt = _arg.lstrip("@") if _arg else ""
         return {"action": "codex_restart", "agent_name": agt, **base}
 
     if cmd == "/codex_live":
         _arg = arg.strip()
-        agt = _arg if _arg else ""
+        agt = _arg.lstrip("@") if _arg else ""
         return {"action": "codex_live_status", "agent_name": agt, **base}
 
     if cmd == "/gemini_restart":
         _arg = arg.strip()
-        agt = _arg if _arg else ""
+        agt = _arg.lstrip("@") if _arg else ""
         return {"action": "gemini_restart", "agent_name": agt, **base}
 
     if cmd == "/gemini_live":
         _arg = arg.strip()
-        agt = _arg if _arg else ""
+        agt = _arg.lstrip("@") if _arg else ""
         return {"action": "gemini_live_status", "agent_name": agt, **base}
 
     # ── Agent ──
@@ -215,29 +240,30 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return _parse_agent_command(arg, base, agent_name)
 
     if cmd in ("/msg", "/message"):
-        target, message = _extract_at_agent(arg, agent_name)
+        target, message = _extract_target(arg, agent_name)
         if target.upper() == "ALL":
             return {"action": "broadcast_agents", "message": message, **base}
         return {"action": "agent_msg", "target_agent": target,
                 "message": message, **base}
 
     if cmd == "/btw":
-        target, question = _extract_at_agent(arg, agent_name)
+        target, question = _extract_target(arg, agent_name)
         return {"action": "btw", "agent_name": target, "question": question,
                 **base}
 
     if cmd == "/stop":
-        _stop_arg = arg.replace("-f", "").strip()
-        agt, _ = _extract_at_agent(_stop_arg, agent_name)
+        _stop_arg = " ".join(part for part in arg.split() if part != "-f")
+        agt, _ = _extract_target(_stop_arg, agent_name)
         return {"action": "cancel", "agent_name": agt, **base}
 
     if cmd == "/resume":
-        agt, _ = _extract_at_agent(arg, agent_name)
+        agt, _ = _extract_target(arg, agent_name)
         return {"action": "resume_agent", "agent_name": agt, **base}
 
     if cmd == "/setname":
-        real, nick = _extract_at_agent(arg, agent_name)
-        return {"action": "set_nickname", "agent_name": real, "nickname": nick.strip(),
+        real, nick = _extract_target(arg, agent_name)
+        return {"action": "set_agent_nickname", "agent_name": real,
+                "nickname": nick.strip(),
                 **base}
 
     # ── Filesystem relay ──
@@ -262,7 +288,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return {"action": "tool_metrics", **base}
 
     if cmd == "/call":
-        return {"action": "user_tool_call", "call_text": arg, **base}
+        return _parse_tool_call_command(arg, base)
 
     if cmd == "/skill":
         return _parse_skill_command(arg, base, agent_name)
@@ -369,8 +395,8 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return _parse_memory_command(arg, base, agent_name)
 
     if cmd in ("/cost", "/usage"):
-        agt, _ = _extract_at_agent(arg, "")
-        return {"action": "cost", "agent_name": agt, **base}
+        agt, _ = _extract_target(arg, "")
+        return {"action": "cost", "agent": agt or "ALL", **base}
 
     # ── Secrets & Variables ──
     if cmd in ("/secrets", "/list-secrets"):
@@ -378,7 +404,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     if cmd == "/add-secret":
         p = arg.split(None, 1)
-        return {"action": "add_secret", "name": p[0] if p else "",
+        return {"action": "add_secret", "key": p[0] if p else "",
                 "value": p[1] if len(p) > 1 else "", **base}
 
     if cmd in ("/variables", "/vars", "/list-variables"):
@@ -386,7 +412,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     if cmd in ("/add-variable", "/add-var"):
         p = arg.split(None, 1)
-        return {"action": "add_variable", "name": p[0] if p else "",
+        return {"action": "add_variable", "key": p[0] if p else "",
                 "value": p[1] if len(p) > 1 else "", **base}
 
     # ── Scheduling ──
@@ -395,6 +421,9 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     if cmd == "/autoconv":
         return _parse_autoconv_command(arg, base, agent_name)
+
+    if cmd == "/loop":
+        return _parse_loop_command(arg, base)
 
     # ── Files ──
     if cmd == "/run":
@@ -410,35 +439,35 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return {"action": "exec_inline", "command": "git diff", **base}
 
     if cmd == "/view":
-        return {"action": "view_file", "path": arg.strip(), **base}
+        return {"action": "fs_read_file", "path": arg.strip(), **base}
 
     # ── Activation ──
     if cmd == "/activate":
         p = arg.split(None, 1)
-        return {"action": "activate_resource", "type": p[0] if p else "",
+        return {"action": "activate_resource", "resource_type": p[0] if p else "",
                 "name": p[1] if len(p) > 1 else "", **base}
 
     if cmd == "/deactivate":
         p = arg.split(None, 1)
-        return {"action": "deactivate_resource", "type": p[0] if p else "",
+        return {"action": "deactivate_resource", "resource_type": p[0] if p else "",
                 "name": p[1] if len(p) > 1 else "", **base}
 
     if cmd == "/share":
         p = arg.split()
         return {"action": "share_resource",
-                "type": p[0] if len(p) > 0 else "",
+                "resource_type": p[0] if len(p) > 0 else "",
                 "name": p[1] if len(p) > 1 else "",
-                "target": p[2] if len(p) > 2 else "",
+                "target_conversation_id": p[2] if len(p) > 2 else "",
                 **base}
 
     if cmd == "/link":
         p = arg.split(None, 1)
         return {"action": "link_account", "provider": p[0] if p else "",
-                "external_id": p[1] if len(p) > 1 else "", **base}
+                "provider_id": p[1] if len(p) > 1 else "", **base}
 
     # ── Session ──
     if cmd == "/login":
-        return {"action": "login", **base}
+        return {"_client_only": True, "command": cmd, "arg": arg}
 
     if cmd == "/help":
         topic = arg.strip().lstrip("/")
@@ -452,19 +481,37 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     # ── Developer ──
     if cmd == "/install":
-        return {"action": "install_tool", "source": arg.strip(), **base}
+        return {"display": "Install tools from Resources → Tools, or install a signed package with /pfp install.", **base}
 
     if cmd == "/uninstall":
-        return {"action": "uninstall_tool", "name": arg.strip(), **base}
+        return {"action": "uninstall_tool", "tool_name": arg.strip(), **base}
 
     if cmd == "/batch":
-        return {"action": "batch", "instruction": arg, **base}
+        instruction = arg.strip()
+        if not instruction:
+            return {"display": "Usage: /batch <instruction>", **base}
+        return {
+            "action": "agent_msg", "target_agent": agent_name,
+            "message": (
+                "[BATCH MODE: apply the following coordinated change across "
+                f"all relevant files, parallelizing independent work.]\n{instruction}"
+            ),
+            **base,
+        }
 
     if cmd == "/debug":
-        return {"action": "debug", **base}
+        return {
+            "action": "run_skill", "target_agent": agent_name,
+            "skill_name": "debug", "arguments": arg.strip(), **base,
+        }
 
     if cmd == "/clear-store":
-        return {"action": "clear_store", "target": arg.strip() or "", **base}
+        target = arg.strip().lstrip("@")
+        if target.upper() == "ALL":
+            return {"action": "clear_store", "scope": "all_agents", **base}
+        if target:
+            return {"action": "clear_store", "agent_name": target, **base}
+        return {"action": "clear_store", **base}
 
     if cmd == "/hooks":
         return _parse_hooks_command(arg, base)
@@ -607,6 +654,12 @@ def _handle_command_dispatch(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    if parsed.get("display") and not parsed.get("action"):
+        flowfile.set_content(json.dumps({
+            "display": parsed["display"],
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
     # Handle /help directly
     if parsed.get("action") == "help":
         return _handle_help(parsed.get("topic", ""), flowfile)
@@ -634,16 +687,20 @@ def _handle_help(topic: str, flowfile: FlowFile) -> list:
             "Agent": ["/agent", "/msg", "/btw", "/stop", "/resume", "/setname"],
             "Context": ["/compact", "/git-prune", "/context", "/model", "/llm", "/effort",
                         "/fast", "/rebuild", "/restart", "/rewind", "/summary",
+                        "/rebuild-full",
                         "/cc_restart", "/cc_live",
                         "/codex_restart", "/codex_live",
                         "/gemini_restart", "/gemini_live"],
             "Resources": ["/resources", "/tools", "/call", "/skill", "/task",
-                          "/service", "/flow", "/prompt", "/memory", "/cost"],
+                          "/goal", "/pfp", "/tool-metrics", "/service", "/flow",
+                          "/prompt", "/memory", "/cost", "/claude-code-auth"],
+            "Media": ["/image", "/video", "/audio"],
             "Secrets & Variables": ["/secrets", "/add-secret", "/variables",
                                     "/add-variable"],
             "Scheduling": ["/schedules", "/autoconv", "/loop"],
             "Files": ["/files", "/upload", "/paste", "/copy", "/view",
-                      "/run", "/diff", "/relay", "/workspace"],
+                      "/run", "/diff", "/connect", "/disconnect", "/relay",
+                      "/workspace"],
             "Mode": ["/plan", "/hooks", "/permission"],
             "Activation": ["/activate", "/deactivate", "/share", "/link"],
             "Session": ["/login", "/help", "/doctor", "/add-dir"],

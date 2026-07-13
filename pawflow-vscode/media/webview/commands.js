@@ -396,6 +396,28 @@ function dispatchCommand(text) {
     return true;
   }
 
+  // Only commands that manipulate VS Code itself stay local.  Domain
+  // commands are sent as raw text to the unified server parser; keeping a
+  // second parser here caused stale action names and silent no-ops.
+  var localCommands = {
+    '/new': 1, '/conv': 1, '/clear': 1,
+    '/upload': 1, '/copy': 1, '/paste': 1, '/files': 1,
+    '/view': 1, '/login': 1, '/clear-files': 1, '/detach': 1,
+    '/watch': 1, '/terminal': 1, '/term': 1, '/code': 1,
+    '/audio': 1, '/desktop': 1, '/port-forward': 1, '/fwd': 1,
+    '/vm': 1, '/flows': 1, '/tasks': 1, '/graph': 1, '/kg': 1,
+    '/claude-login-server': 1, '/cls': 1,
+    '/claude-login-relay': 1, '/clr': 1,
+    '/claude-login-credentials': 1, '/clc': 1,
+  };
+  if (!localCommands[cmd]) {
+    sendCmd('command', JSON.stringify({
+      text: text,
+      agent_name: window._selectedAgent || '',
+    }));
+    return true;
+  }
+
   if (def.handler) {
     window[def.handler](arg);
     return true;

@@ -381,6 +381,15 @@ def _handle_sf_k4(self, action, body, store, user_id, flowfile, _helpers):
                 if not inst:
                     flowfile.set_content(json.dumps({"error": "Instance not found"}).encode())
                     return [flowfile]
+                parameter_overrides = body.get("parameters") or {}
+                if parameter_overrides:
+                    if not isinstance(parameter_overrides, dict):
+                        flowfile.set_content(json.dumps(
+                            {"error": "parameters must be an object"}).encode())
+                        flowfile.set_attribute("http.response.status", "400")
+                        return [flowfile]
+                    inst.parameters.update(parameter_overrides)
+                    dr._save_instance(inst)
                 selected_trigger_ids = body.get("entry_task_ids")
                 if selected_trigger_ids is None:
                     selected_trigger_ids = body.get("one_shot_trigger_ids")

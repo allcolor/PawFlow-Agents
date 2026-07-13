@@ -47,6 +47,32 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "search_memories":
+        query = str(body.get("query", "") or "").strip()
+        if not query:
+            flowfile.set_content(json.dumps({"error": "Missing query"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.memory_store import MemoryStore
+            entries = MemoryStore.instance().recall(
+                user_id, query=query, limit=int(body.get("limit", 50) or 50),
+                agent_name=str(body.get("agent_name", "") or ""),
+                conversation_id=str(body.get("conversation_id", "") or ""),
+            )
+            result = [{
+                "id": entry.id, "text": entry.text, "tags": entry.tags,
+                "agent": entry.agent,
+                "conversation_id": entry.conversation_id,
+                "category": entry.category,
+            } for entry in entries]
+            flowfile.set_content(json.dumps({
+                "memories": result, "count": len(result), "query": query,
+            }, ensure_ascii=False).encode())
+        except Exception as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+        return [flowfile]
+
     if action == "delete_memory":
         memory_id = body.get("memory_id", "")
         if not memory_id:

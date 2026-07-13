@@ -182,4 +182,57 @@ def _handle_ctxops_k2(self, action, body, store, user_id, flowfile, _helpers):
         return self._run_bg_context_op(
             conv_id, "rebuild", _do_rebuild, flowfile, agent_name="")
 
+    if action == "rebuild_full":
+        conv_id = body.get("conversation_id", "")
+        requested_agent = body.get("agent_name", "").strip()
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        transcript = store.load(conv_id, user_id=user_id)
+        if transcript is None:
+            flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+
+        from core.conv_agent_config import get_all_agent_configs, require_agent_member
+        if requested_agent and requested_agent not in ("ALL", "shared"):
+            membership_error = require_agent_member(
+                conv_id, requested_agent, user_id=user_id)
+            if membership_error:
+                flowfile.set_content(json.dumps({"error": membership_error}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            agent_names = [requested_agent]
+        else:
+            agent_names = sorted((get_all_agent_configs(conv_id) or {}).keys())
+
+        def _do_rebuild_full():
+            rebuilt = {}
+            if requested_agent in ("", "ALL", "shared"):
+                shared_candidates = store.filter_for_shared(transcript)
+                shared_messages = [
+                    store._transform_for_shared(message)
+                    for message in shared_candidates
+                ]
+                store.save_agent_context(conv_id, "", shared_messages)
+                rebuilt["shared"] = len(shared_messages)
+
+            for name in agent_names:
+                messages = self._load_compact_source_messages(
+                    store, conv_id, name, user_id=user_id)
+                serialized = self._serialize_messages(messages)
+                store.save_agent_context(conv_id, name, serialized)
+                rebuilt[name] = len(serialized)
+
+            store.invalidate_claude_sessions(conv_id)
+            return {"rebuilt_full": True, "contexts": rebuilt}
+
+        lock_agent = (
+            requested_agent
+            if requested_agent not in ("", "ALL", "shared") else "")
+        return self._run_bg_context_op(
+            conv_id, "rebuild_full", _do_rebuild_full, flowfile,
+            agent_name=lock_agent)
+
     return _UNHANDLED

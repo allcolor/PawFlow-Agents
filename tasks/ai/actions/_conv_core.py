@@ -119,6 +119,50 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": True, "title": title}).encode())
         return [flowfile]
 
+    if action == "search_messages":
+        conv_id = body.get("conversation_id", "")
+        query = str(body.get("query", "") or "").strip()
+        if not conv_id or not query:
+            flowfile.set_content(json.dumps({
+                "error": "Missing conversation_id or query",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        messages = store.load(conv_id, user_id=user_id)
+        if messages is None:
+            flowfile.set_content(json.dumps({
+                "error": "Conversation not found",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        needle = query.casefold()
+        matches = []
+        for index, message in enumerate(messages):
+            if isinstance(message, dict):
+                content = message.get("content", "")
+                role = message.get("role") or message.get("type") or "?"
+                msg_id = message.get("msg_id") or message.get("id") or ""
+            else:
+                content = getattr(message, "content", "")
+                role = getattr(message, "role", "?")
+                msg_id = getattr(message, "msg_id", "")
+            searchable = content if isinstance(content, str) else json.dumps(
+                content, ensure_ascii=False)
+            if needle not in searchable.casefold():
+                continue
+            compact = " ".join(searchable.split())
+            matches.append({
+                "index": index, "msg_id": msg_id, "role": role,
+                "preview": compact[:240],
+            })
+            if len(matches) >= 100:
+                break
+        flowfile.set_content(json.dumps({
+            "query": query, "matches": matches, "count": len(matches),
+            "truncated": len(matches) >= 100,
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
     # -- Server-relay workspace encryption (relay_workspace_*) --------
     if action.startswith("relay_workspace_"):
         import core.workspace_encryption as _we

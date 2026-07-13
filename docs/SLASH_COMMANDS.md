@@ -1,6 +1,6 @@
 # PawFlow Webchat Slash Commands Reference
 
-All commands are typed in the chat input, prefixed with `/`. Commands are processed client-side when possible, with a server-side fallback for extensibility. A double slash is reserved as skill-run sugar: `//<skill> [@agent] [args...]` is equivalent to `/skill run [@agent] <skill> [args...]`.
+All commands are typed in the chat input, prefixed with `/`. Domain commands use the same server-side parser and result renderer in webchat, PawCode, Telegram, and VS Code. Clients keep only transport-specific UI operations local, such as opening a terminal or selecting a file. Machine-readable action results remain intact and also include a human-readable `display` field for consistent output across clients. A double slash is reserved as skill-run sugar: `//<skill> [@agent] [args...]` is equivalent to `/skill run [@agent] <skill> [args...]`.
 
 ## Quick Reference
 
@@ -11,6 +11,8 @@ All commands are typed in the chat input, prefixed with `/`. Commands are proces
 | `/msg` | Send message to a specific agent or task |
 | `/btw` | Side-channel question (no interruption) |
 | `/call` | Call a tool directly |
+| `/audio` | Generate audio or music |
+| `/relay-audio` | Stream audio from a relay in webchat |
 | `/tool-metrics` (`/toolmetrics`) | Show tool execution metrics |
 | `/task` | Create, assign, and manage agent tasks |
 | `/goal` | Create and assign a conversation-scoped goal task |
@@ -116,13 +118,14 @@ Runs the `debug` skill to diagnose session issues -- analyzes context state, rec
 ### /msg
 
 ```
-/msg [@agent|@t_taskid] <message>
+/msg <agent|ALL|task_id> <message>
 ```
 
-Send a message to a specific agent or running task without changing the active agent. If no target is specified, sends to the currently selected agent.
+Send a message to a specific agent or running task without changing the active agent. Agent targets accept either `reviewer` or `@reviewer`.
 
 ```
 /msg @grok Explain this code
+/msg grok Explain this code
 /msg @ALL What do you think?
 /msg @t_8953b308 Check the latest post
 /msg @"Agent With Spaces" Hello
@@ -131,23 +134,24 @@ Send a message to a specific agent or running task without changing the active a
 ### /btw
 
 ```
-/btw [@agent|ALL] <question>
+/btw <agent|ALL> <question>
 ```
 
 Side-channel question. Asks a quick question to an agent without interrupting its current work.
 
 ```
 /btw @claude What is the time complexity?
+/btw claude What is the time complexity?
 /btw @ALL Any thoughts on this?
 ```
 
 ### /setname
 
 ```
-/setname @<agent> [nickname]
+/setname <agent> [nickname]
 ```
 
-Set a display nickname for an agent. Omit the nickname to reset to the real name.
+Set a display nickname for an agent. The optional `@` target prefix is accepted. Omit the nickname to reset to the real name.
 
 ```
 /setname @claude_sonnet_4 Claude
@@ -681,6 +685,20 @@ Open a noVNC virtual desktop on a relay.
 /desktop close         -- close desktop tab
 ```
 
+### /relay-audio
+
+```
+/relay-audio [relay_name] | /relay-audio stop
+```
+
+Stream audio from a relay in webchat without opening the full desktop.
+
+```
+/relay-audio
+/relay-audio my_relay
+/relay-audio stop
+```
+
 ### /port-forward
 
 ```
@@ -704,6 +722,15 @@ Alias: `/fwd`
 ---
 
 ## Tool Execution
+
+### /audio
+
+```
+/audio [@service] <prompt> [--duration N] [--style S] [--instrumental] [--lyrics TEXT]
+```
+
+Generate audio or music with the configured audio service. This is a server-side
+media command shared by webchat, PawCode, Telegram, and VS Code.
 
 ### /call
 

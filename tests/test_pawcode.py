@@ -196,10 +196,32 @@ class TestPawCodeImports:
         )]
         assert api.messages == []
 
+    def test_msg_plain_target_uses_targeted_stream(self):
+        app, api = _fake_pawcode()
+
+        assert app._handle_agent_stream_command(
+            "/msg", "grok hello", "/msg grok hello") is True
+        assert api.messages == [{
+            "message": "hello",
+            "conversation_id": "conv1",
+            "target_agent": "grok",
+            "attachments": None,
+        }]
+
     def test_btw_command_uses_fire_and_forget(self):
         app, api = _fake_pawcode()
 
         assert app._handle_agent_stream_command("/btw", "@grok question", "/btw @grok question") is True
+        assert api.actions == [(
+            "btw",
+            {"conversation_id": "conv1", "agent_name": "grok", "message": "question"},
+        )]
+
+    def test_btw_plain_target_uses_fire_and_forget(self):
+        app, api = _fake_pawcode()
+
+        assert app._handle_agent_stream_command(
+            "/btw", "grok question", "/btw grok question") is True
         assert api.actions == [(
             "btw",
             {"conversation_id": "conv1", "agent_name": "grok", "message": "question"},

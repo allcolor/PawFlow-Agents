@@ -196,12 +196,17 @@ const HELP_DATA = {
       + '  /code close            \u2014 Close VS Code tab',
   },
   '/audio': {
-    usage: '/audio [relay_name] | /audio stop',
+    usage: '/audio [@service] prompt [--duration N] [--style S] [--instrumental] [--lyrics TEXT]',
+    short: 'Generate audio or music',
+    detail: 'Generates audio or music with the configured server-side audio service.',
+  },
+  '/relay-audio': {
+    usage: '/relay-audio [relay_name] | /relay-audio stop',
     short: t('commandShort.20'),
     detail: 'Streams audio from the relay without opening the full desktop.\n\n'
-      + '  /audio              \u2014 Start on first relay\n'
-      + '  /audio my_relay     \u2014 Start on a specific relay\n'
-      + '  /audio stop         \u2014 Close the audio tab',
+      + '  /relay-audio              \u2014 Start on first relay\n'
+      + '  /relay-audio my_relay     \u2014 Start on a specific relay\n'
+      + '  /relay-audio stop         \u2014 Close the audio tab',
   },
   '/desktop': {
     usage: '/desktop [relay_name] | /desktop local [relay] | /desktop docker [relay] | /desktop close',

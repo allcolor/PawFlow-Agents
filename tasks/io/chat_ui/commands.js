@@ -43,6 +43,22 @@ const _CMD_ALIASES = {
   '/int': '/interrupt',
 };
 
+// Commands that directly manipulate webchat UI state remain local. All domain
+// commands use the server parser so their syntax and action schemas cannot
+// drift between webchat, PawCode, Telegram, and VS Code.
+const _LOCAL_COMMANDS = new Set([
+  '/new', '/conv', '/clear', '/clear-files',
+  '/upload', '/copy', '/paste', '/watch',
+  '/export', '/encrypt', '/delete-msg', '/restart_from', '/plan',
+  '/files', '/flows', '/tasks', '/graph', '/kg',
+  '/login',
+  '/claude-login-server', '/cls',
+  '/claude-login-relay', '/clr',
+  '/claude-login-credentials', '/clc',
+  '/terminal', '/term', '/code', '/relay-audio', '/desktop',
+  '/port-forward', '/fwd', '/vm',
+]);
+
 // ── Command dispatch table ──────────────────────────────────────
 // Each handler receives (text, parts, cmd) and returns true.
 // Handlers are defined in: cmd_agent.js, cmd_context.js, cmd_resources.js,
@@ -143,7 +159,7 @@ const _CMD_HANDLERS = {
   '/terminal':      (text, parts, cmd) => cmdTerminal(text, parts),
   '/term':          (text, parts, cmd) => cmdTerminal(text, parts),
   '/code':          (text, parts, cmd) => cmdCode(text, parts),
-  '/audio':         (text, parts, cmd) => cmdAudio(text, parts),
+  '/relay-audio':   (text, parts, cmd) => cmdAudio(text, parts),
   '/desktop':       (text, parts, cmd) => cmdDesktop(text, parts),
   '/port-forward':  (text, parts, cmd) => cmdPortForward(text, parts),
   '/fwd':           (text, parts, cmd) => cmdPortForward(text, parts),
@@ -230,6 +246,10 @@ async function handleSlashCommand(text) {
   // Resolve aliases
   const resolved = _CMD_ALIASES[cmd] || cmd;
 
+  if (!_LOCAL_COMMANDS.has(resolved)) {
+    return await tryServerCommand(text);
+  }
+
   const handler = _CMD_HANDLERS[resolved];
   if (handler) return handler(text, parts, cmd);
 
@@ -252,9 +272,13 @@ function tryServerCommand(text) {
       return;
     }
     if (data.help) { addMsg('system', data.help); return; }
-    if (data.output) { addMsg('system', data.output); }
-    if (data.message) { addMsg('system', data.message); }
-    if (data.error) { addMsg('system', '\u26a0 ' + data.error); }
+    if (data.display) {
+      addMsg('system', data.display);
+    } else {
+      if (data.output) { addMsg('system', data.output); }
+      if (data.message) { addMsg('system', data.message); }
+      if (data.error) { addMsg('system', '\u26a0 ' + data.error); }
+    }
     if (data.conversation_id && data.ok && data.source) {
       addMsg('system', t('switchingToForkedConversation'));
       if (typeof switchConversation === 'function') {

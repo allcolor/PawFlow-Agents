@@ -275,6 +275,13 @@ class _AgentActionsConvMixin:
         Returns ``(min_interval_sec, max_interval_sec)`` or raises ValueError.
         """
         import re
+        interval = re.match(r'^(\d+)(?:-(\d+))?s$', spec)
+        if interval:
+            minimum = int(interval.group(1))
+            maximum = int(interval.group(2) or minimum)
+            if minimum <= 0 or maximum < minimum:
+                raise ValueError(f"Invalid interval range: {spec}")
+            return (minimum, maximum)
         m = re.match(r'^(\d+)(?:-(\d+))?/(\d*)([smhd])$', spec)
         if not m:
             raise ValueError(f"Invalid frequency: {spec}")

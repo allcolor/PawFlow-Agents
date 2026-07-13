@@ -17,18 +17,22 @@ class _PawCodeCommandsMixin:
     # always has a usable command reference, even offline or before login.
     _HELP_CATEGORIES = {
         "Conversation": ["/new", "/conv", "/delete", "/rename", "/export",
-                         "/history", "/search", "/fork"],
+                         "/history", "/search", "/fork", "/encrypt"],
         "Agent": ["/agent", "/msg", "/btw", "/stop", "/resume", "/setname"],
         "Context": ["/compact", "/git-prune", "/context", "/model", "/llm",
                     "/effort", "/fast", "/rebuild", "/restart", "/rewind",
-                    "/summary", "/cc_restart", "/cc_live"],
+                    "/summary", "/rebuild-full", "/cc_restart", "/cc_live",
+                    "/codex_restart", "/codex_live", "/gemini_restart",
+                    "/gemini_live"],
         "Resources": ["/resources", "/tools", "/call", "/skill", "/task",
-                      "/service", "/flow", "/prompt", "/memory", "/cost"],
+                      "/goal", "/pfp", "/tool-metrics", "/service", "/flow",
+                      "/prompt", "/memory", "/cost", "/claude-code-auth"],
+        "Media": ["/image", "/video", "/audio"],
         "Secrets & Variables": ["/secrets", "/add-secret", "/variables",
                                 "/add-variable"],
         "Scheduling": ["/schedules", "/autoconv", "/loop"],
         "Files": ["/files", "/upload", "/paste", "/copy", "/view", "/run",
-                  "/diff", "/relay", "/workspace"],
+                  "/diff", "/connect", "/disconnect", "/relay", "/workspace"],
         "Mode": ["/plan", "/hooks", "/permission"],
         "Session": ["/login", "/help", "/doctor", "/clear", "/quit"],
         "Analysis": ["/stats", "/insights", "/security-review", "/feedback"],
@@ -65,10 +69,9 @@ class _PawCodeCommandsMixin:
             self.renderer.print_error("Server login is only available from the webchat.")
             return
 
-        # /help is rendered client-side: it must work offline (before login
-        # or when the server is unreachable) and never round-trips, so it
-        # can't hang waiting on the server.
-        if cmd == "/help":
+        # Keep an offline reference before login.  Once authenticated, /help
+        # comes from the unified server registry like every domain command.
+        if cmd == "/help" and not self.session_token:
             self._print_offline_help(arg.strip())
             return
 
@@ -163,17 +166,13 @@ class _PawCodeCommandsMixin:
 
         if cmd in ("/msg", "/message"):
             parts = self._parse_command_args(text)
-            if len(parts) < 2:
-                self.renderer.print_error("Usage: /msg [@agent|@ALL] <message>")
+            if len(parts) < 3:
+                self.renderer.print_error("Usage: /msg <agent|ALL> <message>")
                 return True
-            if parts[1].startswith("@"):
-                target = self._strip_agent_target(parts[1])
-                message = " ".join(parts[2:])
-            else:
-                target = self.selected_agent
-                message = " ".join(parts[1:])
+            target = self._strip_agent_target(parts[1])
+            message = " ".join(parts[2:])
             if not target or not message:
-                self.renderer.print_error("Usage: /msg [@agent|@ALL] <message>")
+                self.renderer.print_error("Usage: /msg <agent|ALL> <message>")
                 return True
             if target.upper() == "ALL":
                 self.api.send_action_fire("broadcast_agents",
@@ -186,17 +185,13 @@ class _PawCodeCommandsMixin:
 
         if cmd == "/btw":
             parts = self._parse_command_args(text)
-            if len(parts) < 2:
-                self.renderer.print_error("Usage: /btw [@agent|@ALL] <question>")
+            if len(parts) < 3:
+                self.renderer.print_error("Usage: /btw <agent|ALL> <question>")
                 return True
-            if parts[1].startswith("@"):
-                target = self._strip_agent_target(parts[1])
-                question = " ".join(parts[2:])
-            else:
-                target = self.selected_agent
-                question = " ".join(parts[1:])
+            target = self._strip_agent_target(parts[1])
+            question = " ".join(parts[2:])
             if not question:
-                self.renderer.print_error("Usage: /btw [@agent|@ALL] <question>")
+                self.renderer.print_error("Usage: /btw <agent|ALL> <question>")
                 return True
             self.api.send_action_fire("btw", conversation_id=self.conversation_id or "",
                                       agent_name=target or "", message=question)

@@ -155,6 +155,11 @@ def _format_telegram_command_result(raw: str) -> str:
         return str(payload)
     if payload.get("help"):
         return _telegram_markdown_help(str(payload["help"]))
+    if payload.get("display"):
+        display = str(payload["display"])
+        if display.lstrip().startswith("## "):
+            return _telegram_markdown_help(display)
+        return display
     if payload.get("error"):
         text = f"Error: {payload['error']}"
         if payload.get("hint"):
@@ -164,7 +169,8 @@ def _format_telegram_command_result(raw: str) -> str:
         return str(payload["output"])
     if payload.get("message") is not None:
         return str(payload["message"])
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+    from tasks.ai.actions._command_result import format_command_payload
+    return format_command_payload(payload)
 
 
 def _telegram_markdown_help(text: str) -> str:

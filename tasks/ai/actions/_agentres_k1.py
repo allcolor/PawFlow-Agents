@@ -18,15 +18,19 @@ def _handle_agentres_k1(self, action, body, store, user_id, flowfile):
         nickname = body.get("nickname", "").strip()
         if agent_name and conv_id:
             agent_name = self._resolve_agent_name(agent_name, conv_id)
-        if not conv_id or not agent_name or not nickname:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id, agent_name, or nickname"}).encode())
+        if not conv_id or not agent_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or agent_name"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         nicknames = store.get_extra(conv_id, "agent_nicknames") or {}
-        nicknames[agent_name] = nickname
+        if nickname:
+            nicknames[agent_name] = nickname
+        else:
+            nicknames.pop(agent_name, None)
         store.set_extra(conv_id, "agent_nicknames", nicknames)
         flowfile.set_content(json.dumps({
             "ok": True, "agent_name": agent_name, "nickname": nickname,
+            "reset": not nickname,
         }).encode())
         return [flowfile]
 

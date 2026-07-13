@@ -237,7 +237,7 @@ class LLMConnectionService(BaseService):
                 conversation_id=str(call_kwargs.get("call_conversation_id") or ""),
                 agent_name=str(call_kwargs.get("call_agent_name") or ""))
         except Exception:
-            logger.debug("vision fallback pre-processing failed", exc_info=True)
+            logger.warning("vision fallback pre-processing failed", exc_info=True)
             return messages
 
     def complete_stream(

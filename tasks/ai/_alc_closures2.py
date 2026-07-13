@@ -62,7 +62,7 @@ class _ALCClosures2Mixin:
                 "[agent-loop] resolved service has no _maybe_apply_vision_fallback: %s",
                 type(service).__name__)
         except Exception:
-            logger.debug(
+            logger.warning(
                 "agent-loop vision fallback pre-processing failed",
                 exc_info=True)
         return messages

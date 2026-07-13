@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.15] — 2026-07-13
+
+### Fixed
+
+- Context gauge no longer inflates artificially for CLI providers (Codex,
+  Claude Code, Gemini, CCI, Antigravity). Tool results arriving through the
+  live `block_callback` and `turn_callback` paths were persisted without the
+  `tool_result_max_chars` cap (default 50K chars) that `ToolRegistry.execute`
+  applies to PawFlow MCP tools. Native Codex tool outputs (e.g. `cat
+  initial_context.md`) were stored at full size, duplicating the serialized
+  context and causing the gauge to jump from 19K to 80K+ tokens after a single
+  cold-start file read. Both callback paths now truncate to the configured
+  limit before persistence.
+- `tiktoken` encoding failures are no longer permanent. A transient network or
+  cache issue at startup previously set `_encoding_failed = True` forever,
+  making every subsequent token count use the approximate fallback
+  `(bytes + 3) // 4`, which overestimates by 1.1–2x depending on content and
+  inflates the context gauge. The flag is now a monotonic timestamp with a
+  5-minute retry window, so tiktoken is re-attempted and the precise
+  `cl100k_base` tokenizer is used as soon as it becomes available.
+
 ## [1.0.0-beta.14] — 2026-07-12
 
 ### Fixed

@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.20] — 2026-07-13
+
+### Added
+
+- Added end-to-end delegated-vision documentation, including a GLM 5.2 +
+  Gemma 4 Cloud configuration guide, provider requirements, caching behavior,
+  cost and security boundaries, and website discovery links.
+
+### Changed
+
+- `screen(screenshot)` and `see(screen)` now return an opaque screen revision.
+  `click` and `double_click` require that revision and may accept a target
+  bounding box so actions are tied to the exact image used for coordinate
+  selection.
+
+### Security
+
+- Desktop clicks now compare a bounded reference crop with a fresh local relay
+  capture immediately before any mouse input. A changed target returns
+  `STALE_SCREEN` without moving or clicking; an unchanged target proceeds
+  without another LLM or vision request. Revisions are scoped to the user,
+  conversation, relay, and local or Docker display route.
+
 ## [1.0.0-beta.19] — 2026-07-13
 
 ### Fixed

@@ -232,7 +232,7 @@ class LLMConnectionService(BaseService):
             from core.vision_describe import apply_vision_fallback
             return apply_vision_fallback(
                 messages, target,
-                source_service_id=self._service_id,
+                source_service_id=getattr(self, "_service_id", "") or "",
                 user_id=str(call_kwargs.get("call_user_id") or ""),
                 conversation_id=str(call_kwargs.get("call_conversation_id") or ""),
                 agent_name=str(call_kwargs.get("call_agent_name") or ""))
@@ -377,7 +377,7 @@ class LLMConnectionService(BaseService):
                 from core.conversation_store import ConversationStore
                 ConversationStore.instance().set_extra(
                     conversation_id,
-                    f"llm_api_key_idx:{self._service_id}",
+                    f"llm_api_key_idx:{getattr(self, '_service_id', '') or ''}",
                     idx)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

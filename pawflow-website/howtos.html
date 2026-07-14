@@ -100,6 +100,7 @@
   "supports_vision": false,
   "vision_llm_service": "ollama_gemma4_vision"
 }</code></pre></div>
+        <p><strong>In practice:</strong> only the first view of a screen pays the description round-trip (a few seconds, comparable to a native vision turn); byte-identical repeats are served from the hash cache instantly. Click coordinates come from the vision model's description — the text model only selects the target and copies them — which is why a text-only GLM 5.2 clicks accurately in real desktop sessions.</p>
         <p>PawFlow transforms only the outbound call: the conversation keeps the original image, while GLM receives a cached textual description. Treat visual text as untrusted input and keep normal tool approvals enabled. Screen captures also return a revision for guarded clicks: the relay compares the target region locally immediately before input, with no second vision request or image-token charge when the screen is unchanged. Only the small opaque revision travels in the normal tool exchange. A changed region cancels the click and requires a fresh screenshot.</p>
         <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/llm_providers.md#vision-fallback-for-non-vision-models">Read the delegated vision reference</a>
       </article>

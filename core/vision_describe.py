@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_VERSION = "v1"
 
+ # Images larger than this (in either dimension) are downscaled before being
+ # sent to the vision model.  Large screenshots (e.g. a full YouTube homepage
+ # at 1280x800, ~900 KB PNG) can overwhelm smaller vision models and cause
+ # 500 / timeout errors.  1024px is a safe ceiling that preserves text
+ # legibility while keeping the base64 payload manageable.
+_MAX_IMAGE_DIM = 1024
+
 DESCRIBE_PROMPT = (
     "You are the eyes of a text-only assistant. Describe this image "
     "exhaustively and factually so the assistant can act on it without "
@@ -154,6 +161,38 @@ def _image_dims(mime: str, b64: str) -> str:
         return ""
 
 
+def _downscale_b64(mime: str, b64: str) -> tuple:
+    """Downscale an image so neither dimension exceeds _MAX_IMAGE_DIM.
+
+    Returns (mime, b64) — the original pair if no resize is needed or if
+    PIL is unavailable.  Output format is JPEG (quality 85) for photos and
+    PNG for images with transparency, to keep the payload small.
+    """
+    try:
+        import io
+        from PIL import Image
+        raw = base64.b64decode(b64)
+        with Image.open(io.BytesIO(raw)) as img:
+            w, h = img.size
+            if w <= _MAX_IMAGE_DIM and h <= _MAX_IMAGE_DIM:
+                return mime, b64
+            scale = _MAX_IMAGE_DIM / max(w, h)
+            new_w, new_h = int(w * scale), int(h * scale)
+            img = img.convert("RGBA") if img.mode == "RGBA" else img.convert("RGB")
+            resized = img.resize((new_w, new_h), Image.LANCZOS)
+            buf = io.BytesIO()
+            if resized.mode == "RGBA":
+                resized.save(buf, format="PNG")
+                out_mime = "image/png"
+            else:
+                resized.save(buf, format="JPEG", quality=85)
+                out_mime = "image/jpeg"
+            return out_mime, base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        logger.debug("vision fallback: downscale failed, using original", exc_info=True)
+        return mime, b64
+
+
 def describe_image_b64(vision_svc, mime: str, b64: str, *,
                        user_id: str = "", conversation_id: str = "",
                        agent_name: str = "", prompt: str = "",
@@ -168,7 +207,9 @@ def describe_image_b64(vision_svc, mime: str, b64: str, *,
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
-    full_prompt = prompt or DESCRIBE_PROMPT.format(dims=_image_dims(mime, b64))
+    # Downscale large images before sending to the vision model
+    scaled_mime, scaled_b64 = _downscale_b64(mime, b64)
+    full_prompt = prompt or DESCRIBE_PROMPT.format(dims=_image_dims(scaled_mime, scaled_b64))
     from core.llm_client import LLMMessage
     _prev_active = getattr(_tls, "active", False)
     _tls.active = True
@@ -179,7 +220,7 @@ def describe_image_b64(vision_svc, mime: str, b64: str, *,
                 content=[
                     {"type": "text", "text": full_prompt},
                     {"type": "image_url",
-                     "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                     "image_url": {"url": f"data:{scaled_mime};base64,{scaled_b64}"}},
                 ],
                 conversation_id=conversation_id or "vision_describe",
             )],
@@ -278,12 +319,30 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
                 continue
             if described >= _MAX_DESCRIBE_PER_PASS:
                 truncated = True
-                new_parts.append(part)
+                # Replace with placeholder — don't leak raw image to non-vision LLM
+                changed = True
+                new_parts.append({
+                    "type": "text",
+                    "text": (
+                        f"[Image: skipped — too many images in this pass; "
+                        f"image not described.]"
+                    ),
+                })
                 continue
             payload = _part_payload(part, user_id=user_id,
                                     conversation_id=conversation_id)
             if not payload:
-                new_parts.append(part)
+                # Cannot extract image data — replace with placeholder to
+                # avoid leaking a raw image part to the non-vision LLM.
+                described += 1
+                changed = True
+                new_parts.append({
+                    "type": "text",
+                    "text": (
+                        f"[Image: could not be loaded from tool result; "
+                        f"image data unavailable.]"
+                    ),
+                })
                 continue
             mime, b64, label = payload
             try:
@@ -293,10 +352,29 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
             except Exception:
                 logger.warning("vision fallback describe failed for %s",
                                label, exc_info=True)
-                new_parts.append(part)
+                # Replace with a placeholder instead of leaking the raw image
+                # to the non-vision LLM (which would 500 on the image part).
+                described += 1
+                changed = True
+                new_parts.append({
+                    "type": "text",
+                    "text": (
+                        f"[Image: {label} — vision model was unavailable; "
+                        f"image could not be described.]"
+                    ),
+                })
                 continue
             if not description:
-                new_parts.append(part)
+                # Empty description — same treatment, avoid leaking raw image
+                described += 1
+                changed = True
+                new_parts.append({
+                    "type": "text",
+                    "text": (
+                        f"[Image: {label} — vision model returned no "
+                        f"description; image could not be described.]"
+                    ),
+                })
                 continue
             described += 1
             changed = True

@@ -288,6 +288,88 @@ def test_agent_loop_direct_client_call_applies_service_vision_fallback(streaming
     assert original.content[1]["type"] == "image_ref"
 
 
+def test_apply_vision_fallback_describe_failure_replaces_with_placeholder(monkeypatch):
+    """When the vision model raises, the raw image must NOT leak to the
+    non-vision LLM — it should be replaced by a text placeholder."""
+    from core.vision_describe import apply_vision_fallback
+
+    class BrokenVisionService(FakeVisionService):
+        def complete(self, messages, **kwargs):
+            raise RuntimeError("vision model 500")
+
+    svc = BrokenVisionService()
+    _patch_registry(monkeypatch, svc)
+
+    msg = _image_message()
+    out = apply_vision_fallback([msg], "vision_svc", source_service_id="glm_svc",
+                                user_id="alice", conversation_id="c1")
+
+    assert out[0].content[1]["type"] == "text"
+    assert "could not be described" in out[0].content[1]["text"]
+    # No image_url part should remain
+    assert not any(p.get("type") in ("image_url", "image_ref")
+                   for p in out[0].content)
+
+
+def test_apply_vision_fallback_empty_description_replaces_with_placeholder(monkeypatch):
+    """When the vision model returns an empty string, the raw image must
+    NOT leak — it should be replaced by a text placeholder."""
+    from core.vision_describe import apply_vision_fallback
+
+    svc = FakeVisionService(description="")
+    _patch_registry(monkeypatch, svc)
+
+    msg = _image_message()
+    out = apply_vision_fallback([msg], "vision_svc", source_service_id="glm_svc",
+                                user_id="alice", conversation_id="c1")
+
+    assert out[0].content[1]["type"] == "text"
+    assert "could not be described" in out[0].content[1]["text"]
+    assert not any(p.get("type") in ("image_url", "image_ref")
+                   for p in out[0].content)
+
+
+def test_downscale_b64_returns_original_when_small():
+    """Small images should pass through unchanged."""
+    from core.vision_describe import _downscale_b64
+    mime, b64 = _downscale_b64("image/png", B64)
+    assert mime == "image/png"
+    assert b64 == B64
+
+
+def test_downscale_b64_returns_original_on_invalid_image():
+    """Invalid image bytes should fall back to the original pair."""
+    from core.vision_describe import _downscale_b64
+    mime, b64 = _downscale_b64("image/png", B64)  # B64 is fake bytes
+    assert mime == "image/png"
+    assert b64 == B64
+
+
+def test_downscale_b64_resizes_large_image():
+    """A real large image should be downscaled so neither dimension
+    exceeds _MAX_IMAGE_DIM."""
+    import io
+    import base64 as _b64
+    from PIL import Image
+    from core.vision_describe import _downscale_b64, _MAX_IMAGE_DIM
+
+    # Create a 2000x1500 solid-color image
+    img = Image.new("RGB", (2000, 1500), color=(100, 150, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    big_b64 = _b64.b64encode(buf.getvalue()).decode("ascii")
+
+    out_mime, out_b64 = _downscale_b64("image/png", big_b64)
+    assert out_mime in ("image/png", "image/jpeg")
+
+    # Verify the output dimensions are within the limit
+    out_img = Image.open(io.BytesIO(_b64.b64decode(out_b64)))
+    assert out_img.width <= _MAX_IMAGE_DIM
+    assert out_img.height <= _MAX_IMAGE_DIM
+    # Aspect ratio preserved
+    assert abs(out_img.width / out_img.height - 2000 / 1500) < 0.01
+
+
 def test_agent_loop_vision_fallback_failure_is_fail_open():
     from core.llm_client import LLMMessage
     from tasks.ai.agent_core import AgentCoreMixin

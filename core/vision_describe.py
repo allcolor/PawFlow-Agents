@@ -196,7 +196,7 @@ def _downscale_b64(mime: str, b64: str) -> tuple:
 def describe_image_b64(vision_svc, mime: str, b64: str, *,
                        user_id: str = "", conversation_id: str = "",
                        agent_name: str = "", prompt: str = "",
-                       model: str = "", max_tokens: int = 1500) -> str:
+                       model: str = "", max_tokens: int = 4096) -> str:
     """Describe one base64 image via a vision llmConnection, with caching."""
     svc_id = getattr(vision_svc, "_service_id", "") or ""
     model = model or ""
@@ -234,6 +234,12 @@ def describe_image_b64(vision_svc, mime: str, b64: str, *,
     finally:
         _tls.active = _prev_active
     description = (getattr(response, "content", "") or "").strip()
+    if not description:
+        # Reasoning models (gpt-5.x, o-series) may put all output in
+        # reasoning_content when max_tokens is too low. Use it as fallback.
+        reasoning = (getattr(response, "thinking", "") or "").strip()
+        if reasoning:
+            description = reasoning
     if description:
         _cache_put(cache_key, description)
     return description

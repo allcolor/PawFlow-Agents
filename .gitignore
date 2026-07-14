@@ -107,3 +107,6 @@ data_backup/
 graphify-out/
 
 .antigravitycli/
+
+# Local marketing material (videos, scripts, raw captures)
+marketing/

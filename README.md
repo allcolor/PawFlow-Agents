@@ -256,7 +256,7 @@ An LLM service with `supports_vision: false` can delegate every incoming image t
 
 ```json
 {
-  "default_model": "glm-5.2",
+  "default_model": "glm-5.2:cloud",
   "supports_vision": false,
   "vision_llm_service": "ollama_gemma4_vision"
 }

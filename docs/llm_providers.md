@@ -189,7 +189,7 @@ Then configure the primary service, for example with the service id `ollama_glm5
   "provider": "openai",
   "api_key": "${OLLAMA_API_KEY}",
   "base_url": "https://ollama.com/v1",
-  "default_model": "glm-5.2",
+  "default_model": "glm-5.2:cloud",
   "supports_vision": false,
   "vision_llm_service": "ollama_gemma4_vision"
 }

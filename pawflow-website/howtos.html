@@ -83,7 +83,7 @@
           <div><strong>Brain</strong><span>GLM 5.2 receives that structured description, reasons about the task, and selects the next approved tool call.</span></div>
           <div><strong>Hands</strong><span><code>screen</code>, browser, click, and typing tools act on the relay desktop; the main model never needs native image support.</span></div>
         </div>
-        <ol><li>Create an OpenAI-compatible <code>llmConnection</code> named <code>ollama_gemma4_vision</code>. Use <code>https://ollama.com/v1</code>, model <code>gemma4:cloud</code>, and leave <code>supports_vision</code> enabled.</li><li>Create the primary service <code>ollama_glm52</code> with model <code>glm-5.2</code>.</li><li>Disable <code>supports_vision</code> on the GLM service. The <code>vision_llm_service</code> picker appears; select <code>ollama_gemma4_vision</code>.</li><li>Select <code>ollama_glm52</code> as the agent's <code>llm_service</code>. No special agent prompt is required.</li><li>Attach an image or ask the agent to inspect the desktop with <code>screen</code>, <code>see</code>, or an image <code>read</code>. The server log should report that the image was described through the delegated service.</li><li>For coordinate-based desktop work, capture a fresh screen before a sensitive click and verify the state after the action.</li></ol>
+        <ol><li>Create an OpenAI-compatible <code>llmConnection</code> named <code>ollama_gemma4_vision</code>. Use <code>https://ollama.com/v1</code>, model <code>gemma4:cloud</code>, and leave <code>supports_vision</code> enabled.</li><li>Create the primary service <code>ollama_glm52</code> with model <code>glm-5.2:cloud</code>.</li><li>Disable <code>supports_vision</code> on the GLM service. The <code>vision_llm_service</code> picker appears; select <code>ollama_gemma4_vision</code>.</li><li>Select <code>ollama_glm52</code> as the agent's <code>llm_service</code>. No special agent prompt is required.</li><li>Attach an image or ask the agent to inspect the desktop with <code>screen</code>, <code>see</code>, or an image <code>read</code>. The server log should report that the image was described through the delegated service.</li><li>For coordinate-based desktop work, capture a fresh screen before a sensitive click and verify the state after the action.</li></ol>
         <div class="code-card"><div class="code-top"><span>vision service</span><button type="button" data-copy="#delegated-vision-service">Copy</button></div><pre id="delegated-vision-service"><code>{
   "type": "llmConnection",
   "provider": "openai",
@@ -97,7 +97,7 @@
   "provider": "openai",
   "api_key": "${OLLAMA_API_KEY}",
   "base_url": "https://ollama.com/v1",
-  "default_model": "glm-5.2",
+  "default_model": "glm-5.2:cloud",
   "supports_vision": false,
   "vision_llm_service": "ollama_gemma4_vision"
 }</code></pre></div>

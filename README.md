@@ -19,6 +19,10 @@
 </p>
 
 <p align="center">
+  <a href="https://pawflow.allcolor.org/assets/media/video/vision-fallback-demo.mp4">▶ <strong>70-second demo</strong></a> — a <em>text-only</em> GLM 5.2 operates a Linux desktop, opens Chromium, and plays a song on YouTube. Every screenshot is described to it by a separate vision model (<a href="https://pawflow.allcolor.org/howtos.html#delegated-vision">delegated vision</a>). The demo video itself was cut, narrated, and scored by a Claude agent running inside PawFlow.
+</p>
+
+<p align="center">
   <a href="https://github.com/allcolor/PawFlow-Agents/actions"><img src="https://github.com/allcolor/PawFlow-Agents/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>

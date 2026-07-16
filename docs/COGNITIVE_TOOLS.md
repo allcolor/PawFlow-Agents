@@ -11,6 +11,8 @@ PawFlow provides four persistent cognitive systems that give agents long-term me
 | **Agent Diary** | Per-agent journal of observations and decisions | `data/memories/{user}/diary_{agent}.jsonl` |
 | **Project Graph** | AST-based code structure graph (17 languages) | `data/graphs/{user}/{conv_id}/graph.json` |
 
+A fifth, procedural layer — the **skill loop** — closes learning into reusable artifacts: agents are instructed (via a `## Skill loop` system-prompt block) to crystallize novel multi-step procedures into skills with `manage_resource` and to fix skills that proved wrong during use; post-compaction extraction proposes conservative `skill-draft` memories; `load_skill` tracks usage and suggests scope promotion; and the `skillCurator` flow task produces review-first maintenance reports. See [LEARNING_LOOP_PLAN.md](LEARNING_LOOP_PLAN.md).
+
 They are interconnected:
 
 - **Memory digest** and **diary digest** are injected into the agent's system prompt at the start of every conversation turn.

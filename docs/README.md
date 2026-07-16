@@ -28,6 +28,7 @@
 | [PFP Publisher Guide](PFP_PUBLISHER_GUIDE.md) | Registry publishing, release versioning, SHA pinning, and key rotation |
 | [Marketplace and Package Registries](marketplace.md) | PFP registries, skill marketplace import, review model, and UI/CLI entry points |
 | [Cognitive Tools](COGNITIVE_TOOLS.md) | Memory, Knowledge Graph, Diary, Project Graph |
+| [Skill Learning Loop](LEARNING_LOOP_PLAN.md) | Agent-created skills, drafts from compaction, usage stats, curator task |
 | [Expression Language](EXPRESSION_LANGUAGE.md) | `${scope.key}` syntax, operators, cascade |
 | [Slash Commands](SLASH_COMMANDS.md) | Webchat/CLI/VS Code command surface |
 | [Filesystem](filesystem.md) | Filesystem abstraction, relay backends, permissions |

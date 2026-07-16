@@ -543,6 +543,14 @@ class _PACPhase3Mixin:
                 "panel. One source of truth."
             )
 
+            # Skill loop hint — crystallize/improve skills (see core/skill_loop.py)
+            try:
+                from core.skill_loop import SKILL_LOOP_HINT
+                st.system_prompt += SKILL_LOOP_HINT
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Ignored exception", exc_info=True)
+
         # Resolve thinking_budget auto-detect (-1)
         if st.thinking_budget < 0:
             st._m = (st._client_model_name or st.model_name or "").lower()

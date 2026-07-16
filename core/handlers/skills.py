@@ -60,4 +60,32 @@ class LoadSkillHandler(ToolHandler):
             return json.dumps({
                 "error": f"Skill '{name}' is not assigned to agent '{self._agent_name}'",
             })
-        return block
+        return block + self._skill_loop_suffix(name)
+
+    def _skill_loop_suffix(self, name: str) -> str:
+        """Usage tracking + improvement footer + promotion suggestion.
+
+        Best-effort: the skill prompt is returned unchanged on any error.
+        """
+        try:
+            from core.skill_loop import SKILL_IMPROVE_FOOTER
+            from core.skill_stats import record_load
+            suffix = SKILL_IMPROVE_FOOTER
+            stats = record_load(self._user_id, name,
+                                conversation_id=self._conversation_id,
+                                agent_name=self._agent_name)
+            if int(stats.get("loads", 0)) >= 3 and self._conversation_id:
+                from core.resource_store import ResourceStore
+                skill = ResourceStore.instance().get_any(
+                    "skill", name, self._user_id,
+                    conversation_id=self._conversation_id) or {}
+                if skill.get("_scope") == "conversation":
+                    suffix += (
+                        f"\nThis conversation-scoped skill has been loaded "
+                        f"{int(stats['loads'])} times — consider asking the "
+                        f"user whether to promote it to user scope via "
+                        f"`manage_resource` so other conversations can use it."
+                    )
+            return suffix
+        except Exception:
+            return ""

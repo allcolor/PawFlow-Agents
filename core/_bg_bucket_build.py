@@ -490,6 +490,17 @@ class _BgBucketBuildMixin:
                 "[bg-bucket] auto_extract_memories failed for cid=%s "
                 "bucket seq %d..%d",
                 cid[:8], first_seq, last_seq, exc_info=True)
+        # Skill loop: same distilled summary may contain a reusable
+        # procedure worth proposing as a skill draft. Best-effort.
+        try:
+            from core.skill_loop import propose_skill_draft_from_summary
+            propose_skill_draft_from_summary(
+                user_id=user_id, summary=summary,
+                llm_client=client, conversation_id=cid)
+        except Exception:
+            logger.debug(
+                "[bg-bucket] skill draft proposal failed for cid=%s",
+                cid[:8], exc_info=True)
         return True
 
     def _maybe_rollup(self, store: BucketStore, client: Any,
@@ -630,6 +641,14 @@ class _BgBucketBuildMixin:
                     conversation_id=cid)
             except Exception:
                 logger.debug("[bg-bucket] consolidate memory extract failed",
+                              exc_info=True)
+            try:
+                from core.skill_loop import propose_skill_draft_from_summary
+                propose_skill_draft_from_summary(
+                    user_id=user_id, summary=result,
+                    llm_client=client, conversation_id=cid)
+            except Exception:
+                logger.debug("[bg-bucket] consolidate skill draft failed",
                               exc_info=True)
         return result
 

@@ -202,6 +202,7 @@ def register_all_tasks():
     from tasks.system.list_files import ListFilesTask
     from tasks.system.execute_script import ExecuteScriptTask
     from tasks.system.reporting_task import ReportingTask
+    from tasks.system.skill_curator import SkillCuratorTask
 
     # Scrapling fetch
     from tasks.io.scrapling_fetch import ScraplingFetchTask

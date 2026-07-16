@@ -46,6 +46,7 @@ No tool accesses the server filesystem directly (except internal storage: memori
 - **Knowledge Graph**: temporal entity-relationship triples, BFS/DFS, communities
 - **Agent Diary**: per-agent personal journal
 - **Project Graph**: AST extraction via tree-sitter (17 languages), built via relay
+- **Skill loop** (procedural layer): agents crystallize procedures into skills via `manage_resource`; drafts proposed post-compaction (`core/skill_loop.py`), usage stats (`core/skill_stats.py`), `skillCurator` report task (see `docs/LEARNING_LOOP_PLAN.md`)
 
 ## Key Directories
 

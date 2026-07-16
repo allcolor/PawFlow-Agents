@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Skill learning loop (P1–P3 of `docs/LEARNING_LOOP_PLAN.md`):
+  - Agents now receive a `## Skill loop` system-prompt block instructing them
+    to crystallize novel multi-step procedures into skills via
+    `manage_resource` and to update skills that proved wrong during use.
+  - Post-compaction extraction also asks the summarizer whether the summary
+    contains a reusable procedure not covered by an existing skill; approved
+    drafts are stored as conversation-scoped memories tagged `skill-draft`
+    (never auto-installed).
+  - `load_skill` records per-skill usage statistics
+    (`data/runtime/skill_stats.json`), appends a self-improvement footer, and
+    suggests promoting a conversation-scoped skill to user scope after
+    repeated loads.
+  - New `skillCurator` flow task: flags never-loaded and stale skills, runs an
+    optional LLM review (keep/archive/merge), and emits a JSON report.
+    Report-only — actions are applied by the user after review.
+
 ## [1.0.0-beta.23] — 2026-07-13
 
 ### Fixed

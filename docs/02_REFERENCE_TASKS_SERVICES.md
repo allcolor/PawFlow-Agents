@@ -473,6 +473,24 @@ def process(input_var_name):
 | `distinct_by` | array | Yes | [] | Attributes for distinction |
 | `keep_first` | boolean | No | true | Keep first or last |
 
+#### 11.5.4. Skill Curator Task (`skillCurator`)
+**Description**: Flag stale/unused agent skills and propose curation actions (report only)
+
+Crosses the skill repository with `load_skill` usage statistics (`data/runtime/skill_stats.json`), classifies each skill as active, stale, or never-loaded, optionally runs an LLM review (keep/archive/merge), and writes a JSON report to the FlowFile content. The task never applies an action — changes go through the resource UI or `manage_resource` after review. Schedule it with a cron trigger for a recurring curation loop.
+
+**Parameters**:
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `user_id` | string | Yes | - | User whose skill library is curated |
+| `stale_days` | integer | No | 90 | Days without a load before a skill is flagged stale |
+| `include_global` | boolean | No | false | Also flag global-scope skills |
+| `provider` | string | No | - | Optional LLM provider for the review pass (empty = heuristic report only) |
+| `api_key` | string | No | - | API key for the review LLM |
+| `base_url` | string | No | - | API base URL |
+| `model` | string | No | - | Model name |
+
+**Output attributes**: `skill.curator.total`, `skill.curator.flagged`
+
 ### 11.6. Transformation Tasks
 
 #### 11.6.1. JSON Task (`json`)

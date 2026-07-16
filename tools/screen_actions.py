@@ -72,6 +72,9 @@ def _handle_screen_action_direct(action: str, req: dict) -> dict:
         "screen_move": _move,
         "screen_scroll": _scroll,
         "screen_mouse_position": _mouse_position,
+        "screen_status": _status_pawflow,
+        "screen_windows": _cua_only,
+        "screen_window_state": _cua_only,
     }
     fn = _dispatch.get(action)
     if not fn:
@@ -80,6 +83,20 @@ def _handle_screen_action_direct(action: str, req: dict) -> dict:
         return fn(req)
     except Exception as e:
         return {"error": str(e)}
+
+
+def _status_pawflow(req: dict) -> dict:
+    return {"mode": "pawflow",
+            "note": "default backend (pyautogui/win32); set "
+                    "PAWFLOW_SCREEN_MODE=cua for background computer use"}
+
+
+def _cua_only(req: dict) -> dict:
+    return {"error": (
+        "This action needs the CUA screen backend: set "
+        "PAWFLOW_SCREEN_MODE=cua on the relay (cua-driver must be "
+        "installed). AX window/element addressing is not available in "
+        "the default pawflow backend.")}
 
 
 def _screen_action_subprocess(action: str, req: dict) -> dict:

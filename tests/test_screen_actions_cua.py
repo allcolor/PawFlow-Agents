@@ -2,7 +2,6 @@
 
 import base64
 import json
-import os
 import stat
 import sys
 
@@ -34,6 +33,18 @@ elif tool == "get_cursor_position":
 elif tool == "click" and args.get("x") == 999:
     print("background_unavailable: occluded surface on this compositor")
     sys.exit(1)
+elif tool == "list_windows":
+    print("\\u2705 windows")
+    print(json.dumps([{{"pid": 42, "window_id": "w1", "title": "Editor"}}]))
+elif tool == "get_window_state":
+    out = args.get("screenshot_out_file")
+    if out:
+        with open(out, "wb") as fh:
+            fh.write({png!r})
+    print("\\u2705 window state")
+    print(json.dumps({{"elements": [{{"index": 0, "role": "button",
+                                     "name": "OK"}}],
+                      "markdown": "- [0] button OK"}}))
 else:
     print("\\u2705 ok")
 '''
@@ -148,6 +159,104 @@ class TestActions:
             "screen_status", {})
         assert out["mode"] == "cua"
         assert fake_driver()[0]["tool"] == "health_report"
+
+
+class TestAXActions:
+    def test_windows_lists(self, fake_driver):
+        out = screen_actions_cua.handle_screen_action_cua(
+            "screen_windows", {})
+        assert out["windows"][0] == {"pid": 42, "window_id": "w1",
+                                     "title": "Editor"}
+        assert fake_driver()[0]["tool"] == "list_windows"
+
+    def test_window_state_requires_target(self, fake_driver):
+        out = screen_actions_cua.handle_screen_action_cua(
+            "screen_window_state", {})
+        assert "pid and/or window_id" in out["error"]
+        assert fake_driver() == []  # never reaches the driver
+
+    def test_window_state_roundtrip(self, fake_driver):
+        out = screen_actions_cua.handle_screen_action_cua(
+            "screen_window_state", {"pid": 42})
+        assert out["state"]["elements"][0]["role"] == "button"
+        assert out["state"]["markdown"] == "- [0] button OK"
+        assert base64.b64decode(out["image"]) == _PNG_1X1
+        assert (out["width"], out["height"]) == (1, 1)
+        call = fake_driver()[0]
+        assert call["tool"] == "get_window_state"
+        assert call["args"]["pid"] == 42
+        assert call["args"]["session"] == "test-session"
+
+    def test_element_click_skips_pixel_guard(self, fake_driver):
+        # No _screen_guard attached: element addressing must not require
+        # the desktop-pixel guard (the window may be backgrounded).
+        out = screen_actions_cua.handle_screen_action_cua(
+            "screen_click", {"element_index": 3, "pid": 42})
+        assert out["clicked"] is True and out["element_index"] == 3
+        call = fake_driver()[0]
+        assert call["tool"] == "click"
+        assert call["args"]["element_index"] == 3
+        assert call["args"]["pid"] == 42
+        assert "scope" not in call["args"] and "x" not in call["args"]
+
+    def test_element_click_requires_window_target(self, fake_driver):
+        out = screen_actions_cua.handle_screen_action_cua(
+            "screen_click", {"element_index": 3})
+        assert "pid and/or window_id" in out["error"]
+        assert fake_driver() == []
+
+    def test_element_double_click_and_type(self, fake_driver):
+        screen_actions_cua.handle_screen_action_cua(
+            "screen_double_click", {"element_index": 1, "window_id": "w1"})
+        out = screen_actions_cua.handle_screen_action_cua(
+            "screen_type", {"element_index": 1, "window_id": "w1",
+                            "text": "abc"})
+        assert out["typed"] == 3
+        first, second = fake_driver()
+        assert first["tool"] == "click"
+        assert first["args"]["click_count"] == 2
+        assert first["args"]["window_id"] == "w1"
+        assert second["tool"] == "type_text"
+        assert second["args"]["window_id"] == "w1"
+        assert "scope" not in second["args"]
+
+
+class TestContainerDispatch:
+    """fs_screen.py (relay container / Xvfb) routes through cua too."""
+
+    @pytest.fixture()
+    def no_desktop(self, monkeypatch):
+        from tools import fs_screen
+        monkeypatch.setattr(fs_screen, "_ensure_desktop", lambda: None)
+        return fs_screen
+
+    def test_routes_to_cua(self, fake_driver, no_desktop):
+        out = no_desktop.action_screen_mouse_position(None, None, {})
+        assert out == {"x": 12, "y": 34}
+        assert fake_driver()[0]["tool"] == "get_cursor_position"
+
+    def test_ax_actions_available(self, fake_driver, no_desktop):
+        out = no_desktop.action_screen_windows(None, None, {})
+        assert out["windows"][0]["pid"] == 42
+        out = no_desktop.action_screen_window_state(None, None, {"pid": 42})
+        assert out["state"]["markdown"] == "- [0] button OK"
+
+    def test_pawflow_mode_falls_through_to_xdotool(self, monkeypatch,
+                                                   no_desktop):
+        monkeypatch.setenv(screen_actions_cua.MODE_ENV, "pawflow")
+        xdo_calls = []
+        monkeypatch.setattr(no_desktop, "_xdo",
+                            lambda *a, **k: xdo_calls.append(a) or "")
+        out = no_desktop.action_screen_move(None, None, {"x": 1, "y": 2})
+        assert out == {"moved": True, "x": 1, "y": 2}
+        assert xdo_calls == [("mousemove", "1", "2")]
+
+    def test_ax_actions_error_without_cua(self, monkeypatch, no_desktop):
+        monkeypatch.setenv(screen_actions_cua.MODE_ENV, "pawflow")
+        out = no_desktop.action_screen_windows(None, None, {})
+        assert "PAWFLOW_SCREEN_MODE=cua" in out["error"]
+        status = no_desktop.action_screen_status(None, None, {})
+        assert status["mode"] == "pawflow"
 
 
 class TestFailureModes:

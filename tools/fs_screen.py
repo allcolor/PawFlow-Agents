@@ -11,7 +11,6 @@ Auto-starts a virtual desktop (Xvfb+openbox) if no DISPLAY is available.
 import base64
 import io
 import os
-import shutil
 import subprocess  # nosec B404
 import time
 
@@ -47,6 +46,24 @@ def _ensure_desktop():
 def _display_env():
     """Return env dict with DISPLAY set."""
     return {**os.environ, "DISPLAY": os.environ.get("DISPLAY", ":99")}
+
+
+def _cua_route(action, req):
+    """Route to the cua-driver backend when PAWFLOW_SCREEN_MODE=cua.
+
+    Returns None when cua mode is off — callers fall through to the
+    xdotool path. AT-SPI/XTest need a display, so the container Xvfb
+    desktop is ensured first, exactly as for xdotool. The driver runs
+    with DISPLAY set for this process (os.environ), same as _xdo.
+    """
+    try:
+        import screen_actions_cua as cua
+    except ImportError:
+        from tools import screen_actions_cua as cua
+    if not cua.cua_mode_enabled():
+        return None
+    _ensure_desktop()
+    return cua.handle_screen_action_cua(action, req)
 
 
 def _xdo(*args, timeout=5):
@@ -182,6 +199,9 @@ def _validate_screen_guard(req):
 
 
 def action_screen_screenshot(root_dir, abs_path, req):
+    cua = _cua_route("screen_screenshot", req)
+    if cua is not None:
+        return cua
     _ensure_desktop()
     import base64
     try:
@@ -193,7 +213,8 @@ def action_screen_screenshot(root_dir, abs_path, req):
             png = to_png(img.rgb, img.size)
         return {"image": base64.b64encode(png).decode("ascii"), "width": w, "height": h}
     except ImportError:
-        import io, pyautogui
+        import io
+        import pyautogui
         screenshot = pyautogui.screenshot()
         w, h = screenshot.size
         buf = io.BytesIO()
@@ -218,7 +239,8 @@ def action_screen_screenshot_region(root_dir, abs_path, req):
             png = to_png(img.rgb, img.size)
         return base64.b64encode(png).decode("ascii")
     except ImportError:
-        import io, pyautogui
+        import io
+        import pyautogui
         screenshot = pyautogui.screenshot(region=(x, y, w, h))
         buf = io.BytesIO()
         screenshot.save(buf, format="PNG")
@@ -226,6 +248,9 @@ def action_screen_screenshot_region(root_dir, abs_path, req):
 
 
 def action_screen_click(root_dir, abs_path, req):
+    cua = _cua_route("screen_click", req)
+    if cua is not None:
+        return cua
     _ensure_desktop()
     stale = _validate_screen_guard(req)
     if stale:
@@ -239,6 +264,9 @@ def action_screen_click(root_dir, abs_path, req):
 
 
 def action_screen_double_click(root_dir, abs_path, req):
+    cua = _cua_route("screen_double_click", req)
+    if cua is not None:
+        return cua
     _ensure_desktop()
     stale = _validate_screen_guard(req)
     if stale:
@@ -258,6 +286,9 @@ def action_screen_triple_click(root_dir, abs_path, req):
 
 
 def action_screen_right_click(root_dir, abs_path, req):
+    # Stays on xdotool even in cua mode: this legacy unguarded action is not
+    # what agents use (they right-click via screen_click + button=right,
+    # which is guarded and cua-routed).
     _ensure_desktop()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
     _xdo("mousemove", str(x), str(y))
@@ -266,6 +297,9 @@ def action_screen_right_click(root_dir, abs_path, req):
 
 
 def action_screen_type(root_dir, abs_path, req):
+    cua = _cua_route("screen_type", req)
+    if cua is not None:
+        return cua
     _ensure_desktop()
     text = req.get("text", "")
     _xdo("type", "--clearmodifiers", "--delay", "20", "--", text)
@@ -273,6 +307,9 @@ def action_screen_type(root_dir, abs_path, req):
 
 
 def action_screen_key(root_dir, abs_path, req):
+    cua = _cua_route("screen_key", req)
+    if cua is not None:
+        return cua
     _ensure_desktop()
     key = req.get("key", "")
     mapped = _map_key(key)
@@ -281,6 +318,9 @@ def action_screen_key(root_dir, abs_path, req):
 
 
 def action_screen_move(root_dir, abs_path, req):
+    cua = _cua_route("screen_move", req)
+    if cua is not None:
+        return cua
     _ensure_desktop()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
     _xdo("mousemove", str(x), str(y))
@@ -288,6 +328,9 @@ def action_screen_move(root_dir, abs_path, req):
 
 
 def action_screen_scroll(root_dir, abs_path, req):
+    cua = _cua_route("screen_scroll", req)
+    if cua is not None:
+        return cua
     _ensure_desktop()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
     amount = int(req.get("amount", 3))
@@ -303,10 +346,43 @@ def action_screen_scroll(root_dir, abs_path, req):
 
 
 def action_screen_mouse_position(root_dir, abs_path, req):
+    cua = _cua_route("screen_mouse_position", req)
+    if cua is not None:
+        return cua
     _ensure_desktop()
     out = _xdo("getmouselocation")
     parts = dict(p.split(":", 1) for p in out.split() if ":" in p)
     return {"x": int(parts.get("x", 0)), "y": int(parts.get("y", 0))}
+
+
+def action_screen_status(root_dir, abs_path, req):
+    """Backend health: cua health_report in cua mode, else pawflow info."""
+    cua = _cua_route("screen_status", req)
+    if cua is not None:
+        return cua
+    return {"mode": "pawflow",
+            "note": "xdotool/Xvfb container backend; set "
+                    "PAWFLOW_SCREEN_MODE=cua for background computer use"}
+
+
+def action_screen_windows(root_dir, abs_path, req):
+    """AX window list (CUA mode only)."""
+    cua = _cua_route("screen_windows", req)
+    if cua is not None:
+        return cua
+    return {"error": ("screen_windows needs the CUA backend: set "
+                      "PAWFLOW_SCREEN_MODE=cua (cua-driver is bundled in "
+                      "desktop-capable relay images)")}
+
+
+def action_screen_window_state(root_dir, abs_path, req):
+    """AX element tree + grounding screenshot (CUA mode only)."""
+    cua = _cua_route("screen_window_state", req)
+    if cua is not None:
+        return cua
+    return {"error": ("screen_window_state needs the CUA backend: set "
+                      "PAWFLOW_SCREEN_MODE=cua (cua-driver is bundled in "
+                      "desktop-capable relay images)")}
 
 
 def action_screen_drag(root_dir, abs_path, req):
@@ -535,7 +611,8 @@ def action_screen_ocr(root_dir, abs_path, req):
 
 def action_screen_locate(root_dir, abs_path, req):
     _ensure_desktop()
-    import base64, io
+    import base64
+    import io
     template_b64 = req.get("template", "")
     confidence = float(req.get("confidence", 0.8))
     if not template_b64:

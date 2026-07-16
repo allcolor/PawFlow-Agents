@@ -14,6 +14,13 @@ Contract (see docs/CUA_MODE_PLAN.md):
 - structured refusals (``background_unavailable`` /
   ``background_occluded``) and driver errors surface verbatim as tool
   errors — there is NO silent fallback to foreground injection.
+
+Phase 2 (AX-first addressing): ``screen_windows`` lists windows,
+``screen_window_state`` snapshots one window's accessibility tree
+(structured elements + grounding screenshot), and ``screen_click`` /
+``screen_type`` accept an ``element_index`` (with ``pid`` and/or
+``window_id``) to act on an element by AX identity — works on
+backgrounded/minimized windows without any pointer movement.
 """
 
 import base64
@@ -118,6 +125,8 @@ def handle_screen_action_cua(action: str, req: dict) -> dict:
         "screen_scroll": _scroll,
         "screen_mouse_position": _mouse_position,
         "screen_status": _status,
+        "screen_windows": _windows,
+        "screen_window_state": _window_state,
     }
     fn = dispatch.get(action)
     if not fn:
@@ -162,12 +171,49 @@ def _png_size(png: bytes):
             int.from_bytes(png[20:24], "big"))
 
 
+def _window_args(req: dict) -> dict:
+    """pid/window_id addressing for AX (window-scope) driver calls."""
+    args = {}
+    if req.get("pid") is not None:
+        args["pid"] = int(req["pid"])
+    if req.get("window_id") not in (None, ""):
+        args["window_id"] = str(req["window_id"])
+    return args
+
+
+def _element_args(req: dict):
+    """AX element target (phase 2): ``element_index`` from a prior
+    screen_window_state snapshot, addressed within pid/window_id.
+    Returns None when the request targets pixel coordinates instead,
+    or {"error": ...} when the target is incomplete."""
+    if req.get("element_index") is None:
+        return None
+    window = _window_args(req)
+    if not window:
+        return {"error": ("element_index requires pid and/or window_id "
+                          "from screen_windows/screen_window_state")}
+    return {"element_index": int(req["element_index"]), **window}
+
+
 def _click(req: dict) -> dict:
+    button = str(req.get("button", "left") or "left")
+    element = _element_args(req)
+    if element is not None:
+        # AX identity addressing: the desktop-pixel guard cannot apply (the
+        # window may be backgrounded/occluded); a stale element_index gets a
+        # structured driver error instead of a blind click.
+        if "error" in element:
+            return element
+        result = _run_tool("click", {
+            **element, "button": button, "session": _session(req),
+        }, _timeout(req))
+        if "error" in result:
+            return result
+        return {"clicked": True, "cua": True, **element}
     stale = _screen_actions_module()._validate_screen_guard(req)
     if stale:
         return stale
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
-    button = str(req.get("button", "left") or "left")
     result = _run_tool("click", {
         "x": x, "y": y, "scope": "desktop", "button": button,
         "session": _session(req),
@@ -178,6 +224,17 @@ def _click(req: dict) -> dict:
 
 
 def _double_click(req: dict) -> dict:
+    element = _element_args(req)
+    if element is not None:
+        if "error" in element:
+            return element
+        result = _run_tool("click", {
+            **element, "button": "left", "click_count": 2,
+            "session": _session(req),
+        }, _timeout(req))
+        if "error" in result:
+            return result
+        return {"double_clicked": True, "cua": True, **element}
     stale = _screen_actions_module()._validate_screen_guard(req)
     if stale:
         return stale
@@ -193,6 +250,16 @@ def _double_click(req: dict) -> dict:
 
 def _type(req: dict) -> dict:
     text = str(req.get("text", ""))
+    element = _element_args(req)
+    if element is not None:
+        if "error" in element:
+            return element
+        result = _run_tool("type_text", {
+            **element, "text": text, "session": _session(req),
+        }, _timeout(req))
+        if "error" in result:
+            return result
+        return {"typed": len(text), "cua": True, **element}
     result = _run_tool("type_text", {
         "text": text, "scope": "desktop", "session": _session(req),
     }, _timeout(req))
@@ -250,3 +317,55 @@ def _status(req: dict) -> dict:
     result.setdefault("mode", "cua")
     result.setdefault("binary", _cua_bin())
     return result
+
+
+def _windows(req: dict) -> dict:
+    """List windows (AX rung) — pid/window_id/title per window, usable as
+    screen_window_state targets. Works without touching the pointer."""
+    result = _run_tool("list_windows", {"session": _session(req)},
+                       _timeout(req))
+    if "error" in result:
+        return result
+    payload = result.get("result")
+    return {"windows": payload if payload is not None else [], "cua": True}
+
+
+def _window_state(req: dict) -> dict:
+    """Snapshot one window's accessibility tree plus grounding screenshot.
+
+    Returns the driver's structured state (elements array / markdown) under
+    ``state`` and the grounding screenshot as base64 PNG under ``image``.
+    Element indexes in the state are the ``element_index`` values accepted
+    by screen_click/screen_type."""
+    window = _window_args(req)
+    if not window:
+        return {"error": ("screen_window_state requires pid and/or "
+                          "window_id (see screen_windows)")}
+    fd, path = tempfile.mkstemp(suffix=".png", prefix="pawflow_cua_")
+    os.close(fd)
+    try:
+        result = _run_tool("get_window_state", {
+            **window, "screenshot_out_file": path,
+            "session": _session(req),
+        }, _timeout(req))
+        if "error" in result:
+            return result
+        out = {"cua": True, **window}
+        payload = result.get("result")
+        if payload is not None:
+            out["state"] = payload
+        try:
+            with open(path, "rb") as fh:
+                png = fh.read()
+        except OSError:
+            png = b""
+        if png:
+            width, height = _png_size(png)
+            out["image"] = base64.b64encode(png).decode("ascii")
+            out["width"], out["height"] = width, height
+        return out
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass

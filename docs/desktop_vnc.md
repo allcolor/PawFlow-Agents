@@ -58,12 +58,29 @@ Actions:
 | `move` | `x`, `y` | Move the pointer. |
 | `scroll` | `x`, `y`, `amount` | Scroll at a coordinate. |
 | `mouse_position` | - | Read current pointer location. |
+| `status` | - | Screen backend health report (`pawflow` or `cua` mode, driver health). |
+| `windows` | - | List windows with `pid`/`window_id`/title (CUA backend only). |
+| `window_state` | `pid` and/or `window_id` | Accessibility-tree snapshot of one window: element list with indexes plus a grounding screenshot (CUA backend only). |
 
 Always take a screenshot first. The result includes the screen resolution and an opaque `screen revision`; all coordinates are physical pixels in that screenshot coordinate space. Do not derive click positions from the resized screenshot preview rendered inside the chat; use the returned resolution, for example `2560x1440`, as the coordinate space for `x` and `y`.
 
 `click` and `double_click` require the exact revision associated with the image used to select the coordinates. PawFlow resolves that revision server-side, extracts a small reference crop around `target_bbox` (or around `x,y` when no box is supplied), and sends the crop privately to the relay. Immediately before any mouse movement, the relay captures the same region and compares the two images locally. A changed region returns `STALE_SCREEN` and performs no input; an unchanged region proceeds. This optimistic check does not call the primary or vision LLM and adds no second image-token charge; only the small opaque revision travels in the normal tool exchange. Only a rejected stale action requires the agent to inspect a new screenshot.
 
 Use `see(path="screen", local=true)` or `see(path="screenshot", local=true)` when the agent needs to inspect the real desktop through the multimodal vision path. The shortcut accepts the relay screenshot format `{image, width, height}` and includes both the screen revision and the same physical-pixel coordinate hint before the image payload. The original full-resolution capture is retained for the guard even when the image sent to the model is resized.
+
+### CUA screen mode (background computer use)
+
+Set `PAWFLOW_SCREEN_MODE=cua` on the relay (host helper and/or container) to route screen actions through [cua-driver](https://github.com/trycua/cua) instead of pyautogui/xdotool. Desktop-capable relay images bundle the binary; on a host desktop install it with `curl -fsSL https://cua.ai/driver/install.sh | bash`. `PAWFLOW_CUA_BIN` overrides the binary path, `PAWFLOW_CUA_SESSION` names the overlay-cursor session (one tinted agent cursor per session — several agents can drive the same desktop visibly and independently).
+
+What changes in CUA mode:
+
+- The real OS cursor never moves and focus is never stolen; `move` becomes an honest no-op.
+- Coordinate actions (`click`, `scroll`, `type`, `key`) go through cua-driver desktop scope; the pre-click screen guard keeps running unchanged.
+- AX addressing becomes available: `windows` lists windows, `window_state` returns one window's accessibility-element tree plus a grounding screenshot, and `click`/`double_click`/`type` accept `element_index` (with `pid`/`window_id`) to act on an element by identity — including backgrounded or minimized windows. Element actions need no coordinates and no `expected_screen_revision`; a stale `element_index` returns a structured driver error instead of clicking blind.
+- Unsupported routes surface structured refusals (`background_unavailable`, `background_occluded`) verbatim — there is no silent fallback to foreground input injection.
+- `window_state` grounding screenshots flow through the normal vision path, so delegated vision (text-only models with a `vision_llm_service`) keeps working; the AX element tree itself is plain text and free for any model.
+
+Platform expectations: Windows and macOS are supported by cua-driver (macOS needs Accessibility + Screen Recording permissions and can break on OS updates — check `status`); Linux X11 works with toolkit limits (AT-SPI for background semantic actions); stock Wayland cannot deliver arbitrary background pixel input. Inside the relay container the Xvfb desktop supports AT-SPI, so `windows`/`window_state` work there without any pointer contention with a user connected over VNC. See `docs/CUA_MODE_PLAN.md` for the full design.
 
 ## VNC Proxy
 

@@ -155,6 +155,48 @@ def test_screen_click_without_revision_never_reaches_relay():
     assert relay.calls == []
 
 
+def test_screen_element_click_skips_pixel_guard():
+    """AX element clicks (CUA backend) are addressed by element identity —
+    no expected_screen_revision and no _screen_guard attached."""
+    relay = _Relay({"clicked": True, "cua": True, "element_index": 2,
+                    "pid": 42})
+    handler = ScreenHandler()
+    handler.set_service(relay)
+    handler.set_user_id("user-1")
+    handler.set_conversation_id("conv-1")
+
+    result = handler.execute({
+        "action": "click", "element_index": 2, "pid": 42, "local": True,
+    })
+
+    assert result == "OK: click completed"
+    action, _path, local, kwargs = relay.calls[-1]
+    assert (action, local) == ("screen_click", True)
+    assert "_screen_guard" not in kwargs
+    assert "expected_screen_revision" not in kwargs
+    assert kwargs["element_index"] == 2
+    assert kwargs["pid"] == 42
+
+
+def test_screen_window_state_result_formats_elements(monkeypatch):
+    _patch_screen_store(monkeypatch)
+    handler = ScreenHandler()
+    handler.set_user_id("user-1")
+    handler.set_conversation_id("conv-1")
+
+    result = handler._handle_result("window_state", {
+        "cua": True, "pid": 42,
+        "state": {"elements": [{"index": 0, "role": "button",
+                                "name": "OK"}]},
+        "image": _valid_png_b64(), "width": 4, "height": 4,
+    }, route_key="route-1")
+
+    assert "Window state captured." in result
+    assert "Grounding screenshot (4x4):" in result
+    assert "element_index" in result
+    assert '"button"' in result
+
+
 def test_screen_stale_result_is_never_reported_as_success():
     result = ScreenHandler()._handle_result(
         "click", {"stale_screen": True, "difference": 0.25})

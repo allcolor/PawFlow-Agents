@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- CUA screen mode phase 2 (AX-first addressing, `docs/CUA_MODE_PLAN.md`):
+  new `screen` tool actions `windows` (window list), `window_state`
+  (accessibility-element tree + grounding screenshot) and `status` (backend
+  health), and `click`/`double_click`/`type` now accept `element_index` with
+  `pid`/`window_id` to act on an element by AX identity — works on
+  backgrounded/minimized windows, no coordinates or screen revision needed
+  (a stale element yields a structured driver error instead of a blind
+  click). The relay container path (`tools/fs_screen.py`) now routes through
+  cua-driver too when `PAWFLOW_SCREEN_MODE=cua` — AT-SPI element trees on
+  the Xvfb desktop with zero pointer contention with VNC users; the default
+  xdotool backend is unchanged. Documented in `docs/desktop_vnc.md`.
 - Desktop-capable relay images now bundle `cua-driver`: install step in the
   `desktop.runtime` feature of `config/relay_image_catalog.json` (relay image
   version `2026.07.16`) and in `docker/relay-dev/Dockerfile`, ready for CUA

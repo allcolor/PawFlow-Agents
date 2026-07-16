@@ -86,9 +86,9 @@ Structured refusals (`background_unavailable`, `background_occluded`) are surfac
 | Piece | Effort |
 |---|---|
 | Phase 1: mode switch + `screen_actions_cua.py` (screenshot/click/scroll mapping, session ids, health, refusal policy) | **Done 2026-07-16** — `tools/screen_actions_cua.py`, dispatch in `tools/screen_actions.py`, 14 tests (`tests/test_screen_actions_cua.py`, mocked binary). Env: `PAWFLOW_SCREEN_MODE=cua`, `PAWFLOW_CUA_BIN`, `PAWFLOW_CUA_SESSION`. New `screen_status` action wraps `health_report` |
-| Relay image: bundle `cua-driver` (setup step in `desktop.runtime` catalog feature + `docker/relay-dev/Dockerfile`) | **Done 2026-07-16** — binary is present in desktop-capable relay images; the container dispatch (`tools/fs_screen.py`) is still xdotool-only and lands with phase 2 |
+| Relay image: bundle `cua-driver` (setup step in `desktop.runtime` catalog feature + `docker/relay-dev/Dockerfile`) | **Done 2026-07-16** — binary is present in desktop-capable relay images; container dispatch landed with phase 2 |
 | Spike: desktop-scope `type_text`/`press_key` contract validation on the three OSes | 1 day, gates phase 1 completion |
-| Phase 2: AX-first relay actions + container AT-SPI | ~1 week, independent |
+| Phase 2: AX-first relay actions + container AT-SPI | **Done 2026-07-16** — `screen_windows` / `screen_window_state` (AX tree + grounding screenshot) and `element_index` targets on click/type in `screen_actions_cua.py`; container dispatch (`fs_screen.py` routes to cua, xdotool fallback intact); `ScreenHandler` exposes `windows`/`window_state`/`status` + `pid`/`window_id`/`element_index`, pixel guard bypassed for element clicks (AX identity replaces it). Tests: 24 cua + handler tests |
 | Docs/website (desktop how-to, expectation matrix per OS) | 0.5 day |
 
 ## 7. Recommendation

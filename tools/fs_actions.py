@@ -59,6 +59,7 @@ from fs_screen import (  # noqa: E402,F401
     action_screen_window_close, action_screen_window_resize,
     action_screen_window_minimize, action_screen_window_maximize,
     action_screen_ocr, action_screen_locate,
+    action_screen_status, action_screen_windows, action_screen_window_state,
 )
 from fs_mcp import (  # noqa: E402,F401
     action_mcp_start, action_mcp_discover, action_mcp_call,
@@ -127,6 +128,9 @@ ACTIONS = {
     "screen_window_maximize": action_screen_window_maximize,
     "screen_ocr": action_screen_ocr,
     "screen_locate": action_screen_locate,
+    "screen_status": action_screen_status,
+    "screen_windows": action_screen_windows,
+    "screen_window_state": action_screen_window_state,
     "mcp_start": action_mcp_start,
     "mcp_call": action_mcp_call,
     "mcp_discover": action_mcp_discover,

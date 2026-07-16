@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- CUA screen mode (phase 1 of `docs/CUA_MODE_PLAN.md`): with
+  `PAWFLOW_SCREEN_MODE=cua`, relay-host `screen_*` actions route through
+  [cua-driver](https://github.com/trycua/cua) desktop-scope tools (CLI form,
+  per-action subprocess) for background computer use — the real cursor never
+  moves and focus is not stolen. Per-agent overlay-cursor sessions
+  (`PAWFLOW_CUA_SESSION`), pre-click screen guard unchanged, structured
+  refusals surfaced verbatim (no silent foreground fallback), and a new
+  `screen_status` action exposing the driver health report. Default backend
+  is unchanged.
+
 - Skill learning loop (P1–P3 of `docs/LEARNING_LOOP_PLAN.md`):
   - Agents now receive a `## Skill loop` system-prompt block instructing them
     to crystallize novel multi-step procedures into skills via

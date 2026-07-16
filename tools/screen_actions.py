@@ -40,11 +40,24 @@ def _get_pyautogui():
 def handle_screen_action(action: str, req: dict) -> dict:
     """Dispatch a screen_* action. Returns dict result.
 
+    With PAWFLOW_SCREEN_MODE=cua, actions route through cua-driver
+    (background computer use, no cursor/focus steal) — see
+    screen_actions_cua.py. cua calls are already per-action subprocesses
+    with their own timeout, so the killable-child wrapper is skipped.
+
     Host GUI libraries can block inside OS APIs. Keep the relay host-helper
     thread killable by running every screen action in a subprocess with the
     request timeout. The child process executes the direct implementation.
     """
     if os.environ.get(_CHILD_ENV) != "1":
+        try:
+            from tools.screen_actions_cua import (cua_mode_enabled,
+                                                  handle_screen_action_cua)
+        except ImportError:
+            from screen_actions_cua import (cua_mode_enabled,
+                                            handle_screen_action_cua)
+        if cua_mode_enabled():
+            return handle_screen_action_cua(action, req)
         return _screen_action_subprocess(action, req)
     return _handle_screen_action_direct(action, req)
 

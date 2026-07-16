@@ -205,6 +205,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y xfce4-pulseaudio-plugin 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
 
+# ── cua-driver (background computer use, PAWFLOW_SCREEN_MODE=cua) ───────
+RUN curl -fsSL https://cua.ai/driver/install.sh | bash \
+    && { command -v cua-driver >/dev/null \
+         || install -m 0755 /root/.local/bin/cua-driver /usr/local/bin/cua-driver; } \
+    && cua-driver --version
+
 # ── Desktop apps: image, video, audio, office, viewers ─────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gimp gimp-plugin-registry inkscape imagemagick \

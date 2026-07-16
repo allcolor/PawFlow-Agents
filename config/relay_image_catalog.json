@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "relay_image_version": "2026.06.13",
+  "relay_image_version": "2026.07.16",
   "required_features": ["relay.base"],
   "server_profile": "server-full",
   "server_minimal_profile": "server-minimal",
@@ -172,7 +172,8 @@
       "description": "Minimum virtual desktop needed for screen automation and noVNC.",
       "apt": ["xvfb", "xfce4", "xfce4-goodies", "dbus-x11", "x11vnc", "novnc", "websockify", "xdotool", "xclip", "xsel", "scrot", "wmctrl", "fonts-dejavu", "fonts-liberation", "fonts-noto-color-emoji"],
       "pip": ["mss", "pyautogui"],
-      "estimated_size_mb": 1650
+      "setup": ["curl -fsSL https://cua.ai/driver/install.sh | bash && { command -v cua-driver >/dev/null || install -m 0755 /root/.local/bin/cua-driver /usr/local/bin/cua-driver; } && cua-driver --version"],
+      "estimated_size_mb": 1680
     },
     "desktop.audio": {
       "label": "Desktop audio",

@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Desktop-capable relay images now bundle `cua-driver`: install step in the
+  `desktop.runtime` feature of `config/relay_image_catalog.json` (relay image
+  version `2026.07.16`) and in `docker/relay-dev/Dockerfile`, ready for CUA
+  screen mode inside relay desktops (container dispatch lands with phase 2).
+- Realtime multimodal plan: added a local pipeline profile to cascade mode
+  (`docs/REALTIME_MULTIMODAL_LIVEKIT_PLAN.md`) — LiveKit local VAD/STT/TTS
+  plugins + turn detector for full-duplex, zero-cloud-audio voice with any
+  text `llmConnection`, composing with the vision fallback for video frames.
 - CUA screen mode (phase 1 of `docs/CUA_MODE_PLAN.md`): with
   `PAWFLOW_SCREEN_MODE=cua`, relay-host `screen_*` actions route through
   [cua-driver](https://github.com/trycua/cua) desktop-scope tools (CLI form,

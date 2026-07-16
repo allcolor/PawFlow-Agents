@@ -1,7 +1,7 @@
 # Realtime Multimodal LiveKit Integration Plan
 
 Status: planned.
-Decided: 2026-07-06.
+Decided: 2026-07-06. Updated: 2026-07-16 (local pipeline profile added to cascade mode).
 Owner intent: replace PawFlow's custom realtime voice bridge with a LiveKit Agents based implementation, then extend it to audio/video multimodal sessions without duplicating media transport or provider-specific realtime stacks.
 
 This plan supersedes the custom-provider direction in `docs/REALTIME_VOICE_PLAN.md` for future realtime work. The existing `realtimeVoiceConnection` implementation is treated as a migration source and temporary compatibility layer only. The target architecture is: PawFlow remains the orchestration, identity, tool, memory, and persistence layer; LiveKit Agents becomes the realtime media and provider integration layer.
@@ -347,6 +347,18 @@ Use this for Anthropic and other text-first LLMs. This is an explicit fallback m
 
 Cascade mode should reuse existing PawFlow services: configured STT services for speech recognition, normal `llmConnection` services for the text agent loop, and configured TTS services for speech output. It should not introduce a separate STT/TTS registry.
 
+### Local Pipeline Profile (zero-cloud-audio cascade)
+
+Added 2026-07-16. A special case of cascade mode: run the entire voice loop with local components so no audio ever leaves the deployment — only the text turn goes to the configured `llmConnection`.
+
+- Building blocks are standard LiveKit Agents plugins: Silero VAD, a local Whisper/faster-whisper STT plugin, a local TTS plugin (e.g. Kokoro), and the LiveKit turn-detector model for end-of-turn detection. Barge-in/interruption handling comes from the LiveKit `AgentSession`, exactly as for native realtime providers — PawFlow does not rebuild any of it.
+- Works with any text-first `llmConnection`, including non-vision models: video frames extracted by LiveKit go through the existing vision fallback (`vision_llm_service`), so a text-only model can still "see" camera/screen input.
+- PawFlow already ships local engines for the turn-by-turn walkie-talkie path (Voicebox/Whisper STT, Supertonic TTS). The gap this profile closes is the full-duplex streaming pipeline: continuous VAD, smart end-of-turn detection, sentence-by-sentence TTS while the LLM streams, and barge-in mid-word.
+- The local plugins run inside the sidecar worker, not the PawFlow server process; the worker image must document model download/caching (VAD/STT/TTS weights) so first-call latency is predictable.
+- Market validation: OpenLive (see `marketing/concurrent-openlive.md`) proves demand for exactly this shape — on-device voice loop, bring-your-own text model, delegated vision. Positioning: no audio upload, no per-minute metering, any model, pairs with the free-tier OOTB story (e.g. Ollama cloud GLM + local voice).
+
+Configuration reuses the same realtime service shape with `provider: local_pipeline`; STT/TTS/VAD plugin choices are service config keys resolved by the worker.
+
 ## Relay and Credential Boundaries
 
 The LiveKit worker does not need the PawFlow relay to access user files by default. It should call back into PawFlow for tools and context instead of mounting relay workspaces directly. This keeps the same authorization path as normal PawFlow tool execution.
@@ -535,12 +547,14 @@ Acceptance:
 - Reuse existing PawFlow STT, `llmConnection`, and TTS services.
 - Surface cascade mode as higher-latency fallback in UI/config.
 - Preserve interruption semantics as best-effort only.
+- Add the local pipeline profile (`provider: local_pipeline`): Silero VAD + local Whisper STT + local TTS (e.g. Kokoro) + LiveKit turn-detector model in the sidecar worker; document model download/caching.
 
 Acceptance:
 
 - Anthropic or another text-first LLM can run through STT -> LLM -> TTS.
 - UI labels cascade sessions as fallback/high-latency.
 - Native realtime providers still use LiveKit provider plugins instead of cascade.
+- A text-only `llmConnection` can hold a full-duplex voice session with barge-in where no audio leaves the deployment, and non-vision models see video frames through the vision fallback.
 
 ### P8: Recording and Provenance
 
@@ -566,6 +580,7 @@ Acceptance:
 | AWS Nova Sonic via LiveKit | yes | no initial target | limited/provider-dependent | AWS voice workloads |
 | ElevenLabs | TTS/agent voice | no initial target | provider-dependent | separate TTS or voice layer |
 | Anthropic cascade | via STT/TTS | via extracted frames | PawFlow tools | text-first fallback |
+| Local pipeline (LiveKit local VAD/STT/TTS plugins + any `llmConnection`) | yes, fully local | via extracted frames + vision fallback | PawFlow tools | private zero-cloud-audio voice for any text model |
 
 ## Migration Plan from Existing Realtime Voice
 

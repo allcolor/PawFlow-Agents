@@ -40,6 +40,10 @@ Use approval gates for shell, edit, delete, desktop, VNC, and external network o
 
 Media tools may send prompts, source images, videos, audio, or voice samples to external providers. Voice clone tools must only be used with samples the user is allowed to clone. Store provider API keys as secrets and document provider data-retention policies separately if deploying for teams.
 
+### Realtime LiveKit token scoping
+
+Realtime sessions on the `livekit` engine never expose provider or LiveKit API secrets to browsers. `POST /api/realtime/livekit/start` (session-authenticated, conversation-owner-only) returns a LiveKit **room token** only: JWT signed with the LiveKit API secret, scoped to one room/one session, TTL `min(max_session_seconds + 60s, 15 min)`, minimum grants (join, publish own mic — plus camera/screen only when `video_input` is enabled — subscribe; never `roomAdmin`). The sidecar worker gets two separate credentials: an agent room token, and a **worker-control token** (PawFlow-signed via a SecretsManager subkey, audience-bound, scoped to one session/conversation/agent) required to open `/ws/realtime-worker/{session_id}` — the route is public but fails closed on any token mismatch, and a room token can never be used as a control token. Force-stop sends `shutdown` on the control channel, closes it, and removes the session; a leaked room token may stay cryptographically valid until TTL expiry, which is why the TTL is short and stopped sessions reject further server-side work.
+
 ## Secrets
 
 Use PawFlow secret storage or environment variables for API keys. Never hard-code secrets in flows, agent prompts, or docs. When writing examples, use `${SECRET_NAME}` placeholders.

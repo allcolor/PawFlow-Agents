@@ -91,6 +91,8 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
     # JSON repair
     "json-repair>=0.58.0",
+    # Realtime worker-control tooling (spike server/client, LiveKit worker)
+    "aiohttp>=3.9.0",
 ]
 
 [project.optional-dependencies]

@@ -22,6 +22,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   zero-cloud-audio cascade — Silero VAD + turn-detector + local
   OpenAI-compatible STT/TTS + any text LLM) and `SPIKE_VIDEO=1` on the
   OpenAI spike (gpt-realtime image-input frame path).
+- Realtime LiveKit P1 (service + session API): `realtimeVoiceConnection`
+  gains `engine: livekit` with full config validation and a compatibility
+  loader mapping legacy configs (`protocol`→`provider`,
+  `vad`→`turn_detection`); scoped JWT tokens (browser room token with
+  minimum grants and 15-min-capped TTL, agent room token, PawFlow-signed
+  worker-control token); session registry with one active session per
+  conversation and force-stop integration; `POST
+  /api/realtime/livekit/start`/`stop` endpoints and the
+  `/ws/realtime-worker/{session_id}` control WebSocket speaking the
+  promoted `services/_realtime_worker_protocol.py` contract; `realtime.*`
+  events on the conversation event bus. 40 new unit tests
+  (`tests/test_livekit_engine.py`); docs in `services.md` and
+  `security_model.md`.
 - CUA screen mode phase 2 (AX-first addressing, `docs/CUA_MODE_PLAN.md`):
   new `screen` tool actions `windows` (window list), `window_state`
   (accessibility-element tree + grounding screenshot) and `status` (backend

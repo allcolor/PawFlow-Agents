@@ -273,6 +273,15 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                             "voice session", conv_id[:8])
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        # Same for a LiveKit realtime session (engine: livekit).
+        try:
+            from services._livekit_sessions import stop_livekit_session
+            if stop_livekit_session(conversation_id=conv_id,
+                                    reason="force_stop"):
+                logger.info("[agent:%s] force-stopped active LiveKit "
+                            "realtime session", conv_id[:8])
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
         # Kill Claude Code subprocess (check keyed entries)
         with _exec._active_contexts_lock:

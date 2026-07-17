@@ -2,18 +2,12 @@
 
 import json
 import logging
-import time
-import threading
 import base64
 import os
 import shutil
 import subprocess  # nosec B404
 import tempfile
-from typing import Dict, Any, List, Optional
 
-from core import FlowFile
-from core.llm_client import LLMMessage, LLMClient
-from core.tool_registry import ToolRegistry
 from tasks.ai.agent_utils import AgentUtilsMixin
 
 logger = logging.getLogger(__name__)
@@ -414,9 +408,11 @@ def _handle_media(self, action, body, store, user_id, flowfile):
             try:
                 from services.http_listener_service import _instances
                 from services._realtime_bridge import register_realtime_route
+                from services._livekit_sessions import register_livekit_routes
                 _http_svc = _instances.get(int(_req_port))
                 if _http_svc:
                     register_realtime_route(_http_svc)
+                    register_livekit_routes(_http_svc)
             except Exception:
                 logger.warning("[realtime] route registration failed",
                                exc_info=True)

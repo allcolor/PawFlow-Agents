@@ -446,7 +446,15 @@ Acceptance:
 P0 progress (2026-07-17):
 
 - Landed: `pawflow[realtime-livekit]` optional dependency group; import guard `services/livekit_deps.py` with actionable setup error; docker-compose `realtime` profile (LiveKit dev server + `livekit-worker` sidecar, `docker/livekit-worker/Dockerfile`); spike scripts and runbook under `spikes/livekit/` (OpenAI voice, Gemini video + synthetic-frame publisher, worker-control WebSocket prototype with fake tool round-trip); protocol prototype `control_protocol.py` unit-tested in CI (`tests/test_livekit_spike_control.py`), local end-to-end round-trip verified. Also landed ahead of P7: local pipeline spike (`spike_local_pipeline.py` — Silero VAD + turn-detector + local OpenAI-compatible STT/TTS + any text LLM, the OpenLive-shaped zero-cloud-audio path) and `SPIKE_VIDEO=1` on the OpenAI spike (gpt-realtime image-input frame path).
-- Remaining before P1: run the OpenAI voice and Gemini video spikes against live endpoints (needs `OPENAI_API_KEY` / `GOOGLE_API_KEY`), and record plugin capability gaps (Gemini session resumption, video sampling controls, tool behavior) in the migration matrix and the spike README findings log.
+- Remaining before P1 sign-off: run the OpenAI voice and Gemini video spikes against live endpoints (needs `OPENAI_API_KEY` / `GOOGLE_API_KEY`), and record plugin capability gaps (Gemini session resumption, video sampling controls, tool behavior) in the migration matrix and the spike README findings log. (Owner decision 2026-07-17: implementation continues through the phases; all live validation happens at the end.)
+
+P1 progress (2026-07-17) — implemented:
+
+- `engine: livekit` on `realtimeVoiceConnection` (`services/realtime_voice_service.py`), full config validation + UI schema keys; compatibility loader `services/_livekit_engine.py::resolve_livekit_config` maps legacy configs deterministically (`protocol`→`provider`, `vad`→`turn_detection`) and fails clearly on missing LiveKit settings.
+- Scoped tokens (`services/_livekit_engine.py`, pyjwt — no LiveKit SDK server-side): browser room token (minimum grants, no admin, TTL `min(max+60s, 15min)`), agent room token, PawFlow-signed worker-control token (SecretsManager subkey, audience + session scoped).
+- Session registry + API (`services/_livekit_sessions.py`): `POST /api/realtime/livekit/start`/`stop` (owner/admin only), one active session per conversation (newcomer supersedes), force-stop wired into `cancel_interrupt.py`, `realtime.*` events published on the ConversationEventBus.
+- Worker-control WS endpoint `/ws/realtime-worker/{session_id}` (public route, fails closed on token mismatch), protocol promoted to `services/_realtime_worker_protocol.py` (spike re-exports it). Worker `tool_call` gets an explicit not-wired-yet refusal until P2.
+- Tests: `tests/test_livekit_engine.py` (40) + spike protocol tests — 153 realtime/livekit tests green. Docs: `services.md`, `security_model.md`.
 
 ### P1: Service and Session API
 

@@ -75,3 +75,5 @@ pyarrow>=13.0.0
 google-cloud-storage>=2.10.0
 azure-storage-blob>=12.17.0
 psycopg2-binary>=2.9.0
+# Realtime worker-control spike/server tooling and LiveKit worker HTTP client
+aiohttp>=3.9.0

@@ -36,6 +36,13 @@ class RealtimeVoiceConnectionService(BaseService):
 
     def __init__(self, config):
         super().__init__(config)
+        # engine: 'legacy' = shipped custom bridge; 'livekit' = LiveKit
+        # engine (docs/REALTIME_MULTIMODAL_LIVEKIT_PLAN.md). Legacy configs
+        # have no engine key and keep the custom bridge until the P3 route
+        # switch; their LiveKit mapping is produced on demand by
+        # `livekit_config()` (compatibility loader).
+        self.engine = (self.config.get("engine", "legacy")
+                       or "legacy").strip().lower()
         self.llm_service = (self.config.get("llm_service", "") or "").strip()
         self.protocol = (self.config.get("protocol", "openai_realtime")
                          or "openai_realtime").strip().lower()
@@ -71,6 +78,15 @@ class RealtimeVoiceConnectionService(BaseService):
     # -- BaseService ----------------------------------------------------
 
     def _create_connection(self):
+        if self.engine == "livekit":
+            # Full LiveKit config validation (fails clearly on missing
+            # livekit_url / api key / secret / provider / model).
+            self.livekit_config()
+            return {"ready": True}
+        if self.engine != "legacy":
+            raise ServiceError(
+                f"Unknown realtime engine '{self.engine}'. "
+                "Supported: legacy, livekit")
         if not self.llm_service:
             raise ServiceError(
                 "llm_service is required for realtimeVoiceConnection")
@@ -81,6 +97,16 @@ class RealtimeVoiceConnectionService(BaseService):
                 f"Unknown realtime protocol '{self.protocol}'. "
                 f"Supported: {', '.join(REALTIME_PROTOCOLS)}")
         return {"ready": True}
+
+    def livekit_config(self) -> dict:
+        """Resolved LiveKit engine config (compatibility loader).
+
+        Works for engine=livekit configs and for legacy configs whose
+        provider is covered by LiveKit (protocol -> provider mapping).
+        Raises ServiceError when required LiveKit settings are missing.
+        """
+        from services._livekit_engine import resolve_livekit_config
+        return resolve_livekit_config(self.config)
 
     def _close_connection(self):
         pass
@@ -163,6 +189,43 @@ class RealtimeVoiceConnectionService(BaseService):
 
     def get_parameter_schema(self) -> dict:
         return {
+            "engine": {
+                "type": "select", "required": False, "default": "legacy",
+                "options": ["legacy", "livekit"],
+                "description": "legacy = built-in provider bridge (current default). livekit = LiveKit engine (media via LiveKit server + sidecar worker; requires the livekit_* keys below).",
+            },
+            "livekit_url": {"type": "string", "required": False, "default": "",
+                             "description": "livekit engine: LiveKit server URL (ws://localhost:7880 for the docker-compose dev server, or a LiveKit Cloud wss:// URL)."},
+            "livekit_api_key": {"type": "string", "required": False, "default": "",
+                                 "description": "livekit engine: LiveKit API key (devkey on the dev server)."},
+            "livekit_api_secret": {"type": "password", "required": False, "default": "",
+                                    "description": "livekit engine: LiveKit API secret (secret on the dev server)."},
+            "provider": {
+                "type": "select", "required": False, "default": "",
+                "options": ["", "openai", "gemini", "azure_openai", "xai",
+                             "aws_nova", "local_pipeline"],
+                "description": "livekit engine: realtime provider plugin. Empty = derived from protocol (openai_realtime→openai, gemini_live→gemini). local_pipeline = zero-cloud-audio cascade (local VAD/STT/TTS + any llmConnection).",
+            },
+            "modalities": {"type": "string", "required": False, "default": "audio,text",
+                            "description": "livekit engine: comma list of audio, text, video."},
+            "video_input": {"type": "boolean", "required": False, "default": False,
+                             "description": "livekit engine: enable camera/screen frame ingestion (also implied by 'video' in modalities)."},
+            "video_source": {
+                "type": "select", "required": False, "default": "camera",
+                "options": ["camera", "screen", "both"],
+                "description": "livekit engine: which video sources the browser may publish.",
+            },
+            "turn_detection": {
+                "type": "select", "required": False, "default": "",
+                "options": ["", "provider_default", "semantic_vad",
+                             "server_vad", "manual"],
+                "description": "livekit engine: replaces legacy vad (empty = derived: server→server_vad, manual→manual, else provider_default).",
+            },
+            "recording_policy": {
+                "type": "select", "required": False, "default": "transcript",
+                "options": ["none", "transcript", "audio", "audio_video"],
+                "description": "livekit engine: what is persisted. Default transcript only — raw audio/video recording is explicit opt-in (P8).",
+            },
             "llm_service": {
                 "type": "service_ref", "service_type": "llmConnection",
                 "required": True,

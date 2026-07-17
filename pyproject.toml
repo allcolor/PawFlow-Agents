@@ -109,6 +109,15 @@ docs = [
 sdk = [
     "httpx>=0.25.0",
 ]
+# LiveKit realtime engine (docs/REALTIME_MULTIMODAL_LIVEKIT_PLAN.md).
+# Not in core deps: the sidecar worker and spikes need it, minimal
+# PawFlow installs do not. services/livekit_deps.py guards imports.
+realtime-livekit = [
+    "livekit-agents>=1.6.0",
+    "livekit-plugins-openai>=1.6.0",
+    "livekit-plugins-google>=1.6.0",
+    "livekit-plugins-silero>=1.6.0",
+]
 
 [project.scripts]
 pawflow = "cli:main"

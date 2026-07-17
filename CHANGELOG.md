@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Realtime LiveKit P0 spike (`docs/REALTIME_MULTIMODAL_LIVEKIT_PLAN.md`):
+  new optional dependency group `pawflow[realtime-livekit]` guarded by
+  `services/livekit_deps.py` (clear setup error when absent), docker-compose
+  `realtime` profile (self-hosted LiveKit dev server + `livekit-worker`
+  sidecar built from `docker/livekit-worker/Dockerfile`), and spike scripts
+  under `spikes/livekit/`: OpenAI Realtime voice hello-world, Gemini Live
+  video hello-world with a synthetic-frame publisher, and the worker-control
+  WebSocket prototype (`control_protocol.py`) with a fake tool-call
+  round-trip — protocol covered by CI tests
+  (`tests/test_livekit_spike_control.py`), no live provider calls.
 - CUA screen mode phase 2 (AX-first addressing, `docs/CUA_MODE_PLAN.md`):
   new `screen` tool actions `windows` (window list), `window_state`
   (accessibility-element tree + grounding screenshot) and `status` (backend

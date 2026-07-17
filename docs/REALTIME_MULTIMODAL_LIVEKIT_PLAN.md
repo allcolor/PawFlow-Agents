@@ -1,6 +1,6 @@
 # Realtime Multimodal LiveKit Integration Plan
 
-Status: planned.
+Status: P0 in progress — spike infrastructure landed 2026-07-17 (dependency group, compose profile, spike scripts, worker-control prototype + CI tests); live OpenAI/Gemini spike runs pending API keys.
 Decided: 2026-07-06. Updated: 2026-07-16 (local pipeline profile added to cascade mode).
 Owner intent: replace PawFlow's custom realtime voice bridge with a LiveKit Agents based implementation, then extend it to audio/video multimodal sessions without duplicating media transport or provider-specific realtime stacks.
 
@@ -442,6 +442,11 @@ Acceptance:
 - Missing LiveKit dependencies produce a clear setup error.
 - The spike proves OpenAI voice, Gemini visual input, and worker-control tool round-trip before P1 starts.
 - Any gap versus shipped custom realtime voice is written into the migration matrix.
+
+P0 progress (2026-07-17):
+
+- Landed: `pawflow[realtime-livekit]` optional dependency group; import guard `services/livekit_deps.py` with actionable setup error; docker-compose `realtime` profile (LiveKit dev server + `livekit-worker` sidecar, `docker/livekit-worker/Dockerfile`); spike scripts and runbook under `spikes/livekit/` (OpenAI voice, Gemini video + synthetic-frame publisher, worker-control WebSocket prototype with fake tool round-trip); protocol prototype `control_protocol.py` unit-tested in CI (`tests/test_livekit_spike_control.py`), local end-to-end round-trip verified.
+- Remaining before P1: run the OpenAI voice and Gemini video spikes against live endpoints (needs `OPENAI_API_KEY` / `GOOGLE_API_KEY`), and record plugin capability gaps (Gemini session resumption, video sampling controls, tool behavior) in the migration matrix and the spike README findings log.
 
 ### P1: Service and Session API
 

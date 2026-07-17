@@ -77,6 +77,39 @@ services:
     profiles:
       - relay
 
+  # Optional: self-hosted LiveKit server for realtime audio/video sessions
+  # (docs/REALTIME_MULTIMODAL_LIVEKIT_PLAN.md). Dev mode uses the well-known
+  # devkey/secret API key pair — never expose this profile publicly as-is.
+  # host networking avoids mapping the WebRTC UDP port range (Linux only;
+  # on macOS/Windows switch to explicit `ports:` and set rtc.port_range in
+  # a LiveKit config file).
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --dev --bind 0.0.0.0
+    network_mode: host
+    restart: unless-stopped
+    profiles:
+      - realtime
+
+  # Optional: LiveKit Agents sidecar worker. P0 runs the spike entrypoint
+  # (spikes/livekit/); the production worker replaces the command in P2.
+  livekit-worker:
+    build:
+      context: .
+      dockerfile: docker/livekit-worker/Dockerfile
+    network_mode: host
+    environment:
+      - LIVEKIT_URL=${LIVEKIT_URL:-ws://localhost:7880}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+    depends_on:
+      - livekit
+    restart: unless-stopped
+    profiles:
+      - realtime
+
   # Optional: PostgreSQL backend
   postgres:
     image: postgres:16-alpine

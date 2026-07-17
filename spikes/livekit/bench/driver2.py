@@ -103,7 +103,7 @@ async def main() -> int:
                 checks["transcript_event"] = True
         checks["tool_result_ok"] = checks["tool_call"]  # fake replies inline
         checks["agent_audio"] = (agent_audio["frames"] > 10
-                                 and agent_audio["energy"] > 1000)
+                                 and agent_audio["energy"] > 20000)
         if all(checks.values()):
             break
         await asyncio.sleep(0.1)

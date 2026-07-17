@@ -113,6 +113,20 @@ PAWFLOW_URL=http://127.0.0.1:8898 PAWFLOW_REALTIME_WORKER_SECRET=benchsecret \
 python spikes/livekit/bench/driver.py                          # prints TIER1 PASSED/FAILED
 ```
 
+### Local pipeline bench (zero-cloud-audio)
+
+`bench/local_stt_server.py` (faster-whisper) and `bench/local_tts_server.py`
+(piper + ffmpeg) are minimal OpenAI-compatible stand-ins for
+speaches/kokoro-fastapi. With them running on :8001/:8002, start the fake
+control plane and worker with `BENCH_PROVIDER=local_pipeline` and run
+`driver2.py` on a fresh `BENCH_ROOM`: Silero VAD + turn-detector + local
+Whisper STT + text LLM + local TTS, with only the text turn leaving the
+machine. Extra deps: `pip install livekit-plugins-turn-detector
+faster-whisper piper-tts` + a piper voice, then
+`python -m livekit.agents download-files`.
+
+### Provider-leg bench
+
 With `OPENAI_API_KEY` exported, `bench/driver2.py` exercises the real
 provider leg (tier 2): it synthesizes a spoken instruction with the OpenAI
 TTS API, publishes it as the user's mic track, and asserts the user
@@ -128,4 +142,5 @@ the migration matrix in the plan.
 
 - 2026-07-17 (tier-1 bench, livekit-agents 1.6.5, livekit-server 1.9.1): full control-plane chain PASSED headless — worker dispatch, bootstrap fetch (secret-authenticated), worker-control hello/hello_ack, `realtime.media.connected` + `realtime.agent.state` events, agent participant joined the room. Deprecation warnings to track for a future livekit-agents bump: `metrics_collected` → `session_usage_updated`, `RoomInputOptions`/`RoomOutputOptions` → `RoomOptions` (both still functional in 1.6.5, worker unchanged for now).
 - 2026-07-17 (tier-2 bench, gpt-realtime via `OPENAI_API_KEY`, server restarted on 1.0.0-beta.24): PASSED — spoken instruction (OpenAI TTS 24 kHz PCM published as mic track) produced `realtime.user.transcript.delta/final` events, a provider `tool_call` for `echo` with a successful `tool_result` round-trip through the worker-control WS, `realtime.agent.transcript.final`, and a non-silent agent audio reply in the room (1000+ frames). The full P1/P2 provider leg works end-to-end with real audio. Also confirmed: the beta.24 secrets-cache fix delivers newly added secrets to the relay env without a further restart.
-- Provider-leg runs still pending: Gemini video (`GOOGLE_API_KEY`) and the local pipeline (model downloads).
+- 2026-07-17 (local pipeline bench): PASSED — full zero-cloud-audio loop with Silero VAD + LiveKit turn-detector + local faster-whisper STT (perfect transcription of the spoken instruction) + `gpt-4o-mini` text turn + local piper TTS, including the `echo` tool round-trip and a real agent voice reply in the room. Two findings fixed in the worker: (1) the OpenAI TTS plugin selects its wire format from the MODEL NAME — any name other than `tts-1`/`tts-1-hd` switches to SSE streaming, which kokoro-fastapi/speaches do not implement (symptom: `no audio frames were pushed`); worker default changed from `kokoro` to `tts-1`. (2) The local TTS server should output 24 kHz to match the plugin's expected sample rate. Also noted: `livekit.plugins.turn_detector` is deprecated in favor of `livekit.agents.inference.TurnDetector` (still functional in 1.6.5).
+- Provider-leg runs still pending: Gemini video (`GOOGLE_API_KEY`).

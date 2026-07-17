@@ -232,7 +232,7 @@ class RealtimeVoiceConnectionService(BaseService):
             "local_tts_url": {"type": "string", "required": False, "default": "",
                                "description": "local_pipeline: OpenAI-compatible TTS server URL (e.g. kokoro-fastapi). Empty = worker env/default."},
             "local_tts_model": {"type": "string", "required": False, "default": "",
-                                 "description": "local_pipeline: TTS model id."},
+                                 "description": "local_pipeline: TTS model id. Keep tts-1 (the default) unless the local server implements the OpenAI SSE stream format — the plugin selects the wire format from the model name, and non-tts-1 names use SSE, which kokoro-fastapi/speaches do not speak."},
             "local_tts_voice": {"type": "string", "required": False, "default": "",
                                  "description": "local_pipeline: TTS voice id."},
             "recording_policy": {

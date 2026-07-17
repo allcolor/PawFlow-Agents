@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Realtime LiveKit local-pipeline bench (`spikes/livekit/bench/`): minimal
+  OpenAI-compatible local STT (faster-whisper) and TTS (piper) servers plus a
+  `BENCH_PROVIDER=local_pipeline` mode of the fake control plane — the full
+  zero-cloud-audio loop (Silero VAD + turn-detector + local STT/TTS + text
+  LLM + tool round-trip) validated end-to-end with real speech.
+
+### Fixed
+
+- Realtime LiveKit worker: `local_pipeline` TTS model default changed from
+  `kokoro` to `tts-1` — the OpenAI TTS plugin picks its wire format from the
+  model name, and any non-`tts-1` name selects SSE streaming, which
+  kokoro-fastapi/speaches-style local servers do not implement (the session
+  then produces no agent audio at all).
+
 ## [1.0.0-beta.24] — 2026-07-17
 
 ### Added

@@ -28,6 +28,7 @@ async def bootstrap(request):
     body = await request.json()
     STATE["bootstrap_calls"].append({"room": body.get("room"),
                                      "ts": time.time()})
+    provider = os.environ.get("BENCH_PROVIDER", "openai")
     return web.json_response({
         "session_id": "bench-1",
         "room_name": body.get("room", ""),
@@ -36,14 +37,21 @@ async def bootstrap(request):
         "control_token": "bench-control-token",
         "conversation_id": "bench-conv",
         "agent_name": "claude",
-        "provider": "openai",
-        "model": "gpt-realtime",
+        "provider": provider,
+        "model": ("gpt-4o-mini" if provider == "local_pipeline"
+                  else "gpt-realtime"),
         "voice": "alloy",
         "modalities": ["audio", "text"],
         "video_input": False,
         "video_fps_active": 1.0,
         "video_fps_idle": 0.33,
-        "local_pipeline": {},
+        "local_pipeline": ({
+            "local_stt_url": "http://127.0.0.1:8001/v1",
+            "local_stt_model": "base",
+            "local_tts_url": "http://127.0.0.1:8002/v1",
+            "local_tts_model": "tts-1",
+            "local_tts_voice": "lessac",
+        } if provider == "local_pipeline" else {}),
         "turn_detection": "provider_default",
         "max_session_seconds": 60,
         "instructions": "You are the bench agent.",

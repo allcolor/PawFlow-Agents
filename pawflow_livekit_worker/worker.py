@@ -147,7 +147,12 @@ def _build_session(bootstrap: dict):
             tts=openai.TTS(
                 base_url=_local("local_tts_url", "LOCAL_TTS_URL",
                                 "http://localhost:8002/v1"),
-                model=_local("local_tts_model", "LOCAL_TTS_MODEL", "kokoro"),
+                # MUST stay tts-1/tts-1-hd unless the local server speaks the
+                # OpenAI SSE stream format: the plugin picks the wire format
+                # from the MODEL NAME, and any other name selects SSE, which
+                # kokoro-fastapi/speaches do not implement (bench finding
+                # 2026-07-17). Local servers ignore the model name anyway.
+                model=_local("local_tts_model", "LOCAL_TTS_MODEL", "tts-1"),
                 voice=_local("local_tts_voice", "LOCAL_TTS_VOICE",
                              "af_heart"),
                 api_key=os.environ.get("LOCAL_TTS_KEY", "local")),

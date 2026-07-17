@@ -35,7 +35,8 @@ _MODALITIES = ("audio", "text", "video")
 _RECORDING_POLICIES = ("none", "transcript", "audio", "audio_video")
 
 ROOM_TOKEN_MAX_TTL_S = 15 * 60
-WORKER_TOKEN_AUDIENCE = "pawflow-realtime-worker"
+# JWT audience label, not a credential.
+WORKER_TOKEN_AUDIENCE = "pawflow-realtime-worker"  # nosec B105
 _SIGNING_DOMAIN = b"realtime-worker-control"
 
 
@@ -101,6 +102,19 @@ def resolve_livekit_config(raw: dict) -> dict:
         raise ServiceError(
             f"video_source '{video_source}' must be camera, screen or both")
 
+    def _fps(key, default):
+        try:
+            value = float(cfg.get(key, default) or default)
+        except (TypeError, ValueError):
+            raise ServiceError(f"{key} must be a number (frames per second)")
+        if value <= 0:
+            raise ServiceError(f"{key} must be positive")
+        return value
+
+    # Plan defaults: ~1 FPS while the user speaks, ~1 frame / 3 s idle.
+    video_fps_active = _fps("video_fps_active", 1.0)
+    video_fps_idle = _fps("video_fps_idle", 0.33)
+
     turn_detection = _s("turn_detection").lower()
     if not turn_detection:
         vad = _s("vad").lower()
@@ -142,6 +156,15 @@ def resolve_livekit_config(raw: dict) -> dict:
         "modalities": modalities,
         "video_input": video_input,
         "video_source": video_source,
+        "video_fps_active": video_fps_active,
+        "video_fps_idle": video_fps_idle,
+        # local_pipeline plugin endpoints (worker-side OpenAI-compatible
+        # servers); empty = the worker's env/defaults apply
+        "local_stt_url": _s("local_stt_url"),
+        "local_stt_model": _s("local_stt_model"),
+        "local_tts_url": _s("local_tts_url"),
+        "local_tts_model": _s("local_tts_model"),
+        "local_tts_voice": _s("local_tts_voice"),
         "turn_detection": turn_detection,
         "instructions_mode": instructions_mode,
         "instructions": _s("instructions"),

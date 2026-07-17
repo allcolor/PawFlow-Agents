@@ -88,19 +88,56 @@ def _build_session(bootstrap: dict):
             kwargs["voice"] = bootstrap["voice"]
         return AgentSession(llm=realtime.RealtimeModel(**kwargs))
 
+    if provider == "azure_openai":
+        # OpenAI plugin in Azure mode; the llmConnection's base_url is the
+        # Azure endpoint, the service `model` is the deployment name.
+        return AgentSession(llm=openai.realtime.RealtimeModel.with_azure(
+            azure_deployment=bootstrap["model"],
+            azure_endpoint=creds.get("base_url", ""),
+            api_key=api_key,
+            api_version=os.environ.get("AZURE_OPENAI_API_VERSION",
+                                       "2025-04-01-preview"),
+            voice=bootstrap.get("voice") or "alloy"))
+
+    if provider == "xai":
+        # Grok voice speaks the OpenAI realtime protocol on api.x.ai.
+        kwargs = {"model": bootstrap["model"], "api_key": api_key,
+                  "base_url": creds.get("base_url", "")
+                  or "https://api.x.ai/v1"}
+        if bootstrap.get("voice"):
+            kwargs["voice"] = bootstrap["voice"]
+        return AgentSession(llm=openai.realtime.RealtimeModel(**kwargs))
+
+    if provider == "aws_nova":
+        # livekit-plugins-aws is NOT in the default dependency group (heavy
+        # AWS deps) — install it in the worker image to use Nova Sonic.
+        try:
+            from livekit.plugins import aws
+        except ImportError:
+            raise RuntimeError(
+                "provider 'aws_nova' needs livekit-plugins-aws: "
+                "pip install 'livekit-plugins-aws[realtime]'")
+        return AgentSession(llm=aws.realtime.RealtimeModel(
+            voice=bootstrap.get("voice") or "tiffany"))
+
     if provider == "local_pipeline":
         from livekit.plugins import silero
         from livekit.plugins.turn_detector.multilingual import (
             MultilingualModel,
         )
+        local = bootstrap.get("local_pipeline", {}) or {}
+
+        def _local(key, env, default):
+            return local.get(key, "") or os.environ.get(env, "") or default
+
         return AgentSession(
             vad=silero.VAD.load(),
             turn_detection=MultilingualModel(),
             stt=openai.STT(
-                base_url=os.environ.get("LOCAL_STT_URL",
-                                        "http://localhost:8001/v1"),
-                model=os.environ.get("LOCAL_STT_MODEL",
-                                     "Systran/faster-whisper-small"),
+                base_url=_local("local_stt_url", "LOCAL_STT_URL",
+                                "http://localhost:8001/v1"),
+                model=_local("local_stt_model", "LOCAL_STT_MODEL",
+                             "Systran/faster-whisper-small"),
                 api_key=os.environ.get("LOCAL_STT_KEY", "local")),
             llm=openai.LLM(
                 base_url=creds.get("base_url", "") or None,
@@ -108,16 +145,15 @@ def _build_session(bootstrap: dict):
                 or creds.get("default_model", ""),
                 api_key=api_key or "local"),
             tts=openai.TTS(
-                base_url=os.environ.get("LOCAL_TTS_URL",
-                                        "http://localhost:8002/v1"),
-                model=os.environ.get("LOCAL_TTS_MODEL", "kokoro"),
-                voice=os.environ.get("LOCAL_TTS_VOICE", "af_heart"),
+                base_url=_local("local_tts_url", "LOCAL_TTS_URL",
+                                "http://localhost:8002/v1"),
+                model=_local("local_tts_model", "LOCAL_TTS_MODEL", "kokoro"),
+                voice=_local("local_tts_voice", "LOCAL_TTS_VOICE",
+                             "af_heart"),
                 api_key=os.environ.get("LOCAL_TTS_KEY", "local")),
         )
 
-    # azure_openai / xai / aws_nova land in P6 through plugin config mapping
-    raise RuntimeError(f"provider '{provider}' is not wired in the worker "
-                       "yet (P6)")
+    raise RuntimeError(f"Unknown realtime provider '{provider}'")
 
 
 def _proxy_tools(bootstrap: dict, control: WorkerControlClient) -> list:
@@ -146,9 +182,32 @@ def _proxy_tools(bootstrap: dict, control: WorkerControlClient) -> list:
     return tools
 
 
+def _room_input_options(bootstrap: dict):
+    """Video frame sampling per the plan's video_fps_active/idle settings.
+
+    Falls back to the plugin's default sampler when this livekit-agents
+    build does not expose VoiceActivityVideoSampler (documented default:
+    ~1 FPS speaking, ~0.3 FPS idle — same shape as our config defaults).
+    """
+    from livekit.agents import RoomInputOptions
+    video = bool(bootstrap.get("video_input"))
+    if not video:
+        return RoomInputOptions(video_enabled=False)
+    try:
+        from livekit.agents.voice.room_io import VoiceActivityVideoSampler
+        sampler = VoiceActivityVideoSampler(
+            speaking_fps=float(bootstrap.get("video_fps_active", 1.0)),
+            silent_fps=float(bootstrap.get("video_fps_idle", 0.33)))
+        return RoomInputOptions(video_enabled=True, video_sampler=sampler)
+    except (ImportError, TypeError):
+        logger.info("VoiceActivityVideoSampler unavailable — using the "
+                    "plugin's default video sampling")
+        return RoomInputOptions(video_enabled=True)
+
+
 async def entrypoint(ctx) -> None:
     """One LiveKit job = one PawFlow realtime session."""
-    from livekit.agents import Agent, RoomInputOptions
+    from livekit.agents import Agent
 
     room_name = ctx.room.name if ctx.room else ""
     try:
@@ -211,8 +270,7 @@ async def entrypoint(ctx) -> None:
         room=ctx.room,
         agent=Agent(instructions=bootstrap.get("instructions", ""),
                     tools=_proxy_tools(bootstrap, control)),
-        room_input_options=RoomInputOptions(
-            video_enabled=bool(bootstrap.get("video_input"))),
+        room_input_options=_room_input_options(bootstrap),
     )
     await control.send_event("realtime.media.connected", {})
 

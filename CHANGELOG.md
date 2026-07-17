@@ -55,6 +55,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   LiveKit/provider badge in the voice settings panel. Legacy-engine
   services keep the PCM bridge until the P5 retirement window. 8 new tests
   (`tests/test_livekit_ui.py`).
+- Realtime LiveKit P4/P6/P7 config: `video_fps_active`/`video_fps_idle`
+  frame-sampling service keys (worker applies them via
+  `VoiceActivityVideoSampler`), worker provider mapping for `azure_openai`
+  (OpenAI plugin Azure mode), `xai` (api.x.ai OpenAI-realtime endpoint) and
+  `aws_nova` (guarded `livekit-plugins-aws` import with a clear install
+  error), and `local_stt_url`/`local_stt_model`/`local_tts_url`/
+  `local_tts_model`/`local_tts_voice` service keys so the zero-cloud-audio
+  local pipeline is configured per service instead of per worker env.
 - CUA screen mode phase 2 (AX-first addressing, `docs/CUA_MODE_PLAN.md`):
   new `screen` tool actions `windows` (window list), `window_state`
   (accessibility-element tree + grounding screenshot) and `status` (backend

@@ -472,6 +472,14 @@ P3 progress (2026-07-17) — implemented (live browser validation pending, per o
 - Voice settings panel shows a LiveKit/provider badge (+🎥 when video). i18n keys added (en/fr/es).
 - Tests: `tests/test_livekit_ui.py` (8, house static-introspection pattern + SDK endpoint) — 241 realtime/livekit/chat-ui tests green.
 
+P4/P6/P7 config progress (2026-07-17) — implemented, live validation pending:
+
+- P4: `video_fps_active` (default 1.0) / `video_fps_idle` (default 0.33) service keys, validated in the loader, passed through the worker bootstrap, applied via `VoiceActivityVideoSampler` in the worker (graceful fallback to the plugin's default sampler when the installed livekit-agents build does not expose it).
+- P6: worker provider mapping for `azure_openai` (OpenAI plugin `with_azure`, llmConnection base_url = Azure endpoint, model = deployment), `xai` (OpenAI realtime protocol on api.x.ai), `aws_nova` (guarded `livekit-plugins-aws` import — deliberately NOT in the default dependency group, clear install error). No new PawFlow media transport code, as required.
+- P7: `local_stt_url`/`local_stt_model`/`local_tts_url`/`local_tts_model`/`local_tts_voice` service keys — local pipeline endpoints are now service config resolved by the worker (worker env vars remain the fallback), matching the profile's configuration contract.
+- Bandit B105 false positives (token audience label, secret env var name) annotated `# nosec`.
+- Still NOT started, by design: P5 (bridge retirement — gated on the owner's live sign-off, see REALTIME_LIVEKIT_VALIDATION.md) and P8 (recording via LiveKit egress).
+
 ### P1: Service and Session API
 
 - Add LiveKit engine support to the existing realtime service model.

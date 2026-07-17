@@ -114,6 +114,27 @@ class TestResolveLivekitConfig:
             _cfg(provider="local_pipeline", model=None))
         assert out["provider"] == "local_pipeline"
 
+    def test_video_fps_defaults_and_validation(self):
+        out = engine.resolve_livekit_config(_cfg())
+        assert out["video_fps_active"] == 1.0
+        assert out["video_fps_idle"] == 0.33
+        out = engine.resolve_livekit_config(
+            _cfg(video_fps_active=2, video_fps_idle="0.5"))
+        assert out["video_fps_active"] == 2.0
+        assert out["video_fps_idle"] == 0.5
+        with pytest.raises(ServiceError, match="video_fps_active"):
+            engine.resolve_livekit_config(_cfg(video_fps_active="fast"))
+        with pytest.raises(ServiceError, match="positive"):
+            engine.resolve_livekit_config(_cfg(video_fps_idle=-1))
+
+    def test_local_pipeline_plugin_keys_pass_through(self):
+        out = engine.resolve_livekit_config(_cfg(
+            provider="local_pipeline", model=None,
+            local_stt_url="http://stt:8001/v1", local_tts_voice="af_bella"))
+        assert out["local_stt_url"] == "http://stt:8001/v1"
+        assert out["local_tts_voice"] == "af_bella"
+        assert out["local_tts_url"] == ""
+
     def test_bad_max_session_seconds(self):
         with pytest.raises(ServiceError, match="max_session_seconds"):
             engine.resolve_livekit_config(_cfg(max_session_seconds="soon"))

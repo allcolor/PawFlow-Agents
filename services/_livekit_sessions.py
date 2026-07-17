@@ -221,7 +221,8 @@ def _publish(conversation_id: str, event_type: str, data: dict) -> None:
 
 # -- worker bootstrap ----------------------------------------------------
 
-_WORKER_SECRET_ENV = "PAWFLOW_REALTIME_WORKER_SECRET"
+# Env var NAME holding the deployment secret, not the secret itself.
+_WORKER_SECRET_ENV = "PAWFLOW_REALTIME_WORKER_SECRET"  # nosec B105
 
 # providers whose credentials come from a specific llmConnection provider
 _PROVIDER_LLM_REQUIREMENT = {"openai": "openai", "gemini": "gemini"}
@@ -320,6 +321,11 @@ def build_worker_bootstrap(session: dict) -> dict:
         "voice": cfg["voice"],
         "modalities": cfg["modalities"],
         "video_input": cfg["video_input"],
+        "video_fps_active": cfg["video_fps_active"],
+        "video_fps_idle": cfg["video_fps_idle"],
+        "local_pipeline": {k: cfg[k] for k in (
+            "local_stt_url", "local_stt_model", "local_tts_url",
+            "local_tts_model", "local_tts_voice") if cfg.get(k)},
         "turn_detection": cfg["turn_detection"],
         "max_session_seconds": cfg["max_session_seconds"],
         "instructions": _session_instructions(session),

@@ -124,6 +124,22 @@ class TestWorkerBootstrapEndpoint:
         assert "credentials" not in started
         assert "sk-test" not in json.dumps(started)
 
+    def test_bootstrap_carries_video_and_local_pipeline_settings(
+            self, stubbed_env, monkeypatch):
+        monkeypatch.setenv(sessions._WORKER_SECRET_ENV, "wsecret")
+        stubbed_env.defs["lk"].config.update({
+            "video_input": True, "video_fps_active": 2,
+            "video_fps_idle": 0.5, "local_stt_url": "http://stt:8001/v1"})
+        started = _start()
+        req = _bootstrap_request({"room": started["room"]})
+        sessions._worker_bootstrap_endpoint(req)
+        boot = json.loads(req.response_body)
+        assert boot["video_input"] is True
+        assert boot["video_fps_active"] == 2.0
+        assert boot["video_fps_idle"] == 0.5
+        assert boot["local_pipeline"] == {
+            "local_stt_url": "http://stt:8001/v1"}
+
     def test_provider_llm_mismatch_400(self, stubbed_env, monkeypatch):
         monkeypatch.setenv(sessions._WORKER_SECRET_ENV, "wsecret")
         stubbed_env.defs["lk"].config["provider"] = "gemini"
@@ -267,6 +283,27 @@ class TestTranscriptPersistence:
             ("conv1", "claude", "quentin", "user", "quelle heure ?"),
             ("conv1", "claude", "quentin", "assistant", "Il est midi."),
         ]
+
+
+class TestWorkerProviderMapping:
+    """Static introspection (house pattern): the worker maps every engine
+    provider — live behavior is validated in the owner's E2E pass."""
+
+    def test_all_providers_wired(self):
+        from pathlib import Path
+        src = Path("pawflow_livekit_worker/worker.py").read_text(
+            encoding="utf-8")
+        assert 'provider == "openai"' in src
+        assert 'provider == "gemini"' in src
+        assert "with_azure" in src                      # azure_openai
+        assert "api.x.ai" in src                        # xai
+        assert "livekit-plugins-aws" in src             # aws_nova guard
+        assert 'provider == "local_pipeline"' in src
+        # config-driven local pipeline endpoints override worker env
+        assert 'local.get(key, "") or os.environ.get(env' in src
+        # P4 frame sampling settings
+        assert "VoiceActivityVideoSampler" in src
+        assert "video_fps_active" in src and "video_fps_idle" in src
 
 
 # -- sidecar control client (aiohttp) --------------------------------------

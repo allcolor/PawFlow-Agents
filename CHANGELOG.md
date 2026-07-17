@@ -17,7 +17,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   video hello-world with a synthetic-frame publisher, and the worker-control
   WebSocket prototype (`control_protocol.py`) with a fake tool-call
   round-trip — protocol covered by CI tests
-  (`tests/test_livekit_spike_control.py`), no live provider calls.
+  (`tests/test_livekit_spike_control.py`), no live provider calls. Also:
+  local pipeline spike (`spike_local_pipeline.py`, the OpenLive-shaped
+  zero-cloud-audio cascade — Silero VAD + turn-detector + local
+  OpenAI-compatible STT/TTS + any text LLM) and `SPIKE_VIDEO=1` on the
+  OpenAI spike (gpt-realtime image-input frame path).
 - CUA screen mode phase 2 (AX-first addressing, `docs/CUA_MODE_PLAN.md`):
   new `screen` tool actions `windows` (window list), `window_state`
   (accessibility-element tree + grounding screenshot) and `status` (backend

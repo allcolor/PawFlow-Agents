@@ -355,7 +355,7 @@ Added 2026-07-16. A special case of cascade mode: run the entire voice loop with
 - Works with any text-first `llmConnection`, including non-vision models: video frames extracted by LiveKit go through the existing vision fallback (`vision_llm_service`), so a text-only model can still "see" camera/screen input.
 - PawFlow already ships local engines for the turn-by-turn walkie-talkie path (Voicebox/Whisper STT, Supertonic TTS). The gap this profile closes is the full-duplex streaming pipeline: continuous VAD, smart end-of-turn detection, sentence-by-sentence TTS while the LLM streams, and barge-in mid-word.
 - The local plugins run inside the sidecar worker, not the PawFlow server process; the worker image must document model download/caching (VAD/STT/TTS weights) so first-call latency is predictable.
-- Market validation: OpenLive (see `marketing/concurrent-openlive.md`) proves demand for exactly this shape — on-device voice loop, bring-your-own text model, delegated vision. Positioning: no audio upload, no per-minute metering, any model, pairs with the free-tier OOTB story (e.g. Ollama cloud GLM + local voice).
+- Market validation: OpenLive (github.com/katipally/openlive, see `marketing/concurrent-openlive.md`) proves demand for exactly this shape — on-device voice loop, bring-your-own text model, delegated vision. Positioning: no audio upload, no per-minute metering, any model, pairs with the free-tier OOTB story (e.g. Ollama cloud GLM + local voice).
 
 Configuration reuses the same realtime service shape with `provider: local_pipeline`; STT/TTS/VAD plugin choices are service config keys resolved by the worker.
 
@@ -445,7 +445,7 @@ Acceptance:
 
 P0 progress (2026-07-17):
 
-- Landed: `pawflow[realtime-livekit]` optional dependency group; import guard `services/livekit_deps.py` with actionable setup error; docker-compose `realtime` profile (LiveKit dev server + `livekit-worker` sidecar, `docker/livekit-worker/Dockerfile`); spike scripts and runbook under `spikes/livekit/` (OpenAI voice, Gemini video + synthetic-frame publisher, worker-control WebSocket prototype with fake tool round-trip); protocol prototype `control_protocol.py` unit-tested in CI (`tests/test_livekit_spike_control.py`), local end-to-end round-trip verified.
+- Landed: `pawflow[realtime-livekit]` optional dependency group; import guard `services/livekit_deps.py` with actionable setup error; docker-compose `realtime` profile (LiveKit dev server + `livekit-worker` sidecar, `docker/livekit-worker/Dockerfile`); spike scripts and runbook under `spikes/livekit/` (OpenAI voice, Gemini video + synthetic-frame publisher, worker-control WebSocket prototype with fake tool round-trip); protocol prototype `control_protocol.py` unit-tested in CI (`tests/test_livekit_spike_control.py`), local end-to-end round-trip verified. Also landed ahead of P7: local pipeline spike (`spike_local_pipeline.py` — Silero VAD + turn-detector + local OpenAI-compatible STT/TTS + any text LLM, the OpenLive-shaped zero-cloud-audio path) and `SPIKE_VIDEO=1` on the OpenAI spike (gpt-realtime image-input frame path).
 - Remaining before P1: run the OpenAI voice and Gemini video spikes against live endpoints (needs `OPENAI_API_KEY` / `GOOGLE_API_KEY`), and record plugin capability gaps (Gemini session resumption, video sampling controls, tool behavior) in the migration matrix and the spike README findings log.
 
 ### P1: Service and Session API

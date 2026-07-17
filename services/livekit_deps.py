@@ -16,6 +16,7 @@ REQUIRED_MODULES = {
     "livekit.plugins.openai": "livekit-plugins-openai",
     "livekit.plugins.google": "livekit-plugins-google",
     "livekit.plugins.silero": "livekit-plugins-silero",
+    "livekit.plugins.turn_detector": "livekit-plugins-turn-detector",
 }
 
 INSTALL_HINT = 'pip install "pawflow[realtime-livekit]"'

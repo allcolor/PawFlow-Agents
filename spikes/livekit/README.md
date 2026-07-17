@@ -63,7 +63,27 @@ Ask out loud: “what color is the square?” — the square cycles
 red/green/blue every 3 seconds, so a correct, changing answer proves real
 frame ingestion (not a cached description).
 
-## 3. Worker-control WebSocket + fake tool round-trip
+## 3. Local pipeline (zero-cloud-audio, OpenLive-shaped)
+
+Validates the plan's `provider: local_pipeline` profile — the
+[OpenLive](https://github.com/katipally/openlive)-shaped path: no audio
+leaves the deployment, only the text turn reaches the LLM.
+
+```bash
+# local OpenAI-compatible servers, e.g.:
+#   STT: speaches / faster-whisper-server on :8001
+#   TTS: kokoro-fastapi on :8002
+#   LLM: Ollama on :11434 (or any llmConnection-style endpoint)
+python spikes/livekit/spike_local_pipeline.py dev
+```
+
+Expected: Silero VAD + LiveKit turn-detector give real full-duplex
+(barge-in mid-word, TTS starts sentence-by-sentence while the LLM streams);
+network inspection shows zero audio egress. Findings to record: first-call
+latency after weight download, end-of-turn quality in French, added latency
+vs the OpenAI Realtime spike.
+
+## 4. Worker-control WebSocket + fake tool round-trip
 
 No LiveKit or provider needed — pure protocol prototype
 (`control_protocol.py`, the contract the P1 endpoint will implement):

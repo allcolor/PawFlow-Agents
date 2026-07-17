@@ -117,6 +117,7 @@ realtime-livekit = [
     "livekit-plugins-openai>=1.6.0",
     "livekit-plugins-google>=1.6.0",
     "livekit-plugins-silero>=1.6.0",
+    "livekit-plugins-turn-detector>=1.6.0",
 ]
 
 [project.scripts]

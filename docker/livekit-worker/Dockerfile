@@ -10,7 +10,12 @@ RUN pip install --no-cache-dir \
     "livekit-plugins-openai>=1.6.0" \
     "livekit-plugins-google>=1.6.0" \
     "livekit-plugins-silero>=1.6.0" \
+    "livekit-plugins-turn-detector>=1.6.0" \
     "aiohttp>=3.9.0"
+
+# Pre-download local model weights (Silero VAD + end-of-turn detector) so
+# the local pipeline profile has predictable first-call latency.
+RUN python -c "from livekit.plugins import silero; silero.VAD.load()" || true
 
 COPY spikes/livekit/ /app/spikes/livekit/
 

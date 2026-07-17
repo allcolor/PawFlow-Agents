@@ -578,8 +578,8 @@ Acceptance:
 
 | Provider path | Audio in/out | Video/frames | Tools | Recommended role |
 |---|---:|---:|---:|---|
-| OpenAI Realtime via LiveKit | yes | frame/image path through LiveKit | yes | primary voice baseline |
-| Gemini Live via LiveKit | yes | yes | yes | primary multimodal baseline |
+| OpenAI Realtime via LiveKit | yes | yes — gpt-realtime accepts image input; LiveKit samples the video track (~1 fps) and forwards frames as images. No provider-native continuous video; each frame bills as image-input tokens | yes | primary voice baseline, video capable |
+| Gemini Live via LiveKit | yes | yes — provider-native continuous video ingestion | yes | primary multimodal baseline (cheapest/most proven video path) |
 | Azure OpenAI Realtime via LiveKit | yes | likely same as OpenAI path where supported | yes | enterprise OpenAI deployments |
 | xAI Voice Agent via LiveKit | yes | no initial target | yes | alternate voice provider |
 | AWS Nova Sonic via LiveKit | yes | no initial target | limited/provider-dependent | AWS voice workloads |

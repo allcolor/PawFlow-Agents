@@ -40,6 +40,12 @@ pointed at your server (or any LiveKit client). Expected: the agent greets
 you, answers by voice, and you can interrupt it mid-sentence (barge-in is
 handled by the `AgentSession`, no PawFlow code involved).
 
+`SPIKE_VIDEO=1` also enables video-frame input for OpenAI: gpt-realtime
+accepts image input and LiveKit forwards sampled frames (~1 fps) from the
+video track. Same validation as the Gemini spike (color-cycling square via
+`publish_synthetic_video.py`). Cost caveat: every sampled frame is billed
+as image-input tokens — Gemini Live remains the cheaper native video path.
+
 ## 2. Gemini Live with video
 
 ```bash

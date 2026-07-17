@@ -29,6 +29,9 @@ class ToolApprovalGate:
     EXEMPT_TOOLS = frozenset({
         # Memory (read)
         "recall", "semantic_recall",
+        # One-shot delegation to the conversation agent's own LLM — pure
+        # text completion, the delegate gets no tools (voice-front pattern)
+        "consult_agent",
         # Info / help
         "pawflow_help", "list_secrets",
         # File read

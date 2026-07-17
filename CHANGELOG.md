@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `consult_agent` tool (voice-front delegation): one-shot call to the
+  conversation agent's own model — resolved system prompt + configured
+  `llm_service`, bounded conversation context, answer returned as the
+  tool result. Approval-exempt (the delegate gets no tools). With
+  `tool_profile=consult_agent` on a realtime service, the realtime model
+  becomes a thin spoken interface that routes substantial work to the
+  agent's brain; long answers are spoken when they land via the detached
+  tool path.
+
 - Managed realtime stack (zero-config LiveKit): leaving `livekit_url`
   empty on a `realtimeVoiceConnection` service now makes PawFlow
   provision and supervise the LiveKit stack itself through the Docker

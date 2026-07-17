@@ -62,6 +62,12 @@ README findings log and the plan's migration matrix.
    persisted anywhere.
 5. Tools: ask the agent to use `recall` (pre-approved → runs; result
    spoken). Ask for a tool needing interactive approval → spoken refusal.
+   Voice-front pattern: add `consult_agent` to `tool_profile` and set
+   custom `instructions` ("you are the spoken interface — route any
+   substantial task through consult_agent and relay its answer"): the
+   realtime model only talks while the conversation agent's own model
+   does the thinking; slow answers are spoken when they land (detached
+   tool path).
 6. Stop: hang up → worker logs shutdown, `POST stop` returns
    `stopped: true`; force-stop from the UI kills the session and the NEXT
    session starts cleanly.

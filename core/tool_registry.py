@@ -406,6 +406,8 @@ def create_default_registry() -> ToolRegistry:
     registry.register(RememberHandler())
     registry.register(RecallHandler())
     registry.register(SemanticRecallHandler())
+    from core.handlers.consult_agent import ConsultAgentHandler
+    registry.register(ConsultAgentHandler())
     registry.register(LoadSkillHandler())
     registry.register(LinkTaskHandler())
     registry.register(AssignTaskHandler())

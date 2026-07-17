@@ -262,7 +262,10 @@ def test_read_only_search_does_not_resolve_full_env_for_plain_args(monkeypatch):
     assert "TOPSECRET" not in second["data"]
     assert "Redacted" in first["data"]
     assert len(secret_calls) == 1
-    assert len(fingerprint_calls) == 1
+    # One fingerprint per execution: it is the cache's staleness check, so
+    # it runs on hits too (a secret added mid-conversation must be picked
+    # up and redacted on the very next call). Resolution stays cached.
+    assert len(fingerprint_calls) == 2
 
 
 def test_bash_still_receives_secret_environment(monkeypatch):

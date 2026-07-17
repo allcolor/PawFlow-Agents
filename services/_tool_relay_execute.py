@@ -491,8 +491,14 @@ class _ToolRelayExecuteMixin:
                 secrets_started = time.perf_counter()
                 _needs_env = (tool_name in self._ENV_SECRET_TOOLS
                               or self._args_reference_env(arguments))
+                # One fingerprint per execution, shared by the env and
+                # redaction caches — it is their staleness check (secrets
+                # added mid-conversation must reach the very next call).
+                _fp = self._secret_config_fingerprint(
+                    user_id, self._root_conversation_id(_secret_cid))
                 if _needs_env:
-                    _all_env = self._cached_secrets_env(user_id, _secret_cid)
+                    _all_env = self._cached_secrets_env(
+                        user_id, _secret_cid, fingerprint=_fp)
                 if _needs_env and _all_env:
                     # Inject as process env vars for shell tools
                     if tool_name in {"bash", "execute_script"}:
@@ -508,7 +514,7 @@ class _ToolRelayExecuteMixin:
                     _resolve_vars_in_args(arguments, _all_env, skip_keys=_skip)
                 # Only secrets → redaction
                 _secret_values, _secret_names = self._cached_secret_values(
-                    user_id, _secret_cid)
+                    user_id, _secret_cid, fingerprint=_fp)
                 secrets_ms = (time.perf_counter() - secrets_started) * 1000
             except Exception as _se:
                 logger.warning("[tool-relay] failed to resolve env/secrets: %s", _se)

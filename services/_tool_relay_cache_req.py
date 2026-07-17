@@ -135,32 +135,47 @@ class _ToolRelayCacheReqMixin:
         return tuple(parts)
 
     @classmethod
-    def _cached_secrets_env(cls, user_id: str, conversation_id: str) -> dict:
+    def _cached_secrets_env(cls, user_id: str, conversation_id: str,
+                            fingerprint: tuple = None) -> dict:
+        """Secrets env for tool execution, cached per (user, root conv).
+
+        The fingerprint (file mtimes + conv extras) is the staleness check
+        and is compared on EVERY hit — otherwise secrets added
+        mid-conversation never reach tool env until a server restart.
+        Callers doing both env + redaction pass a precomputed `fingerprint`
+        so it is stat'ed once per execution.
+        """
         if not user_id:
             return {}
         conv = cls._root_conversation_id(conversation_id)
         key = (user_id or "", conv)
+        if fingerprint is None:
+            fingerprint = cls._secret_config_fingerprint(user_id, conv)
         with cls._runtime_cache_lock:
             cached = cls._secret_env_cache.get(key)
-            if cached:
+            if cached and cached[0] == fingerprint:
                 return dict(cached[1])
-        fingerprint = cls._secret_config_fingerprint(user_id, conv)
         env = _trb.resolve_secrets_env(user_id, conv)
         with cls._runtime_cache_lock:
             cls._secret_env_cache[key] = (fingerprint, dict(env))
         return env
 
     @classmethod
-    def _cached_secret_values(cls, user_id: str, conversation_id: str) -> tuple:
+    def _cached_secret_values(cls, user_id: str, conversation_id: str,
+                              fingerprint: tuple = None) -> tuple:
+        """Redaction set/names, same staleness rule as _cached_secrets_env —
+        a stale values cache would leave a freshly added secret unredacted
+        in tool output."""
         if not user_id:
             return set(), {}
         conv = cls._root_conversation_id(conversation_id)
         key = (user_id or "", conv)
+        if fingerprint is None:
+            fingerprint = cls._secret_config_fingerprint(user_id, conv)
         with cls._runtime_cache_lock:
             cached = cls._secret_values_cache.get(key)
-            if cached:
+            if cached and cached[0] == fingerprint:
                 return set(cached[1]), dict(cached[2])
-        fingerprint = cls._secret_config_fingerprint(user_id, conv)
         values, names = _trb.resolve_secret_values(user_id, conv)
         with cls._runtime_cache_lock:
             cls._secret_values_cache[key] = (fingerprint, set(values), dict(names))

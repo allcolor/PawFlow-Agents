@@ -108,6 +108,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     optional LLM review (keep/archive/merge), and emits a JSON report.
     Report-only — actions are applied by the user after review.
 
+### Fixed
+
+- Secrets added mid-conversation now reach tool executions immediately: the
+  tool-relay secrets env/redaction caches stored a config fingerprint but
+  never compared it on cache hits, so a newly added secret was neither
+  injected into `$VAR` env nor redacted from output until a server restart.
+  The fingerprint is now checked once per execution (shared between the env
+  and redaction caches — hot path unchanged). Regression tests in
+  `tests/test_tool_relay_secret_cache.py`.
+
 ## [1.0.0-beta.23] — 2026-07-13
 
 ### Fixed

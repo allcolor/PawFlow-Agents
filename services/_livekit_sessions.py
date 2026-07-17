@@ -579,6 +579,34 @@ def _stop_endpoint(req):
     _json_response(req, 200, {"stopped": stopped})
 
 
+_SDK_CACHE = {"body": b"", "mtime": 0.0}
+
+
+def _sdk_endpoint(req):
+    """GET /api/realtime/livekit/sdk.js — vendored livekit-client UMD.
+
+    Served from tasks/io/chat_ui/vendor/ (pinned version, see
+    THIRD_PARTY_NOTICES.md). Session-authenticated like the chat UI it is
+    part of; cached in memory, revalidated on mtime.
+    """
+    from pathlib import Path
+    path = (Path(__file__).resolve().parents[1] / "tasks" / "io"
+            / "chat_ui" / "vendor" / "livekit-client.umd.min.js")
+    try:
+        mtime = path.stat().st_mtime
+        if not _SDK_CACHE["body"] or _SDK_CACHE["mtime"] != mtime:
+            _SDK_CACHE["body"] = path.read_bytes()
+            _SDK_CACHE["mtime"] = mtime
+    except OSError:
+        return _json_response(req, 404, {
+            "error": "livekit-client bundle missing "
+                     "(tasks/io/chat_ui/vendor/)"})
+    req.complete(200, {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "public, max-age=86400",
+    }, _SDK_CACHE["body"])
+
+
 def register_livekit_routes(http_service) -> None:
     """Idempotently register the LiveKit realtime routes on a listener."""
     existing = {r.get("pattern", "") for r in http_service.get_routes()}
@@ -597,6 +625,10 @@ def register_livekit_routes(http_service) -> None:
             "POST", "/api/realtime/livekit/worker/bootstrap",
             "_realtime_livekit", callback=_worker_bootstrap_endpoint,
             public=True)
+    if "/api/realtime/livekit/sdk.js" not in existing:
+        http_service.register_route(
+            "GET", "/api/realtime/livekit/sdk.js", "_realtime_livekit",
+            callback=_sdk_endpoint)
     if not any(p.startswith("/ws/realtime-worker/") for p in existing):
         # Public: the sidecar worker has no user session. The handler
         # enforces the PawFlow-signed scoped token minted at session start.

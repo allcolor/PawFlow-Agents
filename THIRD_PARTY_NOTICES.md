@@ -34,6 +34,10 @@ The public images may include software under, among others:
 
 The project source code is licensed separately under the repository license. Third-party packages retain their own licenses and notices.
 
+## Vendored Frontend Libraries
+
+- `tasks/io/chat_ui/vendor/livekit-client.umd.min.js` — [livekit-client](https://github.com/livekit/client-sdk-js) 2.20.1, Apache-2.0. Served to browsers at `/api/realtime/livekit/sdk.js` for realtime LiveKit sessions. Update by downloading the pinned UMD build from npm/jsdelivr and recording the new version here.
+
 ## Release Checklist
 
 Before making a Docker release public:

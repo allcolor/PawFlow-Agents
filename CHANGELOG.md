@@ -46,6 +46,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tools detach to `context` injection); final transcripts persist as
   normal conversation messages. 13 new tests
   (`tests/test_livekit_worker_p2.py`).
+- Realtime LiveKit P3 (webchat live panel): the conversation mic button now
+  routes `engine: livekit` services through WebRTC — vendored
+  `livekit-client` 2.20.1 served at `/api/realtime/livekit/sdk.js`
+  (lazy-loaded), new `conversation_livekit.js` reusing the voice overlay
+  with camera/screen-share controls gated by `video_input`, live
+  captions/state/tool activity from `realtime.*` SSE events, and a
+  LiveKit/provider badge in the voice settings panel. Legacy-engine
+  services keep the PCM bridge until the P5 retirement window. 8 new tests
+  (`tests/test_livekit_ui.py`).
 - CUA screen mode phase 2 (AX-first addressing, `docs/CUA_MODE_PLAN.md`):
   new `screen` tool actions `windows` (window list), `window_state`
   (accessibility-element tree + grounding screenshot) and `status` (backend

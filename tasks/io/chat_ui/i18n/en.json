@@ -1346,5 +1346,10 @@
   "voiceToolDenied": "needs approval (text chat)",
   "realtimeVoiceService": "Realtime voice service (voice-native agent)",
   "realtimeVoiceNone": "(none)",
-  "you": "You"
+  "you": "You",
+  "lkCamOn": "Camera",
+  "lkCamOff": "Camera off",
+  "lkScreenOn": "Share screen",
+  "lkScreenOff": "Stop sharing",
+  "lkStartFailed": "Live session failed: "
 }

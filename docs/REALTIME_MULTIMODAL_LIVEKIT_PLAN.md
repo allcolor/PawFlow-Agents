@@ -464,6 +464,14 @@ P2 progress (2026-07-17) — implemented (live provider runs pending, per owner 
 - Sidecar worker `pawflow_livekit_worker/`: `control_client.py` (LiveKit-free, CI-tested, contract-pinned to the server protocol) + `worker.py` (automatic LiveKit dispatch → bootstrap fetch → provider `AgentSession` for openai/gemini/local_pipeline → proxy function tools → event mirroring → `max_session_seconds` cap + shutdown handling). Worker image now runs `python -m pawflow_livekit_worker`.
 - Tests: `tests/test_livekit_worker_p2.py` (13) — 166 realtime/livekit tests green.
 
+P3 progress (2026-07-17) — implemented (live browser validation pending, per owner decision):
+
+- Vendored `livekit-client` 2.20.1 UMD (`tasks/io/chat_ui/vendor/`, Apache-2.0, THIRD_PARTY_NOTICES.md) served session-authenticated at `GET /api/realtime/livekit/sdk.js`, lazy-loaded on first live call.
+- `tasks/io/chat_ui/conversation_livekit.js`: WebRTC live panel over the shared voice overlay (orb/state/captions/tool line), mic publish + agent audio subscribe via the LiveKit room, mute, camera and screen-share buttons gated by the service's `video_input`/`video_source`, captions/state/tool activity from `realtime.*` SSE events (session-id filtered), stop → `POST /api/realtime/livekit/stop`.
+- Engine routing: `list_realtime_services` now exposes `engine`/`provider`/`video_input`/`video_source`; the existing mic button routes `engine: livekit` services through the LiveKit path and legacy services through the unchanged PCM bridge. Deviation from the plan text, on purpose: the global default flip + `PAWFLOW_ENABLE_LEGACY_REALTIME_BRIDGE` gate moves to P5, because P2/P3 acceptance (live browser sessions) is deferred to final validation — flipping the default before parity is proven live would break shipped voice.
+- Voice settings panel shows a LiveKit/provider badge (+🎥 when video). i18n keys added (en/fr/es).
+- Tests: `tests/test_livekit_ui.py` (8, house static-introspection pattern + SDK endpoint) — 241 realtime/livekit/chat-ui tests green.
+
 ### P1: Service and Session API
 
 - Add LiveKit engine support to the existing realtime service model.

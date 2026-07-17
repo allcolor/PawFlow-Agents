@@ -42,15 +42,16 @@ function _voiceT(key, fallback) {
 function _voiceUpdateButton() {
   const btn = document.getElementById('voiceModeBtn');
   if (!btn) return;
+  const live = _voiceActive || (typeof _lkActive !== 'undefined' && _lkActive);
   btn.style.display = _voiceServices.length ? 'inline-flex' : 'none';
-  btn.classList.toggle('active', _voiceActive);
-  btn.setAttribute('aria-pressed', _voiceActive ? 'true' : 'false');
-  btn.title = _voiceActive
+  btn.classList.toggle('active', live);
+  btn.setAttribute('aria-pressed', live ? 'true' : 'false');
+  btn.title = live
     ? _voiceT('voiceModeStopTitle', 'Stop voice conversation')
     : _voiceT('voiceModeStartTitle', 'Start realtime voice conversation');
-  btn.innerHTML = _voiceActive ? '&#x1F50A;' : '&#x1F399;&#xFE0F;';
+  btn.innerHTML = live ? '&#x1F50A;' : '&#x1F399;&#xFE0F;';
   // Voice-native agent: emphasized button (its service is pinned)
-  if (_voiceLinkedService && !_voiceActive) {
+  if (_voiceLinkedService && !live) {
     btn.style.color = 'var(--pf-accent, #7aa2f7)';
     btn.title = _voiceT('voiceLinkedTitle', 'Voice agent — start voice conversation');
   } else {
@@ -352,6 +353,7 @@ function _voiceStopCapture() {
 
 async function toggleVoiceMode() {
   if (_voiceStarting) return;
+  if (typeof _lkActive !== 'undefined' && _lkActive) { stopLiveKitVoiceMode('user'); return; }
   if (_voiceActive) { stopVoiceMode('user'); return; }
   const cid = _voiceConversationId();
   if (!cid) { addMsg('error', _voiceT('voiceNoConversation', 'Open a conversation first')); return; }
@@ -370,6 +372,14 @@ async function _toggleVoiceModeStart(cid) {
   // and the action lazily registers the /ws/realtime route on the listener.
   await new Promise(resolve => refreshRealtimeVoiceServices(resolve));
   if (!_voiceSelectedService) { addMsg('error', _voiceT('voiceNoService', 'No realtime voice service configured')); return; }
+  // Engine routing (P3): livekit services use the WebRTC path
+  // (conversation_livekit.js); legacy services keep the PCM bridge until
+  // the P5 retirement window.
+  const svcEntry = _voiceServices.find(s => s.id === _voiceSelectedService);
+  if (svcEntry && svcEntry.engine === 'livekit') {
+    await startLiveKitVoiceMode(cid, svcEntry);
+    return;
+  }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const url = proto + '://' + location.host + '/ws/realtime/' + encodeURIComponent(cid)
     + '?token=' + encodeURIComponent(getToken() || '')
@@ -453,6 +463,10 @@ function _voiceSaveServicePref(id) {
 
 function _voiceServiceDetails(s) {
   const bits = [];
+  if (s.engine === 'livekit') {
+    bits.push('LiveKit' + (s.provider ? '/' + s.provider : '')
+      + (s.video_input ? ' 🎥' : ''));
+  }
   if (s.model) bits.push(s.model);
   if (s.voice) bits.push('\uD83D\uDDE3 ' + s.voice);
   bits.push(s.vad === 'manual'

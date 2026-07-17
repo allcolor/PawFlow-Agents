@@ -1346,5 +1346,10 @@
   "voiceToolDenied": "nécessite une approbation (chat texte)",
   "realtimeVoiceService": "Service voix temps réel (agent vocal)",
   "realtimeVoiceNone": "(aucun)",
-  "you": "Toi"
+  "you": "Toi",
+  "lkCamOn": "Caméra",
+  "lkCamOff": "Caméra off",
+  "lkScreenOn": "Partager l'écran",
+  "lkScreenOff": "Arrêter le partage",
+  "lkStartFailed": "Échec de la session live : "
 }

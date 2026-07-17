@@ -68,6 +68,9 @@ _JS_MODULES = [
     "conversation_tts.js",
     "conversation_stt.js",
     "conversation_voice.js",
+    # LiveKit engine live sessions — must load after conversation_voice.js
+    # (reuses its overlay helpers) and before first use via the mic button.
+    "conversation_livekit.js",
 ]
 
 _html_cache: str = ""

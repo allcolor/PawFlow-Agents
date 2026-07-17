@@ -445,7 +445,16 @@ def _handle_media(self, action, body, store, user_id, flowfile):
                                                      "openai_realtime"),
                                 "vad": _cfg.get("vad", "server"),
                                 "context_mode": _cfg.get("context_mode",
-                                                         "summary:2000")})
+                                                         "summary:2000"),
+                                # LiveKit engine services route the webchat
+                                # live button through conversation_livekit.js
+                                "engine": (_cfg.get("engine", "legacy")
+                                           or "legacy"),
+                                "provider": _cfg.get("provider", ""),
+                                "video_input": bool(
+                                    _cfg.get("video_input", False)),
+                                "video_source": _cfg.get("video_source",
+                                                         "camera")})
             # Agent link: a voice-native agent pins its service (no picker,
             # voice-first UI treatment in the webchat).
             _linked = ""

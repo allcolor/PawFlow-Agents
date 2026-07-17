@@ -539,3 +539,87 @@ class TestHttpEndpoints:
         sessions._stop_endpoint(mine)
         assert mine.response_status == 200
         assert json.loads(mine.response_body)["stopped"] is True
+
+
+class TestOutOfBandAnnounce:
+    """announce_to_conversation_session + the flash_delegate voice hook."""
+
+    def _live_session(self, cid="conv1", agent="claude", sock="SOCK"):
+        session = {"session_id": "sid12345", "conversation_id": cid,
+                   "agent_name": agent, "state": "created",
+                   "worker_sock": sock}
+        with sessions._lock:
+            sessions._sessions["sid12345"] = session
+            sessions._by_conversation[cid] = "sid12345"
+        return session
+
+    def test_no_session_returns_false(self, clean_sessions):
+        assert sessions.announce_to_conversation_session(
+            "conv1", "claude", "hello") is False
+
+    def test_agent_mismatch_returns_false(self, clean_sessions, monkeypatch):
+        self._live_session(agent="claude")
+        sent = []
+        monkeypatch.setattr(sessions, "_ws_send_text",
+                            lambda sock, data: sent.append((sock, data)))
+        assert sessions.announce_to_conversation_session(
+            "conv1", "otheragent", "hello") is False
+        assert sent == []
+
+    def test_disconnected_worker_returns_false(self, clean_sessions):
+        self._live_session(sock=None)
+        assert sessions.announce_to_conversation_session(
+            "conv1", "claude", "hello") is False
+
+    def test_delivered_as_context_message(self, clean_sessions, monkeypatch):
+        self._live_session()
+        sent = []
+        monkeypatch.setattr(sessions, "_ws_send_text",
+                            lambda sock, data: sent.append((sock, data)))
+        assert sessions.announce_to_conversation_session(
+            "conv1", "claude", "delegate finished") is True
+        assert len(sent) == 1
+        sock, data = sent[0]
+        assert sock == "SOCK"
+        msg = json.loads(data)
+        assert msg["type"] == "context"
+        assert msg["text"] == "delegate finished"
+
+    def test_spawn_delivery_hook_speaks_result(self, clean_sessions,
+                                               monkeypatch):
+        from types import SimpleNamespace
+        from core.handlers._spawn_delivery import _SpawnDeliveryMixin
+        calls = []
+        monkeypatch.setattr(
+            sessions, "announce_to_conversation_session",
+            lambda cid, agent, text: calls.append((cid, agent, text)) or True)
+
+        class _H(_SpawnDeliveryMixin):
+            pass
+
+        result = SimpleNamespace(task_id="t1", agent_name="scout",
+                                 status="completed", error="", question="",
+                                 response="the findings")
+        _H()._announce_to_voice_session("conv1", "claude", result)
+        assert len(calls) == 1
+        cid, agent, text = calls[0]
+        assert (cid, agent) == ("conv1", "claude")
+        assert "scout" in text and "the findings" in text
+
+    def test_spawn_delivery_hook_reports_failure(self, clean_sessions,
+                                                 monkeypatch):
+        from types import SimpleNamespace
+        from core.handlers._spawn_delivery import _SpawnDeliveryMixin
+        calls = []
+        monkeypatch.setattr(
+            sessions, "announce_to_conversation_session",
+            lambda cid, agent, text: calls.append(text) or True)
+
+        class _H(_SpawnDeliveryMixin):
+            pass
+
+        result = SimpleNamespace(task_id="t1", agent_name="scout",
+                                 status="error", error="boom", question="",
+                                 response="")
+        _H()._announce_to_voice_session("conv1", "claude", result)
+        assert len(calls) == 1 and "FAILED" in calls[0] and "boom" in calls[0]

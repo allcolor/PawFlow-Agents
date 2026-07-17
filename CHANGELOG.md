@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Background delegate results are now spoken into live voice sessions:
+  when a `flash_delegate`/`delegate` sub-agent finishes while its caller
+  has an active realtime LiveKit session, the result is injected into
+  the session as an out-of-band context message (voice-friendly wording)
+  on top of the normal text-channel delivery.
 - `consult_agent` tool (voice-front delegation): one-shot call to the
   conversation agent's own model — resolved system prompt + configured
   `llm_service`, bounded conversation context, answer returned as the

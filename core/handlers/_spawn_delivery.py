@@ -274,9 +274,45 @@ class _SpawnDeliveryMixin:
                 task_id=result.task_id, delegate_agent=result.agent_name,
                 file_id=_file_id,
             )
+
+            # 4. If the caller is on a live voice session right now, also
+            #    speak the result there (best-effort, on top of the normal
+            #    text-channel delivery above).
+            self._announce_to_voice_session(conv_id, source_agent, result)
         except Exception as e:
             logger.exception("[bg-delegate] Failed to deliver result for task %s: %s",
                              result.task_id, e)
+
+    def _announce_to_voice_session(self, conv_id, source_agent, result):
+        """Speak a delegate result into the conversation's live session.
+
+        Voice-friendly wording (no file ids, bounded preview). Silent
+        no-op when there is no live LiveKit session for this agent.
+        """
+        try:
+            from core.service_registry import _parent_conversation_id
+            from services._livekit_sessions import (
+                announce_to_conversation_session)
+            _cid = _parent_conversation_id(conv_id) or conv_id
+            if result.error:
+                _text = (f"Background delegate '{result.agent_name}' "
+                         f"FAILED: {result.error[:300]}. Tell the user and "
+                         "decide how to react.")
+            elif result.status == "needs_input" and result.question:
+                _text = (f"Background delegate '{result.agent_name}' needs "
+                         f"input: {result.question[:500]} — relay the "
+                         "question to the user.")
+            else:
+                _text = (f"Background delegate '{result.agent_name}' "
+                         f"finished. Result: {(result.response or '')[:800]}"
+                         "\nReport the relevant outcome to the user in a "
+                         "concise spoken summary.")
+            if announce_to_conversation_session(_cid, source_agent, _text):
+                logger.info("[bg-delegate] result for task %s spoken into "
+                            "live session cid=%s", result.task_id, _cid[:8])
+        except Exception:
+            logger.debug("[bg-delegate] voice announce skipped",
+                         exc_info=True)
 
     def _deliver_to_caller(self, conv_id, caller_agent, user_id, text, msg_id,
                            task_id, delegate_agent, file_id):

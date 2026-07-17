@@ -139,7 +139,7 @@ pages before image results before video results.
 | Tool | Purpose |
 |---|---|
 | `delegate` | Spawn/delegate work to another agent. |
-| `flash_delegate` | Create temporary task-specific agents for independent parallel work; they use the caller's LLM service and disappear after completion. |
+| `flash_delegate` | Create temporary task-specific agents for independent parallel work; they use the caller's LLM service and disappear after completion. Background results are delivered to the caller (preempt/wake) — and when the caller is on a live realtime voice session, the result is ALSO injected into the session and spoken (out-of-band `context` message). |
 | `consult_agent` | One-shot delegation to the conversation agent's own model: resolves the agent's system prompt and `llm_service`, sends the task with bounded conversation context, returns the answer as the tool result. Approval-exempt (the delegate gets no tools). Built for realtime voice sessions (`tool_profile=consult_agent`) where the realtime model is only the spoken interface and routes substantial work to the agent's brain; works from text sessions too. |
 | `manage_resource` | Create/update/delete/list agents, skills, tools, services, resources; review/import marketplace skills; assign/unassign skills to agents with live context notifications. Creates resources in conversation scope when called from an active conversation. |
 | `manage_package` | Build, inspect, install, export, list, and uninstall signed PawFlow Package (`.pfp`) artifacts with selectable objects and provenance. |

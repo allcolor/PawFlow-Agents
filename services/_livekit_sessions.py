@@ -94,6 +94,33 @@ def active_session_for_conversation(conversation_id: str):
         return _sessions.get(sid) if sid else None
 
 
+def announce_to_conversation_session(conversation_id: str, agent_name: str,
+                                     text: str) -> bool:
+    """Inject text into the conversation's live voice session, if any.
+
+    Out-of-band announcements (e.g. a background flash_delegate result
+    landing while the user is on voice): the text is sent to the worker
+    as a `context` message and spoken by the live agent. Returns True
+    only when actually delivered to a connected session for the SAME
+    agent — callers keep their normal text-channel delivery regardless.
+    """
+    session = active_session_for_conversation(conversation_id)
+    if session is None or session.get("state") == "closed":
+        return False
+    if agent_name and session["agent_name"] != agent_name:
+        return False
+    sock = session.get("worker_sock")
+    if sock is None:
+        return False
+    try:
+        _ws_send_text(sock, proto.dumps(
+            proto.make_message("context", text=str(text))))
+        return True
+    except Exception:
+        logger.debug("[livekit] out-of-band announce failed", exc_info=True)
+        return False
+
+
 def start_livekit_session(*, service_id: str, conversation_id: str,
                           agent_name: str, user_id: str,
                           role: str = "") -> dict:

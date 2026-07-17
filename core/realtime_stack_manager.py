@@ -279,7 +279,11 @@ class RealtimeStackManager:
             "--name", SERVER_CONTAINER, "--network", "host",
             "--env",
             f"LIVEKIT_KEYS={creds['api_key']}: {creds['api_secret']}",
-            SERVER_IMAGE, "--bind", "0.0.0.0",
+            # Deliberate all-interfaces bind: remote browsers send WebRTC
+            # media (UDP/ICE) straight to livekit-server — only the signal
+            # WS goes through the authenticated /livekit proxy. Access is
+            # gated by the generated API credentials.
+            SERVER_IMAGE, "--bind", "0.0.0.0",  # nosec B104
         ], timeout=120)
         if result.returncode != 0:
             raise RuntimeError("failed to start livekit-server: "

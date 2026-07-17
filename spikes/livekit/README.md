@@ -113,8 +113,12 @@ PAWFLOW_URL=http://127.0.0.1:8898 PAWFLOW_REALTIME_WORKER_SECRET=benchsecret \
 python spikes/livekit/bench/driver.py                          # prints TIER1 PASSED/FAILED
 ```
 
-With `OPENAI_API_KEY` exported, the same bench exercises the real provider
-leg (tier 2).
+With `OPENAI_API_KEY` exported, `bench/driver2.py` exercises the real
+provider leg (tier 2): it synthesizes a spoken instruction with the OpenAI
+TTS API, publishes it as the user's mic track, and asserts the user
+transcript events, the `echo` tool round-trip through the control plane,
+and a non-silent agent audio reply. Use a fresh `BENCH_ROOM` per run —
+reusing a room name against a live worker skips the track subscription.
 
 ## Findings log
 
@@ -123,4 +127,5 @@ resumption, video sampling controls, tool behavior differences) — they feed
 the migration matrix in the plan.
 
 - 2026-07-17 (tier-1 bench, livekit-agents 1.6.5, livekit-server 1.9.1): full control-plane chain PASSED headless — worker dispatch, bootstrap fetch (secret-authenticated), worker-control hello/hello_ack, `realtime.media.connected` + `realtime.agent.state` events, agent participant joined the room. Deprecation warnings to track for a future livekit-agents bump: `metrics_collected` → `session_usage_updated`, `RoomInputOptions`/`RoomOutputOptions` → `RoomOptions` (both still functional in 1.6.5, worker unchanged for now).
-- Provider-leg runs (OpenAI voice, Gemini video, local pipeline) still pending credentials/model downloads.
+- 2026-07-17 (tier-2 bench, gpt-realtime via `OPENAI_API_KEY`, server restarted on 1.0.0-beta.24): PASSED — spoken instruction (OpenAI TTS 24 kHz PCM published as mic track) produced `realtime.user.transcript.delta/final` events, a provider `tool_call` for `echo` with a successful `tool_result` round-trip through the worker-control WS, `realtime.agent.transcript.final`, and a non-silent agent audio reply in the room (1000+ frames). The full P1/P2 provider leg works end-to-end with real audio. Also confirmed: the beta.24 secrets-cache fix delivers newly added secrets to the relay env without a further restart.
+- Provider-leg runs still pending: Gemini video (`GOOGLE_API_KEY`) and the local pipeline (model downloads).

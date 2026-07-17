@@ -29,6 +29,12 @@ async def bootstrap(request):
     STATE["bootstrap_calls"].append({"room": body.get("room"),
                                      "ts": time.time()})
     provider = os.environ.get("BENCH_PROVIDER", "openai")
+    model = {"local_pipeline": "gpt-4o-mini",
+             "gemini": "gemini-2.5-flash-native-audio-preview-09-2025",
+             }.get(provider, "gpt-realtime")
+    api_key = os.environ.get(
+        "GOOGLE_API_KEY" if provider == "gemini" else "OPENAI_API_KEY",
+        "sk-invalid-bench")
     return web.json_response({
         "session_id": "bench-1",
         "room_name": body.get("room", ""),
@@ -38,11 +44,10 @@ async def bootstrap(request):
         "conversation_id": "bench-conv",
         "agent_name": "claude",
         "provider": provider,
-        "model": ("gpt-4o-mini" if provider == "local_pipeline"
-                  else "gpt-realtime"),
-        "voice": "alloy",
+        "model": model,
+        "voice": ("Puck" if provider == "gemini" else "alloy"),
         "modalities": ["audio", "text"],
-        "video_input": False,
+        "video_input": provider == "gemini",
         "video_fps_active": 1.0,
         "video_fps_idle": 0.33,
         "local_pipeline": ({
@@ -58,9 +63,8 @@ async def bootstrap(request):
         "tools": [{"name": "echo", "description": "echo back",
                    "parameters": {"type": "object", "properties": {
                        "text": {"type": "string"}}}}],
-        "credentials": {"source": "llm_service", "provider": "openai",
-                        "api_key": os.environ.get("OPENAI_API_KEY",
-                                                  "sk-invalid-bench"),
+        "credentials": {"source": "llm_service", "provider": provider,
+                        "api_key": api_key,
                         "base_url": "", "default_model": ""},
     })
 

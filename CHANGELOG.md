@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.25] — 2026-07-17
+
 ### Added
 
 - Realtime LiveKit local-pipeline bench (`spikes/livekit/bench/`): minimal

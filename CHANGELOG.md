@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Realtime LiveKit Gemini video bench (`spikes/livekit/bench/driver3.py`):
+  synthetic camera track (red square) plus a spoken color question against a
+  real `gemini` Live session — user/agent transcripts, correct color answer,
+  and non-silent agent voice all asserted. Validates the native video-input
+  path end to end.
+
 ## [1.0.0-beta.25] — 2026-07-17
 
 ### Added

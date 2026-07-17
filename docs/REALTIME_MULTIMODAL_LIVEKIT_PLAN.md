@@ -1,6 +1,6 @@
 # Realtime Multimodal LiveKit Integration Plan
 
-Status: P0 in progress — spike infrastructure landed 2026-07-17 (dependency group, compose profile, spike scripts, worker-control prototype + CI tests); live OpenAI/Gemini spike runs pending API keys.
+Status: P0–P3 implemented 2026-07-17 (spike infra, service+session API, sidecar worker with tools/transcripts, webchat WebRTC live panel); all live provider/browser validation deferred to the owner's single pass — see docs/REALTIME_LIVEKIT_VALIDATION.md. P5+ gated on that sign-off.
 Decided: 2026-07-06. Updated: 2026-07-16 (local pipeline profile added to cascade mode).
 Owner intent: replace PawFlow's custom realtime voice bridge with a LiveKit Agents based implementation, then extend it to audio/video multimodal sessions without duplicating media transport or provider-specific realtime stacks.
 

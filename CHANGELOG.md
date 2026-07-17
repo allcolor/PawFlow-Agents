@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.24] — 2026-07-17
+
 ### Added
 
 - Realtime LiveKit P0 spike (`docs/REALTIME_MULTIMODAL_LIVEKIT_PLAN.md`):

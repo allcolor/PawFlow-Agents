@@ -35,6 +35,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   events on the conversation event bus. 40 new unit tests
   (`tests/test_livekit_engine.py`); docs in `services.md` and
   `security_model.md`.
+- Realtime LiveKit P2 (worker MVP + tools + transcripts): new sidecar
+  worker package `pawflow_livekit_worker/` (automatic LiveKit dispatch,
+  PawFlow bootstrap fetch, provider `AgentSession` for
+  openai/gemini/local_pipeline, proxied function tools, session cap);
+  `POST /api/realtime/livekit/worker/bootstrap` endpoint guarded by the
+  `PAWFLOW_REALTIME_WORKER_SECRET` deployment secret, resolving provider
+  credentials server-side (never to the browser); worker tool calls now
+  run through the existing `RealtimeToolBridge` (silent approval, long
+  tools detach to `context` injection); final transcripts persist as
+  normal conversation messages. 13 new tests
+  (`tests/test_livekit_worker_p2.py`).
 - CUA screen mode phase 2 (AX-first addressing, `docs/CUA_MODE_PLAN.md`):
   new `screen` tool actions `windows` (window list), `window_state`
   (accessibility-element tree + grounding screenshot) and `status` (backend

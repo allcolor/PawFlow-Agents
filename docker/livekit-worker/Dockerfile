@@ -18,8 +18,9 @@ RUN pip install --no-cache-dir \
 RUN python -c "from livekit.plugins import silero; silero.VAD.load()" || true
 
 COPY spikes/livekit/ /app/spikes/livekit/
+COPY pawflow_livekit_worker/ /app/pawflow_livekit_worker/
 
-# Hello-world OpenAI Realtime voice agent in LiveKit dev mode.
-# Override the command to run the Gemini video spike or the
-# worker-control spike instead (see spikes/livekit/README.md).
-CMD ["python", "spikes/livekit/spike_openai_voice.py", "dev"]
+# Production worker (P2): automatic LiveKit dispatch + PawFlow bootstrap.
+# Override the command with a spike script for isolated validation
+# (see spikes/livekit/README.md).
+CMD ["python", "-m", "pawflow_livekit_worker", "dev"]

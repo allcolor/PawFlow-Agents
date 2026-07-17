@@ -407,7 +407,9 @@ class TestWorkerControlHandler:
 
         text = sock.sent_text()
         assert '"hello_ack"' in text
-        assert '"tool_result"' in text and "not wired yet" in text
+        # No tool_profile on this service: the real bridge (P2) answers
+        # with a spoken-friendly unavailability message.
+        assert '"tool_result"' in text and "not available" in text
         names = [name for _cid, name, _d in published]
         assert "realtime.session.ready" in names
         assert "realtime.agent.transcript.final" in names

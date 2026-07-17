@@ -16,10 +16,20 @@ the /ws/realtime voice route):
 One active LiveKit session per conversation; the newcomer supersedes.
 Force-stop sends `shutdown` on the control WS, closes it, and removes the
 registry entry — it never poisons the next session (project convention).
+P2 additions: the sidecar worker fetches its bootstrap (control token,
+provider credentials, resolved instructions, tool definitions) from
+`POST /api/realtime/livekit/worker/bootstrap`, authenticated with the
+deployment secret `PAWFLOW_REALTIME_WORKER_SECRET` (shared with the worker
+container via compose). Provider credentials are resolved server-side from
+the service's `llm_service` and go only to the trusted worker — never to
+the browser. Worker tool calls run through the existing RealtimeToolBridge
+(silent approval, long tools detach); final transcripts persist as normal
+conversation messages.
 """
 
 import json
 import logging
+import os
 import threading
 import time
 import urllib.parse
@@ -68,6 +78,14 @@ def _new_session(*, service_id: str, conversation_id: str, agent_name: str,
 def get_session(session_id: str):
     with _lock:
         return _sessions.get(session_id)
+
+
+def find_session_by_room(room_name: str):
+    with _lock:
+        for session in _sessions.values():
+            if session["room_name"] == room_name:
+                return session
+    return None
 
 
 def active_session_for_conversation(conversation_id: str):
@@ -201,9 +219,218 @@ def _publish(conversation_id: str, event_type: str, data: dict) -> None:
         logger.debug("[livekit] event publish failed", exc_info=True)
 
 
+# -- worker bootstrap ----------------------------------------------------
+
+_WORKER_SECRET_ENV = "PAWFLOW_REALTIME_WORKER_SECRET"
+
+# providers whose credentials come from a specific llmConnection provider
+_PROVIDER_LLM_REQUIREMENT = {"openai": "openai", "gemini": "gemini"}
+
+
+def _resolve_provider_credentials(engine_cfg: dict, *, user_id: str,
+                                  conversation_id: str) -> dict:
+    """Server-side provider credential resolution for the trusted worker.
+
+    `llm_service` is the migration-path source of truth (plan §Service
+    Model). local_pipeline uses it for the TEXT turn only — audio never
+    leaves the deployment. Raises ServiceError with actionable messages.
+    """
+    llm_service = engine_cfg.get("llm_service", "")
+    if not llm_service:
+        if engine_cfg.get("provider_secret"):
+            # New-style config without an llmConnection: the worker reads
+            # the named secret from its own environment (deployment-provided,
+            # never transits through PawFlow storage).
+            return {"source": "env",
+                    "env_var": engine_cfg["provider_secret"]}
+        raise ServiceError(
+            "llm_service (or provider_secret) is required to resolve "
+            f"provider credentials for '{engine_cfg['provider']}'")
+    from core.service_registry import ServiceRegistry
+    reg = ServiceRegistry.get_instance()
+    svc = reg.resolve(llm_service, user_id=user_id,
+                      conv_id=conversation_id)
+    if svc is None:
+        raise ServiceError(
+            f"LLM service '{llm_service}' could not connect")
+    provider = getattr(svc, "provider", "") or ""
+    required = _PROVIDER_LLM_REQUIREMENT.get(engine_cfg["provider"])
+    if required and provider != required:
+        raise ServiceError(
+            f"livekit provider '{engine_cfg['provider']}' requires a "
+            f"'{required}' llmConnection for credentials, got "
+            f"'{provider or 'unknown'}'")
+    api_key = getattr(svc, "api_key", "") or ""
+    if not api_key:
+        raise ServiceError(f"LLM service '{llm_service}' has no api_key")
+    return {
+        "source": "llm_service",
+        "provider": provider,
+        "api_key": api_key,
+        "base_url": getattr(svc, "base_url", "") or "",
+        "default_model": getattr(svc, "default_model", "") or "",
+    }
+
+
+def _session_instructions(session: dict) -> str:
+    """Agent/custom instructions + bounded conversation context.
+
+    Reuses the legacy bridge's resolver (instructions_mode / context_mode
+    semantics are identical across engines).
+    """
+    from types import SimpleNamespace
+    from services._realtime_bridge import resolve_session_instructions
+    cfg = session["engine_cfg"]
+    shim = SimpleNamespace(instructions_mode=cfg["instructions_mode"],
+                           instructions=cfg["instructions"],
+                           context_mode=cfg["context_mode"])
+    return resolve_session_instructions(
+        shim, session["conversation_id"], session["agent_name"],
+        session["user_id"])
+
+
+def _tool_bridge(session: dict):
+    """Lazily build (and cache) the session's RealtimeToolBridge."""
+    bridge = session.get("tool_bridge")
+    if bridge is None:
+        from services._realtime_tools import RealtimeToolBridge
+        bridge = RealtimeToolBridge(
+            session["engine_cfg"]["tool_profile"],
+            session["conversation_id"], session["agent_name"],
+            session["user_id"])
+        session["tool_bridge"] = bridge
+    return bridge
+
+
+def build_worker_bootstrap(session: dict) -> dict:
+    """Full bootstrap payload for the trusted sidecar worker."""
+    cfg = session["engine_cfg"]
+    credentials = _resolve_provider_credentials(
+        cfg, user_id=session["user_id"],
+        conversation_id=session["conversation_id"])
+    tool_definitions = []
+    if cfg["tool_profile"]:
+        tool_definitions = _tool_bridge(session).tool_definitions()
+    return {
+        **session["worker_bootstrap"],
+        "conversation_id": session["conversation_id"],
+        "agent_name": session["agent_name"],
+        "provider": cfg["provider"],
+        "model": cfg["model"],
+        "voice": cfg["voice"],
+        "modalities": cfg["modalities"],
+        "video_input": cfg["video_input"],
+        "turn_detection": cfg["turn_detection"],
+        "max_session_seconds": cfg["max_session_seconds"],
+        "instructions": _session_instructions(session),
+        "tools": tool_definitions,
+        "credentials": credentials,
+    }
+
+
+def _worker_bootstrap_endpoint(req):
+    """POST /api/realtime/livekit/worker/bootstrap  {"room": ...}
+
+    Public route; auth is the deployment secret shared with the worker
+    container (header X-PawFlow-Worker-Secret). Without the env set, the
+    endpoint refuses — no anonymous fallback.
+    """
+    import hmac as _hmac
+    secret = os.environ.get(_WORKER_SECRET_ENV, "")
+    if not secret:
+        return _json_response(req, 503, {
+            "error": f"{_WORKER_SECRET_ENV} is not configured on the "
+                     "PawFlow server — worker bootstrap is disabled"})
+    provided = (req.headers.get("X-PawFlow-Worker-Secret")
+                or req.headers.get("x-pawflow-worker-secret") or "")
+    if not _hmac.compare_digest(provided, secret):
+        return _json_response(req, 403, {"error": "bad worker secret"})
+    try:
+        body = json.loads(req.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return _json_response(req, 400, {"error": "invalid JSON body"})
+    room = str(body.get("room", "") or "").strip()
+    session = find_session_by_room(room) if room else None
+    if session is None or session["state"] == "closed":
+        return _json_response(req, 404, {"error": f"no active session for "
+                                                  f"room '{room}'"})
+    try:
+        payload = build_worker_bootstrap(session)
+    except ServiceError as e:
+        return _json_response(req, 400, {"error": str(e)})
+    except Exception as e:
+        logger.error("[livekit] bootstrap failed", exc_info=True)
+        return _json_response(req, 500, {"error": str(e)})
+    _json_response(req, 200, payload)
+
+
 # -- worker-control WebSocket ------------------------------------------
 
 _EVENT_LOG_CAP = 500
+
+_TRANSCRIPT_EVENTS = {
+    "realtime.user.transcript.final": "user",
+    "realtime.agent.transcript.final": "assistant",
+}
+
+
+def _handle_worker_tool_call(session: dict, sock, message: dict) -> None:
+    """Run one worker tool call through the RealtimeToolBridge.
+
+    Silent approval semantics are the bridge's own (exempt/pre-approved
+    tools run, dialog-requiring tools get a spoken-friendly refusal). Long
+    tools detach: the provider receives an interim tool_result immediately
+    and the real result arrives later as a `context` message — or persists
+    as a system message when the session ended meanwhile.
+    """
+    call_id = message["call_id"]
+    name = str(message["name"])
+    cid = session["conversation_id"]
+    session_id = session["session_id"]
+    _publish(cid, "realtime.tool.started",
+             {"session_id": session_id, "tool": name})
+
+    def _send_result(cid_, result_text):
+        try:
+            _ws_send_text(sock, proto.dumps(proto.make_message(
+                "tool_result", call_id=cid_, ok=True,
+                result={"text": str(result_text)})))
+        except Exception:
+            logger.debug("[livekit] tool_result send failed", exc_info=True)
+
+    def _announce(text):
+        # Late result of a detached tool: inject into the live session, or
+        # persist as a system message when the session is already gone.
+        current = get_session(session_id)
+        if current is not None and current.get("worker_sock") is not None:
+            try:
+                _ws_send_text(current["worker_sock"], proto.dumps(
+                    proto.make_message("context", text=str(text))))
+                return
+            except Exception:
+                logger.debug("[livekit] context send failed", exc_info=True)
+        from services._realtime_bridge import persist_voice_transcript
+        persist_voice_transcript(cid, session["agent_name"],
+                                 session["user_id"], "system", str(text))
+
+    try:
+        status = _tool_bridge(session).handle_call(
+            call_id, name, message["arguments"],
+            send_result=_send_result, announce=_announce)
+    except Exception as exc:
+        logger.warning("[livekit] tool call '%s' failed: %s", name, exc,
+                       exc_info=True)
+        try:
+            _ws_send_text(sock, proto.dumps(proto.make_message(
+                "tool_result", call_id=call_id, ok=False,
+                result={"error": str(exc)})))
+        except Exception:
+            logger.debug("Ignored exception", exc_info=True)
+        status = "error"
+    _publish(cid, "realtime.tool.completed" if status in ("done",
+                                                          "background")
+             else "realtime.tool.rejected",
+             {"session_id": session_id, "tool": name, "status": status})
 
 
 def worker_control_ws_handler(sock, path_params: dict, meta: dict):
@@ -272,13 +499,17 @@ def worker_control_ws_handler(sock, path_params: dict, meta: dict):
                 _publish(cid, str(message["name"]),
                          dict(message["data"] or {},
                               session_id=session_id))
+                role = _TRANSCRIPT_EVENTS.get(str(message["name"]))
+                if role:
+                    # Final transcripts become normal conversation messages
+                    # (UUID + timestamp, SSE fan-out) — deltas are UI-only.
+                    from services._realtime_bridge import \
+                        persist_voice_transcript
+                    persist_voice_transcript(
+                        cid, session["agent_name"], session["user_id"],
+                        role, str((message["data"] or {}).get("text", "")))
             elif message["type"] == "tool_call":
-                # Tool bridge wiring lands in P2 — refuse explicitly rather
-                # than time the worker out.
-                _ws_send_text(sock, proto.dumps(proto.make_message(
-                    "tool_result", call_id=message["call_id"], ok=False,
-                    result={"error": "PawFlow tool bridge not wired yet "
-                                     "(P2)"})))
+                _handle_worker_tool_call(session, sock, message)
             elif message["type"] == "bye":
                 session["stop_reason"] = message["reason"]
                 break
@@ -359,6 +590,13 @@ def register_livekit_routes(http_service) -> None:
         http_service.register_route(
             "POST", "/api/realtime/livekit/stop", "_realtime_livekit",
             callback=_stop_endpoint)
+    if "/api/realtime/livekit/worker/bootstrap" not in existing:
+        # Public: the worker has no user session; auth is the deployment
+        # secret header checked in the endpoint (503 when unconfigured).
+        http_service.register_route(
+            "POST", "/api/realtime/livekit/worker/bootstrap",
+            "_realtime_livekit", callback=_worker_bootstrap_endpoint,
+            public=True)
     if not any(p.startswith("/ws/realtime-worker/") for p in existing):
         # Public: the sidecar worker has no user session. The handler
         # enforces the PawFlow-signed scoped token minted at session start.

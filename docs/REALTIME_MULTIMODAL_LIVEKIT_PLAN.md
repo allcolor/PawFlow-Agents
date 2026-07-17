@@ -456,6 +456,14 @@ P1 progress (2026-07-17) — implemented:
 - Worker-control WS endpoint `/ws/realtime-worker/{session_id}` (public route, fails closed on token mismatch), protocol promoted to `services/_realtime_worker_protocol.py` (spike re-exports it). Worker `tool_call` gets an explicit not-wired-yet refusal until P2.
 - Tests: `tests/test_livekit_engine.py` (40) + spike protocol tests — 153 realtime/livekit tests green. Docs: `services.md`, `security_model.md`.
 
+P2 progress (2026-07-17) — implemented (live provider runs pending, per owner decision):
+
+- Worker bootstrap: `POST /api/realtime/livekit/worker/bootstrap` (deployment-secret header `PAWFLOW_REALTIME_WORKER_SECRET`, 503 when unset, room→session lookup) returns control token, agent room token, resolved instructions (same `instructions_mode`/`context_mode` resolver as the legacy bridge), tool definitions, and server-side-resolved provider credentials (`llm_service` first, `provider_secret` env passthrough otherwise) — never sent to the browser.
+- Tool bridge wired: worker `tool_call` messages run through the existing `RealtimeToolBridge` (silent approval, long tools detach → `context` message to the live session or system-message persistence), `realtime.tool.started/completed/rejected` published.
+- Transcript persistence: `realtime.user/agent.transcript.final` events persist as normal conversation messages via `persist_voice_transcript` (UUID+ts, SSE fan-out); deltas stay UI-only.
+- Sidecar worker `pawflow_livekit_worker/`: `control_client.py` (LiveKit-free, CI-tested, contract-pinned to the server protocol) + `worker.py` (automatic LiveKit dispatch → bootstrap fetch → provider `AgentSession` for openai/gemini/local_pipeline → proxy function tools → event mirroring → `max_session_seconds` cap + shutdown handling). Worker image now runs `python -m pawflow_livekit_worker`.
+- Tests: `tests/test_livekit_worker_p2.py` (13) — 166 realtime/livekit tests green.
+
 ### P1: Service and Session API
 
 - Add LiveKit engine support to the existing realtime service model.

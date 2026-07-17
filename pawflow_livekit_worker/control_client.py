@@ -19,6 +19,7 @@ Incoming `context` and `shutdown` messages fire the registered callbacks.
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 
@@ -63,7 +64,11 @@ class WorkerControlClient:
 
     async def connect(self) -> None:
         self._http = aiohttp.ClientSession()
-        self._ws = await self._http.ws_connect(self._url)
+        # PAWFLOW_TLS_INSECURE=1: managed stack, loopback wss with the
+        # default self-signed install certificate.
+        insecure = os.environ.get("PAWFLOW_TLS_INSECURE", "") == "1"
+        self._ws = await self._http.ws_connect(
+            self._url, ssl=(False if insecure else None))
         await self._send(_make_message(
             "hello", session_id=self._session_id,
             worker_id=self._worker_id, sdk=self._sdk))

@@ -96,11 +96,12 @@ Reasoning:
 - The sidecar can be scaled or restarted independently from PawFlow without killing the main HTTP worker.
 - Provider SDK dependencies stay out of minimal PawFlow installs unless realtime LiveKit is enabled.
 
-Initial deployment modes:
+Deployment modes:
 
-1. Local development: Docker Compose starts PawFlow, LiveKit server, and `pawflow-livekit-worker`.
-2. Production self-hosted: LiveKit server and worker are explicit services in the deployment.
-3. LiveKit Cloud: PawFlow still runs the worker sidecar, but rooms are hosted by LiveKit Cloud.
+1. **Managed (default for installer deployments)**: `livekit_url` left empty on the service. `core/realtime_stack_manager.py` provisions and supervises the stack through the Docker socket, exactly like ServerRelayManager provisions relays: `pawflow-livekit` (official livekit-server image, generated API key/secret) and `pawflow-livekit-worker` (dependency-only image built locally once; the `pawflow_livekit_worker` package is staged from the server install and bind-mounted, so upgrades need no rebuild). The worker deployment secret is generated and persisted encrypted (`data/system/realtime_stack.json`). Browsers connect same-origin through the `/livekit` signal WebSocket proxy on the PawFlow listener (no mixed-content ws:// from HTTPS pages); WebRTC media flows over UDP directly. Provider API keys never enter any container env — the worker gets them per-session from the bootstrap.
+2. Local development: Docker Compose starts PawFlow, LiveKit server, and `pawflow-livekit-worker` (external mode: `livekit_url` + api key/secret set on the service).
+3. Production self-hosted with an existing LiveKit: external mode against that server.
+4. LiveKit Cloud: PawFlow still runs the worker sidecar, but rooms are hosted by LiveKit Cloud (external mode).
 
 In-process LiveKit Agents is not the default target. It can be considered only for an explicit minimal single-binary mode after the sidecar path works.
 

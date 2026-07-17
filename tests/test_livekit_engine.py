@@ -49,7 +49,6 @@ class TestResolveLivekitConfig:
         assert out["max_session_seconds"] == 600
 
     @pytest.mark.parametrize("missing,fragment", [
-        ("livekit_url", "livekit_url is required"),
         ("livekit_api_key", "livekit_api_key and livekit_api_secret"),
         ("livekit_api_secret", "livekit_api_key and livekit_api_secret"),
         ("model", "model is required"),
@@ -57,6 +56,25 @@ class TestResolveLivekitConfig:
     def test_missing_required_fails_clearly(self, missing, fragment):
         with pytest.raises(ServiceError, match=fragment):
             engine.resolve_livekit_config(_cfg(**{missing: None}))
+
+    def test_empty_url_selects_managed_stack(self):
+        """No livekit_url = managed mode with generated credentials."""
+        out = engine.resolve_livekit_config(
+            _cfg(livekit_url=None, livekit_api_key=None,
+                 livekit_api_secret=None))
+        assert out["livekit_managed"] is True
+        assert out["livekit_url"].startswith("ws://127.0.0.1:")
+        assert out["livekit_api_key"].startswith("pflk")
+        assert len(out["livekit_api_secret"]) >= 32
+        # Stable across calls (persisted, not re-generated).
+        again = engine.resolve_livekit_config(_cfg(livekit_url=None))
+        assert again["livekit_api_key"] == out["livekit_api_key"]
+        assert again["livekit_api_secret"] == out["livekit_api_secret"]
+
+    def test_external_url_is_not_managed(self):
+        out = engine.resolve_livekit_config(_cfg())
+        assert out["livekit_managed"] is False
+        assert out["livekit_url"] == "ws://localhost:7880"
 
     def test_bad_url_scheme_rejected(self):
         with pytest.raises(ServiceError, match="ws\\(s\\)://"):
@@ -287,6 +305,39 @@ class TestSessionRegistry:
             boot["control_token"], out["session_id"])
         assert claims["cid"] == "conv1"
 
+    def test_managed_start_waits_for_provisioning(self, stubbed_env,
+                                                  monkeypatch):
+        from core.realtime_stack_manager import RealtimeStackManager
+        stubbed_env.defs["lkm"] = _FakeServiceDef(
+            _cfg(livekit_url=None, livekit_api_key=None,
+                 livekit_api_secret=None))
+        monkeypatch.setattr(
+            RealtimeStackManager, "ensure_stack",
+            lambda self: {"state": "provisioning", "detail": "pulling"})
+        with pytest.raises(ServiceError, match="provisioning"):
+            sessions.start_livekit_session(
+                service_id="lkm", conversation_id="conv1",
+                agent_name="claude", user_id="quentin")
+
+    def test_managed_start_uses_signal_proxy_path(self, stubbed_env,
+                                                  monkeypatch):
+        from core.realtime_stack_manager import RealtimeStackManager
+        stubbed_env.defs["lkm"] = _FakeServiceDef(
+            _cfg(livekit_url=None, livekit_api_key=None,
+                 livekit_api_secret=None))
+        monkeypatch.setattr(RealtimeStackManager, "ensure_stack",
+                            lambda self: {"state": "ready", "detail": ""})
+        out = sessions.start_livekit_session(
+            service_id="lkm", conversation_id="conv1", agent_name="claude",
+            user_id="quentin")
+        # Browser goes same-origin through the proxy; the worker bootstrap
+        # keeps the direct local URL.
+        assert out["livekit_url"] == ""
+        assert out["livekit_path"] == "/livekit"
+        session = sessions.get_session(out["session_id"])
+        assert session["worker_bootstrap"]["livekit_url"].startswith(
+            "ws://127.0.0.1:")
+
     def test_api_key_caller_rejected(self, stubbed_env):
         with pytest.raises(PermissionError, match="user session"):
             sessions.start_livekit_session(
@@ -466,7 +517,8 @@ class TestHttpEndpoints:
 
     def test_start_endpoint_bad_config_is_400(self, stubbed_env):
         stubbed_env.defs["broken"] = _FakeServiceDef(
-            {"engine": "livekit"})  # missing everything
+            {"engine": "livekit",
+             "livekit_url": "localhost:7880"})  # bad scheme, external mode
         req = _request({"service": "broken", "conversation_id": "conv1",
                         "agent_name": "claude"})
         sessions._start_endpoint(req)

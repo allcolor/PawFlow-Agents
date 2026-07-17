@@ -7,6 +7,18 @@ acceptance criterion. Record failures as issues against the plan phase.
 
 ## 1. Stack up
 
+**Managed mode (default, installer deployments):** nothing to do. Leave
+`livekit_url` empty on the service; PawFlow provisions the stack itself
+through the Docker socket on first session start (`RealtimeStackManager`:
+`pawflow-livekit` + `pawflow-livekit-worker` containers, generated
+credentials, worker code bind-mounted from the server install). First
+start pulls/builds images for a few minutes — the mic button reports
+"provisioning — retry in a moment" until ready. Provider API keys are
+NOT needed on any container: the worker receives them per-session from
+the `llm_service` connection via the bootstrap.
+
+**External mode (docker-compose dev bench / existing LiveKit):**
+
 ```bash
 export PAWFLOW_REALTIME_WORKER_SECRET=$(openssl rand -hex 24)
 export OPENAI_API_KEY=...        # voice baseline
@@ -16,9 +28,11 @@ docker compose up -d pawflow
 ```
 
 Checks:
-- `livekit-worker` logs show it registered with the LiveKit server.
-- Without `PAWFLOW_REALTIME_WORKER_SECRET` on the pawflow service, the
-  worker logs `bootstrap refused (503)` — expected fail-closed behavior.
+- `livekit-worker` logs show it registered with the LiveKit server
+  (managed mode: `docker logs pawflow-livekit-worker`).
+- Without `PAWFLOW_REALTIME_WORKER_SECRET` on the pawflow service (and no
+  managed stack), the worker logs `bootstrap refused (503)` — expected
+  fail-closed behavior.
 
 ## 2. Spikes in isolation (P0 acceptance)
 
@@ -32,12 +46,14 @@ README findings log and the plan's migration matrix.
 ## 3. Service + session (P1/P2 acceptance)
 
 1. Create a `realtimeVoiceConnection` service with:
-   `engine=livekit`, `livekit_url=ws://localhost:7880`,
-   `livekit_api_key=devkey`, `livekit_api_secret=secret`,
-   `provider=openai`, `model=gpt-realtime`, `llm_service=<openai conn>`,
-   `tool_profile=recall,web_search`.
-2. Broken-config check: omit `livekit_url` → service install fails with the
-   actionable message (no silent fallback).
+   `engine=livekit`, `provider=openai`, `model=gpt-realtime`,
+   `llm_service=<openai conn>`, `tool_profile=recall,web_search`.
+   Leave `livekit_url` empty for the managed stack; set
+   `livekit_url`/`livekit_api_key`/`livekit_api_secret` only against an
+   external LiveKit server (e.g. the compose dev bench).
+2. Broken-config check: external mode with a bad `livekit_url` scheme or
+   missing api key/secret → service install fails with the actionable
+   message (no silent fallback).
 3. In a conversation, click the mic button and pick the LiveKit service
    (LiveKit badge in the right-click settings panel).
 4. Expected: overlay opens, agent greets by voice, barge-in works,

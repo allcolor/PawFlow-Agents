@@ -126,6 +126,21 @@ def start_livekit_session(*, service_id: str, conversation_id: str,
             f"'{service_id}' is not a realtimeVoiceConnection service")
     engine_cfg = engine.resolve_livekit_config(svc_def.config or {})
 
+    if engine_cfg["livekit_managed"]:
+        # Managed stack: make sure the containers are up (provisioning is
+        # asynchronous — first run pulls/builds images for a few minutes).
+        from core.realtime_stack_manager import RealtimeStackManager
+        stack = RealtimeStackManager.get_instance().ensure_stack()
+        if stack["state"] == "error":
+            raise ServiceError(
+                "managed realtime stack failed to provision: "
+                + stack["detail"])
+        if stack["state"] != "ready":
+            raise ServiceError(
+                "managed realtime stack is provisioning ("
+                + (stack["detail"] or "starting")
+                + ") — retry in a moment")
+
     session = _new_session(service_id=service_id,
                            conversation_id=conversation_id,
                            agent_name=agent_name, user_id=user_id,
@@ -170,7 +185,13 @@ def start_livekit_session(*, service_id: str, conversation_id: str,
     return {
         "session_id": session_id,
         "room": room_name,
-        "livekit_url": engine_cfg["livekit_url"],
+        # Managed stack: the browser connects same-origin through the
+        # /livekit signal proxy (empty URL + path — the client derives
+        # ws(s)://<page-host>/livekit). External stack: direct URL.
+        "livekit_url": ("" if engine_cfg["livekit_managed"]
+                        else engine_cfg["livekit_url"]),
+        "livekit_path": ("/livekit" if engine_cfg["livekit_managed"]
+                         else ""),
         "token": browser_token,
         "provider": engine_cfg["provider"],
         "modalities": engine_cfg["modalities"],
@@ -338,15 +359,22 @@ def _worker_bootstrap_endpoint(req):
     """POST /api/realtime/livekit/worker/bootstrap  {"room": ...}
 
     Public route; auth is the deployment secret shared with the worker
-    container (header X-PawFlow-Worker-Secret). Without the env set, the
-    endpoint refuses — no anonymous fallback.
+    container (header X-PawFlow-Worker-Secret): the env var for external
+    deployments, else the generated managed-stack secret. Neither set —
+    the endpoint refuses; no anonymous fallback.
     """
     import hmac as _hmac
     secret = os.environ.get(_WORKER_SECRET_ENV, "")
     if not secret:
+        from core.realtime_stack_manager import RealtimeStackManager
+        mgr = RealtimeStackManager.get_instance()
+        if mgr.has_state():
+            secret = mgr.credentials()["worker_secret"]
+    if not secret:
         return _json_response(req, 503, {
             "error": f"{_WORKER_SECRET_ENV} is not configured on the "
-                     "PawFlow server — worker bootstrap is disabled"})
+                     "PawFlow server and no managed realtime stack exists "
+                     "— worker bootstrap is disabled"})
     provided = (req.headers.get("X-PawFlow-Worker-Secret")
                 or req.headers.get("x-pawflow-worker-secret") or "")
     if not _hmac.compare_digest(provided, secret):
@@ -641,4 +669,13 @@ def register_livekit_routes(http_service) -> None:
         http_service.register_route(
             "GET", "/ws/realtime-worker/{session_id}", "_realtime_livekit",
             callback=None, ws_handler=worker_control_ws_handler, public=True)
+    if not any(p.startswith("/livekit/") for p in existing):
+        # Public: same-origin signal proxy for the MANAGED stack only
+        # (dumb pipe to the local livekit-server; auth is the LiveKit
+        # access token in the query, verified by livekit-server itself).
+        # The handler refuses when no managed stack has been provisioned.
+        from services.livekit_signal_proxy import livekit_signal_ws_proxy
+        http_service.register_route(
+            "GET", "/livekit/{path+}", "_realtime_livekit",
+            callback=None, ws_handler=livekit_signal_ws_proxy, public=True)
     logger.info("[livekit] realtime routes registered")

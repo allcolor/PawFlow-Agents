@@ -169,7 +169,7 @@ ignore_missing_imports = true
 [tool.setuptools.packages.find]
 include = [
     "core*", "engine*", "tasks*", "services*", "tools*",
-    "pawflow_relay*", "pawflow_cli*",
+    "pawflow_relay*", "pawflow_cli*", "pawflow_livekit_worker*",
 ]
 exclude = ["tests*"]
 

@@ -89,11 +89,30 @@ def _bootstrap_request(body, secret="wsecret"):
 class TestWorkerBootstrapEndpoint:
     def test_disabled_without_env(self, stubbed_env, monkeypatch):
         monkeypatch.delenv(sessions._WORKER_SECRET_ENV, raising=False)
+        # No managed stack either (other tests may have provisioned one
+        # in the shared test data dir).
+        from core.realtime_stack_manager import RealtimeStackManager
+        monkeypatch.setattr(RealtimeStackManager, "has_state",
+                            lambda self: False)
         req = _bootstrap_request({"room": "x"})
         sessions._worker_bootstrap_endpoint(req)
         assert req.response_status == 503
         assert "PAWFLOW_REALTIME_WORKER_SECRET" in \
             json.loads(req.response_body)["error"]
+
+    def test_managed_secret_fallback(self, stubbed_env, monkeypatch,
+                                     tmp_path):
+        """No env secret, but a managed stack: its secret authenticates."""
+        monkeypatch.delenv(sessions._WORKER_SECRET_ENV, raising=False)
+        monkeypatch.setenv("PAWFLOW_DATA_DIR", str(tmp_path / "data"))
+        from core.realtime_stack_manager import RealtimeStackManager
+        mgr = RealtimeStackManager()
+        monkeypatch.setattr(RealtimeStackManager, "_instance", mgr)
+        secret = mgr.credentials()["worker_secret"]
+        req = _bootstrap_request({"room": "nosuch"}, secret=secret)
+        sessions._worker_bootstrap_endpoint(req)
+        # Authenticated (past 403/503) — unknown room is a 404.
+        assert req.response_status == 404
 
     def test_bad_secret_rejected(self, stubbed_env, monkeypatch):
         monkeypatch.setenv(sessions._WORKER_SECRET_ENV, "wsecret")

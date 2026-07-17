@@ -44,6 +44,15 @@ def _control_ws_url(bootstrap: dict) -> str:
             f"?token={bootstrap['control_token']}")
 
 
+def _tls_insecure() -> bool:
+    """PAWFLOW_TLS_INSECURE=1 — accept the server's self-signed cert.
+
+    Set by the managed-stack provisioner when the PawFlow listener runs
+    TLS with the default install certificate (the fetch targets loopback).
+    """
+    return os.environ.get("PAWFLOW_TLS_INSECURE", "") == "1"
+
+
 async def fetch_bootstrap(room_name: str) -> dict:
     """Ask PawFlow for the session bootstrap of a room; None-safe: raises."""
     secret = os.environ.get("PAWFLOW_REALTIME_WORKER_SECRET", "")
@@ -53,6 +62,7 @@ async def fetch_bootstrap(room_name: str) -> dict:
         async with http.post(
                 f"{_pawflow_url()}/api/realtime/livekit/worker/bootstrap",
                 json={"room": room_name},
+                ssl=(False if _tls_insecure() else None),
                 headers={"X-PawFlow-Worker-Secret": secret}) as resp:
             payload = await resp.json()
             if resp.status != 200:

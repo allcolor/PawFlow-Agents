@@ -192,14 +192,14 @@ class RealtimeVoiceConnectionService(BaseService):
             "engine": {
                 "type": "select", "required": False, "default": "legacy",
                 "options": ["legacy", "livekit"],
-                "description": "legacy = built-in provider bridge (current default). livekit = LiveKit engine (media via LiveKit server + sidecar worker; requires the livekit_* keys below).",
+                "description": "legacy = built-in provider bridge (current default). livekit = LiveKit engine (media via LiveKit server + sidecar worker). With livekit_url left empty, PawFlow provisions and manages the LiveKit stack itself (managed mode — no setup needed).",
             },
             "livekit_url": {"type": "string", "required": False, "default": "",
-                             "description": "livekit engine: LiveKit server URL (ws://localhost:7880 for the docker-compose dev server, or a LiveKit Cloud wss:// URL)."},
+                             "description": "livekit engine: leave EMPTY for the managed stack (PawFlow runs livekit-server + worker itself). Set only to use an external LiveKit server (ws(s):// URL), together with the api key/secret below."},
             "livekit_api_key": {"type": "string", "required": False, "default": "",
-                                 "description": "livekit engine: LiveKit API key (devkey on the dev server)."},
+                                 "description": "livekit engine, external server only: LiveKit API key. Ignored in managed mode (keys are generated)."},
             "livekit_api_secret": {"type": "password", "required": False, "default": "",
-                                    "description": "livekit engine: LiveKit API secret (secret on the dev server)."},
+                                    "description": "livekit engine, external server only: LiveKit API secret. Ignored in managed mode (keys are generated)."},
             "provider": {
                 "type": "select", "required": False, "default": "",
                 "options": ["", "openai", "gemini", "azure_openai", "xai",

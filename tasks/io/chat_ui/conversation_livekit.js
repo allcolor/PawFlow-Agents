@@ -185,7 +185,14 @@ async function startLiveKitVoiceMode(cid, svc) {
     _lkExtendOverlay(!!payload.video_input, payload.video_source || 'camera');
     _voiceSetState('connecting');
     if (typeof _voiceUpdateButton === 'function') _voiceUpdateButton();
-    await room.connect(payload.livekit_url, payload.token);
+    // Managed stack: empty livekit_url + a livekit_path — connect
+    // same-origin through the PawFlow signal proxy (wss on TLS pages).
+    var lkUrl = payload.livekit_url;
+    if (!lkUrl && payload.livekit_path) {
+      lkUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://')
+              + location.host + payload.livekit_path;
+    }
+    await room.connect(lkUrl, payload.token);
     await room.localParticipant.setMicrophoneEnabled(true);
   } catch (err) {
     addMsg('error', _voiceT('lkStartFailed', 'Live session failed: ') + (err && err.message ? err.message : err));

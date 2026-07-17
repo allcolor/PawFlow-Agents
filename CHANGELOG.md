@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Managed realtime stack (zero-config LiveKit): leaving `livekit_url`
+  empty on a `realtimeVoiceConnection` service now makes PawFlow
+  provision and supervise the LiveKit stack itself through the Docker
+  socket — `pawflow-livekit` (generated API credentials, never
+  devkey/secret) and `pawflow-livekit-worker` (dependency-only image
+  built locally once, worker code bind-mounted from the server install).
+  The worker deployment secret is generated and persisted encrypted;
+  browsers connect same-origin through the new `/livekit` signal
+  WebSocket proxy (works on HTTPS pages, no manual docker-compose or env
+  variables). External LiveKit servers remain supported by setting
+  `livekit_url` + API key/secret.
+
 - Realtime LiveKit Gemini video bench (`spikes/livekit/bench/driver3.py`):
   synthetic camera track (red square) plus a spoken color question against a
   real `gemini` Live session — user/agent transcripts, correct color answer,

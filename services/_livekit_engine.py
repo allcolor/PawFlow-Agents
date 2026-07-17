@@ -54,19 +54,29 @@ def resolve_livekit_config(raw: dict) -> dict:
         return str(cfg.get(key, default) or default).strip()
 
     livekit_url = _s("livekit_url")
-    if not livekit_url:
-        raise ServiceError(
-            "livekit_url is required for the livekit realtime engine "
-            "(e.g. ws://localhost:7880 for the docker-compose dev server)")
-    if not livekit_url.startswith(("ws://", "wss://", "http://", "https://")):
-        raise ServiceError(f"livekit_url '{livekit_url}' must be a ws(s):// "
-                           "or http(s):// URL")
-    api_key = _s("livekit_api_key")
-    api_secret = _s("livekit_api_secret")
-    if not api_key or not api_secret:
-        raise ServiceError(
-            "livekit_api_key and livekit_api_secret are required for the "
-            "livekit realtime engine")
+    livekit_managed = not livekit_url
+    if livekit_managed:
+        # Managed mode: no external LiveKit configured — PawFlow
+        # provisions livekit-server + worker itself (generated
+        # credentials, containers supervised by RealtimeStackManager).
+        from core.realtime_stack_manager import RealtimeStackManager
+        managed = RealtimeStackManager.get_instance().engine_credentials()
+        livekit_url = managed["livekit_url"]
+        api_key = managed["livekit_api_key"]
+        api_secret = managed["livekit_api_secret"]
+    else:
+        if not livekit_url.startswith(
+                ("ws://", "wss://", "http://", "https://")):
+            raise ServiceError(
+                f"livekit_url '{livekit_url}' must be a ws(s):// "
+                "or http(s):// URL")
+        api_key = _s("livekit_api_key")
+        api_secret = _s("livekit_api_secret")
+        if not api_key or not api_secret:
+            raise ServiceError(
+                "livekit_api_key and livekit_api_secret are required when "
+                "livekit_url points at an external LiveKit server (leave "
+                "livekit_url empty for the managed stack)")
 
     # provider: explicit, else derived from the legacy protocol
     provider = _s("provider").lower()
@@ -145,6 +155,7 @@ def resolve_livekit_config(raw: dict) -> dict:
 
     return {
         "engine": "livekit",
+        "livekit_managed": livekit_managed,
         "livekit_url": livekit_url,
         "livekit_api_key": api_key,
         "livekit_api_secret": api_secret,

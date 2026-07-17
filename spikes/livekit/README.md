@@ -97,10 +97,30 @@ Expected output: `handshake OK`, `tool round-trip OK in X ms`, then
 `worker-control spike PASSED`. The protocol logic is unit-tested in CI
 (`tests/test_livekit_spike_control.py`).
 
+## Control-plane bench (no provider key)
+
+`bench/` runs the REAL worker against a local LiveKit server and a fake
+PawFlow control plane — validates dispatch → bootstrap fetch → control WS
+handshake → media/session events without any provider credential:
+
+```bash
+cd /tmp && curl -sL https://github.com/livekit/livekit/releases/download/v1.9.1/livekit_1.9.1_linux_amd64.tar.gz | tar xz
+./livekit-server --dev --bind 127.0.0.1 &
+python spikes/livekit/bench/fake_pawflow.py &                 # port 8898
+PAWFLOW_URL=http://127.0.0.1:8898 PAWFLOW_REALTIME_WORKER_SECRET=benchsecret \
+  LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret \
+  python -m pawflow_livekit_worker start &
+python spikes/livekit/bench/driver.py                          # prints TIER1 PASSED/FAILED
+```
+
+With `OPENAI_API_KEY` exported, the same bench exercises the real provider
+leg (tier 2).
+
 ## Findings log
 
 Record plugin capability gaps here as the spike runs (Gemini session
 resumption, video sampling controls, tool behavior differences) — they feed
 the migration matrix in the plan.
 
-- (pending first live runs)
+- 2026-07-17 (tier-1 bench, livekit-agents 1.6.5, livekit-server 1.9.1): full control-plane chain PASSED headless — worker dispatch, bootstrap fetch (secret-authenticated), worker-control hello/hello_ack, `realtime.media.connected` + `realtime.agent.state` events, agent participant joined the room. Deprecation warnings to track for a future livekit-agents bump: `metrics_collected` → `session_usage_updated`, `RoomInputOptions`/`RoomOutputOptions` → `RoomOptions` (both still functional in 1.6.5, worker unchanged for now).
+- Provider-leg runs (OpenAI voice, Gemini video, local pipeline) still pending credentials/model downloads.

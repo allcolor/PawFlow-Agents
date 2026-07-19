@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.27] — 2026-07-19
+
 ### Added
 
 - Native Claude Code plugin support (`claude-code` / `claude-code-interactive`):

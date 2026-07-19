@@ -731,8 +731,76 @@ class ClaudeCodeSessionMixin:
         with open(mcp_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 
+        self._cc_write_plugin_settings(workdir)
+
         logger.info("MCP config written: %s (relay=%s)", mcp_path, relay_url)
         return mcp_path, internal_token
+
+    def _cc_write_plugin_settings(self, workdir: str) -> None:
+        """Merge native Claude Code plugin config into
+        <workdir>/.claude/settings.json.
+
+        `claude_plugins` (llmConnection param): comma-separated plugin ids,
+        normally qualified as `plugin@marketplace` — each becomes
+        settings["enabledPlugins"][id] = true. `claude_marketplaces`:
+        comma-separated `name=owner/repo` (github source) or
+        `name=<git-url>` (git source) — each becomes an
+        settings["extraKnownMarketplaces"] entry. Claude Code auto-installs
+        known marketplaces and enabled plugins on startup.
+
+        Merge-based writer: reads the existing settings.json and only
+        touches the two plugin keys, so the CCI pool's hook/permission
+        settings written to the same file are preserved (and vice versa —
+        the pool writer is also merge-based). No plugins configured and no
+        stale keys present = no file touched.
+        """
+        cfg = getattr(self, "config", None) or {}
+        try:
+            plugins_raw = str(cfg.get("claude_plugins", "") or "")
+            markets_raw = str(cfg.get("claude_marketplaces", "") or "")
+        except Exception:
+            return
+        plugins = [p.strip() for p in plugins_raw.split(",") if p.strip()]
+        marketplaces = {}
+        for part in markets_raw.split(","):
+            name, sep, source = part.strip().partition("=")
+            name = name.strip()
+            source = source.strip()
+            if not name or not sep or not source:
+                continue
+            if "://" in source:
+                marketplaces[name] = {"source": {"source": "git",
+                                                 "url": source}}
+            else:
+                marketplaces[name] = {"source": {"source": "github",
+                                                 "repo": source}}
+        settings_path = os.path.join(workdir, ".claude", "settings.json")
+        try:
+            with open(settings_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+            if not isinstance(settings, dict):
+                settings = {}
+        except (FileNotFoundError, json.JSONDecodeError):
+            settings = {}
+        had_keys = ("enabledPlugins" in settings
+                    or "extraKnownMarketplaces" in settings)
+        if not plugins and not marketplaces and not had_keys:
+            return
+        # Full ownership of the two keys: removed config entries disable
+        # the plugin on the next session instead of lingering forever.
+        settings.pop("enabledPlugins", None)
+        settings.pop("extraKnownMarketplaces", None)
+        if plugins:
+            settings["enabledPlugins"] = {p: True for p in plugins}
+        if marketplaces:
+            settings["extraKnownMarketplaces"] = marketplaces
+        os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+        with open(settings_path, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+            f.write("\n")
+        logger.info("[cc] plugin settings merged: %s (plugins=%d, "
+                    "marketplaces=%d)", settings_path, len(plugins),
+                    len(marketplaces))
 
     # All built-in Claude Code tools that must be disabled
     # (server filesystem != user's filesystem — everything goes through MCP).

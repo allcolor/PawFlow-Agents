@@ -600,6 +600,21 @@ class LLMConnectionService(BaseService):
                 "options": ["low", "medium", "high", "max"],
                 "description": "Claude Code effort level (thinking budget)",
             },
+            "claude_plugins": {
+                "type": "string", "required": False, "default": "",
+                "description": "claude-code providers only: comma-separated "
+                               "Claude Code plugin ids to enable in sessions "
+                               "(plugin@marketplace form). Marketplaces are "
+                               "declared in claude_marketplaces; Claude Code "
+                               "auto-installs them on session start.",
+            },
+            "claude_marketplaces": {
+                "type": "string", "required": False, "default": "",
+                "description": "claude-code providers only: comma-separated "
+                               "marketplace declarations, name=owner/repo "
+                               "(GitHub) or name=<git-url>. Referenced by "
+                               "claude_plugins entries.",
+            },
             "codex_plugins": {
                 "type": "string", "required": False, "default": "",
                 "description": "codex-app-server only: comma-separated native "
@@ -631,6 +646,8 @@ class LLMConnectionService(BaseService):
                     "docker_memory_limit": {"visible": False},
                     "effort":        {"visible": False},
                     "codex_plugins": {"visible": False},
+                    "claude_plugins": {"visible": False},
+                    "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -658,6 +675,8 @@ class LLMConnectionService(BaseService):
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
                     "codex_plugins": {"visible": False},
+                    "claude_plugins": {"visible": True},
+                    "claude_marketplaces": {"visible": True},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -679,6 +698,8 @@ class LLMConnectionService(BaseService):
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
                     "codex_plugins": {"visible": False},
+                    "claude_plugins": {"visible": True},
+                    "claude_marketplaces": {"visible": True},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -700,6 +721,8 @@ class LLMConnectionService(BaseService):
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": False},
                     "codex_plugins": {"visible": False},
+                    "claude_plugins": {"visible": False},
+                    "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -721,6 +744,8 @@ class LLMConnectionService(BaseService):
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True, "description": "Codex app-server reasoning effort (low/medium/high/xhigh/max)"},
                     "codex_plugins": {"visible": True},
+                    "claude_plugins": {"visible": False},
+                    "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -742,6 +767,8 @@ class LLMConnectionService(BaseService):
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": False},
                     "codex_plugins": {"visible": False},
+                    "claude_plugins": {"visible": False},
+                    "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },

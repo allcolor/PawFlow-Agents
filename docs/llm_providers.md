@@ -269,6 +269,17 @@ Container notes:
 - Server-side login containers are named `pawflow-claude-login-*`.
 - Pool containers are named `pf-cc-pool-*`.
 
+### Native Claude Code plugins
+
+Both Claude Code providers can enable native Claude Code plugins (slash commands, skills, agents shipped by a plugin marketplace). Two `llmConnection` parameters:
+
+```
+claude_marketplaces: acme=acme-corp/cc-plugins, lab=https://git.example/lab.git
+claude_plugins: pr-review@acme, deploy@acme
+```
+
+`claude_marketplaces` declares marketplaces as `name=owner/repo` (GitHub) or `name=<git-url>` (git); `claude_plugins` lists `plugin@marketplace` ids to enable. PawFlow merges `extraKnownMarketplaces` and `enabledPlugins` into the session's `.claude/settings.json` (preserving all other keys — CCI hook settings included), and Claude Code auto-installs them on session start. Removing entries from the service config disables them on the next session. Caveat: MCP servers shipped by plugins are constrained by `--strict-mcp-config` on the batch provider — plugin commands/skills/agents load, plugin MCP servers may not.
+
 ## Codex App-Server
 
 Codex agents use `codex-app-server`. PawFlow does not expose a legacy `codex`
@@ -353,6 +364,8 @@ Credential inputs:
 - `credential_service_id` pointing at an `llmCredentialOAuthProvider` whose provider is `gemini` when using OAuth/login mode
 
 Login options are the same as other credential pools: set `api_key`, or use `gemini_oauth_credentials` with server login, relay login, or pasted credentials. The credential service exposes both Gemini CLI server login and Agy/Antigravity server login; both write the same Gemini OAuth pool. Server login containers are named `pawflow-gemini-login-*`; pool containers are named `pf-gemini-pool-*`; Antigravity observer containers are named `pf-*-agyobs-*`.
+
+Native Gemini CLI extensions: the session HOME is the persistent per-(conversation, agent) slot, so extensions installed there (`gemini extensions install <git-url>` run once inside the session container) live in `<slot>/.gemini/extensions/` and survive restarts — PawFlow's generated `settings.json` does not touch that directory. There is no declarative `gemini_extensions` service parameter yet: unlike Codex plugins (account-level) and Claude Code plugins (settings-driven auto-install), Gemini extensions require an on-disk install step the CLI has to run itself.
 
 Operational notes:
 

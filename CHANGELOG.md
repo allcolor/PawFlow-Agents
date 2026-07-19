@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Native Claude Code plugin support (`claude-code` / `claude-code-interactive`):
+  new `claude_plugins` (`plugin@marketplace` ids) and `claude_marketplaces`
+  (`name=owner/repo` or `name=<git-url>`) parameters on `llmConnection` —
+  merged as `enabledPlugins` / `extraKnownMarketplaces` into the session's
+  `.claude/settings.json` (all other keys preserved, CCI hook settings
+  included); Claude Code auto-installs them on session start, and removed
+  entries are cleared on the next session.
 - Native Codex plugin support (`codex-app-server`): a new `codex_plugins`
   parameter on `llmConnection` (comma-separated names, optional
   `name@marketplace`, default marketplace `openai-curated`) emits

@@ -16,10 +16,10 @@ def test_relay_manager_stores_servers_and_workspaces(monkeypatch, tmp_path):
     workspace.mkdir()
 
     server = manager.add_server(
-        "prod", "https://pawflow.example:9090/", gateway_key="RoyBetty")
+        "prod", "https://pawflow.example:9090/", gateway_key="RoyBatty")
     assert server["name"] == "prod"
     assert server["url"] == "https://pawflow.example:9090"
-    assert server["gateway_key"] == "RoyBetty"
+    assert server["gateway_key"] == "RoyBatty"
 
     share = manager.add_workspace(
         "repo", "prod", str(workspace), mode="ro", docker_image="relay:python")

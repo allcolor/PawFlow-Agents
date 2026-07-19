@@ -20,7 +20,7 @@
 #   PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE Minimal server relay image used by PawFlow (default: pawflow-relay-minimal:latest)
 #   PAWFLOW_RECREATE_CONTAINER Recreate an existing PawFlow container in place (default: 1)
 #
-# The first PawFlow bootstrap gateway key is RoyBetty. The installer wizard
+# The first PawFlow bootstrap gateway key is RoyBatty. The installer wizard
 # must force the user to replace it before finalization.
 
 set -euo pipefail
@@ -62,8 +62,8 @@ if [[ -z "$PUBLISH_HOST" ]]; then PUBLISH_HOST="$HOST"; fi
 if [[ -z "$NETWORK_MODE" ]]; then NETWORK_MODE="host"; fi
 if [[ -z "$CONTAINER_HOST" ]]; then CONTAINER_HOST="0.0.0.0"; fi
 if [[ -z "$BOOTSTRAP_GATEWAY_KEY" ]]; then
-  BOOTSTRAP_GATEWAY_KEY="RoyBetty"
-  BOOTSTRAP_GATEWAY_LABEL="RoyBetty"
+  BOOTSTRAP_GATEWAY_KEY="RoyBatty"
+  BOOTSTRAP_GATEWAY_LABEL="RoyBatty"
 else
   BOOTSTRAP_GATEWAY_LABEL="custom value from PAWFLOW_BOOTSTRAP_GATEWAY_KEY"
 fi

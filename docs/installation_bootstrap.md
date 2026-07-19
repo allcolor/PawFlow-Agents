@@ -167,7 +167,7 @@ workspace relays can be spawned later. The install script mounts
 the socket is unavailable, the server still installs, but server-side workspace
 creation remains blocked until Docker socket access is provided.
 
-`RoyBetty` is a temporary bootstrap key. The installer must force a replacement
+`RoyBatty` is a temporary bootstrap key. The installer must force a replacement
 before finalization. The bootstrap `privateGateway` service is disabled when the
 installer finalizes.
 
@@ -197,7 +197,7 @@ endpoints under `POST /install/api/llm-credential/*`, and finalization at
 `privateGateway` service. The deployed executor preserves the flow version
 directory as the asset source directory so `install.html` resolves after process
 restore. Finalization requires the current bootstrap key,
-rejects keeping `RoyBetty`, requires matching admin password confirmation and
+rejects keeping `RoyBatty`, requires matching admin password confirmation and
 password complexity, stores only a SHA-256
 digest of the replacement gateway key, writes the final key as encrypted secret
 `privategateway.main`, creates the persistent `_private_gateway`, resolves the
@@ -237,7 +237,7 @@ and global-secret files after removing runtime artifacts it created.
    - select one of the installed private gateway skins
    - choose the final runtime listener TLS mode: generated private self-signed
      certificate or mounted cert/key files
-   - reject `RoyBetty` as a final key
+   - reject `RoyBatty` as a final key
    - persist only `privategateway.main` plus a digest in install state
 
 4. LLM service and CLI credential pools

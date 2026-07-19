@@ -31,7 +31,7 @@ The standalone relay client is exposed as `pawflow-relay` when installed from th
 Add a server profile:
 
 ```bash
-pawflow-relay server add prod https://pawflow.example:PORT --gateway-key RoyBetty
+pawflow-relay server add prod https://pawflow.example:PORT --gateway-key RoyBatty
 ```
 
 Login to the server:

@@ -161,7 +161,7 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert 'PAWFLOW_APP_DIR="/app"' in run_src
     assert "BOOTSTRAP_GATEWAY_KEY" in run_src
     assert "BOOTSTRAP_RESET" in run_src
-    assert "RoyBetty" in run_src
+    assert "RoyBatty" in run_src
     assert "--help|-h" in run_src
     assert "/var/run/docker.sock:/var/run/docker.sock" in run_src
     assert "--group-add" in run_src
@@ -690,7 +690,7 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "PawFlow Installer" in doc
     assert "doctor-pawflow.sh" in doc
     assert "doctor-pawflow.ps1" in doc
-    assert "RoyBetty" in doc
+    assert "RoyBatty" in doc
     assert "Never create a default user relay" in doc
     assert "Install relay client" in doc
     assert "/var/run/docker.sock" in doc
@@ -732,7 +732,7 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "Do not configure relays" in prompt
     assert "summarizer service" in prompt
     assert "variables, secrets" in prompt
-    assert "RoyBetty" in prompt
+    assert "RoyBatty" in prompt
 
 
 def test_compose_healthcheck_accepts_bootstrap_tls():
@@ -882,7 +882,7 @@ def test_pawflow_installer_flow_template_exists():
     flow = json.loads(template.read_text(encoding="utf-8"))
     assert flow["id"] == "pawflow-installer"
     assert flow["fqn"] == "default.pawflow_installer:1.0.0"
-    assert flow["parameters"]["bootstrap_gateway_key"] == "RoyBetty"
+    assert flow["parameters"]["bootstrap_gateway_key"] == "RoyBatty"
     assert flow["parameters"]["bootstrap_gateway_secret_ref"] == "privategateway.bootstrap"
     assert flow["parameters"]["private_gateway_service_id"] == "_bootstrap_private_gateway"
     assert flow["parameters"]["ssl_certfile"] == "data/system/ssl/bootstrap.crt"

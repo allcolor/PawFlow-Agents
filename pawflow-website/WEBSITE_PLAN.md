@@ -73,7 +73,7 @@ Then:
 
 - Open `https://localhost:PORT/install`.
 - Accept the self-signed bootstrap certificate for local/private installs.
-- Use temporary bootstrap key `RoyBetty` only during first install.
+- Use temporary bootstrap key `RoyBatty` only during first install.
 - Finalize wizard: admin user, LLM service, summarizer service, PawFlow Agent flow, starter conversation.
 
 Secondary source/dev path:

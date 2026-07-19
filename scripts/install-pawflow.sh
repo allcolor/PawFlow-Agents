@@ -771,8 +771,8 @@ run_native_server() {
   if [[ "$HOST_SET" == "0" ]]; then native_host="127.0.0.1"; fi
   bootstrap_gateway_key="$(printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY || true)"
   if [[ -z "$bootstrap_gateway_key" ]]; then
-    bootstrap_gateway_key="RoyBetty"
-    bootstrap_gateway_label="RoyBetty"
+    bootstrap_gateway_key="RoyBatty"
+    bootstrap_gateway_label="RoyBatty"
   else
     bootstrap_gateway_label="custom value from PAWFLOW_BOOTSTRAP_GATEWAY_KEY"
   fi

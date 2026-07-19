@@ -197,8 +197,8 @@ function Run-ServerContainer($repoDir) {
     }
     $cliCheck = & docker run --rm --entrypoint sh $Image -lc 'command -v docker && docker --version' 2>&1 | Out-String
     if ($cliCheck -notmatch "Docker version") { Fail "Server image '$Image' does not contain a working Docker CLI.`n$cliCheck" }
-    $bootstrapKey = if ($env:PAWFLOW_BOOTSTRAP_GATEWAY_KEY) { $env:PAWFLOW_BOOTSTRAP_GATEWAY_KEY } else { "RoyBetty" }
-    $bootstrapLabel = if ($env:PAWFLOW_BOOTSTRAP_GATEWAY_KEY) { "custom value from PAWFLOW_BOOTSTRAP_GATEWAY_KEY" } else { "RoyBetty" }
+    $bootstrapKey = if ($env:PAWFLOW_BOOTSTRAP_GATEWAY_KEY) { $env:PAWFLOW_BOOTSTRAP_GATEWAY_KEY } else { "RoyBatty" }
+    $bootstrapLabel = if ($env:PAWFLOW_BOOTSTRAP_GATEWAY_KEY) { "custom value from PAWFLOW_BOOTSTRAP_GATEWAY_KEY" } else { "RoyBatty" }
     $args = @(
         "run", "-d",
         "--name", $Container,

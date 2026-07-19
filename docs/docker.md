@@ -142,7 +142,7 @@ The installer is protected by a temporary `privateGateway` service wired to the
 bootstrap `httpListener`. The initial Private Gateway bootstrap key is:
 
 ```text
-RoyBetty
+RoyBatty
 ```
 
 The installer wizard forces the user to replace this key before finalizing the
@@ -239,7 +239,7 @@ These are the supported Docker install scenarios and their expected outcomes.
    - An empty `~/pawflow/data` receives `data/repository`, so the installer flow
      is available even though `/app/data` is a bind mount.
    - Open `https://localhost:PORT/install`, accept the self-signed bootstrap
-     certificate warning, enter the current gateway key `RoyBetty`, replace it,
+     certificate warning, enter the current gateway key `RoyBatty`, replace it,
      create the admin password, and finalize.
    - Expected result: `_private_gateway`, `_auth_gateway`, the selected
      `llmConnection`, `summarizer_service`, `pawflow-agent`, and a starter

@@ -90,7 +90,7 @@ def test_fresh_install_deploys_installer_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(ib_base, "INSTALLER_TEMPLATE", template)
     cert, key = _stub_cert_generation(tmp_path, monkeypatch)
     monkeypatch.delenv("PAWFLOW_BOOTSTRAP_DISABLED", raising=False)
-    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBatty")
 
     try:
         assert ib.ensure_install_bootstrap(port=9443) is True
@@ -113,7 +113,7 @@ def test_fresh_install_deploys_installer_flow(tmp_path, monkeypatch):
         assert sdef.service_type == "privateGateway"
         assert sdef.config["secret_refs"] == ib.BOOTSTRAP_GATEWAY_SECRET_REF
         secret_file = _paths.GLOBAL_SECRETS_FILE.read_text(encoding="utf-8")
-        assert "RoyBetty" not in secret_file
+        assert "RoyBatty" not in secret_file
 
         state = json.loads(state_file.read_text(encoding="utf-8"))
         assert state["install_complete"] is False
@@ -452,18 +452,18 @@ def test_bootstrap_secret_write_preserves_other_raw_secrets(tmp_path, monkeypatc
         encoding="utf-8",
     )
 
-    ib._store_bootstrap_gateway_secret("RoyBetty")
+    ib._store_bootstrap_gateway_secret("RoyBatty")
 
     raw = json.loads(secrets_file.read_text(encoding="utf-8"))
     assert raw["other.secret"] == "enc:v2:not-valid"
     assert raw[ib.BOOTSTRAP_GATEWAY_SECRET_REF].startswith("enc:v2:")
-    assert "RoyBetty" not in secrets_file.read_text(encoding="utf-8")
+    assert "RoyBatty" not in secrets_file.read_text(encoding="utf-8")
 
 
 def test_finalize_install_requires_replaced_gateway_key(tmp_path, monkeypatch):
     state_file = tmp_path / "install_state.json"
     monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBatty")
     state_file.write_text(json.dumps({
         "install_complete": False,
         "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
@@ -473,7 +473,7 @@ def test_finalize_install_requires_replaced_gateway_key(tmp_path, monkeypatch):
 
     try:
         ib.finalize_install({
-            "new_gateway_key": "RoyBetty",
+            "new_gateway_key": "RoyBatty",
         })
         assert False, "unchanged bootstrap key should fail"
     except ValueError:
@@ -483,7 +483,7 @@ def test_finalize_install_requires_replaced_gateway_key(tmp_path, monkeypatch):
 def test_finalize_install_rejects_mismatched_admin_password_confirmation(tmp_path, monkeypatch):
     state_file = tmp_path / "install_state.json"
     monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBatty")
     state_file.write_text(json.dumps({
         "install_complete": False,
         "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
@@ -493,7 +493,7 @@ def test_finalize_install_rejects_mismatched_admin_password_confirmation(tmp_pat
 
     try:
         ib.finalize_install({
-            "bootstrap_gateway_key": "RoyBetty",
+            "bootstrap_gateway_key": "RoyBatty",
             "new_gateway_key": "new-gateway-key-123",
             "admin_password": "Admin-password-123",
             "admin_password_confirm": "Admin-password-456",
@@ -506,7 +506,7 @@ def test_finalize_install_rejects_mismatched_admin_password_confirmation(tmp_pat
 def test_finalize_install_rejects_weak_admin_password(tmp_path, monkeypatch):
     state_file = tmp_path / "install_state.json"
     monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
-    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBatty")
     state_file.write_text(json.dumps({
         "install_complete": False,
         "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
@@ -516,7 +516,7 @@ def test_finalize_install_rejects_weak_admin_password(tmp_path, monkeypatch):
 
     try:
         ib.finalize_install({
-            "bootstrap_gateway_key": "RoyBetty",
+            "bootstrap_gateway_key": "RoyBatty",
             "new_gateway_key": "new-gateway-key-123",
             "admin_password": "admin-password-123",
             "admin_password_confirm": "admin-password-123",
@@ -534,7 +534,7 @@ def test_finalize_install_validates_main_template_before_persistent_writes(tmp_p
     monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", tmp_path / "missing-main.json")
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
-    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBatty")
     state_file.write_text(json.dumps({
         "install_complete": False,
         "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
@@ -545,7 +545,7 @@ def test_finalize_install_validates_main_template_before_persistent_writes(tmp_p
     try:
         try:
             ib.finalize_install({
-                "bootstrap_gateway_key": "RoyBetty",
+                "bootstrap_gateway_key": "RoyBatty",
                 "new_gateway_key": "new-gateway-key-123",
                 "admin_password": "Admin-password-123",
                 "admin_password_confirm": "Admin-password-123",
@@ -574,7 +574,7 @@ def test_finalize_install_requires_valid_cli_oauth_before_persistent_writes(tmp_
     monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", main_template)
     monkeypatch.setattr(_paths, "GLOBAL_SECRETS_FILE", system_dir / "global_secrets.json")
     monkeypatch.setattr(_paths, "SECRET_KEY_FILE", system_dir / "secret.key")
-    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBatty")
     state_file.write_text(json.dumps({
         "install_complete": False,
         "installer_instance_id": ib.INSTALLER_INSTANCE_ID,
@@ -585,7 +585,7 @@ def test_finalize_install_requires_valid_cli_oauth_before_persistent_writes(tmp_
     try:
         try:
             ib.finalize_install({
-                "bootstrap_gateway_key": "RoyBetty",
+                "bootstrap_gateway_key": "RoyBatty",
                 "new_gateway_key": "new-gateway-key-123",
                 "admin_password": "Admin-password-123",
                 "admin_password_confirm": "Admin-password-123",
@@ -630,7 +630,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
     monkeypatch.setattr(_paths, "SECURITY_FILE", system_dir / "security.json")
     monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
     monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", main_template)
-    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBatty")
 
     try:
         from core.conversation_store import ConversationStore
@@ -692,7 +692,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
 
         new_key = "new-gateway-key-123"
         status = ib.finalize_install({
-            "bootstrap_gateway_key": "RoyBetty",
+            "bootstrap_gateway_key": "RoyBatty",
             "new_gateway_key": new_key,
             "admin_password": "Admin-password-123",
             "admin_password_confirm": "Admin-password-123",
@@ -780,7 +780,7 @@ def test_finalize_install_persists_complete_state_without_cleartext_key(tmp_path
         assert restored["service_configs"]["auth"]["providers"] == {"builtin": {"enabled": True}}
         from services.private_gateway import verify_secret
         assert verify_secret(new_key, ib.FINAL_GATEWAY_SECRET_REF) is True
-        assert verify_secret("RoyBetty", ib.FINAL_GATEWAY_SECRET_REF) is False
+        assert verify_secret("RoyBatty", ib.FINAL_GATEWAY_SECRET_REF) is False
         assert reg.get(ib.MAIN_INSTANCE_ID).status == "running"
         assert reg.get(ib.INSTALLER_INSTANCE_ID) is None
         sdef = ServiceRegistry.get_instance().get_definition(
@@ -851,7 +851,7 @@ def test_finalize_install_with_api_key_does_not_create_llm_credential_pool(tmp_p
     monkeypatch.setattr(_paths, "SECURITY_FILE", system_dir / "security.json")
     monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
     monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", main_template)
-    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBatty")
 
     try:
         from core.conversation_store import ConversationStore
@@ -881,7 +881,7 @@ def test_finalize_install_with_api_key_does_not_create_llm_credential_pool(tmp_p
         }), encoding="utf-8")
 
         status = ib.finalize_install({
-            "bootstrap_gateway_key": "RoyBetty",
+            "bootstrap_gateway_key": "RoyBatty",
             "new_gateway_key": "new-gateway-key-123",
             "admin_password": "Admin-password-123",
             "admin_password_confirm": "Admin-password-123",
@@ -941,7 +941,7 @@ def test_finalize_install_rolls_back_runtime_artifacts_when_smoke_checks_fail(tm
     monkeypatch.setattr(_paths, "SECURITY_FILE", system_dir / "security.json")
     monkeypatch.setattr(ib_base, "INSTALL_STATE_FILE", state_file)
     monkeypatch.setattr(ib_base, "MAIN_TEMPLATE", main_template)
-    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBetty")
+    monkeypatch.setenv("PAWFLOW_BOOTSTRAP_GATEWAY_KEY", "RoyBatty")
 
     try:
         from core.conversation_store import ConversationStore
@@ -989,7 +989,7 @@ def test_finalize_install_rolls_back_runtime_artifacts_when_smoke_checks_fail(tm
 
         try:
             ib.finalize_install({
-                "bootstrap_gateway_key": "RoyBetty",
+                "bootstrap_gateway_key": "RoyBatty",
                 "new_gateway_key": "new-gateway-key-123",
                 "admin_username": "rollback_admin",
                 "admin_password": "Admin-password-123",
@@ -1485,7 +1485,7 @@ def test_stop_installer_executor_soon_unregisters_running_executor(monkeypatch):
 def test_install_bootstrap_task_rejects_mutating_endpoints_after_completion(monkeypatch):
     monkeypatch.setattr(ib_task, "is_install_complete", lambda: True)
 
-    ff = FlowFile(content=json.dumps({"bootstrap_gateway_key": "RoyBetty"}).encode("utf-8"))
+    ff = FlowFile(content=json.dumps({"bootstrap_gateway_key": "RoyBatty"}).encode("utf-8"))
     ff.set_attribute("http.method", "POST")
     ff.set_attribute("http.path", "/install/api/llm-credential/prepare")
 
@@ -1503,7 +1503,7 @@ def test_install_bootstrap_task_returns_json_for_unexpected_finalize_errors(monk
         raise RuntimeError("forced finalize failure")
 
     monkeypatch.setattr(ib_task, "finalize_install", fail_finalize)
-    ff = FlowFile(content=json.dumps({"bootstrap_gateway_key": "RoyBetty"}).encode("utf-8"))
+    ff = FlowFile(content=json.dumps({"bootstrap_gateway_key": "RoyBatty"}).encode("utf-8"))
     ff.set_attribute("http.method", "POST")
     ff.set_attribute("http.path", "/install/api/finalize")
 

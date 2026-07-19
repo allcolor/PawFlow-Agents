@@ -52,7 +52,7 @@ def test_private_gateway_service_registered_and_uses_explicit_secret_refs(monkey
 
     monkeypatch.setattr(
         "core.expression._load_global_secrets",
-        lambda: {"gateway_key": ConfigValue(value="RoyBetty")},
+        lambda: {"gateway_key": ConfigValue(value="RoyBatty")},
     )
 
     svc = private_gateway.PrivateGateway({
@@ -62,8 +62,8 @@ def test_private_gateway_service_registered_and_uses_explicit_secret_refs(monkey
     })
 
     assert svc.is_enabled() is True
-    assert private_gateway.verify_secret("RoyBetty", "gateway_key") is True
-    assert private_gateway.verify_secret("RoyBetty", "privategateway.legacy") is False
+    assert private_gateway.verify_secret("RoyBatty", "gateway_key") is True
+    assert private_gateway.verify_secret("RoyBatty", "privategateway.legacy") is False
 
 
 def test_private_gateway_ws_accepts_gateway_key_header(monkeypatch):

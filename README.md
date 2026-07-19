@@ -146,7 +146,7 @@ Open the installer at:
 https://localhost:PORT/install
 ```
 
-The first-run Private Gateway key is `RoyBetty`. Finalizing the wizard replaces it.
+The first-run Private Gateway key is `RoyBatty`. Finalizing the wizard replaces it.
 
 ### From Source
 

@@ -775,7 +775,7 @@ function validate() {
     const hasCert = !!field('ssl_certfile').value.trim();
     const hasKey = !!field('ssl_keyfile').value.trim();
     if (hasCert !== hasKey) { err.textContent = 'Final cert file and final key file must be provided together, or both left empty.'; return false; }
-    if (field('new_gateway_key').value === 'RoyBetty') { err.textContent = 'New gateway key must replace the bootstrap key.'; return false; }
+    if (field('new_gateway_key').value === 'RoyBatty') { err.textContent = 'New gateway key must replace the bootstrap key.'; return false; }
   }
   if (step === 3 && (!validateLlmServices() || !field('summarizer_service_id').value || !field('summarizer_llm_service').value)) { err.textContent = err.textContent || 'Configure the summarizer service and linked LLM.'; return false; }
   if (step === 4 && !validateRelayServer()) return false;

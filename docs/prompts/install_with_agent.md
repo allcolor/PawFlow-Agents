@@ -59,8 +59,8 @@ After starting:
    https://localhost:PORT
    The first run uses a self-signed bootstrap certificate; browser trust warnings are expected until the wizard configures final certificates.
 4. Use the initial Private Gateway bootstrap key:
-   RoyBetty
-5. Tell the user that the bootstrap wizard must replace RoyBetty before finalization.
+   RoyBatty
+5. Tell the user that the bootstrap wizard must replace RoyBatty before finalization.
 6. If the user asks you to help finish the wizard, collect the final Private Gateway key, admin username/password, LLM service id, provider, model, and optional API key. Do not print the passwords or API key back to the terminal.
 7. After finalization, PawFlow creates the persistent Private Gateway, builtin auth gateway, admin user, selected LLM service, summarizer service (`summarizer_service`), variables, secrets, `pawflow-agent` deployment, and a starter conversation with `assistant` selected. Client relays are still configured later from webchat.
 

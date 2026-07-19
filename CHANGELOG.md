@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.28] — 2026-07-19
+
+### Fixed
+
+- Corrected the spelling of the default first-run Private Gateway bootstrap key
+  (`roy betty` → `roy batty`) everywhere it appears: code default
+  (`DEFAULT_BOOTSTRAP_GATEWAY_KEY`), install scripts, installer flow, docs,
+  README, website, and tests.
+
 ## [1.0.0-beta.27] — 2026-07-19
 
 ### Added

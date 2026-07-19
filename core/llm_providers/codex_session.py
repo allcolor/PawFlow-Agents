@@ -605,6 +605,14 @@ class CodexSessionMixin:
         except Exception as e:
             logger.debug("[codex] token recovery failed: %s", e)
 
+    # Markers wrapping the PawFlow-generated section of config.toml.
+    # Content OUTSIDE the markers (e.g. [plugins.*] state written by
+    # `codex plugin install` run inside the session slot) is preserved
+    # across regenerations. A config.toml without markers is a legacy
+    # fully-generated file and is replaced wholesale.
+    _CODEX_MANAGED_BEGIN = "# --- managed by PawFlow — regenerated every session ---"
+    _CODEX_MANAGED_END = "# --- end PawFlow managed section ---"
+
     def _codex_setup_mcp_config(self, workdir: str, user_id: str = "",
                            conversation_id: str = "",
                            agent_name: str = "") -> tuple:
@@ -679,15 +687,64 @@ class CodexSessionMixin:
             f'PAWFLOW_CONVERSATION_ID = "{_toml_escape(conversation_id or "")}"\n'
             f'PAWFLOW_AGENT_NAME = "{_toml_escape(agent_name or "")}"\n'
         )
+        # Native Codex plugins (Linear, GitHub, Gmail, Calendar, ... from the
+        # openai-curated marketplace). `codex_plugins` on the llmConnection is
+        # a comma-separated list of plugin names, optionally qualified as
+        # `name@marketplace` (default marketplace: openai-curated). Same
+        # [plugins."name@marketplace"] table shape codex's own `plugin
+        # install` writes. Requires OAuth (ChatGPT plan) credentials — the
+        # plugins are authorized at the account level.
+        for _qualified in self._codex_plugin_specs():
+            toml += (
+                "\n"
+                f'[plugins."{_toml_escape(_qualified)}"]\n'
+                "enabled = true\n"
+            )
         codex_home = os.path.join(workdir, ".codex")
         os.makedirs(codex_home, exist_ok=True)
         config_path = os.path.join(codex_home, "config.toml")
+        managed = (self._CODEX_MANAGED_BEGIN + "\n" + toml
+                   + self._CODEX_MANAGED_END + "\n")
+        # Preserve content outside the managed markers (codex plugin state,
+        # user edits). The managed section goes FIRST so its top-level keys
+        # stay root-scoped — TOML cannot return to root after a table header.
+        preserved = ""
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                existing = f.read()
+            if (self._CODEX_MANAGED_BEGIN in existing
+                    and self._CODEX_MANAGED_END in existing):
+                before, _, rest = existing.partition(self._CODEX_MANAGED_BEGIN)
+                _, _, after = rest.partition(self._CODEX_MANAGED_END)
+                preserved = (before.strip() + "\n" + after.strip()).strip()
+            # No markers: legacy fully-generated file — replaced wholesale.
+        except FileNotFoundError:
+            pass
+        content = managed + (("\n" + preserved + "\n") if preserved else "")
         with open(config_path, "w", encoding="utf-8") as f:
-            f.write(toml)
+            f.write(content)
         os.chmod(config_path, 0o600)
-        logger.info("[codex] config.toml written: %s (relay=%s)",
-                    config_path, relay_url)
+        logger.info("[codex] config.toml written: %s (relay=%s, plugins=%d, "
+                    "preserved=%d chars)", config_path, relay_url,
+                    len(self._codex_plugin_specs()), len(preserved))
         return config_path, internal_token
+
+    def _codex_plugin_specs(self) -> list:
+        """Qualified `name@marketplace` plugin ids from the `codex_plugins`
+        service parameter. Empty names are dropped; marketplace defaults to
+        openai-curated."""
+        try:
+            raw = str((getattr(self, "config", None) or {}).get(
+                "codex_plugins", "") or "")
+        except Exception:
+            return []
+        specs = []
+        for part in raw.split(","):
+            name, _, marketplace = part.strip().partition("@")
+            if not name:
+                continue
+            specs.append(f"{name}@{marketplace.strip() or 'openai-curated'}")
+        return specs
 
     # Codex's equivalent of CC's `--disallowedTools` is per-feature
     # `--disable <name>` (see `codex features list`) plus per-tool

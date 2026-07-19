@@ -295,6 +295,16 @@ Operational notes:
 - If Codex still emits native `commandExecution`, `fileChange`, or `dynamicToolCall` items, PawFlow surfaces them in the technical tool stream instead of hiding them.
 - Preemption uses app-server `turn/steer` for active turns.
 
+### Native Codex plugins
+
+OAuth-mode Codex sessions can enable native Codex plugins (Linear, GitHub, Gmail, Google Calendar, Canva, ... from OpenAI's curated marketplace). Set `codex_plugins` on the `llmConnection` to a comma-separated list of plugin names, optionally qualified as `name@marketplace` (default marketplace: `openai-curated`):
+
+```
+codex_plugins: github,linear,gmail
+```
+
+PawFlow emits a `[plugins."<name>@<marketplace>"]` entry per plugin in the session's generated `~/.codex/config.toml`. Plugins are authorized at the ChatGPT account level, so this only applies to OAuth credential mode (API-key mode has no account plugins). The generated `config.toml` is now a managed section between markers: anything codex itself or the user writes outside the markers (for example plugin state from `codex plugin install` run inside the session slot, which is persistent per conversation/agent) is preserved across session restarts.
+
 ## Compaction Summarizer
 
 `system.summarizer_service` selects both the compaction budget source and the client that executes summary generation. The summarizer re-resolves the configured service for each compaction call and replaces stale in-memory clients when the service provider changed, so switching from a CLI service to an API-compatible service such as DeepSeek cannot silently keep running the old CLI provider.

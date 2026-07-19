@@ -600,6 +600,16 @@ class LLMConnectionService(BaseService):
                 "options": ["low", "medium", "high", "max"],
                 "description": "Claude Code effort level (thinking budget)",
             },
+            "codex_plugins": {
+                "type": "string", "required": False, "default": "",
+                "description": "codex-app-server only: comma-separated native "
+                               "Codex plugin names to enable in sessions "
+                               "(e.g. github,linear,gmail). Optionally "
+                               "qualified as name@marketplace; default "
+                               "marketplace is openai-curated. Plugins are "
+                               "authorized at the ChatGPT account level — "
+                               "OAuth credential mode only.",
+            },
         }
 
     def get_parameter_rules(self) -> list:
@@ -620,6 +630,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": False},
                     "docker_memory_limit": {"visible": False},
                     "effort":        {"visible": False},
+                    "codex_plugins": {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -646,6 +657,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
+                    "codex_plugins": {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -666,6 +678,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
+                    "codex_plugins": {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -686,6 +699,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": False},
+                    "codex_plugins": {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -706,6 +720,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True, "description": "Codex app-server reasoning effort (low/medium/high/xhigh/max)"},
+                    "codex_plugins": {"visible": True},
                     "extra_body":    {"visible": False},
                 }
             },
@@ -726,6 +741,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": False},
+                    "codex_plugins": {"visible": False},
                     "extra_body":    {"visible": False},
                 }
             },

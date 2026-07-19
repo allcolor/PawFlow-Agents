@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Native Codex plugin support (`codex-app-server`): a new `codex_plugins`
+  parameter on `llmConnection` (comma-separated names, optional
+  `name@marketplace`, default marketplace `openai-curated`) emits
+  `[plugins."<name>@<marketplace>"]` entries in the session's generated
+  `~/.codex/config.toml`, enabling OpenAI's curated plugins (Linear,
+  GitHub, Gmail, Calendar, ...) in OAuth-mode Codex sessions. The
+  generated config.toml is now a managed section between markers —
+  content codex or the user writes outside it (e.g. `codex plugin
+  install` state in the persistent session slot) survives regeneration.
+
 ## [1.0.0-beta.26] — 2026-07-17
 
 ### Added

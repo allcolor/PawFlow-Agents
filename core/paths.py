@@ -160,6 +160,8 @@ SPILL_DIR = RUNTIME_DIR / "spill"
 TOKEN_USAGE_FILE = RUNTIME_DIR / "token_usage.json"
 # Event-level usage/cost ledger (core/usage_ledger.py).
 USAGE_DB_FILE = SYSTEM_DIR / "usage.db"
+# Spend budgets (core/budget_store.py).
+USAGE_BUDGETS_FILE = SYSTEM_DIR / "usage_budgets.json"
 
 # Capability-auth registry (sensitive-route capability tokens, persisted so
 # active VNC / terminal / code-server / port-forward sessions survive a

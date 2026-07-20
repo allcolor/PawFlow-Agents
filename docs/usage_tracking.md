@@ -74,6 +74,35 @@ usage (e.g. subscription-only traffic). Admins get an "All users" toggle;
 non-admins are always scoped to their own usage regardless of what they
 pass.
 
+## Spend budgets (`core/budget_store.py`)
+
+Cumulative daily/monthly caps, distinct from the per-agent-loop-invocation
+`max_budget_usd` LLM-service parameter (a single-turn safety cap, see
+`tasks/ai/_alc_base.py`). A budget is scoped to `global`, `user`,
+`conversation` (its task sub-conversations included), `agent`, or
+`llm_service`, with a `period` (`daily`/`monthly`), a `limit_usd`, and a
+`policy`:
+
+- `warn` — never blocks; only drives the threshold notifications below.
+- `block` — once period-to-date REAL spend (virtual/subscription cost is
+  never counted) reaches the limit, the NEXT external agent turn on that
+  scope raises a `Budget exceeded: ...` fatal error (checked once per turn,
+  before the LLM call — the turn that crosses the line still completes,
+  since its cost is only known once it's done).
+
+At 50/80/100% of the limit, a system notification is posted into the
+conversation that triggered the crossing (bell row + toast, same mechanism
+as the `PushNotification` tool), deduplicated per (budget, period) so it
+fires once per threshold per period. This runs from every ledger write
+(`UsageLedger.record`), across all channels — not just `chat`.
+
+Managed from the dashboard's "Budgets" section (progress bars; add/delete
+form for admins) or directly via actions: `budget_list` (everyone — non-
+admins only ever see budgets that apply to them: `global` or their own
+`user` scope), `budget_create` / `budget_update` / `budget_delete`
+(admin role required — a budget is a cross-user enforcement rule, never a
+self-service limit a user could raise on themselves).
+
 ## Live conversation cost gauge
 
 After every turn the server publishes a `usage.updated` SSE event on the

@@ -191,6 +191,15 @@ class UsageLedger:
                  int(cache_write), int(duration_ms), cost,
                  float(virtual_cost_usd or 0.0)))
             self._conn.commit()
+        # Best-effort: notify on any spend-budget threshold crossed by this
+        # event (core/budget_store.py). Never affects usage recording.
+        try:
+            from core.budget_store import check_and_notify
+            check_and_notify(
+                self, user_id=user_id, conversation_id=conversation_id,
+                agent_name=agent_name, llm_service=llm_service)
+        except Exception:
+            logger.debug("[usage] budget notify hook failed", exc_info=True)
         return cost
 
     # -- filter helper ----------------------------------------------------

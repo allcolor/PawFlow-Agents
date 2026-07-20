@@ -92,6 +92,14 @@ function _usageWireSSE() {
       _usageLoadPanelContent();
     }
   });
+  // A spend budget crossed a 50/80/100% threshold — refresh the budgets
+  // section of the dashboard if it's open (usage_dashboard.js).
+  eventSource.addEventListener('budget.updated', function () {
+    if (typeof _usageDashLoadBudgets === 'function'
+        && document.getElementById('usageDashBudgetsWrap')) {
+      _usageDashLoadBudgets();
+    }
+  });
 }
 
 // ── Breakdown panel ─────────────────────────────────────────────

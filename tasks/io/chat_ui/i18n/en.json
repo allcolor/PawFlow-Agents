@@ -1377,5 +1377,13 @@
   "usageDashUnattributed": "(unattributed)",
   "usageDashTopConversations": "Top conversations",
   "usageDashTopAgents": "Top agents",
-  "usageCostByServiceOpt": "By LLM service"
+  "usageCostByServiceOpt": "By LLM service",
+  "usageDashBudgets": "Budgets",
+  "usageDashNoBudgets": "No budgets configured.",
+  "usageDashBlock": "block",
+  "usageDashWarn": "warn",
+  "usageDashDaily": "daily",
+  "usageDashMonthly": "monthly",
+  "usageDashAddBudget": "Add budget",
+  "usageDashScopeValuePlaceholder": "user/conv/agent/service id"
 }

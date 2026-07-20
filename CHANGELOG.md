@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Spend budgets (`core/budget_store.py`): cumulative daily/monthly caps
+  scoped to a user, conversation, agent, LLM service, or globally, with a
+  `warn` (notify only) or `block` (refuse the next turn on that scope)
+  policy. Enforcement checks period-to-date REAL spend from the usage
+  ledger once per external agent turn (subscription/virtual cost never
+  counts); notifications fire at 50/80/100% of the limit into the
+  triggering conversation, deduplicated per period. Managed via a new
+  "Budgets" section on the dashboard (admin-only create/delete, progress
+  bars for everyone budgets apply to) or `budget_list`/`budget_create`/
+  `budget_update`/`budget_delete` actions. Distinct from the existing
+  per-turn `max_budget_usd` LLM-service safety cap.
 - Global "Usage & Costs" dashboard (header action menu): KPI cards
   (today/7d/30d, tokens, cache-hit rate, 30-day projection), a stacked
   daily bar chart (canvas, no external charting dependency) stackable by

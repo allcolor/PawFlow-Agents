@@ -122,9 +122,95 @@ function _usageDashLoad() {
           t('usageDashTopConversations'), data.top_conversations) + '</div>'
       + '<div style="flex:1;min-width:280px;">' + _usageDashTopTable(
           t('usageDashTopAgents'), data.top_agents) + '</div>'
-      + '</div>';
+      + '</div>'
+      + '<div style="margin:20px 0 6px;font-weight:600;opacity:0.85;">'
+      + escapeHtml(t('usageDashBudgets')) + '</div>'
+      + '<div id="usageDashBudgetsWrap">\u2026</div>';
     _usageDashDrawChart(data.timeseries, data.group_by);
+    _usageDashLoadBudgets();
   }, () => { if (b) b.style.opacity = '1'; });
+}
+
+// ── Budgets section (core/budget_store.py) ──────────────────────
+
+function _usageDashLoadBudgets() {
+  const wrap = document.getElementById('usageDashBudgetsWrap');
+  if (!wrap) return;
+  action$('budget_list', {}).subscribe(data => {
+    const w = document.getElementById('usageDashBudgetsWrap');
+    if (!w) return;
+    const budgets = (data && data.budgets) || [];
+    w.innerHTML = _usageDashBudgetsHtml(budgets);
+  }, () => {});
+}
+
+function _usageDashBudgetsHtml(budgets) {
+  const isAdmin = typeof _isAdmin === 'function' && _isAdmin();
+  let html = '';
+  if (!budgets.length) {
+    html += '<div style="opacity:0.6;font-size:12px;margin-bottom:8px;">'
+      + escapeHtml(t('usageDashNoBudgets')) + '</div>';
+  } else {
+    budgets.forEach(b => {
+      const pct = Math.max(0, Math.min(100, b.pct || 0));
+      const color = pct >= 100 ? '#e94560' : (pct >= 80 ? '#f0ad4e' : '#4ecdc4');
+      const policyBadge = b.policy === 'block'
+        ? '<span style="background:#5a1a1a;color:#ff9a9a;padding:0 6px;border-radius:8px;font-size:10px;margin-left:6px;">' + escapeHtml(t('usageDashBlock')) + '</span>'
+        : '<span style="background:#2a2a45;color:#a8a8c8;padding:0 6px;border-radius:8px;font-size:10px;margin-left:6px;">' + escapeHtml(t('usageDashWarn')) + '</span>';
+      html += '<div style="margin-bottom:8px;">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;">'
+        + '<span>' + escapeHtml(b.label || (b.scope_type + (b.scope_value ? ':' + b.scope_value : '')))
+        + ' \u00b7 ' + escapeHtml(b.period) + policyBadge + '</span>'
+        + '<span>' + _usageFmtUsd(b.spend_usd) + ' / ' + _usageFmtUsd(b.limit_usd)
+        + (isAdmin ? ' <a href="#" onclick="_usageDashBudgetDelete(\'' + b.id + '\');return false;" style="color:#ff9a9a;margin-left:8px;text-decoration:none;">\u2715</a>' : '')
+        + '</span></div>'
+        + '<div style="height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;margin-top:3px;">'
+        + '<span style="display:block;height:100%;width:' + pct + '%;background:' + color + ';"></span>'
+        + '</div></div>';
+    });
+  }
+  if (isAdmin) {
+    const selStyle = 'background:var(--pf-user,#0f3460);color:var(--pf-text,#e0e0e0);'
+      + 'border:1px solid var(--pf-accent-2,#4ecdc4);border-radius:6px;padding:3px 6px;font-size:11px;';
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;">'
+      + '<select id="budScopeType" style="' + selStyle + '">'
+      + ['global', 'user', 'conversation', 'agent', 'llm_service'].map(v =>
+          '<option value="' + v + '">' + escapeHtml(v) + '</option>').join('')
+      + '</select>'
+      + '<input id="budScopeValue" placeholder="' + escapeAttr(t('usageDashScopeValuePlaceholder')) + '" style="' + selStyle + ';width:120px;">'
+      + '<select id="budPeriod" style="' + selStyle + '">'
+      + '<option value="daily">' + escapeHtml(t('usageDashDaily')) + '</option>'
+      + '<option value="monthly">' + escapeHtml(t('usageDashMonthly')) + '</option>'
+      + '</select>'
+      + '<input id="budLimit" type="number" min="0.01" step="0.01" placeholder="$" style="' + selStyle + ';width:70px;">'
+      + '<select id="budPolicy" style="' + selStyle + '">'
+      + '<option value="warn">' + escapeHtml(t('usageDashWarn')) + '</option>'
+      + '<option value="block">' + escapeHtml(t('usageDashBlock')) + '</option>'
+      + '</select>'
+      + '<button onclick="_usageDashBudgetCreate()" style="' + selStyle + ';cursor:pointer;">'
+      + escapeHtml(t('usageDashAddBudget')) + '</button>'
+      + '</div>';
+  }
+  return html;
+}
+
+function _usageDashBudgetCreate() {
+  const val = id => (document.getElementById(id) || {}).value || '';
+  const body = {
+    scope_type: val('budScopeType'), scope_value: val('budScopeValue'),
+    period: val('budPeriod'), limit_usd: val('budLimit'),
+    policy: val('budPolicy'),
+  };
+  action$('budget_create', body).subscribe(data => {
+    if (data && data.error) { addMsg('error', data.error); return; }
+    _usageDashLoadBudgets();
+  }, () => {});
+}
+
+function _usageDashBudgetDelete(budgetId) {
+  action$('budget_delete', { budget_id: budgetId }).subscribe(() => {
+    _usageDashLoadBudgets();
+  }, () => {});
 }
 
 function _usageDashKpisHtml(kpis) {

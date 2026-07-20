@@ -19,6 +19,15 @@ logger = logging.getLogger(__name__)
 class _ALCLlmTurnMixin:
     def _alc_llm_turn(self, st):
         try:
+            if not st._budget_precheck_done:
+                st._budget_precheck_done = True
+                from core.budget_store import enforce_pre_turn
+                from core.usage_ledger import UsageLedger
+                enforce_pre_turn(
+                    UsageLedger.instance(), user_id=st.user_id,
+                    conversation_id=st.conversation_id,
+                    agent_name=st.ctx.get("active_agent_name", "") or "",
+                    llm_service=st.ctx.get("active_llm_service", "") or "")
             _check_budget(
                 st.ctx, st.total_tokens_in, st.total_tokens_out,
                 st.total_cache_read, st.total_cache_write)

@@ -322,6 +322,10 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                   "usage_export"):
         return _handle_usage_query(action, body, user_id, flowfile)
 
+    if action in ("budget_list", "budget_create", "budget_update",
+                  "budget_delete"):
+        return _handle_budget(action, body, user_id, flowfile)
+
     return None
 
 
@@ -449,4 +453,116 @@ def _handle_usage_dashboard(body, user_id, flowfile):
         flowfile.set_attribute("http.response.status", "400")
     except Exception as e:
         flowfile.set_content(json.dumps({"error": str(e)}).encode())
+    return [flowfile]
+
+
+def _budget_to_dict(b, ledger):
+    """Budget + live period-to-date spend/pct for list responses."""
+    from core.budget_store import current_spend, period_bounds
+    spend = current_spend(ledger, b)
+    _start, period_key = period_bounds(b.period)
+    pct = round(spend / b.limit_usd * 100.0, 1) if b.limit_usd > 0 else 0.0
+    d = b.to_dict()
+    d["spend_usd"] = round(spend, 6)
+    d["pct"] = pct
+    d["period_key"] = period_key
+    return d
+
+
+def _handle_budget(action, body, user_id, flowfile):
+    """Spend budget CRUD (core/budget_store.py).
+
+    Mutation (create/update/delete) requires the admin role — a budget is
+    a cross-user enforcement rule, never a self-service limit a user could
+    raise on themselves. list is available to everyone but non-admins only
+    ever see budgets that actually apply to them: global, or scoped to
+    their own user_id.
+    """
+    from core.budget_store import BudgetStore
+    from core.usage_ledger import UsageLedger
+    is_admin = "admin" in (flowfile.get_attribute("http.auth.roles") or "")
+    store = BudgetStore.instance()
+
+    if action == "budget_list":
+        try:
+            budgets = store.list(
+                scope_type=str(body.get("scope_type", "") or ""),
+                scope_value=str(body.get("scope_value", "") or ""))
+            if not is_admin:
+                budgets = [b for b in budgets
+                          if b.scope_type == "global"
+                          or (b.scope_type == "user"
+                              and b.scope_value == user_id)]
+            ledger = UsageLedger.instance()
+            flowfile.set_content(json.dumps({
+                "budgets": [_budget_to_dict(b, ledger) for b in budgets],
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if not is_admin:
+        flowfile.set_content(json.dumps(
+            {"error": "admin role required to manage budgets"}).encode())
+        flowfile.set_attribute("http.response.status", "403")
+        return [flowfile]
+
+    if action == "budget_create":
+        try:
+            b = store.create(
+                scope_type=str(body.get("scope_type", "") or ""),
+                scope_value=str(body.get("scope_value", "") or ""),
+                period=str(body.get("period", "") or ""),
+                limit_usd=float(body.get("limit_usd", 0) or 0),
+                policy=str(body.get("policy", "") or ""),
+                created_by=user_id)
+            flowfile.set_content(json.dumps(
+                _budget_to_dict(b, UsageLedger.instance()),
+                ensure_ascii=False).encode())
+        except (ValueError, TypeError) as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "budget_update":
+        budget_id = str(body.get("budget_id", "") or "")
+        if not budget_id:
+            flowfile.set_content(json.dumps(
+                {"error": "Missing budget_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            fields = {}
+            for key in ("scope_type", "scope_value", "period", "policy"):
+                if key in body:
+                    fields[key] = str(body[key])
+            if "limit_usd" in body:
+                fields["limit_usd"] = float(body["limit_usd"])
+            b = store.update(budget_id, **fields)
+            flowfile.set_content(json.dumps(
+                _budget_to_dict(b, UsageLedger.instance()),
+                ensure_ascii=False).encode())
+        except KeyError as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+        except (ValueError, TypeError) as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    # budget_delete
+    budget_id = str(body.get("budget_id", "") or "")
+    if not budget_id:
+        flowfile.set_content(json.dumps(
+            {"error": "Missing budget_id"}).encode())
+        flowfile.set_attribute("http.response.status", "400")
+        return [flowfile]
+    deleted = store.delete(budget_id)
+    flowfile.set_content(json.dumps({"deleted": deleted}).encode())
+    if not deleted:
+        flowfile.set_attribute("http.response.status", "404")
     return [flowfile]

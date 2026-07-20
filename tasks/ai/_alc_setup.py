@@ -32,6 +32,9 @@ class _ALCSetupMixin:
         st._need_more_retried = False
         st._fatal_error = False
         st._fatal_error_msg = ""
+        # Cumulative spend-budget precheck (core/budget_store.py) runs once
+        # per external turn, on the first _alc_llm_turn call — see there.
+        st._budget_precheck_done = False
 
         st.client: LLMClient = st.ctx["client"]
         st.registry = st.ctx["registry"]

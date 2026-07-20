@@ -53,9 +53,6 @@ Support x402 for payment-gated HTTP, tool, flow, package, and A2A agent endpoint
 ### Filesystem hooks
 React to file changes automatically — run tests, lint, trigger flows, or ask agents to review modified files. Configured via `.pawflow/hooks.yaml`.
 
-### Full cost tracking dashboard
-Cost caps and usage tracking exist; the remaining work is an operator dashboard with per-user, per-conversation, per-agent, per-provider, and per-flow breakdowns, plus exportable usage history.
-
 ### More LLM providers
 Ollama, Mistral, vLLM, LM Studio, Together.ai — most work via the OpenAI-compatible endpoint with a `base_url` override. Auto-discovery for local Ollama instances.
 
@@ -94,6 +91,20 @@ Spans for each task execution in the pipeline engine, exportable to Jaeger, Zipk
 
 These were shipped as part of the alpha development cycle:
 
+- Full usage/cost tracking: a persistent event-level ledger (SQLite,
+  every LLM call recorded with user/conversation/agent/service/model/
+  channel dimensions and cost frozen at the rates in effect when it ran)
+  replacing the old JSON aggregate trackers; a live per-conversation cost
+  gauge (header badge + breakdown panel, updated over SSE after every
+  turn); a global "Usage & Costs" dashboard (KPI cards, a stacked daily
+  chart selectable by service/agent/model/channel, top conversations and
+  agents, admin all-users view); a `subscription` flag on flat-rate LLM
+  services so their usage shows as virtual ("what this would have cost
+  via API") instead of real spend; and cumulative spend budgets — daily
+  or monthly caps scoped to a user, conversation, agent, service, or
+  globally, with `warn` or `block` policy and 50/80/100% notifications —
+  layered on top of (and distinct from) the per-agent-loop-turn budget cap
+  further below.
 - Telegram as a first-class agent client: shared conversations, streaming updates, consolidated thinking blocks, voice messages via STT, command mirroring, and identity linking
 - Private gateway: server invisible until sign-in, camouflage skins, multi-provider sign-in (Google, GitHub, X, Telegram, Microsoft, Facebook, Amazon), and opt-in `trusted_proxies` for reverse-proxy deployments
 - Security hardening pass over gateway/OAuth: constant-time token compares, state-keyed PKCE verifiers, and auth gap fixes

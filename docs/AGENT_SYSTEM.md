@@ -425,7 +425,7 @@ Actions are server-side command handlers organized into modules under `tasks/ai/
 | **misc.py** | `model` override, theme, effort, fast mode, plan mode, fork, doctor. |
 | **secrets_variables.py** | `add_secret`, secret and variable management. |
 | **service_flow.py** | Service and flow management commands. |
-| **usage.py** | `cost` -- token usage and cost tracking via TokenTracker. |
+| **usage.py** | `cost` / `get_cost` / `get_usage` -- token usage and cost from the persistent usage ledger (`core/usage_ledger.py`); `usage_summary` / `usage_timeseries` / `usage_top` / `usage_export` -- filtered ledger queries (period, agent, service, channel; admin can query all users). |
 | **scheduling.py** | Task scheduling, agent thread management, kill running task agents. |
 | **account_linking.py** | `link_account` -- cross-platform identity linking (Telegram, Discord, etc.). |
 

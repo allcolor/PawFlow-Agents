@@ -53,7 +53,7 @@ When used as `/help call`, lists all available tools. `/help call <toolname>` sh
 /cost [@agent|ALL]
 ```
 
-Shows token usage and estimated cost per agent and per model, for both the current conversation and user-level totals.
+Shows token usage and cost per agent and per model, for both the current conversation and user-level totals. Data comes from the persistent usage ledger (see [usage_tracking.md](usage_tracking.md)); cost is frozen at the service rates in effect when each turn ran.
 
 ```
 /cost @ALL        -- all agents

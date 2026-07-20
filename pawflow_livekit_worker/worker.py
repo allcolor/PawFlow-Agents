@@ -278,8 +278,22 @@ async def entrypoint(ctx) -> None:
 
     @session.on("metrics_collected")
     def _on_metrics(ev):
+        # Structured token counts so PawFlow can record the session in the
+        # usage ledger. Field names differ per metric type (LLMMetrics uses
+        # prompt/completion_tokens, RealtimeModelMetrics input/output_tokens)
+        # — probe both, keep a bounded raw string for diagnostics.
         metrics = getattr(ev, "metrics", None)
-        _emit("realtime.usage", {"metrics": str(metrics)})
+        data = {"kind": type(metrics).__name__ if metrics is not None else ""}
+        for src, dst in (("prompt_tokens", "input_tokens"),
+                         ("input_tokens", "input_tokens"),
+                         ("completion_tokens", "output_tokens"),
+                         ("output_tokens", "output_tokens"),
+                         ("prompt_cached_tokens", "cached_tokens")):
+            val = getattr(metrics, src, None)
+            if isinstance(val, (int, float)) and val > 0:
+                data[dst] = int(val)
+        data["raw"] = str(metrics)[:400]
+        _emit("realtime.usage", data)
 
     await session.start(
         room=ctx.room,

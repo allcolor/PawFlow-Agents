@@ -1,5 +1,6 @@
-"""Tests for new agent features: TokenTracker, Plan, Notify, CreateTool,
-AskAgent, FlowManager.
+"""Tests for new agent features: Plan, Notify, CreateTool,
+AskAgent, FlowManager. (Token tracking tests live in
+tests/test_usage_ledger.py.)
 
 Covers the handlers added in the agent extensibility sprint.
 """
@@ -14,7 +15,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core import FlowFile
-from core.token_tracker import TokenTracker
 from core.conversation_store import ConversationStore
 from core.tool_registry import (
     CreatePlanHandler,
@@ -53,105 +53,6 @@ class _FakeLLMResponse:
 class _FakeLLMClient:
     def complete(self, messages, model="", max_tokens=2048, **kw):
         return _FakeLLMResponse("I am the agent's response.")
-
-
-# ══════════════════════════════════════════════════════════════════
-# 1. TokenTracker
-# ══════════════════════════════════════════════════════════════════
-
-
-class TestTokenTracker(unittest.TestCase):
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self.path = os.path.join(self.tmp, "usage.json")
-        TokenTracker.reset()
-        self.tracker = TokenTracker(path=self.path)
-        TokenTracker._instance = self.tracker
-
-    def tearDown(self):
-        TokenTracker.reset()
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def test_track_basic(self):
-        self.tracker.track("alice", 100, 50, agent_name="test-agent", llm_service="openai")
-        usage = self.tracker.get_usage("alice")
-        self.assertEqual(usage["total_in"], 100)
-        self.assertEqual(usage["total_out"], 50)
-
-    def test_track_daily(self):
-        self.tracker.track("alice", 10, 5, agent_name="test-agent", llm_service="openai")
-        usage = self.tracker.get_usage("alice")
-        today = time.strftime("%Y-%m-%d")
-        self.assertIn(today, usage["daily"])
-        self.assertEqual(usage["daily"][today]["in"], 10)
-
-    def test_track_model(self):
-        self.tracker.track("alice", 10, 5, model="gpt-4", agent_name="test-agent", llm_service="openai")
-        usage = self.tracker.get_usage("alice")
-        self.assertIn("gpt-4", usage["models"])
-        self.assertEqual(usage["models"]["gpt-4"]["in"], 10)
-
-    def test_track_cache_tokens(self):
-        self.tracker.track(
-            "alice", 10, 5, model="gpt-4", agent_name="test-agent",
-            llm_service="openai", cache_read=40, cache_write=7)
-        usage = self.tracker.get_usage("alice")
-        self.assertEqual(usage["total_cache_read"], 40)
-        self.assertEqual(usage["total_cache_write"], 7)
-        self.assertEqual(usage["models"]["gpt-4"]["cache_read"], 40)
-        agent = usage["agents"]["test-agent::openai"]
-        self.assertEqual(agent["cache_read"], 40)
-        self.assertEqual(agent["cache_write"], 7)
-
-    def test_get_usage_unknown_user(self):
-        usage = self.tracker.get_usage("nobody")
-        self.assertEqual(usage["total_in"], 0)
-        self.assertEqual(usage["total_out"], 0)
-
-    def test_singleton(self):
-        self.assertIs(TokenTracker.instance(), TokenTracker.instance())
-
-    def test_reset(self):
-        old = TokenTracker.instance()
-        TokenTracker.reset()
-        # After reset, instance() creates a new one (default path)
-        TokenTracker._instance = TokenTracker(path=self.path)
-        self.assertIsNot(old, TokenTracker.instance())
-
-    def test_flush_and_reload(self):
-        self.tracker.track("alice", 200, 100, model="claude", agent_name="test-agent", llm_service="openai")
-        self.tracker.flush()
-        # Verify file was written
-        self.assertTrue(os.path.exists(self.path))
-        # Create a new tracker from same path
-        TokenTracker.reset()
-        t2 = TokenTracker(path=self.path)
-        usage = t2.get_usage("alice")
-        self.assertEqual(usage["total_in"], 200)
-        self.assertEqual(usage["total_out"], 100)
-
-    def test_flush_not_dirty(self):
-        # Should not error
-        self.tracker.flush()
-        self.assertFalse(os.path.exists(self.path))
-
-    def test_multiple_tracks(self):
-        self.tracker.track("alice", 10, 5, agent_name="test-agent", llm_service="openai")
-        self.tracker.track("alice", 20, 10, agent_name="test-agent", llm_service="openai")
-        self.tracker.track("alice", 30, 15, agent_name="test-agent", llm_service="openai")
-        usage = self.tracker.get_usage("alice")
-        self.assertEqual(usage["total_in"], 60)
-        self.assertEqual(usage["total_out"], 30)
-
-    def test_get_all_usage(self):
-        self.tracker.track("alice", 10, 5, agent_name="test-agent", llm_service="openai")
-        self.tracker.track("bob", 20, 10, agent_name="test-agent", llm_service="openai")
-        all_usage = self.tracker.get_all_usage()
-        self.assertIn("alice", all_usage)
-        self.assertIn("bob", all_usage)
-        self.assertEqual(all_usage["alice"]["total_in"], 10)
-        self.assertEqual(all_usage["bob"]["total_in"], 20)
 
 
 # ══════════════════════════════════════════════════════════════════

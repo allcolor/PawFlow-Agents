@@ -200,11 +200,11 @@ class _AgentStreamingLoopMixin:
                     _all_tasks = _store.get_extra(_parent_cid, "agent_tasks") or {}
                     _ag_name = ctx.get("active_agent_name") or ""
                     _tasks_changed = False
-                    # Accumulate total_cost from CostTracker and log iteration metrics
+                    # Accumulate total_cost from the usage ledger and log iteration metrics
                     if "::task::" in conversation_id:
                         try:
-                            from core.cost_tracker import CostTracker as _CT
-                            _task_sub_cost = _CT.instance().get_conversation_cost(conversation_id)
+                            from core.usage_ledger import UsageLedger as _UL
+                            _task_sub_cost = _UL.instance().conversation_cost(conversation_id)
                             _tid_cost = conversation_id.rsplit("::", 1)[-1]
                             if _tid_cost in _all_tasks:
                                 _prev_cost = _all_tasks[_tid_cost].get("total_cost", 0.0)
@@ -346,19 +346,22 @@ class _AgentStreamingLoopMixin:
                 if not title:
                     return
 
-                # Track token usage
+                # Track token usage (internal call — no pricing attached,
+                # tokens recorded for visibility)
                 try:
-                    from core.token_tracker import TokenTracker
+                    from core.usage_ledger import UsageLedger
                     if resp.tokens_in > 0:
-                        TokenTracker.instance().track(
-                            ctx.get("user_id", "system"),
-                            resp.tokens_in, resp.tokens_out,
+                        UsageLedger.instance().record(
+                            user_id=ctx.get("user_id", "") or "system",
+                            channel="system",
+                            conversation_id=conversation_id,
+                            tokens_in=resp.tokens_in,
+                            tokens_out=resp.tokens_out,
                             model=resp.model or "",
                             agent_name=ctx.get("active_agent_name", "title"),
                             llm_service=title_svc_id,
                             cache_read=getattr(resp, "cache_read_tokens", 0),
                             cache_write=getattr(resp, "cache_creation_tokens", 0))
-                        TokenTracker.instance().flush()
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
 

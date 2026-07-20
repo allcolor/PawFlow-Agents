@@ -90,7 +90,7 @@ def _svc_rates(ctx):
 
 def _usage_cost_usd(ctx, total_in, total_out,
                     total_cache_read=0, total_cache_write=0):
-    """Return cost using the same cache-aware rates as CostTracker."""
+    """Return cost using the same cache-aware rates as the usage ledger."""
     cost_in, cost_out, cost_cache_read, cost_cache_write = _svc_rates(ctx)
     return (
         total_in / 1_000_000 * cost_in

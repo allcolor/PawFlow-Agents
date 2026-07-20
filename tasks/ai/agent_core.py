@@ -366,22 +366,23 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     return st.result
                 st.response_content = st._processed
 
-                self._track_tokens(
-                    st.user_id, st.total_tokens_in, st.total_tokens_out,
-                    model=st.final_model or st._client_model,
-                    agent_name=st.ctx.get("active_agent_name", "") or "",
-                    llm_service=st.ctx.get("active_llm_service", ""),
-                    cache_read=st.total_cache_read,
-                    cache_write=st.total_cache_write)
-
-                # Track cost per conversation/model
+                # One ledger event per turn: tokens + cost frozen at the
+                # service rates in effect now (core/usage_ledger.py).
                 try:
-                    from core.cost_tracker import CostTracker
+                    from core.usage_ledger import UsageLedger
                     st._ci, st._co, st._ccr, st._ccw = _svc_rates(st.ctx)
-                    st._turn_cost_ref[0] = CostTracker.instance().track(
-                        st.conversation_id, st.final_model or st._client_model,
-                        tokens_in=st.total_tokens_in, tokens_out=st.total_tokens_out,
-                        cache_read=st.total_cache_read, cache_write=st.total_cache_write,
+                    st._turn_cost_ref[0] = UsageLedger.instance().record(
+                        user_id=st.user_id or "system",
+                        channel=("task" if "::task::" in st.conversation_id
+                                 else "chat"),
+                        conversation_id=st.conversation_id,
+                        agent_name=st.ctx.get("active_agent_name", "") or "",
+                        llm_service=st.ctx.get("active_llm_service", ""),
+                        model=st.final_model or st._client_model,
+                        tokens_in=st.total_tokens_in,
+                        tokens_out=st.total_tokens_out,
+                        cache_read=st.total_cache_read,
+                        cache_write=st.total_cache_write,
                         cost_per_1m_input=st._ci, cost_per_1m_output=st._co,
                         cost_per_1m_cache_read=st._ccr,
                         cost_per_1m_cache_write=st._ccw,
@@ -389,7 +390,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     st._turn_cost_ref[0] += float(
                         st.ctx.get("_additional_usage_cost_usd", 0) or 0)
                 except Exception as _cost_err:
-                    logger.debug("[agent:%s] cost tracking error: %s",
+                    logger.debug("[agent:%s] usage tracking error: %s",
                                  st.conversation_id[:8], _cost_err)
 
                 self._cleanup_tool_result_files(

@@ -494,6 +494,39 @@ def _handle_worker_tool_call(session: dict, sock, message: dict) -> None:
              {"session_id": session_id, "tool": name, "status": status})
 
 
+def _record_realtime_usage(session: dict, data: dict) -> None:
+    """Record a worker `realtime.usage` event in the usage ledger.
+
+    Realtime sessions were previously invisible in usage tracking. Tokens
+    come from the worker's structured metrics; realtime audio pricing is
+    provider-specific and NOT the llm_service text rates, so no cost is
+    attached — tokens are recorded for visibility (channel=realtime).
+    """
+    try:
+        tokens_in = int(data.get("input_tokens", 0) or 0)
+        tokens_out = int(data.get("output_tokens", 0) or 0)
+        cached = int(data.get("cached_tokens", 0) or 0)
+    except (TypeError, ValueError):
+        return
+    if not tokens_in and not tokens_out and not cached:
+        return
+    try:
+        from core.usage_ledger import UsageLedger
+        cfg = session.get("engine_cfg", {}) or {}
+        UsageLedger.instance().record(
+            user_id=session.get("user_id", "") or "system",
+            channel="realtime",
+            conversation_id=session.get("conversation_id", ""),
+            agent_name=session.get("agent_name", ""),
+            llm_service=session.get("service_id", ""),
+            model=cfg.get("model", ""),
+            provider=cfg.get("provider", ""),
+            tokens_in=tokens_in, tokens_out=tokens_out,
+            cache_read=cached)
+    except Exception:
+        logger.debug("[livekit] usage recording failed", exc_info=True)
+
+
 def worker_control_ws_handler(sock, path_params: dict, meta: dict):
     """GET /ws/realtime-worker/{session_id}?token=...
 
@@ -569,6 +602,8 @@ def worker_control_ws_handler(sock, path_params: dict, meta: dict):
                     persist_voice_transcript(
                         cid, session["agent_name"], session["user_id"],
                         role, str((message["data"] or {}).get("text", "")))
+                if str(message["name"]) == "realtime.usage":
+                    _record_realtime_usage(session, message["data"] or {})
             elif message["type"] == "tool_call":
                 _handle_worker_tool_call(session, sock, message)
             elif message["type"] == "bye":

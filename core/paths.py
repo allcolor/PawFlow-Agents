@@ -155,7 +155,11 @@ GRAPHS_DIR = RUNTIME_DIR / "graphs"
 SPILL_DIR = RUNTIME_DIR / "spill"
 
 # Runtime data files
+# Legacy pre-ledger aggregate file — only read once by UsageLedger's
+# one-shot migration, then renamed to .json.migrated.
 TOKEN_USAGE_FILE = RUNTIME_DIR / "token_usage.json"
+# Event-level usage/cost ledger (core/usage_ledger.py).
+USAGE_DB_FILE = SYSTEM_DIR / "usage.db"
 
 # Capability-auth registry (sensitive-route capability tokens, persisted so
 # active VNC / terminal / code-server / port-forward sessions survive a

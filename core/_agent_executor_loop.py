@@ -719,6 +719,49 @@ class _SubAgentExecutorLoopMixin:
                     logger.debug("exception suppressed", exc_info=True)
 
         result.duration_ms = (time.time() - start) * 1000
+
+        # One ledger event per sub-agent run (channel=subagent) — these
+        # calls go straight through client.complete and would otherwise be
+        # invisible in usage/cost tracking. Rates come from the sub-agent's
+        # own llm_service config, frozen at record time.
+        if result.tokens_in or result.tokens_out:
+            try:
+                from core.usage_ledger import UsageLedger
+                from core import safe_float
+                _ci = _co = 0.0
+                _ccr = _ccw = None
+                try:
+                    from core.service_registry import ServiceRegistry
+                    _svc_def = ServiceRegistry.get_instance().resolve_definition(
+                        task.llm_service, user_id=task.user_id,
+                        conv_id=task.parent_conversation_id or "")
+                    _cfg = getattr(_svc_def, "config", {}) or {}
+                    _ci = safe_float(_cfg.get("cost_per_1m_input", 0), 0.0)
+                    _co = safe_float(_cfg.get("cost_per_1m_output", 0), 0.0)
+                    _cr = _cfg.get("cost_per_1m_cache_read")
+                    _cw = _cfg.get("cost_per_1m_cache_write")
+                    _ccr = (safe_float(_cr, _ci * 0.1)
+                            if _cr not in (None, "") else None)
+                    _ccw = (safe_float(_cw, _ci * 1.25)
+                            if _cw not in (None, "") else None)
+                except Exception:
+                    logger.debug("subagent rate lookup failed", exc_info=True)
+                UsageLedger.instance().record(
+                    user_id=task.user_id or "system", channel="subagent",
+                    conversation_id=(sub_conv_id
+                                     or task.parent_conversation_id or ""),
+                    agent_name=task.agent_name or "",
+                    llm_service=task.llm_service or "",
+                    model=result.model or "",
+                    provider=result.provider or "",
+                    tokens_in=result.tokens_in, tokens_out=result.tokens_out,
+                    duration_ms=int(result.duration_ms),
+                    cost_per_1m_input=_ci, cost_per_1m_output=_co,
+                    cost_per_1m_cache_read=_ccr,
+                    cost_per_1m_cache_write=_ccw)
+            except Exception:
+                logger.debug("subagent usage recording failed", exc_info=True)
+
         _done_data = {
             "agent_name": task.agent_name,
             "task_id": task.id,

@@ -40,7 +40,7 @@ tests/                      # Unit and static tests
 
 ## Key Patterns
 
-Most stores use thread-safe singletons: `ConversationStore.instance()`, `ResourceStore.instance()`, `PollScheduler.instance()`, `ConversationEventBus.instance()`, and `CostTracker.instance()`. Use `.instance()`, not direct construction.
+Most stores use thread-safe singletons: `ConversationStore.instance()`, `ResourceStore.instance()`, `PollScheduler.instance()`, `ConversationEventBus.instance()`, and `UsageLedger.instance()`. Use `.instance()`, not direct construction.
 
 Conversations are JSONL append-only files. Append new records instead of rewriting history. Every message must have a UUID and timestamp when created.
 

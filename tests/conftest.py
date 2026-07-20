@@ -53,7 +53,8 @@ def _isolate_data_dir(tmp_path_factory):
         "MEMORIES_DIR", "KNOWLEDGE_GRAPHS_DIR", "PLANS_DIR",
         "CLAUDE_SESSIONS_DIR", "CODEX_SESSIONS_DIR",
         "GEMINI_SESSIONS_DIR", "GRAPHS_DIR", "SPILL_DIR",
-        "TOKEN_USAGE_FILE", "POLL_SCHEDULE_FILE", "GATEWAY_BANS_FILE",
+        "TOKEN_USAGE_FILE", "USAGE_DB_FILE",
+        "POLL_SCHEDULE_FILE", "GATEWAY_BANS_FILE",
         "USERS_FILE", "SESSIONS_FILE", "SECURITY_FILE",
         "SECRET_KEY_FILE", "SERVER_ID_FILE", "SSL_DIR",
         "GLOBAL_PARAMS_FILE", "GLOBAL_SECRETS_FILE",
@@ -87,6 +88,7 @@ def _isolate_data_dir(tmp_path_factory):
     paths.GRAPHS_DIR = runtime_dir / "graphs"
     paths.SPILL_DIR = runtime_dir / "spill"
     paths.TOKEN_USAGE_FILE = runtime_dir / "token_usage.json"
+    paths.USAGE_DB_FILE = system_dir / "usage.db"
     paths.POLL_SCHEDULE_FILE = runtime_dir / "poll_schedule.json"
     paths.GATEWAY_BANS_FILE = runtime_dir / "gateway_bans.json"
     paths.USERS_FILE = system_dir / "users.json"

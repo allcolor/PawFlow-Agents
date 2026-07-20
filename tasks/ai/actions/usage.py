@@ -15,11 +15,10 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
     """Handle usage actions. Returns [flowfile] or None."""
 
     if action == "cost":
-        # Read persistent stats from TokenTracker (survives restarts)
-        from core.token_tracker import TokenTracker
+        # Read persistent stats from the usage ledger (survives restarts)
+        from core.usage_ledger import UsageLedger
         from core.service_registry import ServiceRegistry
-        tracker = TokenTracker.instance()
-        usage = tracker.get_usage(user_id)
+        usage = UsageLedger.instance().user_usage(user_id)
         agents_data = usage.get("agents", {})
         req_agent = body.get("agent", "ALL")
 
@@ -66,12 +65,10 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             cost_out_1m = costs.get("cost_per_1m_output", 0)
             cost_cache_read_1m = costs.get("cost_per_1m_cache_read", 0)
             cost_cache_write_1m = costs.get("cost_per_1m_cache_write", 0)
-            cost = round(
-                tok_in / 1_000_000 * cost_in_1m
-                + tok_out / 1_000_000 * cost_out_1m
-                + cache_read / 1_000_000 * cost_cache_read_1m
-                + cache_write / 1_000_000 * cost_cache_write_1m,
-                6)
+            # Cost is the ledger's FROZEN per-event cost (rates in effect
+            # at call time) — the per-1M rates below are the CURRENT
+            # service config, shown for reference only.
+            cost = round(agent_stats.get("cost", 0.0), 6)
             stats.append({
                 "agent": agent_name, "llm_service": svc_id,
                 "tokens_in": tok_in, "tokens_out": tok_out,
@@ -93,15 +90,16 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "get_cost":
-        # Per-conversation cost from CostTracker (in-memory, model-aware pricing)
+        # Per-conversation cost from the ledger (persistent, cost frozen
+        # at the service rates in effect when each turn ran)
         conv_id = body.get("conversation_id", "")
         try:
-            from core.cost_tracker import CostTracker
-            tracker = CostTracker.instance()
+            from core.usage_ledger import UsageLedger
+            ledger = UsageLedger.instance()
             if conv_id:
-                data = tracker.get_conversation_cost(conv_id)
+                data = ledger.conversation_cost(conv_id)
             else:
-                data = {"total": tracker.get_total_cost(), "by_model": {}}
+                data = {"total": ledger.total_cost(), "by_model": {}}
             flowfile.set_content(json.dumps({
                 "total_usd": round(data.get("total", 0.0), 6),
                 "by_model": data.get("by_model", {}),
@@ -286,12 +284,12 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
 
     if action == "get_usage":
         try:
-            from core.token_tracker import TokenTracker
+            from core.usage_ledger import UsageLedger
             is_admin = "admin" in (flowfile.get_attribute("http.auth.roles") or "")
             if is_admin:
-                usage = TokenTracker.instance().get_all_usage()
+                usage = UsageLedger.instance().all_usage()
             else:
-                usage = {user_id: TokenTracker.instance().get_usage(user_id)}
+                usage = {user_id: UsageLedger.instance().user_usage(user_id)}
             flowfile.set_content(json.dumps({
                 "usage": usage,
             }, ensure_ascii=False).encode())
@@ -299,4 +297,85 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action in ("usage_summary", "usage_timeseries", "usage_top",
+                  "usage_export"):
+        return _handle_usage_query(action, body, user_id, flowfile)
+
     return None
+
+
+def _usage_query_filters(body, user_id, flowfile):
+    """Common ledger filters for the usage query actions.
+
+    Non-admin callers are always scoped to their own user_id; admins may
+    pass user="ALL" (no user filter) or a specific user id. `days` bounds
+    the window (default 30).
+    """
+    is_admin = "admin" in (flowfile.get_attribute("http.auth.roles") or "")
+    req_user = str(body.get("user", "") or "")
+    if is_admin and req_user:
+        filter_user = "" if req_user.upper() == "ALL" else req_user
+    else:
+        filter_user = user_id
+    try:
+        days = float(body.get("days", 30) or 30)
+    except (TypeError, ValueError):
+        days = 30.0
+    filters = {
+        "user_id": filter_user,
+        "since": time.time() - days * 86400,
+        "conversation_id": str(body.get("conversation_id", "") or ""),
+        "agent_name": str(body.get("agent", "") or ""),
+        "llm_service": str(body.get("llm_service", "") or ""),
+        "channel": str(body.get("channel", "") or ""),
+    }
+    if str(body.get("model", "") or ""):
+        filters["model"] = str(body["model"])
+    return filters
+
+
+def _handle_usage_query(action, body, user_id, flowfile):
+    """Ledger query actions: summary / timeseries / top / export."""
+    from core.usage_ledger import UsageLedger
+    ledger = UsageLedger.instance()
+    try:
+        filters = _usage_query_filters(body, user_id, flowfile)
+        if action == "usage_summary":
+            out = {"summary": ledger.summary(**filters)}
+        elif action == "usage_timeseries":
+            out = {"timeseries": ledger.timeseries(
+                bucket=str(body.get("bucket", "day") or "day"),
+                group_by=str(body.get("group_by", "") or ""),
+                **filters)}
+        elif action == "usage_top":
+            try:
+                limit = int(body.get("limit", 10) or 10)
+            except (TypeError, ValueError):
+                limit = 10
+            out = {"top": ledger.top(
+                dimension=str(body.get("dimension", "conversation_id")
+                              or "conversation_id"),
+                order_by=str(body.get("order_by", "cost_usd")
+                             or "cost_usd"),
+                limit=limit, **filters)}
+        else:  # usage_export
+            rows = ledger.export_rows(**filters)
+            if str(body.get("format", "") or "").lower() == "csv":
+                import csv
+                import io
+                buf = io.StringIO()
+                if rows:
+                    writer = csv.DictWriter(buf, fieldnames=list(rows[0]))
+                    writer.writeheader()
+                    writer.writerows(rows)
+                flowfile.set_content(buf.getvalue().encode("utf-8"))
+                flowfile.set_attribute("mime.type", "text/csv")
+                return [flowfile]
+            out = {"events": rows}
+        flowfile.set_content(json.dumps(out, ensure_ascii=False).encode())
+    except ValueError as e:
+        flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        flowfile.set_attribute("http.response.status", "400")
+    except Exception as e:
+        flowfile.set_content(json.dumps({"error": str(e)}).encode())
+    return [flowfile]

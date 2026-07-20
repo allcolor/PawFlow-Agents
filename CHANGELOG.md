@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Persistent usage/cost ledger (`core/usage_ledger.py`, SQLite at
+  `data/system/usage.db`): every LLM call is recorded as ONE event with
+  full dimensions (user, conversation, agent, llm_service, model,
+  provider, channel) and the cost FROZEN at the service rates in effect
+  at call time. Replaces TokenTracker (JSON aggregates, no conversation
+  dimension) and CostTracker (in-memory, lost on restart); the legacy
+  `token_usage.json` is imported once as synthetic `migrated` events.
+  Newly attributed traffic that was previously invisible: sub-agent runs
+  (`delegate`/`flash_delegate`, channel `subagent`, priced from the
+  sub-agent's own service), realtime LiveKit sessions (structured token
+  metrics from the worker, channel `realtime`), aggregator advisors, and
+  internal calls such as title generation (channel `system`).
+- Usage query actions on the agent-loop API (`usage_summary`,
+  `usage_timeseries` with hour/day/month buckets and one group-by
+  dimension, `usage_top`, `usage_export` JSON/CSV) with period and
+  dimension filters — non-admins scoped to their own user, admins can
+  query any/all users. Foundation for the upcoming usage dashboards.
+  See `docs/usage_tracking.md`.
+
 ## [1.0.0-beta.28] — 2026-07-19
 
 ### Fixed

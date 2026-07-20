@@ -184,7 +184,7 @@ class AggregatingLLMClient:
 
     def _track_advisor_usage(self, reports: List[AgentResult]) -> None:
         from core import safe_float
-        from core.cost_tracker import CostTracker
+        from core.usage_ledger import UsageLedger
 
         usage = []
         total_cost = 0.0
@@ -195,8 +195,13 @@ class AggregatingLLMClient:
             cost_out = safe_float(config.get("cost_per_1m_output", 0), 0.0)
             cache_read = config.get("cost_per_1m_cache_read")
             cache_write = config.get("cost_per_1m_cache_write")
-            cost = CostTracker.instance().track(
-                self._conversation_id, result.model or service_id,
+            cost = UsageLedger.instance().record(
+                user_id=self._user_id or "system",
+                channel="aggregator_advisor",
+                conversation_id=self._conversation_id,
+                agent_name=self._agent_name or "",
+                llm_service=service_id,
+                model=result.model or service_id,
                 tokens_in=result.tokens_in, tokens_out=result.tokens_out,
                 cost_per_1m_input=cost_in,
                 cost_per_1m_output=cost_out,

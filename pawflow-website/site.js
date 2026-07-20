@@ -6,7 +6,7 @@ const toggle = document.querySelector('[data-nav-toggle]');
 // version in sync with the latest release tag on a best-effort basis — the
 // live fetch below overrides it on every page load.
 const PAWFLOW_RELEASE = {
-  version: '1.0.0-beta.28',
+  version: '1.0.0-beta.29',
   repo: 'https://github.com/allcolor/PawFlow-Agents',
 };
 

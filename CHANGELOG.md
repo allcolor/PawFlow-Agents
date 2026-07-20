@@ -20,6 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sub-agent's own service), realtime LiveKit sessions (structured token
   metrics from the worker, channel `realtime`), aggregator advisors, and
   internal calls such as title generation (channel `system`).
+- Live conversation cost gauge in the webchat header: a `usage.updated`
+  SSE event is published after every turn (task sub-conversations roll up
+  to the parent), the badge shows the conversation's cumulative cost and
+  opens a breakdown panel — totals, by agent / channel / model with bars,
+  and the most recent turns. Backed by a new `usage_conversation` action
+  and conversation-prefix queries on the ledger.
 - Usage query actions on the agent-loop API (`usage_summary`,
   `usage_timeseries` with hour/day/month buckets and one group-by
   dimension, `usage_top`, `usage_export` JSON/CSV) with period and

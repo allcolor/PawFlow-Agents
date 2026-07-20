@@ -1351,5 +1351,13 @@
   "lkCamOff": "Camera off",
   "lkScreenOn": "Share screen",
   "lkScreenOff": "Stop sharing",
-  "lkStartFailed": "Live session failed: "
+  "lkStartFailed": "Live session failed: ",
+  "usageCostBadgeTitle": "Conversation cost {usd} — {tin} in / {tout} out tokens. Click for details.",
+  "usageCostPanelTitle": "Conversation cost",
+  "usageCostTotalsLine": "{calls} calls — {tin} in / {tout} out tokens (cache read {cr}, write {cw})",
+  "usageCostByAgent": "By agent",
+  "usageCostByChannel": "By channel",
+  "usageCostByModel": "By model",
+  "usageCostRecent": "Recent turns",
+  "usageCostNoData": "No usage recorded yet."
 }

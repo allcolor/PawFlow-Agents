@@ -1351,5 +1351,13 @@
   "lkCamOff": "Cámara off",
   "lkScreenOn": "Compartir pantalla",
   "lkScreenOff": "Dejar de compartir",
-  "lkStartFailed": "Error de sesión en vivo: "
+  "lkStartFailed": "Error de sesión en vivo: ",
+  "usageCostBadgeTitle": "Coste de la conversación {usd} — {tin} tokens entrada / {tout} salida. Clic para detalles.",
+  "usageCostPanelTitle": "Coste de la conversación",
+  "usageCostTotalsLine": "{calls} llamadas — {tin} entrada / {tout} salida (caché leída {cr}, escrita {cw})",
+  "usageCostByAgent": "Por agente",
+  "usageCostByChannel": "Por canal",
+  "usageCostByModel": "Por modelo",
+  "usageCostRecent": "Turnos recientes",
+  "usageCostNoData": "Sin uso registrado todavía."
 }

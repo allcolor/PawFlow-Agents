@@ -1351,5 +1351,13 @@
   "lkCamOff": "Caméra off",
   "lkScreenOn": "Partager l'écran",
   "lkScreenOff": "Arrêter le partage",
-  "lkStartFailed": "Échec de la session live : "
+  "lkStartFailed": "Échec de la session live : ",
+  "usageCostBadgeTitle": "Coût de la conversation {usd} — {tin} tokens entrée / {tout} sortie. Cliquer pour le détail.",
+  "usageCostPanelTitle": "Coût de la conversation",
+  "usageCostTotalsLine": "{calls} appels — {tin} entrée / {tout} sortie (cache lu {cr}, écrit {cw})",
+  "usageCostByAgent": "Par agent",
+  "usageCostByChannel": "Par canal",
+  "usageCostByModel": "Par modèle",
+  "usageCostRecent": "Derniers tours",
+  "usageCostNoData": "Aucun usage enregistré pour l'instant."
 }

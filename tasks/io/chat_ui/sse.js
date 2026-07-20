@@ -79,6 +79,8 @@ function connectSSE(cid, onReady, opts) {
   _sseWireB();
   // realtime.* listeners for LiveKit live sessions (conversation_livekit.js)
   if (typeof _lkWireSSE === 'function') _lkWireSSE();
+  // usage.updated listener for the conversation cost gauge (usage_cost.js)
+  if (typeof _usageWireSSE === 'function') _usageWireSSE();
   let sseHadError = false;  // track any error on this EventSource
   let sseEverConnected = false;  // distinguish reconnects from initial connect hiccups
 

@@ -187,7 +187,8 @@ class UsageLedger:
 
     @staticmethod
     def _where(user_id="", conversation_id="", agent_name="",
-               llm_service="", model="", channel="", since=0.0, until=0.0):
+               llm_service="", model="", channel="", since=0.0, until=0.0,
+               conversation_prefix=""):
         clauses, params = [], []
         for col, val in (("user_id", user_id),
                          ("conversation_id", conversation_id),
@@ -197,6 +198,12 @@ class UsageLedger:
             if val:
                 clauses.append(f"{col} = ?")
                 params.append(val)
+        if conversation_prefix:
+            # The conversation plus its task sub-conversations
+            # (`<cid>::task::<tid>`) — how the UI totals a conversation.
+            clauses.append("(conversation_id = ? OR conversation_id LIKE ?)")
+            params.extend([conversation_prefix,
+                           conversation_prefix + "::%"])
         if since:
             clauses.append("ts >= ?")
             params.append(float(since))
@@ -281,6 +288,31 @@ class UsageLedger:
                     for r in rows}
         return {"total": sum(m["cost"] for m in by_model.values()),
                 "by_model": by_model}
+
+    def conversation_breakdown(self, conversation_id: str,
+                               recent_limit: int = 30) -> Dict[str, Any]:
+        """Full cost/token picture of one conversation for the UI panel.
+
+        Includes the conversation's task sub-conversations
+        (`<cid>::task::<tid>`). Returns totals plus by_agent / by_channel /
+        by_model groupings and the most recent events.
+        """
+        totals = self.summary(conversation_prefix=conversation_id)
+        out: Dict[str, Any] = {"conversation_id": conversation_id,
+                               "totals": totals}
+        for key, dimension in (("by_agent", "agent_name"),
+                               ("by_channel", "channel"),
+                               ("by_model", "model")):
+            out[key] = self.top(dimension=dimension, limit=50,
+                                order_by="cost_usd",
+                                conversation_prefix=conversation_id)
+        out["recent"] = [
+            {k: r[k] for k in ("ts", "agent_name", "llm_service", "model",
+                               "channel", "tokens_in", "tokens_out",
+                               "cache_read", "cache_write", "cost_usd")}
+            for r in self.export_rows(conversation_prefix=conversation_id,
+                                      limit=recent_limit)]
+        return out
 
     def total_cost(self) -> float:
         row = self._query("SELECT SUM(cost_usd) c FROM usage_events", ())[0]

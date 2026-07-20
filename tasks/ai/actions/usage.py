@@ -297,6 +297,24 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "usage_conversation":
+        # Full cost/token picture of one conversation for the cost panel:
+        # totals + by_agent/by_channel/by_model + recent turns, task
+        # sub-conversations included.
+        conv_id = str(body.get("conversation_id", "") or "")
+        if not conv_id:
+            flowfile.set_content(json.dumps(
+                {"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.usage_ledger import UsageLedger
+            out = UsageLedger.instance().conversation_breakdown(conv_id)
+            flowfile.set_content(json.dumps(out, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action in ("usage_summary", "usage_timeseries", "usage_top",
                   "usage_export"):
         return _handle_usage_query(action, body, user_id, flowfile)

@@ -39,7 +39,7 @@ _JS_MODULES = [
     # Order matters: core → render → tools → markdown (markdown holds load-time
     # #messages scroll listeners).
     "messages.js", "messages_render.js", "messages_tools.js", "messages_markdown.js",
-    "active_agents.js", "typing.js", "notifications.js",
+    "active_agents.js", "usage_cost.js", "typing.js", "notifications.js",
     # sse.js was split (<=800 lines each); load order matters: sse_state.js
     # (globals + per-connection state + shared helpers) before the wire
     # files, then sse.js (connectSSE resets state + calls _sseWireA/B).

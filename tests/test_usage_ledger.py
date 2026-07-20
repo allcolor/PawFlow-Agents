@@ -147,6 +147,52 @@ class TestQueries:
         assert {"id", "ts", "channel", "cost_usd"} <= set(rows[0])
 
 
+class TestConversationBreakdown:
+    def _seed(self, ledger):
+        ledger.record(user_id="alice", channel="chat", conversation_id="c1",
+                      agent_name="claude", llm_service="svc-a", model="m1",
+                      tokens_in=100, tokens_out=10, cost_per_1m_input=10.0,
+                      cost_per_1m_output=10.0)
+        # Task sub-conversation of c1 — must be included in c1's totals.
+        ledger.record(user_id="alice", channel="task",
+                      conversation_id="c1::task::t_9", agent_name="claude",
+                      llm_service="svc-a", model="m1",
+                      tokens_in=50, tokens_out=5)
+        # Unrelated conversation sharing the prefix chars but not `::`.
+        ledger.record(user_id="alice", channel="chat",
+                      conversation_id="c1b", agent_name="claude",
+                      llm_service="svc-a", model="m1",
+                      tokens_in=999, tokens_out=99)
+
+    def test_prefix_includes_task_subconvs_only(self, ledger):
+        self._seed(ledger)
+        data = ledger.conversation_breakdown("c1")
+        assert data["totals"]["tokens_in"] == 150
+        assert data["totals"]["calls"] == 2
+        channels = {r["value"] for r in data["by_channel"]}
+        assert channels == {"chat", "task"}
+        assert len(data["recent"]) == 2
+        assert {"ts", "agent_name", "channel", "cost_usd"} <= \
+            set(data["recent"][0])
+
+    def test_usage_conversation_action(self, ledger):
+        self._seed(ledger)
+        from tasks.ai.actions.usage import _handle_usage
+        ff = _ff()
+        out = _handle_usage(None, "usage_conversation",
+                            {"conversation_id": "c1"}, None, "alice", ff)
+        assert out == [ff]
+        data = json.loads(ff.get_content())
+        assert data["totals"]["tokens_in"] == 150
+        assert data["by_agent"][0]["value"] == "claude"
+
+    def test_usage_conversation_requires_cid(self, ledger):
+        from tasks.ai.actions.usage import _handle_usage
+        ff = _ff()
+        _handle_usage(None, "usage_conversation", {}, None, "alice", ff)
+        assert ff.get_attribute("http.response.status") == "400"
+
+
 class TestLegacyMigration:
     def test_token_usage_json_imported_once(self, tmp_path, monkeypatch):
         import core.paths as paths

@@ -47,6 +47,18 @@ pass `user: "ALL"` or a specific user id.
 | `usage_timeseries` | `bucket` (hour/day/month), `group_by` (llm_service/agent_name/model/channel/user_id/conversation_id/provider) | bucketed totals, optionally grouped |
 | `usage_top` | `dimension`, `order_by` (cost_usd/tokens_in/tokens_out/calls), `limit` | top-N values of one dimension |
 | `usage_export` | `format: csv` for CSV, else JSON | raw events, newest first |
+| `usage_conversation` | `conversation_id` (required) | totals + by_agent / by_channel / by_model + recent turns for one conversation, task sub-conversations (`<cid>::task::<tid>`) included |
+
+## Live conversation cost gauge
+
+After every turn the server publishes a `usage.updated` SSE event on the
+conversation (task sub-conversations publish to their parent) with the
+turn's cost/tokens and the conversation totals. The webchat header shows a
+cost badge (`usage_cost.js`) hydrated from `usage_conversation` on
+conversation open and refreshed live from `usage.updated`; clicking it
+opens a breakdown panel (totals, by agent/channel/model, recent turns).
+When a conversation only uses services without configured pricing (e.g.
+subscription CLI providers), bars scale on tokens instead of cost.
 
 ## Migration
 

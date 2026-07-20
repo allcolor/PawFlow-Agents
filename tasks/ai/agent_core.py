@@ -389,6 +389,29 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     )
                     st._turn_cost_ref[0] += float(
                         st.ctx.get("_additional_usage_cost_usd", 0) or 0)
+                    # Live cost gauge: one SSE event per turn with the
+                    # turn's cost and the conversation total (tasks and
+                    # sub-conversations included). Task sub-convs publish
+                    # to the parent conv — that's where the SSE client is.
+                    from core.service_registry import _parent_conversation_id
+                    from core.conversation_event_bus import \
+                        ConversationEventBus
+                    _gauge_cid = (_parent_conversation_id(st.conversation_id)
+                                  or st.conversation_id)
+                    _conv_totals = UsageLedger.instance().summary(
+                        conversation_prefix=_gauge_cid)
+                    ConversationEventBus.get_instance().publish_event(
+                        _gauge_cid, "usage.updated", {
+                            "conversation_id": _gauge_cid,
+                            "agent_name":
+                                st.ctx.get("active_agent_name", "") or "",
+                            "turn_cost_usd": st._turn_cost_ref[0],
+                            "turn_tokens_in": st.total_tokens_in,
+                            "turn_tokens_out": st.total_tokens_out,
+                            "total_usd": _conv_totals["cost_usd"],
+                            "total_tokens_in": _conv_totals["tokens_in"],
+                            "total_tokens_out": _conv_totals["tokens_out"],
+                        })
                 except Exception as _cost_err:
                     logger.debug("[agent:%s] usage tracking error: %s",
                                  st.conversation_id[:8], _cost_err)

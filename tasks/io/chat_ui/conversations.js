@@ -330,6 +330,7 @@ function resumeConv(cid, force) {
       //    authoritative transcript from disk; buffered bus events would be
       //    duplicates of what we already rendered.
       if (typeof hydrateContextUsage === 'function') hydrateContextUsage();
+      if (typeof hydrateUsageCost === 'function') hydrateUsageCost();
       connectSSE(cid, () => startSSEHealthTimer(), { noReplay: true });
     });
 }

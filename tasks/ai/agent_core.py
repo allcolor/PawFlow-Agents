@@ -11,8 +11,8 @@ from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
 from tasks.ai._alc_base import (  # noqa: F401
     _ALCState, _ALC_BREAK, _ALC_CONTINUE, _strip_context_ack, _preempt_rescue_requires_retrigger,
-    _apply_bg_results, _svc_rates, _usage_cost_usd, _check_budget,
-    _CONTEXT_ACK_PATTERNS)
+    _apply_bg_results, _svc_rates, _svc_subscription, _usage_cost_usd,
+    _check_budget, _CONTEXT_ACK_PATTERNS)
 from tasks.ai._alc_closures1 import _ALCClosures1Mixin
 from tasks.ai._alc_closures2 import _ALCClosures2Mixin
 from tasks.ai._alc_setup import _ALCSetupMixin
@@ -386,6 +386,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                         cost_per_1m_input=st._ci, cost_per_1m_output=st._co,
                         cost_per_1m_cache_read=st._ccr,
                         cost_per_1m_cache_write=st._ccw,
+                        subscription=_svc_subscription(st.ctx),
                     )
                     st._turn_cost_ref[0] += float(
                         st.ctx.get("_additional_usage_cost_usd", 0) or 0)
@@ -409,6 +410,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                             "turn_tokens_in": st.total_tokens_in,
                             "turn_tokens_out": st.total_tokens_out,
                             "total_usd": _conv_totals["cost_usd"],
+                            "total_virtual_usd":
+                                _conv_totals["virtual_cost_usd"],
                             "total_tokens_in": _conv_totals["tokens_in"],
                             "total_tokens_out": _conv_totals["tokens_out"],
                         })

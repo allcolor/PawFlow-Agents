@@ -1359,5 +1359,7 @@
   "usageCostByChannel": "By channel",
   "usageCostByModel": "By model",
   "usageCostRecent": "Recent turns",
-  "usageCostNoData": "No usage recorded yet."
+  "usageCostNoData": "No usage recorded yet.",
+  "usageCostVirtualTitle": "({usd} virtual — subscription services)",
+  "usageCostVirtualLine": "virtual — what this would have cost via API (subscription services)"
 }

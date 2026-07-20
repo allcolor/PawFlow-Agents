@@ -730,6 +730,7 @@ class _SubAgentExecutorLoopMixin:
                 from core import safe_float
                 _ci = _co = 0.0
                 _ccr = _ccw = None
+                _sub = False
                 try:
                     from core.service_registry import ServiceRegistry
                     _svc_def = ServiceRegistry.get_instance().resolve_definition(
@@ -744,6 +745,8 @@ class _SubAgentExecutorLoopMixin:
                             if _cr not in (None, "") else None)
                     _ccw = (safe_float(_cw, _ci * 1.25)
                             if _cw not in (None, "") else None)
+                    _sub = str(_cfg.get("subscription", "")).strip().lower() \
+                        in ("1", "true", "yes", "on")
                 except Exception:
                     logger.debug("subagent rate lookup failed", exc_info=True)
                 UsageLedger.instance().record(
@@ -758,7 +761,8 @@ class _SubAgentExecutorLoopMixin:
                     duration_ms=int(result.duration_ms),
                     cost_per_1m_input=_ci, cost_per_1m_output=_co,
                     cost_per_1m_cache_read=_ccr,
-                    cost_per_1m_cache_write=_ccw)
+                    cost_per_1m_cache_write=_ccw,
+                    subscription=_sub)
             except Exception:
                 logger.debug("subagent usage recording failed", exc_info=True)
 

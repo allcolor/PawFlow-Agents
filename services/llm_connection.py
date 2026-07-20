@@ -549,6 +549,16 @@ class LLMConnectionService(BaseService):
                 "type": "integer", "default": 0,
                 "description": "Max concurrent requests (0 = unlimited)",
             },
+            "subscription": {
+                "type": "boolean", "default": False,
+                "description": (
+                    "Flat-rate/subscription service (e.g. Claude, Codex, or "
+                    "Gemini subscription login): usage is recorded as VIRTUAL "
+                    "cost at the cost_per_1m_* rates below (API-equivalent "
+                    "pricing) instead of real spend — dashboards show what "
+                    "the subscription saved, budgets ignore it."
+                ),
+            },
             "cost_per_1m_input": {
                 "type": "string", "default": "0",
                 "description": "Cost per 1M input tokens ($)",

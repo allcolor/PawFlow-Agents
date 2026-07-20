@@ -18,7 +18,18 @@ service (`cost_per_1m_input` / `cost_per_1m_output`, plus optional
 `cost_per_1m_cache_read` / `cost_per_1m_cache_write`; cache defaults are
 10% / 125% of the input rate). Changing a service's pricing later never
 rewrites history. There is no hardcoded price table: services without
-configured rates (e.g. subscription CLI providers) record tokens at $0.
+configured rates record tokens at $0.
+
+### Subscription services
+
+Set `subscription: true` on a flat-rate `llmConnection` (a Claude Code,
+Codex, or Gemini subscription login) together with API-equivalent
+`cost_per_1m_*` rates. Usage from that service is recorded as
+`virtual_cost_usd` instead of `cost_usd` — the real cost stays $0 (budgets
+and `max_budget_usd` never count it), while dashboards can still show what
+the tokens would have cost via the API, i.e. what the subscription saved.
+Every `summary` / `timeseries` / `top` / `conversation_breakdown` row
+carries both `cost_usd` and `virtual_cost_usd`.
 
 Channels attribute where the tokens went:
 

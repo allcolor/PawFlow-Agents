@@ -1359,5 +1359,7 @@
   "usageCostByChannel": "Par canal",
   "usageCostByModel": "Par modèle",
   "usageCostRecent": "Derniers tours",
-  "usageCostNoData": "Aucun usage enregistré pour l'instant."
+  "usageCostNoData": "Aucun usage enregistré pour l'instant.",
+  "usageCostVirtualTitle": "({usd} virtuel — services par abonnement)",
+  "usageCostVirtualLine": "virtuel — ce que ça aurait coûté en API (services par abonnement)"
 }

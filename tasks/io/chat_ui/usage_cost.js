@@ -6,7 +6,7 @@
 // opens a breakdown panel (totals, by agent/channel/model, recent turns).
 
 window._usageCost = window._usageCost || {
-  totalUsd: 0, tokensIn: 0, tokensOut: 0, hydratedFor: '',
+  totalUsd: 0, virtualUsd: 0, tokensIn: 0, tokensOut: 0, hydratedFor: '',
 };
 
 function _usageFmtUsd(v) {
@@ -28,17 +28,28 @@ function renderUsageCostBadge() {
   const el = document.getElementById('usageCostBadge');
   if (!el) return;
   const u = window._usageCost;
-  const hasData = u.totalUsd > 0 || u.tokensIn > 0 || u.tokensOut > 0;
+  const hasData = u.totalUsd > 0 || u.virtualUsd > 0
+    || u.tokensIn > 0 || u.tokensOut > 0;
   if (!conversationId || u.hydratedFor !== conversationId || !hasData) {
     el.style.display = 'none';
     return;
   }
-  el.textContent = '\u2248 ' + _usageFmtUsd(u.totalUsd);
-  el.title = t('usageCostBadgeTitle', {
+  // Real spend leads; a subscription-only conversation shows its virtual
+  // (API-equivalent) cost with a tilde so it never reads as real money.
+  const showVirtual = !(u.totalUsd > 0) && u.virtualUsd > 0;
+  el.textContent = showVirtual
+    ? '\u007e ' + _usageFmtUsd(u.virtualUsd)
+    : '\u2248 ' + _usageFmtUsd(u.totalUsd);
+  let title = t('usageCostBadgeTitle', {
     usd: _usageFmtUsd(u.totalUsd),
     tin: _usageFmtTok(u.tokensIn),
     tout: _usageFmtTok(u.tokensOut),
   });
+  if (u.virtualUsd > 0) {
+    title += ' ' + t('usageCostVirtualTitle',
+                     { usd: _usageFmtUsd(u.virtualUsd) });
+  }
+  el.title = title;
   el.style.display = '';
 }
 
@@ -52,6 +63,7 @@ function hydrateUsageCost() {
     const tot = data.totals || {};
     window._usageCost = {
       totalUsd: tot.cost_usd || 0,
+      virtualUsd: tot.virtual_cost_usd || 0,
       tokensIn: tot.tokens_in || 0,
       tokensOut: tot.tokens_out || 0,
       hydratedFor: cid,
@@ -69,6 +81,7 @@ function _usageWireSSE() {
     if (!conversationId || d.conversation_id !== conversationId) return;
     window._usageCost = {
       totalUsd: d.total_usd || 0,
+      virtualUsd: d.total_virtual_usd || 0,
       tokensIn: d.total_tokens_in || 0,
       tokensOut: d.total_tokens_out || 0,
       hydratedFor: conversationId,
@@ -143,6 +156,11 @@ function _usageRenderBreakdown(data) {
         cr: _usageFmtTok(tot.cache_read), cw: _usageFmtTok(tot.cache_write),
       })) + '</span>'
     + '</div>';
+  if ((tot.virtual_cost_usd || 0) > 0) {
+    html += '<div style="margin:-6px 0 12px;opacity:0.8;color:#a8dadc;">'
+      + '\u007e ' + _usageFmtUsd(tot.virtual_cost_usd) + ' '
+      + escapeHtml(t('usageCostVirtualLine')) + '</div>';
+  }
   html += _usageDimTable(t('usageCostByAgent'), data.by_agent, anyCost);
   html += _usageDimTable(t('usageCostByChannel'), data.by_channel, anyCost);
   html += _usageDimTable(t('usageCostByModel'), data.by_model, anyCost);
@@ -156,8 +174,10 @@ function _usageRenderBreakdown(data) {
 function _usageDimTable(title, rows, anyCost) {
   rows = (rows || []).filter(r => r.value);
   if (!rows.length) return '';
+  const anyVirtual = rows.some(r => (r.virtual_cost_usd || 0) > 0);
   const metric = r => anyCost ? (r.cost_usd || 0)
-                              : ((r.tokens_in || 0) + (r.tokens_out || 0));
+    : (anyVirtual ? (r.virtual_cost_usd || 0)
+                  : ((r.tokens_in || 0) + (r.tokens_out || 0)));
   const max = Math.max.apply(null, rows.map(metric).concat([1e-12]));
   let html = '<div style="margin:10px 0 4px;font-weight:600;opacity:0.85;">'
     + escapeHtml(title) + '</div>'
@@ -172,7 +192,9 @@ function _usageDimTable(title, rows, anyCost) {
       + '<td style="padding:2px 6px;text-align:right;opacity:0.75;white-space:nowrap;">'
       + _usageFmtTok(r.tokens_in) + ' / ' + _usageFmtTok(r.tokens_out) + '</td>'
       + '<td style="padding:2px 0;text-align:right;white-space:nowrap;">'
-      + _usageFmtUsd(r.cost_usd) + '</td>'
+      + ((r.cost_usd || 0) > 0 || !(r.virtual_cost_usd > 0)
+          ? _usageFmtUsd(r.cost_usd)
+          : '\u007e ' + _usageFmtUsd(r.virtual_cost_usd)) + '</td>'
       + '</tr>';
   });
   return html + '</table>';

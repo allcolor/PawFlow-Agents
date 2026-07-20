@@ -70,6 +70,33 @@ class TestRecord:
         UsageLedger.reset()
 
 
+class TestSubscription:
+    def test_subscription_records_virtual_not_real(self, ledger):
+        real = ledger.record(
+            user_id="alice", channel="chat", conversation_id="c1",
+            model="claude", tokens_in=1_000_000, tokens_out=500_000,
+            cost_per_1m_input=3.0, cost_per_1m_output=15.0,
+            subscription=True)
+        assert real == 0.0
+        s = ledger.summary(user_id="alice")
+        assert s["cost_usd"] == 0.0
+        assert s["virtual_cost_usd"] == pytest.approx(10.5)
+        assert s["tokens_in"] == 1_000_000
+        assert ledger.total_cost() == 0.0
+
+    def test_subscription_mixed_with_real_in_conversation(self, ledger):
+        ledger.record(user_id="alice", channel="chat", conversation_id="c1",
+                      model="api-model", tokens_in=100, tokens_out=10,
+                      cost_per_1m_input=10.0, cost_per_1m_output=10.0)
+        ledger.record(user_id="alice", channel="chat", conversation_id="c1",
+                      model="sub-model", tokens_in=200, tokens_out=20,
+                      cost_per_1m_input=10.0, cost_per_1m_output=10.0,
+                      subscription=True)
+        data = ledger.conversation_breakdown("c1")
+        assert data["totals"]["cost_usd"] == pytest.approx(0.0011)
+        assert data["totals"]["virtual_cost_usd"] == pytest.approx(0.0022)
+
+
 class TestQueries:
     def _seed(self, ledger):
         now = time.time()

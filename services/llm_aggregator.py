@@ -211,6 +211,8 @@ class AggregatingLLMClient:
                 cost_per_1m_cache_write=(
                     safe_float(cache_write, cost_in * 1.25)
                     if cache_write not in (None, "") else None),
+                subscription=str(config.get("subscription", ""))
+                .strip().lower() in ("1", "true", "yes", "on"),
             )
             total_cost += cost
             item = result.to_dict()

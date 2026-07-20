@@ -9,7 +9,7 @@ from core import ServiceError, ServiceFactory
 from core.llm_client import LLMMessage, LLMResponse, LLMToolCall
 from core.tool_registry import ToolHandler, ToolRegistry
 from services.llm_aggregator import LLMAggregatorService
-from tasks.ai._alc_base import _svc_rates, _usage_cost_usd
+from tasks.ai._alc_base import _svc_rates, _svc_subscription, _usage_cost_usd
 
 
 class ReadHandler(ToolHandler):
@@ -152,6 +152,27 @@ def test_composite_cost_uses_final_rates_plus_advisor_delta():
     assert _svc_rates(ctx) == (2.0, 4.0, 0.2, 2.5)
     assert _usage_cost_usd(
         ctx, 1_000_000, 500_000, 0, 0) == pytest.approx(4.25)
+
+
+def test_subscription_service_has_no_real_cost():
+    client = SimpleNamespace(get_cost_config=lambda: {
+        "cost_per_1m_input": 3, "cost_per_1m_output": 15,
+        "subscription": True,
+    })
+    ctx = {"client": client}
+    assert _svc_subscription(ctx) is True
+    assert _usage_cost_usd(ctx, 1_000_000, 500_000, 0, 0) == 0.0
+
+
+def test_subscription_string_forms_are_truthy():
+    for val in ("true", "1", "yes", "on", "True"):
+        client = SimpleNamespace(
+            get_cost_config=lambda v=val: {"subscription": v})
+        assert _svc_subscription({"client": client}) is True
+    for val in ("false", "0", "", "no"):
+        client = SimpleNamespace(
+            get_cost_config=lambda v=val: {"subscription": v})
+        assert _svc_subscription({"client": client}) is False
 
 
 def test_advisors_use_tools_once_and_reports_are_cached_for_tool_loop():

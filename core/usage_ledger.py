@@ -152,12 +152,19 @@ class UsageLedger:
                cost_per_1m_cache_read: Optional[float] = None,
                cost_per_1m_cache_write: Optional[float] = None,
                virtual_cost_usd: float = 0.0,
+               subscription: bool = False,
                ts: Optional[float] = None) -> float:
-        """Record one usage event; returns the cost recorded (USD).
+        """Record one usage event; returns the REAL cost recorded (USD).
 
         user_id and channel are REQUIRED (no anonymous fallback). Cost is
         computed from the caller-supplied per-1M rates and frozen in the
         event; omitted pricing = $0.
+
+        subscription=True (flat-rate service, e.g. a Claude/Codex/Gemini
+        subscription login): the computed cost is what the tokens WOULD
+        have cost at the configured API-equivalent rates — it is stored as
+        virtual_cost_usd, real cost_usd stays 0, and 0.0 is returned so
+        budgets/gauges never count subscription traffic as real spend.
         """
         if not user_id:
             raise ValueError("BUG: user_id required for usage recording")
@@ -166,6 +173,9 @@ class UsageLedger:
         cost = compute_cost(tokens_in, tokens_out, cache_read, cache_write,
                             cost_per_1m_input, cost_per_1m_output,
                             cost_per_1m_cache_read, cost_per_1m_cache_write)
+        if subscription:
+            virtual_cost_usd = float(virtual_cost_usd or 0.0) + cost
+            cost = 0.0
         ts = float(ts if ts is not None else time.time())
         day = time.strftime("%Y-%m-%d", time.localtime(ts))
         with self._db_lock:
@@ -347,7 +357,8 @@ class UsageLedger:
         for r in self._query(
                 "SELECT agent_name, llm_service, SUM(tokens_in) i, "
                 "SUM(tokens_out) o, SUM(cache_read) cr, "
-                "SUM(cache_write) cw, COUNT(*) n, SUM(cost_usd) c "
+                "SUM(cache_write) cw, COUNT(*) n, SUM(cost_usd) c, "
+                "SUM(virtual_cost_usd) vc "
                 "FROM usage_events WHERE user_id = ? AND agent_name != '' "
                 "GROUP BY agent_name, llm_service", (user_id,)):
             key = r["agent_name"] + "::" + r["llm_service"]
@@ -355,7 +366,8 @@ class UsageLedger:
                 "agent": r["agent_name"], "llm_service": r["llm_service"],
                 "in": r["i"] or 0, "out": r["o"] or 0,
                 "cache_read": r["cr"] or 0, "cache_write": r["cw"] or 0,
-                "calls": r["n"] or 0, "cost": r["c"] or 0.0}
+                "calls": r["n"] or 0, "cost": r["c"] or 0.0,
+                "virtual_cost": r["vc"] or 0.0}
         return out
 
     def all_usage(self) -> Dict[str, Dict[str, Any]]:

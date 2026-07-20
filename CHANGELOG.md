@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `subscription` flag on `llmConnection`: usage from a flat-rate service
+  (Claude Code / Codex / Gemini subscription login) is recorded as
+  `virtual_cost_usd` in the usage ledger instead of `cost_usd` — real spend
+  stays $0 and budgets never count it, while `cost_per_1m_*` rates still
+  drive a "what this would have cost via API" figure surfaced everywhere
+  the ledger is read (badge, panel, summary/timeseries/top/export).
 - Persistent usage/cost ledger (`core/usage_ledger.py`, SQLite at
   `data/system/usage.db`): every LLM call is recorded as ONE event with
   full dimensions (user, conversation, agent, llm_service, model,

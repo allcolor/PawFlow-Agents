@@ -333,6 +333,57 @@ class TestUsageQueryActions:
         assert data["by_model"]["m1"]["in"] == 100
 
 
+class TestUsageDashboardAction:
+    def _seed(self, ledger):
+        now = time.time()
+        ledger.record(user_id="alice", channel="chat", conversation_id="c1",
+                      agent_name="claude", llm_service="svc-a", model="m1",
+                      tokens_in=100, tokens_out=10, cost_per_1m_input=10.0,
+                      cost_per_1m_output=10.0, ts=now)
+        ledger.record(user_id="alice", channel="chat", conversation_id="c2",
+                      agent_name="scout", llm_service="svc-b", model="m2",
+                      tokens_in=200, tokens_out=20, cost_per_1m_input=5.0,
+                      cost_per_1m_output=5.0, ts=now - 86400)
+        ledger.record(user_id="bob", channel="chat", conversation_id="c3",
+                      agent_name="claude", llm_service="svc-a", model="m1",
+                      tokens_in=900, tokens_out=90, cost_per_1m_input=10.0,
+                      cost_per_1m_output=10.0, ts=now)
+
+    def _run(self, body, user_id="alice", roles=""):
+        from tasks.ai.actions.usage import _handle_usage
+        ff = _ff(roles)
+        out = _handle_usage(None, "usage_dashboard", body, None, user_id, ff)
+        assert out == [ff]
+        return json.loads(ff.get_content())
+
+    def test_bundle_shape_and_scope(self, ledger):
+        self._seed(ledger)
+        data = self._run({"days": 30, "group_by": "llm_service"})
+        assert set(data) == {"kpis", "timeseries", "group_by",
+                             "top_conversations", "top_agents", "days"}
+        assert set(data["kpis"]) == {"today", "d7", "d30", "window"}
+        # Scoped to alice — bob's c3 event must not leak in.
+        assert data["kpis"]["d30"]["tokens_in"] == 300
+        conv_ids = {r["value"] for r in data["top_conversations"]}
+        assert conv_ids == {"c1", "c2"}
+
+    def test_timeseries_grouped_by_requested_dimension(self, ledger):
+        self._seed(ledger)
+        data = self._run({"days": 30, "group_by": "agent_name"})
+        assert data["group_by"] == "agent_name"
+        assert {r["grp"] for r in data["timeseries"]} == {"claude", "scout"}
+
+    def test_admin_all_users(self, ledger):
+        self._seed(ledger)
+        data = self._run({"days": 30, "user": "ALL"}, roles="admin")
+        assert data["kpis"]["d30"]["tokens_in"] == 1200
+
+    def test_non_admin_all_users_request_is_ignored(self, ledger):
+        self._seed(ledger)
+        data = self._run({"days": 30, "user": "ALL"})  # no admin role
+        assert data["kpis"]["d30"]["tokens_in"] == 300
+
+
 class TestRealtimeUsageHook:
     def test_worker_usage_event_recorded(self, ledger):
         from services._livekit_sessions import _record_realtime_usage

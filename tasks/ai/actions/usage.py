@@ -315,6 +315,9 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "usage_dashboard":
+        return _handle_usage_dashboard(body, user_id, flowfile)
+
     if action in ("usage_summary", "usage_timeseries", "usage_top",
                   "usage_export"):
         return _handle_usage_query(action, body, user_id, flowfile)
@@ -390,6 +393,56 @@ def _handle_usage_query(action, body, user_id, flowfile):
                 flowfile.set_attribute("mime.type", "text/csv")
                 return [flowfile]
             out = {"events": rows}
+        flowfile.set_content(json.dumps(out, ensure_ascii=False).encode())
+    except ValueError as e:
+        flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        flowfile.set_attribute("http.response.status", "400")
+    except Exception as e:
+        flowfile.set_content(json.dumps({"error": str(e)}).encode())
+    return [flowfile]
+
+
+def _handle_usage_dashboard(body, user_id, flowfile):
+    """Bundled payload for the global usage/cost dashboard screen.
+
+    One round trip covers: KPI totals (today/7d/30d/window), a timeseries
+    bucketed by day stacked on one dimension, and the top-N conversations
+    and agents by cost for the selected window. `days`/`group_by`/`user`
+    filters mirror the other usage_* actions.
+    """
+    from core.usage_ledger import UsageLedger
+    ledger = UsageLedger.instance()
+    try:
+        filters = _usage_query_filters(body, user_id, flowfile)
+        f_user = {"user_id": filters["user_id"]}
+        now = time.time()
+        try:
+            days = float(body.get("days", 30) or 30)
+        except (TypeError, ValueError):
+            days = 30.0
+        today_start = now - (now % 86400)
+        kpis = {
+            "today": ledger.summary(since=today_start, **f_user),
+            "d7": ledger.summary(since=now - 7 * 86400, **f_user),
+            "d30": ledger.summary(since=now - 30 * 86400, **f_user),
+            "window": ledger.summary(since=now - days * 86400, **f_user),
+        }
+        group_by = str(body.get("group_by", "llm_service")
+                       or "llm_service")
+        timeseries = ledger.timeseries(
+            bucket=str(body.get("bucket", "day") or "day"),
+            group_by=group_by, **filters)
+        top_conversations = ledger.top(
+            dimension="conversation_id", order_by="cost_usd", limit=10,
+            **filters)
+        top_agents = ledger.top(
+            dimension="agent_name", order_by="cost_usd", limit=10,
+            **filters)
+        out = {
+            "kpis": kpis, "timeseries": timeseries, "group_by": group_by,
+            "top_conversations": top_conversations,
+            "top_agents": top_agents, "days": days,
+        }
         flowfile.set_content(json.dumps(out, ensure_ascii=False).encode())
     except ValueError as e:
         flowfile.set_content(json.dumps({"error": str(e)}).encode())

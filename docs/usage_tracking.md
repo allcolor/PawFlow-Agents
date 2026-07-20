@@ -59,6 +59,20 @@ pass `user: "ALL"` or a specific user id.
 | `usage_top` | `dimension`, `order_by` (cost_usd/tokens_in/tokens_out/calls), `limit` | top-N values of one dimension |
 | `usage_export` | `format: csv` for CSV, else JSON | raw events, newest first |
 | `usage_conversation` | `conversation_id` (required) | totals + by_agent / by_channel / by_model + recent turns for one conversation, task sub-conversations (`<cid>::task::<tid>`) included |
+| `usage_dashboard` | `days`, `bucket`, `group_by` | bundled payload for the global dashboard screen: KPIs (today/7d/30d/window), a timeseries, and top conversations/agents |
+
+## Global Usage & Cost dashboard
+
+"Usage & Costs" in the header action menu (`tasks/io/chat_ui/usage_dashboard.js`)
+is a full-panel screen backed by the `usage_dashboard` action: KPI cards
+(today / 7d / 30d, tokens, cache-hit rate, a 30-day projection from the
+last 7 days' daily average), a stacked daily bar chart (canvas, no external
+charting dependency) that can stack on LLM service / agent / model /
+channel, and top-10 conversations and agents by cost for the selected
+window. Bars and KPIs fall back to tokens when the window has no priced
+usage (e.g. subscription-only traffic). Admins get an "All users" toggle;
+non-admins are always scoped to their own usage regardless of what they
+pass.
 
 ## Live conversation cost gauge
 

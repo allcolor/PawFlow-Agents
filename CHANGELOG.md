@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Global "Usage & Costs" dashboard (header action menu): KPI cards
+  (today/7d/30d, tokens, cache-hit rate, 30-day projection), a stacked
+  daily bar chart (canvas, no external charting dependency) stackable by
+  LLM service / agent / model / channel, and top-10 conversations/agents
+  by cost. Bars fall back to tokens when the window has no priced usage.
+  Admins get an "All users" toggle. Backed by a new bundled
+  `usage_dashboard` action on the usage ledger.
 - `subscription` flag on `llmConnection`: usage from a flat-rate service
   (Claude Code / Codex / Gemini subscription login) is recorded as
   `virtual_cost_usd` in the usage ledger instead of `cost_usd` — real spend

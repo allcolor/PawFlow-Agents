@@ -1361,5 +1361,21 @@
   "usageCostRecent": "Turnos recientes",
   "usageCostNoData": "Sin uso registrado todavía.",
   "usageCostVirtualTitle": "({usd} virtual — servicios por suscripción)",
-  "usageCostVirtualLine": "virtual — lo que habría costado vía API (servicios por suscripción)"
+  "usageCostVirtualLine": "virtual — lo que habría costado vía API (servicios por suscripción)",
+  "usageDashMenuLabel": "Uso y Costes",
+  "usageDashMenuDesc": "Panel de uso/costes entre conversaciones",
+  "usageDashTitle": "Uso y Costes",
+  "usageDashAllUsers": "Todos los usuarios",
+  "usageDashToday": "Hoy",
+  "usageDash7d": "Últimos 7 días",
+  "usageDash30d": "Últimos 30 días",
+  "usageDashProjected": "Proyectado (30d)",
+  "usageDashProjectedHint": "según el promedio diario de los últimos 7 días",
+  "usageDashCacheHit": "caché",
+  "usageDashChartTitle": "Coste diario, últimos {days} días",
+  "usageDashChartHint": "Apilado por la dimensión seleccionada",
+  "usageDashUnattributed": "(sin atribuir)",
+  "usageDashTopConversations": "Top conversaciones",
+  "usageDashTopAgents": "Top agentes",
+  "usageCostByServiceOpt": "Por servicio LLM"
 }

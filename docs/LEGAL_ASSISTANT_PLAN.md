@@ -204,7 +204,13 @@ task_def/flow pour le CRON de suivi des délais, service_definition pour
 la base juridique indexée) rentre sans friction dans les types d'objets déjà
 supportés (agent, skill, flow, task_def, service_provider, ui_extension).
 
-### 9.2 Ce qui manque : pas de route page entière dédiée
+### 9.2 Ce qui manque : pas de route page entière dédiée — **livré le 2026-07-23 (1.0.0-beta.30)**
+
+> Mise à jour : le type d'objet `web_app` décrit ci-dessous comme préalable
+> plateforme a été construit et livré (task `servePfpWebAppAssets`, route
+> `/apps/<package>/<name>/`, bouton "Open {name}" dans le panneau Packages).
+> Le reste de cette section 9.2 est conservé tel quel comme trace de
+> l'analyse d'origine ; le blocage qu'elle décrit n'existe plus.
 
 Le contrat ui.v1 des ui_extension (_UI_ASSET_EXTENSIONS dans
 core/pfp_package/_pp_base.py) exclut délibérément .html : les assets d'une
@@ -277,7 +283,253 @@ Un seul package, par exemple firm.legal-assistant :
 - Secrets déclarés : credentials manageCalendar/sendEmail, clé du
   provider LLM si non-rétention contractuelle exigée (garde-fou §7.4).
 
-## 10. Conclusion
+## 10bis. Compléments d'analyse (2026-07-23) — modèles, RAG, MCP, business
+
+Ce qui suit prolonge l'analyse ci-dessus avec des éléments vérifiés par
+recherche web (prix, disponibilité d'API, sources de données réelles), à la
+demande explicite de creuser agents/prompts/workflows/modèles/coûts/prix de
+vente/RAG/MCP. Chiffres de prix précis marqués "à confirmer" quand la source
+ne les publie pas noir sur blanc — cohérent avec le garde-fou §7 : on ne sert
+pas une affirmation non vérifiée comme un fait.
+
+### 11. Modèles candidats et coûts
+
+Deux familles open-weight actuellement compétitives pour un usage agentique
+long-contexte, toutes deux avec function-calling et support MCP natif côté
+API (confirmé pour GLM-5.2 dans sa doc officielle : "peut appeler librement
+des outils MCP externes") :
+
+| | GLM-5.2 (Z.ai / Zhipu) | Kimi K3 (Moonshot AI) |
+|---|---|---|
+| Contexte | 1M tokens (long-horizon réel, pas juste annoncé) | 1M tokens |
+| Positionnement éditeur | Agent/coding long-horizon, proche Opus 4.7-4.8 sur les benchmarks SWE cités | "Built for Agentic Coding & Knowledge Work" — le "knowledge work" du slogan correspond bien à la posture collègue/expert visée ici |
+| Facturation | API au token (open.bigmodel.cn) **ou** abonnement forfaitaire "GLM Coding Plan" (pensé coding-agent, à vérifier si le forfait couvre un usage agent généraliste au volume du cabinet) | API au token uniquement trouvé (rechargement de crédit, pas de forfait mensuel identifié) |
+| Hébergement | Chine (Zhipu) — soulève la question de rétention pour du contenu sensible | Chine (Moonshot) — même remarque |
+| Poids ouverts | Oui pour les générations précédentes (GLM-4.x) — à vérifier au cas par cas si la version exacte déployée est auto-hébergeable via Ollama/vLLM | Lignée K2 diffusée en poids ouverts — à vérifier pour la version exacte utilisée |
+
+Tarifs par million de tokens : non retrouvés en clair sur les pages
+publiques consultées (documentation en chinois, tableaux de prix rendus en
+JS). Avant tout engagement cabinet, obtenir les tarifs à jour directement
+depuis le tableau de bord facturation (open.bigmodel.cn "价格" / Moonshot
+"Model Pricing") plutôt que de les estimer ici. Ce qui est vérifiable sans
+ambiguïté : les deux sont des modèles ouverts chinois nettement moins chers
+que les modèles fermés occidentaux haut de gamme à capacité comparable — de
+l'ordre de plusieurs fois moins cher par token, ce qui change la conversation
+prix de vente (section 15).
+
+**Routage par rôle plutôt qu'un modèle unique pour les quatre rôles :**
+
+- **Secrétaire** (accusés de réception, RDV, rappels) — tâche mécanique, pas
+  de contenu juridique sensible : modèle le moins cher/rapide disponible, ou
+  un LLM service marqué `subscription` (coût virtuel, cf. le système de
+  suivi de coûts livré en beta.29) si le cabinet a déjà un abonnement plat
+  ailleurs.
+- **Assistant** (recherche factuelle dans la base indexée) — la précision
+  vient du RAG (section 14), pas de la mémoire du modèle : un modèle rapide
+  suffit tant que le prompt impose de ne répondre qu'à partir des passages
+  récupérés.
+- **Collègue** (relecture, angle transversal) — usage ponctuel, pas continu :
+  justifie le modèle flagship (GLM-5.2 ou Kimi K3) même si plus cher au
+  token, car le volume réel par dossier reste faible.
+- **Expert** (citation de loi, calcul de délai) — l'exigence n'est pas "le
+  meilleur modèle" mais "zéro citation non sourcée" : la discipline imposée
+  par `skill:legal-citations` (refuser de répondre sans passage retrouvé)
+  compte plus que le choix du modèle lui-même.
+
+**Confidentialité et souveraineté des données** (garde-fou §7.4) : pour les
+dossiers les plus sensibles (pénal, secret des affaires), trois options
+non-exclusives à documenter et laisser au choix du cabinet, par dossier :
+
+1. Auto-hébergement via Ollama/vLLM d'un modèle ouvert sur le matériel du
+   cabinet (aucune donnée ne sort jamais) — au prix d'une qualité inférieure
+   au flagship hébergé, et d'un investissement matériel (GPU) à amortir.
+2. Engagement contractuel de non-rétention avec le fournisseur d'API choisi.
+3. Fournisseur occidental alternatif si le cabinet l'exige par principe,
+   même à coût supérieur — PawFlow reste multi-provider par conception, ce
+   choix ne doit jamais être figé en dur dans le .pfp.
+
+Avant d'arrêter un choix définitif : instrumenter un mois pilote via le
+ledger d'usage déjà livré (`core/usage_ledger.py`) avec un budget plafond
+par rôle (`core/budget_store.py`, policy `block`) plutôt que d'estimer les
+coûts a priori.
+
+### 12. Types d'agents et prompts — exemples concrets
+
+Quatre agents distincts (ou un agent unique avec quatre `assigned_skills`,
+selon la préférence d'implémentation) partageant le même garde-fou de base :
+
+**Garde-fou commun (system prompt, injecté aux quatre) :**
+> Tu assistes une avocate, tu ne la remplaces jamais. Toute affirmation de
+> droit doit citer sa source exacte (article, texte, date de version) telle
+> que retrouvée dans la base documentaire — si tu ne trouves pas la source,
+> dis-le explicitement plutôt que de répondre de mémoire. Tu ne calcules
+> jamais un délai de procédure comme un fait acquis : présente-le toujours
+> comme "à vérifier par l'avocate". Tu ne déclenches jamais l'envoi d'un
+> email ou d'un courrier vers un tiers sans validation humaine explicite.
+
+**Assistant** — *"Retrouve, ne rédige pas."*
+> Ton rôle : recherche documentaire instantanée dans la base juridique
+> indexée et l'historique du dossier en cours. Réponds par les passages
+> exacts retrouvés, avec leur source, jamais par une reformulation qui
+> pourrait diverger du texte. Si la question sort du dossier courant,
+> précise que la réponse vient d'une recherche transversale.
+
+**Collègue** — *"Relis et propose, ne décide pas."*
+> Ton rôle : relire un brouillon ou un raisonnement, signaler toute
+> incohérence (dates, montants, noms de parties) entre le texte et les
+> pièces du dossier, et proposer un angle non envisagé en t'appuyant sur des
+> dossiers similaires du cabinet si pertinent. Formule toujours tes retours
+> comme des suggestions numérotées, jamais comme des corrections appliquées.
+
+**Secrétaire** — *"Exécute le répétitif, jamais le sensible."*
+> Ton rôle : accusés de réception, prise de RDV (`manageCalendar`), rappels
+> d'échéance, préparation de courriers types à partir de templates. Tu
+> prépares toujours un brouillon ; l'envoi effectif (`sendEmail`) attend un
+> clic de validation humaine, sans exception.
+
+**Expert** — *"Cite, ne suppose jamais."*
+> Ton rôle : donner le texte de loi exact en vigueur à la date pertinente,
+> avec sa source et sa version. Pour un calcul de délai de procédure,
+> détaille le raisonnement (acte déclencheur, durée légale, méthode de
+> calcul) mais conclus systématiquement par "à vérifier avant toute action".
+
+### 13. Workflows détaillés
+
+**`flow:deadline-watch`** (CRON quotidien, déjà esquissé en §3.3/§8) :
+1. Scanner la Knowledge Graph pour les entités "délai" à échéance ≤ 30 jours.
+2. Pour chaque délai : mettre à jour/créer l'événement calendrier
+   (`manageCalendar`) et préparer (jamais envoyer) un rappel par email.
+3. Notifier in-app à J-30 / J-7 / J-1, avec lien direct vers le dossier.
+4. Aucune étape n'envoie ou ne modifie une date sans que l'avocate l'ait
+   confirmée au moins une fois à la création du délai.
+
+**`flow:new-matter-intake`** (nouveau dossier) :
+1. Déclenchement manuel ou vocal ("nouveau dossier pour M./Mme X").
+2. Agent d'extraction structure les entités de base (client, type d'affaire,
+   dates connues) dans la Knowledge Graph, scopée à une nouvelle conversation.
+3. Rattachement automatique du `skill:legal-citations` et des agents des
+   quatre rôles à cette conversation.
+4. Si des dates de procédure sont identifiées dès l'intake, création des
+   entités "délai" correspondantes (déclenche `deadline-watch` dès le
+   prochain passage CRON) — toujours présentées à valider, jamais actées
+   automatiquement (cf. garde-fou §7.3).
+
+**`flow:draft-review`** (relecture collègue) :
+1. Déclenchement manuel depuis l'écran dossier ("relire ce brouillon").
+2. L'agent collègue charge le brouillon + les pièces du dossier (dates,
+   montants, noms) depuis la KG et le filesystem du dossier.
+3. Retour structuré : liste numérotée d'incohérences + suggestions d'angle,
+   jamais une édition directe du fichier.
+
+### 14. RAG de départ, sources de données, MCP
+
+Découverte de recherche qui change la section 3.2/9.4 d'origine : un serveur
+MCP public, gratuit, sans authentification existe déjà et couvre exactement
+le besoin de base juridique versionnée — **justicelibre.org**
+(`https://justicelibre.org/mcp`, protocole Streamable HTTP). Chiffres
+affichés par le service lui-même : ~3M décisions indexées, 1,75M articles de
+loi avec versions historiques, 30 outils MCP couvrant juridictions
+administratives (CE, 9 CAA, 40 TA), judiciaires (Cass, CA, Conseil
+constitutionnel), et européennes (CEDH, CJUE) — plus JORF, conventions
+collectives (KALI), délibérations CNIL. Fondement légal : lois Open Data de
+2016/2019, Licence Ouverte 2.0 Etalab (réutilisation libre, citation de
+source seule condition).
+
+Point qui valide directement le garde-fou §7.1 ("jamais de citation sans
+version en vigueur à la date exacte") : l'outil `get_law_article(code, num,
+date)` restitue la rédaction d'époque d'un article, pas sa version actuelle
+— exactement l'anachronisme juridique à éviter en jurisprudence. Point de
+repère prix trouvé en recherche : le service indique que "c'est exactement
+cette garantie que Dalloz vous facture 200€ par mois" — donnée non vérifiée
+de façon indépendante mais plausible comme ancrage tarifaire (section 15).
+
+**Réserve trouvée en recherche, à documenter dans le .pfp** : la
+jurisprudence judiciaire "temps réel" (dernières décisions Cour de
+cassation/cours d'appel via Judilibre) reste derrière une authentification
+OAuth2 obligatoire côté plateforme PISTE — justicelibre.org ne la contourne
+pas, il sert un miroir DILA mis à jour hebdomadairement pour cette partie
+(`search_judiciaire_libre`) et documente lui-même une procédure
+d'inscription PISTE en 13 étapes pour qui veut le flux temps réel
+(`search_judiciaire`, `get_decision_judiciaire`). La justice administrative,
+elle, est ouverte et temps réel sans aucune authentification. Un recours
+citoyen contre ce verrou judiciaire est en cours selon le service — à
+surveiller, pas à attendre pour livrer le MVP.
+**Plan de bootstrap RAG révisé (remplace le CRON d'indexation générique
+prévu en §3.2/§9.4 comme *premier* réflexe) :**
+
+1. **Jour 1, coût nul** — relier le `service_provider`/MCP legal-kb du .pfp
+   directement à `https://justicelibre.org/mcp` comme ressource MCP externe
+   liée aux agents. Couvre d'emblée la quasi-totalité du besoin "texte de loi
+   + jurisprudence sourcée et versionnée" sans infrastructure de scraping à
+   construire ni maintenir.
+2. **Si la fraîcheur temps réel de la jurisprudence judiciaire compte pour
+   le cabinet** — lancer l'inscription PISTE (délai de traitement à prévoir,
+   selon le tutoriel documenté par justicelibre.org) en parallèle, sans que
+   ça bloque la livraison du MVP qui fonctionne déjà avec le miroir
+   hebdomadaire.
+3. **Ce qui reste un vrai chantier RAG interne** — l'historique propre du
+   cabinet (dossiers passés, conclusions, mémos internes) : c'est la seule
+   partie qui n'a pas d'équivalent public, et la seule qui doit
+   impérativement rester sur l'infrastructure du cabinet (jamais envoyée à
+   un MCP public). Reprendre ici le plan d'indexation par embeddings + KG
+   de la section 3.2 d'origine, mais scopé à ce contenu interne uniquement.
+4. **Recontacter la question du modèle d'embeddings** une fois ce périmètre
+   interne clarifié — lui seul justifie un éventuel auto-hébergement dédié
+   (section 11) puisqu'il touche des pièces client non publiques.
+
+### 15. Modèle économique — comment vendre, quel prix
+
+**Ce que la recherche confirme sur le marché du haut de gamme** : Harvey AI
+(licorne valorisée 11 Md$) a ouvert un bureau à Paris en mai 2026 avec des
+clients comme Bredin Prat et CMS Francis Lefebvre — du très grand cabinet,
+vente enterprise sur devis, aucun prix public trouvé (cohérent avec le
+fonctionnement habituel de ce segment : cycle de vente commercial, pas de
+grille tarifaire affichée). CoCounsel (Thomson Reuters) suit le même schéma.
+Ce segment n'est pas une cible réaliste pour un livrable self-hosted type
+PawFlow — c'est un marché de vente enterprise que PawFlow n'a ni la force de
+vente ni la légitimité de marque pour disputer frontalement.
+
+**Le segment non couvert** : cabinets boutique/solo, qui n'ont ni le budget
+ni le besoin d'une vente enterprise à 11 Md$ de valorisation en face. Aucun
+acteur self-hosted/source-available sérieux identifié sur ce créneau précis
+dans les recherches menées — c'est là que la proposition PawFlow (MIT,
+auto-hébergé, coût LLM transparent au token via le ledger déjà livré) a un
+angle réel plutôt que de concurrencer Harvey sur son propre terrain.
+
+**Structure de prix proposée** (pas un prix noir-boîte à la Harvey/CoCounsel
+— justement parce que la confiance est la contrainte n°1 du projet, cf.
+section 1) :
+
+1. **Frais de mise en place + package .pfp** — installation, indexation de
+   l'historique propre du cabinet, connexion PISTE si besoin, calibrage des
+   garde-fous/prompts — un forfait de service, pas une licence par siège.
+2. **Coût d'inférence LLM séparé et transparent** — le cabinet apporte sa
+   propre clé API ou son abonnement, le ledger d'usage (déjà livré en
+   beta.29) l'itemise nativement ; PawFlow n'absorbe pas ce risque de coût
+   variable et ne le maquille pas dans un forfait opaque — argument de
+   confiance direct pour une profession qui vérifie tout.
+3. **Paliers par taille de cabinet** — solo/boutique (1-3 avocats) : forfait
+   d'installation + support optionnel à la demande. Petit cabinet (4-15) :
+   mêmes briques + fonctions multi-utilisateur (échéances transversales,
+   rôles multiples) avec un forfait et/ou abonnement de support plus élevé.
+   Au-delà, c'est le segment où Harvey a déjà la relation de vente
+   enterprise — ne pas chercher à y suivre.
+
+**Ordre de grandeur** (estimation explicitement non vérifiée, à cadrer avec
+de vrais devis avant publication) : le repère Dalloz à 200€/mois pour une
+seule fonctionnalité adjacente (citation versionnée) suggère qu'un cabinet
+boutique a déjà un budget "legal-tech" de cet ordre — un positionnement
+crédible viserait un total (forfait + coût LLM réel, hors le segment
+enterprise) sensiblement inférieur au coût mensuel d'une heure de
+paralegal, tout en restant dans cette gamme de budget déjà acceptée par le
+marché pour un outil adjacent.
+
+**Recommandation de mise en marché** : piloter avec 1-2 cabinets partenaires
+à tarif réduit/gratuit contre retour d'usage et étude de cas, avant de fixer
+une grille tarifaire publique — cohérent avec l'ordre de priorité MVP→V1
+déjà posé en section 8.
+
+## 16. Conclusion
 
 PawFlow est un bon socle : le gros de l'infrastructure (conversations
 persistantes, memory/KG, flows, auth email, et maintenant calendrier) existe

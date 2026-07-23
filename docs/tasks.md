@@ -63,6 +63,7 @@ code duplication.
 | `httpReceiver` | Receive HTTP requests from a shared HTTP listener service |
 | `listSFTP` | List files on an SFTP server with filtering and tracking |
 | `listenHTTP` | Generate a FlowFile from HTTP request data (simulated for pipeline use) |
+| `manageCalendar` | List/create/update/delete calendar events (Google Calendar OAuth2 or generic CalDAV) |
 | `notifySlack` | Send a message to Slack via Incoming Webhook |
 | `oauthCallback` | Handle OAuth2 provider callback and create user session |
 | `oauthLogout` | Invalidate session and clear authentication cookie |

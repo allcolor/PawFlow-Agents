@@ -10,6 +10,7 @@ from tasks.io.put_file import PutFileTask
 from tasks.io.fetch_http import FetchHTTPTask
 from tasks.io.listen_http import ListenHTTPTask
 from tasks.io.send_email import SendEmailTask
+from tasks.io.manage_calendar import ManageCalendarTask
 from tasks.io.notify_slack import NotifySlackTask
 from tasks.io.sftp_tasks import GetSFTPTask, PutSFTPTask
 from tasks.io.kafka_tasks import PublishKafkaTask, ConsumeKafkaTask
@@ -24,7 +25,7 @@ from tasks.io.validate_http_auth import ValidateHTTPAuthTask
 
 __all__ = [
     'GetFileTask', 'PutFileTask', 'FetchHTTPTask', 'ListenHTTPTask',
-    'SendEmailTask', 'NotifySlackTask',
+    'SendEmailTask', 'ManageCalendarTask', 'NotifySlackTask',
     'GetSFTPTask', 'PutSFTPTask',
     'PublishKafkaTask', 'ConsumeKafkaTask', 'GetS3Task', 'PutS3Task',
     'PublishMQTTTask', 'ConsumeMQTTTask',

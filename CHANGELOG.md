@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `manageCalendar` task (`tasks/io/manage_calendar.py`): list/create/update/
+  delete calendar events. Two providers: Google Calendar API v3 with the same
+  OAuth2 refresh-token flow as `sendEmail` (client_id/client_secret/
+  refresh_token), or generic CalDAV (Nextcloud, Radicale, iCloud, most
+  self-hosted servers) over HTTP Basic auth using PUT/DELETE of iCalendar
+  (.ics) resources and a calendar-query REPORT for listing.
+
 ## [1.0.0-beta.29] — 2026-07-20
 
 ### Added

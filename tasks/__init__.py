@@ -163,6 +163,7 @@ def register_all_tasks():
 
     # Additional IO tasks
     from tasks.io.send_email import SendEmailTask
+    from tasks.io.manage_calendar import ManageCalendarTask
     from tasks.io.notify_slack import NotifySlackTask
     from tasks.io.sftp_tasks import GetSFTPTask, PutSFTPTask
     from tasks.io.kafka_tasks import PublishKafkaTask, ConsumeKafkaTask

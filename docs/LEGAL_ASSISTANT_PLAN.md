@@ -1005,7 +1005,119 @@ insérées directement : même principe que le reste du rôle collègue
 une valeur de variable, les deux restent une proposition à valider par le
 cabinet, jamais un fait appliqué.
 
-## 21. Conclusion
+## 21. Fine-tuning d'un modèle local (Qwen3.6-35B-A3B ou équivalent)
+
+Demande explicite : évaluer le fine-tuning d'un modèle local type
+Qwen3.6-35B-A3B (MoE, generation la plus récente au moment de la rédaction
+de la famille Qwen3, succédant à Qwen3-30B-A3B/Qwen3-235B-A22B déjà publiés
+en poids ouverts — les specs exactes de la version 3.6 n'ont pas de source
+publique claire trouvée en recherche, à confirmer avant tout engagement
+matériel). Recherche faite sur l'écosystème d'outillage (Unsloth,
+LLaMA-Factory, PEFT/QLoRA), pas de dépôt spécifique 3.6 identifié — la
+méthode ci-dessous s'applique de la même façon quelle que soit la version
+exacte disponible au moment de l'implémentation.
+
+#### 21.1 Où le fine-tuning aide réellement — et où il ne doit jamais servir
+
+Point de méthode qui découle directement du garde-fou §7 et de la section
+11 (routage par rôle) : le fine-tuning est le bon outil pour le **style**,
+jamais pour les **faits**.
+
+- **Utile** — cohérence de ton et de formule ("voix" propre au cabinet dans
+  les brouillons secrétaire/collègue), familiarité avec les conventions de
+  rédaction juridique française et les formats de template déjà en place
+  (section 20) — réduit le prompt engineering nécessaire pour obtenir un
+  brouillon dans le style attendu du premier coup.
+- **À proscrire** — injecter du contenu juridique (articles, jurisprudence,
+  délais) dans les poids du modèle par fine-tuning. C'est exactement
+  l'inverse de l'architecture retenue en section 14 : un fait figé dans des
+  poids ne peut pas porter de date de version comme `get_law_article(code,
+  num, date)`, ne peut pas être mis à jour sans réentraîner, et peut
+  halluciner une version obsolète avec la même confiance apparente qu'une
+  citation exacte. Le RAG (justicelibre.org + index interne) reste l'unique
+  source de vérité juridique ; le fine-tuning ne doit jamais s'y substituer,
+  seulement améliorer la forme du texte autour des passages retrouvés.
+
+#### 21.2 Méthode — LoRA/QLoRA, pas un fine-tuning complet
+
+Réentraîner l'intégralité des poids d'un modèle 35B (même MoE à ~3B de
+paramètres actifs) est hors de portée du budget matériel d'un cabinet
+boutique/solo. La voie réaliste est un fine-tuning à paramètres efficients
+(LoRA, ou QLoRA en 4-bit pour réduire encore la mémoire), via un outillage
+existant plutôt qu'un pipeline à construire — Unsloth ou LLaMA-Factory
+supportent déjà Qwen3 en LoRA/QLoRA (à vérifier explicitement pour la
+variante MoE A3B précise disponible, le support LoRA sur architecture MoE
+est plus délicat qu'en dense : cibler l'attention et les couches partagées
+plutôt que tenter du LoRA par expert individuellement, sauf si l'outil le
+gère nativement).
+
+Ordre de grandeur matériel (estimation non vérifiée indépendamment, à
+tester avant tout achat) : un QLoRA en 4-bit sur un modèle ~30-35B devrait
+tenir sur un seul GPU 24 Go de VRAM haut de gamme grand public/prosumer,
+dans la même gamme que ce qu'Unsloth documente pour Qwen3-30B-A3B — mais
+une architecture MoE garde tous les experts en mémoire même si peu sont
+actifs par token, donc l'empreinte mémoire réelle peut être plus proche
+d'un dense ~30B que d'un dense ~3B. À valider par un essai réel avant de
+cadrer un budget matériel définitif.
+
+Sortie utilisable ensuite comme un `service_provider` LLM auto-hébergé via
+Ollama/vLLM — exactement l'option 1 du menu confidentialité de la section
+11 (aucune donnée ne sort jamais), ce qui fait du fine-tuning local un
+complément naturel de cette option plutôt qu'un chantier séparé.
+
+#### 21.3 Données d'entraînement — le vrai chantier, pas le calcul GPU
+
+Ce que le fine-tuning demande vraiment, c'est des paires
+(contexte dossier → brouillon dans le style du cabinet), pas du texte brut
+:
+
+- **Source** : la correspondance passée du cabinet (courriers, mises en
+  demeure, conclusions) — le même corpus déjà identifié comme cible du
+  backup interne (section 16.4) et de l'import de templates (section
+  20.6). Reformater en paires d'instruction ("contexte factice/anonymisé →
+  texte final rédigé par le cabinet") plutôt que d'entraîner sur du texte
+  brut non structuré, qui donnerait un modèle qui complète du texte plutôt
+  qu'un modèle qui rédige à partir d'un contexte de dossier.
+- **Volume réaliste** : un fine-tuning de style efficace se construit
+  typiquement avec quelques centaines à quelques milliers de paires bien
+  choisies, pas des millions d'exemples — un cabinet boutique/solo avec des
+  années d'archives numérisées en a plausiblement assez, si elles sont
+  correctement nettoyées et formatées. C'est cette mise en forme qui est
+  l'effort réel, pas l'entraînement GPU lui-même.
+- **Anonymisation stricte avant tout entraînement, même 100% local** — un
+  point technique distinct de la confidentialité "ne rien envoyer à un
+  tiers" (section 11) : un modèle fine-tuné peut mémoriser et régurgiter
+  verbatim des fragments de ses données d'entraînement sous certaines
+  requêtes (risque documenté de mémorisation/fuite par inférence). Un
+  modèle entraîné sur des dossiers clients non anonymisés reste un risque
+  de fuite même s'il ne quitte jamais le matériel du cabinet — remplacer
+  noms/montants/dates identifiantes par des marqueurs neutres avant
+  d'utiliser un dossier réel comme exemple d'entraînement, pas seulement
+  avant de l'envoyer à une API externe.
+
+#### 21.4 Où le cadrer dans la feuille de route
+
+Cohérent avec l'ordre de priorité de la section 8 : le fine-tuning est un
+chantier V2+, pas MVP. Deux raisons qui se renforcent :
+
+1. Le RAG (section 14) et le garde-fou de citation (`skill:legal-citations`)
+   couvrent déjà l'essentiel de la valeur différenciante — le fine-tuning
+   n'ajoute qu'un polish de style, pas une capacité manquante.
+2. Le problème du "pas encore assez de données" se résout de lui-même en
+   V2 : une fois le MVP en usage réel, les brouillons générés et corrigés
+   par l'avocate (section 4.7) deviennent eux-mêmes le corpus
+  contexte→correction idéal pour un futur fine-tuning, alors qu'il
+   faudrait aujourd'hui reconstruire ces paires depuis des archives brutes.
+
+Point de sécurité qui rend l'expérimentation peu risquée le moment venu :
+le garde-fou "toujours un brouillon, jamais un envoi automatique" (section
+4.7/7) s'applique à un modèle fine-tuné exactement comme au modèle de base
+— un mauvais fine-tuning produit un brouillon de moins bonne qualité, pas
+une action non supervisée. Ça permet de tester un modèle local fine-tuné en
+production contrôlée sans élargir la surface de risque déjà cadrée par les
+garde-fous existants.
+
+## 22. Conclusion
 
 PawFlow est un bon socle : le gros de l'infrastructure (conversations
 persistantes, memory/KG, flows, auth email, et maintenant calendrier) existe

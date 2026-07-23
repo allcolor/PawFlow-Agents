@@ -186,10 +186,104 @@ dédié réutilisant les mêmes API/SSE, avec trois écrans principaux.
    standard, pour éviter de construire une interface autour de
    fonctionnalités pas encore éprouvées.
 
-## 9. Conclusion
+## 9. Packaging en .pfp — URL dédiée, bouton, endpoint par défaut
+
+Contrainte posée : ce livrable doit être un .pfp installable ; une fois
+installé, l'interface avocat doit être joignable (a) via une URL dédiée et
+(b) via un bouton dans l'interface PawFlow principale ; et l'utilisateur doit
+pouvoir choisir, après connexion, un endpoint par défaut — depuis
+l'interface PawFlow principale ou depuis l'interface dédiée elle-même.
+
+### 9.1 Ce qui est déjà couvert par le format .pfp actuel
+
+Le bouton dans l'interface principale ne demande rien de nouveau : un
+ui_extension peut déclarer un slot action_menu ou header_actions (voir
+docs/PFP_DEVELOPER_GUIDE.md, section UI Extensions) qui ouvre un lien ou un
+panneau. Le reste du livrable (agents des quatre rôles, skill juridique,
+task_def/flow pour le CRON de suivi des délais, service_definition pour
+la base juridique indexée) rentre sans friction dans les types d'objets déjà
+supportés (agent, skill, flow, task_def, service_provider, ui_extension).
+
+### 9.2 Ce qui manque : pas de route page entière dédiée
+
+Le contrat ui.v1 des ui_extension (_UI_ASSET_EXTENSIONS dans
+core/pfp_package/_pp_base.py) exclut délibérément .html : les assets d'une
+extension s'injectent en JS/CSS dans la page chat existante (slots,
+panneaux via pfp.ui.openPanel), toujours sur la même origine et le même
+domaine de confiance que le chat. Il n'existe aujourd'hui aucun type d'objet
+.pfp qui serve une page complète à sa propre URL (/legal/... ou
+équivalent), séparée du shell chat. Une interface dédiée avec sa propre URL
+n'est donc pas un détail d'implémentation ici : c'est une capacité PawFlow à
+construire avant de pouvoir livrer ce .pfp.
+
+Proposition minimale, cohérente avec le modèle de sécurité existant :
+
+- Nouveau type d'objet installable, par exemple web_app : le manifeste
+  déclare un dossier d'assets statiques (html/js/css) plus une route stable
+  (/apps/<package>/). PawFlow sert ces fichiers derrière la même session
+  authentifiée que le chat (cookie/token existant), donc pas de second login.
+- Comme il s'agit d'une route séparée (pas d'injection dans le DOM du chat),
+  servir du .html y est acceptable sans reproduire le risque documente pour
+  ui_extension (tous les extensions partagent un même DOM/window) —
+  mais ça doit rester examiné à l'install comme les autres objets
+  code-porteurs (scan à l'inspect, taille/hash affichés, consentement
+  explicite), et cette page ne doit pas pouvoir usurper l'origine du chat ni
+  lire son DOM.
+- Le bouton de l'écran principal (ui_extension / header_actions) devient
+  alors un simple lien vers /apps/legal/..., pas un panneau injecté.
+
+Tant que web_app n'existe pas, la seule solution livrable dès aujourd'hui
+est de construire l'interface avocat comme panneau plein écran d'un
+ui_extension (pfp.ui.openPanel, pas de nouvelle URL) — ce qui couvre le
+bouton mais pas l'exigence explicite d'URL dédiée. Je recommande de traiter
+web_app comme un petit chantier plateforme à faire d'abord, avant
+d'attaquer le .pfp métier lui-même.
+
+### 9.3 Endpoint par défaut après connexion
+
+Lecture retenue : endpoint par défaut = le dossier (conversation) ou
+l'agent sur lequel l'interface avocat s'ouvre automatiquement après
+connexion, pas une URL d'API — l'interface dédiée reste un client de la même
+instance PawFlow. Mécanisme proposé :
+
+- Une préférence utilisateur côté serveur (pas côté navigateur seul, sinon
+  elle ne survit pas au changement d'interface) : default_dossier_id (ou
+  default_conversation_id) rattachée au compte utilisateur.
+- Un handler serveur du ui_extension (pfp.call("legal.set_default", {...}),
+  voir section Server handlers du guide développeur) qui lit/écrit cette
+  préférence. Le même handler est appelé :
+  - depuis un menu de l'interface PawFlow principale (gear_menu ou
+    action_menu du même ui_extension) ;
+  - depuis un écran de réglages de l'interface dédiée elle-même (une fois
+    web_app disponible, via un appel au même endpoint serveur).
+- Au chargement de l'interface dédiée après login, elle lit cette préférence
+  et ouvre directement le bon dossier au lieu de la liste des dossiers
+  (écran 1 de la section 5 devient l'écran de secours, pas le défaut).
+
+### 9.4 Composition du .pfp
+
+Un seul package, par exemple firm.legal-assistant :
+
+- agent:* — les quatre rôles (assistant / collègue / secrétaire / expert)
+  ou un agent unique avec assigned_skills couvrant les quatre postures.
+- skill:legal-citations — discipline de citation systématique (garde-fou
+  §7.1).
+- flow:deadline-watch — CRON quotidien de suivi des délais (§3.3),
+  task_def réutilisant manageCalendar + sendEmail.
+- service_definition:legal-kb — base juridique indexée (§3.2).
+- ui_extension:legal-shell — bouton d'accès + réglage d'endpoint par
+  défaut, plus (une fois disponible) l'objet web_app pour la page dédiée
+  elle-même.
+- Secrets déclarés : credentials manageCalendar/sendEmail, clé du
+  provider LLM si non-rétention contractuelle exigée (garde-fou §7.4).
+
+## 10. Conclusion
 
 PawFlow est un bon socle : le gros de l'infrastructure (conversations
 persistantes, memory/KG, flows, auth email, et maintenant calendrier) existe
 déjà. L'effort réel est l'assemblage métier et surtout la discipline sur les
 garde-fous — un cabinet d'avocat ne pardonne pas les approximations que
-d'autres domaines tolèrent.
+d'autres domaines tolèrent. Le point qui bloque la livraison en .pfp telle
+que demandée n'est pas métier mais plateforme : l'URL dédiée exige un type
+d'objet .pfp qui n'existe pas encore (section 9.2) et doit être tranché
+avant d'écrire le package lui-même.

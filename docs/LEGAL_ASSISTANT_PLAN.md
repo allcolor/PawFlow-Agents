@@ -956,6 +956,55 @@ et simplement déclaré comme dépendance `.pfp` (docs/PFP_PACKAGES.md
 juridiques par défaut (mise en demeure, accusé de réception) comme contenu
 de départ plutôt que comme capacité propre.
 
+#### 20.6 Import d'un .docx/.pdf existant comme point de départ
+
+Demande explicite : l'utilisateur doit pouvoir uploader un exemple de
+document existant (.docx ou .pdf) qui devient le point de départ d'un
+template, plutôt que de repartir d'une page blanche dans l'éditeur.
+
+**Rien à ajouter côté extraction : le pipeline existe déjà.**
+`tasks/ai/agent_context.py` sait déjà convertir un .docx (`python-docx`) ou
+un .pdf (`PyPDF2`/`pdfminer`, plus `markitdown[pdf,docx,...]` en
+complément) en texte/markdown pour l'ingestion de pièces jointes — c'est
+exactement la même extraction qu'il faut pour transformer un document
+exemple en template éditable, sans nouvelle dépendance.
+
+**Deux chemins d'import, pas un seul, parce que le besoin diffère selon la
+source :**
+
+1. **Import "contenu" (texte/markdown)** — pour un .pdf, ou un .docx dont
+   seul le texte compte. Extraction via le pipeline existant, résultat
+   déposé comme brouillon de template dans l'éditeur (section 20.4). Le
+   cabinet marque ensuite lui-même les emplacements variables en tapant
+   les placeholders `${dossier...}` (section 20.2) à la main dans le texte
+   extrait — l'import fait gagner la rédaction de base, pas la détection
+   des variables.
+2. **Import "mise en forme" (.docx natif, formatage préservé)** — pour un
+   courrier avec en-tête/logo/mise en page du cabinet, où repasser par du
+   markdown perdrait la charte graphique. Le .docx original est conservé
+   tel quel comme fichier template ; le cabinet insère les placeholders
+   `${...}` directement dans le texte du document (dans Word, ou dans un
+   éditeur limité côté PawFlow) et `renderTemplate` (section 20.3)
+   substitue ces runs de texte via `python-docx` au moment du rendu,
+   plutôt que de reconstruire le document depuis du markdown — la mise en
+   page d'origine (marges, en-tête, style) reste intacte dans le
+   brouillon final. C'est le chemin à privilégier pour la correspondance
+   réelle du cabinet (mise en demeure, courrier à en-tête).
+
+Un .pdf ne devrait jamais être la cible de rendu — un PDF n'a pas de
+structure éditable fiable pour une substitution in-place. Un .pdf importé
+nourrit uniquement le chemin 1 (extraction de contenu), jamais le chemin 2.
+
+**Suggestion assistée, jamais automatique** — une passe optionnelle de
+l'agent collègue (section 12) pourrait proposer des emplacements probables
+de variables (noms propres, dates, montants détectés dans le texte
+importé) comme suggestions surlignées à valider une par une, jamais
+insérées directement : même principe que le reste du rôle collègue
+("propose, ne décide jamais") et cohérent avec le garde-fou de la section
+20.2 — deviner qu'un nom est une variable n'est pas différent de deviner
+une valeur de variable, les deux restent une proposition à valider par le
+cabinet, jamais un fait appliqué.
+
 ## 21. Conclusion
 
 PawFlow est un bon socle : le gros de l'infrastructure (conversations

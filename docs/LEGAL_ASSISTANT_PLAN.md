@@ -529,13 +529,143 @@ marché pour un outil adjacent.
 une grille tarifaire publique — cohérent avec l'ordre de priorité MVP→V1
 déjà posé en section 8.
 
-## 16. Conclusion
+## 16. Backup incrémental — brique séparée du package métier
+
+Demande explicite : une solution de backup incrémental (cible type Google
+Drive), et pouvoir composer un déploiement à partir de trois briques
+indépendantes : **install standard PawFlow + `.pfp` avocat + `.pfp` backup**.
+Cette dernière contrainte est aussi importante que la fonctionnalité
+elle-même — le backup ne doit être ni un module interne du package avocat,
+ni couplé à son cycle de vie.
+
+#### 16.1 Ce qui existe déjà et se réutilise tel quel
+
+Deux services de destination sont déjà enregistrés, aucun n'est à
+construire :
+
+- `googleDrive` (`services/gdrive_filesystem_service.py`) — accès natif
+  côté serveur à Google Drive via l'API REST v3 (OAuth2, scope `drive`),
+  implémente l'interface `FilesystemBackend` standard (list/read/write/
+  mkdir/stat/exists). C'est la cible "par exemple gdrive" demandée,
+  disponible sans rien écrire.
+- `rcloneFilesystem` (`services/rclone_filesystem_service.py`) — config
+  d'un remote rclone (drive, s3, onedrive, gcs, azureblob, webdav, sftp,
+  ftp), monté côté relay sous `/remote/<service_id>`. Élargit la cible à
+  peu près n'importe quel stockage si le cabinet préfère S3/OneDrive/un
+  NAS auto-hébergé plutôt que Drive.
+
+Ce qui manque, vérifié par grep sur tout le dépôt : aucune tâche/flow
+n'implémente aujourd'hui de **sauvegarde incrémentale** au sens propre
+(manifeste des fichiers déjà sauvegardés + upload des seuls fichiers
+nouveaux/modifiés). `filesystemOps` (`tasks/io/filesystem_ops.py`) sait
+faire `read_file`/`write_file`/`mkdir` fichier par fichier mais ne fait
+aucun diff ni suivi d'état entre deux passages — la brique à construire est
+cette couche de diff, pas l'accès au stockage distant.
+
+#### 16.2 Conception proposée
+
+**`task_def:incrementalBackup`** (nouvelle tâche, même convention que les
+tâches io existantes) :
+
+1. Parcourt une racine source (chemin relay, ou dossier filestore d'une
+   conversation) et construit un manifeste `{chemin: (taille, sha256,
+   mtime)}`.
+2. Lit le dernier manifeste connu à la destination
+   (`_backup/manifest.json` via le `service_id` configuré — `googleDrive`
+   ou un chemin monté `rcloneFilesystem`).
+3. Calcule le diff : upload uniquement des fichiers nouveaux ou dont le
+   sha256 a changé ; les fichiers identiques ne retraversent jamais le
+   réseau — c'est la définition même de "incrémental".
+4. Écrit un nouveau manifeste horodaté (`_backup/manifests/<horodatage>.json`)
+   et met à jour `_backup/manifest.json` (pointeur vers le dernier état
+   connu), pour permettre un retour à un point dans le temps, pas
+   seulement au dernier état.
+5. Purge optionnelle : garder N manifestes ou supprimer ceux plus vieux que
+   X jours (paramètre de rétention), jamais les fichiers de données
+   eux-mêmes tant qu'ils sont référencés par un manifeste conservé.
+
+**`flow:incremental-backup`** — CRON (quotidien ou nocturne, paramétrable),
+sur le même modèle que `flow:deadline-watch` : un seul paramètre de flow
+pointe le `service_id` de destination, ce qui permet au même package
+d'écrire vers Drive pour un cabinet et vers S3/OneDrive pour un autre sans
+toucher au flow lui-même.
+
+**Restauration** — tâche symétrique `task_def:restoreFromBackup` (ou un mode
+`restore` de la même tâche) : lit un manifeste choisi (dernier ou
+horodaté), retélécharge chaque fichier référencé vers une racine cible.
+Comme les deux services de destination exposent déjà `read_file` en plus de
+`write_file`, cette lecture ne demande aucune nouvelle capacité côté
+service, seulement la tâche de restauration elle-même.
+
+**Chiffrement avant envoi** (à documenter comme option, cohérent avec le
+garde-fou §7.4 confidentialité) : Google Drive et les autres cibles listées
+sont des sous-traitants tiers au sens RGPD. Pour les dossiers sensibles, la
+tâche devrait pouvoir chiffrer chaque fichier côté client (une clé détenue
+par le cabinet, jamais transmise à PawFlow ni au fournisseur cloud) avant
+l'upload — sinon la sauvegarde elle-même redevient un point de fuite pour
+des pièces confidentielles. Point à trancher avant la V1 : chiffrement
+systématique par défaut, ou option activable par dossier/scope.
+
+#### 16.3 Packaging — répartition en trois briques indépendantes
+
+Point clé de la demande : ne pas coupler le backup au package avocat.
+Le modèle de dépendances `.pfp` (`docs/PFP_PACKAGES.md` §dependencies)
+supporte nativement des packages installés côte à côte sans lien entre eux,
+ce qui donne exactement la répartition demandée :
+
+1. **Install standard PawFlow** — le socle (serveur, moteur de flows,
+   services `googleDrive`/`rcloneFilesystem` déjà dans le cœur, pas dans un
+   package).
+2. **`.pfp` `firm.legal-assistant`** — le métier avocat (section 9.4),
+   installé ou non indépendamment du backup.
+3. **`.pfp` `platform.incremental-backup`** — package séparé et générique
+   (pas spécifique au droit), composé de :
+   - `task_def:incrementalBackup` + `task_def:restoreFromBackup`,
+   - `flow:incremental-backup` (CRON, `service_id` en paramètre),
+   - pas de `service_definition` propre : il consomme un `googleDrive` ou
+     `rcloneFilesystem` déjà configuré au niveau de l'instance, pour éviter
+     de dupliquer des credentials entre packages,
+   - secrets déclarés : aucun credential propre — référence le
+     `service_id` de destination choisi à l'install.
+
+Aucune dépendance déclarée dans un sens ou dans l'autre entre
+`firm.legal-assistant` et `platform.incremental-backup` : les deux
+s'installent, se mettent à jour et se désinstallent indépendamment. Un
+cabinet peut vouloir le backup seul (sans le métier avocat) ou l'inverse ;
+le réutiliser tel quel pour n'importe quel autre package métier futur est
+le but explicite de le garder générique.
+
+#### 16.4 Ce que ce package sauvegarderait pour le cas d'usage avocat
+
+Si les deux packages sont installés ensemble pour un cabinet, la
+configuration recommandée du flow cible spécifiquement :
+
+- le filestore par conversation (pièces du dossier, section 2),
+- un export de la Knowledge Graph/memory scopée aux dossiers (l'historique
+  reconstruit, section 4.1),
+- l'index RAG interne au cabinet s'il est auto-hébergé (section 14, point
+  3) — jamais le contenu du MCP public justicelibre.org, qui n'a pas besoin
+  d'être sauvegardé puisqu'il est déjà republié en source ouverte.
+
+Ce ciblage reste une configuration du flow générique, pas un fork
+spécifique au métier avocat — cohérent avec la séparation de la section
+16.3.
+
+## 17. Conclusion
 
 PawFlow est un bon socle : le gros de l'infrastructure (conversations
 persistantes, memory/KG, flows, auth email, et maintenant calendrier) existe
 déjà. L'effort réel est l'assemblage métier et surtout la discipline sur les
 garde-fous — un cabinet d'avocat ne pardonne pas les approximations que
-d'autres domaines tolèrent. Le point qui bloque la livraison en .pfp telle
-que demandée n'est pas métier mais plateforme : l'URL dédiée exige un type
-d'objet .pfp qui n'existe pas encore (section 9.2) et doit être tranché
-avant d'écrire le package lui-même.
+d'autres domaines tolèrent. Le point qui bloquait la livraison en .pfp telle
+que demandée n'était pas métier mais plateforme : l'URL dédiée exigeait un
+type d'objet .pfp qui n'existait pas encore (section 9.2) — livré depuis en
+1.0.0-beta.30.
+
+Le backup incrémental (section 16) suit le même principe : les services de
+destination (`googleDrive`, `rcloneFilesystem`) existent déjà côté cœur
+PawFlow, seule la tâche de diff/manifeste reste à écrire, et elle doit
+l'être comme package `.pfp` générique et indépendant plutôt que comme
+fonctionnalité du package avocat — c'est ce qui permet de composer un
+déploiement à la carte : install standard + `.pfp` avocat + `.pfp` backup,
+chacun installable, mis à jour et désinstallé sans toucher aux deux autres.

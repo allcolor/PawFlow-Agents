@@ -734,7 +734,142 @@ Ce ciblage reste une configuration du flow générique (plusieurs racines,
 filtres d'exclusion), pas un fork spécifique au métier avocat — cohérent
 avec la séparation de la section 16.3.
 
-## 17. Conclusion
+## 17. Workflows additionnels
+
+Au-delà des trois flows détaillés en section 13 et du backup (section 16),
+quatre workflows supplémentaires valent d'être cadrés dès maintenant — même
+non retenus pour le MVP (section 8), ils clarifient où s'arrête le
+périmètre :
+
+**`flow:conflict-check`** — au moment de `flow:new-matter-intake` (section
+13), recherche transversale automatique (KG + base structurée, section 20)
+pour détecter si une partie du nouveau dossier apparaît déjà côté adverse
+dans un autre dossier du cabinet. Alerte à vérifier par l'avocate avant
+ouverture définitive — jamais un blocage automatique : la décision de
+conflit d'intérêt reste un jugement professionnel, pas une règle mécanique
+(cohérent avec le garde-fou §7).
+
+**`flow:hearing-prep`** — à J-2/J-1 d'une audience identifiée par une
+entité délai de type "audience", assemble automatiquement un brief
+consultable (pièces du dossier, chronologie, dernières conclusions,
+rappel des points en délibéré) — jamais généré comme document à déposer,
+uniquement comme support de préparation pour l'avocate.
+
+**`flow:weekly-digest`** — résumé hebdomadaire (email ou notification
+in-app, lundi matin) : dossiers actifs, échéances à 7/14/30 jours, et point
+utile que la section 13 ne couvre pas — dossiers *sans* activité depuis X
+jours, pour repérer un dossier qui a glissé hors de l'attention plutôt que
+de compter uniquement sur les rappels d'échéance déjà connues.
+
+**`flow:jurisprudence-watch`** — s'appuie sur le MCP justicelibre.org
+(section 14) : à partir de mots-clés/articles suivis par le cabinet
+(déclarés par dossier ou globalement), poll périodique de nouvelles
+décisions correspondantes. Notifie sans jamais résumer sans citer la
+source exacte (garde-fou §7.1) — un simple lien + référence de la décision
+suffit, la synthèse reste à la demande explicite de l'avocate.
+
+**`flow:document-assembly`** — formalise la rédaction assistée déjà décrite
+en section 4.7 comme un flow réutilisable (template + variables du
+dossier) plutôt qu'une capacité ad hoc du chat, pour qu'il soit
+déclenchable depuis l'écran dossier (section 5, actions rapides) de façon
+prévisible et testable indépendamment du modèle utilisé.
+
+Garde-fou commun aux cinq : jamais d'envoi ni de décision automatique,
+toujours une citation de source quand le workflow touche du contenu
+juridique, toujours une validation humaine avant action irréversible — les
+mêmes trois règles que la section 7, appliquées workflow par workflow.
+
+## 18. UI complémentaire
+
+En prolongement des trois écrans de la section 5 :
+
+- **Écran "Aujourd'hui"** (candidat à fusionner avec l'écran 3 échéances,
+  ou à en faire l'écran par défaut au lieu de la liste des dossiers) : RDV
+  du jour, délais à J-1/J-7, brouillons du secrétaire en attente de
+  validation, et le contenu du `flow:weekly-digest` le lundi — un seul
+  endroit qui répond à "qu'est-ce qui a besoin de moi aujourd'hui".
+- **Recherche transversale globale** — barre de recherche persistante
+  depuis n'importe quel écran, pas seulement dans la vue dossier ;
+  implémente concrètement la fonctionnalité "tous les dossiers où on
+  invoque l'article X" déjà listée en section 4.1.
+- **Timeline visuelle par dossier** — représentation graphique de la
+  chronologie reconstruite (section 4.1) plutôt qu'une simple liste,
+  directement utile en entrée du `flow:hearing-prep` ci-dessus.
+- **Écran de réglages dédié au chiffrement du backup** (section 16.2bis) —
+  gestion explicite de la passphrase, jamais un champ caché dans un menu
+  générique ; le risque de perte de clé doit être affiché en clair au
+  moment de la configuration, pas seulement documenté à part.
+- **Indicateur de fraîcheur RAG** — à côté de chaque réponse "Expert"
+  sourcée (section 6), afficher la date de dernière synchronisation avec
+  justicelibre.org / PISTE (section 14) : rend visible *quand* la source a
+  été vérifiée, pas seulement qu'elle l'a été — renforce concrètement le
+  garde-fou de citation.
+- **Mode "jour d'audience"** — vue allégée, gros texte, pensée mobile/
+  tablette pour consulter rapidement le brief du `flow:hearing-prep` entre
+  deux dossiers, sans rouvrir l'interface complète.
+- **Fil d'audit par dossier** — historique d'activité consultable
+  (qui/quoi/quand, y compris les suggestions de l'agent collègue et les
+  brouillons secrétaire) : nécessaire si un dossier est un jour contesté
+  ("l'IA a-t-elle halluciné ici, et quand") — traçabilité, pas juste
+  fonctionnalité de confort.
+
+## 19. Base de données légère sur le relay
+
+Question posée directement : la Knowledge Graph (triples sujet/prédicat/
+objet, section 2) convient aux faits souples et aux relations, mais des
+requêtes comme "tous les délais entre J et J+7 triés par urgence" ou "tous
+les dossiers en statut X d'un type d'affaire donné" sont plus naturelles en
+SQL qu'en traversée de graphe — la KG n'est pas le bon outil pour tout.
+
+**Rien à construire côté plateforme : SQLite tourne déjà sur le relay sans
+nouvelle capacité.** `task_def:executeSQL`/`putSQL`
+(`tasks/data/execute_sql.py`) acceptent soit un service `dbConnectionPool`
+(SQLite ou PostgreSQL), soit un simple paramètre `db_path` en fallback
+direct — et comme les tâches de flow s'exécutent sur un `relay` explicite
+(paramètre requis par tâche, cf. PFP_DEVELOPER_GUIDE), pointer ce `db_path`
+vers un fichier relay-local (par exemple `/workspace/legal.db` — cohérent
+avec la racine de backup ajoutée en section 16.4) donne une base SQLite
+embarquée, locale au poste du cabinet, sans service serveur additionnel à
+héberger ni port réseau à ouvrir.
+
+**Ce que cette base structurée devrait porter** (complémentaire à la KG,
+pas un remplacement) :
+
+- Table `dossiers` (id, client, type_affaire, statut, date_ouverture) —
+  alimente directement l'écran 1 (liste des dossiers, section 5) par un
+  simple `SELECT ... ORDER BY prochaine_echeance` au lieu d'une traversée
+  de graphe à chaque affichage.
+- Table `delais` (id, dossier_id, type_acte, date_declenchement,
+  duree_legale, date_butoir, statut, confirme_par_avocate) — `flow:
+  deadline-watch` (section 13) lit/écrit ici plutôt que de scanner la KG
+  entité par entité ; des colonnes indexées (`date_butoir`, `statut`)
+  rendent le scan quotidien un `SELECT` trivial.
+- Table `pieces` (id, dossier_id, chemin_filestore, nom, date_ajout) —
+  miroir léger du filestore pour permettre un filtrage/tri SQL rapide sans
+  lister le filesystem à chaque requête.
+- La KG reste la source pour les faits qualitatifs et relationnels (angle
+  transversal du collègue, historique reconstruit) — partage des rôles
+  cohérent : SQLite pour interroger/filtrer/trier des entités structurées,
+  KG pour les relations et le raisonnement.
+
+**Cohérence avec le backup (section 16)** : ce fichier SQLite doit être une
+des racines couvertes par `task_def:incrementalBackup` (fichier unique,
+diff/hash trivial) et chiffré au repos comme le reste une fois transféré
+(section 16.2bis). Point d'attention propre au format : activer le mode WAL
+et faire un checkpoint avant chaque passage de backup (ou un verrou
+applicatif court pendant le hash), pour ne jamais calculer un manifeste sur
+un fichier en cours d'écriture.
+
+**Alternative écartée** : un vrai serveur PostgreSQL au niveau du cabinet —
+apporte de la robustesse concurrente mais réintroduit un service à
+héberger/sécuriser/sauvegarder séparément, alors que le volume réel d'un
+cabinet boutique/solo (des dizaines à quelques centaines de dossiers) ne
+justifie pas cette complexité. SQLite embarqué reste cohérent avec le
+positionnement self-hosted "léger" du reste du produit — et
+`dbConnectionPool` garde la porte ouverte vers Postgres plus tard, pour un
+cabinet plus gros, sans changer le SQL des tâches elles-mêmes.
+
+## 20. Conclusion
 
 PawFlow est un bon socle : le gros de l'infrastructure (conversations
 persistantes, memory/KG, flows, auth email, et maintenant calendrier) existe
@@ -752,3 +887,14 @@ l'être comme package `.pfp` générique et indépendant plutôt que comme
 fonctionnalité du package avocat — c'est ce qui permet de composer un
 déploiement à la carte : install standard + `.pfp` avocat + `.pfp` backup,
 chacun installable, mis à jour et désinstallé sans toucher aux deux autres.
+
+Les sections 17 à 19 élargissent le périmètre plutôt que de le refermer :
+cinq workflows supplémentaires (conflit d'intérêt, préparation d'audience,
+digest hebdomadaire, veille jurisprudentielle, assemblage de courrier), des
+écrans complémentaires cohérents avec les trois déjà cadrés en section 5,
+et une base structurée légère (SQLite, déjà supportée nativement sur le
+relay via `executeSQL`/`dbConnectionPool`) pour les requêtes que la
+Knowledge Graph ne sert pas naturellement. Aucune de ces additions ne
+demande de nouvelle capacité plateforme — le socle déjà en place absorbe
+tout, ce qui confirme le diagnostic de départ : l'effort restant est
+l'assemblage et la discipline, pas l'infrastructure.

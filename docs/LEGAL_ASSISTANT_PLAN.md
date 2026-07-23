@@ -869,7 +869,94 @@ positionnement self-hosted "léger" du reste du produit — et
 `dbConnectionPool` garde la porte ouverte vers Postgres plus tard, pour un
 cabinet plus gros, sans changer le SQL des tâches elles-mêmes.
 
-## 20. Conclusion
+## 20. Templating de documents — lettres types, contenu éditable
+
+Besoin exprimé directement : un système de templating pour les documents
+(courrier type, mise en demeure, accusé de réception, convocation de
+RDV...) dont le contenu reste éditable par l'utilisateur, pas figé dans le
+package. Ce dernier point est le vrai sujet — un template en dur dans le
+.pfp signé serait immuable à l'usage, alors que chaque cabinet personnalise
+ses lettres types (en-tête, formules, mentions obligatoires spécifiques).
+
+#### 20.1 Séparation contenu par défaut / contenu éditable
+
+Même logique que la section 16.3 (ne pas coupler ce qui doit rester
+générique/éditable à ce qui est signé et versionné) : les templates par
+défaut sont livrés dans le `.pfp`, mais **copiés vers un stockage
+éditable propre au cabinet à l'installation**, jamais exécutés directement
+depuis le contenu signé du package. Ça réutilise une règle déjà actée par
+`/pfp update` (docs/PFP_PACKAGES.md §215) : une ressource localement
+modifiée après install n'est plus écrasée par une mise à jour sauf
+`--force` explicite — appliquer ce même principe aux templates évite
+qu'une mise à jour du package avocat n'efface silencieusement la lettre
+type que le cabinet a réécrite entièrement.
+
+#### 20.2 Placeholders — réutiliser la syntaxe existante, pas en inventer une
+
+PawFlow a déjà un langage d'expression `${...}` utilisé partout (paramètres
+de flow, références de secrets, `pfp.call_tool`/`pfp.call_service`). Les
+templates de documents devraient réutiliser cette même syntaxe pour les
+variables du dossier plutôt qu'inventer un second langage de template à
+apprendre pour le cabinet : `${dossier.client}`, `${dossier.type_affaire}`,
+`${delai.date_butoir}`, etc., résolus depuis la base structurée (section
+19, tables `dossiers`/`delais`) et la Knowledge Graph.
+
+**Variable manquante = erreur visible, jamais une valeur inventée** — si
+`${dossier.numero_rg}` n'existe pas encore pour ce dossier, le rendu doit
+laisser un marqueur explicite ("[numero_rg manquant]") plutôt que de
+laisser le modèle deviner une valeur plausible : cohérent avec le
+garde-fou §7 (aucune affirmation non vérifiée présentée comme un fait),
+appliqué ici aux données du dossier et pas seulement au droit.
+
+#### 20.3 Tâche et rendu
+
+**`task_def:renderTemplate`** — prend un `template_id` + un `dossier_id`,
+résout les variables, produit un brouillon. Toujours un brouillon,
+jamais un envoi ni un dépôt — le garde-fou §7.2 ("aucun envoi automatique
+sans validation humaine") s'applique ici de la même façon qu'en section
+4.7/12 (agent secrétaire). Format de sortie : markdown/texte par défaut,
+export `.docx` optionnel — `python-docx` est déjà une dépendance du projet
+(pyproject.toml, section "Document conversion"), donc générer un `.docx`
+à partir du texte rendu ne demande pas de nouvelle dépendance.
+
+**Aperçu fusionné en direct** — l'écran d'édition de template (section
+20.4) doit pouvoir prévisualiser le rendu avec un dossier réel ou un
+dossier d'exemple factice, pour que le cabinet voie immédiatement l'effet
+d'une modification de formule sans avoir à générer un brouillon complet à
+chaque essai.
+
+#### 20.4 UI — bibliothèque de templates
+
+Écran dédié (en prolongement de la section 18), pas un simple champ texte
+noyé dans les réglages :
+
+- Liste des templates disponibles par catégorie (courrier, mise en
+  demeure, accusé de réception, convocation RDV), avec indication visuelle
+  "par défaut" vs "personnalisé par le cabinet".
+- Éditeur markdown/texte avec les placeholders `${...}` visuellement
+  distincts (même logique que la distinction texte sourcé / brouillon de
+  la section 6), et la prévisualisation fusionnée de la section 20.3
+  affichée côte à côte.
+- Historique des modifications par template (qui/quand, cf. le fil
+  d'audit de la section 18) avec possibilité de revenir à une version
+  antérieure — utile si une modification introduit une erreur dans une
+  mention obligatoire.
+- Action rapide "générer depuis ce template" directement depuis l'écran
+  dossier (section 5), pas seulement depuis la bibliothèque.
+
+#### 20.5 Packaging
+
+Même raisonnement qu'en section 16.3 : le templating de documents n'est
+pas spécifique au droit — un cabinet-conseil ou toute autre profession
+libérale en a le même besoin. Candidat naturel à un quatrième package
+générique, `platform.doc-templates` (task_def `renderTemplate`, stockage
+éditable des templates, ui_extension d'édition), installable indépendamment
+et simplement déclaré comme dépendance `.pfp` (docs/PFP_PACKAGES.md
+§dependencies) par `firm.legal-assistant`, qui apporte lui les templates
+juridiques par défaut (mise en demeure, accusé de réception) comme contenu
+de départ plutôt que comme capacité propre.
+
+## 21. Conclusion
 
 PawFlow est un bon socle : le gros de l'infrastructure (conversations
 persistantes, memory/KG, flows, auth email, et maintenant calendrier) existe

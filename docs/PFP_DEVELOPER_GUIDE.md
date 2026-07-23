@@ -547,6 +547,85 @@ Dev loop:
 
 A starter template lives at `docs/examples/pfp/ui_extension_hello.pfpdir/`.
 
+## Standalone Pages (web_app / webapp.v1)
+
+A `ui_extension` only injects JS/CSS into the existing chat page — it never
+ships `.html`, and it never gets its own URL. A `web_app` object is the
+opposite: a standalone page (html/js/css) served at its own authenticated
+route, separate from `/chat`. Use it when a package needs a dedicated UI
+(a purpose-built dashboard, an operator console) rather than a slot/panel
+inside the chat shell.
+
+Source layout:
+
+```text
+my-app.pfpdir/
+  pfp.json
+  content/
+    webapp/
+      index.html
+      app.js
+      style.css
+```
+
+Manifest:
+
+```json
+{
+  "id": "web_app:dashboard",
+  "type": "web_app",
+  "name": "dashboard",
+  "version_compat": "webapp.v1",
+  "entry": "content/webapp/index.html",
+  "assets": [
+    "content/webapp/index.html",
+    "content/webapp/app.js",
+    "content/webapp/style.css"
+  ]
+}
+```
+
+Rules:
+
+- `assets` is a flat list of every file the page needs; `entry` must be one
+  of them. Allowed extensions: `.html .js .css .json .svg .png .jpg .jpeg
+  .webp .woff .woff2` — `.html` is allowed here, unlike `ui_extension`,
+  because this route is not injected into the chat page DOM.
+- A package may declare more than one `web_app` object; each gets its own
+  route keyed by its object `name`.
+- Once installed, the page is served at `/apps/<package>/<name>/` (the
+  `entry` file) and `/apps/<package>/<name>/<sha256>/<file>` (every other
+  asset, immutably cached like `/chat/ext/...`). Both routes require the
+  same authenticated session as `/chat` — there is no anonymous access to
+  an installed web_app.
+- **Trust model**: the page runs on the same origin and under the same
+  session as `/chat`. It can read/write same-origin browser state and call
+  PawFlow APIs with the user's ambient session cookie. This is the same
+  shared-trust-domain model already documented for `ui_extension` — install
+  consent is the security gate, not runtime isolation. A `web_app` does
+  *not* share the chat page's DOM/`window` with other extensions (it is a
+  separate page load), but it is not sandboxed from the rest of PawFlow
+  either. Do not install a `web_app` package you have not reviewed.
+- To reach PawFlow tools/services from the page's own JS, call the normal
+  `/api/agent` or `/api/ui` endpoints directly (same session cookie) —
+  there is no `pfp.call(...)` broker for `web_app` pages in this version;
+  that pattern is currently only wired for `ui_extension` server handlers.
+- The Resources sidebar's Packages section shows a ↗ link next to any
+  installed package that has a `web_app` object, opening it in a new tab —
+  this is the "button in the main PawFlow interface" a package needs, with
+  no extra `ui_extension` object required.
+
+Dev loop:
+
+```text
+/pfp dev-load ./my-app.pfpdir --include web_app:dashboard
+# Open /apps/dev.my-app/dashboard/ directly, or use the ↗ link in the
+# Packages sidebar. Re-run dev-load --replace after editing pfp.json;
+# asset content edits take effect on next request (dev packages skip the
+# install-time hash check).
+/pfp dev-unload dev.my-app
+```
+
 ## Release
 
 When the dev package works, create a signed release artifact:

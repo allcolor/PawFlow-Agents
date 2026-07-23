@@ -44,6 +44,7 @@ _RESOURCE_TYPES = {
 _INSTALLABLE_TYPES = set(_RESOURCE_TYPES) | {"flow", "service", "service_definition"}
 _INSTALLABLE_TYPES.update({"tool", "agent_hook", "service_provider", "flow_task", "task_provider"})
 _INSTALLABLE_TYPES.add("ui_extension")
+_INSTALLABLE_TYPES.add("web_app")
 
 _RUNTIME_OBJECT_TYPES = {"tool", "agent_hook", "service_provider", "flow_task", "task_provider"}
 _SUPPORTED_RUNTIME_RUNNERS = {"python"}
@@ -74,6 +75,12 @@ _UI_KNOWN_HOOKS = {
 # build markup do it through DOM APIs (createElement + textContent) from
 # their .js code.
 _UI_ASSET_EXTENSIONS = {".js", ".css", ".json", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".woff", ".woff2"}
+
+# `web_app` objects serve a standalone page at its own route (`/apps/...`),
+# not injected into the chat page DOM — so unlike ui_extension, `.html` is
+# allowed here. This is a distinct route/trust-domain from `/chat/ext/...`.
+_WEBAPP_API_VERSION = "webapp.v1"
+_WEBAPP_ASSET_EXTENSIONS = _UI_ASSET_EXTENSIONS | {".html"}
 
 
 class PfpError(ValueError):

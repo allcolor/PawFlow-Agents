@@ -22,9 +22,9 @@ from cryptography.hazmat.primitives.serialization import (
 import yaml
 import core.paths as _paths
 from core.pfp_package._pp_base import (  # noqa: F401
-    FORMAT_VERSION, LOCK_FILE, MANIFEST_FILE, PfpError, SIGNATURE_FILE, _RESOURCE_NAME_RE, _RESOURCE_TYPES, _UI_API_VERSION, _UI_ASSET_EXTENSIONS, _UI_HANDLER_ACTION_RE, _UI_KNOWN_HOOKS, _UI_KNOWN_SLOTS)
+    FORMAT_VERSION, LOCK_FILE, MANIFEST_FILE, PfpError, SIGNATURE_FILE, _RESOURCE_NAME_RE, _RESOURCE_TYPES, _UI_API_VERSION, _UI_ASSET_EXTENSIONS, _UI_HANDLER_ACTION_RE, _UI_KNOWN_HOOKS, _UI_KNOWN_SLOTS, _WEBAPP_API_VERSION, _WEBAPP_ASSET_EXTENSIONS)
 from core.pfp_package._pp_mod1 import (  # noqa: F401
-    _agent_assigned_skill_names, _append_display_list, _canonical_json, _capability_refs, _caret_upper_bound, _compare_versions, _decode_key_bytes, _dedupe_dependencies, _dedupe_dicts, _format_bytes, _format_dependency, _iter_install_record_paths, _load_json_bytes, _name_from_id, _parse_skill_md, _public_key_text, _read_json_file, _record_dependencies, _register_flow_task_proxy, _safe_component, _safe_relpath, _secret_env_name, _secret_key_exists, _skill_bundled_files, _split_object_ref, _tilde_upper_bound, _ui_extension_asset_list, _validate_package_id, _validate_version_ref, _version_tuple, _write_json_file)
+    _agent_assigned_skill_names, _append_display_list, _canonical_json, _capability_refs, _caret_upper_bound, _compare_versions, _decode_key_bytes, _dedupe_dependencies, _dedupe_dicts, _format_bytes, _format_dependency, _iter_install_record_paths, _load_json_bytes, _name_from_id, _parse_skill_md, _public_key_text, _read_json_file, _record_dependencies, _register_flow_task_proxy, _safe_component, _safe_relpath, _secret_env_name, _secret_key_exists, _skill_bundled_files, _split_object_ref, _tilde_upper_bound, _ui_extension_asset_list, _validate_package_id, _validate_version_ref, _version_tuple, _web_app_asset_list, _write_json_file)
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +324,13 @@ def _object_capabilities(obj_type: str, obj: Dict[str, Any],
             "hooks": [str(h) for h in (obj.get("hooks") or [])],
             "asset_count": len(assets),
         }
+    if obj_type == "web_app":
+        assets = _web_app_asset_list(obj)
+        caps["web_app"] = {
+            "version_compat": str(obj.get("version_compat") or ""),
+            "entry": str(obj.get("entry") or ""),
+            "asset_count": len(assets),
+        }
     return caps
 
 
@@ -489,6 +496,33 @@ def _validate_ui_extension_object(obj: Dict[str, Any], package: Dict[str, Any]) 
             return f"ui_extension.handlers[{act}]: missing package file {path!r}"
         if Path(rel).suffix.lower() != ".py":
             return f"ui_extension.handlers[{act}]: handler must be a .py file"
+    return ""
+
+
+def _validate_web_app_object(obj: Dict[str, Any], package: Dict[str, Any]) -> str:
+    """Return an empty string when the web_app is structurally valid, else a reason."""
+    if str(obj.get("version_compat") or "") != _WEBAPP_API_VERSION:
+        return f"web_app requires version_compat == {_WEBAPP_API_VERSION!r}"
+    entry = str(obj.get("entry") or "").strip()
+    if not entry:
+        return "web_app.entry is required"
+    assets = _web_app_asset_list(obj)
+    if not assets:
+        return "web_app must declare at least one asset"
+    if entry not in assets:
+        return "web_app.entry must be listed in web_app.assets"
+    files = package.get("files") or {}
+    seen = set()
+    for item in assets:
+        rel = _safe_relpath(item)
+        if rel in seen:
+            return f"web_app.assets: duplicate path {item!r}"
+        seen.add(rel)
+        if rel not in files:
+            return f"web_app asset is missing in package: {item}"
+        ext = Path(rel).suffix.lower()
+        if ext not in _WEBAPP_ASSET_EXTENSIONS:
+            return f"web_app asset extension is not allowed: {item}"
     return ""
 
 

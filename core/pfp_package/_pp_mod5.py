@@ -14,9 +14,9 @@ from core.pfp_package._pp_base import (  # noqa: F401
 from core.pfp_package._pp_mod1 import (  # noqa: F401
     _canonical_json, _file_sha256, _files_size, _format_dependency, _install_default_relay_id, _load_json_bytes, _make_lock, _name_from_id, _normalize_scope, _provenance, _public_key_text, _read_json_file, _register_flow_task_proxy, _safe_relpath, _validate_package_id, _validate_runtime_object, _verify_lock, _write_flow, _write_json_file, _write_resource, _write_service)
 from core.pfp_package._pp_mod2 import (  # noqa: F401
-    _collect_source_files, _existing_status_name, _load_private_key, _load_resource_data, _manifest_object_hash, _object_capabilities, _read_pfp_zip, _signature_payload, _validate_ui_extension_object)
+    _collect_source_files, _existing_status_name, _load_private_key, _load_resource_data, _manifest_object_hash, _object_capabilities, _read_pfp_zip, _signature_payload, _validate_ui_extension_object, _validate_web_app_object)
 from core.pfp_package._pp_mod3 import (  # noqa: F401
-    _declared_secret_requirements, _inject_package_flow_task_relays, _install_record_path, _missing_agent_assigned_skills, _ui_extension_manifest, _uninstall_object, _verify_signature)
+    _declared_secret_requirements, _inject_package_flow_task_relays, _install_record_path, _missing_agent_assigned_skills, _ui_extension_manifest, _uninstall_object, _verify_signature, _web_app_manifest)
 from core.pfp_package._pp_mod4 import (  # noqa: F401
     _declared_package_dependencies, _dependent_packages, _existing_status, _missing_package_dependencies, _pinned_developer_key, _record_is_locally_modified, _refresh_runtime, _remove_package_content_store, _validate_allowed_refs, _validate_dependency_list)
 
@@ -95,6 +95,10 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         _ui_err = _validate_ui_extension_object(obj, package)
         if _ui_err:
             status, reason, installable = "blocked", _ui_err, False
+    elif obj_type == "web_app":
+        _webapp_err = _validate_web_app_object(obj, package)
+        if _webapp_err:
+            status, reason, installable = "blocked", _webapp_err, False
     elif missing_dependencies:
         status = "missing_dependency"
         reason = "missing package dependency: " + ", ".join(
@@ -651,6 +655,21 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
             "handlers": manifest_obj["handlers"],
             "allowed_tools": list(obj.get("allowed_tools") or []),
             "allowed_services": list(obj.get("allowed_services") or []),
+            "installed_from": provenance,
+            "dependencies": dependencies,
+            "hash": provenance["hash"],
+        }
+    if obj_type == "web_app":
+        manifest_obj = _web_app_manifest(obj, package)
+        package_id = str(package["manifest"].get("package") or "")
+        return {
+            "kind": "web_app",
+            "object_id": obj_id,
+            "name": name,
+            "version_compat": manifest_obj["version_compat"],
+            "entry": manifest_obj["entry"],
+            "assets": manifest_obj["assets"],
+            "url": f"/apps/{package_id}/{name}/",
             "installed_from": provenance,
             "dependencies": dependencies,
             "hash": provenance["hash"],

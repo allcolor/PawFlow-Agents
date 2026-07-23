@@ -236,11 +236,14 @@ async function _renderResourcesData(data) {
           const packageId = _pfpAttr(pkg.package || '');
           const packageScope = _pfpAttr(scope);
           const objectTitle = _pfpAttr(objects.map(_pfpObjectLabel).join('\n'));
+          const webApps = objects.filter(o => o.kind === 'web_app' && o.url);
+          const webAppLinks = webApps.map(w => '<a href="' + _pfpAttr(w.url) + '" target="_blank" rel="noopener" style="font-size:11px;color:var(--pf-accent);text-decoration:none;padding:0 3px;" title="' + _pfpAttr(t('pfpOpenWebApp', { name: w.name || '' })) + '">\u2197</a>').join('');
           liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="' + objectTitle + '">'
             + _scopeBadge(scope)
             + '<span style="color:var(--pf-text);font-size:12px;flex:1;">' + pkgName + '</span>'
             + (blockers.length ? '<span style="color:var(--pf-warning);font-size:10px;" title="' + _pfpAttr(t('pfpBlockingDependents')) + '">!' + escapeHtml(String(blockers.length)) + '</span>' : '')
             + '<span style="color:var(--pf-muted);font-size:10px;">[' + escapeHtml(objectLabel) + ']</span>'
+            + webAppLinks
             + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('uninstall')) + '" onclick="_showPfpUninstallDialog(this.dataset.package, this.dataset.scope)" data-package="' + packageId + '" data-scope="' + packageScope + '">&times;</span>'
             + '</div>';
         });

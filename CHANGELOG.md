@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.30] — 2026-07-23
+
 ### Added
 
 - `manageCalendar` task (`tasks/io/manage_calendar.py`): list/create/update/
@@ -14,6 +16,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   refresh_token), or generic CalDAV (Nextcloud, Radicale, iCloud, most
   self-hosted servers) over HTTP Basic auth using PUT/DELETE of iCalendar
   (.ics) resources and a calendar-query REPORT for listing.
+- New PFP installable object type `web_app` (`webapp.v1`): a standalone
+  page (html/js/css) served at its own authenticated route
+  `/apps/<package>/<name>/`, separate from the chat page's `ui_extension`
+  slot/hook contract — `ui_extension` never ships `.html` and never gets
+  its own URL, `web_app` does both. New task `servePfpWebAppAssets`
+  (`tasks/io/serve_pfp_webapp_assets.py`), wired into the default
+  `pawflow_agent` flow behind the same session auth gate as `/chat`. The
+  Packages section of the Resources sidebar shows a ↗ link to any
+  installed package's web_app pages. See `docs/PFP_DEVELOPER_GUIDE.md`
+  ("Standalone Pages") for the manifest shape and trust model.
 
 ## [1.0.0-beta.29] — 2026-07-20
 

@@ -242,6 +242,19 @@ def _ui_extension_asset_list(obj: Dict[str, Any]) -> List[Dict[str, str]]:
     return rows
 
 
+def _web_app_asset_list(obj: Dict[str, Any]) -> List[str]:
+    """Return the declared list of bundled web_app asset paths, in order."""
+    raw = obj.get("assets")
+    if not isinstance(raw, list):
+        return []
+    rows = []
+    for item in raw:
+        path = str(item or "").strip()
+        if path:
+            rows.append(path)
+    return rows
+
+
 def _parse_skill_md(text: str, default_name: str = "") -> Dict[str, Any]:
     match = _FRONTMATTER_RE.match(text or "")
     if not match:

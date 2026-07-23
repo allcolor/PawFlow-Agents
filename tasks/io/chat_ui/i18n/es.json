@@ -1249,6 +1249,7 @@
   "pfpAllowedServices": "Servicios permitidos",
   "pfpAllowedTools": "Herramientas permitidas",
   "pfpBlockingDependents": "Dependientes bloqueantes",
+  "pfpOpenWebApp": "Abrir {name}",
   "pfpDependencies": "Dependencias",
   "pfpFilterAdd": "Añadidos",
   "pfpFilterAll": "Todo",

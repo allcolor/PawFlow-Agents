@@ -10,9 +10,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from cryptography.exceptions import InvalidSignature
 import core.paths as _paths
 from core.pfp_package._pp_base import (  # noqa: F401
-    PfpError, _PACKAGE_ID_RE, _RUNTIME_OBJECT_TYPES, _UI_API_VERSION)
+    PfpError, _PACKAGE_ID_RE, _RUNTIME_OBJECT_TYPES, _UI_API_VERSION, _WEBAPP_API_VERSION)
 from core.pfp_package._pp_mod1 import (  # noqa: F401
-    _agent_assigned_skill_names, _looks_like_package_ref, _normalize_scope, _read_json_file, _register_flow_task_proxy, _safe_component, _safe_relpath, _skill_bundled_files, _split_package_object_ref, _ui_extension_asset_list, _validate_version_ref, _version_tuple)
+    _agent_assigned_skill_names, _looks_like_package_ref, _normalize_scope, _read_json_file, _register_flow_task_proxy, _safe_component, _safe_relpath, _skill_bundled_files, _split_package_object_ref, _ui_extension_asset_list, _validate_version_ref, _version_tuple, _web_app_asset_list)
 from core.pfp_package._pp_mod2 import (  # noqa: F401
     _find_replacement_flow_task_record, _install_scope_dir, _load_public_key, _load_resource_data, _normalize_secret_requirements, _package_content_root, _package_flow_task_types, _package_skill_names, _parse_package_version, _signature_payload, _uninstall_flow, _version_part_satisfies)
 
@@ -232,6 +232,26 @@ def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any],
     }
 
 
+def _web_app_manifest(obj: Dict[str, Any], package: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the install-record manifest (assets with sha + size, entry path)."""
+    rows = []
+    for item in _web_app_asset_list(obj):
+        rel = _safe_relpath(item)
+        data = package["files"][rel]
+        digest = hashlib.sha256(data).hexdigest()
+        rows.append({
+            "path": rel,
+            "sha256": "sha256:" + digest,
+            "size": len(data),
+        })
+    entry = _safe_relpath(str(obj.get("entry") or ""))
+    return {
+        "version_compat": _WEBAPP_API_VERSION,
+        "entry": entry,
+        "assets": rows,
+    }
+
+
 def list_installed_ui_extensions(*, user_id: str, conversation_id: str = "",
                                  scope: str = "user") -> List[Dict[str, Any]]:
     """Return the asset manifest for every installed ui_extension in the scope.
@@ -281,6 +301,62 @@ def list_installed_ui_extensions(*, user_id: str, conversation_id: str = "",
                     "allowed_tools": list(ui.get("allowed_tools") or []),
                     "allowed_services": list(ui.get("allowed_services") or []),
                     "installed_from": dict(ui.get("installed_from") or {}),
+                })
+    return out
+
+
+def list_installed_web_apps(*, user_id: str, conversation_id: str = "",
+                           scope: str = "user") -> List[Dict[str, Any]]:
+    """Return the asset manifest for every installed web_app object in the scope.
+
+    Each entry has: package, version, content_dir, object_id, name,
+    version_compat, entry, assets, url. Conversation scope inherits
+    user-scope packages. Unlike ui_extension (one bundle per package),
+    a package may ship several web_app objects, each served at its own
+    `/apps/<package>/<name>/` route.
+    """
+    seen = set()
+    out = []
+    scopes = ["conversation", "user"] if scope in {"conversation", "conv"} else ["user"]
+    for sc in scopes:
+        try:
+            root = _install_scope_dir(user_id, conversation_id, sc)
+        except PfpError:
+            continue
+        if not root.exists():
+            continue
+        for path in sorted(root.glob("*.json")):
+            try:
+                record = _read_json_file(path)
+            except (OSError, json.JSONDecodeError, PfpError):
+                continue
+            package_id = str(record.get("package") or "")
+            if not package_id:
+                continue
+            content_dir = str(record.get("content_dir") or "")
+            if not content_dir or not Path(content_dir).is_dir():
+                continue
+            objects = record.get("objects") or []
+            web_objects = [obj for obj in objects if obj.get("kind") == "web_app"]
+            for web in web_objects:
+                object_id = str(web.get("object_id") or "")
+                dedupe_key = (package_id, object_id)
+                if not object_id or dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                name = str(web.get("name") or "")
+                out.append({
+                    "package": package_id,
+                    "version": str(record.get("version") or ""),
+                    "scope": sc,
+                    "content_dir": content_dir,
+                    "object_id": object_id,
+                    "name": name,
+                    "version_compat": str(web.get("version_compat") or _WEBAPP_API_VERSION),
+                    "entry": str(web.get("entry") or ""),
+                    "assets": list(web.get("assets") or []),
+                    "url": f"/apps/{package_id}/{name}/",
+                    "installed_from": dict(web.get("installed_from") or {}),
                 })
     return out
 
@@ -358,6 +434,28 @@ def _review_object_for_install(row: Dict[str, Any], package: Dict[str, Any],
             llm_service=review.get("llm_service", ""),
             subject_hash=review_hash(obj, package.get("lock", {}).get("files", {})),
         )
+        return
+    if obj_type == "web_app":
+        # Same static+LLM pipeline as ui_extension; the .html entry is
+        # matched against `_JS_STATIC_PATTERNS` like .js/.css already are.
+        from core.package_review import (
+            assert_installable_review, review_hash, review_metadata,
+            review_package_object,
+        )
+        review = review_package_object(
+            package,
+            obj,
+            operation=operation,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        assert_installable_review(review, force=force, label="Web app")
+        obj["_review"] = review_metadata(
+            review,
+            service_id=review.get("service_id", ""),
+            llm_service=review.get("llm_service", ""),
+            subject_hash=review_hash(obj, package.get("lock", {}).get("files", {})),
+        )
 
 
 def _uninstall_object(record: Dict[str, Any], user_id: str, conversation_id: str,
@@ -420,6 +518,10 @@ def _uninstall_object(record: Dict[str, Any], user_id: str, conversation_id: str
         # ui_extension assets live entirely in the package content store;
         # removing the install record is enough. The shared content_dir
         # is cleaned up by uninstall_pfp when no objects remain.
+        return True
+    if kind == "web_app":
+        # Same as ui_extension: static assets live in the package content
+        # store, removed by uninstall_pfp when no objects remain.
         return True
     return False
 

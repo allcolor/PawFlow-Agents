@@ -214,6 +214,7 @@ def register_all_tasks():
     from tasks.io.serve_chat_ui import ServeChatUITask
     from tasks.io.serve_assets import ServeAssetsTask
     from tasks.io.serve_pfp_ext_assets import ServePfpExtensionAssetsTask
+    from tasks.io.serve_pfp_webapp_assets import ServePfpWebAppAssetsTask
     from tasks.io.admin_actions import AdminActionTask
     from tasks.io.relay_proxy import ServeRelayProxyTask
 

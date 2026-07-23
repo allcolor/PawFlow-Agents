@@ -597,14 +597,74 @@ Comme les deux services de destination exposent déjà `read_file` en plus de
 `write_file`, cette lecture ne demande aucune nouvelle capacité côté
 service, seulement la tâche de restauration elle-même.
 
-**Chiffrement avant envoi** (à documenter comme option, cohérent avec le
-garde-fou §7.4 confidentialité) : Google Drive et les autres cibles listées
-sont des sous-traitants tiers au sens RGPD. Pour les dossiers sensibles, la
-tâche devrait pouvoir chiffrer chaque fichier côté client (une clé détenue
-par le cabinet, jamais transmise à PawFlow ni au fournisseur cloud) avant
-l'upload — sinon la sauvegarde elle-même redevient un point de fuite pour
-des pièces confidentielles. Point à trancher avant la V1 : chiffrement
-systématique par défaut, ou option activable par dossier/scope.
+#### 16.2bis Chiffrement des backups — par défaut, pas en option
+
+Suite à relecture explicite de ce point : pour un cabinet d'avocat, laisser
+le chiffrement en option revient à accepter par défaut qu'une sauvegarde
+soit le point de fuite le plus faible du système — incohérent avec le
+garde-fou §1 (la confiance est la contrainte n°1) et §7.4. Décision proposée
+: **`task_def:incrementalBackup` chiffre systématiquement, sans option pour
+le désactiver.** Google Drive/S3/OneDrive restent des sous-traitants tiers
+au sens RGPD ; sans chiffrement côté client, le fournisseur cloud voit les
+pièces du dossier en clair, ce qui contredit la promesse self-hosted du
+reste de PawFlow (section 2, ligne "Confidentialité").
+
+**Ne pas inventer un second mécanisme crypto : réutiliser celui déjà conçu
+pour le chiffrement au repos.** `docs/design/encryption-at-rest.md` (statut
+DESIGN/RFC, pas encore codé) et son commencement d'implémentation
+`core/key_vault.py` posent déjà exactement le bon modèle : une DEK
+(32 octets aléatoires, AEAD AESGCM/ChaCha20Poly1305) qui chiffre les
+données, elle-même enveloppée ("wrap") par une KEK dérivée par scrypt d'une
+passphrase détenue par le cabinet — la clé ne touche jamais le disque en
+clair et n'est jamais transmise à PawFlow ni au fournisseur cloud. Le
+format multi-wrap (`pass` / `relay` / `escrow`) est déjà pensé pour porter
+plusieurs portes vers la même DEK. Réutiliser ce module pour le backup :
+
+- Cohérence UX : si le cabinet chiffre déjà ses conversations sensibles au
+  repos avec une passphrase, le backup peut déverrouiller la même DEK par
+  scope plutôt que d'imposer une seconde passphrase à retenir.
+- Le module est encore au statut RFC/phase 1 (`wrap_pass` seul implémenté) —
+  le package `platform.incremental-backup` peut consommer `core/key_vault.py`
+  tel quel dès aujourd'hui pour `wrap_pass`, et hérite de `wrap_relay`/
+  `wrap_escrow` gratuitement quand ces phases livreront, sans changer son
+  propre format de manifeste.
+
+**Piège à éviter — la DEK doit être stable, pas une par run.** Un backup
+incrémental fonctionne parce que le sha256 d'un fichier inchangé est
+identique d'un passage à l'autre ; ce sha256 doit donc se calculer **sur le
+plaintext**, avant chiffrement, pour rester stable. Si la tâche mintait une
+nouvelle DEK à chaque exécution (ou si l'AEAD réutilisait un nonce
+aléatoire sans autre précaution), le ciphertext d'un fichier identique
+diffèrerait à chaque run et l'upload incrémental perdrait tout son intérêt
+(tout reuploadé, tout le temps). Conception correcte : une DEK persistante
+par scope de backup (par cabinet, ou par dossier si le cabinet veut des clés
+séparées par affaire), déverrouillée en RAM au démarrage du flow CRON via
+`KeyVault`, jamais reminée à chaque passage.
+
+**Les métadonnées aussi, pas seulement le contenu.** Chiffrer le contenu
+d'un fichier mais laisser son nom et son chemin en clair sur Drive ("M.
+Dupont - mise en demeure.docx") fuite déjà l'identité du client au
+fournisseur cloud. Le manifeste (chemin → hash/mtime/taille) doit lui-même
+être chiffré par la même DEK, et les objets stockés côté cloud sous un nom
+opaque dérivé du hash (`_backup/blobs/<sha256>`) plutôt que sous le chemin
+d'origine — la correspondance chemin réel ↔ nom opaque ne vit que dans le
+manifeste déchiffré.
+
+**Custody et risque de perte** — à documenter noir sur blanc au cabinet
+avant activation, pas seulement dans la doc technique : si la passphrase
+(`wrap_pass`) est perdue et qu'aucun `wrap_escrow` n'a été configuré, la
+sauvegarde est définitivement irrécupérable — c'est la garantie même du
+modèle (ni PawFlow ni l'hébergeur ne peuvent déverrouiller sans elle), mais
+appliquée à un backup ça veut dire "la roue de secours est aussi crevée si
+on perd la clé". Recommandation : proposer `wrap_escrow` (clé de recouvrement
+détenue par un second associé ou un tiers de confiance du cabinet, hors
+PawFlow) comme option explicite à l'activation du package, jamais comme
+défaut silencieux — un escrow mal choisi réintroduit exactement le risque de
+fuite que le chiffrement visait à éliminer.
+
+La restauration (`task_def:restoreFromBackup`) demande donc la même
+passphrase/KEK que la sauvegarde — sans elle, seuls des blobs chiffrés sous
+noms opaques sont récupérables, ce qui est le comportement voulu.
 
 #### 16.3 Packaging — répartition en trois briques indépendantes
 
@@ -638,8 +698,21 @@ le but explicite de le garder générique.
 #### 16.4 Ce que ce package sauvegarderait pour le cas d'usage avocat
 
 Si les deux packages sont installés ensemble pour un cabinet, la
-configuration recommandée du flow cible spécifiquement :
+configuration recommandée du flow cible plusieurs racines source, chacune
+déclarée comme une entrée de la liste `sources` du flow (le paramètre
+`service_id`/racine peut être répété, une paire source→manifeste par
+entrée) :
 
+- **`/workspace` du relay** — c'est la racine de travail où tourne le code
+  du cabinet (scripts, exports locaux, fichiers de travail du relay lié à
+  la conversation/agent), donc la première chose qui doit être couverte :
+  sans elle, tout ce qui n'est pas passé par le filestore conversation ou
+  la KG (un export ponctuel, un fichier généré par un agent puis laissé
+  sur le relay) n'est backupé nulle part. `task_def:incrementalBackup`
+  parcourt ce chemin exactement comme n'importe quelle autre racine relay
+  (section 16.2, point 1) — aucune capacité nouvelle à construire pour ça,
+  juste s'assurer que `/workspace` fait partie de la config par défaut du
+  flow plutôt que d'être un chemin à ajouter manuellement après coup.
 - le filestore par conversation (pièces du dossier, section 2),
 - un export de la Knowledge Graph/memory scopée aux dossiers (l'historique
   reconstruit, section 4.1),
@@ -647,9 +720,19 @@ configuration recommandée du flow cible spécifiquement :
   3) — jamais le contenu du MCP public justicelibre.org, qui n'a pas besoin
   d'être sauvegardé puisqu'il est déjà republié en source ouverte.
 
-Ce ciblage reste une configuration du flow générique, pas un fork
-spécifique au métier avocat — cohérent avec la séparation de la section
-16.3.
+Point d'attention propre à `/workspace` : contrairement au filestore
+conversation (déjà scopé à un dossier), un `/workspace` de relay peut
+contenir du bruit (venv, node_modules, caches de build) qui n'a aucune
+valeur à sauvegarder et gonflerait le volume/coût de stockage pour rien.
+La configuration par défaut du flow doit donc inclure une liste
+d'exclusion (`.git`, `node_modules`, `__pycache__`, `.venv`, répertoires de
+cache connus) plutôt que d'aspirer tout le répertoire sans filtre — le
+manifeste (section 16.2) est le bon endroit pour appliquer ce filtre avant
+même de calculer les hash.
+
+Ce ciblage reste une configuration du flow générique (plusieurs racines,
+filtres d'exclusion), pas un fork spécifique au métier avocat — cohérent
+avec la séparation de la section 16.3.
 
 ## 17. Conclusion
 

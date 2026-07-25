@@ -175,6 +175,7 @@ function _getTaskBlock(taskId, iteration, agentName) {
   // First event for this iteration — create the block
   const details = document.createElement('details');
   details.className = 'msg task-block';
+  details.dataset.taskId = taskId;
   details.setAttribute('open', '');
   details.style.cssText = 'margin:6px 0;border:1px solid #333;border-radius:8px;padding:0;background:#1a1a2e;';
   const summary = document.createElement('summary');
@@ -182,7 +183,8 @@ function _getTaskBlock(taskId, iteration, agentName) {
   const iterLabel = (iteration || 0) > 1 ? ' iter ' + iteration : '';
   summary.innerHTML = '\u{1F4CB} Task <span style="color:#e0e0e0;font-weight:normal">' + escapeHtml(taskId) + '</span>'
     + (agentName ? ' <span style="color:#888;font-weight:normal">(' + escapeHtml(displayAgentName(agentName)) + iterLabel + ')</span>' : '')
-    + ' <span class="task-block-status" style="margin-left:auto;font-size:11px;color:#888">\u25cf running</span>';
+    + ' <button class="task-tab-open-btn" title="' + escapeAttr(t('openInTaskTab')) + '" style="margin-left:auto;background:none;border:1px solid #444;border-radius:3px;color:#9d8cff;font-size:10px;cursor:pointer;padding:1px 5px;" onclick="event.preventDefault();event.stopPropagation();if(typeof openTaskTab===\'function\')openTaskTab(' + jsStringArg(taskId) + ',' + jsStringArg(agentName || '') + ')">\u2197</button>'
+    + ' <span class="task-block-status" style="font-size:11px;color:#888">\u25cf running</span>';
   details.appendChild(summary);
   const content = document.createElement('div');
   content.style.cssText = 'padding:4px 12px 8px;max-height:60vh;overflow-y:auto;';

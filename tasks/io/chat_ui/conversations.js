@@ -154,6 +154,7 @@ function _clearConvState() {
   var _stopBtn = document.getElementById('stopBtn');
   if (_stopBtn) _stopBtn.style.display = 'none';
   if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
+  if (typeof window._taskTabsReset === 'function') window._taskTabsReset();
   if (typeof activeInteractions !== 'undefined') {
     for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
     if (typeof updateActivePanel === 'function') updateActivePanel();

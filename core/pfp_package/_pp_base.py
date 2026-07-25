@@ -40,6 +40,7 @@ _RESOURCE_TYPES = {
     "theme": "theme",
     "task": "task_def",
     "task_def": "task_def",
+    "mcp_server": "mcp",
 }
 _INSTALLABLE_TYPES = set(_RESOURCE_TYPES) | {"flow", "service", "service_definition"}
 _INSTALLABLE_TYPES.update({"tool", "agent_hook", "service_provider", "flow_task", "task_provider"})

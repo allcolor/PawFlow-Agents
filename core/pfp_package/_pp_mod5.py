@@ -14,7 +14,7 @@ from core.pfp_package._pp_base import (  # noqa: F401
 from core.pfp_package._pp_mod1 import (  # noqa: F401
     _canonical_json, _file_sha256, _files_size, _format_dependency, _install_default_relay_id, _load_json_bytes, _make_lock, _name_from_id, _normalize_scope, _provenance, _public_key_text, _read_json_file, _register_flow_task_proxy, _safe_relpath, _validate_package_id, _validate_runtime_object, _verify_lock, _write_flow, _write_json_file, _write_resource, _write_service)
 from core.pfp_package._pp_mod2 import (  # noqa: F401
-    _collect_source_files, _existing_status_name, _load_private_key, _load_resource_data, _manifest_object_hash, _object_capabilities, _read_pfp_zip, _signature_payload, _validate_ui_extension_object, _validate_web_app_object)
+    _collect_source_files, _existing_status_name, _load_private_key, _load_resource_data, _manifest_object_hash, _mcp_server_risk, _object_capabilities, _read_pfp_zip, _signature_payload, _validate_mcp_server_object, _validate_ui_extension_object, _validate_web_app_object)
 from core.pfp_package._pp_mod3 import (  # noqa: F401
     _declared_secret_requirements, _inject_package_flow_task_relays, _install_record_path, _missing_agent_assigned_skills, _ui_extension_manifest, _uninstall_object, _verify_signature, _web_app_manifest)
 from core.pfp_package._pp_mod4 import (  # noqa: F401
@@ -99,6 +99,10 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         _webapp_err = _validate_web_app_object(obj, package)
         if _webapp_err:
             status, reason, installable = "blocked", _webapp_err, False
+    elif obj_type == "mcp_server":
+        _mcp_err = _validate_mcp_server_object(obj, package)
+        if _mcp_err:
+            status, reason, installable = "blocked", _mcp_err, False
     elif missing_dependencies:
         status = "missing_dependency"
         reason = "missing package dependency: " + ", ".join(
@@ -131,6 +135,8 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         risk = "medium"
     if obj_type in {"tool", "service_provider", "flow_task", "task_provider"}:
         risk = "high"
+    if obj_type == "mcp_server":
+        risk = _mcp_server_risk(obj, package)
     if obj.get("permissions") or obj.get("allowed_tools") or obj.get("allowed_services"):
         risk = "high"
     secrets = _declared_secret_requirements(manifest, obj)

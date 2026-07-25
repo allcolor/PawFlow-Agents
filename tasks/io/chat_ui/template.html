@@ -290,6 +290,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .active-row .a-actions button:hover { background: rgba(255,255,255,0.1); color: #fff; }
 .active-row .a-actions button.btn-stop { border-color: #993333; color: #ff6b6b; }
 .active-row .a-actions button.btn-stop:hover { background: #993333; color: #fff; }
+.task-tab-dock { position: fixed; top: 50%; right: 0; transform: translateY(-50%); display: flex;
+                 flex-direction: column; gap: 6px; z-index: 49; }
+.task-tab-dock-btn { position: relative; width: 30px; height: 30px; border-radius: 6px 0 0 6px;
+                      border: 1px solid #0f3460; border-right: none; background: #16213e; color: #9d8cff;
+                      font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+                      box-shadow: -2px 2px 6px rgba(0,0,0,0.3); }
+.task-tab-dock-btn:hover { background: #1a2550; }
+.task-tab-dock-btn.active { background: #22224a; border-color: #6c5ce7; color: #e0e0f0; }
+.task-tab-dock-btn .task-tab-close { display: none; position: absolute; top: -6px; left: -6px; width: 14px;
+                      height: 14px; border-radius: 50%; background: #e94560; color: #fff; font-size: 9px;
+                      line-height: 14px; text-align: center; cursor: pointer; }
+.task-tab-dock-btn:hover .task-tab-close { display: block; }
+.task-tab-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 92vw;
+                   background: #0f1629; border-left: 1px solid #0f3460; box-shadow: -6px 0 16px rgba(0,0,0,0.35);
+                   transform: translateX(100%); transition: transform 0.22s ease; z-index: 48;
+                   display: flex; flex-direction: column; }
+.task-tab-panel.open { transform: translateX(0); }
+.task-tab-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+                   padding: 10px 14px; border-bottom: 1px solid #0f3460; font-size: 13px; font-weight: 600;
+                   color: #e0e0e0; flex-shrink: 0; }
+.task-tab-panel-body { flex: 1; overflow-y: auto; padding: 6px 12px 12px; }
+.task-tab-panel-body .msg { font-size: 12.5px; }
+.task-tab-empty { color: #808090; font-size: 12px; padding: 16px 4px; }
 .typing { align-self: flex-start; font-size: 14px; padding: 10px 14px;
          font-style: italic; display: flex; align-items: center; gap: 8px; }
 .typing .spinner { display: inline-block; animation: spin 1.2s linear infinite;
@@ -544,8 +567,8 @@ body.desktop-fullscreen .tab-content.active iframe {
 .action-menu-sep { border-top: 1px solid #0f3460; margin: 4px 0; }
 /* Theme variable bridge: themes only set --pf-* variables. */
 body, .main, .messages-wrap, .tab-content.active, .audio-tab-panel { background: var(--pf-bg) !important; color: var(--pf-text) !important; }
-.sidebar, .tab-bar, .files-panel, .fe-toolbar, .fe-table th, .fe-status, .fe-preview-pane .fe-ph, .load-more-banner { background: var(--pf-sidebar) !important; border-color: var(--pf-border) !important; }
-.header, .input-area, .action-menu, .ctx-menu, .dialog, .exec-dialog, .active-panel, .fe-panel, .fe-preview-pane, .audio-tab-controls { background: var(--pf-panel) !important; border-color: var(--pf-border) !important; }
+.sidebar, .tab-bar, .files-panel, .fe-toolbar, .fe-table th, .fe-status, .fe-preview-pane .fe-ph, .load-more-banner, .task-tab-dock-btn { background: var(--pf-sidebar) !important; border-color: var(--pf-border) !important; }
+.header, .input-area, .action-menu, .ctx-menu, .dialog, .exec-dialog, .active-panel, .fe-panel, .fe-preview-pane, .audio-tab-controls, .task-tab-panel { background: var(--pf-panel) !important; border-color: var(--pf-border) !important; }
 .conv-item:hover, .conv-item.active, .msg.assistant, .msg.subagent, .msg.agent-result, .msg.btw, .msg.sub_agent_trace, .delegate-block, .delegate-sub-block, .dialog-body .btn, .fe-row:hover, .fe-row.selected, .ask-user-box, .tab-btn.active { background: var(--pf-assistant) !important; border-color: var(--pf-border) !important; color: var(--pf-text) !important; }
 .msg.user, button, .header .btn, .action-menu-btn, .sidebar-toggle, .btn-attach, .btn-folder, .scroll-nav button, .audio-tab-controls button { background: var(--pf-user) !important; color: var(--pf-text) !important; border-color: var(--pf-accent) !important; }
 button:hover, .header .btn:hover, .action-menu-btn:hover, .sidebar-header .btn-new:hover, .input-row button:hover, .dialog-body .btn:hover, .dialog-body .btn-primary:hover, .ask-user-btn:hover { background: var(--pf-accent) !important; color: var(--pf-bg) !important; border-color: var(--pf-accent) !important; }
@@ -789,6 +812,14 @@ if (typeof hljs !== 'undefined') {
 <div class="active-panel" id="activePanel">
   <div class="active-panel-title" data-i18n="activeAgents">Active agents</div>
   <div id="activeRows"></div>
+</div>
+<div class="task-tab-dock" id="taskTabDock" title="Task tabs" data-i18n-title="taskTabsTitle"></div>
+<div class="task-tab-panel" id="taskTabPanel">
+  <div class="task-tab-panel-header">
+    <span id="taskTabPanelTitle"></span>
+    <button class="btn-close-panel" onclick="closeActiveTaskTab()">&times;</button>
+  </div>
+  <div class="task-tab-panel-body" id="taskTabPanelBody"></div>
 </div>
 <div class="input-area">
   <div class="attachments-preview" id="attachPreview"></div>

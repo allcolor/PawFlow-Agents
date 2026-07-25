@@ -526,6 +526,55 @@ def _validate_web_app_object(obj: Dict[str, Any], package: Dict[str, Any]) -> st
     return ""
 
 
+_MCP_TRANSPORTS = {"http", "stdio"}
+
+
+def _validate_mcp_server_object(obj: Dict[str, Any], package: Dict[str, Any]) -> str:
+    """Return an empty string when the mcp_server is structurally valid, else a reason.
+
+    Structural rules mirror what a human would otherwise have to fill in by
+    hand after install: an http server needs a url, a stdio server needs a
+    command, so the .pfp declares everything the mcp resource requires up
+    front and installs it directly with no manual configuration step.
+    """
+    path = str(obj.get("path") or "").strip()
+    rel = _safe_relpath(path) if path else ""
+    if not rel or rel not in (package.get("files") or {}):
+        return f"mcp_server is missing package file: {path}"
+    name = str(obj.get("name") or _name_from_id(str(obj.get("id") or "")) or "")
+    try:
+        data = _load_resource_data(package, rel, "mcp", name)
+    except Exception as exc:
+        return str(exc)
+    if not isinstance(data, dict):
+        return "mcp_server definition must be a JSON object"
+    transport = str(data.get("transport") or "http")
+    if transport not in _MCP_TRANSPORTS:
+        return f"mcp_server: unsupported transport {transport!r}"
+    if transport == "http" and not str(data.get("url") or "").strip():
+        return "mcp_server (http): url is required"
+    if transport == "stdio" and not str(data.get("command") or "").strip():
+        return "mcp_server (stdio): command is required"
+    return ""
+
+
+def _mcp_server_risk(obj: Dict[str, Any], package: Dict[str, Any]) -> str:
+    """stdio mcp_server objects run an arbitrary command on the relay host
+    once enabled, the same risk profile as a package tool/service_provider.
+    http-only servers only reach a declared URL, matching service_definition.
+    """
+    path = str(obj.get("path") or "").strip()
+    rel = _safe_relpath(path) if path else ""
+    if not rel or rel not in (package.get("files") or {}):
+        return "high"
+    name = str(obj.get("name") or _name_from_id(str(obj.get("id") or "")) or "")
+    try:
+        data = _load_resource_data(package, rel, "mcp", name)
+    except Exception:
+        return "high"
+    return "high" if str(data.get("transport") or "http") == "stdio" else "medium"
+
+
 def _uninstall_flow(record: Dict[str, Any], user_id: str,
                     conversation_id: str, scope: str, force: bool) -> bool:
     from core.paths import flow_dir, flow_latest_file, flow_version_file, parse_flow_fqn

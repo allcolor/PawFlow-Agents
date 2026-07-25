@@ -316,6 +316,7 @@ function updateActivePanel() {
       + ctxHtml
       + '<span class="a-time">' + timeStr + '</span>'
       + '<span class="a-actions">'
+      + (info.taskId ? '<button title="' + escapeAttr(t('openInTaskTab')) + '" onclick="if(typeof openTaskTab===\'function\')openTaskTab(' + jsStringArg(info.taskId) + ',' + jsStringArg(apiName) + ')">↗</button>' : '')
       + '<button title="' + escapeAttr(t('stopTitle')) + '" onclick="interruptSingle(' + jsStringArg(apiName) + ',' + jsStringArg(info.taskId || '') + ')">&#x23F8;</button>'
       + restartBtn
       + '<button class="btn-stop" title="' + escapeAttr(t('stop')) + '" onclick="stopSingle(' + jsStringArg(apiName) + ',' + jsStringArg(info.taskId || '') + ')">&#x25A0;</button>'

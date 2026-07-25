@@ -626,6 +626,18 @@ Dev loop:
 /pfp dev-unload dev.my-app
 ```
 
+## MCP Servers (mcp_server)
+
+A package that depends on an MCP server no longer needs a manual reconnection
+step after install. Declare a `mcp_server` object pointing at a JSON file with
+the same fields the `mcp` resource type already understands (`url`/`transport`
+for http, `command`/`args`/`env` for stdio, `auth` for headers) and it installs
+as a ready-to-use `mcp` resource. See "MCP Servers (mcp_server)" in
+[PFP_PACKAGES.md](PFP_PACKAGES.md) for the manifest shape, secret binding, and
+risk model. As with any MCP server, the connection still has to be explicitly
+enabled at conversation or agent level before an agent can use its tools —
+install wires up the connection, it does not silently activate it.
+
 ## Release
 
 When the dev package works, create a signed release artifact:

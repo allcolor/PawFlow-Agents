@@ -116,6 +116,8 @@ function addMsg(role, text, extra) {
   }
   el.className = 'msg ' + cssClass;
   el.dataset.messageRole = role;
+  const _msgTaskId = (extra && (extra.task_id || (extra.source && extra.source.task_id))) || '';
+  if (_msgTaskId) el.dataset.taskId = _msgTaskId;
   if (role === 'assistant' || role === 'user') el.dataset.technicalBoundary = '1';
   if ((role === 'assistant' || role === 'user') && !String(text || '').trim()) el.dataset.transientUi = '1';
   if (extra && extra.live) el.dataset.live = '1';

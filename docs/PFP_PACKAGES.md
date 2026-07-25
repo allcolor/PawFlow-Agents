@@ -76,11 +76,39 @@ my-package-1.0.0.pfp
 }
 ```
 
-Supported installable object types in the first implementation are `agent`, `prompt`, `skill`, `theme`, `task_def`, `flow`, `service_definition`, `tool`, `service_provider`, `flow_task`, `task_provider`, `ui_extension`, and `web_app`. `task_def` is a PawFlow agent/task definition resource. `flow_task`/`task_provider` are processor types for flows: install registers a `TaskFactory` proxy so flows can parse, validate, and execute the new task type when a runtime runner is declared. PFP `tool` objects are installed as runtime proxies with provenance and declared capabilities. PFP `service_provider` objects are installed as `packageRuntime` service proxies and keep their declared `provides`, dependencies, operations, and allowed tool/service grants in service config. `ui_extension` objects ship JS/CSS assets that hook into the chat web UI via the versioned `ui.v1` slot/hook contract; assets are served by `servePfpExtensionAssets` at `/chat/ext/<package>/<short_sha256>/<file>` with per-file SHA-256 integrity verification, and the install plan rejects packages declaring an incompatible `version_compat`. `web_app` objects ship a standalone page (html/js/css) served at its own authenticated route instead of being injected into the chat page; see [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md) for the manifest shape and trust model.
+Supported installable object types in the first implementation are `agent`, `prompt`, `skill`, `theme`, `task_def`, `flow`, `service_definition`, `tool`, `service_provider`, `flow_task`, `task_provider`, `ui_extension`, `web_app`, and `mcp_server`. `task_def` is a PawFlow agent/task definition resource. `flow_task`/`task_provider` are processor types for flows: install registers a `TaskFactory` proxy so flows can parse, validate, and execute the new task type when a runtime runner is declared. PFP `tool` objects are installed as runtime proxies with provenance and declared capabilities. PFP `service_provider` objects are installed as `packageRuntime` service proxies and keep their declared `provides`, dependencies, operations, and allowed tool/service grants in service config. `ui_extension` objects ship JS/CSS assets that hook into the chat web UI via the versioned `ui.v1` slot/hook contract; assets are served by `servePfpExtensionAssets` at `/chat/ext/<package>/<short_sha256>/<file>` with per-file SHA-256 integrity verification, and the install plan rejects packages declaring an incompatible `version_compat`. `web_app` objects ship a standalone page (html/js/css) served at its own authenticated route instead of being injected into the chat page; see [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md) for the manifest shape and trust model. `mcp_server` objects install directly as an `mcp` resource (the same resource type the Resources sidebar's MCP section manages) — no manual reconnection step after install; see "MCP Servers (mcp_server)" below.
 
 `dependencies` declares package-level dependencies. Object-level `requires` can also reference another package with `"package:community.pkg@1.0.0"` or `{"package": "community.pkg", "version": "1.0.0"}`. `allowed_tools` and `allowed_services` accept builtin names, such as `{"name": "read"}`, and package-qualified grants, such as `{"package": "community.media-core", "object": "tool:normalize_image"}` or `"community.media-core/tool:normalize_image"`. These grants are only for brokered calls back into PawFlow through `pfp.call_tool(...)` and `pfp.call_service(...)`; they do not gate normal relay-local filesystem or binary access by the package process. Package-qualified grants are treated as dependencies: the referenced package, and the referenced object when one is named, must already be installed in the target scope or in the user scope before the dependent object can be selected for install.
 
 Dependency `version` accepts exact versions and simple ranges: `>=1.0.0,<2.0.0`, `^1.2.0`, `~1.2.3`, comparison operators (`>`, `>=`, `<`, `<=`, `==`, `!=`), or `*`. Install and runtime checks require the installed package to satisfy the constraint. Updating a package is blocked when an installed dependent would no longer satisfy its declared constraint, unless `force` is explicit.
+
+## MCP Servers (mcp_server)
+
+Before `mcp_server`, connecting a `.pfp` to an MCP server was a two-step affair: the package could ship everything else (agents, skills, flows) but the MCP connection itself had to be added by hand afterwards through the Resources sidebar or `manage_resource`. `mcp_server` objects close that gap: they install directly as an `mcp` resource, so the connection is live as soon as the package is installed and enabled.
+
+```json
+{
+  "id": "mcp_server:justicelibre",
+  "type": "mcp_server",
+  "name": "justicelibre",
+  "path": "content/mcp/justicelibre.json",
+  "secrets": [{"name": "justicelibre_api_key", "env": "JUSTICELIBRE_API_KEY"}]
+}
+```
+
+`content/mcp/justicelibre.json` holds the same fields the `mcp` resource type already supports:
+
+```json
+{
+  "url": "https://justicelibre.org/mcp",
+  "transport": "http",
+  "auth": {"Authorization": "Bearer ${justicelibre_api_key}"}
+}
+```
+
+An http server requires `url`; a stdio server (`"transport": "stdio"`) requires `command` and runs on a relay, exactly like a manually-configured MCP resource — `local: true` runs it on the relay host helper instead of inside the relay container. Install rejects an `mcp_server` object missing the field its declared transport needs. `auth`/`env`/`command` values may reference `${secret_name}` placeholders bound the same way as any other PFP secret (`--secret name=stored_key`); values are resolved at connection time, never written into the install record.
+
+Because a stdio `command` runs an arbitrary relay-local executable and an http server can reach any URL, `mcp_server` objects are always shown at elevated risk in the install plan (`high` for stdio, `medium` for http-only, matching `tool`/`service_provider` and `service_definition` respectively) so the user sees exactly what they're granting before confirming. Installing the resource does not by itself make the server usable in a conversation: MCP servers remain opt-in — nothing is enabled until it is checked at conversation level or in an agent override, per [tool_catalog.md](tool_catalog.md#tool-and-mcp-availability).
 
 ## Commands
 

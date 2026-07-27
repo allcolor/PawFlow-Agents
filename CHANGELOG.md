@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.33] — 2026-07-27
+
 ### Fixed
 
 - Message pipeline audit — three more defects on the live channel, all of

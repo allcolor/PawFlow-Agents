@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.32] — 2026-07-27
+
+### Fixed
+
+- Action-menu (`+`) dropdown could be cut off with no way to scroll on
+  short/narrow viewports (`position:absolute`, no height limit). Now
+  `position:fixed`, clamped to the viewport, scrollable, and positioned/
+  flipped in JS relative to the button instead of a static corner.
+- Message/thinking-block ordering could land new content above older,
+  correctly-timestamped history whenever the browser and server clocks
+  disagreed (`_insertMessageChronologically` was comparing a client
+  `Date.now()` fallback against real server timestamps). Only genuine
+  server timestamps are now compared against each other; content with no
+  real timestamp always appends at the true end. A buffered `error_event`
+  replayed after a client reconnects now renders at its true original
+  time instead of whenever the replay happened to land.
+- OAuth refresh race: `_refresh_oauth_token_coordinated` released its
+  per-slot lock before the caller persisted the rotated tokens, letting a
+  concurrent session read the pool in that gap, miss the rotation, and
+  re-POST an already-consumed refresh token — a real `invalid_grant`
+  rejection that dropped a perfectly good credential. Persistence now
+  happens inside the lock.
+- Telegram (and any other `AgentResultWaiter`-based bridge) never
+  surfaced fatal LLM errors (credential expiry, session lost, budget
+  exceeded): `on_fatal_error` published `error_event` without
+  `turn_id`/`request_msg_id`, so the waiter couldn't correlate it back to
+  the pending request and callers silently got the turn's empty response
+  instead of the real error text.
+- A fatal-error's synthetic assistant message was marked `is_error=True`
+  but not `display_only=True`, so it could resurface as fake prior
+  assistant content in the LLM context on a later turn. Now excluded from
+  context (still visible in the transcript) via the same mechanism used
+  for `sub_agent_trace`/delegate nudges.
+- Mobile-responsive chat UI: `.header`/`.header .actions` now
+  `flex-wrap` under 768px instead of squeezing/overflowing; `.sidebar`
+  becomes a `position:fixed` overlay under 768px instead of squeezing
+  `.main`; ~20 fixed-pixel-width dialog panels across the chat UI now
+  clamp to the viewport instead of overflowing horizontally on a phone.
+
 ## [1.0.0-beta.31] — 2026-07-27
 
 ### Added

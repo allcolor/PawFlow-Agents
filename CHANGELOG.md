@@ -31,6 +31,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   delivered]`) are marked as placeholders so a real result arriving late
   replaces them — never the reverse.
 
+### Added
+
+- Conversation sharing, phase 1 (`core/conversation_access.py`): the
+  authorization primitive every call site will consult instead of its own
+  owner-equality check — `resolve_conversation_access` / `require_read` /
+  `require_write` / `require_owner`, the collaborators ACL stored via the
+  existing `extra` mechanism (no schema change), and a per-user reverse index
+  of conversations shared with them. `ConversationStore` gains the read-only
+  `resolve_owner()` and `shared_index_path()`. Nothing calls it yet, so
+  behavior is unchanged; see `docs/CONVERSATION_SHARING_PLAN.md`.
+
 ## [1.0.0-beta.32] — 2026-07-27
 
 ### Fixed

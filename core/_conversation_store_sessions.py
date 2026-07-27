@@ -128,7 +128,7 @@ class _CsSessionsMixin:
         file under the targeted provider dir is stale history.
         """
         try:
-            owner = self._cid_user.get(cid, "") or self.get_user_id(cid) or ""
+            owner = self._cid_user.get(cid, "") or self.resolve_owner(cid) or ""
         except Exception:
             owner = self._cid_user.get(cid, "") or ""
         if not owner:

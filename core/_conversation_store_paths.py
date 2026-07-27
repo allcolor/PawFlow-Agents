@@ -215,6 +215,42 @@ class _CsPathsMixin:
                         return conv_dir
         raise ValueError(f"Conversation {cid[:16]} not found and no user_id provided")
 
+    def resolve_owner(self, cid: str) -> str:
+        """Owner user_id of ``cid``, or "" when it cannot be resolved.
+
+        Read-only counterpart of ``_conv_dir``'s owner lookup: consults the
+        conversation metadata first (authoritative, raw user_id), then falls
+        back to the cid->user cache / on-disk scan, which yields the
+        ``_safe_name`` form of the directory. Never creates anything and
+        never raises — an unknown conversation resolves to "".
+        """
+        if not cid:
+            return ""
+        if not self.exists(cid):
+            return ""
+        try:
+            uid = str((self._load_cache(cid) or {}).get("user_id") or "").strip()
+        except Exception:
+            logger.debug("owner metadata read failed for %s", cid[:8], exc_info=True)
+            uid = ""
+        if uid:
+            return uid
+        try:
+            return self._conv_dir(cid).parent.name
+        except (ValueError, OSError):
+            return ""
+
+    def shared_index_path(self, user_id: str) -> Path:
+        """Per-user reverse index of conversations shared *with* that user.
+
+        Lives next to the user directories rather than inside one, since it
+        is not owned by any single conversation. The leading underscore keeps
+        it out of the way of the user-directory scans (a plain .json file is
+        skipped by every ``is_dir()`` walk).
+        """
+        return (self._store_dir / "_shared_index"
+                / f"{self._safe_name(user_id)}.json")
+
     def _transcript_path(self, cid: str) -> Path:
         return self._conv_dir(cid) / "transcript.jsonl"
 

@@ -1,6 +1,8 @@
 # Conversation Sharing — Implementation Plan
 
-Status: **proposed** (design + phased implementation plan, not yet implemented).
+Status: **in progress** — Phase 1 (core primitive + data model) is
+implemented in `core/conversation_access.py`; Phases 2-7 are still design
+only. Nothing calls the primitive yet, so behavior is unchanged.
 
 ## Goal
 
@@ -364,9 +366,18 @@ best-effort owner map).
 
 ## Phases
 
-1. **Core primitive + data model** — `core/conversation_access.py`,
-   `ConversationStore.resolve_owner()`, collaborators ACL read/write via
-   `extra`, reverse `_shared_index`. No behavior change yet (nothing calls it).
+1. ~~**Core primitive + data model**~~ — **done**. `core/conversation_access.py`
+   (`resolve_conversation_access`/`require_read`/`require_write`/`require_owner`,
+   ACL read/write via `extra`, reverse `_shared_index`),
+   `ConversationStore.resolve_owner()` + `shared_index_path()`, covered by
+   `tests/test_conversation_access.py`. No behavior change (nothing calls it).
+   Two deliberate deviations from the design above:
+   - the reverse index holds `pending` **and** `accepted` rows (an invite has
+     to be discoverable before it can be accepted); it is cleared on
+     decline/kick, not on accept;
+   - `require_write` does not yet perform owner reassignment — that arrives
+     with its directory-move in Phase 6, where it can be tested against a
+     deleted-owner fixture.
 2. **Close the SSE gap** — add `require_read` to `agent_sse_stream.py`. Ships
    independently and is valuable even before sharing exists (fixes the
    pre-existing gap for single-owner conversations too — anyone who could

@@ -64,7 +64,7 @@ function _showParamEditor(key, scope, isSecret, isNew) {
   const inputType = isSecret ? 'password' : 'text';
   formHtml += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${t('value')}</label><input id="pv-value" type="${inputType}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:400px;border:1px solid #333;';
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:400px;max-width:calc(100vw - 32px);border:1px solid #333;';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${escapeHtml(title)}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>

@@ -19,7 +19,7 @@ function _usePrompt(name, hasParams) {
     ov.id = 'promptParamOverlay';
     ov.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
     const panel = document.createElement('div');
-    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:420px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
+    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:420px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
     let formHtml = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(data.title || name)}</h3>
       <button onclick="document.getElementById('promptParamOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
@@ -376,7 +376,7 @@ async function showResourceEditor(rtype, name, readonly) {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
   const title = ro ? t('view') : t('contextEdit');
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(title)} ${escapeHtml(rtype)}: ${escapeHtml(name)} ${_scopeBadge(scope)}</h3>
@@ -417,7 +417,7 @@ function _showSkillReviewConfirm(review, message, onForce) {
   overlay.id = 'reviewConfirmOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:10001;';
   var panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
   var html = '<h3 style="margin:0 0 10px;color:var(--pf-text);font-size:14px;">' + escapeHtml(t('skillReviewTitle')) + '</h3>';
   html += '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:8px;">' + escapeHtml(String(message || '')) + '</div>';
   html += '<div style="color:var(--pf-text);font-size:11px;margin-bottom:6px;">' + escapeHtml(t('skillReviewRisk', { risk: String(review.risk || 'unknown') })) + '</div>';

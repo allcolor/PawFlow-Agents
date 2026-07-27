@@ -11,7 +11,7 @@ async function showResourceCreator(rtype) {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
   const createAssignBtn = (rtype === 'task_def' || rtype === 'skill')
     ? '<button onclick="_saveResourceCreate(\'' + rtype + '\', true)" style="background:color-mix(in srgb, var(--pf-accent) 16%, var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('create')) + ' + ' + escapeHtml(t('assign')) + '</button>'
     : '';
@@ -127,7 +127,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   var panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-width:calc(100vw - 32px);max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
   panel.innerHTML = '<p style="color:var(--pf-text);font-weight:600;">' + escapeHtml(t('addAgentToConversation')) + '</p><p style="color:var(--pf-muted);">' + escapeHtml(t('loading')) + '</p>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -285,7 +285,7 @@ function _showAssignDialog(taskDefName) {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:420px;border:1px solid var(--pf-border);';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:420px;max-width:calc(100vw - 32px);border:1px solid var(--pf-border);';
   const convAgents = ((_lastResourcesData || {}).agents || []).map(function(a) { return a.name || ''; }).filter(Boolean);
   const agentField = convAgents.length
     ? `<select id="assign-agent" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">${convAgents.map(function(a) { return `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`; }).join('')}</select>`

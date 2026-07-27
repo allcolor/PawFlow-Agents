@@ -280,7 +280,7 @@ async function _showToolMcpFilterDialog(agentName, mode) {
   overlay.id = 'toolMcpFilterOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:680px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:680px;max-width:calc(100vw - 32px);max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
   panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
     + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(title) + '</h3>'
     + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button></div>'
@@ -364,7 +364,7 @@ async function _showAgentHooksDialog() {
   overlay.id = 'agentHooksOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:740px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:740px;max-width:calc(100vw - 32px);max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
   let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
     + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(t('conversationAgentHooks')) + '</h3>'
     + '<button onclick="document.getElementById(\'agentHooksOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button></div>';
@@ -525,7 +525,7 @@ function _showAgentConvConfigDialog(agentName) {
     overlay.id = 'agentConvConfigOverlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
     var panel = document.createElement('div');
-    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:520px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
+    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:520px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
     var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
       + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(t('configureAgentTitle', { agent: agentName })) + '</h3>'
       + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>'

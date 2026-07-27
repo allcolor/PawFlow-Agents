@@ -416,7 +416,7 @@ async function showServiceInstallForm() {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-width:calc(100vw - 32px);max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
 
   const typeOpts = _renderServiceTypeOptions(serviceTypes);
 
@@ -543,7 +543,7 @@ async function showServiceEditForm(serviceId, scope, readonly) {
     overlay.id = 'resourceEditorOverlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
     const panel = document.createElement('div');
-    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
+    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-width:calc(100vw - 32px);max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
 
     const title = ro ? t('viewServiceTitle') : t('editServiceTitle');
     let formHtml = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'

@@ -182,7 +182,7 @@ function _showImportConvDialog(info, fmt) {
     var overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
     var box = document.createElement('div');
-    box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:640px;max-width:780px;max-height:85vh;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:relative;';
+    box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:min(640px, calc(100vw - 32px));max-width:min(780px, calc(100vw - 32px));max-height:85vh;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:relative;';
     box.onclick = e => e.stopPropagation();
 
     var _listCss = 'width:100%;min-height:100px;max-height:240px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);';
@@ -445,7 +445,7 @@ function showExportDialog(cid) {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
   overlay.dataset.conversationId = targetCid;
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:340px;border:1px solid #333;';
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:340px;max-width:calc(100vw - 32px);border:1px solid #333;';
   panel.innerHTML = '<h3 style="margin:0 0 16px;color:#e0e0e0;font-size:14px;">Export Conversation</h3>'
     + '<div style="display:flex;flex-direction:column;gap:8px;">'
     + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cid=p.dataset.conversationId;p.remove();exportConversation(cid)" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>HTML</b><br><span style=font-size:11px;color:#888>Standalone HTML file for viewing/sharing</span></button>'

@@ -89,7 +89,7 @@ function _showFlowStartDialog(instanceId, editOnly) {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid #333;';
   const title = editOnly ? t('flowEditParameters') : t('flowStart');
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${escapeHtml(title)}: ${escapeHtml(instanceId)}</h3>

@@ -319,6 +319,58 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
 
 
+def test_action_menu_clamps_to_viewport_and_is_scrollable():
+    # Regression: .action-menu was position:absolute with no height limit,
+    # so on a short/narrow viewport where the + button sits near the top,
+    # the ~15-item dropdown extended past the bottom with no way to scroll
+    # to the rest -- cut off. Now fixed + clamped + scrollable, and
+    # positioned/flipped in JS relative to the button (tabs.js).
+    assert "position: fixed; margin-top: 4px;" in TEMPLATE_HTML
+    assert "max-height: calc(100vh - 16px); overflow-y: auto;" in TEMPLATE_HTML
+    tabs_js = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
+    assert "function _positionActionMenu(menu)" in tabs_js
+    assert "_positionActionMenu(menu);" in tabs_js
+
+
+def test_mobile_breakpoints_wrap_header_and_overlay_sidebar():
+    # Regression: zero @media queries existed anywhere in the chat UI --
+    # .header had no flex-wrap (controls squeezed/overflowed on narrow
+    # screens instead of wrapping) and .sidebar had no overlay mode
+    # (sidebar-toggle only shrank it to 0 width, .main was always squeezed
+    # next to it rather than the sidebar floating on top).
+    assert "@media (max-width: 768px)" in TEMPLATE_HTML
+    mobile_block = TEMPLATE_HTML[
+        TEMPLATE_HTML.index("@media (max-width: 768px)"):
+        TEMPLATE_HTML.index("@media (max-width: 480px)")]
+    assert ".header { flex-wrap: wrap;" in mobile_block
+    assert ".header .actions { flex-wrap: wrap; margin-left: 0;" in mobile_block
+    assert ".sidebar { position: fixed;" in mobile_block
+    # sidebar-toggle's left is set inline by _syncToggleBtn() (state.js) to
+    # '268px' assuming the sidebar pushes .main over -- must be pinned back
+    # with !important now that the sidebar overlays instead on mobile.
+    assert ".sidebar-toggle { left: 12px !important; }" in mobile_block
+
+
+def test_dialog_panels_clamp_to_viewport_width():
+    # Regression sweep: fixed-pixel-width dialog panels (300-780px) overflow
+    # horizontally on any viewport narrower than their width, with no way to
+    # see the rest of the dialog. Every such panel must clamp with either
+    # max-width: calc(100vw - Npx) or max-width: min(Npx, calc(100vw - Npx)).
+    import re
+    js_dir = Path("tasks/io/chat_ui")
+    offenders = []
+    for js_file in sorted(js_dir.glob("*.js")):
+        src = js_file.read_text(encoding="utf-8")
+        for m in re.finditer(r"style\.cssText = '([^']*)';", src):
+            style = m.group(1)
+            # A fixed-pixel width (not min-width/max-width) hard-codes a box
+            # size; such a panel must also declare a max-width somewhere to
+            # clamp it on narrow viewports.
+            if re.search(r"(?<!min-)(?<!max-)\bwidth:\s*\d+px\b", style) and "max-width" not in style:
+                offenders.append(f"{js_file.name}: {style[:120]}")
+    assert not offenders, f"Fixed-width dialog(s) with no viewport clamp: {offenders}"
+
+
 def test_chat_scroll_container_has_stable_flex_height_and_post_render_refresh():
     assert ".main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }" in TEMPLATE_HTML
     assert ".messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; }" in TEMPLATE_HTML

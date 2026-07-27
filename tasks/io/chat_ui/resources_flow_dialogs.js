@@ -159,7 +159,7 @@ async function showDeployFlowDialog(initialTemplateId) {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:560px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:560px;max-width:calc(100vw - 32px);max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(t('deployFlow'))}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>

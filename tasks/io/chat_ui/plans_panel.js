@@ -259,7 +259,7 @@ async function showAssignPlanDialog(planId) {
 
   const panel = document.createElement('div');
   panel.setAttribute('data-overlay', '1');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid #333;';
   panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">' + escapeHtml(t('assignPlan')) + '</h3>'
     + '<div style="margin-bottom:12px;">'
     + '<label style="color:#a0a0c0;font-size:12px;">' + escapeHtml(t('stepRangeOptional')) + ':</label>'
@@ -310,7 +310,7 @@ async function showAssignStepDialog(planId, stepIndex) {
 
   const panel = document.createElement('div');
   panel.setAttribute('data-overlay', '1');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid #333;';
   panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">' + escapeHtml(t('assignStepTitle', { n: stepIndex })) + '</h3>'
     + '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px;">' + escapeHtml(t('selectAgent')) + ':</div>'
     + agentBtns
@@ -327,7 +327,7 @@ async function showCreatePlanDialog() {
 
   const panel = document.createElement('div');
   panel.setAttribute('data-overlay', '1');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:460px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:460px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid #333;';
   panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">' + escapeHtml(t('createPlan')) + '</h3>'
     + '<label style="color:#a0a0c0;font-size:12px;">' + escapeHtml(t('title')) + ':</label>'
     + '<input id="newPlanTitle" type="text" placeholder="' + escapeHtml(t('planTitlePlaceholder')) + '" '
@@ -387,7 +387,7 @@ async function showSetVerifierDialog(planId, stepIndex) {
 
   const panel = document.createElement('div');
   panel.setAttribute('data-overlay', '1');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-width:calc(100vw - 32px);max-height:80vh;overflow-y:auto;border:1px solid #333;';
   panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">' + escapeHtml(t('setVerifierTitle', { target: label })) + '</h3>'
     + '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px;">' + escapeHtml(t('selectVerifierAgent')) + ':</div>'
     + btns

@@ -259,7 +259,7 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
   var overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
   var box = document.createElement('div');
-  box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:640px;max-width:780px;max-height:85vh;display:flex;flex-direction:column;gap:12px;overflow-y:auto';
+  box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:min(640px, calc(100vw - 32px));max-width:min(780px, calc(100vw - 32px));max-height:85vh;display:flex;flex-direction:column;gap:12px;overflow-y:auto';
 
   // Build LLM service options HTML
   var svcOpts = llmServices.map(function(s) {

@@ -125,6 +125,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .view-menu-item.active .vmi-switch::after { left: 16px; }
 .view-menu-item.disabled { opacity: 0.6; pointer-events: none; }
 .header .user-info { font-size: 12px; color: #8888aa; }
+/* ── Mobile layout (narrow viewports) ──
+   Base layout above assumes desktop width: sidebar pushes .main over at a
+   fixed 260px, and .header lays every control out on one row. Neither
+   holds up under ~768px: the header row has no wrap/overflow handling and
+   the sidebar has no overlay mode (sidebar-toggle only shrinks it to 0
+   width, it never becomes a drawer), so content gets squeezed instead of
+   reflowing. This section makes both degrade gracefully instead of
+   redesigning what's shown. */
+@media (max-width: 768px) {
+  .header { flex-wrap: wrap; row-gap: 8px; padding: 10px 12px; }
+  .header .actions { flex-wrap: wrap; margin-left: 0; width: 100%; }
+  .sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;
+             box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
+  /* sidebar-toggle's left is also set inline by _syncToggleBtn() (state.js)
+     to '268px' when the sidebar is open, assuming it pushes .main over.
+     On mobile the sidebar overlays instead, so .main never moves -- pin
+     the toggle at its collapsed position regardless of that inline style. */
+  .sidebar-toggle { left: 12px !important; }
+}
+@media (max-width: 480px) {
+  .messages { padding: 12px; }
+  .header h1 { font-size: 16px; }
+}
 .messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; }
 .messages { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px; overscroll-behavior: contain;
             scrollbar-width: thin; scrollbar-color: #333 transparent; }

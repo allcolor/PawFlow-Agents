@@ -11,7 +11,7 @@ function _showEditLimitsDialog(taskId) {
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:var(--pf-shadow);z-index:9999;display:flex;align-items:center;justify-content:center;';
 
     const panel = document.createElement('div');
-    panel.style.cssText = 'background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:8px;padding:20px;min-width:340px;max-width:420px;color:var(--pf-text);';
+    panel.style.cssText = 'background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:8px;padding:20px;min-width:min(340px, calc(100vw - 32px));max-width:min(420px, calc(100vw - 32px));color:var(--pf-text);';
     const _f = (id, label, val, ph) => `<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--pf-muted);">${label}</label><input id="${id}" value="${val||''}" placeholder="${ph}" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
     panel.innerHTML = `<div style="font-weight:bold;margin-bottom:12px;">${escapeHtml(t('editLimitsTitle', { id: taskId }))}</div>`
       + _f('el-budget', t('maxBudget'), task.max_budget || '', '$5.00')

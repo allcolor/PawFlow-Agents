@@ -157,7 +157,7 @@ function convRollbackDialog(cid) {
     overlay.className = 'git-dialog-overlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;';
     const dialog = document.createElement('div');
-    dialog.style.cssText = 'background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:20px;min-width:500px;max-width:700px;max-height:70vh;display:flex;flex-direction:column;';
+    dialog.style.cssText = 'background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:20px;min-width:min(500px, calc(100vw - 32px));max-width:min(700px, calc(100vw - 32px));max-height:70vh;display:flex;flex-direction:column;';
 
     let html = '<div style="font-size:14px;font-weight:600;color:#e0e0e0;margin-bottom:12px;">' + escapeHtml(t('rollbackConversation')) + (data.branch ? ' (' + escapeHtml(data.branch) + ')' : '') + '</div>';
     html += '<div style="overflow-y:auto;flex:1;margin-bottom:12px;">';
@@ -226,7 +226,7 @@ function _showGitDialog(title, items, onSelect) {
   overlay.className = 'git-dialog-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;';
   const dialog = document.createElement('div');
-  dialog.style.cssText = 'background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:20px;min-width:300px;max-width:400px;';
+  dialog.style.cssText = 'background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:20px;min-width:min(300px, calc(100vw - 32px));max-width:min(400px, calc(100vw - 32px));';
   let html = '<div style="font-size:14px;font-weight:600;color:#e0e0e0;margin-bottom:12px;">' + escapeHtml(title) + '</div>';
   for (const it of items) {
     const dis = it.disabled ? ' style="color:#555;cursor:default;"' : '';

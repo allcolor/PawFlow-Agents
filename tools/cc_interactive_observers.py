@@ -9,10 +9,10 @@ import zlib
 
 try:
     from cc_interactive_filters import (
-        is_hidden_native_tool, normalize_observed_tool, observed_tool_origin)
+        normalize_observed_tool, observed_tool_origin)
 except ImportError:  # Unit tests import this file as tools.cc_interactive_proxy.
     from tools.cc_interactive_filters import (
-        is_hidden_native_tool, normalize_observed_tool, observed_tool_origin)
+        normalize_observed_tool, observed_tool_origin)
 
 try:  # standalone (/opt/pawflow on path) vs package (tools.cc_interactive_common)
     from cc_interactive_common import (  # noqa: F401
@@ -76,19 +76,16 @@ class SSEObserver:
                 f"event={event_name} payload_type={type(payload).__name__}")
         EVENTS.emit(ev)
 
-def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
-                               hidden_tool_use_ids: set[str] | None = None) -> set[str]:
-    hidden_tool_use_ids = hidden_tool_use_ids or set()
-    newly_hidden: set[str] = set()
+def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
     if not path.startswith("/v1/messages"):
-        return newly_hidden
+        return
     try:
         payload = json.loads(body.decode("utf-8"))
     except Exception:
-        return newly_hidden
+        return
     messages = payload.get("messages") or []
     if not isinstance(messages, list):
-        return newly_hidden
+        return
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -107,10 +104,6 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
                 args = block.get("input") or {}
                 tool_name = block.get("name", "")
                 display_name, display_args = normalize_observed_tool(tool_name, args)
-                if (is_hidden_native_tool(tool_name, args if isinstance(args, dict) else {})
-                        or is_hidden_native_tool(display_name, display_args)):
-                    newly_hidden.add(tool_use_id)
-                    continue
                 _log(
                     f"emit tool_use request={request_id} path={path} "
                     f"tool_use_id={tool_use_id} name={display_name}")
@@ -127,8 +120,6 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
                 tool_use_id = block.get("tool_use_id") or block.get("id") or ""
                 if not tool_use_id:
                     continue
-                if tool_use_id in hidden_tool_use_ids or tool_use_id in newly_hidden:
-                    continue
                 result = _content_text(block.get("content"))
                 _log(
                     f"emit tool_result request={request_id} path={path} "
@@ -142,13 +133,11 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes,
                     "content": result,
                     "is_error": bool(block.get("is_error")),
                 })
-    return newly_hidden
 
 class HTTPRequestObserver:
     def __init__(self, tracker: HTTPExchangeTracker):
         self.tracker = tracker
         self.buf = b""
-        self.hidden_tool_use_ids: set[str] = set()
 
     def feed(self, data: bytes):
         self.buf += data
@@ -189,8 +178,7 @@ class HTTPRequestObserver:
                 "body_bytes": len(body),
                 "ignore_reason": reason,
             })
-            self.hidden_tool_use_ids.update(
-                _emit_observed_tool_blocks(request_id, path, body, self.hidden_tool_use_ids))
+            _emit_observed_tool_blocks(request_id, path, body)
 
 class ChunkedBodyObserver:
     def __init__(self, observer: SSEObserver):

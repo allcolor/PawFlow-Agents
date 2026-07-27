@@ -895,7 +895,14 @@ def test_turn_coordinator_observed_tool_use_unblocks_result_before_sse_stop():
     ]
 
 
-def test_turn_coordinator_hides_bootstrap_native_tools():
+def test_turn_coordinator_emits_bootstrap_native_tools():
+    """The stream path filters nothing either -- native calls and their results.
+
+    Mirror of the proxy-side test: the coordinator used to swallow Claude
+    Code's own bootstrap/discovery calls, so a turn that opened by reading its
+    context rendered an empty technical-details block and the transcript kept
+    no trace of the tool call at all.
+    """
     events = [
         _sse("content_block_start", {
             "type": "content_block_start",
@@ -933,7 +940,17 @@ def test_turn_coordinator_hides_bootstrap_native_tools():
         block_callback=lambda event_type, payload: blocks.append((event_type, payload)),
     ).run()
 
-    assert blocks == []
+    assert [(kind, payload.get("name") or payload.get("tool"))
+            for kind, payload in blocks] == [
+        ("tool_use", "Read"),
+        ("tool_result", "Read"),
+        ("tool_use", "ToolSearch"),
+        ("tool_result", "ToolSearch"),
+    ]
+    assert blocks[0][1]["arguments"] == {
+        "file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md"}
+    assert blocks[0][1]["tool_origin"] == "native"
+    assert blocks[1][1]["result"] == "context"
 
 
 def test_turn_coordinator_accepts_stop_hook_as_lifecycle_end():

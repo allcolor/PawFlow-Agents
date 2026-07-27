@@ -265,7 +265,16 @@ def test_request_observer_unwraps_use_tool_arguments_json_string(monkeypatch):
     }
 
 
-def test_request_observer_hides_bootstrap_native_tools(monkeypatch):
+def test_request_observer_emits_bootstrap_native_tools(monkeypatch):
+    """Every observed tool call reaches the transcript -- native ones included.
+
+    The proxy used to drop Claude Code's own bootstrap/discovery calls (the
+    `Read` of `.pawflow_cci/initial_context.md`, `ToolSearch`, `GetSchema`) on
+    the grounds that they were noise. They are not: a turn that opens by
+    reading its context showed an empty technical-details block, and the user
+    could not tell a suppressed call from a lost one. Nothing is filtered now
+    -- what the agent did is what the transcript shows.
+    """
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")
     events = []
@@ -300,19 +309,18 @@ def test_request_observer_hides_bootstrap_native_tools(monkeypatch):
 
     proxy.HTTPRequestObserver(proxy.HTTPExchangeTracker("r1")).feed(chunk)
 
-    assert [event["type"] for event in events] == ["request_start"]
-
-
-def test_hidden_native_tool_filter_matches_only_bootstrap_read():
-    from tools.cc_interactive_filters import is_hidden_native_tool
-
-    assert is_hidden_native_tool("GetSchema", {}) is True
-    assert is_hidden_native_tool("ToolSearch", {}) is True
-    assert is_hidden_native_tool(
-        "Read", {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md"}) is True
-    assert is_hidden_native_tool(
-        "Read", {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md.bak"}) is False
-    assert is_hidden_native_tool("Bash", {"command": "git status"}) is False
+    assert [event["type"] for event in events] == [
+        "request_start", "tool_use", "tool_result", "tool_use"]
+    # The bootstrap Read is a first-class tool call, badged native.
+    assert events[1]["name"] == "Read"
+    assert events[1]["tool_origin"] == "native"
+    assert events[1]["arguments"] == {
+        "file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md"}
+    # Its result must survive too: suppressing the call used to suppress the
+    # result with it, via the hidden-id set.
+    assert events[2]["tool_use_id"] == "toolu_1"
+    assert events[2]["content"] == "initial context"
+    assert events[3]["name"] == "ToolSearch"
 
 
 def test_observed_tool_origin_classifies_mcp_wrappers_vs_native():

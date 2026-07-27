@@ -17,7 +17,7 @@ import uuid
 
 from core.tool_json import parse_tool_arguments, tool_argument_parse_error
 from tools.cc_interactive_filters import (
-    is_hidden_native_tool, normalize_observed_tool, observed_tool_origin)
+    normalize_observed_tool, observed_tool_origin)
 
 logger = logging.getLogger(__name__)
 
@@ -299,7 +299,6 @@ class _CCITurnCoordinator:
                         "name": block.get("name", ""),
                         "json": "",
                         "emitted": False,
-                        "hidden": False,
                     }
                     self.tool_blocks[idx] = block_state
                     self.tool_by_id[block_state["id"]] = block_state
@@ -507,19 +506,14 @@ class _CCITurnCoordinator:
             logger.warning(
                 "[cci-args-debug] STREAM empty args: raw_name=%r raw_json=%r display_name=%r",
                 block.get("name", ""), (raw or "")[:400], display_name)
-        block["hidden"] = (
-            is_hidden_native_tool(block.get("name", ""), args)
-            or is_hidden_native_tool(display_name, display_args)
-        )
         block["emitted"] = True
         if tool_id in self.emitted_tool_use_ids:
             self._emit_pending_tool_results(tool_id)
             return
         self.emitted_tool_use_ids.add(tool_id)
-        if not block.get("hidden"):
-            self._remember_turn_tool_call(tool_id, display_name, display_args)
+        self._remember_turn_tool_call(tool_id, display_name, display_args)
         block["tool_origin"] = observed_tool_origin(block.get("name", ""))
-        if self.block_callback and not block.get("hidden"):
+        if self.block_callback:
             self.block_callback("tool_use", {
                 "id": tool_id,
                 "name": display_name,
@@ -556,7 +550,6 @@ class _CCITurnCoordinator:
                 "name": event.get("name", ""),
                 "json": json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False),
                 "emitted": False,
-                "hidden": is_hidden_native_tool(event.get("name", ""), args if isinstance(args, dict) else {}),
             }
             self.tool_by_id[tc_id] = block
         if block.get("emitted") or tc_id in self.emitted_tool_use_ids:
@@ -575,10 +568,6 @@ class _CCITurnCoordinator:
                 block.get("name", ""),
                 {k: event.get(k) for k in ("name", "arguments", "input", "tool_input")},
                 (block.get("json") or "")[:400], display_name)
-        block["hidden"] = (
-            is_hidden_native_tool(block.get("name", ""), args)
-            or is_hidden_native_tool(display_name, display_args)
-        )
         # Prefer the MITM's tool_origin field (computed from the RAW name before
         # unwrapping). Fall back to classifying the observed name: native tools
         # keep their own name (-> native); MCP wrappers are unwrapped to a
@@ -586,15 +575,14 @@ class _CCITurnCoordinator:
         block["tool_origin"] = (
             event.get("tool_origin", "")
             or observed_tool_origin(block.get("name", "")))
-        if self.block_callback and not block.get("hidden"):
+        if self.block_callback:
             self.block_callback("tool_use", {
                 "id": tc_id,
                 "name": display_name,
                 "arguments": display_args,
                 "tool_origin": block["tool_origin"],
             })
-        if not block.get("hidden"):
-            self._remember_turn_tool_call(tc_id, display_name, display_args)
+        self._remember_turn_tool_call(tc_id, display_name, display_args)
         self._emit_pending_tool_results(tc_id)
 
     def _remember_turn_tool_call(self, tc_id: str, name: str, args: dict) -> None:
@@ -626,12 +614,11 @@ class _CCITurnCoordinator:
             return
         self.emitted_tool_result_ids.add(tc_id)
         result = event.get("content", "") or "(no output)"
-        if not block.get("hidden"):
-            for tc in self.turn_tool_calls:
-                if tc.get("id") == tc_id:
-                    tc["result"] = result
-                    break
-        if self.block_callback and not block.get("hidden"):
+        for tc in self.turn_tool_calls:
+            if tc.get("id") == tc_id:
+                tc["result"] = result
+                break
+        if self.block_callback:
             display_name = block.get("display_name") or block.get("name", "")
             self.block_callback("tool_result", {
                 "tc_id": tc_id,

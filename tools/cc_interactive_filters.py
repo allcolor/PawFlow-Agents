@@ -86,15 +86,3 @@ def observed_tool_origin(name: str) -> str:
     if raw_name in _USE_TOOL_WRAPPERS or raw_name in _SCHEMA_WRAPPERS:
         return "mcp"
     return "native"
-
-
-def is_hidden_native_tool(name: str, args: dict) -> bool:
-    """Hide Claude Code bootstrap/discovery tools from PawFlow transcripts."""
-    tool = (name or "").lower().replace("_", "")
-    if tool in {"getschema", "toolsearch", "toolschema", "listtools"}:
-        return True
-    if tool == "read":
-        path = str(args.get("file_path") or args.get("path") or "")
-        normalized = path.replace("\\", "/")
-        return normalized.endswith("/.pawflow_cci/initial_context.md")
-    return False

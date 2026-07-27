@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Claude Code's native tool calls are no longer hidden from the transcript.**
+  The proxy and the turn coordinator both dropped the provider's own
+  bootstrap/discovery calls — `GetSchema`, `ToolSearch`, and the `Read` of
+  `.pawflow_cci/initial_context.md` — along with their results. It was meant to
+  spare the transcript some noise, but it made a turn that opens by reading its
+  own context render an empty technical-details block, and left no way to tell
+  a deliberately suppressed call from a lost one — precisely the question a
+  transcript exists to answer. The `is_hidden_native_tool` predicate and the
+  whole `hidden` plumbing behind it (the observer's hidden-id set, the four
+  `not block.get("hidden")` guards) are gone rather than neutralized: what the
+  agent did is what the transcript shows.
+
 ## [1.0.0-beta.34] — 2026-07-27
 
 ### Fixed

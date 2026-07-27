@@ -130,9 +130,14 @@ The provider assembles responses from those events:
 - `tool_use` blocks and `input_json_delta` are emitted as live observed tool
   events for display/persistence only. PawFlow never re-executes them; Claude
   Code already ran those tools inside its own session.
-- Bootstrap/discovery native tools are hidden from the PawFlow transcript:
-  `GetSchema`, `ToolSearch`, compatible schema-list aliases, and Claude Code's
-  `Read` of `.pawflow_cci/initial_context.md`.
+- **No tool call is filtered.** Every observed call is emitted and persisted,
+  native ones included — `GetSchema`, `ToolSearch`, and Claude Code's `Read` of
+  `.pawflow_cci/initial_context.md` among them. These were once suppressed as
+  bootstrap noise; the cost was worse than the noise. A turn that opened by
+  reading its own context showed an empty technical-details block, and nothing
+  distinguished a deliberately hidden call from a lost one — which is exactly
+  the question the transcript exists to answer. What the agent did is what the
+  transcript shows.
 - Outgoing `/v1/messages` request bodies are observed for both assistant
   `tool_use` blocks and user `tool_result` blocks. This preserves live ordering
   even when a response-side tool block is delayed or missed; provider events are

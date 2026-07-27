@@ -27,7 +27,7 @@ Editing preference: use `apply_patch` for patch-shaped changes and `batch_edit` 
 |---|---|
 | `read` | Read a file through the active filesystem/relay; use `mode="outline"` for compact code structure with bodies stubbed. |
 | `write` | Write a file. |
-| `edit` | Exact string or line-based file edit. Exact unique replacements no longer require a prior read; whitespace drift is tolerated, and `fuzzy=true` enables one high-confidence fuzzy match. |
+| `edit` | Exact string or line-based file edit. Exact unique replacements no longer require a prior read; whitespace drift is tolerated, and `fuzzy=true` enables one high-confidence fuzzy match. The returned diff is computed from the file before/after the write — it reports what was written, so a successful edit never needs a verification read. |
 | `batch_edit` | Apply multiple replacements atomically across files, with aggregate replacement totals. |
 | `apply_patch` | Apply a unified diff or `*** Begin Patch` block. `path` is optional when the patch contains file paths. |
 | `find_replace` | Regex find/replace. `multiline=true` enables `^`/`$` line-boundary matching. |

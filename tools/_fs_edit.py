@@ -118,6 +118,76 @@ def _apply_replacements(text: str, matches: List[Dict[str, Any]],
     return "".join(out)
 
 
+_DIFF_MAX_ROWS = 200
+
+
+def _build_diff(old_text: str, new_text: str,
+                context: int = 3) -> List[Dict[str, Any]]:
+    """Line diff of what was ACTUALLY written, +/-context lines around changes.
+
+    Derived from the two file texts, never from old_string/new_string. Building
+    it from the operands was wrong in three ways at once, and all three showed
+    correct edits as mangled ones:
+
+    - A match may start or end mid-line. Rendering the operands marked the
+      WHOLE line removed and printed only the replacement fragment, so the
+      untouched remainder of that line appeared nowhere -- it looked deleted
+      when it had never moved.
+    - Added rows were appended after the entire context window instead of
+      sitting at the replacement point, which read as code jumping downwards.
+    - Added rows were numbered `line_num + j`, i.e. as if the new text had the
+      same line count as the old one, and trailing context kept its pre-edit
+      numbering.
+
+    Removed rows carry their number in the OLD file, added and context rows
+    theirs in the NEW file -- the removed lines do not exist in the result.
+    Every changed region is reported, not just the first: `replace_all` used to
+    announce N replacements while showing one.
+    """
+    import difflib
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+    matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    rows: List[Dict[str, Any]] = []
+    truncated = False
+
+    def _push(line: int, text: str, kind: str) -> bool:
+        """Append a row; False once the cap is reached.
+
+        The cap is enforced here rather than between opcodes: a single
+        `replace` opcode can span thousands of lines, and a check that only
+        runs between opcodes never fires inside one.
+        """
+        if len(rows) >= _DIFF_MAX_ROWS:
+            return False
+        rows.append({"line": line, "text": text, "type": kind})
+        return True
+
+    for group in matcher.get_grouped_opcodes(context):
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                spans = [(range(j1, j2), new_lines, "context")]
+            else:
+                spans = [(range(i1, i2), old_lines, "remove"),
+                         (range(j1, j2), new_lines, "add")]
+            for indices, source, kind in spans:
+                for k in indices:
+                    if not _push(k + 1, source[k], kind):
+                        truncated = True
+                        break
+                if truncated:
+                    break
+            if truncated:
+                break
+        if truncated:
+            break
+    if truncated:
+        # Never let a bounded view read as a complete one.
+        rows.append({"line": 0, "type": "context",
+                     "text": f"... diff truncated at {_DIFF_MAX_ROWS} rows"})
+    return rows
+
+
 def _diagnose_edit_mismatch(old_string: str, text: str, filename: str) -> str:
     """Build an actionable error message explaining WHY old_string doesn't match.
 
@@ -281,29 +351,15 @@ def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     if replace_all and any(m["kind"] == "fuzzy" for m in matches):
         raise ValueError("fuzzy replace_all is not supported; make the match exact or use one edit per occurrence")
 
-    # Build diff context (±3 lines around the first replacement)
-    lines = text.splitlines(True)
-    diff_lines = []
     first_match = matches[0]
-    matched_old = first_match["actual"]
-    old_lines = matched_old.splitlines(True)
-    new_lines = new_string.splitlines(True)
-    # Find line number of first occurrence
     pos = first_match["start"]
     line_num = text[:pos].count("\n") + 1 if pos >= 0 else 0
-    ctx_start = max(0, line_num - 4)
-    ctx_end = min(len(lines), line_num + len(old_lines) + 3)
-    for i in range(ctx_start, min(ctx_end, len(lines))):
-        in_old = line_num - 1 <= i < line_num - 1 + len(old_lines)
-        diff_lines.append({"line": i + 1, "text": lines[i].rstrip("\n\r"),
-                           "type": "remove" if in_old else "context"})
-    for j, nl in enumerate(new_lines):
-        diff_lines.append({"line": line_num + j, "text": nl.rstrip("\n\r"),
-                           "type": "add"})
 
-    # Apply replacement
+    # Apply replacement, then diff the before/after texts. Order matters: the
+    # diff must describe what was written, not what we intended to write.
     new_text = _apply_replacements(text, matches, new_string, bool(replace_all))
     p.write_text(new_text, encoding="utf-8")
+    diff_lines = _build_diff(text, new_text)
     return {
         "replacements": count if replace_all else 1,
         "path": _rel(path, root_dir),

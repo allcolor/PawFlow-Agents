@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `edit` tool reported diffs that did not match what it wrote.** The diff
+  was assembled from `old_string`/`new_string` *before* the write, so it
+  described the intent rather than the result — and it was wrong three ways at
+  once. A match starting or ending mid-line marked the WHOLE line removed and
+  printed only the replacement fragment, so the untouched remainder of that
+  line appeared deleted when it had never moved. Added rows were appended after
+  the entire context window instead of sitting at the replacement point, which
+  read as code jumping downwards. Added rows were numbered as if the new text
+  had the same line count as the old one, and trailing context kept its
+  pre-edit numbering. On top of that, `replace_all` announced N replacements
+  while showing only the first. The file on disk was always correct — only the
+  report lied — but it cost a verification read after edits that were fine.
+  The diff is now derived from the before/after texts (`difflib`, grouped
+  opcodes, ±3 lines), covers every changed region, and announces truncation
+  instead of silently capping.
+
 ### Changed
 
 - **Claude Code's native tool calls are no longer hidden from the transcript.**

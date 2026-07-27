@@ -185,9 +185,9 @@ class ClaudeCodeSessionMixin:
                 pool_index, bool(_new_at), _new_exp)
             _drop_dead_slot("refresh returned invalid token")
             return False
-        _persist_tokens_to_service(
-            _new_at, _new_rt, _new_exp,
-            service_id=svc_id, pool_index=pool_index, user_id=uid, conv_id=cid)
+        # _refresh_oauth_token_coordinated already persisted these (or
+        # adopted a peer's already-persisted rotation) while still holding
+        # the slot lock -- do not persist again here.
         logger.info("[force-refresh] pool[%d] access_token renewed", pool_index)
         return True
 
@@ -257,13 +257,17 @@ class ClaudeCodeSessionMixin:
                                          user_id: str, conv_id: str) -> dict:
         """Serialized, idempotent refresh of one pool slot's single-use token.
 
-        Holds the per-slot lock so two sessions sharing the slot can't both
-        POST the same refresh_token (the second would get invalid_grant and
-        drop a credential the first just rotated). After acquiring the lock
-        we re-read the pool: if a peer already rotated this slot, the
-        freshly-persisted token is returned with NO network call — so the
-        caller never sees a spurious OAuthRejectedError for a token that was
-        consumed by a concurrent, successful refresh.
+        Holds the per-slot lock for the network call AND the persist, not
+        just the network call: an earlier version released the lock right
+        after POSTing, before the caller persisted the new tokens. A peer
+        waiting on the same lock could then acquire it, read the pool
+        (still showing the OLD, now-consumed refresh_token, since the
+        winner hadn't written yet), fail to detect the rotation, and
+        re-POST that already-used token -- getting a genuine invalid_grant
+        from Anthropic and dropping the credential, even though nothing
+        was actually wrong. Persisting before releasing the lock closes
+        that window: the next peer to acquire it always sees the
+        already-rotated, already-persisted token.
         """
         lock = self._slot_refresh_lock(service_id, pool_index)
         with lock:
@@ -282,7 +286,12 @@ class ClaudeCodeSessionMixin:
                         "refresh_token": slot.get("refresh_token", ""),
                         "expires_at": slot.get("expires_at", 0),
                     }
-            return self._refresh_oauth_token(refresh_token)
+            tokens = self._refresh_oauth_token(refresh_token)
+            _persist_tokens_to_service(
+                tokens["access_token"], tokens.get("refresh_token", refresh_token),
+                int(tokens["expires_at"]), service_id=service_id,
+                pool_index=pool_index, user_id=user_id, conv_id=conv_id)
+            return tokens
 
     def _get_session_workdir(self, conversation_id: str,
                              agent_name: str = "",
@@ -556,10 +565,9 @@ class ClaudeCodeSessionMixin:
                         access_token = new_tokens["access_token"]
                         refresh_token = new_tokens.get("refresh_token", refresh_token)
                         expires_at = new_tokens["expires_at"]
-                        _persist_tokens_to_service(
-                            access_token, refresh_token, int(expires_at),
-                            service_id=svc_id, pool_index=_pidx,
-                            user_id=uid, conv_id=cid)
+                        # _refresh_oauth_token_coordinated already persisted these
+                        # (or adopted a peer's already-persisted rotation) while
+                        # still holding the slot lock -- do not persist again here.
                         pool[_pidx]["access_token"] = access_token
                         pool[_pidx]["refresh_token"] = refresh_token
                         pool[_pidx]["expires_at"] = int(expires_at)

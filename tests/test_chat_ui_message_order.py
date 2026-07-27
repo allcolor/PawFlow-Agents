@@ -48,9 +48,10 @@ def test_client_unwrap_reads_arguments_json_like_server():
 def test_add_msg_inserts_by_message_timestamp():
     """Late SSE tool events must not render after newer assistant text."""
     assert "function _messageSortTs(extra)" in MESSAGES_JS
-    assert "function _insertMessageChronologically(container, el, sortTs)" in MESSAGES_JS
+    assert "function _hasRealSortTs(extra)" in MESSAGES_JS
+    assert "function _insertMessageChronologically(container, el, sortTs, hasRealTs)" in MESSAGES_JS
     assert "childTs > sortTs" in MESSAGES_JS
-    assert "_insertMessageChronologically(container, el, _ts)" in MESSAGES_JS
+    assert "_insertMessageChronologically(container, el, _ts, _hasRealSortTs(extra))" in MESSAGES_JS
 
 
 def test_send_ignores_technical_ack_body():
@@ -75,7 +76,41 @@ def test_chat_bootstrap_auto_resumes_first_conversation_after_login():
 
 def test_notification_rows_use_same_ordering_path():
     assert "const notifSortTs = _messageSortTs(extra);" in MESSAGES_JS
-    assert "_insertMessageChronologically(notifContainer, notifEl, notifSortTs)" in MESSAGES_JS
+    assert "_insertMessageChronologically(notifContainer, notifEl, notifSortTs, _hasRealSortTs(extra));" in MESSAGES_JS
+
+
+def test_chronological_insert_never_compares_across_clock_domains():
+    # A locally-guessed timestamp (browser Date.now() fallback, used before a
+    # server round-trip confirms the real one — e.g. the optimistic user-echo
+    # bubble, or a streaming placeholder's first token) must never be treated
+    # as a valid insertion point in either direction: content rendered live in
+    # this tab is already in correct order by construction (the JS event loop
+    # processes SSE events in true arrival order), so timestamp comparison is
+    # only legitimate between two genuine, server-authoritative timestamps.
+    # Regression: mixing the browser clock and the server clock for sort order
+    # made a thinking block (real server ts, stamped by conversation_event_bus)
+    # land ABOVE the user message that triggered it whenever the two clocks
+    # disagreed by even a fixed, constant offset — deterministic on every turn,
+    # not just an occasional race.
+    fn = MESSAGES_JS[
+        MESSAGES_JS.index("function _insertMessageChronologically"):
+        MESSAGES_JS.index("window.PAWFLOW_GROUP_TECHNICAL_MESSAGES")]
+    assert "if (hasRealTs) el.dataset.sortTsReal = '1';" in fn
+    assert "if (hasRealTs) {" in fn
+    assert "if (!child.dataset || child.dataset.sortTsReal !== '1') continue;" in fn
+    # The comparison loop (and hence any possibility of landing above older
+    # content) must be gated on hasRealTs — a fallback-timestamped element
+    # always falls through to a plain append at the true end.
+    assert fn.index("if (hasRealTs) {") < fn.index("container.insertBefore(el, child);")
+
+
+def test_thinking_block_insertion_flags_real_server_timestamp():
+    # data.ts on thinking_delta/thinking_content is stamped by
+    # conversation_event_bus.py with the server's own clock — a genuine,
+    # comparable timestamp — so it must be passed through _hasRealSortTs,
+    # not silently treated as a local guess.
+    assert "const _hasRealTs = (typeof _hasRealSortTs === 'function') && _hasRealSortTs(data);" in SSE_JS
+    assert "_insertMessageChronologically(_msgContainer, details, _sortTs, _hasRealTs);" in SSE_JS
 
 
 def test_technical_grouping_is_expression_driven_and_post_rendered():

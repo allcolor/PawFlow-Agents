@@ -135,7 +135,7 @@ function _promptTargetOwner(title) {
     overlay.id = 'targetOwnerOverlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:10001;';
     const panel = document.createElement('div');
-    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:380px;border:1px solid var(--pf-border);';
+    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:380px;max-width:calc(100vw - 32px);border:1px solid var(--pf-border);';
     panel.innerHTML = '<h3 style="margin:0 0 12px;color:var(--pf-text);font-size:14px;">' + escapeHtml(title || t('targetOwner')) + '</h3>'
       + '<select id="target-owner-pick" style="' + _svcInputStyle + '"><option value="">' + escapeHtml(t('targetOwnerSelf')) + '</option></select>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">'

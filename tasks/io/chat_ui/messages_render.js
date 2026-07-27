@@ -94,7 +94,7 @@ function addMsg(role, text, extra) {
     );
     const notifContainer = document.getElementById('messages');
     const notifShouldScroll = isNearBottom();
-    _insertMessageChronologically(notifContainer, notifEl, notifSortTs);
+    _insertMessageChronologically(notifContainer, notifEl, notifSortTs, _hasRealSortTs(extra));
     trimLiveDisplayWindowIfAutoscrolling(notifShouldScroll);
     scrollBottom(notifShouldScroll);
     return notifEl;
@@ -417,7 +417,7 @@ function addMsg(role, text, extra) {
   // Check near-bottom BEFORE appending so new element doesn't shift the threshold
   const shouldScroll = isNearBottom();
   const container = document.getElementById('messages');
-  _insertMessageChronologically(container, el, _ts);
+  _insertMessageChronologically(container, el, _ts, _hasRealSortTs(extra));
   trimLiveDisplayWindowIfAutoscrolling(shouldScroll);
   scrollBottom(shouldScroll);
   // Syntax highlighting via highlight.js (if loaded)

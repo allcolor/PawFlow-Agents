@@ -243,15 +243,28 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                                 st.m.is_error = True
                                 st._err_mid = st.m.msg_id
                                 break
+                    st._err_created_new = False
                     if not st._err_mid and st._err_text:
                         # No assistant error message exists — create one.
+                        # display_only=True: this synthetic text (e.g. "LLM
+                        # call failed: credentials expired") is an internal
+                        # failure notice, not something the model said or
+                        # should ever see again. Visible in the transcript
+                        # for the user (same as sub_agent_trace/nudges), but
+                        # excluded from LLM context on every future turn --
+                        # _deserialize_messages already filters display_only
+                        # for exactly this purpose. Without it, the next
+                        # turn's context would include a fake prior
+                        # assistant reply admitting a technical failure.
                         st._err_msg = LLMMessage(
                             role="assistant", content=st._err_text,
-                            is_error=True, source=st._agent_source(),
+                            is_error=True, display_only=True,
+                            source=st._agent_source(),
                             conversation_id=st.conversation_id)
                         st.new_messages.append(st._err_msg)
                         st.messages.append(st._err_msg)
                         st._err_mid = st._err_msg.msg_id
+                        st._err_created_new = True
 
 
                 if st._fatal_error:
@@ -260,8 +273,11 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     if st._err_mid and st.use_conv_store and st.conversation_id:
                         try:
                             from core.conversation_store import ConversationStore
+                            st._err_patch = {"is_error": True}
+                            if st._err_created_new:
+                                st._err_patch["display_only"] = True
                             ConversationStore.instance().patch_message(
-                                st.conversation_id, st._err_mid, is_error=True)
+                                st.conversation_id, st._err_mid, **st._err_patch)
                         except Exception:
                             logger.debug("exception suppressed", exc_info=True)
                     break

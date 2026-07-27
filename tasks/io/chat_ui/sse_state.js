@@ -265,8 +265,9 @@ function renderThinkingContent(data, reconcileFinal) {
     if (!_placed) {
       const _msgContainer = document.getElementById('messages');
       const _sortTs = (typeof _messageSortTs === 'function') ? _messageSortTs(data) : Date.now() / 1000;
+      const _hasRealTs = (typeof _hasRealSortTs === 'function') && _hasRealSortTs(data);
       if (typeof _insertMessageChronologically === 'function') {
-        _insertMessageChronologically(_msgContainer, details, _sortTs);
+        _insertMessageChronologically(_msgContainer, details, _sortTs, _hasRealTs);
       } else {
         const _typingEl = document.getElementById('typing');
         if (_typingEl) _msgContainer.insertBefore(details, _typingEl);

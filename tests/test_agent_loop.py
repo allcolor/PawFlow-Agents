@@ -792,6 +792,11 @@ class TestAgentLoopTask(unittest.TestCase):
         assert history[-1]["role"] == "assistant"
         assert history[-1]["is_error"] is True
         assert "LLM call failed" in history[-1]["content"]
+        # display_only=True: this synthetic error text must never re-enter
+        # LLM context on a future turn (it's an internal failure notice, not
+        # something the assistant actually said) -- only visible in the
+        # transcript for the user, same guarantee as sub_agent_trace/nudges.
+        assert history[-1]["display_only"] is True
 
     @patch.object(LLMClient, 'complete')
     def test_multiple_tool_calls_in_one_response(self, mock_complete):

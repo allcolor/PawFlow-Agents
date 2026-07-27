@@ -554,9 +554,10 @@ body.desktop-fullscreen .tab-content.active iframe {
 .action-menu-btn { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
                     padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; }
 .action-menu-btn:hover { background: #e94560; color: white; }
-.action-menu { display: none; position: absolute; right: 0; top: 100%; margin-top: 4px;
+.action-menu { display: none; position: fixed; margin-top: 4px;
                background: #16213e; border: 1px solid #0f3460; border-radius: 8px;
-               min-width: 240px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); z-index: 200; padding: 4px 0; }
+               min-width: 240px; max-width: calc(100vw - 16px); box-shadow: 0 4px 16px rgba(0,0,0,0.5); z-index: 200; padding: 4px 0;
+               max-height: calc(100vh - 16px); overflow-y: auto; }
 .action-menu.open { display: block; }
 .action-menu-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
                      cursor: pointer; color: #c0c0d0; font-size: 13px; }

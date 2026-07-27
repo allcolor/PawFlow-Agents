@@ -300,6 +300,18 @@ function _sseWireB() {
         if (existMeta) existMeta.outerHTML = meta;
         else existingEl.insertAdjacentHTML('beforeend', meta);
       }
+      // The streaming placeholder was positioned at first-token time using
+      // the browser's local clock (no server ts is known yet — see addMsg's
+      // fallback in _messageSortTs). Now that the authoritative server ts
+      // has arrived, re-sort it into place; otherwise any client/server
+      // clock drift leaves it stuck wherever the local clock guessed,
+      // which can land it above older, correctly server-timestamped
+      // history instead of at the bottom where it belongs. Only reposition
+      // top-level messages — elements nested in a task/delegate block are
+      // already correctly placed by their container.
+      if (extra.ts && existingEl.parentNode && existingEl.parentNode.id === 'messages') {
+        _insertMessageChronologically(existingEl.parentNode, existingEl, Number(extra.ts), true);
+      }
     }
     clearStream(doneAgent);
     scrollBottom();
@@ -483,7 +495,14 @@ function _sseWireB() {
   eventSource.addEventListener('error_event', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    addMsg('error', data.message || t('unknownError'));
+    // data.ts is the server's real publish_event() timestamp -- stamped at
+    // the moment the error actually happened, BEFORE any event-bus buffering
+    // for a disconnected client. A buffered error can be replayed minutes
+    // (or longer) after the fact once a new SSE subscriber connects; without
+    // passing ts through, addMsg falls back to the browser's clock at
+    // *replay* time, making an already-resolved, long-past error render as
+    // if it just happened right now, with no relation to current activity.
+    addMsg('error', data.message || t('unknownError'), { ts: data.ts });
     // Error could be from any agent — clear the agent's stream + active interaction
     const errAgent = data.agent_name || '';
     _finalizeLiveToolCalls(errAgent, '[Error]');

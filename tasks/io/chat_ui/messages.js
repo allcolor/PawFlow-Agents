@@ -240,17 +240,41 @@ function _messageSortTs(extra) {
   return Number.isFinite(n) && n > 0 ? n : Date.now() / 1000;
 }
 
-function _insertMessageChronologically(container, el, sortTs) {
+// Whether `extra` carries a genuine, server-authoritative timestamp (as
+// opposed to _messageSortTs falling back to the browser's own clock).
+// Only real timestamps are safe to compare against each other — the
+// server clock and the browser clock are two different clock domains,
+// and content rendered live in this tab is already in correct order by
+// construction (the JS event loop processes it in true arrival order),
+// so it never needs — and must never get — a cross-clock comparison.
+function _hasRealSortTs(extra) {
+  const raw = extra && (extra.timestamp || extra.ts);
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0;
+}
+
+function _insertMessageChronologically(container, el, sortTs, hasRealTs) {
   if (!container) return;
   el.dataset.sortTs = String(sortTs);
+  if (hasRealTs) el.dataset.sortTsReal = '1';
+  else delete el.dataset.sortTsReal;
   const typingEl = document.getElementById('typing');
   const fallback = typingEl && typingEl.parentNode === container ? typingEl : null;
-  for (const child of Array.from(container.children)) {
-    if (child === fallback) break;
-    const childTs = Number(child.dataset && child.dataset.sortTs);
-    if (Number.isFinite(childTs) && childTs > sortTs) {
-      container.insertBefore(el, child);
-      return;
+  // Only ever compare real, server-timestamped content against other
+  // real, server-timestamped content. A locally-guessed timestamp
+  // (browser clock, no round-trip yet) is never a valid insertion point
+  // in either direction: it must not be jumped by a real timestamp that
+  // merely lands earlier due to clock skew, and it must not itself jump
+  // ahead of anything already rendered — live content is always last.
+  if (hasRealTs) {
+    for (const child of Array.from(container.children)) {
+      if (child === fallback) break;
+      if (!child.dataset || child.dataset.sortTsReal !== '1') continue;
+      const childTs = Number(child.dataset.sortTs);
+      if (Number.isFinite(childTs) && childTs > sortTs) {
+        container.insertBefore(el, child);
+        return;
+      }
     }
   }
   if (fallback) container.insertBefore(el, fallback);

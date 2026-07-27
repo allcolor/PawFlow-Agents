@@ -430,6 +430,16 @@ class StreamEmitter(AgentEmitter):
             "message": error_msg,
             "agent_name": self._agent_name or "",
             "conversation_id": self.conversation_id,
+            # Without these, AgentResultWaiter._on_event (used by the
+            # Telegram/API bridge to correlate the async error back to the
+            # blocking request) can't match this event to its pending turn
+            # and falls back to a fragile "single pending waiter for this
+            # conversation" guess -- which silently resolves to nothing
+            # useful whenever that's ambiguous, so callers like
+            # telegramSend never see the real error text.
+            "turn_id": self.ctx.get("request_msg_id") or "",
+            "request_msg_id": self.ctx.get("request_msg_id") or "",
+            "channel": self._channel or "web",
         })
 
     def on_overflow_retry(self, iteration: int) -> None:

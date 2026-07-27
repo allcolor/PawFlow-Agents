@@ -140,6 +140,9 @@ def test_setname_without_nickname_removes_existing_mapping():
 
 def test_conversation_title_and_message_search_handlers():
     store = MagicMock()
+    # Both handlers authorize through core.conversation_access first, which
+    # asks the store who owns the conversation before touching it.
+    store.resolve_owner.return_value = "alice"
     flowfile = FlowFile(content=b"")
 
     renamed = _handle_conv_core(

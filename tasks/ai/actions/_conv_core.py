@@ -11,8 +11,40 @@ from tasks.ai.actions._conv_base import (
 logger = logging.getLogger(__name__)
 
 
+def _authorize(conv_id, user_id, store, flowfile, require):
+    """Resolve ``user_id``'s access to ``conv_id``, or answer 404.
+
+    Returns ``(access, None)`` when authorized and ``(None, [flowfile])``
+    when not -- the rejection carries the same body an unknown
+    conversation_id gets, so these handlers never reveal that a conversation
+    exists but belongs to someone else.
+
+    ``store`` is passed through explicitly: the dispatcher hands each handler
+    a store, and authorizing against a different one than we then read from
+    would be a hole rather than a check.
+    """
+    from core.conversation_access import ConversationAccessError
+    try:
+        return require(conv_id, user_id, store=store), None
+    except ConversationAccessError:
+        flowfile.set_content(json.dumps(
+            {"error": "Conversation not found"}).encode())
+        flowfile.set_attribute("http.response.status", "404")
+        return None, [flowfile]
+
+
 def _handle_conv_core(self, action, body, store, user_id, flowfile):
-    """Conversation actions cluster: _conv_core. Returns result or _UNHANDLED."""
+    """Conversation actions cluster: _conv_core. Returns result or _UNHANDLED.
+
+    ``user_id`` is the authenticated requester (``http.auth.principal``).
+    Anything touching a specific conversation resolves it through
+    ``core.conversation_access`` first and then addresses storage with the
+    resolved owner's id -- for an unshared conversation the two are the same
+    id and the behavior is unchanged.
+    """
+    from core.conversation_access import (
+        require_owner, require_read, require_write,
+    )
     if action == "list_conversations":
         convs = store.list_conversations(user_id=user_id)
         # Override persisted status with real-time active agent state
@@ -48,6 +80,10 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        access, denied = _authorize(conv_id, user_id, store, flowfile,
+                                    require_read)
+        if denied:
+            return denied
 
         # Encrypted-and-locked: do not return ciphertext rows. Tell the client
         # to show the unlock banner instead of rendering enc: blobs.
@@ -63,8 +99,8 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         page = store.load_page(
-            conv_id, limit=limit, offset=offset, user_id=user_id,
-            before_msg_id=before_msg_id)
+            conv_id, limit=limit, offset=offset,
+            user_id=access.storage_user_id, before_msg_id=before_msg_id)
         if page is None:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -118,7 +154,12 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
         if not conv_id or not title:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or title"}).encode())
             return [flowfile]
-        store.set_extra(conv_id, "title", title, user_id=user_id)
+        access, denied = _authorize(conv_id, user_id, store, flowfile,
+                                    require_write)
+        if denied:
+            return denied
+        store.set_extra(conv_id, "title", title,
+                        user_id=access.storage_user_id)
         flowfile.set_content(json.dumps({"ok": True, "title": title}).encode())
         return [flowfile]
 
@@ -131,7 +172,11 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        messages = store.load(conv_id, user_id=user_id)
+        access, denied = _authorize(conv_id, user_id, store, flowfile,
+                                    require_read)
+        if denied:
+            return denied
+        messages = store.load(conv_id, user_id=access.storage_user_id)
         if messages is None:
             flowfile.set_content(json.dumps({
                 "error": "Conversation not found",
@@ -176,6 +221,12 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        # Workspace encryption is key management, not participation: it stays
+        # owner-only even on a shared conversation.
+        access, denied = _authorize(conv_id, user_id, store, flowfile,
+                                    require_owner)
+        if denied:
+            return denied
         session_id = flowfile.get_attribute("auth.session_id") or ""
         passphrase = body.get("passphrase", "") or ""
 
@@ -194,7 +245,7 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
                 meta = mgr.get_metadata(conv_id)
                 if meta and mgr._is_container_running(meta.get("container_id", "")):
                     mgr.destroy(conv_id)
-                    mgr.ensure(conv_id, user_id)
+                    mgr.ensure(conv_id, access.storage_user_id)
             except Exception:
                 logging.getLogger(__name__).debug("workspace relay respawn skipped", exc_info=True)
 
@@ -239,6 +290,12 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        # Same rule as the workspace variant above: a collaborator inherits
+        # the owner's unlock state, never the ability to change it.
+        _access, denied = _authorize(conv_id, user_id, store, flowfile,
+                                     require_owner)
+        if denied:
+            return denied
         session_id = flowfile.get_attribute("auth.session_id") or ""
         passphrase = body.get("passphrase", "") or ""
 
@@ -302,13 +359,18 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        # Owner-only by design: a collaborator leaves, they do not delete.
+        access, denied = _authorize(conv_id, user_id, store, flowfile,
+                                    require_owner)
+        if denied:
+            return denied
         # Collect file IDs from conversation before deleting
-        history = store.load(conv_id, user_id=user_id)
+        history = store.load(conv_id, user_id=access.storage_user_id)
         if history:
             self._cleanup_conversation_files(history)
         # Cascade cleanup: flows, dynamic tools, secrets
         self._cleanup_conversation_resources(conv_id)
-        deleted = store.delete(conv_id, user_id=user_id)
+        deleted = store.delete(conv_id, user_id=access.storage_user_id)
         logger.info(f"[action] delete_conversation {conv_id}: deleted={deleted}, "
                     f"user_id={user_id}")
         result = json.dumps({"deleted": deleted, "conversation_id": conv_id})
@@ -323,7 +385,11 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        _rs_msgs = store.load(conv_id, user_id=user_id)
+        access, denied = _authorize(conv_id, user_id, store, flowfile,
+                                    require_write)
+        if denied:
+            return denied
+        _rs_msgs = store.load(conv_id, user_id=access.storage_user_id)
         if not _rs_msgs:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -392,6 +458,10 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
         if not conv_id:
             flowfile.set_content(json.dumps({"new_messages": []}).encode())
             return [flowfile]
+        access, denied = _authorize(conv_id, user_id, store, flowfile,
+                                    require_read)
+        if denied:
+            return denied
         current_count = int(store.get_extra_snapshot(
             conv_id, "_meta_msg_count", last_count) or last_count)
         if current_count <= last_count:
@@ -404,7 +474,8 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
         if delta > 50:
             # Too many missed — client should just update count, not render all
             delta = 50
-        page = store.load_page(conv_id, limit=delta, offset=0, user_id=user_id)
+        page = store.load_page(conv_id, limit=delta, offset=0,
+                               user_id=access.storage_user_id)
         if page is None:
             flowfile.set_content(json.dumps({
                 "new_messages": [], "message_count": current_count,

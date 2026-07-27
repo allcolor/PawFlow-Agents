@@ -1,9 +1,10 @@
 # Conversation Sharing — Implementation Plan
 
-Status: **in progress** — Phase 1 (core primitive + data model,
-`core/conversation_access.py`) and Phase 2 (SSE authorization) are
-implemented; Phases 3-7 are still design only. Sharing itself is not
-reachable yet: there is no action to invite anyone.
+Status: **in progress** — Phases 1 (core primitive + data model,
+`core/conversation_access.py`), 2 (SSE authorization) and 3 (write-path
+actions) are implemented; Phases 4-7 are still design only. Sharing is
+reachable through the actions, but has no UI yet (Phase 7) and does not
+reach the channel bridges yet (Phase 4).
 
 ## Goal
 
@@ -386,14 +387,40 @@ best-effort owner map).
    `validate_auth`) is rejected too — an unauthenticated subscriber is
    precisely what this closes. Covered by
    `tests/test_sse_streaming.py::TestAgentSSEStreamAuthorization`.
-3. **Write-path actions** — `share_conversation`, `respond_to_share_invite`,
-   `list_collaborators`, `update_collaborator_role`, `kick_collaborator`,
-   `leave_conversation`, `list_shared_conversations`; swap
-   `_conv_core.py` call sites to `resolve_conversation_access`.
+3. ~~**Write-path actions**~~ — **done**. `tasks/ai/actions/_conv_sharing.py`
+   implements the seven actions above, wired into the `conversation.py`
+   dispatcher; every `_conv_core.py` action naming a conversation resolves
+   `require_read`/`require_write`/`require_owner` before touching it and then
+   addresses storage with `access.storage_user_id`. Covered by
+   `tests/test_conversation_sharing.py`. Notes on the shape it landed in:
+   - `resolve_conversation_access` and friends take an optional `store=`.
+     Action handlers are handed a store by the dispatcher; authorizing
+     against the singleton while reading from that store would be a hole,
+     not a check. Omitting it keeps the Phase 1 behavior (the singleton).
+   - A re-invite of an *accepted* collaborator only updates the role. Forcing
+     them back to `pending` (as the table above reads literally) would
+     silently revoke a live collaborator's access.
+   - `leave_conversation` sets `status="kicked"`, the same terminal state a
+     kick produces — there is no separate `left` status, so the audit trail
+     records that access ended, not who ended it.
+   - Authorization closed several pre-existing holes that had nothing to do
+     with sharing: `set_conv_title`, `conv_encrypt_*`, `relay_workspace_*`
+     and `poll` all resolved a conversation by id alone, so any logged-in
+     user knowing an id could rename someone else's conversation or change
+     its encryption state. See the CHANGELOG Security entry.
+   - **Still requester-partitioned, not collaborator-aware**: the actions in
+     `_conv_ops.py` / `_conv_tags_export.py` / `_conv_import.py` (export,
+     fork, tags, import). They pass the requester's `user_id` to storage, so
+     they are safe today — a stranger simply resolves to a directory that
+     does not exist — but a collaborator cannot export or fork a shared
+     conversation either. Folded into the Phase 5 audit rather than done
+     blind here.
 4. **`flow_runtime_access.py` integration** — channel bridges (Telegram et
    al.) honor collaborators through the same primitive.
 5. **`resource_store`/`server_relay_manager` audit** — enumerate and fix any
-   remaining owner-only assumption for conversation-scoped reads.
+   remaining owner-only assumption for conversation-scoped reads, plus the
+   `_conv_ops`/`_conv_tags_export`/`_conv_import` actions left
+   requester-partitioned by Phase 3 (export, fork, tags, import).
 6. **Owner reassignment** — directory-move-on-write path, tested with a
    deleted-owner fixture.
 7. **Frontend** — sidebar split, invite/share dialogs, author badges,

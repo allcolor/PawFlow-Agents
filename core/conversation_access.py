@@ -91,7 +91,15 @@ class ConversationAccess:
         return self.role in _WRITE_ROLES
 
 
-def _store():
+def _store(store=None):
+    """The store to resolve against: an explicit one, else the singleton.
+
+    Action handlers are handed a store by the dispatcher and must keep using
+    that one -- resolving the singleton behind their back would authorize
+    against a different set of conversations than the one they then read.
+    """
+    if store is not None:
+        return store
     from core.conversation_store import ConversationStore
     return ConversationStore.instance()
 
@@ -128,13 +136,13 @@ def _normalize_row(raw: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def get_collaborators(cid: str) -> List[Dict[str, Any]]:
+def get_collaborators(cid: str, *, store=None) -> List[Dict[str, Any]]:
     """The conversation's ACL rows (all statuses), normalized, never None."""
     cid = _clean(cid)
     if not cid:
         return []
     try:
-        raw = _store().get_extra(cid, COLLABORATORS_KEY, default=None)
+        raw = _store(store).get_extra(cid, COLLABORATORS_KEY, default=None)
     except Exception:
         logger.debug("collaborators read failed for %s", cid[:8], exc_info=True)
         return []
@@ -148,17 +156,19 @@ def get_collaborators(cid: str) -> List[Dict[str, Any]]:
     return rows
 
 
-def get_collaborator(cid: str, user_id: str) -> Optional[Dict[str, Any]]:
+def get_collaborator(cid: str, user_id: str, *,
+                     store=None) -> Optional[Dict[str, Any]]:
     user_id = _clean(user_id)
     if not user_id:
         return None
-    for row in get_collaborators(cid):
+    for row in get_collaborators(cid, store=store):
         if row["user_id"] == user_id:
             return row
     return None
 
 
-def set_collaborators(cid: str, rows: List[Dict[str, Any]]) -> bool:
+def set_collaborators(cid: str, rows: List[Dict[str, Any]], *,
+                      store=None) -> bool:
     """Replace the ACL wholesale and resync every affected reverse index."""
     cid = _clean(cid)
     if not cid:
@@ -169,17 +179,17 @@ def set_collaborators(cid: str, rows: List[Dict[str, Any]]) -> bool:
         if row is None:
             raise ValueError(f"Invalid collaborator row: {entry!r}")
         clean.append(row)
-    before = {row["user_id"] for row in get_collaborators(cid)}
-    if not _store().set_extra(cid, COLLABORATORS_KEY, clean):
+    before = {row["user_id"] for row in get_collaborators(cid, store=store)}
+    if not _store(store).set_extra(cid, COLLABORATORS_KEY, clean):
         return False
     for user_id in before | {row["user_id"] for row in clean}:
-        _sync_shared_index(cid, user_id, clean)
+        _sync_shared_index(cid, user_id, clean, store=store)
     return True
 
 
 def set_collaborator(cid: str, user_id: str, *, role: str = "",
                      status: str = "", invited_by: str = "",
-                     now: float = 0.0) -> Dict[str, Any]:
+                     now: float = 0.0, store=None) -> Dict[str, Any]:
     """Insert or update one ACL row and return it.
 
     Read-modify-write under the conversation's extras lock: concurrent
@@ -201,10 +211,10 @@ def set_collaborator(cid: str, user_id: str, *, role: str = "",
     if status and status not in COLLABORATOR_STATUSES:
         raise ValueError(f"Invalid collaborator status: {status!r}")
 
-    store = _store()
+    conv_store = _store(store)
     now = float(now or time.time())
-    with store._get_extras_lock(cid):
-        rows = get_collaborators(cid)
+    with conv_store._get_extras_lock(cid):
+        rows = get_collaborators(cid, store=conv_store)
         existing = next((r for r in rows if r["user_id"] == user_id), None)
         if existing is None:
             if not role:
@@ -227,12 +237,12 @@ def set_collaborator(cid: str, user_id: str, *, role: str = "",
                 row["responded_at"] = now
             if invited_by:
                 row["invited_by"] = _clean(invited_by)
-        store.set_extra(cid, COLLABORATORS_KEY, rows)
-    _sync_shared_index(cid, user_id, rows)
+        conv_store.set_extra(cid, COLLABORATORS_KEY, rows)
+    _sync_shared_index(cid, user_id, rows, store=conv_store)
     return dict(row)
 
 
-def remove_collaborator(cid: str, user_id: str) -> bool:
+def remove_collaborator(cid: str, user_id: str, *, store=None) -> bool:
     """Drop a row entirely -- declining an invite, not being kicked.
 
     A kick keeps the row (``status="kicked"``) for the audit trail; only a row
@@ -242,21 +252,21 @@ def remove_collaborator(cid: str, user_id: str) -> bool:
     user_id = _clean(user_id)
     if not cid or not user_id:
         return False
-    store = _store()
-    with store._get_extras_lock(cid):
-        rows = get_collaborators(cid)
+    conv_store = _store(store)
+    with conv_store._get_extras_lock(cid):
+        rows = get_collaborators(cid, store=conv_store)
         kept = [r for r in rows if r["user_id"] != user_id]
         if len(kept) == len(rows):
             return False
-        store.set_extra(cid, COLLABORATORS_KEY, kept)
-    _sync_shared_index(cid, user_id, kept)
+        conv_store.set_extra(cid, COLLABORATORS_KEY, kept)
+    _sync_shared_index(cid, user_id, kept, store=conv_store)
     return True
 
 
 # -- Access resolution ------------------------------------------------
 
-def resolve_conversation_access(cid: str,
-                                requester_user_id: str) -> ConversationAccess:
+def resolve_conversation_access(cid: str, requester_user_id: str, *,
+                                store=None) -> ConversationAccess:
     """Resolve what ``requester_user_id`` may do with ``cid``.
 
     An empty ``role`` means no access *and* must be treated as not-found by
@@ -267,14 +277,14 @@ def resolve_conversation_access(cid: str,
     requester = _clean(requester_user_id)
     if not cid or not requester:
         return ConversationAccess()
-    owner = _clean(_store().resolve_owner(cid))
+    owner = _clean(_store(store).resolve_owner(cid))
     if not owner:
         return ConversationAccess()
     if owner == requester:
         # Unshared / owner path: identical to the pre-sharing behavior.
         return ConversationAccess(owner_user_id=owner, role=ROLE_OWNER,
                                   storage_user_id=owner)
-    row = get_collaborator(cid, requester)
+    row = get_collaborator(cid, requester, store=store)
     if row is None or row["status"] != STATUS_ACCEPTED:
         return ConversationAccess(owner_user_id=owner, role=ROLE_NONE,
                                   storage_user_id=owner)
@@ -282,23 +292,26 @@ def resolve_conversation_access(cid: str,
                               storage_user_id=owner)
 
 
-def require_read(cid: str, requester_user_id: str) -> ConversationAccess:
-    access = resolve_conversation_access(cid, requester_user_id)
+def require_read(cid: str, requester_user_id: str, *,
+                 store=None) -> ConversationAccess:
+    access = resolve_conversation_access(cid, requester_user_id, store=store)
     if not access.can_read:
         raise ConversationAccessError("Conversation not found")
     return access
 
 
-def require_write(cid: str, requester_user_id: str) -> ConversationAccess:
-    access = resolve_conversation_access(cid, requester_user_id)
+def require_write(cid: str, requester_user_id: str, *,
+                  store=None) -> ConversationAccess:
+    access = resolve_conversation_access(cid, requester_user_id, store=store)
     if not access.can_write:
         raise ConversationAccessError("Conversation not found")
     return access
 
 
-def require_owner(cid: str, requester_user_id: str) -> ConversationAccess:
+def require_owner(cid: str, requester_user_id: str, *,
+                  store=None) -> ConversationAccess:
     """For owner-only operations: delete, invite, kick, role change."""
-    access = resolve_conversation_access(cid, requester_user_id)
+    access = resolve_conversation_access(cid, requester_user_id, store=store)
     if not access.is_owner:
         raise ConversationAccessError("Conversation not found")
     return access
@@ -306,7 +319,7 @@ def require_owner(cid: str, requester_user_id: str) -> ConversationAccess:
 
 # -- Reverse index: conversations shared WITH a user -------------------
 
-def shared_conversation_ids(user_id: str) -> List[str]:
+def shared_conversation_ids(user_id: str, *, store=None) -> List[str]:
     """cids where ``user_id`` has a pending or accepted row.
 
     Read-mostly side index -- ``list_shared_conversations`` cannot afford a
@@ -316,7 +329,7 @@ def shared_conversation_ids(user_id: str) -> List[str]:
     user_id = _clean(user_id)
     if not user_id:
         return []
-    path = _store().shared_index_path(user_id)
+    path = _store(store).shared_index_path(user_id)
     try:
         if not path.exists():
             return []
@@ -329,8 +342,8 @@ def shared_conversation_ids(user_id: str) -> List[str]:
     return [c for c in (_clean(x) for x in data) if c]
 
 
-def _write_shared_index(user_id: str, cids: List[str]) -> None:
-    path = _store().shared_index_path(user_id)
+def _write_shared_index(user_id: str, cids: List[str], store=None) -> None:
+    path = _store(store).shared_index_path(user_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")
@@ -344,7 +357,7 @@ def _write_shared_index(user_id: str, cids: List[str]) -> None:
 
 
 def _sync_shared_index(cid: str, user_id: str,
-                       rows: List[Dict[str, Any]]) -> None:
+                       rows: List[Dict[str, Any]], store=None) -> None:
     """Add/remove ``cid`` from ``user_id``'s index to match ``rows``."""
     cid = _clean(cid)
     user_id = _clean(user_id)
@@ -352,17 +365,17 @@ def _sync_shared_index(cid: str, user_id: str,
         return
     row = next((r for r in rows or [] if r.get("user_id") == user_id), None)
     should_index = bool(row) and row.get("status") in _INDEXED_STATUSES
-    current = shared_conversation_ids(user_id)
+    current = shared_conversation_ids(user_id, store=store)
     if should_index == (cid in current):
         return
     if should_index:
         current.append(cid)
     else:
         current = [c for c in current if c != cid]
-    _write_shared_index(user_id, current)
+    _write_shared_index(user_id, current, store=store)
 
 
-def rebuild_shared_index(user_id: str) -> List[str]:
+def rebuild_shared_index(user_id: str, *, store=None) -> List[str]:
     """Recompute one user's index from a full ACL sweep.
 
     The defensive counterpart to the incremental updates above: whenever the
@@ -374,12 +387,12 @@ def rebuild_shared_index(user_id: str) -> List[str]:
     if not user_id:
         return []
     found = []
-    for conv in _store().list_conversations():
+    for conv in _store(store).list_conversations():
         cid = _clean(conv.get("conversation_id"))
         if not cid or _clean(conv.get("user_id")) == user_id:
             continue
-        row = get_collaborator(cid, user_id)
+        row = get_collaborator(cid, user_id, store=store)
         if row is not None and row["status"] in _INDEXED_STATUSES:
             found.append(cid)
-    _write_shared_index(user_id, found)
+    _write_shared_index(user_id, found, store=store)
     return found

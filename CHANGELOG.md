@@ -41,8 +41,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   resolves read access before subscribing and answers a rejection with the same
   404 an unknown `conversation_id` gets, so it cannot be used to probe which
   conversations exist. A request with no trusted principal is rejected too.
+- The conversation actions that resolve a conversation by id alone were open
+  to any logged-in user who knew that id: `set_conv_title` renamed it,
+  `conv_encrypt_*` / `relay_workspace_*` could enable, lock or disable its
+  encryption, and `poll` leaked its message count. Access to the owner's
+  directory was never the barrier it looked like — only the actions that pass
+  `user_id` down to storage (`load_history`, `search_messages`,
+  `delete_conversation`) were partitioned by path. Every action in
+  `_conv_core.py` that names a conversation now resolves
+  `require_read`/`require_write`/`require_owner` first (phase 3 below) and
+  answers a rejection with the unknown-conversation 404.
 
 ### Added
+
+- Conversation sharing, phase 3 — sharing is now reachable.
+  `tasks/ai/actions/_conv_sharing.py` adds `share_conversation`,
+  `respond_to_share_invite`, `list_collaborators`,
+  `update_collaborator_role`, `kick_collaborator`, `leave_conversation` and
+  `list_shared_conversations`. Inviting is owner-only and two-sided (the owner
+  can only create a `pending` row; access starts when the invitee accepts),
+  kicking keeps the row for the audit trail, and every rejection is the same
+  404 an unknown `conversation_id` gets. The `_conv_core.py` handlers now
+  address storage with the resolved *owner's* id, so an accepted collaborator
+  reads and writes the one shared conversation rather than a copy — encryption
+  management and deletion stay owner-only. No frontend yet (phase 7).
 
 - Conversation sharing, phase 1 (`core/conversation_access.py`): the
   authorization primitive every call site will consult instead of its own

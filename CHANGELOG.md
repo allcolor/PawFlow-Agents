@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.31] — 2026-07-27
+
+### Added
+
+- New PFP installable object type `mcp_server`: installs directly as a
+  ready-to-use `mcp` resource with no manual reconnection step after
+  install. Structural validation (an `http` server needs `url`, a
+  `stdio` server needs `command`) and risk classification (high for
+  `stdio`, medium for `http`-only), mirroring the existing
+  `tool`/`service_provider` and `service_definition` object types.
+- Chat UI: a right-side sliding panel (`task_tabs.js`) showing a single
+  task's messages, opened from the Active Agents panel or the inline
+  task-block header. `addMsg()`/`_getTaskBlock()` tag rendered elements
+  with `dataset.taskId`; the panel clones the matching top-level nodes
+  and stays live via a `MutationObserver`, with no re-fetch or parallel
+  render path.
+
 ## [1.0.0-beta.30] — 2026-07-23
 
 ### Added

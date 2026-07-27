@@ -669,6 +669,28 @@ def test_active_agents_sse_hint_restores_panel_before_poll():
     assert "updateActivePanel();" in active_agents_js
 
 
+def test_done_metadata_and_resort_target_the_end_of_the_turn():
+    # Regression: a CLI-provider turn persists several messages (a narration,
+    # tool calls, then the answer). The done payload describes the END of that
+    # turn -- its tokens, cost, duration and ts -- but the element lookup
+    # scanned all_msg_ids oldest-first and stopped on the first match, i.e. the
+    # turn's OPENING message. It then stamped the turn's totals onto that
+    # bubble and re-sorted it to the done timestamp, physically moving the
+    # first message of the turn below the final answer. A reload rendered it
+    # correctly (the transcript was never wrong), which is what made it look
+    # like a phantom "old message re-sent at the end".
+    done_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('done'"):
+        SSE_JS.index("eventSource.addEventListener('conversation_title'")]
+    # Newest-first scan.
+    assert "for (let i = allIds.length - 1; i >= 0; i--)" in done_block
+    assert "for (const mid of allIds)" not in done_block
+    # Only the live streaming placeholder -- the one positioned with the
+    # browser clock -- may be re-sorted by the done ts. An element built from
+    # a persisted event already carries its own server timestamp.
+    assert "if (extra.ts && existingEl === s.el" in done_block
+
+
 def test_active_released_sse_hint_clears_panel_before_done():
     assert "eventSource.addEventListener('active_released'" in SSE_JS
     active_released = SSE_JS[

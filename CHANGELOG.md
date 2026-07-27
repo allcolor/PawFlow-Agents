@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The first message of a turn jumped below the final answer once the turn
+  ended, and a page reload put it back where it belonged. Nothing was
+  re-sent and no event was replayed: the `done` handler looks up the DOM
+  element the turn's final metadata belongs to by scanning `all_msg_ids`,
+  but it scanned oldest-first and stopped on the first match. On a CLI
+  provider a turn persists several messages (a narration, tool calls, then
+  the answer), so it matched the turn's OPENING line — stamped the whole
+  turn's tokens/cost/duration onto it, then re-sorted it to the `done`
+  timestamp, physically moving it to the bottom. The scan now runs
+  newest-first, and the re-sort is restricted to the live streaming
+  placeholder, the only element positioned with the browser's clock rather
+  than a server timestamp of its own.
+
 - Images sent to a vision model while the agent was already running (the
   preempt path) were never downscaled: `_build_user_content` resizes on
   ingestion, but preempt hands the raw `file_id` to the provider, and the

@@ -275,11 +275,19 @@ function _sseWireB() {
     if (s.el && s.el.parentNode) {
       s.el.classList.remove('streaming');
     }
-    // Find existing element or create one if nothing was streamed
+    // Find existing element or create one if nothing was streamed.
+    // Scan NEWEST-first: all_msg_ids is ordered oldest→newest, and a turn
+    // can persist several messages (a CLI provider narrates, calls tools,
+    // then answers). The done payload describes the END of the turn — its
+    // tokens, cost, duration and ts. Matching the first id instead stamped
+    // the turn's totals onto its opening line and, worse, re-sorted that
+    // opening line to the done timestamp, physically moving the first
+    // message of the turn below the final answer.
     let anyExists = !!s.el;
     let existingEl = s.el;
     if (!anyExists) {
-      for (const mid of allIds) {
+      for (let i = allIds.length - 1; i >= 0; i--) {
+        const mid = allIds[i];
         if (mid) {
           const found = document.querySelector('#messages [data-msgid="' + mid + '"]');
           if (found) { anyExists = true; existingEl = found; break; }
@@ -309,7 +317,12 @@ function _sseWireB() {
       // history instead of at the bottom where it belongs. Only reposition
       // top-level messages — elements nested in a task/delegate block are
       // already correctly placed by their container.
-      if (extra.ts && existingEl.parentNode && existingEl.parentNode.id === 'messages') {
+      // ONLY the live placeholder: an element rendered from a persisted
+      // event already carries the server's own ts for that message, and
+      // the done ts belongs to the end of the turn, not to it. Re-sorting
+      // it here would move a correctly-placed message to the bottom.
+      if (extra.ts && existingEl === s.el
+          && existingEl.parentNode && existingEl.parentNode.id === 'messages') {
         _insertMessageChronologically(existingEl.parentNode, existingEl, Number(extra.ts), true);
       }
     }

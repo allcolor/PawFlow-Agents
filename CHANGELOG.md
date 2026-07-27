@@ -8,6 +8,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Message pipeline audit — three more defects on the live channel, all of
+  them invisible in the transcript (the stored conversation was never
+  wrong; only the live view was):
+  - **Lost messages.** The `done` handler registered every `msg_id` of the
+    turn as "already displayed" to guard against replay duplicates. An id
+    whose event never arrived — socket down during the gap — was recorded
+    as displayed anyway, so `addMsg` refused its later delivery too and the
+    message stayed invisible until a manual reload. Only ids that actually
+    reached the DOM are marked now.
+  - **Unrecoverable gaps.** Nothing healed what the server published while
+    a socket was down: events accepted by a half-open writer are never
+    buffered (`send()` returned true, so the bus counted them delivered),
+    and the watchdog / health-timer reconnects pass `replay=false`, which
+    skips the buffer on purpose. A reconnect that follows a real drop now
+    re-reads the transcript tail and renders only what is missing —
+    idempotent by `msg_id`, and each recovered message is inserted at its
+    own server timestamp rather than appended at the end.
+  - **Phantom message at the end of a turn.** The token handler appended to
+    the stream buffer before creating its element; when `addMsg` refused
+    (that `msg_id` was already on screen), the text stayed in a stream with
+    no element, and neither reset site clears it — both are guarded on the
+    element existing. `done` falls back to that buffer when nothing of the
+    turn rendered, resurrecting the text as a duplicate bubble.
+- Buffered SSE events were replayed regardless of age: `_BUFFER_TTL` was
+  applied only when appending to a buffer, and expired a conversation's
+  buffer on its *newest* entry — so a buffer that kept receiving events
+  never shed the old ones. A subscriber could be handed an event minutes
+  old and render it as if it had just happened. The TTL is now enforced at
+  delivery, and stale rows are pruned as they are found.
+
 - The first message of a turn jumped below the final answer once the turn
   ended, and a page reload put it back where it belonged. Nothing was
   re-sent and no event was replayed: the `done` handler looks up the DOM

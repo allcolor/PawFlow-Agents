@@ -117,6 +117,11 @@ function connectSSE(cid, onReady, opts) {
     if (wasDisconnected) {
       pawflowDebugLog('[SSE] reconnected; continuing with live SSE events');
       syncActiveFromServer();
+      // Whatever was published while the socket was down never reached this
+      // tab — the buffer replay cannot cover a half-open writer (the bus
+      // already counted those events as delivered), and the noReplay paths
+      // skip it entirely. Re-read the transcript tail and render the gap.
+      if (typeof reconcileMissedMessages === 'function') reconcileMissedMessages();
     }
   };
 

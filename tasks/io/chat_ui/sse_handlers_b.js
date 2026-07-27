@@ -264,12 +264,24 @@ function _sseWireB() {
     extra.cost_usd = data.cost_usd || 0;
     extra.duration_ms = data.duration_ms || 0;
     extra.ts = data.ts;
-    // Register ALL msg_ids from this turn (prevents replay duplicates)
     const allIds = data.all_msg_ids || [];
     if (extra.msg_id) allIds.push(extra.msg_id);
     if (s.msg_id) allIds.push(s.msg_id);
+    // The streamed element can still be anonymous — tokens may arrive before
+    // any event carries the msg_id. Stamp it now so it counts as rendered.
+    if (s.el && s.el.dataset && !s.el.dataset.msgid && extra.msg_id) {
+      s.el.dataset.msgid = extra.msg_id;
+    }
+    // Mark as seen ONLY the ids that actually reached the DOM, so a replay of
+    // this turn cannot duplicate them. Marking the whole turn was silent
+    // message loss: an id whose event never arrived (socket down during the
+    // gap) was recorded as "already rendered", so addMsg refused the later
+    // delivery too and that message stayed invisible until a manual reload.
     for (const id of allIds) {
-      if (id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(id);
+      if (!id || typeof _seenMsgIds === 'undefined') continue;
+      if (document.querySelector('#messages [data-msgid="' + id + '"]')) {
+        _seenMsgIds.add(id);
+      }
     }
     // Finalize active streaming element (remove streaming class)
     if (s.el && s.el.parentNode) {

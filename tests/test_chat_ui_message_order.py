@@ -691,6 +691,68 @@ def test_done_metadata_and_resort_target_the_end_of_the_turn():
     assert "if (extra.ts && existingEl === s.el" in done_block
 
 
+def test_done_marks_as_seen_only_what_actually_rendered():
+    # Regression (silent message loss): the done handler registered EVERY
+    # msg_id of the turn in _seenMsgIds to guard against replay duplicates.
+    # An id whose event never arrived (socket down during the gap) was thus
+    # recorded as "already rendered", and addMsg refuses anything already in
+    # _seenMsgIds -- so the later delivery of that message was swallowed too
+    # and it stayed invisible until a manual reload. Only ids that reached
+    # the DOM may be marked.
+    done_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('done'"):
+        SSE_JS.index("eventSource.addEventListener('conversation_title'")]
+    assert "if (document.querySelector('#messages [data-msgid=\"' + id + '\"]')) {" in done_block
+    assert "if (id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(id);" not in done_block
+    # A streamed element can still be anonymous when done lands; stamping it
+    # is what makes the DOM check above recognize it as rendered.
+    assert "if (s.el && s.el.dataset && !s.el.dataset.msgid && extra.msg_id)" in done_block
+
+
+def test_token_never_accumulates_text_it_could_not_render():
+    # Regression (phantom message): the token handler appended to s.text
+    # before creating the element. When addMsg refused (msg_id already on
+    # screen, e.g. a replayed token), s.el stayed null while s.text kept the
+    # text -- and both reset sites (turn_complete, tool_call) are guarded on
+    # s.el, so it was never cleared. The done handler falls back to s.text
+    # when nothing of the turn rendered, resurrecting it as a phantom copy.
+    token_block = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('token'"):
+        SSE_JS.index("eventSource.addEventListener('turn_complete'")]
+    assert "s.el = addMsg('assistant', '', {source: src, msg_id: s.msg_id});" in token_block
+    creation = token_block[token_block.index("s.el = addMsg('assistant'"):]
+    assert "if (!s.el) {" in creation
+    assert "s.text = '';" in creation
+    assert creation.index("s.text = '';") < creation.index("const badge = sourceBadge(src);")
+
+
+def test_reconnect_refetches_the_transcript_tail_to_close_the_gap():
+    # Nothing in the live channel can heal its own gap: events accepted by a
+    # half-open writer are never buffered (send() returned true, so the bus
+    # counted them delivered), and the watchdog/health-timer reconnects pass
+    # replay=false, which skips the buffer on purpose. The transcript is the
+    # authority, so a reconnect that follows a real drop re-reads its tail
+    # and renders only what is missing.
+    assert "function reconcileMissedMessages()" in CONVERSATIONS_JS
+    assert "if (typeof reconcileMissedMessages === 'function') reconcileMissedMessages();" in SSE_JS
+    reconnect_block = SSE_JS[
+        SSE_JS.index("const wasDisconnected = sseEverConnected && sseHadError;"):
+        SSE_JS.index("eventSource.addEventListener('sse_ping'")]
+    assert "reconcileMissedMessages()" in reconnect_block
+    recon = CONVERSATIONS_JS[
+        CONVERSATIONS_JS.index("function reconcileMissedMessages()"):
+        CONVERSATIONS_JS.index("function _renderHistory(data)")]
+    # Idempotent: an id already on screen is skipped, and a row with no id is
+    # skipped too — it could never be deduped on a later pass.
+    assert "if (!msgId || _seenMsgIds.has(msgId)) continue;" in recon
+    # Recovered rows go through the same renderer as a normal history load,
+    # so they are inserted by their own server timestamp, not appended.
+    assert "_renderHistoryRow(m)" in recon
+    assert "function _renderHistoryRow(m)" in CONVERSATIONS_JS
+    assert "_renderHistoryRow(m);" in CONVERSATIONS_JS[
+        CONVERSATIONS_JS.index("function _renderHistory(data)"):]
+
+
 def test_active_released_sse_hint_clears_panel_before_done():
     assert "eventSource.addEventListener('active_released'" in SSE_JS
     active_released = SSE_JS[

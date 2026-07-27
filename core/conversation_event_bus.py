@@ -209,7 +209,7 @@ class ConversationEventBus:
                     replaced = True
                 self._clients[client_key] = writer
             self._subscribers[conversation_id].add(writer)
-            buffered = list(self._buffer.get(conversation_id, []) or [])
+            buffered = self._fresh_buffered(conversation_id)
             if replay:
                 # A replaying subscriber consumes the buffered tail. Explicit
                 # no-replay reloads only skip delivery for that subscriber;
@@ -398,6 +398,32 @@ class ConversationEventBus:
                 else:
                     del self._subscribers[conversation_id]
             return active
+
+    def _fresh_buffered(self, conversation_id: str) -> List[Tuple[float, SSEEvent]]:
+        """Buffered events still inside _BUFFER_TTL (called under lock).
+
+        The TTL is enforced HERE, at delivery, not only when appending.
+        ``_cleanup_expired_buffers`` expires a conversation's buffer on its
+        NEWEST entry, so a buffer that keeps receiving events never sheds the
+        old ones -- and nothing else looked at an event's age before sending
+        it. A subscriber could therefore be handed an event minutes old and
+        render it as if it had just happened. Stale rows are dropped from the
+        buffer as they are found, so this both filters and prunes.
+        """
+        buf = self._buffer.get(conversation_id) or []
+        if not buf:
+            return []
+        cutoff = time.time() - _BUFFER_TTL
+        fresh = [row for row in buf if row[0] >= cutoff]
+        if len(fresh) != len(buf):
+            logger.debug(
+                "EventBus: dropped %d expired buffered event(s) for conv=%s",
+                len(buf) - len(fresh), conversation_id[:8])
+            if fresh:
+                self._buffer[conversation_id] = fresh
+            else:
+                self._buffer.pop(conversation_id, None)
+        return fresh
 
     def _cleanup_expired_buffers(self):
         """Remove buffered events older than _BUFFER_TTL (called under lock)."""

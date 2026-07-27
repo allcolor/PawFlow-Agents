@@ -111,6 +111,15 @@ function _sseWireA() {
     const src = data.source || {type: 'agent', name: agent};
     if (!s.el) {
       s.el = addMsg('assistant', '', {source: src, msg_id: s.msg_id});
+      if (!s.el) {
+        // addMsg refused: this msg_id is already on screen (its persisted
+        // new_message won the race, or this is a replayed token). Drop the
+        // accumulated text instead of keeping it in a stream that has no
+        // element -- `done` falls back to s.text when nothing of the turn
+        // rendered, and would resurrect it as a phantom copy at the end.
+        s.text = '';
+        return;
+      }
       // If this is a delegate reply, route updates into the inner node
       // inside the delegate block instead of the outer wrapper.
       if (s.el && s.el._delegateInner) s.el = s.el._delegateInner;

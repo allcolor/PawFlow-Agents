@@ -413,6 +413,73 @@ function _clearConvLoadingPlaceholder() {
   if (el) el.remove();
 }
 
+// Render ONE transcript row. Single source of truth for the history render
+// and for the post-reconnect gap recovery below, so a recovered message is
+// built exactly like the same message rendered on a normal load.
+function _renderHistoryRow(m) {
+  let content = m.content || '';
+  if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+    content = content.replace(/^\[[^\]]+\]:\s*/, '');
+  }
+  const el = addMsg(m.type || m.role, content, m);
+  // task_id can be top-level (SSE) or in source (stored messages)
+  // Use task_iteration to create separate blocks per iteration.
+  // Delegate traces are their own top-level block — never wrap them
+  // in a generic task-block (delegate is not a task).
+  const _isDelegateTrace = (m.type === 'sub_agent_trace' || m.role === 'sub_agent_trace');
+  const _taskId = _isDelegateTrace ? '' : (m.task_id || (m.source && m.source.task_id) || '');
+  if (_taskId && el) {
+    const agentName = (m.source && m.source.name) || '';
+    const _iter = m.task_iteration || (m.source && m.source.task_iteration) || 0;
+    const tb = _getHistTaskBlock(_taskId, _iter, agentName);
+    if (tb) tb.content.appendChild(el);
+  }
+  return el;
+}
+
+// Gap recovery, called on every SSE reconnect that follows a real drop.
+//
+// The live channel cannot heal its own gaps. Events accepted by a half-open
+// writer are never buffered (send() returned true, so the bus considers them
+// delivered), and the reconnect paths that pass replay=false skip the buffer
+// on purpose. Either way, whatever the server published while the socket was
+// down never reaches this tab. The transcript on disk is the authority, so
+// re-read its tail and render only what is missing.
+//
+// Idempotent by construction: a row whose msg_id is already on screen is
+// skipped, a row with no msg_id is skipped too (it could not be deduped on a
+// later pass), and a recovered row is inserted by its own server timestamp —
+// so it lands in its true position instead of being appended at the bottom.
+function reconcileMissedMessages() {
+  if (!conversationId) return;
+  const cid = conversationId;
+  action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
+    .subscribe(data => {
+      if (!data || data.error || data.encrypted_locked) return;
+      if (cid !== conversationId) return;
+      if (data.conversation_id && data.conversation_id !== conversationId) return;
+      let recovered = 0;
+      if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
+      try {
+        for (const m of (data.messages || [])) {
+          const msgId = m.msg_id || '';
+          if (!msgId || _seenMsgIds.has(msgId)) continue;
+          if (_renderHistoryRow(m)) {
+            recovered++;
+            _noteLiveHistoryAppend(data.message_count, 1, msgId);
+          }
+        }
+      } finally {
+        if (typeof resumeTechnicalMessageGrouping === 'function') resumeTechnicalMessageGrouping(false);
+      }
+      if (recovered) {
+        console.warn('[SSE] recovered ' + recovered + ' message(s) missed while disconnected');
+        if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+        scrollBottom();
+      }
+    });
+}
+
 function _renderHistory(data) {
   _clearConvLoadingPlaceholder();
   if (!data || data.error) {
@@ -459,23 +526,7 @@ function _renderHistory(data) {
   if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
   try {
     for (const m of (data.messages || [])) {
-      let content = m.content || '';
-      if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
-        content = content.replace(/^\[[^\]]+\]:\s*/, '');
-      }
-      const el = addMsg(m.type || m.role, content, m);
-      // task_id can be top-level (SSE) or in source (stored messages)
-      // Use task_iteration to create separate blocks per iteration.
-      // Delegate traces are their own top-level block — never wrap them
-      // in a generic task-block (delegate is not a task).
-      const _isDelegateTrace = (m.type === 'sub_agent_trace' || m.role === 'sub_agent_trace');
-      const _taskId = _isDelegateTrace ? '' : (m.task_id || (m.source && m.source.task_id) || '');
-      if (_taskId && el) {
-        const agentName = (m.source && m.source.name) || '';
-        const _iter = m.task_iteration || (m.source && m.source.task_iteration) || 0;
-        const tb = _getHistTaskBlock(_taskId, _iter, agentName);
-        if (tb) tb.content.appendChild(el);
-      }
+      _renderHistoryRow(m);
     }
   } finally {
     if (typeof resumeTechnicalMessageGrouping === 'function') resumeTechnicalMessageGrouping(false);

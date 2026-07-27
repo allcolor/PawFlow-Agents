@@ -372,6 +372,52 @@ class TestConversationEventBus(unittest.TestCase):
         assert b"event: tool_result" in chunks[0]
         assert b'"tc_id": "tc1"' in chunks[0]
 
+    def test_expired_buffered_event_is_never_replayed(self):
+        """A buffered event past _BUFFER_TTL must not surface later as if live.
+
+        The TTL was only ever applied when appending to a buffer, and it
+        expired a conversation's buffer on its NEWEST entry -- so a buffer that
+        kept receiving events never shed the old ones, and subscribe() sent
+        whatever was there regardless of age.
+        """
+        import core.conversation_event_bus as bus_mod
+        bus = ConversationEventBus.instance()
+        bus.publish_event("conv1", "new_message", {"msg_id": "old"})
+        stale_ts, event = bus._buffer["conv1"][0]
+        bus._buffer["conv1"][0] = (stale_ts - bus_mod._BUFFER_TTL - 1, event)
+
+        replay = bus.subscribe("conv1", replay=True, client_id="tab-a")
+        replay.close()
+
+        assert list(replay.iterate(timeout=0.1)) == []
+        assert "conv1" not in bus._buffer
+
+    def test_expiry_drops_only_the_stale_rows(self):
+        import core.conversation_event_bus as bus_mod
+        bus = ConversationEventBus.instance()
+        bus.publish_event("conv1", "new_message", {"msg_id": "old"})
+        bus.publish_event("conv1", "new_message", {"msg_id": "recent"})
+        stale_ts, event = bus._buffer["conv1"][0]
+        bus._buffer["conv1"][0] = (stale_ts - bus_mod._BUFFER_TTL - 1, event)
+
+        replay = bus.subscribe("conv1", replay=True, client_id="tab-a")
+        replay.close()
+        chunks = list(replay.iterate(timeout=0.1))
+
+        assert len(chunks) == 1
+        assert b'"msg_id": "recent"' in chunks[0]
+
+    def test_a_stale_row_is_pruned_even_for_a_no_replay_subscriber(self):
+        """no-replay keeps the buffer for the next reconnect -- but not forever."""
+        import core.conversation_event_bus as bus_mod
+        bus = ConversationEventBus.instance()
+        bus.publish_event("conv1", "new_message", {"msg_id": "old"})
+        stale_ts, event = bus._buffer["conv1"][0]
+        bus._buffer["conv1"][0] = (stale_ts - bus_mod._BUFFER_TTL - 1, event)
+
+        bus.subscribe("conv1", replay=False, client_id="tab-a").close()
+        assert "conv1" not in bus._buffer
+
     def test_isolation_between_conversations(self):
         bus = ConversationEventBus.instance()
         w1 = bus.subscribe("conv1")

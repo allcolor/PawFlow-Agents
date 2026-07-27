@@ -136,9 +136,19 @@ function _renderToolOutput(text, toolHint, pathHint) {
   return '<pre class="tc-output">' + renderTextWithInlineMedia(text) + '</pre>';
 }
 
-function _attachToolResult(tcEl, resultText) {
-  // Guard: don't attach if result already present
-  if (tcEl.querySelector('.tc-result')) return;
+function _attachToolResult(tcEl, resultText, opts) {
+  // Placeholder results ('[Interrupted]', '[Stopped]', '[result not
+  // delivered]') are written when a turn ends with a tool call still in
+  // flight, so the row does not stay visually pending forever. They must
+  // never win over a real result: a genuine tool_result that arrives late
+  // (or on the next history load) replaces the placeholder, while the
+  // reverse is refused.
+  const _placeholder = !!(opts && opts.placeholder);
+  const _existingResult = tcEl.querySelector('.tc-result');
+  if (_existingResult) {
+    if (_placeholder || _existingResult.dataset.placeholder !== '1') return;
+    _existingResult.remove();
+  }
   if (typeof resultText !== 'string') {
     try { resultText = JSON.stringify(resultText, null, 2); }
     catch (_err) { resultText = String(resultText || ''); }
@@ -171,6 +181,7 @@ function _attachToolResult(tcEl, resultText) {
   }
   const resultDiv = document.createElement('div');
   resultDiv.className = 'tc-result';
+  if (_placeholder) resultDiv.dataset.placeholder = '1';
   const firstLine = resultText.split('\n')[0].substring(0, 120);
   const rendered = _renderToolOutput(resultText, toolHint, pathHint);
   // see sends the image to the LLM, not the user — don't render it twice

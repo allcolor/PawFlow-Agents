@@ -23,6 +23,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (with a `100vh` fallback) and added a mobile type scale (+1–2px per
   level, full-width bubbles, `.tc-output` 11 → 12px). The composer is now
   16px, which also stops iOS auto-zoom on focus.
+- A tool call interrupted mid-flight stayed "pending" forever (spinner +
+  →BG/✘ buttons, no result): `interrupting` was the only turn-ending SSE
+  path that did not finalize in-flight tool calls, and since the turn
+  keeps running, no other finalizer fired either. It now finalizes them,
+  and synthesized results (`[Interrupted]`, `[Stopped]`, `[result not
+  delivered]`) are marked as placeholders so a real result arriving late
+  replaces them — never the reverse.
 
 ## [1.0.0-beta.32] — 2026-07-27
 

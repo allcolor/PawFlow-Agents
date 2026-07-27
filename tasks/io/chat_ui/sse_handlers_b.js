@@ -232,7 +232,7 @@ function _sseWireB() {
       if (tcEl && !tcEl.querySelector('.tc-result')) {
         const tcId = tcEl.dataset ? (tcEl.dataset.tcId || '') : '';
         if (tcId && _attachPendingToolResult(tcEl, tcId)) return;
-        try { _attachToolResult(tcEl, '[result not delivered]'); } catch (e) {}
+        try { _attachToolResult(tcEl, '[result not delivered]', {placeholder: true}); } catch (e) {}
       }
     });
     trackAgentDone(doneAgent);
@@ -447,6 +447,12 @@ function _sseWireB() {
   eventSource.addEventListener('interrupting', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    // An interrupt aborts whatever tool the agent had in flight, so its
+    // tool_result never arrives -- unlike stop/cancel/error, the turn keeps
+    // running, so none of the other finalizers fire either and the row was
+    // left pending (spinner + BG/kill buttons) with no result, forever.
+    // Mark it now; a real result that still lands replaces this placeholder.
+    _finalizeLiveToolCalls(data.agent || '', '[Interrupted]');
     addMsg('system', t('interruptingAgentImmediateResponse', { agent: displayAgentName(data.agent) }));
     scrollBottom();
   });

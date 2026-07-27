@@ -132,7 +132,7 @@ function _finalizeLiveToolCalls(agentName, resultText) {
     const rowAgent = tcEl.dataset ? (tcEl.dataset.agent || '').toLowerCase() : '';
     if (targetAgent && rowAgent && rowAgent !== targetAgent) return;
     if (!tcEl.querySelector('.tc-result')) {
-      try { _attachToolResult(tcEl, resultText || '[Interrupted]'); }
+      try { _attachToolResult(tcEl, resultText || '[Interrupted]', {placeholder: true}); }
       catch (_err) {
         bullet.classList.remove('pending');
         bullet.classList.add('done');

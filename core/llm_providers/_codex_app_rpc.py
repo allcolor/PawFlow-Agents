@@ -275,15 +275,10 @@ class _CodexAppRpcMixin:
         if not data_b64:
             return None
         mime = source.get("media_type") or "image/png"
-        ext = mimetypes.guess_extension(mime) or ".png"
-        if ext == ".jpe":
-            ext = ".jpg"
+        from core.image_resize import write_vision_image
         vision_dir = os.path.join(workdir, ".pawflow_vision")
-        os.makedirs(vision_dir, exist_ok=True)
-        filename = f"{uuid.uuid4().hex}{ext}"
-        host_path = os.path.join(vision_dir, filename)
-        with open(host_path, "wb") as f:
-            f.write(base64.b64decode(data_b64))
+        filename = write_vision_image(
+            vision_dir, uuid.uuid4().hex, base64.b64decode(data_b64), mime=mime)
         rel_name = f".pawflow_vision/{filename}"
         return {"type": "localImage", "path": f"{container_dir}/{rel_name}"}
 

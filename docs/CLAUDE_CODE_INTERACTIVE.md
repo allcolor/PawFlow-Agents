@@ -215,6 +215,17 @@ User image attachments are materialized into `.pawflow_vision/` in the session
 workdir and referenced in the pasted prompt with `@/cc_sessions/.../image.png`.
 This uses Claude Code's native interactive file read path.
 
+Every materialized file goes through `core.image_resize.write_vision_image()`,
+which downscales to the shared vision ceiling (`PAWFLOW_VISION_MAX_DIM`, 1568px
+by default) before writing and names the file after the encoding it actually
+wrote (a re-encoded PNG lands as `.jpg`). This is required, not an optimization:
+the agent opens the file itself, so an oversized image is rejected at *its* read
+time with the provider's "exceeds 2000x2000" error. The ingestion-time resize in
+`_build_user_content` does not cover this — the live-preempt path (a message sent
+while the agent is mid-turn) passes the raw uploaded `file_id` straight to the
+provider. The same helper is used by the antigravity provider and by the Codex
+app-server tool-result image path.
+
 Tool-side image reads use PawFlow's multimodal marker contract:
 
 - `see()` on an image returns `__image_data__:<mime>:<base64>`.

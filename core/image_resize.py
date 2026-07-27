@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import io
 import logging
+import mimetypes
 import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -92,3 +94,30 @@ def resize_image_for_vision(data: bytes, mime: str = "",
     logger.info("resized image for vision: %dx%d (%d bytes) -> %dx%d (%d bytes)",
                 w, h, len(data), img.size[0], img.size[1], len(out))
     return out, "image/jpeg"
+
+
+def write_vision_image(out_dir, stem: str, data: bytes, *, mime: str = "",
+                       filename: str = "") -> str:
+    """Downscale ``data`` and write it as ``<stem><suffix>`` under ``out_dir``.
+
+    Returns the file name that was written. Use this — not a bare
+    ``write_bytes`` — for every image materialised on disk for an agent to read
+    (``.pawflow_vision`` payloads for the CLI providers). Those agents open the
+    file themselves, so an oversized image is rejected at *their* read time with
+    the provider's 2000px error, and unlike the base64 paths nothing downscales
+    it on the way in. The suffix follows the encoding actually written, so a
+    re-encoded PNG lands as ``.jpg`` rather than lying about its content.
+    """
+    out, out_mime = resize_image_for_vision(data, mime)
+    if out is not data:
+        suffix = mimetypes.guess_extension(out_mime or "") or ".jpg"
+    else:
+        suffix = (Path(filename).suffix
+                  or mimetypes.guess_extension(mime or "") or ".png")
+    if suffix == ".jpe":
+        suffix = ".jpg"
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = f"{stem}{suffix}"
+    (out_dir / name).write_bytes(out)
+    return name

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import base64
 import logging
-import mimetypes
 from pathlib import Path
 import uuid
 
 from core.agent_prompt_policy import append_cli_mcp_system_prompt
+from core.image_resize import write_vision_image
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
 
@@ -201,9 +201,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 from core.file_store import FileStore
                 filename, data, mime = FileStore.instance().get_required(
                     file_id, user_id=user_id, conversation_id=conversation_id)
-                suffix = Path(filename).suffix or mimetypes.guess_extension(mime or "") or ".png"
-                name = f"{file_id}{suffix}"
-                (out_dir / name).write_bytes(data)
+                name = write_vision_image(out_dir, file_id, data, mime=mime,
+                                          filename=filename)
                 lines.append(
                     f"fs://filestore/{file_id}/{filename} -> "
                     f"@{container_workdir}/.pawflow_vision/{name}")
@@ -218,9 +217,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     continue
                 meta, b64 = url.split(",", 1)
                 mime = meta.split(";", 1)[0].replace("data:", "") or "image/png"
-                suffix = mimetypes.guess_extension(mime) or ".png"
-                name = f"inline_{uuid.uuid4().hex[:12]}{suffix}"
-                (out_dir / name).write_bytes(base64.b64decode(b64))
+                name = write_vision_image(
+                    out_dir, f"inline_{uuid.uuid4().hex[:12]}",
+                    base64.b64decode(b64), mime=mime)
                 lines.append(f"@{container_workdir}/.pawflow_vision/{name}")
         return lines
 

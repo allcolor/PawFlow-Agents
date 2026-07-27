@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Images sent to a vision model while the agent was already running (the
+  preempt path) were never downscaled: `_build_user_content` resizes on
+  ingestion, but preempt hands the raw `file_id` to the provider, and the
+  three sites that materialize a file on disk (Claude Code interactive,
+  antigravity, Codex) wrote the original bytes — so the agent opening the
+  file itself hit the provider's "exceeds 2000x2000" rejection. New
+  `core.image_resize.write_vision_image()` downscales and names the file
+  after the encoding actually written (a re-encoded PNG becomes `.jpg`).
+
 ## [1.0.0-beta.32] — 2026-07-27
 
 ### Fixed

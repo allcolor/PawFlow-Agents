@@ -4,7 +4,11 @@ import io
 
 import pytest
 
-from core.image_resize import resize_image_for_vision, MAX_DIM
+from core.image_resize import (
+    MAX_DIM,
+    resize_image_for_vision,
+    write_vision_image,
+)
 
 PIL = pytest.importorskip("PIL")
 from PIL import Image  # noqa: E402
@@ -61,6 +65,66 @@ def test_empty_is_noop():
     out, mime = resize_image_for_vision(b"", "image/png")
     assert out == b""
     assert mime == "image/png"
+
+
+def test_write_vision_image_downscales_and_names_by_written_encoding(tmp_path):
+    """An image materialised on disk for the agent to read must already fit the
+    vision ceiling — the agent opens the file itself, so nothing downstream can
+    downscale it (this is what made a 904x2316 phone screenshot unreadable)."""
+    name = write_vision_image(tmp_path, "img1", _png(904, 2316),
+                              mime="image/png", filename="phone.png")
+
+    assert name == "img1.jpg"  # re-encoded, so the suffix follows the bytes
+    w, h = Image.open(tmp_path / name).size
+    assert max(w, h) == MAX_DIM
+
+
+def test_write_vision_image_keeps_original_suffix_when_it_already_fits(tmp_path):
+    data = _png(800, 600)
+    name = write_vision_image(tmp_path, "img2", data,
+                             mime="image/png", filename="small.png")
+
+    assert name == "img2.png"
+    assert (tmp_path / name).read_bytes() == data
+
+
+def test_write_vision_image_creates_missing_directory(tmp_path):
+    out_dir = tmp_path / "nested" / ".pawflow_vision"
+    name = write_vision_image(out_dir, "img3", _png(64, 64), mime="image/png")
+
+    assert (out_dir / name).exists()
+
+
+def test_cci_materialized_image_is_downscaled(tmp_path, monkeypatch):
+    """Regression: the live-preempt path hands the raw uploaded file_id straight
+    to the provider, bypassing the ingestion resize in _build_user_content. The
+    materialised .pawflow_vision copy must still fit the ceiling."""
+    from core.llm_client import LLMClient, LLMMessage
+
+    oversized = _png(904, 2316)
+
+    class _Store:
+        def get_required(self, file_id, user_id, conversation_id):
+            return "phone.png", oversized, "image/png"
+
+    import core.file_store as file_store
+    monkeypatch.setattr(file_store.FileStore, "instance", staticmethod(lambda: _Store()))
+
+    client = LLMClient("claude-code-interactive")
+    msg = LLMMessage(
+        role="user",
+        conversation_id="conv",
+        content=[{"type": "image_ref", "file_id": "img1", "filename": "phone.png"}],
+    )
+
+    lines = client._cci_materialize_images(
+        [msg], str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv")
+
+    written = list((tmp_path / ".pawflow_vision").iterdir())
+    assert len(written) == 1
+    assert max(Image.open(written[0]).size) == MAX_DIM
+    # The prompt must point at the file that was actually written.
+    assert lines and lines[0].endswith(f"/.pawflow_vision/{written[0].name}")
 
 
 def test_attachment_ingestion_downscales_before_storing():

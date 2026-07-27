@@ -16,6 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   file itself hit the provider's "exceeds 2000x2000" rejection. New
   `core.image_resize.write_vision_image()` downscales and names the file
   after the encoding actually written (a re-encoded PNG becomes `.jpg`).
+- Mobile chat UI: the top header was pushed off-screen and technical text
+  was unreadably small. `height: 100vh` on `body`/`.sidebar` is the
+  URL-bar-hidden height, i.e. taller than the real viewport, and with
+  `overflow: hidden` the overflow was unrecoverable. Switched to `100dvh`
+  (with a `100vh` fallback) and added a mobile type scale (+1–2px per
+  level, full-width bubbles, `.tc-output` 11 → 12px). The composer is now
+  16px, which also stops iOS auto-zoom on focus.
 
 ## [1.0.0-beta.32] — 2026-07-27
 

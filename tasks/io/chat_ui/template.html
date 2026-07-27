@@ -32,10 +32,16 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #555; }
+/* dvh, not vh: on mobile browsers 100vh is the URL-bar-HIDDEN height, which is
+   taller than what is actually on screen. With `overflow: hidden` the excess
+   cannot be scrolled back, so the top of the layout (.header) ends up above the
+   visible area and is simply unreachable. 100dvh tracks the visible viewport as
+   the URL bar shows/hides. The plain 100vh line stays first as the fallback for
+   engines without dvh. */
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-       background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; overflow: hidden; }
+       background: #1a1a2e; color: #e0e0e0; height: 100vh; height: 100dvh; display: flex; overflow: hidden; }
 .sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
-           display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; overflow: hidden;
+           display: flex; flex-direction: column; height: 100vh; height: 100dvh; flex-shrink: 0; overflow: hidden;
            transition: width 0.2s, min-width 0.2s; }
 .sidebar.collapsed { width: 0; min-width: 0; border-right: none; overflow: hidden; }
 .sidebar.collapsed > * { display: none; }
@@ -143,10 +149,30 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
      On mobile the sidebar overlays instead, so .main never moves -- pin
      the toggle at its collapsed position regardless of that inline style. */
   .sidebar-toggle { left: 12px !important; }
+  /* Desktop sizes assume a ~1400px-wide window read at arm's length; the same
+     11-12px on a phone is unreadable. Bump the type scale (roughly +1-2px per
+     step) and let bubbles use the full width, since horizontal space -- not
+     vertical -- is what is scarce here. Sizes stay relative to each other so
+     the visual hierarchy is unchanged. */
+  .msg { font-size: 15px; max-width: 92%; }
+  .msg code { font-size: 14px; }
+  .msg pre, .msg pre code { font-size: 13px; }
+  .msg.tool { font-size: 13px; max-width: 100%; }
+  .msg.system { font-size: 13px; }
+  .msg.system-compact { font-size: 12px; }
+  .msg.agent-result { font-size: 13px; }
+  .msg.error { font-size: 14px; }
+  .technical-group, .delegate-block { max-width: 100%; }
+  .technical-group-header, .delegate-header { font-size: 13px; }
+  .tc-result, .tc-output, .tc-md code, .sub-trace-body { font-size: 12px; }
+  .tc-md, .delegate-message { font-size: 13px; }
+  .sub-trace-header { font-size: 13px; }
+  .input-row textarea, .input-row button { font-size: 16px; }
 }
 @media (max-width: 480px) {
   .messages { padding: 12px; }
   .header h1 { font-size: 16px; }
+  .input-area { padding: 10px 12px; }
 }
 .messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; }
 .messages { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px; overscroll-behavior: contain;

@@ -1105,13 +1105,41 @@ class TestAgentLoopStreaming(unittest.TestCase):
 # ── AgentSSEStreamTask ──────────────────────────────────────────────
 
 
-class TestAgentSSEStreamTask(unittest.TestCase):
+class _SSEConversationFixture(unittest.TestCase):
+    """Temp-backed ConversationStore + helpers for an authorized SSE request."""
 
     def setUp(self):
+        from core.conversation_store import ConversationStore
         ConversationEventBus.reset()
+        ConversationStore.reset()
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.store = ConversationStore(
+            store_dir=str(Path(self._tmpdir.name) / "conversations"))
+        ConversationStore._instance = self.store
 
     def tearDown(self):
+        from core.conversation_store import ConversationStore
         ConversationEventBus.reset()
+        ConversationStore.reset()
+        self._tmpdir.cleanup()
+
+    def _ff(self, cid, *, requester="alice", owner="alice", query=""):
+        """A flowfile whose requester may read `cid` (owner unless told otherwise).
+
+        Subscribing is authorized per conversation, so every streaming test
+        needs a real conversation and a real principal.
+        """
+        self.store.save(cid, [], user_id=owner)
+        ff = FlowFile(content=b"")
+        if query:
+            ff.set_attribute("http.query", query)
+        else:
+            ff.set_attribute("http.query.conversation_id", cid)
+        ff.set_attribute("http.auth.principal", requester)
+        return ff
+
+
+class TestAgentSSEStreamTask(_SSEConversationFixture):
 
     def test_missing_conversation_id(self):
         from tasks.io.agent_sse_stream import AgentSSEStreamTask
@@ -1125,8 +1153,7 @@ class TestAgentSSEStreamTask(unittest.TestCase):
         bus = ConversationEventBus.instance()
         # Pre-subscribe so we can close the writer after test
         task = AgentSSEStreamTask({"timeout": 10})
-        ff = FlowFile(content=b"")
-        ff.set_attribute("http.query.conversation_id", "conv-abc")
+        ff = self._ff("conv-abc")
         results = task.execute(ff)
 
         assert results[0].get_attribute("http.response.status") == "200"
@@ -1143,8 +1170,7 @@ class TestAgentSSEStreamTask(unittest.TestCase):
         bus = ConversationEventBus.instance()
 
         task = AgentSSEStreamTask({"timeout": 10})
-        ff = FlowFile(content=b"")
-        ff.set_attribute("http.query.conversation_id", "conv-xyz")
+        ff = self._ff("conv-xyz")
         results = task.execute(ff)
 
         bus.publish_event("conv-xyz", "token", {"text": "hello"})
@@ -1167,14 +1193,14 @@ class TestAgentSSEStreamTask(unittest.TestCase):
         bus = ConversationEventBus.instance()
         task = AgentSSEStreamTask({"timeout": 10})
 
-        first = FlowFile(content=b"")
-        first.set_attribute("http.query", "conversation_id=conv-client&client_id=tab-a")
+        first = self._ff("conv-client",
+                         query="conversation_id=conv-client&client_id=tab-a")
         first_result = task.execute(first)[0]
         with bus._lock:
             first_writer = next(iter(bus._subscribers.get("conv-client", set())))
 
-        second = FlowFile(content=b"")
-        second.set_attribute("http.query", "conversation_id=conv-client&client_id=tab-a")
+        second = self._ff("conv-client",
+                          query="conversation_id=conv-client&client_id=tab-a")
         second_result = task.execute(second)[0]
 
         assert first_writer.is_closed
@@ -1195,9 +1221,7 @@ class TestAgentSSEStreamTask(unittest.TestCase):
         from tasks.io.agent_sse_stream import AgentSSEStreamTask
         bus = ConversationEventBus.instance()
         task = AgentSSEStreamTask({"timeout": 10})
-        ff = FlowFile(content=b"")
-        ff.set_attribute("http.query.conversation_id", "conv-life")
-        result = task.execute(ff)[0]
+        result = task.execute(self._ff("conv-life"))[0]
 
         # Event lands while the stream is a live subscriber (subs=1), so it is
         # delivered to the writer queue — NOT buffered for replay.
@@ -1236,8 +1260,7 @@ class TestAgentSSEStreamTask(unittest.TestCase):
         from tasks.io.agent_sse_stream import AgentSSEStreamTask
         bus = ConversationEventBus.instance()
         task = AgentSSEStreamTask({})
-        ff = FlowFile(content=b"")
-        ff.set_attribute("http.query", "conversation_id=fallback-conv")
+        ff = self._ff("fallback-conv", query="conversation_id=fallback-conv")
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "200"
         assert hasattr(results[0], "_sse_stream")
@@ -1245,6 +1268,93 @@ class TestAgentSSEStreamTask(unittest.TestCase):
         with bus._lock:
             for w in bus._subscribers.get("fallback-conv", set()).copy():
                 w.close()
+
+
+# ── SSE authorization (docs/CONVERSATION_SHARING_PLAN.md phase 2) ────
+
+
+class TestAgentSSEStreamAuthorization(_SSEConversationFixture):
+    """Subscribing to a conversation's live stream requires read access.
+
+    Before this, `validate_auth` proved only WHO was asking: any logged-in
+    user who knew (or guessed) a conversation_id could open someone else's
+    stream.
+    """
+
+    def _run(self, cid, principal, *, owner="alice"):
+        from tasks.io.agent_sse_stream import AgentSSEStreamTask
+        if not self.store.exists(cid):
+            self.store.save(cid, [], user_id=owner)
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.query.conversation_id", cid)
+        if principal is not None:
+            ff.set_attribute("http.auth.principal", principal)
+        return AgentSSEStreamTask({"timeout": 10}).execute(ff)[0]
+
+    def test_stranger_is_rejected_before_subscribing(self):
+        result = self._run("conv-private", "mallory")
+        assert result.get_attribute("http.response.status") == "404"
+        assert getattr(result, "_sse_stream", None) is None
+        assert ConversationEventBus.instance().subscriber_count("conv-private") == 0
+
+    def test_request_without_a_principal_is_rejected(self):
+        result = self._run("conv-anon", None)
+        assert result.get_attribute("http.response.status") == "404"
+        assert ConversationEventBus.instance().subscriber_count("conv-anon") == 0
+
+    def test_rejection_is_indistinguishable_from_a_missing_conversation(self):
+        forbidden = self._run("conv-secret", "mallory")
+        from tasks.io.agent_sse_stream import AgentSSEStreamTask
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.query.conversation_id", "conv-never-existed")
+        ff.set_attribute("http.auth.principal", "mallory")
+        missing = AgentSSEStreamTask({"timeout": 10}).execute(ff)[0]
+        assert (forbidden.get_attribute("http.response.status")
+                == missing.get_attribute("http.response.status") == "404")
+        assert forbidden.get_content() == missing.get_content()
+
+    def test_owner_still_subscribes(self):
+        result = self._run("conv-mine", "alice")
+        assert result.get_attribute("http.response.status") == "200"
+        assert hasattr(result, "_sse_stream")
+        bus = ConversationEventBus.instance()
+        with bus._lock:
+            for w in bus._subscribers.get("conv-mine", set()).copy():
+                w.close()
+
+    def test_accepted_read_collaborator_subscribes(self):
+        import core.conversation_access as ca
+        self.store.save("conv-shared", [], user_id="alice")
+        ca.set_collaborator("conv-shared", "bob", role=ca.ROLE_READ,
+                            status=ca.STATUS_ACCEPTED)
+        result = self._run("conv-shared", "bob")
+        assert result.get_attribute("http.response.status") == "200"
+        bus = ConversationEventBus.instance()
+        with bus._lock:
+            for w in bus._subscribers.get("conv-shared", set()).copy():
+                w.close()
+
+    def test_pending_invite_does_not_grant_the_stream(self):
+        import core.conversation_access as ca
+        self.store.save("conv-pending", [], user_id="alice")
+        ca.set_collaborator("conv-pending", "bob", role=ca.ROLE_WRITE)
+        assert self._run("conv-pending", "bob").get_attribute(
+            "http.response.status") == "404"
+
+    def test_kicked_collaborator_loses_the_stream_on_reconnect(self):
+        import core.conversation_access as ca
+        self.store.save("conv-kick", [], user_id="alice")
+        ca.set_collaborator("conv-kick", "bob", role=ca.ROLE_WRITE,
+                            status=ca.STATUS_ACCEPTED)
+        first = self._run("conv-kick", "bob")
+        assert first.get_attribute("http.response.status") == "200"
+        bus = ConversationEventBus.instance()
+        with bus._lock:
+            for w in bus._subscribers.get("conv-kick", set()).copy():
+                w.close()
+        ca.set_collaborator("conv-kick", "bob", status=ca.STATUS_KICKED)
+        assert self._run("conv-kick", "bob").get_attribute(
+            "http.response.status") == "404"
 
 
 # ── HandleHTTPResponse streaming ────────────────────────────────────

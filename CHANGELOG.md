@@ -31,6 +31,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   delivered]`) are marked as placeholders so a real result arriving late
   replaces them — never the reverse.
 
+### Security
+
+- The live SSE stream (`GET /api/agent/events`) never checked whether the
+  requester may see the conversation it streams: `validate_auth` upstream only
+  proves *who* is asking, and the task read `conversation_id` straight from the
+  query string. Any logged-in user who knew or guessed a `conversation_id`
+  could subscribe to someone else's conversation. `agentSSEStream` now
+  resolves read access before subscribing and answers a rejection with the same
+  404 an unknown `conversation_id` gets, so it cannot be used to probe which
+  conversations exist. A request with no trusted principal is rejected too.
+
 ### Added
 
 - Conversation sharing, phase 1 (`core/conversation_access.py`): the
@@ -39,8 +50,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `require_write` / `require_owner`, the collaborators ACL stored via the
   existing `extra` mechanism (no schema change), and a per-user reverse index
   of conversations shared with them. `ConversationStore` gains the read-only
-  `resolve_owner()` and `shared_index_path()`. Nothing calls it yet, so
-  behavior is unchanged; see `docs/CONVERSATION_SHARING_PLAN.md`.
+  `resolve_owner()` and `shared_index_path()`. Its only consumer so far is the
+  SSE fix above — sharing itself is not reachable yet, there is no action to
+  invite anyone; see `docs/CONVERSATION_SHARING_PLAN.md`.
 
 ## [1.0.0-beta.32] — 2026-07-27
 

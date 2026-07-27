@@ -1,8 +1,9 @@
 # Conversation Sharing — Implementation Plan
 
-Status: **in progress** — Phase 1 (core primitive + data model) is
-implemented in `core/conversation_access.py`; Phases 2-7 are still design
-only. Nothing calls the primitive yet, so behavior is unchanged.
+Status: **in progress** — Phase 1 (core primitive + data model,
+`core/conversation_access.py`) and Phase 2 (SSE authorization) are
+implemented; Phases 3-7 are still design only. Sharing itself is not
+reachable yet: there is no action to invite anyone.
 
 ## Goal
 
@@ -378,10 +379,13 @@ best-effort owner map).
    - `require_write` does not yet perform owner reassignment — that arrives
      with its directory-move in Phase 6, where it can be tested against a
      deleted-owner fixture.
-2. **Close the SSE gap** — add `require_read` to `agent_sse_stream.py`. Ships
-   independently and is valuable even before sharing exists (fixes the
-   pre-existing gap for single-owner conversations too — anyone who could
-   previously guess a `conversation_id` loses that access).
+2. ~~**Close the SSE gap**~~ — **done**. `agent_sse_stream.py` resolves
+   `require_read` from the trusted principal before `bus.subscribe(...)` and
+   answers a rejection with the same 404 an unknown `conversation_id` gets.
+   A request carrying no trusted identity at all (a custom flow wired without
+   `validate_auth`) is rejected too — an unauthenticated subscriber is
+   precisely what this closes. Covered by
+   `tests/test_sse_streaming.py::TestAgentSSEStreamAuthorization`.
 3. **Write-path actions** — `share_conversation`, `respond_to_share_invite`,
    `list_collaborators`, `update_collaborator_role`, `kick_collaborator`,
    `leave_conversation`, `list_shared_conversations`; swap

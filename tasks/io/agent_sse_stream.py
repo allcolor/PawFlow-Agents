@@ -9,6 +9,11 @@ Flow pattern:
 The response is a streaming SSE body (text/event-stream).  The task sets
 a special attribute ``http.response.stream`` with the SSE iterator so that
 handleHTTPResponse can submit a streaming response.
+
+Subscribing requires read access to the conversation (owner or an accepted
+collaborator, see ``core/conversation_access.py``). Upstream ``validate_auth``
+only authenticates the requester; this task is where the per-conversation
+check happens.
 """
 
 import json
@@ -59,6 +64,26 @@ class AgentSSEStreamTask(BaseTask):
         if not conversation_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
+            flowfile.set_attribute("http.response.header.Content-Type", "application/json")
+            return [flowfile]
+
+        # Authorization. `validate_auth` upstream only proves WHO is asking;
+        # until now nothing checked whether they may see THIS conversation, so
+        # any logged-in user who knew a conversation_id could open its live
+        # stream. Resolve read access explicitly, and answer a rejection with
+        # the same 404 an unknown conversation_id gets — "exists but not
+        # yours" must not be distinguishable from "does not exist".
+        # No trusted identity at all (a custom flow wired without
+        # validate_auth) is a rejection too: an unauthenticated subscriber is
+        # exactly the case this closes.
+        from core.conversation_access import ConversationAccessError, require_read
+        from core.flow_runtime_access import trusted_requester_user_id
+        try:
+            require_read(conversation_id, trusted_requester_user_id(flowfile))
+        except ConversationAccessError:
+            logger.warning("[sse-events] denied conv=%s", conversation_id[:8])
+            flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
             flowfile.set_attribute("http.response.header.Content-Type", "application/json")
             return [flowfile]
 

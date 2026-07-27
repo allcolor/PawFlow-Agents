@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.34] — 2026-07-27
+
 ### Fixed
 
 - **beta.33 broke the chat UI entirely** — the whole page was dead: history

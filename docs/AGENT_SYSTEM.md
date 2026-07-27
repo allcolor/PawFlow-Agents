@@ -504,7 +504,7 @@ PawFlow uses Server-Sent Events (SSE) for real-time communication between the ag
 | Event | Description |
 |-------|-------------|
 | `thinking` | Agent is starting to process (includes `agent_name`). |
-| `token` | A token of the response (streamed incrementally). |
+| `token` | A token of the response (streamed incrementally). **Must carry a non-empty `msg_id`** — see below; `publish_event` raises `ValueError` otherwise. |
 | `tool_start` | Agent is calling a tool (name + arguments). |
 | `tool_result` | Tool execution completed (result summary). |
 | `done` | Agent turn is complete. Includes response, model, tokens_in/out, tools_called, duration_ms. |
@@ -517,6 +517,18 @@ PawFlow uses Server-Sent Events (SSE) for real-time communication between the ag
 | `plan_updated` | Plan status or step status changed. |
 | `thought_scheduled` | Random thought scheduled for later. |
 | `title_generated` | Conversation title was auto-generated. |
+
+#### Why `token` requires a `msg_id`
+
+The client accumulates `token` text into a streaming bubble, and that bubble
+is reconciled against the transcript by `msg_id`. Without an id the bubble is
+anonymous: the turn-ending event is then the only thing that can pair it with
+the line persisted by `ConversationWriter`, and if that event is lost, gap
+reconciliation after a reconnect renders the stored message next to the bubble
+already on screen — the same answer, twice. `ConversationEventBus.publish_event`
+therefore refuses an untagged `token`. The cost of a refusal is the live
+preview only; the message itself still reaches the client through the
+persisted `new_message` event.
 
 ### Queue Behavior
 

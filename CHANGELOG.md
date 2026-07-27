@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A `token` SSE event published without a `msg_id` is now refused
+  (`ValueError`) instead of producing an anonymous streaming bubble. Tokens
+  accumulate into a bubble that is reconciled against the transcript by
+  `msg_id`; with no id, only the turn-ending event could pair it with the
+  persisted line, so losing that event made gap reconciliation render the
+  stored message beside the bubble already on screen — the same answer twice.
+  This closes the residual risk introduced with reconciliation in beta.33: no
+  emitter could reach it (the single one stamps a uuid, and Claude Code
+  publishes no tokens at all), but nothing enforced it either. A refused event
+  costs the live preview only; the message still arrives persisted.
+
 ## [1.0.0-beta.33] — 2026-07-27
 
 ### Fixed

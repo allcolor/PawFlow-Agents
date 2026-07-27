@@ -350,7 +350,21 @@ class ConversationEventBus:
         """Convenience: create SSEEvent and publish.
 
         Auto-stamps data with ts=time.time() if missing.
+
+        A ``token`` event MUST carry a non-empty ``msg_id``. The client
+        accumulates tokens into a streaming bubble; without an id that bubble
+        is anonymous, so nothing can pair it with the persisted line that
+        ends the turn. The turn-ending event is what stamps the id onto the
+        bubble -- lose it, and gap reconciliation re-renders the stored
+        message next to the streamed one: the same answer, twice. Refusing
+        the event costs the live preview only; the persisted message still
+        arrives through ConversationWriter.
         """
+        if event_type == "token":
+            if not isinstance(data, dict) or not data.get("msg_id"):
+                raise ValueError(
+                    "publish_event('token') requires a non-empty msg_id "
+                    f"(conversation={conversation_id[:8]})")
         if isinstance(data, dict) and "ts" not in data:
             data["ts"] = time.time()
         self._log_context_gauge_update(conversation_id, event_type, data)

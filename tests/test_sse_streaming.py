@@ -211,7 +211,7 @@ class TestConversationEventBus(unittest.TestCase):
     def test_publish_to_subscriber(self):
         bus = ConversationEventBus.instance()
         writer = bus.subscribe("conv1")
-        bus.publish_event("conv1", "token", {"text": "hi"})
+        bus.publish_event("conv1", "token", {"text": "hi", "msg_id": "m1"})
         writer.close()
         chunks = list(writer.iterate(timeout=0.1))
         assert len(chunks) == 1
@@ -233,7 +233,7 @@ class TestConversationEventBus(unittest.TestCase):
         w1 = bus.subscribe("conv1")
         w2 = bus.subscribe("conv1")
         assert bus.subscriber_count("conv1") == 2
-        bus.publish_event("conv1", "token", {"text": "x"})
+        bus.publish_event("conv1", "token", {"text": "x", "msg_id": "m1"})
         w1.close()
         w2.close()
         c1 = list(w1.iterate(timeout=0.1))
@@ -256,7 +256,7 @@ class TestConversationEventBus(unittest.TestCase):
         assert w1.is_closed
         assert not w2.is_closed
         assert bus.subscriber_count("conv1") == 1
-        bus.publish_event("conv1", "token", {"text": "x"})
+        bus.publish_event("conv1", "token", {"text": "x", "msg_id": "m1"})
         w2.close()
         chunks = list(w2.iterate(timeout=0.1))
         assert len(chunks) == 1
@@ -275,9 +275,9 @@ class TestConversationEventBus(unittest.TestCase):
         writer = bus.subscribe("conv1")
         writer._max_queue = 1
         writer._queue = queue.Queue(maxsize=1)
-        bus.publish_event("conv1", "token", {"n": 1})
+        bus.publish_event("conv1", "token", {"n": 1, "msg_id": "m1"})
         assert bus.subscriber_count("conv1") == 1
-        bus.publish_event("conv1", "token", {"n": 2})
+        bus.publish_event("conv1", "token", {"n": 2, "msg_id": "m2"})
         assert writer.is_closed
         assert writer.overflowed
         assert bus.subscriber_count("conv1") == 0
@@ -288,8 +288,8 @@ class TestConversationEventBus(unittest.TestCase):
         writer._max_queue = 1
         writer._queue = queue.Queue(maxsize=1)
 
-        bus.publish_event("conv1", "token", {"n": 1})
-        bus.publish_event("conv1", "token", {"n": 2})
+        bus.publish_event("conv1", "token", {"n": 1, "msg_id": "m1"})
+        bus.publish_event("conv1", "token", {"n": 2, "msg_id": "m2"})
 
         replay = bus.subscribe("conv1", replay=True, client_id="tab-a")
         replay.close()
@@ -372,6 +372,30 @@ class TestConversationEventBus(unittest.TestCase):
         assert b"event: tool_result" in chunks[0]
         assert b'"tc_id": "tc1"' in chunks[0]
 
+    def test_token_event_without_msg_id_is_refused(self):
+        """An anonymous streaming bubble cannot be paired with its stored line.
+
+        The client accumulates `token` text into a bubble and only learns the
+        msg_id from the tokens themselves or from the turn-ending event. Lose
+        that event on an untagged stream and gap reconciliation renders the
+        persisted message beside the bubble already on screen -- the same
+        answer, twice. The bus refuses the untagged event: the live preview is
+        lost, the persisted message still arrives through ConversationWriter.
+        """
+        bus = ConversationEventBus.instance()
+        writer = bus.subscribe("conv1")
+        for bad in ({"text": "hi"}, {"text": "hi", "msg_id": ""}, None, ""):
+            with self.assertRaises(ValueError):
+                bus.publish_event("conv1", "token", bad)
+        writer.close()
+        self.assertEqual(list(writer.iterate(timeout=0.1)), [])
+
+        # Only `token` is constrained -- other event types keep flowing.
+        w2 = bus.subscribe("conv2")
+        bus.publish_event("conv2", "done", {"ok": True})
+        w2.close()
+        self.assertEqual(len(list(w2.iterate(timeout=0.1))), 1)
+
     def test_expired_buffered_event_is_never_replayed(self):
         """A buffered event past _BUFFER_TTL must not surface later as if live.
 
@@ -422,8 +446,8 @@ class TestConversationEventBus(unittest.TestCase):
         bus = ConversationEventBus.instance()
         w1 = bus.subscribe("conv1")
         w2 = bus.subscribe("conv2")
-        bus.publish_event("conv1", "token", {"text": "a"})
-        bus.publish_event("conv2", "token", {"text": "b"})
+        bus.publish_event("conv1", "token", {"text": "a", "msg_id": "m1"})
+        bus.publish_event("conv2", "token", {"text": "b", "msg_id": "m2"})
         w1.close()
         w2.close()
         c1 = list(w1.iterate(timeout=0.1))
@@ -1219,7 +1243,7 @@ class TestAgentSSEStreamTask(_SSEConversationFixture):
         ff = self._ff("conv-xyz")
         results = task.execute(ff)
 
-        bus.publish_event("conv-xyz", "token", {"text": "hello"})
+        bus.publish_event("conv-xyz", "token", {"text": "hello", "msg_id": "m1"})
         bus.publish_event("conv-xyz", "done", {"ok": True})
 
         # Close all subscribers to make iteration terminate

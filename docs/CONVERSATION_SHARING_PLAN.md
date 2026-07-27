@@ -387,6 +387,27 @@ best-effort owner map).
    `validate_auth`) is rejected too — an unauthenticated subscriber is
    precisely what this closes. Covered by
    `tests/test_sse_streaming.py::TestAgentSSEStreamAuthorization`.
+   - **The endpoint does not carry conversations only.** The chat UI opens a
+     second stream per browser tab on `__ui__:<tab id>`
+     (`_uiActionConversationId` in `rxbus.js`), and every `action$()` call
+     routes its `command_result` there. That id is a routing key, not a
+     conversation: no owner, no row on disk, so `require_read` can only ever
+     deny it. Gating the endpoint without excluding it shipped in beta.33 and
+     took the whole UI command bus down — no action returned a result, the
+     history never rendered, pending actions hung forever. `is_ui_bus_channel`
+     exempts the channel from the per-conversation check while still requiring
+     an authenticated requester. Covered by
+     `tests/test_sse_streaming.py::TestUIActionBusChannelIsNotAConversation`.
+     Residual exposure, deliberately not closed here: the channel is not bound
+     to the requester's identity, so an authenticated user who obtained a live
+     tab id could read that tab's action results. Tab ids are random and live
+     in `sessionStorage` only — never persisted, never shared — so the
+     "IDs get handed between users" reasoning that motivates the conversation
+     gate does not transfer. Binding it would mean namespacing the channel as
+     `__ui__:<user id>:<tab id>` at both the subscribe site and every
+     `command_result` publish site (`agent_actions.py`, the async context-op
+     path, which re-parses the raw request body) — a wider change than a
+     production hotfix should carry.
 3. ~~**Write-path actions**~~ — **done**. `tasks/ai/actions/_conv_sharing.py`
    implements the seven actions above, wired into the `conversation.py`
    dispatcher; every `_conv_core.py` action naming a conversation resolves

@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **beta.33 broke the chat UI entirely** — the whole page was dead: history
+  never rendered, every action hung "in progress" forever, and the browser
+  console showed a 404 on `GET /api/agent/events?conversation_id=__ui__:tab-…`.
+  The SSE authorization added in beta.33 assumed every `conversation_id` on
+  that endpoint is a conversation. It is not: the chat UI opens a second
+  stream per browser tab on `__ui__:<tab id>` and routes the `command_result`
+  of *every* `action$()` call through it, deliberately decoupled from the
+  conversation stream (which `resumeConv` closes and reopens around history
+  rendering). That id has no owner and no row on disk, so `require_read` could
+  only ever deny it — the gate 404'd the UI's own command bus. The channel is
+  now recognized (`is_ui_bus_channel`) and exempted from the per-conversation
+  check; it still requires an authenticated requester, and real conversations
+  are gated exactly as before.
 - A `token` SSE event published without a `msg_id` is now refused
   (`ValueError`) instead of producing an anonymous streaming bubble. Tokens
   accumulate into a bubble that is reconciled against the transcript by

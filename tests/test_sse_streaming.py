@@ -1427,6 +1427,78 @@ class TestAgentSSEStreamAuthorization(_SSEConversationFixture):
             "http.response.status") == "404"
 
 
+class TestUIActionBusChannelIsNotAConversation(_SSEConversationFixture):
+    """The per-tab UI command bus must survive the conversation ACL.
+
+    Regression (beta.33 shipped it): the chat UI opens a second SSE stream on
+    `__ui__:<tab id>` and every action$() call routes its `command_result`
+    there. That id is a routing key, not a conversation -- no owner, no row on
+    disk -- so `require_read` could only ever deny it. Gating the endpoint on
+    read access answered 404 to the UI command bus, and with it no action ever
+    returned a result: the history never rendered and pending actions hung
+    forever. Authentication must still be required.
+    """
+
+    BUS = "__ui__:tab-ms3alrfd-4a83b62n4mq"
+
+    def _run(self, cid, principal):
+        from tasks.io.agent_sse_stream import AgentSSEStreamTask
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.query.conversation_id", cid)
+        if principal is not None:
+            ff.set_attribute("http.auth.principal", principal)
+        return AgentSSEStreamTask({"timeout": 10}).execute(ff)[0]
+
+    def _close(self, cid):
+        bus = ConversationEventBus.instance()
+        with bus._lock:
+            for w in bus._subscribers.get(cid, set()).copy():
+                w.close()
+
+    def test_authenticated_tab_subscribes_without_any_conversation(self):
+        # Nothing is saved in the store: this id has no conversation at all.
+        assert not self.store.exists(self.BUS)
+        result = self._run(self.BUS, "alice")
+        assert result.get_attribute("http.response.status") == "200"
+        assert hasattr(result, "_sse_stream")
+        self._close(self.BUS)
+
+    def test_command_result_reaches_the_tab(self):
+        # The whole point of the channel: an action's result must arrive.
+        bus = ConversationEventBus.instance()
+        result = self._run(self.BUS, "alice")
+        bus.publish_event(self.BUS, "command_result",
+                          {"action": "load_history", "result": "[]"})
+        self._close(self.BUS)
+        chunks = list(result._sse_stream)
+        assert any(b"event: command_result" in c for c in chunks)
+
+    def test_unauthenticated_tab_is_still_rejected(self):
+        # The exemption is from the per-conversation check, not from auth.
+        result = self._run(self.BUS, None)
+        assert result.get_attribute("http.response.status") == "404"
+        assert ConversationEventBus.instance().subscriber_count(self.BUS) == 0
+
+    def test_bare_prefix_is_not_a_bus_channel(self):
+        # `__ui__:` with no tab id is not a channel anyone owns; it must not
+        # become a shared broadcast lobby by way of the exemption.
+        import core.conversation_access as ca
+        assert not ca.is_ui_bus_channel("__ui__:")
+        assert not ca.is_ui_bus_channel("")
+        assert not ca.is_ui_bus_channel("conv-abc")
+        assert not ca.is_ui_bus_channel("prefixed__ui__:x")
+        assert ca.is_ui_bus_channel(self.BUS)
+        assert self._run("__ui__:", "alice").get_attribute(
+            "http.response.status") == "404"
+
+    def test_real_conversations_are_still_gated(self):
+        # The exemption must not widen: a stranger is still refused a real
+        # conversation, and an id merely CONTAINING the prefix is not exempt.
+        self.store.save("conv-private", [], user_id="alice")
+        assert self._run("conv-private", "mallory").get_attribute(
+            "http.response.status") == "404"
+
+
 # ── HandleHTTPResponse streaming ────────────────────────────────────
 
 

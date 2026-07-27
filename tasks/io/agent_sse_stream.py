@@ -14,6 +14,11 @@ Subscribing requires read access to the conversation (owner or an accepted
 collaborator, see ``core/conversation_access.py``). Upstream ``validate_auth``
 only authenticates the requester; this task is where the per-conversation
 check happens.
+
+The one exception is the per-tab UI command bus (``__ui__:<tab id>``), which
+is a routing key rather than a conversation: it has no owner and no row on
+disk, so the conversation ACL can only ever deny it. It still requires an
+authenticated requester -- see ``is_ui_bus_channel``.
 """
 
 import json
@@ -76,10 +81,21 @@ class AgentSSEStreamTask(BaseTask):
         # No trusted identity at all (a custom flow wired without
         # validate_auth) is a rejection too: an unauthenticated subscriber is
         # exactly the case this closes.
-        from core.conversation_access import ConversationAccessError, require_read
+        from core.conversation_access import (
+            ConversationAccessError, is_ui_bus_channel, require_read)
         from core.flow_runtime_access import trusted_requester_user_id
+        requester = trusted_requester_user_id(flowfile)
         try:
-            require_read(conversation_id, trusted_requester_user_id(flowfile))
+            if is_ui_bus_channel(conversation_id):
+                # A per-tab UI command bus, not a conversation: no owner, no
+                # row on disk, so the conversation ACL has nothing to resolve
+                # and can only deny. Authentication is still required -- the
+                # unauthenticated subscriber is what this endpoint closes --
+                # but the per-conversation check does not apply.
+                if not requester:
+                    raise ConversationAccessError("Unauthenticated")
+            else:
+                require_read(conversation_id, requester)
         except ConversationAccessError:
             logger.warning("[sse-events] denied conv=%s", conversation_id[:8])
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())

@@ -263,6 +263,31 @@ def remove_collaborator(cid: str, user_id: str, *, store=None) -> bool:
     return True
 
 
+# -- Ephemeral UI bus channels ----------------------------------------
+
+# The chat UI opens a second SSE stream per browser tab on a channel id of
+# the form `__ui__:<tab id>` (`_uiActionConversationId` in rxbus.js). Every
+# action$() call routes its `command_result` there, deliberately decoupled
+# from the conversation stream, which resumeConv closes and reopens around
+# history rendering.
+#
+# It is NOT a conversation: nothing on disk, no owner, no ACL. Resolving it
+# through resolve_conversation_access can only ever deny -- resolve_owner
+# finds nothing -- so gating this endpoint on read access took the whole UI
+# command bus down with it: no action ever returned a result.
+UI_BUS_PREFIX = "__ui__:"
+
+
+def is_ui_bus_channel(cid: str) -> bool:
+    """True for a per-tab UI command bus id, which has no conversation ACL.
+
+    Callers must still require an authenticated principal: the exemption is
+    from the per-conversation check, not from authentication.
+    """
+    cid = _clean(cid)
+    return cid.startswith(UI_BUS_PREFIX) and len(cid) > len(UI_BUS_PREFIX)
+
+
 # -- Access resolution ------------------------------------------------
 
 def resolve_conversation_access(cid: str, requester_user_id: str, *,

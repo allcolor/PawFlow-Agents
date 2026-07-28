@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`apply_patch` could rewrite the wrong lines without saying so.** When `git
+  apply` refused to parse a diff — which it does on hand-counted `@@` counts,
+  even when the context and the edits are correct — its diagnostic was
+  discarded and the patch fell through to a fallback parser that applied
+  *positionally*. That parser never compared what it removed, so a hunk whose
+  context existed nowhere was applied anyway to whatever sat at the stated
+  offset; and it indexed the old-side `@@` number into a buffer the preceding
+  hunks had already grown, so every hunk after the first landed off by the net
+  line delta before it. It also wrote each file as it went, leaving earlier
+  files rewritten when a later hunk was nonsense. The fallback now treats the
+  `@@` number as a hint and locates each hunk by its context, refuses a hunk it
+  cannot place (quoting git's reason when git supplied one), and writes nothing
+  until every hunk in the patch has been placed. A patch with wrong `@@` counts
+  or a bare `@@` now applies correctly instead of corrupting the target.
+
+  A hunk with no context at all (a pure insertion, as `diff -U0` emits) has
+  nothing to match, so it is checked against the header's own redundancy
+  instead: the two counts must restate the hunk body, and the new-side start
+  must restate the old-side start shifted by every hunk already applied. All
+  three agreeing corroborates the position; any disagreement, or a bare `@@`
+  carrying no arithmetic, is refused rather than placed on trust. Every hunk is
+  now checked — by context where context exists, by arithmetic where it does not.
+
+- **`apply_patch` reported success on a zero-context diff it had not applied.**
+  `git apply` requires one line of context and otherwise skips the hunk *and
+  still exits 0*, so a `diff -U0` patch came back applied over an untouched
+  file. It is now invoked with `--unidiff-zero`, which relaxes only the hunks
+  that carry no context — a patch that has context applies identically either
+  way.
+
+- **`Monitor` dropped output past `line_limit` without saying so.** A body that
+  stops at the cap is indistinguishable from a command that had nothing more to
+  say, so a caller reading a truncated result concluded the output simply ended
+  there. The watcher script now reports the true line count and which branch it
+  took, and a truncated result states the cut twice: `truncated=N` in the
+  header, and a closing line giving how many lines were dropped, how many were
+  produced, and which end was kept (`first` for raw output, `last` for the
+  never-matched fallback). A hit list capped by `limit` is not reported as
+  truncation — the header already carries `limit=`, so that cap was never
+  silent. `line_limit` still never costs a match: the hit search greps the whole
+  capture file, so a marker on line 400 is found under any `line_limit`.
+
 ## [1.0.0-beta.39] — 2026-07-28
 
 ### Fixed

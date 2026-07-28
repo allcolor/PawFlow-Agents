@@ -42,6 +42,51 @@ Editing preference: use `apply_patch` for patch-shaped changes and `batch_edit` 
 | `copy` | Copy files between filesystem services/FileStore. |
 | `notebook_edit` | Edit a Jupyter notebook cell. |
 
+### How `apply_patch` places a hunk
+
+`*** Begin Patch` blocks have their own applier. A unified diff goes to `git
+apply` first, which verifies context and names the offending line. Only if git
+is missing, or refuses to *parse* the diff, does a built-in fallback take over —
+and when git refused, its diagnostic is carried into any error the fallback
+raises, so the real reason is never lost.
+
+A unified diff carries two independent kinds of evidence for where a hunk goes,
+and the fallback uses whichever the hunk actually has.
+
+**Context**, when the hunk has any. The `@@` number is then a **hint, not an
+address**: the hunk is placed by searching for its context, starting at the
+hinted line and working outward, so wrong or missing numbers do not matter. A
+hunk whose context is nowhere in the file is refused, never applied to whatever
+happened to sit at the stated offset.
+
+**The header's own arithmetic**, when the hunk has no context — a pure
+insertion, as `diff -U0` emits. A `@@ -a,b +c,d @@` header is redundant three
+times over: `b` restates the old side's line total, `d` the new side's, and `c`
+restates `a` shifted by every hunk already applied. If all three agree, the
+stated position is corroborated by the diff's own numbers; if any disagrees,
+the header was not produced by a diff tool and the hunk is refused rather than
+placed on trust. A bare `@@` on a contextless hunk carries no arithmetic at all
+and is likewise refused.
+
+So every hunk is checked — by context where context exists, by arithmetic where
+it does not. Nothing is written until all of them have been placed, so a bad
+hunk at the end cannot leave the earlier files half-rewritten.
+
+This matters because hand-counted `@@` headers are the common failure: git
+rejects a header whose line counts are wrong, even when the context and the
+edits are perfectly correct. Such a patch now applies correctly through the
+fallback. It previously did not — the fallback indexed the old-side `@@` number
+into a buffer the preceding hunks had already grown, so every hunk after the
+first landed off by the net line delta before it, silently. A bare `@@` with no
+numbers at all is likewise located by context rather than rejected.
+
+On the git path, zero-context diffs need `--unidiff-zero`, which `apply_patch`
+now always passes. Without it git demands one line of context, skips a
+context-free hunk **and still exits 0** — a silent no-op this tool used to
+report as a successful patch over an untouched file. The flag only relaxes
+hunks that carry no context; a patch that has context applies identically
+either way.
+
 ## Execution, DevOps, and Desktop
 
 | Tool | Purpose |
@@ -89,6 +134,31 @@ output text: `reason=match|exit|timeout|unknown`, plus `exit_code=` when the
 command exited on its own. A timeout still returns the lines captured so far,
 and when a pattern never matched, the tail of the raw output is returned so the
 run is not a blank.
+
+### What `line_limit` drops, and why it says so
+
+`line_limit` (default 200) caps the raw output kept. Only the two raw-output
+branches can drop lines: no pattern at all, which keeps the *first*
+`line_limit` lines, and the never-matched fallback, which keeps the *last*. A
+hit list is capped by `limit` instead, and the header already states `limit=`,
+so that cap was never silent.
+
+The cap used to be. A body that stops at line 200 is indistinguishable from a
+command that had nothing more to say, so a caller reading a truncated result
+would conclude the output simply ended there. The shell now reports the true
+line count alongside the reason, and a truncated result says so twice: the
+header carries `truncated=N`, and the body ends with how many lines were
+dropped, how many were produced, and which end was kept:
+
+```
+[monitor] reason=exit elapsed_ms=225 lines=200 exit_code=0 truncated=300
+...
+[monitor] 300 more line(s) not shown: 500 produced, kept the first 200
+(line_limit=200). Raise line_limit to see them.
+```
+
+Note that `line_limit` never costs you a match: the hit search greps the whole
+capture file, so a `FAILED` on line 400 is found under any `line_limit`.
 
 ## Web and Search
 

@@ -32,6 +32,44 @@ from tasks.ai._agent_streaming_loop import _AgentStreamingLoopMixin  # noqa: E40
 class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamingLoopMixin):
     """Streaming agent execution + sync + side channels."""
 
+    @staticmethod
+    def _deliver_to_captured_tmux(conversation_id: str, agent_name: str,
+                                  text: str) -> bool:
+        """Type a user message into a tmux session working outside a worker.
+
+        Reached only when a turn marker says the agent is busy while nothing
+        preemptable is registered — the shape of a captured turn. The MITM
+        proxy settles whether there is anywhere to deliver: its WebSocket is
+        up exactly while a container lives, so a connected session is proof
+        of a live tmux, independent of the turn bookkeeping that went stale.
+        No connected session means no container to type into, and the message
+        falls back to the queue.
+
+        Returns True when the text reached the live container.
+        """
+        if not conversation_id or not (text or "").strip():
+            return False
+        try:
+            from services.cc_interactive_event_service import (
+                CCInteractiveEventService)
+            if CCInteractiveEventService.live_session(
+                    conversation_id, agent_name or "") is None:
+                return False
+            from core.claude_code_interactive_pool import (
+                InteractiveClaudeCodePool)
+            pool = InteractiveClaudeCodePool.instance()
+            state = pool.find_live_by_conv_agent(
+                conversation_id, agent_name or "")
+            if state is None or not pool.send_text(state, text):
+                return False
+        except Exception:
+            logger.debug("captured-tmux delivery failed", exc_info=True)
+            return False
+        logger.info(
+            "[agent:%s] typed message into captured tmux turn agent=%s",
+            conversation_id[:8], agent_name or "default")
+        return True
+
     def _execute_streaming(self, flowfile: FlowFile) -> List[FlowFile]:
         """Streaming mode: returns ACK immediately, runs loop in background thread.
 
@@ -386,6 +424,25 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 logger.info(
                     "[agent:%s] active turn not preemptable yet — queuing for next drain",
                     conversation_id[:8])
+                # One case is not "not yet": a captured tmux turn. The CC
+                # interactive event service registers _active_turns for work
+                # Claude Code started on its own (a background-task result
+                # landing in its container), with no streaming worker, no
+                # context and no client — so this branch holds for the whole
+                # turn, not for a brief settling window. Queuing there means
+                # the message reaches nothing while the tmux is visibly
+                # working. The live container is still typeable: type into it.
+                if self._deliver_to_captured_tmux(
+                        conversation_id, _target, _user_text):
+                    ack = json.dumps({
+                        "status": "accepted",
+                        "conversation_id": conversation_id,
+                        "message_count": _ack_message_count(),
+                        "server_start_time": SERVER_START_TIME,
+                        "wait_for_done": False})
+                    flowfile.set_content(ack.encode("utf-8"))
+                    flowfile.set_attribute("agent.conversation_id", conversation_id)
+                    return [flowfile]
 
             if _fast_restart_after_preempt:
                 # The stale/preempted worker has been generation-cancelled and

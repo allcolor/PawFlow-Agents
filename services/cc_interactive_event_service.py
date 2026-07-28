@@ -202,6 +202,31 @@ class CCInteractiveEventService(BaseService):
         with self._sessions_lock:
             return self._sessions.get(session_token)
 
+    @classmethod
+    def live_session(cls, conversation_id: str,
+                     agent_name: str) -> Optional[CCInteractiveSessionEvents]:
+        """Return the connected proxy session for (conv, agent), if any.
+
+        The MITM proxy sits between the tmux and PawFlow: its WebSocket is up
+        exactly while a container is alive, and every event the session sees
+        arrived through it. So a connected session is direct evidence of a
+        live tmux — evidence that does not depend on PawFlow's own turn
+        bookkeeping, which is precisely what goes stale when Claude Code
+        resumes work outside a streaming worker.
+        """
+        if not conversation_id:
+            return None
+        with cls._instances_lock:
+            services = list(cls._instances.values())
+        for svc in services:
+            with svc._sessions_lock:
+                for state in svc._sessions.values():
+                    if (state.conversation_id == conversation_id
+                            and (state.agent_name or "") == (agent_name or "")
+                            and state.connected):
+                        return state
+        return None
+
     def claim_consumer(self, session_token: str, *, kind: str = "request") -> int:
         """Take exclusive ownership of a session's event stream.
 
@@ -560,51 +585,238 @@ class CCInteractiveEventService(BaseService):
         except Exception:
             logger.debug("CC interactive capture SSE failed", exc_info=True)
 
+    @staticmethod
+    def _drain_pending_after_capture(
+            state: CCInteractiveSessionEvents) -> None:
+        """Wake the agent for messages queued while the capture held the turn.
+
+        A captured turn registers `_active_turns` but never creates a
+        streaming worker, an `_active_contexts` entry, or an
+        `_active_claude_client`. agent_streaming reads that combination as
+        "already active but not preemptable" and parks every incoming user
+        message in the PendingQueue — and because no worker owns this turn,
+        nothing performs the end-of-turn drain that a normal turn does in
+        `_agent_streaming_loop`. The messages stay queued until a force stop
+        discards them: the webchat looks alive (the marker is up) while
+        typing into it reaches nothing. Releasing the marker is therefore
+        not enough; the capture must also hand the queue back.
+        """
+        if not state.conversation_id:
+            return
+        try:
+            from core.pending_queue import PendingQueue
+            count = PendingQueue.for_agent(
+                state.conversation_id, state.agent_name or "").peek_count()
+            if not count:
+                return
+            from tasks.ai.agent_loop import AgentLoopTask
+            AgentLoopTask.wake_agent(
+                state.conversation_id, state.agent_name or "",
+                reason=f"[pending] {count} queued msg(s) after tmux capture",
+                user_id=state.user_id or "",
+                delay=0.0,
+                even_if_active=True,
+            )
+            logger.info(
+                "CC interactive capture handed back %d queued msg(s): "
+                "conv=%s agent=%s",
+                count, state.conversation_id[:8], state.agent_name)
+        except Exception:
+            logger.debug("CC interactive pending handback failed", exc_info=True)
+
+    def _capture_stream_callbacks(self, state: CCInteractiveSessionEvents):
+        """Build the live callbacks a captured turn needs to reach the UI.
+
+        A captured turn carries the same wire traffic as any other turn — the
+        MITM proxy observed all of it — so it must reach the SSE listeners the
+        same way. A PawFlow-driven turn gets there through the agent loop's
+        callbacks; a capture has no loop, so it carries its own and persists
+        each block as it arrives instead of one lump when the turn ends.
+        Mirrors the Antigravity observer's manual ingest, which streams
+        out-of-band tmux activity by default.
+
+        Returns ``(text_callback, block_callback)``.
+        """
+        cid = state.conversation_id
+        live = {"msg_id": "", "ts": 0.0}
+
+        def _source():
+            return {"type": "agent", "name": state.agent_name,
+                    "input": "cc_interactive_tmux"}
+
+        def _writer():
+            from core.conversation_writer import ConversationWriter
+            return ConversationWriter.for_conversation(cid)
+
+        def _text_callback(text: str) -> None:
+            """Publish each delta so the answer appears while it is written."""
+            if not text:
+                return
+            if not live["msg_id"]:
+                live["msg_id"] = uuid.uuid4().hex[:12]
+                live["ts"] = time.time()
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(cid, "token", {
+                    "agent_name": state.agent_name,
+                    "text": text,
+                    "msg_id": live["msg_id"],
+                    "ts": live["ts"],
+                    "source": _source(),
+                })
+            except Exception:
+                logger.debug("CC interactive capture token publish failed",
+                             exc_info=True)
+
+        def _block_callback(event_type: str, payload: dict) -> None:
+            from core.llm_client import (
+                has_complete_mcp_tool_call, is_mcp_tool_call_name,
+                stamp_message, unwrap_mcp_tool)
+            try:
+                if event_type == "text":
+                    text = payload.get("text", "") or ""
+                    if not text.strip():
+                        return
+                    # Reuse the id the streamed tokens carried so the client
+                    # replaces its live preview instead of showing it twice.
+                    msg = stamp_message({
+                        "role": "assistant", "content": text,
+                        "source": _source(), "channel": "tmux",
+                        "msg_id": live["msg_id"] or None,
+                    }, cid)
+                    live["msg_id"] = ""
+                    _writer().enqueue_message(
+                        msg, agent_name=state.agent_name,
+                        user_id=state.user_id,
+                        sse_events=[{"type": "new_message", "data": {
+                            "role": "assistant",
+                            "content": msg.get("content", ""),
+                            "msg_id": msg.get("msg_id", ""),
+                            "ts": msg.get("ts"),
+                            "source": msg.get("source") or {},
+                            "channel": "tmux",
+                        }}])
+                    return
+
+                if event_type in ("thinking", "thinking_content"):
+                    thinking = (payload.get("thinking", "")
+                                or payload.get("text", "") or "")
+                    if not thinking.strip():
+                        return
+                    msg = stamp_message({
+                        "role": "assistant", "content": "",
+                        "thinking": thinking,
+                        "source": _source(), "channel": "tmux",
+                    }, cid)
+                    _writer().enqueue_message(
+                        msg, agent_name=state.agent_name,
+                        user_id=state.user_id,
+                        sse_events=[{"type": "thinking_content", "data": {
+                            "agent_name": state.agent_name,
+                            "text": thinking,
+                            "msg_id": msg.get("msg_id", ""),
+                            "ts": msg.get("ts"),
+                            "source": msg.get("source") or {},
+                        }}])
+                    return
+
+                if event_type == "tool_use":
+                    raw_name = payload.get("name", "")
+                    raw_args = payload.get("arguments", {}) or {}
+                    # An incomplete MCP call renders with empty args and is
+                    # dropped downstream; do not persist a half call.
+                    if not has_complete_mcp_tool_call(raw_name, raw_args):
+                        return
+                    name, args = unwrap_mcp_tool(raw_name, raw_args)
+                    origin = payload.get("tool_origin", "") or ""
+                    if not origin and is_mcp_tool_call_name(raw_name):
+                        origin = "mcp"
+                    tc_id = payload.get("id", "")
+                    msg = stamp_message({
+                        "role": "assistant", "content": "",
+                        "source": _source(), "channel": "tmux",
+                        "thinking": payload.get("thinking", "") or "",
+                        "tool_calls": [{
+                            "id": tc_id, "name": name, "arguments": args,
+                            **({"tool_origin": origin} if origin else {}),
+                        }],
+                    }, cid)
+                    tc_data = {
+                        "tool": name, "arguments": args, "tc_id": tc_id,
+                        "agent_name": state.agent_name,
+                        "msg_id": msg.get("msg_id", ""),
+                        "ts": msg.get("ts"),
+                        "source": msg.get("source") or {},
+                    }
+                    if origin:
+                        tc_data["tool_origin"] = origin
+                    _writer().enqueue_message(
+                        msg, agent_name=state.agent_name,
+                        user_id=state.user_id,
+                        sse_events=[{"type": "tool_call", "data": tc_data}])
+                    return
+
+                if event_type == "tool_result":
+                    name = payload.get("tool", "") or ""
+                    result = payload.get("result", "") or "(no output)"
+                    tc_id = payload.get("tc_id", "")
+                    origin = payload.get("tool_origin", "") or ""
+                    # Same wrapping the agent loop and the Antigravity ingest
+                    # apply, so a transcript row is identical whoever produced
+                    # it.
+                    from tasks.ai.agent_core import AgentCoreMixin
+                    msg = stamp_message({
+                        "role": "tool",
+                        "content": AgentCoreMixin._wrap_tool_output(
+                            name, result),
+                        "tool_call_id": tc_id,
+                        **({"tool_origin": origin} if origin else {}),
+                    }, cid)
+                    tr_data = {
+                        "tool": name, "result": str(result)[:2000],
+                        "tc_id": tc_id, "agent_name": state.agent_name,
+                        "msg_id": msg.get("msg_id", ""),
+                        "ts": msg.get("ts"),
+                    }
+                    if origin:
+                        tr_data["tool_origin"] = origin
+                    _writer().enqueue_message(
+                        msg, agent_name=state.agent_name,
+                        user_id=state.user_id,
+                        sse_events=[{"type": "tool_result", "data": tr_data}])
+            except Exception:
+                logger.warning(
+                    "CC interactive capture block persist failed (%s)",
+                    event_type, exc_info=True)
+
+        return _text_callback, _block_callback
+
     def _run_manual_capture(self, session_token: str) -> None:
         state = self.session_state(session_token)
         try:
             if not state:
                 return
             self._publish_capture_active(state, active=True)
-            from core.llm_client import stamp_message
-            from core.conversation_writer import ConversationWriter
             from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
+            # Same callbacks a PawFlow-driven turn passes: every observed
+            # block is persisted and published as it arrives. Without them
+            # the coordinator ran the whole turn silently and the webchat saw
+            # nothing until it ended, while the tmux was visibly working.
+            _text_cb, _block_cb = self._capture_stream_callbacks(state)
             coord = _CCITurnCoordinator(self, session_token,
+                                        callback=_text_cb,
+                                        block_callback=_block_cb,
                                         consumer_kind="capture")
             response = coord.run()
-            content = response.content or ""
-            if not content.strip():
-                return
-            msg = stamp_message({
-                "role": "assistant",
-                "content": content,
-                "source": {
-                    "type": "agent",
-                    "name": state.agent_name,
-                    "input": "cc_interactive_tmux",
-                },
-                "channel": "tmux",
-            }, state.conversation_id)
-            ConversationWriter.for_conversation(
-                state.conversation_id).enqueue_message(
-                    msg, agent_name=state.agent_name, user_id=state.user_id,
-                    sse_events=[{"type": "new_message", "data": {
-                        "role": "assistant",
-                        "content": msg.get("content", ""),
-                        "msg_id": msg.get("msg_id", ""),
-                        "ts": msg.get("ts"),
-                        "source": msg.get("source") or {},
-                        "channel": msg.get("channel", ""),
-                    }}])
             logger.info(
-                "CC interactive manual tmux response persisted: conv=%s agent=%s msg=%s chars=%d",
-                state.conversation_id[:8], state.agent_name, msg.get("msg_id", ""),
-                len(content))
+                "CC interactive captured turn streamed: conv=%s agent=%s chars=%d",
+                state.conversation_id[:8], state.agent_name,
+                len(response.content or ""))
         except CCIConsumerEvicted:
-            # A real turn started and took the stream: our text stops
-            # mid-sentence. Persisting it would publish exactly the truncated
-            # message this ownership scheme exists to prevent — drop it, the
-            # new coordinator owns the whole turn.
+            # A real turn started and took the stream. Blocks already flushed
+            # were complete when they were written, so they stay; only the
+            # block still being accumulated is lost, and the new coordinator
+            # owns the rest of the turn.
             logger.info(
                 "CC interactive capture evicted by a live turn: session=%s",
                 session_token[:8])
@@ -626,6 +838,7 @@ class CCInteractiveEventService(BaseService):
                     # and blinking the marker off between the two would show
                     # the agent idle in the middle of the work.
                     self._publish_capture_active(state, active=False)
+                    self._drain_pending_after_capture(state)
                 if restart:
                     thread = threading.Thread(
                         target=self._run_manual_capture,

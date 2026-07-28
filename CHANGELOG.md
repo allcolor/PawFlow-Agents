@@ -8,6 +8,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Webchat messages reached nothing while a tmux turn was visibly working.**
+  When a PawFlow turn ended with a background tool still running, the tool's
+  result landed in the Claude Code container and Claude Code resumed on its
+  own. That is a *captured* turn: `_active_turns` is registered so the agent
+  shows as busy, but there is no streaming worker, no `_active_contexts` entry
+  and no `_active_claude_client`. `agent_streaming` reads that combination as
+  "already active but not preemptable" and parks the message in the
+  PendingQueue — correct for a real turn, which drains at its end, but a
+  captured turn has no owner to drain it. Every message sent from the webchat
+  sat in the queue until a force stop discarded it, with the UI showing the
+  agent up the whole time. Two gaps closed: the message is now typed straight
+  into the live tmux, and the capture hands any queued messages back when it
+  releases the turn. Liveness is decided by the MITM proxy's WebSocket — it is
+  up exactly while a container lives, so it proves there is a tmux to deliver
+  into without consulting the turn bookkeeping that went stale in the first
+  place.
+
+- **A captured tmux turn was invisible until it ended.** The same sequence, seen
+  from the other direction: the tmux worked for minutes — text, tool calls, tool
+  results, every byte observed by the MITM proxy — and the webchat showed
+  nothing, because the capture built its turn coordinator with *no callbacks*
+  and persisted one lump when the turn finished. A PawFlow-driven turn passes
+  four callbacks and streams each block through the agent loop; the capture had
+  none, so it was silent by construction, and its tool calls were dropped
+  entirely. It now passes the same `callback` and `block_callback`: text deltas
+  publish as `token` events while they are written, and each completed block is
+  persisted and published as it arrives. This is the rule the Antigravity
+  observer already implements — its manual ingest streams out-of-band tmux
+  activity by default and suspends only while PawFlow drives a turn — applied
+  to Claude Code interactive: everything the proxy intercepts reaches the SSE
+  listeners while it happens, whoever started the turn.
+
 - **`apply_patch` could rewrite the wrong lines without saying so.** When `git
   apply` refused to parse a diff — which it does on hand-counted `@@` counts,
   even when the context and the edits are correct — its diagnostic was

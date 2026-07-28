@@ -1,0 +1,174 @@
+"""A captured tmux turn must stream like any other turn.
+
+Production sequence (2026-07-28): a background tool result reached Claude Code
+and it resumed on its own. The tmux worked for minutes — text, tool calls,
+tool results, all observed by the MITM proxy — and the webchat showed nothing
+until the turn ended, because the capture built its coordinator with no
+callbacks and persisted a single lump at the end.
+
+Everything the proxy intercepts must reach the SSE listeners while it happens,
+whoever started the turn. The Antigravity observer already works that way (its
+manual ingest streams out-of-band tmux activity by default); this is the same
+rule for Claude Code interactive.
+"""
+
+import pytest
+
+from services.cc_interactive_event_service import CCInteractiveEventService
+
+
+@pytest.fixture
+def captured(monkeypatch):
+    """Return (service, state, written, published)."""
+    written = []
+    published = []
+
+    class _Writer:
+        @staticmethod
+        def for_conversation(_cid):
+            return _Writer()
+
+        def enqueue_message(self, msg, **kw):
+            written.append((msg, kw.get("sse_events") or []))
+
+    class _Bus:
+        @staticmethod
+        def instance():
+            return _Bus()
+
+        def publish_event(self, cid, kind, data):
+            published.append((cid, kind, data))
+
+    import core.conversation_writer as cw
+    import core.conversation_event_bus as bus
+    monkeypatch.setattr(cw, "ConversationWriter", _Writer)
+    monkeypatch.setattr(bus, "ConversationEventBus", _Bus)
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    state = svc.register_session("sess", user_id="allcol",
+                                 conversation_id="80c37670",
+                                 agent_name="claude")
+    return svc, state, written, published
+
+
+def _sse_types(written):
+    return [e["type"] for _msg, events in written for e in events]
+
+
+def test_text_streams_live_then_persists_under_the_same_id(captured):
+    """The streamed preview and the stored message must share a msg_id.
+
+    Otherwise the client cannot replace its live preview and the answer shows
+    up twice.
+    """
+    svc, state, written, published = captured
+    text_cb, block_cb = svc._capture_stream_callbacks(state)
+
+    text_cb("Hel")
+    text_cb("lo")
+    assert [d["text"] for _c, kind, d in published if kind == "token"] == [
+        "Hel", "lo"]
+    live_id = published[0][2]["msg_id"]
+    assert all(d["msg_id"] == live_id for _c, _k, d in published)
+
+    block_cb("text", {"text": "Hello"})
+    assert len(written) == 1
+    msg, events = written[0]
+    assert msg["role"] == "assistant"
+    assert msg["content"] == "Hello"
+    assert msg["msg_id"] == live_id
+    assert events[0]["type"] == "new_message"
+
+
+def test_a_second_text_block_gets_a_fresh_live_id(captured):
+    svc, state, written, published = captured
+    text_cb, block_cb = svc._capture_stream_callbacks(state)
+
+    text_cb("one")
+    block_cb("text", {"text": "one"})
+    text_cb("two")
+    block_cb("text", {"text": "two"})
+
+    assert written[0][0]["msg_id"] != written[1][0]["msg_id"]
+
+
+def test_tool_calls_and_results_are_persisted_and_published(captured):
+    """They used to be dropped entirely: the capture kept only the text."""
+    svc, state, written, published = captured
+    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+
+    block_cb("tool_use", {"id": "tc1", "name": "read",
+                          "arguments": {"path": "/x"}})
+    block_cb("tool_result", {"tc_id": "tc1", "tool": "read",
+                            "result": "contents"})
+
+    assert _sse_types(written) == ["tool_call", "tool_result"]
+    call_msg, call_events = written[0]
+    assert call_msg["tool_calls"][0]["name"] == "read"
+    assert call_events[0]["data"]["tc_id"] == "tc1"
+    result_msg, _ = written[1]
+    assert result_msg["role"] == "tool"
+    assert result_msg["tool_call_id"] == "tc1"
+    # Same wrapping the agent loop applies, so a transcript row does not
+    # betray which path produced it.
+    from tasks.ai.agent_core import AgentCoreMixin
+    assert result_msg["content"] == AgentCoreMixin._wrap_tool_output(
+        "read", "contents")
+
+
+def test_incomplete_mcp_tool_call_is_not_persisted(captured):
+    """A call with empty args renders bare and is dropped downstream."""
+    svc, state, written, _published = captured
+    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+
+    block_cb("tool_use", {"id": "tc1", "name": "use_tool", "arguments": {}})
+
+    assert written == []
+
+
+def test_thinking_is_persisted_and_published(captured):
+    svc, state, written, _published = captured
+    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+
+    block_cb("thinking_content", {"text": "reasoning"})
+
+    assert _sse_types(written) == ["thinking_content"]
+    assert written[0][0]["thinking"] == "reasoning"
+
+
+@pytest.mark.parametrize("event_type,payload", [
+    ("text", {"text": "   "}),
+    ("thinking_content", {"text": ""}),
+])
+def test_empty_blocks_are_not_persisted(captured, event_type, payload):
+    svc, state, written, _published = captured
+    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+
+    block_cb(event_type, payload)
+
+    assert written == []
+
+
+def test_a_failing_block_never_kills_the_capture(captured, monkeypatch):
+    """A persist failure must not abort the turn still being observed."""
+    svc, state, _written, _published = captured
+
+    class _Boom:
+        @staticmethod
+        def for_conversation(_cid):
+            raise RuntimeError("writer down")
+
+    import core.conversation_writer as cw
+    monkeypatch.setattr(cw, "ConversationWriter", _Boom)
+
+    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+    block_cb("text", {"text": "hello"})  # must not raise
+
+
+def test_capture_passes_the_callbacks_to_its_coordinator():
+    """Guards the regression directly: a capture built with no callbacks."""
+    import inspect
+    src = inspect.getsource(CCInteractiveEventService._run_manual_capture)
+    assert "_capture_stream_callbacks(state)" in src
+    assert "callback=_text_cb" in src
+    assert "block_callback=_block_cb" in src

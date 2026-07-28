@@ -687,6 +687,21 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             self._kill_container(state.name)
         return len(victims)
 
+    def find_live_by_conv_agent(self, conv_id: str,
+                                agent_name: str) -> Optional[InteractiveContainer]:
+        """Return the live container for one (conversation, agent) pair.
+
+        Used to reach a tmux session that is working outside any streaming
+        worker — a captured turn — so a webchat message can still be typed
+        into it instead of being parked in the PendingQueue.
+        """
+        with self._lock:
+            for key, state in self._sessions.items():
+                if key[1] == conv_id and key[2] == agent_name:
+                    if self._is_alive(state.name):
+                        return state
+        return None
+
     def ensure_sweeper(self, tick_seconds: int = 60,
                        idle_ttl_seconds: Optional[int] = None) -> None:
         if idle_ttl_seconds and idle_ttl_seconds > 0:

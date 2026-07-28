@@ -63,6 +63,86 @@ def test_marker_is_skipped_without_a_bound_conversation(live_task):
     assert live_task._active_turns == {}
 
 
+def test_live_session_follows_the_proxy_connection(monkeypatch):
+    """The proxy WebSocket is the evidence of a live tmux, not a turn flag."""
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    state = _state(svc)
+    monkeypatch.setitem(CCInteractiveEventService._instances, "events", svc)
+
+    assert CCInteractiveEventService.live_session("80c37670", "claude") is None
+
+    state.connected = True
+    assert CCInteractiveEventService.live_session("80c37670", "claude") is state
+    # A session belongs to one (conversation, agent) pair only.
+    assert CCInteractiveEventService.live_session("80c37670", "other") is None
+    assert CCInteractiveEventService.live_session("other", "claude") is None
+
+    # Liveness does not depend on whether a capture happens to hold the turn:
+    # traffic through the proxy proves the container either way.
+    state.manual_capture_active = True
+    assert CCInteractiveEventService.live_session("80c37670", "claude") is state
+    state.connected = False
+    assert CCInteractiveEventService.live_session("80c37670", "claude") is None
+
+
+def test_capture_release_hands_queued_messages_back(monkeypatch):
+    """Messages typed during a captured turn must not stay queued forever.
+
+    A capture registers `_active_turns` without a streaming worker, so
+    agent_streaming parks incoming messages in the PendingQueue and no
+    end-of-turn drain ever runs. Before this handback they sat there until a
+    force stop discarded them.
+    """
+    woken = []
+
+    class _Queue:
+        @staticmethod
+        def for_agent(_cid, _agent):
+            return _Queue()
+
+        def peek_count(self):
+            return 3
+
+    import core.pending_queue as pq
+    monkeypatch.setattr(pq, "PendingQueue", _Queue)
+
+    import tasks.ai.agent_loop as agent_loop
+    monkeypatch.setattr(agent_loop.AgentLoopTask, "wake_agent",
+                        classmethod(lambda cls, cid, agent, **kw: woken.append(
+                            (cid, agent, kw.get("reason", "")))))
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc._drain_pending_after_capture(_state(svc))
+
+    assert len(woken) == 1
+    assert woken[0][0] == "80c37670"
+    assert woken[0][1] == "claude"
+    assert "3 queued msg(s) after tmux capture" in woken[0][2]
+
+
+def test_capture_release_is_quiet_on_an_empty_queue(monkeypatch):
+    woken = []
+
+    class _Queue:
+        @staticmethod
+        def for_agent(_cid, _agent):
+            return _Queue()
+
+        def peek_count(self):
+            return 0
+
+    import core.pending_queue as pq
+    monkeypatch.setattr(pq, "PendingQueue", _Queue)
+    import tasks.ai.agent_loop as agent_loop
+    monkeypatch.setattr(agent_loop.AgentLoopTask, "wake_agent",
+                        classmethod(lambda cls, *a, **k: woken.append(a)))
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    svc._drain_pending_after_capture(_state(svc))
+
+    assert woken == []
+
+
 def test_capture_publishes_activity_then_release(live_task, monkeypatch):
     published = []
 

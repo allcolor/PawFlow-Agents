@@ -131,6 +131,44 @@ it ends (skipping the release when a chained capture continues the same visible
 activity). Without this the webchat shows the agent idle while the tmux is
 visibly working.
 
+A capture also owns the turn's *inbound* path. It registers `_active_turns`
+without an `_active_contexts` entry or an `_active_claude_client`, and
+`agent_streaming` reads that combination as "already active but not
+preemptable": the message goes to the agent's `PendingQueue`. For a real turn
+that window is brief and the turn drains the queue at its end; a captured turn
+has no owner to drain it, so messages sent from the webchat used to sit there
+until a force stop discarded them — while the UI showed the agent up. Two
+rules close that:
+
+- **Type into the live tmux.** `_deliver_to_captured_tmux` sends the text
+  through the pool rather than queuing it. Whether there is anywhere to deliver
+  is decided by `CCInteractiveEventService.live_session`, which looks for a
+  *connected* proxy session. The MITM WebSocket is up exactly while a container
+  lives and every observed event arrived through it, so it proves a live tmux
+  independently of the turn bookkeeping that went stale. No connected session
+  means no container, and the message falls back to the queue.
+- **Hand the queue back on release.** When a capture releases the turn it wakes
+  the agent if anything is queued, so a message that could not be typed is
+  still processed instead of being discarded by the next force stop.
+
+A capture streams like any other turn. It builds its coordinator with the same
+`callback` and `block_callback` a PawFlow-driven turn passes, so text deltas
+publish as `token` events while they are written and each completed block —
+text, thinking, tool call, tool result — is persisted and published as it
+arrives. The coordinator's returned content is unaffected by supplying
+`block_callback` (only the `turn_callback` payload is suppressed), but the
+capture no longer uses it: persisting per block and again at the end would
+double the text.
+
+This mirrors the Antigravity observer, whose manual ingest streams out-of-band
+tmux activity by default and is *suspended* only while PawFlow drives a turn.
+The rule both providers implement: everything the proxy intercepts reaches the
+SSE listeners while it happens, whoever started the turn.
+
+A capture evicted mid-turn by a real coordinator keeps the blocks it already
+flushed — they were complete when written — and loses only the block still
+being accumulated.
+
 When the streamed tool input is incomplete but the request-body replay that
 follows carries the full input, the replay supersedes the emit — but only when
 the streamed name stayed an MCP wrapper. Such a call is dropped downstream by

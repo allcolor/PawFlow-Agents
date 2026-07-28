@@ -2668,14 +2668,23 @@ def test_cc_interactive_event_service_publishes_manual_tmux_response(monkeypatch
         content = "final from cci"
 
     class _Coordinator:
-        def __init__(self, service, session_token, consumer_kind="request"):
+        def __init__(self, service, session_token, callback=None,
+                     block_callback=None, consumer_kind="request"):
             assert session_token == "sess"
             # The capture path must declare itself as the safety net so it
             # yields to a live request coordinator instead of splitting the
             # session's event stream with it.
             assert consumer_kind == "capture"
+            # It must also stream: a capture without callbacks runs the whole
+            # turn silently and the webchat stays empty until it ends.
+            assert callback is not None
+            assert block_callback is not None
+            self._callback = callback
+            self._block_callback = block_callback
 
         def run(self):
+            self._callback("final from cci")
+            self._block_callback("text", {"text": "final from cci"})
             return _Response()
 
     monkeypatch.setattr(

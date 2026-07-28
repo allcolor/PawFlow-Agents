@@ -58,6 +58,7 @@ def self_container_id() -> str:
         try:
             text = Path(path).read_text(encoding="utf-8", errors="ignore")
         except Exception:
+            logger.debug("Could not read %s", path, exc_info=True)
             continue
         match = _CONTAINER_ID_RE.search(text)
         if match:

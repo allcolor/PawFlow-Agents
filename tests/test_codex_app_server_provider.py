@@ -338,7 +338,11 @@ def test_codex_app_server_registers_live_app_server_session():
     assert "active_turn=True" in src
     assert "active_turn=False" in src
 
-    assert LLMConnectionService({}).get_service_actions() == []
+    # The point of this assertion is that CLI OAuth logins live in
+    # llmCredentialOAuthProvider, not here. Copilot's device flow is not one:
+    # it ends on a plain api_key.
+    assert [a["id"] for a in LLMConnectionService({}).get_service_actions()] == [
+        "copilot_device_login"]
 
     rules = LLMConnectionService({}).get_parameter_rules()
     assert any(

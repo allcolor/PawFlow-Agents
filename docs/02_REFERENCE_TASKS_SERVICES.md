@@ -636,12 +636,35 @@ val = cache.get("key")
 **Parameters**:
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `provider` | string | Yes | openai | Provider (openai, anthropic) |
+| `provider` | string | Yes | openai | Provider (openai, azure-openai, copilot, anthropic, plus the CLI providers) |
 | `api_key` | secret | Yes | - | API key |
 | `model` | string | No | gpt-4 | Model to use |
 | `base_url` | string | No | - | Custom base URL |
+| `azure_deployment` | string | No | - | Azure only: deployment name (empty = use the model name) |
+| `azure_api_version` | string | No | - | Azure only: `api-version` query parameter |
 | `max_tokens` | integer | No | 1024 | Max tokens per response |
 | `temperature` | float | No | 0.7 | Temperature |
+
+**OpenAI-dialect providers** (`core/llm_providers/openai_dialects.py`): Azure
+OpenAI and GitHub Copilot send OpenAI chat-completions bodies, so they reuse
+the whole OpenAI path. Only the envelope differs.
+
+*Azure OpenAI* needs three things a plain OpenAI-compatible `base_url` cannot
+express: the key travels in an `api-key` header rather than `Authorization`,
+the request addresses a **deployment** (`/openai/deployments/<name>/chat/completions`),
+and an `api-version` query parameter is mandatory. `base_url` is required —
+every Azure resource has its own host, so there is no default to fall back on.
+Embeddings still go through the `openai` provider only.
+
+*GitHub Copilot* is a two-token provider. **Sign in with GitHub** on the service
+form runs a device flow: GitHub shows a field, PawFlow shows the code to type
+into it — no callback URL and no browser needed on the server. The resulting
+GitHub token lands in `api_key` and is saved like any other key. It is not what
+the chat endpoint accepts: each session exchanges it for a short-lived Copilot
+token, cached in memory and renewed before expiry. `PAWFLOW_COPILOT_CLIENT_ID`
+overrides the editor client id if you register your own GitHub OAuth app.
+Using a Copilot subscription outside GitHub's own editors is a grey area in
+their terms — the account and the risk are the operator's.
 
 **Usage with InferLLM**:
 ```python

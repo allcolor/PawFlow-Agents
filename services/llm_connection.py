@@ -429,6 +429,22 @@ class LLMConnectionService(BaseService):
                     "free-tier API key from https://ollama.com/settings/keys."
                 ),
             },
+            "azure_deployment": {
+                "type": "string", "default": "",
+                "description": (
+                    "Azure deployment name. Azure addresses a deployment, not "
+                    "a model: the name you chose in the portal goes here. "
+                    "Empty uses the model name, which works when they match."
+                ),
+            },
+            "azure_api_version": {
+                "type": "string", "default": "",
+                "description": (
+                    "Azure OpenAI api-version query parameter "
+                    "(empty = provider default). Azure rejects requests "
+                    "without one."
+                ),
+            },
             "relay_local": {
                 "type": "boolean", "default": True,
                 "description": (
@@ -641,7 +657,19 @@ class LLMConnectionService(BaseService):
         """Rules for conditional visibility, required, and defaults."""
         return [
             {
-                "when": {"provider": ["openai", "anthropic"]},
+                # Every provider except the two Azure-only fields, which the
+                # azure-openai rule below turns back on.
+                "when": {"provider": ["openai", "azure-openai", "copilot", "anthropic",
+                                     "claude-code", "claude-code-interactive",
+                                     "antigravity-interactive", "codex-app-server",
+                                     "gemini"]},
+                "set": {
+                    "azure_deployment":  {"visible": False},
+                    "azure_api_version": {"visible": False},
+                }
+            },
+            {
+                "when": {"provider": ["openai", "azure-openai", "copilot", "anthropic"]},
                 "set": {
                     "api_key":       {"visible": True, "required": True},
                     "credential_service_id": {"visible": False},
@@ -662,9 +690,29 @@ class LLMConnectionService(BaseService):
                 }
             },
             {
-                "when": {"provider": ["openai"]},
+                "when": {"provider": ["openai", "azure-openai", "copilot"]},
                 "set": {
                     "extra_body":    {"visible": True},
+                }
+            },
+            {
+                "when": {"provider": ["azure-openai"]},
+                "set": {
+                    "api_key":       {"visible": True, "required": True,
+                                      "description": "Azure OpenAI resource key (sent as the api-key header)"},
+                    "base_url":      {"visible": True, "required": True,
+                                      "description": "Your resource endpoint, e.g. https://my-resource.openai.azure.com"},
+                    "azure_deployment":  {"visible": True},
+                    "azure_api_version": {"visible": True},
+                }
+            },
+            {
+                "when": {"provider": ["copilot"]},
+                "set": {
+                    "api_key":       {"visible": True, "required": True,
+                                      "description": "GitHub token from the device login below (exchanged for a Copilot token per session)"},
+                    "base_url":      {"visible": True,
+                                      "description": "Copilot chat endpoint (empty = api.githubcopilot.com)"},
                 }
             },
             {
@@ -795,12 +843,23 @@ class LLMConnectionService(BaseService):
         ]
 
     def get_service_actions(self) -> list:
-        """LLM services no longer own OAuth login actions.
+        """CLI providers keep their logins in llmCredentialOAuthProvider.
 
-        Configure an llmCredentialOAuthProvider service and reference it via
-        credential_service_id when api_key is empty.
+        Copilot is the exception, and deliberately so: its device flow ends on
+        a plain GitHub token that belongs in ``api_key``, not on a rotating
+        credential pool with accounts and refresh tokens. Putting it here keeps
+        the result where the user can see and edit it.
         """
-        return []
+        return [
+            {
+                "id": "copilot_device_login",
+                "label": "Sign in with GitHub",
+                "icon": "",
+                "when": {"provider": ["copilot"]},
+                "server_action": "copilot_device_login",
+                "flow": "device_code",
+            },
+        ]
 
 
 ServiceFactory.register(LLMConnectionService)

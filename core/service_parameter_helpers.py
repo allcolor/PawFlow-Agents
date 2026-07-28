@@ -36,6 +36,17 @@ OPENAI_BASE_URLS = [
     ("Local relay", _conv_relay_url("localhost:1234/v1"), "Relay-routed local OpenAI-compatible server."),
 ]
 
+AZURE_BASE_URLS = [
+    ("Azure OpenAI resource", "https://YOUR-RESOURCE.openai.azure.com",
+     "Your resource endpoint from the Azure portal. The deployment name and "
+     "api-version are separate fields, not part of this URL."),
+]
+
+COPILOT_BASE_URLS = [
+    ("GitHub Copilot", "https://api.githubcopilot.com",
+     "Copilot chat endpoint. Leave empty to use it by default."),
+]
+
 ANTHROPIC_BASE_URLS = [
     ("Anthropic", "https://api.anthropic.com", "Native Anthropic Messages API."),
     ("DeepSeek Anthropic", "https://api.deepseek.com/anthropic", "DeepSeek Anthropic-compatible endpoint."),
@@ -83,6 +94,13 @@ LLM_MODELS = {
         ("qwen3.6-flash", "Qwen fast model."),
         ("deepseek-v4-pro", "Third-party model via DashScope."),
         ("kimi-k2.6", "Third-party model via DashScope."),
+    ],
+    "copilot": [
+        ("gpt-4.1", "Copilot default chat model."),
+        ("gpt-4o", "Copilot general model."),
+        ("o4-mini", "Copilot reasoning model."),
+        ("claude-sonnet-4", "Claude through Copilot, when the plan includes it."),
+        ("gemini-2.5-pro", "Gemini through Copilot, when the plan includes it."),
     ],
     "ollama": [
         ("gpt-oss:120b", "Open-weight OpenAI model; light usage level, good free-tier default."),
@@ -502,8 +520,14 @@ def _fallback_models(service_type: str, parameter: str, config: Dict[str, Any]) 
 
 
 def _base_url_values(service_type: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if service_type == "llmConnection" and str(config.get("provider") or "") == "anthropic":
-        return _values(ANTHROPIC_BASE_URLS)
+    if service_type == "llmConnection":
+        provider = str(config.get("provider") or "")
+        if provider == "anthropic":
+            return _values(ANTHROPIC_BASE_URLS)
+        if provider == "azure-openai":
+            return _values(AZURE_BASE_URLS)
+        if provider == "copilot":
+            return _values(COPILOT_BASE_URLS)
     if service_type in {"supertonicTTS", "pocketTTS", "voicebox", "voxcpmTTS", "httpClientService"}:
         return _values(LOCAL_BASE_URLS + OPENAI_BASE_URLS[:2])
     return _values(OPENAI_BASE_URLS)

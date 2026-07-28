@@ -433,6 +433,38 @@ def _handle_sf_k3(self, action, body, store, user_id, flowfile, _helpers):
         }).encode())
         return [flowfile]
 
+    # ── GitHub Copilot device login ───────────────────────────────
+
+    if action == "copilot_device_login":
+        """Start the GitHub device flow and hand back the code to type.
+
+        Nothing is stored here: the flow ends with a GitHub token that the UI
+        drops into the service's api_key field, which the user then saves like
+        any other key. No new credential store, no token written behind the
+        operator's back.
+        """
+        try:
+            from core import copilot_auth
+            flowfile.set_content(json.dumps(copilot_auth.start_device_login()).encode())
+        except Exception as exc:
+            logger.warning("Copilot device login failed to start", exc_info=True)
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+        return [flowfile]
+
+    if action == "copilot_device_poll":
+        """Poll the device flow once. The browser tab may never be opened."""
+        device_code = body.get("device_code", "")
+        if not device_code:
+            flowfile.set_content(json.dumps({"error": "Missing device_code"}).encode())
+            return [flowfile]
+        try:
+            from core import copilot_auth
+            flowfile.set_content(json.dumps(copilot_auth.poll_device_login(device_code)).encode())
+        except Exception as exc:
+            logger.warning("Copilot device login poll failed", exc_info=True)
+            flowfile.set_content(json.dumps({"status": "error", "error": str(exc)}).encode())
+        return [flowfile]
+
     # ── Codex set credentials (paste) ─────────────────────────────
 
     if action == "codex_login_url":

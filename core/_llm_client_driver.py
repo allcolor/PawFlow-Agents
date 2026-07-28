@@ -23,6 +23,11 @@ from core._llm_types import (
 
 logger = logging.getLogger(__name__)
 
+#: Providers whose requests are OpenAI chat-completions bodies. They share the
+#: whole OpenAI path; only the URL layout and auth header differ, and that is
+#: decided in core.llm_providers.openai_dialects.
+OPENAI_WIRE_PROVIDERS = ("openai", "azure-openai", "copilot")
+
 
 class _LLMClientDriverMixin:
     """complete / complete_stream / embed + abort control for LLMClient."""
@@ -119,7 +124,7 @@ class _LLMClientDriverMixin:
         def _do_complete(mdl):
             self._circuit_before_call(mdl)
             start = time.time()
-            if self.provider == "openai":
+            if self.provider in OPENAI_WIRE_PROVIDERS:
                 result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools,
                                                 call_user_id=call_user_id or "",
                                                 call_conversation_id=call_conversation_id or "")
@@ -364,7 +369,7 @@ class _LLMClientDriverMixin:
         def _do_stream(mdl):
             self._circuit_before_call(mdl)
             start = time.time()
-            if self.provider == "openai":
+            if self.provider in OPENAI_WIRE_PROVIDERS:
                 try:
                     result = self._stream_openai(messages, mdl, temperature, max_tokens, tools, callback,
                                                   thinking_callback=thinking_callback,

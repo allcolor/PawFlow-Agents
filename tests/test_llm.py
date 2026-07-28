@@ -371,7 +371,11 @@ class TestLLMConnectionService:
     def test_llm_service_rules_hide_cli_fields_for_api_providers(self):
         rules = LLMConnectionService({}).get_parameter_rules()
 
-        api_rule = next(r for r in rules if r["when"] == {"provider": ["openai", "anthropic"]})
+        # The API-provider rule covers the direct-HTTP providers; anchored on
+        # membership so adding one does not break the assertion.
+        api_rule = next(r for r in rules
+                        if set(r["when"].get("provider", [])) >= {"openai", "anthropic"}
+                        and "docker_image" in r["set"])
         assert api_rule["set"]["docker_image"]["visible"] is False
         assert api_rule["set"]["docker_cpu_limit"]["visible"] is False
         assert api_rule["set"]["docker_memory_limit"]["visible"] is False
@@ -379,7 +383,9 @@ class TestLLMConnectionService:
         assert api_rule["set"]["extra_body"]["visible"] is False
         assert api_rule["set"]["relay_local"]["visible"] is True
 
-        openai_rule = next(r for r in rules if r["when"] == {"provider": ["openai"]})
+        openai_rule = next(r for r in rules
+                           if "openai" in r["when"].get("provider", [])
+                           and r["set"].get("extra_body", {}).get("visible") is True)
         assert openai_rule["set"]["extra_body"]["visible"] is True
 
     def test_claude_code_interactive_exposes_base_url_for_api_key_mode(self):

@@ -334,6 +334,60 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction, sc
         // Result arrives via SSE command_result
       });
     } catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
+  } else if (flow === 'device_code') {
+    // Device flow: GitHub shows a field, we show the code to type into it.
+    // No callback URL and no browser needed on this machine, which is the
+    // whole point on a headless server.
+    try {
+      const resp = await rxjs.firstValueFrom(action$(serverAction, payload));
+      if (resp.error) { addMsg('error', resp.error); return; }
+      const container = btn ? btn.parentElement : null;
+      if (!container) return;
+      const div = document.createElement('div');
+      div.style.cssText = 'margin-top:8px;';
+      div.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;">' + escapeHtml(t('deviceCodeHint')) + '</div>'
+        + '<div style="font-family:monospace;font-size:18px;letter-spacing:2px;margin-bottom:6px;">' + escapeHtml(resp.user_code || '') + '</div>'
+        + '<a href="' + escapeHtml(resp.verification_uri || '') + '" target="_blank" rel="noopener" style="font-size:12px;">' + escapeHtml(resp.verification_uri || '') + '</a>'
+        + '<div id="svc-device-status" style="color:var(--pf-muted);font-size:11px;margin-top:6px;">' + escapeHtml(t('waitingForAuthorization')) + '</div>';
+      container.appendChild(div);
+      const statusEl = div.querySelector('#svc-device-status');
+      if (btn) { btn.disabled = true; }
+
+      const deadline = Date.now() + (resp.expires_in || 900) * 1000;
+      let interval = (resp.interval || 5) * 1000;
+      const pollAction = serverAction.replace('_login', '_poll');
+      const poll = async () => {
+        if (Date.now() > deadline) {
+          statusEl.textContent = t('deviceCodeExpired');
+          if (btn) { btn.disabled = false; }
+          return;
+        }
+        let result;
+        try {
+          result = await rxjs.firstValueFrom(action$(pollAction, { device_code: resp.device_code }));
+        } catch (e) {
+          statusEl.textContent = e.message;
+          if (btn) { btn.disabled = false; }
+          return;
+        }
+        if (result.status === 'ok') {
+          const field = document.getElementById('svc-p-api_key');
+          if (field) field.value = result.access_token;
+          statusEl.innerHTML = '<span style="color:var(--pf-success);">\u2714 ' + escapeHtml(t('deviceCodeLinked')) + '</span>';
+          if (btn) { btn.disabled = false; }
+          return;
+        }
+        if (result.status === 'error') {
+          statusEl.textContent = result.error || 'error';
+          if (btn) { btn.disabled = false; }
+          return;
+        }
+        // GitHub asks us to back off rather than refusing outright.
+        if (result.slow_down) interval += 5000;
+        setTimeout(poll, interval);
+      };
+      setTimeout(poll, interval);
+    } catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
   } else if (flow === 'oauth_code') {
     try {
       // Step 1: get instructions

@@ -82,11 +82,14 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
+    PROVIDERS = ("openai", "azure-openai", "copilot", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
         "anthropic": "https://api.anthropic.com",
+        # Azure has no shared host: every resource has its own, so base_url is
+        # required rather than defaulted.
+        "copilot": "https://api.githubcopilot.com",
     }
 
     DEFAULT_MODELS = _load_default_models()

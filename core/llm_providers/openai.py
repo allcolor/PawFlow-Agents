@@ -36,6 +36,22 @@ class LLMOpenaiMixin:
             return "/chat/completions"
         return "/v1/chat/completions"
 
+    def _openai_endpoint_path(self, base_url: str, model: str) -> str:
+        """Chat-completions path for this provider's dialect."""
+        from core.llm_providers.openai_dialects import DIALECTS, endpoint_path
+        provider = getattr(self, "provider", "openai")
+        if provider in DIALECTS:
+            return endpoint_path(provider, base_url, model, self._cfg)
+        return self._chat_completions_endpoint(base_url)
+
+    def _openai_auth_headers(self) -> Dict[str, str]:
+        """Authentication headers for this provider's dialect."""
+        from core.llm_providers.openai_dialects import DIALECTS, auth_headers
+        provider = getattr(self, "provider", "openai")
+        if provider in DIALECTS:
+            return auth_headers(provider, self.api_key)
+        return {"Authorization": f"Bearer {self.api_key}"}
+
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback,
                         thinking_callback=None, *,
                         call_user_id: str = "",
@@ -90,7 +106,7 @@ class LLMOpenaiMixin:
         host = parsed.hostname
         port = parsed.port
         full_path = (
-            parsed.path.rstrip("/") + self._chat_completions_endpoint(base_url)
+            parsed.path.rstrip("/") + self._openai_endpoint_path(base_url, model)
         ).replace("//", "/")
         safe_base_url = re.sub(r"(/relay-proxy/[^/]+/)[^/]+/", r"\1<token>/", base_url or "")
 
@@ -105,10 +121,10 @@ class LLMOpenaiMixin:
             self._active_http_conn = conn
             json_body = json.dumps(body).encode("utf-8")
             headers = {
-                "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
                 "Content-Length": str(len(json_body)),
             }
+            headers.update(self._openai_auth_headers())
             logger.info(
                 "OpenAI stream request model=%s host=%s port=%s path=%s base_url=%s body_bytes=%d",
                 model, host, port, full_path, safe_base_url, len(json_body),
@@ -579,9 +595,9 @@ class LLMOpenaiMixin:
 
         try:
             data = self._http_post(
-                self._chat_completions_endpoint(base_url),
+                self._openai_endpoint_path(base_url, model),
                 body,
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                headers={**self._openai_auth_headers(), "Content-Type": "application/json"},
                 base_url=base_url,
             )
         except Exception as exc:
@@ -595,9 +611,9 @@ class LLMOpenaiMixin:
                 conversation_id=call_conversation_id,
                 allow_vision=False)
             data = self._http_post(
-                self._chat_completions_endpoint(base_url),
+                self._openai_endpoint_path(base_url, model),
                 body,
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                headers={**self._openai_auth_headers(), "Content-Type": "application/json"},
                 base_url=base_url,
             )
         choice = data.get("choices", [{}])[0]

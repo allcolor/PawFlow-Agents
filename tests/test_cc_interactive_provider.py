@@ -2668,8 +2668,12 @@ def test_cc_interactive_event_service_publishes_manual_tmux_response(monkeypatch
         content = "final from cci"
 
     class _Coordinator:
-        def __init__(self, service, session_token):
+        def __init__(self, service, session_token, consumer_kind="request"):
             assert session_token == "sess"
+            # The capture path must declare itself as the safety net so it
+            # yields to a live request coordinator instead of splitting the
+            # session's event stream with it.
+            assert consumer_kind == "capture"
 
         def run(self):
             return _Response()

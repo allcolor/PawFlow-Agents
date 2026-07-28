@@ -103,9 +103,26 @@ class _CCITurnCoordinator:
     def __init__(self, event_service, session_token: str, callback=None,
                  thinking_callback=None, block_callback=None,
                  turn_callback=None, touch_callback=None,
-                 emitted_tool_use_ids=None, emitted_tool_result_ids=None):
+                 emitted_tool_use_ids=None, emitted_tool_result_ids=None,
+                 consumer_epoch: int = 0, consumer_kind: str = "request"):
         self.event_service = event_service
         self.session_token = session_token
+        # Exclusive read ownership of the session's event queue. Without it
+        # a stale coordinator (an orphan-turn capture, or a previous turn
+        # that never died) keeps calling wait_event on the same queue and
+        # each event goes to whichever getter wins the race: text deltas
+        # arrive halved, and a tool_use whose input_json_delta chunks landed
+        # elsewhere renders with empty args — an MCP wrapper then falls back
+        # to its raw `use_tool` name. The caller may pass an epoch claimed
+        # before draining; otherwise claim now. Services that do not
+        # arbitrate (test doubles) leave the epoch at 0 = unenforced.
+        self._consumer_refused = False
+        self._consumer_epoch = consumer_epoch
+        if not self._consumer_epoch:
+            claim = getattr(event_service, "claim_consumer", None)
+            if claim is not None:
+                self._consumer_epoch = claim(session_token, kind=consumer_kind)
+                self._consumer_refused = not self._consumer_epoch
         self.touch_callback = touch_callback
         self.callback = callback
         self.thinking_callback = thinking_callback
@@ -159,16 +176,34 @@ class _CCITurnCoordinator:
         self._last_event_at = 0.0
         self._max_event_gap = 0.0
 
+    def _wait_event(self, timeout: float) -> dict:
+        """Poll the session queue, asserting we still own the stream.
+
+        The epoch is only sent when one was granted, so an event service
+        that does not arbitrate ownership keeps its original signature.
+        """
+        if self._consumer_epoch:
+            return self.event_service.wait_event(
+                self.session_token, timeout=timeout, epoch=self._consumer_epoch)
+        return self.event_service.wait_event(self.session_token, timeout=timeout)
+
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
 
+        if self._consumer_refused:
+            # Another coordinator owns this session's stream. Reading it too
+            # would split the turn between us; yield instead of competing.
+            logger.info(
+                "[cci-provider] session=%s already has a live event consumer "
+                "— skipping this capture", self.session_token[:8])
+            return LLMResponse(content="", tool_calls=[])
         started_at = time.time()
         done = False
         while not done:
             if abort_event is not None and abort_event.is_set():
                 raise RuntimeError("claude-code-interactive aborted")
             timeout = 0.05 if self._stop_seen else 0.25
-            event = self.event_service.wait_event(self.session_token, timeout=timeout)
+            event = self._wait_event(timeout)
             if not event:
                 if not self._saw_proxy_event:
                     waited = time.time() - started_at
@@ -554,6 +589,7 @@ class _CCITurnCoordinator:
             self.tool_by_id[tc_id] = block
         if block.get("emitted") or tc_id in self.emitted_tool_use_ids:
             block["emitted"] = True
+            self._supersede_unwrappable_emit(tc_id, block, event)
             self._emit_pending_tool_results(tc_id)
             return
         block["emitted"] = True
@@ -584,6 +620,53 @@ class _CCITurnCoordinator:
             })
         self._remember_turn_tool_call(tc_id, display_name, display_args)
         self._emit_pending_tool_results(tc_id)
+
+    def _supersede_unwrappable_emit(self, tc_id: str, block: dict,
+                                    event: dict) -> None:
+        """Recover a wrapper call the streamed input_json_delta chunks lost.
+
+        The observed event IS the request body Claude Code sent, so its input
+        is complete by construction; the streamed chunks are not. When chunks
+        go missing the accumulated JSON yields no `tool_name`, the MCP wrapper
+        stays un-unwrapped and the call is emitted as a bare `use_tool` with
+        empty args — which `has_complete_mcp_tool_call` then drops, so the
+        call never reaches the conversation at all. Nothing was persisted,
+        so re-emitting from the request body cannot duplicate it.
+
+        Deliberately narrow: only an emit that stayed an MCP wrapper is
+        superseded. A call whose display name did resolve was persisted, and
+        re-emitting it would show the same call twice.
+        """
+        if block.get("display_args"):
+            return
+        if observed_tool_origin(str(block.get("display_name") or "")) != "mcp":
+            return
+        observed = _event_tool_args(event)
+        if not observed:
+            return
+        raw_name = event.get("name", "") or block.get("name", "")
+        display_name, display_args = normalize_observed_tool(raw_name, observed)
+        if not display_args:
+            return
+        logger.warning(
+            "[cci-args-debug] SUPERSEDE unwrappable stream emit: id=%s "
+            "was=%r now=%r", tc_id, block.get("display_name", ""), display_name)
+        block["display_name"] = display_name
+        block["display_args"] = display_args
+        # Classify from the name the MODEL emitted (the wrapper recorded on
+        # the stream block), not from the event's already-unwrapped name —
+        # the latter looks native and would lose the MCP badge.
+        block["tool_origin"] = (
+            event.get("tool_origin", "")
+            or observed_tool_origin(block.get("name", "") or raw_name))
+        self._remember_turn_tool_call(tc_id, display_name, display_args)
+        if self.block_callback:
+            self.block_callback("tool_use", {
+                "id": tc_id,
+                "name": display_name,
+                "arguments": display_args,
+                "tool_origin": block["tool_origin"],
+            })
 
     def _remember_turn_tool_call(self, tc_id: str, name: str, args: dict) -> None:
         if not tc_id:

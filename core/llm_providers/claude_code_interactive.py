@@ -60,6 +60,10 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             agent_name=agent_name)
         from services.cc_interactive_event_service import get_or_create_cc_interactive_event_service
         _, _, event_service = get_or_create_cc_interactive_event_service()
+        # Claim BEFORE draining: any stale coordinator still polling this
+        # session is evicted first, so whatever it grabs afterwards belongs
+        # to the discarded pre-drain backlog and never to our turn.
+        consumer_epoch = event_service.claim_consumer(state.session_token)
         event_service.drain_session(state.session_token)
         if not pool.send_text(state, prompt):
             detail = getattr(state, "last_error", "") or "unknown tmux error"
@@ -73,7 +77,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             thinking_callback=thinking_callback, block_callback=block_callback,
             turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
             emitted_tool_use_ids=state.emitted_tool_use_ids,
-            emitted_tool_result_ids=state.emitted_tool_result_ids)
+            emitted_tool_result_ids=state.emitted_tool_result_ids,
+            consumer_epoch=consumer_epoch)
         response = coord.run(getattr(self, "_abort", None))
         # Prefer the model resolved on the wire (message_start); fall back to
         # the configured alias (e.g. "best") then the provider default.
@@ -107,6 +112,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         pool = InteractiveClaudeCodePool.instance()
         pool.touch(state)
         _, _, event_service = get_or_create_cc_interactive_event_service()
+        consumer_epoch = event_service.claim_consumer(state.session_token)
         event_service.drain_session(state.session_token)
         if not pool.send_interrupt(state, text):
             detail = getattr(state, "last_error", "") or "unknown tmux error"
@@ -119,7 +125,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             thinking_callback=thinking_callback, block_callback=block_callback,
             turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
             emitted_tool_use_ids=state.emitted_tool_use_ids,
-            emitted_tool_result_ids=state.emitted_tool_result_ids)
+            emitted_tool_result_ids=state.emitted_tool_result_ids,
+            consumer_epoch=consumer_epoch)
         response = coord.run(getattr(self, "_abort", None))
         # Prefer the model resolved on the wire (message_start); fall back to
         # the configured alias (e.g. "best") then the provider default.

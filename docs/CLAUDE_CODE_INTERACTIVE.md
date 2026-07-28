@@ -98,6 +98,45 @@ observed response (`gzip` or `deflate`), only the side-channel copy is decoded
 before SSE/JSON parsing; the proxied bytes sent back to Claude Code remain
 unchanged.
 
+### Stream ownership
+
+Exactly one consumer may read a session's event queue. `queue.Queue` hands each
+event to a single getter, so two live turn coordinators on the same
+`session_token` split the SSE stream between them: text deltas arrive halved
+(an answer that starts mid-sentence), and a `tool_use` whose `input_json_delta`
+chunks landed in the other reader emits with empty arguments — which leaves an
+MCP wrapper un-unwrapped and rendered as a bare `use_tool`.
+
+Ownership is arbitrated by epoch. `claim_consumer()` bumps the epoch and every
+`wait_event()` presents the epoch it was granted; a stale holder raises
+`CCIConsumerEvicted` on its next poll instead of stealing events. A `request`
+claim always wins — it is the reader for the turn the user is waiting on — and
+the provider claims *before* draining, so anything a stale reader grabs belongs
+to the discarded pre-drain backlog. A `capture` claim (the orphan-turn safety
+net) refuses while a request coordinator is polling, and when evicted mid-turn
+it discards its partial text rather than publishing a truncated message.
+
+### Captured turns and the active-agent marker
+
+Claude Code can start a turn that PawFlow did not send: a human typing in the
+tmux, or Claude Code injecting its own background-task notification. Neither
+passes through `send_text`, so neither is registered as an injected prompt and
+no streaming worker runs. PawFlow attaches to such a turn with a capture rather
+than restarting it — a second prompt would duplicate work already in flight.
+
+Because a capture runs outside the streaming worker, it must publish the UI's
+active-agent truth itself: it registers an `_active_turns` entry and a
+`thinking` event when it starts, and releases both with `active_released` when
+it ends (skipping the release when a chained capture continues the same visible
+activity). Without this the webchat shows the agent idle while the tmux is
+visibly working.
+
+When the streamed tool input is incomplete but the request-body replay that
+follows carries the full input, the replay supersedes the emit — but only when
+the streamed name stayed an MCP wrapper. Such a call is dropped downstream by
+`has_complete_mcp_tool_call`, so nothing was persisted and re-emitting cannot
+duplicate it. A call whose name did resolve is left alone.
+
 Timing controls are read once when the provider modules are imported:
 
 - `PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_SECONDS` sets how long PawFlow waits after

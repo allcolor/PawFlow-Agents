@@ -37,6 +37,10 @@ def _redact_wire_bytes(data: bytes) -> bytes:
         lambda match: match.group(1) + b": <redacted>", data)
 
 
+class CCIConsumerEvicted(RuntimeError):
+    """Raised when a newer consumer took over a session's event stream."""
+
+
 def _safe_wire_field(data_b64: str, text_repr: str) -> tuple[str, str]:
     try:
         raw = base64.b64decode(data_b64, validate=True)
@@ -72,6 +76,11 @@ class CCInteractiveSessionEvents:
     # detect that and capture the orphan turn like a manual tmux one.
     last_wait_at: float = 0.0
     injected_intent_at: float = 0.0
+    # Exactly one consumer may read `events`: queue.Queue hands each item to
+    # a single getter, so two live coordinators SPLIT the SSE stream between
+    # them. Claiming bumps the epoch; the previous holder is evicted on its
+    # next wait_event instead of silently stealing half the turn.
+    consumer_epoch: int = 0
 
 
 class CCInteractiveEventService(BaseService):
@@ -193,10 +202,32 @@ class CCInteractiveEventService(BaseService):
         with self._sessions_lock:
             return self._sessions.get(session_token)
 
-    def wait_event(self, session_token: str, timeout: Optional[float] = None) -> dict:
+    def claim_consumer(self, session_token: str, *, kind: str = "request") -> int:
+        """Take exclusive ownership of a session's event stream.
+
+        A ``request`` claim always wins: it is the authoritative reader for
+        the turn the user is waiting on, and any stale coordinator still
+        polling is evicted. A ``capture`` claim (the orphan-turn safety net)
+        refuses when a request coordinator is actively polling — the net
+        must never take the stream away from the real turn. Returns the
+        granted epoch, or 0 when the claim is refused.
+        """
+        state = self.register_session(session_token)
+        with self._sessions_lock:
+            if kind != "request" and (
+                    time.time() - state.last_wait_at < self._LISTENER_FRESH_SECONDS):
+                return 0
+            state.consumer_epoch += 1
+            return state.consumer_epoch
+
+    def wait_event(self, session_token: str, timeout: Optional[float] = None,
+                   epoch: int = 0) -> dict:
         state = self.session_state(session_token)
         if state is None:
             raise RuntimeError("Unknown CC interactive session")
+        if epoch and epoch != state.consumer_epoch:
+            raise CCIConsumerEvicted(
+                "CC interactive session taken over by a newer consumer")
         if state.unreliable:
             raise RuntimeError(state.error or "CC interactive session is unreliable")
         state.last_wait_at = time.time()
@@ -472,15 +503,74 @@ class CCInteractiveEventService(BaseService):
         )
         thread.start()
 
+    @staticmethod
+    def _active_turn_marker(state: CCInteractiveSessionEvents, *,
+                           register: bool) -> None:
+        """Mirror a captured turn into the UI's active-agent truth.
+
+        A captured turn runs entirely outside the streaming worker, so none
+        of the usual bookkeeping fires: `_active_turns` stays empty and the
+        webchat shows the agent idle while Claude Code is visibly working in
+        the tmux. That happens for a human tmux prompt AND for Claude Code's
+        own self-injected prompts (a background-task notification), neither
+        of which passes through send_text. `_active_turns` is deliberately
+        provider-agnostic and owned by whoever runs the turn — so a capture
+        must register itself there, and release it when it ends.
+        """
+        if not state.conversation_id:
+            return
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            inst = AgentLoopTask._live_instance
+            if not inst:
+                return
+            key = (f"{state.conversation_id}:{state.agent_name}"
+                   if state.agent_name else state.conversation_id)
+            with inst._active_contexts_lock:
+                if register:
+                    inst._active_turns[key] = {
+                        "conversation_id": state.conversation_id,
+                        "agent_name": state.agent_name,
+                        "started_at": time.time(),
+                        "status": "running",
+                        "message_preview": "(tmux turn)",
+                        "generation": 0,
+                    }
+                else:
+                    inst._active_turns.pop(key, None)
+        except Exception:
+            logger.debug("CC interactive active-turn marker failed", exc_info=True)
+
+    def _publish_capture_active(self, state: CCInteractiveSessionEvents, *,
+                                active: bool) -> None:
+        self._active_turn_marker(state, register=active)
+        if not state.conversation_id:
+            return
+        try:
+            from core.conversation_writer import ConversationWriter
+            event = ({"type": "thinking",
+                      "data": {"conversation_id": state.conversation_id,
+                               "agent_name": state.agent_name}}
+                     if active else
+                     {"type": "active_released",
+                      "data": {"conversation_id": state.conversation_id,
+                               "agent_name": state.agent_name}})
+            ConversationWriter.for_conversation(
+                state.conversation_id).enqueue_sse_events([event])
+        except Exception:
+            logger.debug("CC interactive capture SSE failed", exc_info=True)
+
     def _run_manual_capture(self, session_token: str) -> None:
         state = self.session_state(session_token)
         try:
             if not state:
                 return
+            self._publish_capture_active(state, active=True)
             from core.llm_client import stamp_message
             from core.conversation_writer import ConversationWriter
             from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
-            coord = _CCITurnCoordinator(self, session_token)
+            coord = _CCITurnCoordinator(self, session_token,
+                                        consumer_kind="capture")
             response = coord.run()
             content = response.content or ""
             if not content.strip():
@@ -510,6 +600,14 @@ class CCInteractiveEventService(BaseService):
                 "CC interactive manual tmux response persisted: conv=%s agent=%s msg=%s chars=%d",
                 state.conversation_id[:8], state.agent_name, msg.get("msg_id", ""),
                 len(content))
+        except CCIConsumerEvicted:
+            # A real turn started and took the stream: our text stops
+            # mid-sentence. Persisting it would publish exactly the truncated
+            # message this ownership scheme exists to prevent — drop it, the
+            # new coordinator owns the whole turn.
+            logger.info(
+                "CC interactive capture evicted by a live turn: session=%s",
+                session_token[:8])
         except Exception:
             logger.warning("CC interactive manual response capture failed", exc_info=True)
         finally:
@@ -522,6 +620,12 @@ class CCInteractiveEventService(BaseService):
                         restart = True
                     else:
                         state.manual_capture_active = False
+                if not restart:
+                    # Release only when no follow-up capture is queued: a
+                    # chained capture continues the same visible activity,
+                    # and blinking the marker off between the two would show
+                    # the agent idle in the middle of the work.
+                    self._publish_capture_active(state, active=False)
                 if restart:
                     thread = threading.Thread(
                         target=self._run_manual_capture,

@@ -70,7 +70,8 @@ def self_container_id() -> str:
     return host if re.fullmatch(r"[0-9a-f]{12,64}", host or "") else ""
 
 
-def _inspect(container: str) -> Dict[str, Any]:
+def inspect_container(container: str) -> Dict[str, Any]:
+    """``docker inspect`` of one container, or ``{}`` when it cannot be read."""
     try:
         result = subprocess.run(  # nosec B603
             docker_cmd() + ["inspect", container],
@@ -105,7 +106,7 @@ def compose_info(refresh: bool = False) -> Dict[str, Any]:
     info: Dict[str, Any] = {}
     container_id = self_container_id()
     if container_id:
-        raw = _inspect(container_id)
+        raw = inspect_container(container_id)
         labels = ((raw.get("Config") or {}).get("Labels") or {}) if raw else {}
         working_dir = labels.get(LABEL_WORKING_DIR, "")
         if labels.get(LABEL_PROJECT) and working_dir:

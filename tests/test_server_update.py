@@ -1,21 +1,24 @@
-"""Server self-update: compose detection, preflight, and the detached updater."""
+"""Server self-update: deployment detection, preflight, and the detached updater."""
 
 import json
 import subprocess
 
 import pytest
 
-from core import compose_deployment, update_manager
+from core import compose_deployment, installer_deployment, update_manager
 from core import FlowFile
 
 WORKDIR = "/srv/pawflow"
+APP_DIR = "/home/pawflow/install"
 
 
 @pytest.fixture(autouse=True)
 def _clean_cache():
     compose_deployment.reset_cache()
+    installer_deployment.reset_cache()
     yield
     compose_deployment.reset_cache()
+    installer_deployment.reset_cache()
 
 
 def _admin_flowfile():
@@ -115,8 +118,14 @@ def _patch_compose(monkeypatch, info=None):
                             "config_files": []}))
 
 
-def test_preflight_refuses_outside_a_compose_deployment(monkeypatch):
+def _patch_installer(monkeypatch, info=None):
+    monkeypatch.setattr("core.installer_deployment.installer_info",
+                        lambda refresh=False: dict(info or {}))
+
+
+def test_preflight_refuses_when_neither_deployment_is_recognised(monkeypatch):
     _patch_compose(monkeypatch, info={})
+    _patch_installer(monkeypatch)
     monkeypatch.setattr(update_manager.subprocess, "run",
                         lambda *a, **k: pytest.fail("nothing may run"))
 
@@ -124,6 +133,7 @@ def test_preflight_refuses_outside_a_compose_deployment(monkeypatch):
 
     assert check["ok"] is False
     assert "Compose" in check["reason"]
+    assert "PAWFLOW_HOST_APP_DIR" in check["reason"]
 
 
 def test_preflight_mounts_the_project_at_its_own_host_path(monkeypatch):
@@ -274,6 +284,266 @@ def test_updater_image_is_configurable(monkeypatch):
     assert update_manager.updater_image() == update_manager.DEFAULT_UPDATER_IMAGE
 
 
+# -- installer deployments ---------------------------------------------
+#
+# `install-pawflow.sh` ends on `run-pawflow-docker.sh`, a plain `docker run`.
+# Compose stamps its project path on every container it creates; a `docker run`
+# stamps nothing, so every installer deployment used to be refused outright.
+
+INSTALLER_ENV = [
+    "PATH=/usr/bin",
+    "PAWFLOW_HOST_APP_DIR=" + APP_DIR,
+    "PAWFLOW_HOST_DATA_DIR=/home/pawflow/.pawflow/data",
+    "PAWFLOW_APP_DIR=/app",
+    "PAWFLOW_DATA_DIR=/app/data",
+    "PAWFLOW_BOOTSTRAP_GATEWAY_KEY=not-roy-batty",
+    "PAWFLOW_BOOTSTRAP_RESET=1",
+    "PAWFLOW_RUN_UID=1001",
+    "PAWFLOW_SERVER_RELAY_IMAGE=ghcr.io/allcolor/pawflow-relay-dev:2026.07.16",
+]
+
+INSTALLER_CMD = ["python", "cli.py", "start", "--host", "0.0.0.0",
+                 "--port", "19990", "--verbose"]
+
+
+def _patch_inspect(monkeypatch, labels=None, env=None, cmd=None, mounts=None,
+                   image="ghcr.io/allcolor/pawflow:1.0.0-beta.40"):
+    raw = {
+        "Name": "/pawflow-server",
+        "Config": {"Labels": labels or {}, "Env": env if env is not None else INSTALLER_ENV,
+                   "Cmd": cmd if cmd is not None else INSTALLER_CMD, "Image": image},
+        "HostConfig": {"NetworkMode": "host"},
+        "Mounts": mounts if mounts is not None else [
+            {"Destination": "/app/data", "Source": "/home/pawflow/.pawflow/data"}],
+    }
+    monkeypatch.setattr(installer_deployment, "self_container_id", lambda: "d" * 64)
+    monkeypatch.setattr(installer_deployment, "inspect_container", lambda c: raw)
+
+
+def test_a_container_started_before_the_labels_is_still_recognised(monkeypatch):
+    # The whole point: an install running *right now* must be updatable, not
+    # only the next one. PAWFLOW_HOST_APP_DIR has been injected for far longer
+    # than the labels have existed.
+    _patch_inspect(monkeypatch, labels={})
+
+    info = installer_deployment.installer_info()
+
+    assert info["host_app_dir"] == APP_DIR
+    assert info["labelled"] is False
+    assert info["pawflow_home"] == "/home/pawflow/.pawflow"
+    assert info["container_name"] == "pawflow-server"
+
+
+def test_labels_win_over_the_environment(monkeypatch):
+    _patch_inspect(monkeypatch, labels={
+        installer_deployment.LABEL_DEPLOYMENT: "installer",
+        installer_deployment.LABEL_APP_DIR: "/opt/pawflow",
+        installer_deployment.LABEL_HOME: "/opt/home",
+        installer_deployment.LABEL_PORT: "8443",
+    })
+
+    info = installer_deployment.installer_info()
+
+    assert info["host_app_dir"] == "/opt/pawflow"
+    assert info["pawflow_home"] == "/opt/home"
+    assert info["port"] == "8443"
+    assert info["labelled"] is True
+
+
+def test_the_port_and_extra_args_come_from_the_command_line(monkeypatch):
+    # They are arguments to `cli.py start`, never environment variables, so an
+    # env-only reading would silently move the server to the default port.
+    _patch_inspect(monkeypatch)
+
+    info = installer_deployment.installer_info()
+
+    assert info["port"] == "19990"
+    assert info["container_host"] == "0.0.0.0"
+    assert info["extra_args"] == "--verbose"
+
+
+def test_a_container_with_no_installer_marker_is_not_one(monkeypatch):
+    _patch_inspect(monkeypatch, labels={}, env=["PATH=/usr/bin"], mounts=[])
+
+    assert installer_deployment.installer_info() == {}
+
+
+def test_the_start_environment_replays_the_running_container(monkeypatch):
+    _patch_inspect(monkeypatch)
+    info = installer_deployment.installer_info()
+
+    env = installer_deployment.start_script_env(info, "ghcr.io/x/pawflow:new")
+
+    # Replayed: the deployment keeps its identity across an update.
+    assert env["PAWFLOW_BOOTSTRAP_GATEWAY_KEY"] == "not-roy-batty"
+    assert env["PAWFLOW_RUN_UID"] == "1001"
+    assert env["PAWFLOW_SERVER_RELAY_IMAGE"].endswith("2026.07.16")
+    # Decided by the update.
+    assert env["PAWFLOW_IMAGE"] == "ghcr.io/x/pawflow:new"
+    assert env["PAWFLOW_CONTAINER"] == "pawflow-server"
+    assert env["PAWFLOW_PORT"] == "19990"
+    assert env["PAWFLOW_NETWORK_MODE"] == "host"
+    assert env["PAWFLOW_RECREATE_CONTAINER"] == "1"
+    # Paths inside the old container say nothing about the new one.
+    assert "PAWFLOW_APP_DIR" not in env and "PAWFLOW_HOST_DATA_DIR" not in env
+
+
+def test_the_first_run_flags_are_never_replayed(monkeypatch):
+    # A fresh install may have been started with the bootstrap reset on.
+    # Replaying it on every update would wipe a working server's installer
+    # state, which is the opposite of an update.
+    _patch_inspect(monkeypatch)
+    info = installer_deployment.installer_info()
+
+    env = installer_deployment.start_script_env(info, "img")
+
+    assert env["PAWFLOW_BOOTSTRAP_RESET"] == ""
+
+
+def test_compose_is_preferred_when_both_are_present(monkeypatch):
+    _patch_compose(monkeypatch)
+    _patch_installer(monkeypatch, {"host_app_dir": APP_DIR})
+    monkeypatch.setattr(update_manager, "_probe",
+                        lambda *a, **k: _completed("Docker Compose version v2\n"))
+
+    assert update_manager.server_update_preflight()["deployment"] == "compose"
+
+
+def test_installer_preflight_requires_the_start_script(monkeypatch):
+    _patch_compose(monkeypatch, info={})
+    _patch_installer(monkeypatch, {"host_app_dir": APP_DIR,
+                                   "container_name": "pawflow-server",
+                                   "pawflow_home": "/home/pawflow/.pawflow",
+                                   "port": "19990",
+                                   "image": "ghcr.io/allcolor/pawflow:1.0.0b40"})
+    monkeypatch.setattr(update_manager, "latest_server_release", lambda: "1.0.0-beta.41")
+    monkeypatch.setattr(update_manager, "_probe",
+                        lambda *a, **k: _completed("", returncode=1))
+
+    check = update_manager.server_update_preflight()
+
+    assert check["ok"] is False
+    assert "run-pawflow-docker.sh" in check["reason"]
+
+
+def test_installer_preflight_reports_the_image_it_would_move_to(monkeypatch):
+    _patch_compose(monkeypatch, info={})
+    _patch_installer(monkeypatch, {"host_app_dir": APP_DIR,
+                                   "container_name": "pawflow-server",
+                                   "pawflow_home": "/home/pawflow/.pawflow",
+                                   "port": "19990",
+                                   "image": "ghcr.io/allcolor/pawflow:1.0.0-beta.40"})
+    monkeypatch.setattr(update_manager, "latest_server_release", lambda: "1.0.0-beta.41")
+    monkeypatch.setattr(update_manager, "_probe", lambda *a, **k: _completed(""))
+    monkeypatch.setattr(update_manager, "running_agent_count", lambda: 2)
+
+    check = update_manager.server_update_preflight()
+
+    assert check["ok"] is True
+    assert check["deployment"] == "installer"
+    assert check["target_image"] == "ghcr.io/allcolor/pawflow:1.0.0-beta.41"
+    assert check["working_dir"] == APP_DIR
+    assert check["running_agents"] == 2
+
+
+def test_an_unresolvable_published_image_stops_the_update(monkeypatch):
+    _patch_compose(monkeypatch, info={})
+    _patch_installer(monkeypatch, {"host_app_dir": APP_DIR, "image": "pawflow:x"})
+    monkeypatch.setattr(update_manager, "latest_server_release", lambda: "")
+    monkeypatch.setattr(update_manager, "_probe",
+                        lambda *a, **k: pytest.fail("nothing may run"))
+
+    assert update_manager.server_update_preflight()["ok"] is False
+
+
+def test_an_unknown_data_directory_stops_the_update(monkeypatch):
+    # run-pawflow-docker.sh defaults PAWFLOW_HOME to $HOME/pawflow, which inside
+    # the updater container is an empty directory: the server would come back on
+    # blank data with the old container already gone. Refused, never defaulted.
+    _patch_compose(monkeypatch, info={})
+    _patch_installer(monkeypatch, {"host_app_dir": APP_DIR,
+                                   "container_name": "pawflow-server",
+                                   "pawflow_home": "", "port": "19990",
+                                   "image": "ghcr.io/allcolor/pawflow:1.0.0-beta.40"})
+    monkeypatch.setattr(update_manager, "latest_server_release", lambda: "1.0.0-beta.41")
+    monkeypatch.setattr(update_manager, "_probe",
+                        lambda *a, **k: pytest.fail("nothing may run"))
+
+    check = update_manager.server_update_preflight()
+
+    assert check["ok"] is False
+    assert "data directory" in check["reason"]
+
+
+def test_published_server_image_keeps_the_repository():
+    assert update_manager.published_server_image("ghcr.io/allcolor/pawflow:1.0.0b40")
+    monkeyless = update_manager.published_server_image
+    # A digest pin or a registry with a port must not lose its repository.
+    assert monkeyless("ghcr.io/a/b@sha256:" + "0" * 64).startswith("ghcr.io/a/b:")
+    assert monkeyless("registry.local:5000/pawflow").startswith(
+        "registry.local:5000/pawflow:")
+
+
+def test_the_installer_script_pulls_before_it_touches_the_server(monkeypatch):
+    _patch_inspect(monkeypatch)
+    info = installer_deployment.installer_info()
+
+    script = update_manager._installer_updater_script(
+        info, "ghcr.io/allcolor/pawflow:1.0.0-beta.41", pull_source=False)
+
+    lines = script.splitlines()
+    assert lines[0] == "set -eu"
+    # docker:cli is Alpine and ships ash; the start script is bash.
+    assert "apk add --no-cache bash" in script
+    # A failed pull must leave the server running, so it comes first.
+    assert script.index("docker pull") < script.index("run-pawflow-docker.sh")
+    assert lines[-1].endswith("bash scripts/run-pawflow-docker.sh")
+    assert f"cd {APP_DIR}" in script
+    # The deployment's identity rides along, quoted.
+    assert "PAWFLOW_BOOTSTRAP_GATEWAY_KEY=not-roy-batty" in script
+    assert "PAWFLOW_BOOTSTRAP_RESET=''" in script
+    assert "PAWFLOW_PORT=19990" in script
+    assert "git pull" not in script
+
+
+def test_the_installer_script_pulls_source_only_when_asked(monkeypatch):
+    _patch_inspect(monkeypatch)
+    info = installer_deployment.installer_info()
+
+    script = update_manager._installer_updater_script(info, "img", pull_source=True)
+
+    assert "git pull --ff-only" in script
+    assert script.index("git pull") < script.index("docker pull")
+
+
+def test_update_server_runs_the_installer_script_for_an_installer_deployment(monkeypatch):
+    _patch_inspect(monkeypatch)
+    info = installer_deployment.installer_info()
+    calls = []
+    monkeypatch.setattr(update_manager, "server_update_preflight", lambda: {
+        "ok": True, "deployment": "installer", "installer": info,
+        "working_dir": APP_DIR, "updater_image": "docker:cli",
+        "target_image": "ghcr.io/allcolor/pawflow:1.0.0-beta.41"})
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _completed("deadbeef\n")
+
+    monkeypatch.setattr(update_manager.subprocess, "run", fake_run)
+
+    result = update_manager.update_server()
+
+    assert result["ok"] is True
+    assert result["deployment"] == "installer"
+    assert result["target_image"].endswith("1.0.0-beta.41")
+    run_cmd = calls[1]
+    assert "run-pawflow-docker.sh" in run_cmd[-1]
+    assert "docker compose" not in run_cmd[-1]
+    # The install directory is mounted at its own host path: the start script
+    # resolves $PAWFLOW_HOME against it and hands the daemon host paths.
+    assert f"{APP_DIR}:{APP_DIR}" in run_cmd
+
+
 # -- admin actions -----------------------------------------------------
 
 
@@ -335,3 +605,36 @@ def test_update_dialog_confirms_then_waits_for_health():
     assert "running_agents" in js
     assert "/health" in js
     assert "location.reload()" in js
+
+
+def test_the_dialog_names_what_an_installer_update_will_actually_do():
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[1] / "tasks" / "io" / "chat_ui"
+          / "admin_settings.js").read_text(encoding="utf-8")
+
+    # It used to promise a compose project to every operator, including the
+    # majority who never ran compose.
+    assert "deployment === 'installer'" in js
+    assert "run-pawflow-docker.sh" in js
+    assert "target_image" in js
+
+
+def test_the_start_script_stamps_what_the_detector_reads():
+    """A `docker run` records nothing by itself, so the script must.
+
+    Without these labels the only trace of how the server was started is its
+    environment, which is why the detector keeps that fallback — but a
+    container created from now on says so outright.
+    """
+    from pathlib import Path
+    script = (Path(__file__).resolve().parents[1] / "scripts"
+              / "run-pawflow-docker.sh").read_text(encoding="utf-8")
+
+    for label in (installer_deployment.LABEL_DEPLOYMENT,
+                  installer_deployment.LABEL_APP_DIR,
+                  installer_deployment.LABEL_HOME,
+                  installer_deployment.LABEL_PORT,
+                  installer_deployment.LABEL_NETWORK):
+        assert f"--label {label}=" in script, f"{label} is not stamped"
+    assert f"--label {installer_deployment.LABEL_DEPLOYMENT}=" \
+           f"{installer_deployment.DEPLOYMENT_INSTALLER}" in script

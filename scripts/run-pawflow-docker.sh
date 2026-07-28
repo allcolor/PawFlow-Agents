@@ -179,9 +179,19 @@ MSG
 fi
 
 echo "Starting $CONTAINER from $IMAGE"
+# Labels the server reads back to update itself. A `docker run` records nothing
+# on its own (compose stamps its project path on every container it creates), so
+# without these the server cannot tell how it was started. core/installer_
+# deployment.py falls back to PAWFLOW_HOST_APP_DIR and `docker inspect` for
+# containers created before these labels existed.
 docker run -d \
   --name "$CONTAINER" \
   --restart unless-stopped \
+  --label org.pawflow.deployment=installer \
+  --label org.pawflow.host-app-dir="$SOURCE_DIR" \
+  --label org.pawflow.home="$PAWFLOW_HOME" \
+  --label org.pawflow.port="$PORT" \
+  --label org.pawflow.network-mode="$NETWORK_MODE" \
   "${DOCKER_ARGS[@]}" \
   -v "$PAWFLOW_HOME/data:/app/data" \
   -v "$PAWFLOW_HOME/config:/app/config" \

@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess  # nosec B404
 import threading
@@ -53,6 +54,18 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 GITHUB_RELEASE_URL = "https://api.github.com/repos/allcolor/PawFlow-Agents/releases/latest"
 NPM_REGISTRY_URL = "https://registry.npmjs.org/{package}/latest"
 HTTP_TIMEOUT = 15
+
+#: Anonymous pull scope for a public GHCR repository, then its tag list. The
+#: relay images are published there by ``.github/workflows/docker-publish.yml``,
+#: so this is where "published" is actually true.
+GHCR_TOKEN_URL = "https://ghcr.io/token?scope=repository:{repo}:pull&service=ghcr.io"
+GHCR_TAGS_URL = "https://ghcr.io/v2/{repo}/tags/list"
+
+#: Pristine copy of the shipped config, baked into the server image. ``/app/config``
+#: is a host bind mount seeded no-clobber by ``docker/server-entrypoint.sh``, so a
+#: file that gained a key after the operator's first install keeps the old copy
+#: there forever. Shipped, versioned data is read from the image instead.
+DEFAULT_CONFIG_DIR = Path("/app/default-config")
 
 DEFAULT_CLI_IMAGE = "pawflow-claude-code:latest"
 CLI_BUILD_CONTEXT = APP_ROOT / "docker" / "claude-code"
@@ -81,6 +94,10 @@ RELAY_IMAGES = (
     {"key": "relay-dev", "repository": "ghcr.io/allcolor/pawflow-relay-dev"},
     {"key": "relay-minimal", "repository": "ghcr.io/allcolor/pawflow-relay-minimal"},
 )
+
+#: Relay tags are dates assigned from ``relay_image_version``. Anything else in
+#: the registry is a moving alias and names no version.
+_RELAY_TAG_RE = re.compile(r"\d{4}\.\d{2}\.\d{2}")
 
 #: How each relay image is built from the sources shipped in the server image.
 #: The build contexts mirror ``.github/workflows/docker-publish.yml`` — a local
@@ -121,13 +138,13 @@ def _run(args: List[str], timeout: int = 30) -> subprocess.CompletedProcess:
         docker_cmd() + args, capture_output=True, text=True, timeout=timeout)
 
 
-def _fetch_json(url: str) -> Optional[Dict[str, Any]]:
+def _fetch_json(url: str, headers: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
     try:
         import requests
         resp = requests.get(
             url, timeout=HTTP_TIMEOUT,
             headers={"User-Agent": "PawFlow-UpdateManager/1.0",
-                     "Accept": "application/json"})
+                     "Accept": "application/json", **(headers or {})})
         if resp.status_code != 200:
             logger.debug("Update check %s returned HTTP %s", url, resp.status_code)
             return None
@@ -214,11 +231,25 @@ def installed_cli_versions() -> Dict[str, str]:
     return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
 
 
+def catalog_path() -> Path:
+    """The relay image catalog to trust.
+
+    Prefer the copy baked into the image over the one under ``/app/config``:
+    the latter is a host bind mount, seeded with ``cp -a -n``, so an operator
+    who installed before a key existed keeps a catalog without it for good.
+    That is how ``relay_image_version`` -- added in `Decouple relay image
+    release tags` -- can be missing on a perfectly current server.
+    """
+    shipped = DEFAULT_CONFIG_DIR / "relay_image_catalog.json"
+    return shipped if shipped.is_file() else (
+        APP_ROOT / "config" / "relay_image_catalog.json")
+
+
 def catalog_relay_version() -> str:
     """``relay_image_version`` from the shipped relay image catalog."""
-    catalog = APP_ROOT / "config" / "relay_image_catalog.json"
     try:
-        return str(json.loads(catalog.read_text(encoding="utf-8")).get("relay_image_version", ""))
+        return str(json.loads(catalog_path().read_text(encoding="utf-8")).get(
+            "relay_image_version", ""))
     except Exception:
         logger.debug("Could not read relay image catalog", exc_info=True)
         return ""
@@ -243,6 +274,33 @@ def latest_npm_version(package: str) -> str:
     """``latest`` version published on the npm registry, or empty on failure."""
     data = _fetch_json(NPM_REGISTRY_URL.format(package=package)) or {}
     return str(data.get("version", "") or "")
+
+
+def _ghcr_tags(repository: str) -> List[str]:
+    """Every tag published for a public GHCR repository.
+
+    The registry API needs a bearer token even for anonymous pulls of a public
+    image, so this is two calls: one for the token, one for the list.
+    """
+    repo = repository.split("ghcr.io/", 1)[-1]
+    token = (_fetch_json(GHCR_TOKEN_URL.format(repo=repo)) or {}).get("token")
+    if not token:
+        return []
+    data = _fetch_json(GHCR_TAGS_URL.format(repo=repo),
+                       headers={"Authorization": f"Bearer {token}"}) or {}
+    tags = data.get("tags") or []
+    return [str(t) for t in tags if str(t).strip()]
+
+
+def latest_published_relay_tag(repository: str) -> str:
+    """Newest relay tag actually published, or empty when the registry is mute.
+
+    The relay tags are dates (``2026.07.16``), assigned from the catalog by the
+    publish workflow, so newest is a plain sort of the date-shaped ones.
+    ``latest`` and any other moving alias are ignored: they name no version.
+    """
+    dated = [t for t in _ghcr_tags(repository) if _RELAY_TAG_RE.fullmatch(t)]
+    return max(dated) if dated else ""
 
 
 # ── inventory ────────────────────────────────────────────────────────
@@ -277,10 +335,17 @@ def check_updates() -> Dict[str, Any]:
         if configured_repo and configured_repo != image["repository"]:
             local_tags += [f"{configured_repo}:{t}" for t in local_image_tags(configured_repo)]
         installed = catalog_version if catalog_version in tags else (tags[0] if tags else "")
+        # "Published" means published: the registry is asked, and the catalog
+        # is only the fallback for an offline or rate-limited server. Reporting
+        # the catalog as published answered a different question -- what this
+        # server expects -- and read as "unknown" whenever the catalog was
+        # missing the key.
+        published = latest_published_relay_tag(image["repository"]) or catalog_version
         components.append(_component(
             image["key"], image["repository"].rsplit("/", 1)[-1],
-            installed, catalog_version,
+            installed, published,
             group="relay", repository=image["repository"],
+            expected=catalog_version,
             configured_image=configured, local_tags=local_tags))
 
     installed_clis = installed_cli_versions()
@@ -628,6 +693,59 @@ def _updater_script(working_dir: str, pull_source: bool) -> str:
     return "\n".join(lines)
 
 
+def published_server_image(current_image: str) -> str:
+    """The published image this server should move to, or empty.
+
+    The publish workflow tags the server image with the release tag minus its
+    ``v`` (``ghcr.io/allcolor/pawflow:1.0.0-beta.41``), so the repository of the
+    running image plus the latest release is the whole answer. A digest-pinned
+    or tagless image still resolves: only the repository part is kept.
+    """
+    tag = latest_server_release()
+    repo = (current_image or "").split("@", 1)[0]
+    if ":" in repo.rsplit("/", 1)[-1]:
+        repo = repo.rsplit(":", 1)[0]
+    return f"{repo}:{tag}" if repo and tag else ""
+
+
+def _installer_updater_script(info: Dict[str, Any], image: str,
+                              pull_source: bool) -> str:
+    """Shell run by the updater for a ``docker run`` (installer) deployment.
+
+    It does what the installer does, in the installer's own order: pull the new
+    server image first, then hand over to ``run-pawflow-docker.sh``, which is
+    the single source of truth for how a PawFlow container is started and which
+    already recreates an existing container in place.
+
+    The pull comes before the start script for the same reason the compose path
+    checks compose first: a failed pull must leave the server running.
+    """
+    from core.installer_deployment import RESET_ON_UPDATE, start_script_env
+
+    env = start_script_env(info, image)
+    # Empty values are dropped, except the first-run flags: those must reach
+    # the script *as* empty to override what the running container carries.
+    assignments = " ".join(
+        f"{k}={shlex.quote(v)}" for k, v in sorted(env.items())
+        if v != "" or k in RESET_ON_UPDATE)
+    lines = [
+        "set -eu",
+        # The updater image is docker:cli, which is Alpine and ships ash; the
+        # start script is bash (arrays, [[ ]]).
+        "command -v bash >/dev/null 2>&1 || apk add --no-cache bash",
+        f"cd {shlex.quote(info.get('host_app_dir', ''))}",
+    ]
+    if pull_source:
+        # Same rule as the compose path: a dirty or diverged tree stops the
+        # update instead of being merged behind the operator's back.
+        lines.append("git pull --ff-only")
+    lines.extend([
+        f"docker pull {shlex.quote(image)}",
+        f"{assignments} bash scripts/run-pawflow-docker.sh",
+    ])
+    return "\n".join(lines)
+
+
 def running_agent_count() -> int:
     """Agent turns currently in flight across the whole server.
 
@@ -646,43 +764,38 @@ def running_agent_count() -> int:
         return 0
 
 
-def server_update_preflight() -> Dict[str, Any]:
-    """Everything that must hold before the server may be told to die.
+def _probe(image: str, host_dir: str, script: str) -> subprocess.CompletedProcess:
+    """Run a check inside the updater image, with the host directory mounted.
 
-    Checked here rather than inside the updater because a failure here is
-    recoverable: the server is still running and can report why.
+    The directory is a *host* path, so the server cannot stat it directly; only
+    a container carrying that bind mount can. It is mounted at its own path,
+    because both compose and the start script resolve relative paths against it
+    and hand the result to the daemon as host paths.
     """
-    from core.compose_deployment import compose_info
+    return subprocess.run(  # nosec B603
+        docker_cmd() + [
+            "run", "--rm",
+            "--volume", "/var/run/docker.sock:/var/run/docker.sock",
+            "--volume", f"{host_dir}:{host_dir}",
+            "--workdir", host_dir,
+            "--entrypoint", "sh", image, "-c", script,
+        ],
+        capture_output=True, text=True, timeout=300)
 
-    compose = compose_info()
-    if not compose:
-        return {"ok": False, "compose": {},
-                "reason": "This server was not started by Docker Compose "
-                          "(no compose labels on its container), so it cannot "
-                          "update itself."}
 
+def _compose_preflight(compose: Dict[str, Any]) -> Dict[str, Any]:
     working_dir = compose.get("working_dir", "")
     image = updater_image()
     # One probe, three answers: the image can run, it carries a working
     # `docker compose`, and the project directory really is where compose says
-    # it is — mounted the same way the updater will mount it. `working_dir` is
-    # a *host* path, so the server cannot stat it directly; only a container
-    # with that bind mount can.
+    # it is — mounted the same way the updater will mount it.
     probe_script = (
         "set -e\n"
         "docker compose version\n"
         "test -d .git && echo PAWFLOW_GIT=1 || true\n"
     )
     try:
-        probe = subprocess.run(  # nosec B603
-            docker_cmd() + [
-                "run", "--rm",
-                "--volume", "/var/run/docker.sock:/var/run/docker.sock",
-                "--volume", f"{working_dir}:{working_dir}",
-                "--workdir", working_dir,
-                "--entrypoint", "sh", image, "-c", probe_script,
-            ],
-            capture_output=True, text=True, timeout=300)
+        probe = _probe(image, working_dir, probe_script)
     except Exception as exc:
         return {"ok": False, "compose": compose,
                 "reason": f"Could not run the updater image '{image}': {exc}"}
@@ -692,11 +805,94 @@ def server_update_preflight() -> Dict[str, Any]:
                           f"{(probe.stderr or probe.stdout).strip()[:300]}"}
 
     stdout = probe.stdout or ""
-    return {"ok": True, "compose": compose, "updater_image": image,
+    return {"ok": True, "deployment": "compose", "compose": compose,
+            "updater_image": image,
             "working_dir": working_dir,
             "is_git_checkout": "PAWFLOW_GIT=1" in stdout,
             "running_agents": running_agent_count(),
             "compose_version": stdout.splitlines()[0].strip() if stdout.strip() else ""}
+
+
+def _installer_preflight(installer: Dict[str, Any]) -> Dict[str, Any]:
+    """The installer deployment's equivalent: can we re-run the start script?"""
+    app_dir = installer.get("host_app_dir", "")
+    image = updater_image()
+    target = published_server_image(installer.get("image", ""))
+    if not target:
+        return {"ok": False, "installer": installer,
+                "reason": "Could not resolve the published server image to "
+                          "update to: GitHub did not answer with a release "
+                          "tag, or this container runs an unnamed image."}
+    if not installer.get("container_name"):
+        return {"ok": False, "installer": installer,
+                "reason": "This container has no name, so the update could not "
+                          "recreate it in place."}
+    # Refused, never defaulted: run-pawflow-docker.sh falls back to
+    # `$HOME/pawflow` when PAWFLOW_HOME is empty, which inside the updater
+    # container is a fresh empty directory. The server would come back up on
+    # blank data with the old container already gone.
+    if not installer.get("pawflow_home"):
+        return {"ok": False, "installer": installer,
+                "reason": "Could not tell where this server's data directory "
+                          "lives on the host (no /app/data bind mount and no "
+                          "PAWFLOW_HOST_DATA_DIR), so the update would recreate "
+                          "it on an empty one."}
+    if not installer.get("port"):
+        return {"ok": False, "installer": installer,
+                "reason": "Could not tell which port this server was started "
+                          "on, so the update could not restart it on the same "
+                          "one."}
+
+    probe_script = (
+        "set -e\n"
+        "test -f scripts/run-pawflow-docker.sh\n"
+        "test -d .git && echo PAWFLOW_GIT=1 || true\n"
+    )
+    try:
+        probe = _probe(image, app_dir, probe_script)
+    except Exception as exc:
+        return {"ok": False, "installer": installer,
+                "reason": f"Could not run the updater image '{image}': {exc}"}
+    if probe.returncode != 0:
+        return {"ok": False, "installer": installer,
+                "reason": f"The install directory '{app_dir}' does not carry "
+                          "scripts/run-pawflow-docker.sh, so the update cannot "
+                          "start the server the way the installer did: "
+                          f"{(probe.stderr or probe.stdout).strip()[:200]}"}
+
+    return {"ok": True, "deployment": "installer", "installer": installer,
+            "updater_image": image, "working_dir": app_dir,
+            "target_image": target,
+            "is_git_checkout": "PAWFLOW_GIT=1" in (probe.stdout or ""),
+            "running_agents": running_agent_count(),
+            "container": installer.get("container_name", "")}
+
+
+def server_update_preflight() -> Dict[str, Any]:
+    """Everything that must hold before the server may be told to die.
+
+    Checked here rather than inside the updater because a failure here is
+    recoverable: the server is still running and can report why.
+
+    Two deployments can update themselves, and they are asked in that order: a
+    compose stack, and an installer ``docker run`` — the shape
+    ``install-pawflow.sh`` produces, which used to be refused outright.
+    """
+    from core.compose_deployment import compose_info
+    from core.installer_deployment import installer_info
+
+    compose = compose_info()
+    if compose:
+        return _compose_preflight(compose)
+
+    installer = installer_info()
+    if installer:
+        return _installer_preflight(installer)
+
+    return {"ok": False, "compose": {}, "installer": {},
+            "reason": "This server was not started by Docker Compose and "
+                      "carries no installer markers (no compose labels, no "
+                      "PAWFLOW_HOST_APP_DIR), so it cannot update itself."}
 
 
 def update_server(pull_source: bool = False) -> Dict[str, Any]:
@@ -705,12 +901,14 @@ def update_server(pull_source: bool = False) -> Dict[str, Any]:
     A container cannot replace itself: ``docker restart`` would come back on the
     old image, and ``rm -f`` kills the process issuing the command. So the work
     is handed to a short-lived container that survives the server's death, has
-    the socket, and drives compose from the project directory.
+    the socket, and drives the deployment from the project directory — compose
+    for a compose stack, ``run-pawflow-docker.sh`` for an installer deployment.
 
     The project directory is mounted **at its own host path** — compose resolves
     the relative paths in the compose file (``./data``, ``build: .``) against it
-    and hands the result to the daemon as host paths, so mounting it anywhere
-    else would silently produce wrong bind mounts.
+    and hands the result to the daemon as host paths, and the start script does
+    the same with ``$PAWFLOW_HOME``, so mounting it anywhere else would silently
+    produce wrong bind mounts.
 
     Returns immediately. The caller has seconds, not minutes, before the server
     stops answering.
@@ -721,6 +919,11 @@ def update_server(pull_source: bool = False) -> Dict[str, Any]:
 
     working_dir = check["working_dir"]
     image = check["updater_image"]
+    deployment = check.get("deployment", "compose")
+    script = (_installer_updater_script(check["installer"], check["target_image"],
+                                        pull_source)
+              if deployment == "installer"
+              else _updater_script(working_dir, pull_source))
 
     # Drop the previous updater so its name is free; its logs have served
     # their purpose by now.
@@ -737,7 +940,7 @@ def update_server(pull_source: bool = False) -> Dict[str, Any]:
         "--volume", f"{working_dir}:{working_dir}",
         "--workdir", working_dir,
         "--entrypoint", "sh",
-        image, "-c", _updater_script(working_dir, pull_source),
+        image, "-c", script,
     ]
     try:
         result = subprocess.run(  # nosec B603
@@ -756,5 +959,7 @@ def update_server(pull_source: bool = False) -> Dict[str, Any]:
             "updater_image": image,
             "working_dir": working_dir,
             "pull_source": bool(pull_source),
-            "project": check["compose"].get("project", ""),
-            "service": check["compose"].get("service", "")}
+            "deployment": deployment,
+            "target_image": check.get("target_image", ""),
+            "project": check.get("compose", {}).get("project", ""),
+            "service": check.get("compose", {}).get("service", "")}

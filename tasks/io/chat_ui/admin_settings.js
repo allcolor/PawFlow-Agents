@@ -301,8 +301,10 @@ function _admServerSection() {
   return '<div style="border-top:1px solid var(--pf-border);padding-top:10px;margin-top:10px;">'
     + '<strong>PawFlow server</strong>'
     + '<div style="color:var(--pf-muted);font-size:11px;margin:4px 0 8px;">Updating restarts the whole stack: '
-    + 'every running agent turn is killed, exactly as if you ran <code>docker compose up -d</code> yourself. '
-    + 'The project directory is detected from the container\'s compose labels.</div>'
+    + 'every running agent turn is killed, exactly as if you re-ran the deployment yourself. '
+    + 'A compose stack is updated with <code>docker compose up -d</code>; an installer deployment '
+    + 'pulls the published image and re-runs <code>run-pawflow-docker.sh</code>, the same script '
+    + 'the installer used. Either way the directory comes from the container itself.</div>'
     + '<button id="adm-server-update" onclick="adminUpdateServer()">Update server\u2026</button>'
     + '<pre id="adm-server-log" style="display:none;margin-top:8px;max-height:160px;overflow:auto;font-size:11px;white-space:pre-wrap;"></pre>'
     + '</div>';
@@ -328,10 +330,17 @@ function adminUpdateServer() {
 
 function _admConfirmServerUpdate(info) {
   var agents = info.running_agents || 0;
+  var installer = info.deployment === 'installer';
   var body = '<div style="font-size:12px;line-height:1.6;">'
-    + '<p>This will pull and recreate the compose project, then restart this server.</p>'
+    + '<p>' + (installer
+        ? 'This will pull the published server image and re-run the installer\'s start script, '
+          + 'recreating this container in place.'
+        : 'This will pull and recreate the compose project, then restart this server.') + '</p>'
     + '<table style="width:100%;font-size:12px;border-collapse:collapse;">'
-    + '<tr><td style="color:var(--pf-muted);">Project</td><td><code>' + adminEsc(info.compose && info.compose.project || '') + '</code></td></tr>'
+    + (installer
+        ? '<tr><td style="color:var(--pf-muted);">Container</td><td><code>' + adminEsc(info.container || '') + '</code></td></tr>'
+          + '<tr><td style="color:var(--pf-muted);">New image</td><td><code>' + adminEsc(info.target_image || '') + '</code></td></tr>'
+        : '<tr><td style="color:var(--pf-muted);">Project</td><td><code>' + adminEsc(info.compose && info.compose.project || '') + '</code></td></tr>')
     + '<tr><td style="color:var(--pf-muted);">Directory (host)</td><td><code>' + adminEsc(info.working_dir || '') + '</code></td></tr>'
     + '<tr><td style="color:var(--pf-muted);">Updater image</td><td><code>' + adminEsc(info.updater_image || '') + '</code></td></tr>'
     + '<tr><td style="color:var(--pf-muted);">Agent turns running</td><td><strong>' + agents + '</strong>'

@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The server could not update itself unless it was a Docker Compose stack.**
+  Which most servers are not: `install-pawflow.sh` ends on
+  `run-pawflow-docker.sh`, a plain `docker run`. Compose stamps its project path
+  on every container it creates; a `docker run` stamps nothing, so the update
+  refused with *"not started by Docker Compose"* and left the gear menu useless
+  for every installer deployment. The updater now recognises that shape and does
+  what the installer does: pull the published server image, then re-run
+  `run-pawflow-docker.sh`, which already recreates the container in place. The
+  environment of the running container is replayed, so the bootstrap key, the
+  uid/gid and the relay images survive the update; `PAWFLOW_BOOTSTRAP_RESET` is
+  forced empty, since replaying a fresh install's first-run flag would wipe a
+  working server's installer state. `run-pawflow-docker.sh` now also stamps
+  `org.pawflow.*` labels, and `core/installer_deployment.py` falls back to
+  `PAWFLOW_HOST_APP_DIR` and `docker inspect` so an install that is *already*
+  running is updatable, not only the next one.
+
+- **The published version of the relay images was always unknown.** Two causes.
+  It was never asked of the registry: the shipped catalog's
+  `relay_image_version` was reported as "published", which answers what this
+  server expects, not what exists. GHCR is now queried for the real tags, with
+  the catalog kept as the offline fallback. And that catalog was read from
+  `/app/config`, a host bind mount seeded no-clobber by the entrypoint, so an
+  install predating the `relay_image_version` key kept a catalog without it
+  forever — reporting an empty published version on a perfectly current server.
+  Shipped, versioned data is now read from the image's own copy.
+
 ## [1.0.0-beta.41] — 2026-07-28
 
 ### Added

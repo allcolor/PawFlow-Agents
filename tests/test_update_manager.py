@@ -108,6 +108,8 @@ def test_check_updates_reports_every_component_and_counts_updates(monkeypatch):
     monkeypatch.setattr(update_manager, "latest_server_release", lambda: "1.0.0-beta.36")
     monkeypatch.setattr(update_manager, "local_image_tags", lambda repo: ["2026.07.16"])
     monkeypatch.setattr(update_manager, "catalog_relay_version", lambda: "2026.07.16")
+    monkeypatch.setattr(update_manager, "latest_published_relay_tag",
+                        lambda repo: "2026.07.16")
     monkeypatch.setattr(update_manager, "installed_cli_versions",
                         lambda: {"claude": "2.1.0", "codex": "1.0.0",
                                  "gemini": "3.0.0", "antigravity": "0.9.3"})
@@ -134,6 +136,7 @@ def test_relay_components_name_the_image_the_server_actually_spawns(monkeypatch)
     monkeypatch.setattr(update_manager, "latest_npm_version", lambda pkg: "")
     monkeypatch.setattr(update_manager, "installed_cli_versions", lambda: {})
     monkeypatch.setattr(update_manager, "catalog_relay_version", lambda: "2026.07.16")
+    monkeypatch.setattr(update_manager, "latest_published_relay_tag", lambda repo: "")
     monkeypatch.setattr(update_manager, "relay_image_name",
                         lambda key: f"pawflow-{key}:latest")
     monkeypatch.setattr(update_manager, "local_image_tags",
@@ -154,6 +157,77 @@ def test_check_updates_survives_unreachable_network(monkeypatch):
 
     assert report["update_count"] == 0
     assert report["components"]
+
+
+# -- what "published" means for a relay image ---------------------------
+
+
+def test_the_published_relay_version_comes_from_the_registry(monkeypatch):
+    # It used to be read from the shipped catalog, which answers a different
+    # question — what this server *expects* — and reported "unknown" whenever
+    # that catalog was stale.
+    calls = []
+
+    def fake_fetch(url, headers=None):
+        calls.append((url, headers))
+        if "/token" in url:
+            return {"token": "t0ken"}
+        return {"tags": ["2026.06.06", "latest", "2026.07.16", "2026.06.13"]}
+
+    monkeypatch.setattr(update_manager, "_fetch_json", fake_fetch)
+
+    tag = update_manager.latest_published_relay_tag(
+        "ghcr.io/allcolor/pawflow-relay-dev")
+
+    assert tag == "2026.07.16"
+    # A public GHCR pull still needs a bearer token, so it is two calls, and
+    # the repository is asked for without its registry host.
+    assert "allcolor/pawflow-relay-dev" in calls[0][0] and "ghcr.io/all" not in calls[1][0]
+    assert calls[1][1]["Authorization"] == "Bearer t0ken"
+
+
+def test_a_moving_tag_is_not_a_version(monkeypatch):
+    monkeypatch.setattr(update_manager, "_fetch_json", lambda url, headers=None:
+                        {"token": "t"} if "/token" in url else {"tags": ["latest", "main"]})
+
+    assert update_manager.latest_published_relay_tag("ghcr.io/x/y") == ""
+
+
+def test_an_unreachable_registry_falls_back_to_the_catalog(monkeypatch):
+    monkeypatch.setattr(update_manager, "_fetch_json", lambda url, headers=None: None)
+    monkeypatch.setattr(update_manager, "local_image_tags", lambda repo: ["2026.07.16"])
+    monkeypatch.setattr(update_manager, "installed_cli_versions", lambda: {})
+    monkeypatch.setattr(update_manager, "catalog_relay_version", lambda: "2026.07.16")
+
+    by_key = {c["key"]: c for c in update_manager.check_updates()["components"]}
+
+    assert by_key["relay-dev"]["available"] == "2026.07.16"
+    assert by_key["relay-dev"]["expected"] == "2026.07.16"
+
+
+def test_the_catalog_is_read_from_the_image_not_the_bind_mount(monkeypatch, tmp_path):
+    """/app/config is a host mount seeded no-clobber by the entrypoint.
+
+    An operator who installed before ``relay_image_version`` existed keeps a
+    catalog without it forever, and the whole relay row went "unknown". The
+    pristine copy baked into the image is the one to trust.
+    """
+    shipped = tmp_path / "default-config"
+    shipped.mkdir()
+    (shipped / "relay_image_catalog.json").write_text(
+        json.dumps({"relay_image_version": "2026.07.16"}), encoding="utf-8")
+    stale = tmp_path / "config"
+    stale.mkdir()
+    (stale / "relay_image_catalog.json").write_text(
+        json.dumps({"version": 1}), encoding="utf-8")
+
+    monkeypatch.setattr(update_manager, "DEFAULT_CONFIG_DIR", shipped)
+    monkeypatch.setattr(update_manager, "APP_ROOT", tmp_path)
+    assert update_manager.catalog_relay_version() == "2026.07.16"
+
+    # No image copy (a source checkout): the repository's own config is used.
+    monkeypatch.setattr(update_manager, "DEFAULT_CONFIG_DIR", tmp_path / "absent")
+    assert update_manager.catalog_relay_version() == ""
 
 
 # -- rebuild -----------------------------------------------------------

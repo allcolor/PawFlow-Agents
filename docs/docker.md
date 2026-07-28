@@ -351,13 +351,29 @@ versus the published one:
 | Component | Installed | Published |
 |---|---|---|
 | PawFlow server | `core.__version__` | latest GitHub release |
-| `pawflow-relay-dev` / `pawflow-relay-minimal` | local image tags | `relay_image_version` from `config/relay_image_catalog.json` |
+| `pawflow-relay-dev` / `pawflow-relay-minimal` | local image tags | newest date tag published on GHCR |
 | Claude Code / Codex / Gemini | `/opt/pawflow/cli_versions.json` in the tools image | npm registry `latest` |
 | Antigravity | same file | *none* |
 
 The release tag (`1.0.0-beta.35`) and the packaged version (`1.0.0b35`) are
 compared under PEP 440, so they read as equal rather than as a permanent
 pending update.
+
+**"Published" means published.** The relay row asks the registry — an anonymous
+bearer token, then `/v2/<repo>/tags/list` — and keeps only date-shaped tags,
+since `latest` names no version. `relay_image_version` from the shipped catalog
+is the *fallback*, for a server that is offline or rate-limited, and is also
+reported as `expected`. Reading the catalog as the published version answered a
+different question — what this server wants — and read as "unknown" whenever the
+catalog was stale.
+
+The catalog itself is read from `/app/default-config`, the pristine copy baked
+into the image, not from `/app/config`. The latter is a host bind mount that
+`docker/server-entrypoint.sh` seeds with `cp -a -n`, so a file that gained a key
+after the operator's first install keeps the old copy there for good:
+`relay_image_version` did not always exist, and any install predating it
+reported an empty published version forever. Shipped, versioned data comes from
+the image; `/app/config` stays for what the operator edits.
 
 The same dialog rebuilds the agent CLI tools image. This affects only the next
 CLI pool spawn — no running relay, conversation, or user data is touched. Two
@@ -509,13 +525,16 @@ check free space before starting.
 
 ### Update the server itself from the admin gear menu
 
-**Server settings (gear) → Updates → PawFlow server** pulls and recreates the
-compose project, which restarts this server.
+**Server settings (gear) → Updates → PawFlow server** re-runs this server's own
+deployment, which restarts it.
 
 A container cannot replace itself: `docker restart` comes back on the *old*
 image, and `docker rm -f <self>` kills the process issuing the command. The work
 is therefore handed to a short-lived detached container (`pawflow-updater`)
-that has the Docker socket, survives the server's death, and runs:
+that has the Docker socket and survives the server's death.
+
+Two deployment shapes can update themselves, and the server detects which one it
+is. **A compose stack** runs:
 
 ```bash
 docker compose version                 # abort here if compose is missing
@@ -529,24 +548,60 @@ Everything that can fail harmlessly runs before anything that stops the server.
 image to pull; `up -d --build` then covers both shapes and recreates only what
 changed.
 
-**The project directory is detected, not configured.** Compose stamps every
+**An installer deployment** — what `scripts/install-pawflow.sh` produces, and
+the common case — is not a compose stack at all: the installer ends on
+`scripts/run-pawflow-docker.sh`, a plain `docker run`. It runs:
+
+```bash
+command -v bash || apk add --no-cache bash   # docker:cli is Alpine, the script is bash
+git pull --ff-only                           # only when asked, and only fast-forward
+docker pull ghcr.io/allcolor/pawflow:<latest release>
+PAWFLOW_IMAGE=… PAWFLOW_PORT=… bash scripts/run-pawflow-docker.sh
+```
+
+The start script is the source of truth for how a PawFlow container is started
+and already recreates an existing container in place
+(`PAWFLOW_RECREATE_CONTAINER` defaults to 1), so the update calls it rather than
+reproducing its `docker run` from an inspect dump — a second source of truth
+would drift. The image to pull is the repository of the running image plus the
+latest GitHub release tag, which is exactly how the publish workflow tags it.
+
+The environment of the running container is replayed, so the deployment keeps
+its bootstrap gateway key, its uid/gid and its relay images. Two exceptions:
+`PAWFLOW_BOOTSTRAP_RESET` is forced empty — a fresh install may have been
+started with the reset on, and replaying it would wipe a working server's
+installer state — and the in-container paths are dropped, since the new
+container sets its own.
+
+**The directory is detected, not configured.** Compose stamps every
 container it creates with `com.docker.compose.project.working_dir` (a *host*
 path), and `core/compose_deployment.py` finds this container's own id — from
 `/proc/self/mountinfo`, falling back to cgroups and only then to the hostname,
-which an explicit `hostname:` would poison — then reads that label. A container
-without compose labels is not a compose deployment and the feature refuses
-cleanly instead of guessing.
+which an explicit `hostname:` would poison — then reads that label.
+
+A `docker run` stamps nothing, so `run-pawflow-docker.sh` now writes the
+equivalent itself: `org.pawflow.deployment`, `org.pawflow.host-app-dir`,
+`org.pawflow.home`, `org.pawflow.port` and `org.pawflow.network-mode`.
+`core/installer_deployment.py` reads those first and falls back to
+`PAWFLOW_HOST_APP_DIR` and `docker inspect` — which is what makes an install
+that is *already running* updatable, instead of only the next one. The port and
+any extra arguments come off the command line (`cli.py start --port N`); they
+are not in the environment, and reading it alone would silently move the server
+to the default port. A container with neither labels nor those variables is
+refused cleanly instead of guessed at.
 
 The directory is bind-mounted into the updater **at its own host path**: compose
 resolves the relative paths in the compose file (`./data`, `build: .`) against
-it and hands the result to the daemon as host paths, so mounting it anywhere
-else would silently produce wrong bind mounts.
+it and hands the result to the daemon as host paths, and the start script does
+the same with `$PAWFLOW_HOME`, so mounting it anywhere else would silently
+produce wrong bind mounts.
 
 Before anything is launched, a preflight runs the updater image once: it proves
-the image exists, carries a working `docker compose`, and that the project
-directory really is where compose says it is (the server cannot stat a host
-path itself). It also reports whether the directory is a git checkout, which is
-what gates the optional `git pull` checkbox.
+the image exists, that it carries what the update needs (`docker compose`, or
+`scripts/run-pawflow-docker.sh` in the install directory), and that the
+directory really is where the container says it is — the server cannot stat a
+host path itself. It also reports whether the directory is a git checkout, which
+is what gates the optional `git pull` checkbox.
 
 **A restart kills every running agent turn.** That is the same cost as running
 `docker compose up -d` by hand, so the dialog names it — including how many

@@ -84,6 +84,29 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         _user_msg_id = _body.get("msg_id", "")
         if _user_msg_id:
             flowfile.set_attribute("_user_msg_id", _user_msg_id)
+
+        # Authorization has to happen HERE, not in _prepare_agent_context.
+        # This method pre-persists the user message and publishes it to every
+        # SSE subscriber, then hands the turn to a background thread -- so a
+        # check that lives downstream of the thread boundary runs after the
+        # write it was meant to prevent, and raises where no HTTP response is
+        # left to turn into a 404. The preempt logic just below is a reason of
+        # its own: it cancels whatever agent is running on this conversation.
+        if conversation_id:
+            from core.conversation_access import (
+                ConversationAccessError, authorize_message_submission,
+            )
+            try:
+                authorize_message_submission(
+                    conversation_id,
+                    flowfile.get_attribute("http.auth.principal") or "")
+            except ConversationAccessError:
+                flowfile.set_content(json.dumps({
+                    "error": "Conversation not found",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+
         bus = ConversationEventBus.instance()
 
         def _ack_message_count() -> int:

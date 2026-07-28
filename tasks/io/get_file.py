@@ -83,7 +83,7 @@ class GetFileTask(BaseTask):
         from core.file_store import FileStore
         store = FileStore.instance()
         from core.flow_runtime_access import (
-            authorize_filestore_target, runtime_context_from_task,
+            ROLE_READ, authorize_filestore_target, runtime_context_from_task,
             trusted_requester_user_id,
         )
         ctx = runtime_context_from_task(self)
@@ -93,7 +93,8 @@ class GetFileTask(BaseTask):
             user_id, conv_id = authorize_filestore_target(
                 ctx, target_conversation_id=target_conv,
                 requester_user_id=requester,
-                allow_global_admin=self.config.get('allow_global_admin'))
+                allow_global_admin=self.config.get('allow_global_admin'),
+                required_role=ROLE_READ)
         except Exception as e:
             raise TaskError(str(e))
         results = []

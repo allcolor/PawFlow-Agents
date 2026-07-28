@@ -38,6 +38,7 @@ function showConvMenu(e, cid, status) {
   };
 
   item('\u{1F4E5} ' + t('export'), () => showExportDialog(cid));
+  item('\u{1F91D} ' + t('shareConversation'), () => showShareDialog(cid));
   item('\u{21BB} ' + t('refresh'), () => resumeConv(cid, true));
   item('\u{1F5D1} ' + t('delete'), () => deleteConversationById(cid), { danger: true });
   sep();

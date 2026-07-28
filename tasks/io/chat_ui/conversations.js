@@ -5,9 +5,15 @@
 window._convActiveOverride = window._convActiveOverride || {};
 
 function loadConversations() {
+  // Two independent calls: the shared list must not delay the user's own
+  // conversations, so the sidebar renders as soon as the first answers and
+  // the shared sections are appended when the second does.
   action$('list_conversations', {}).subscribe(data => {
-    const convs = data.conversations || [];
-    renderConvList(convs);
+    window._ownConvs = data.conversations || [];
+    renderConvList(window._ownConvs);
+  });
+  loadSharedConversations(() => {
+    renderConvList(window._ownConvs || []);
   });
 }
 
@@ -46,9 +52,16 @@ function setConversationWorking(cid, isWorking) {
 function renderConvList(convs) {
   const list = document.getElementById('convList');
   list.innerHTML = '';
-  if (convs.length === 0) {
+  const shared = window._sharedConvs || [];
+  if (convs.length === 0 && shared.length === 0) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:#6c6c8a;font-size:13px;">' + escapeHtml(t('noConversationsHint')) + '</div>';
     if (!conversationId) _setInputEnabled(false);
+  }
+  // The "Mine" heading only earns its space once there is something to tell
+  // it apart from.
+  if (convs.length && shared.length) {
+    list.insertAdjacentHTML('beforeend',
+      _convGroupHeader(t('myConversations'), convs.length));
   }
   for (const c of convs) {
     const el = document.createElement('div');
@@ -73,6 +86,7 @@ function renderConvList(convs) {
     el.oncontextmenu = (function(cid, status) { return function(ev) { ev.preventDefault(); showConvMenu(ev, cid, status); }; })(c.conversation_id, runtimeStatus);
     list.appendChild(el);
   }
+  renderSharedSections(list);
 }
 
 // escapeHtml is the canonical definition in state.js (loads first).

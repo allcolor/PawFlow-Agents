@@ -343,7 +343,8 @@ function addMsg(role, text, extra) {
     el.innerHTML = '';
     el.appendChild(details);
   } else if (role === 'user') {
-    el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text) + _attachHtml;
+    el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge
+      + _authorBadgeHtml(extra) + escapeHtml(text) + _attachHtml;
   } else if (role === 'sub_agent_trace') {
     if (window.PAWFLOW_GROUP_DELEGATE_MESSAGES === false) {
       el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);

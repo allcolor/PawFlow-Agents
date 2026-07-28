@@ -259,6 +259,18 @@ class _PACPhase1Mixin:
                 self._pending_channel_chat_id = st.channel_chat_id
                 self._pending_channel_name = st.channel
 
+        # The conversation named by the request is only reachable if the
+        # requester may write to it. Placed here, after channel identity
+        # resolution has had its say on which conversation this is, and before
+        # anything reads it: everything below this line loads context, agent
+        # config and session state from the OWNER's directory, none of which
+        # is partitioned by requester.
+        if st.use_conv_store and st.conversation_id:
+            from core.conversation_access import authorize_message_submission
+            authorize_message_submission(
+                st.conversation_id,
+                st.flowfile.get_attribute("http.auth.principal") or "")
+
         # Every LLMMessage we're about to build requires a cid. Mint
         # one now so downstream LLMMessage constructors have a valid
         # value. Works for both persistent (use_conv_store=True) and

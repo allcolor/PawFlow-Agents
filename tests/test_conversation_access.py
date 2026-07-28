@@ -16,7 +16,9 @@ import uuid
 
 import pytest
 
+import core.paths as _paths
 from core.conversation_store import ConversationStore
+from core.security import Role, SecurityManager, User
 import core.conversation_access as ca
 
 
@@ -25,6 +27,27 @@ def reset_singleton():
     ConversationStore.reset()
     yield
     ConversationStore.reset()
+
+
+@pytest.fixture(autouse=True)
+def users(tmp_path, monkeypatch):
+    """A real SecurityManager holding the owners these tests use.
+
+    ``require_write`` reassigns a conversation whose owner account no longer
+    exists, so "is alice a real account" decides what this module observes.
+    Left to the ambient singleton the answer depends on which test file ran
+    first -- alone the registry is empty, in a full run it is somebody
+    else's. Owning it here makes the module's results its own.
+    """
+    monkeypatch.setattr(_paths, "SECURITY_FILE", tmp_path / "security.json")
+    monkeypatch.setattr(_paths, "USERS_FILE", tmp_path / "users.json")
+    monkeypatch.setattr(_paths, "SESSIONS_FILE", tmp_path / "sessions.json")
+    SecurityManager._instance = None
+    manager = SecurityManager.get_instance()
+    for name in ("alice", "bob", "carol"):
+        manager._users[name] = User(username=name, role=Role.USER)
+    yield manager
+    SecurityManager._instance = None
 
 
 @pytest.fixture
@@ -57,6 +80,27 @@ class TestResolveOwner:
         """A fresh process must resolve ownership by scanning, not guessing."""
         cold = ConversationStore(store_dir=str(store._store_dir))
         assert cold.resolve_owner(conv) == "alice"
+
+    @pytest.mark.parametrize("owner", ["alice", "google:12345", "jean dupont"])
+    def test_the_raw_owner_survives_directory_name_sanitizing(self, store, owner):
+        """Ownership must never be read back through ``_safe_name``.
+
+        The directory name is sanitized (``:`` becomes ``__``, spaces are
+        dropped), so a user id that sanitizing alters would no longer equal
+        the owner read back from the path -- and owner-equality is what every
+        access decision starts from, including the message-submit gate. The
+        raw id is recorded in the conversation's extras precisely so the
+        fallback to the path never has to be trusted. This pins that every
+        creation path keeps recording it.
+        """
+        cid = store.generate_id()
+        store.save(cid, [], user_id=owner)
+
+        assert store.resolve_owner(cid) == owner
+        assert ca.resolve_conversation_access(cid, owner, store=store).is_owner
+        # And after a fork, which is its own creation path.
+        forked = store.fork(cid, owner)
+        assert store.resolve_owner(forked) == owner
 
 
 # -- Unshared conversations: zero change ------------------------------

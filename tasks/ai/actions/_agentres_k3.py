@@ -407,6 +407,10 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
         # Include user role so frontend can enable admin features
         _user_role = flowfile.get_attribute("http.auth.roles") or "user"
         result["user_role"] = _user_role
+        # ...and the requester's own id: on a shared conversation the UI has
+        # to tell "my message" from "someone else's", which it cannot do
+        # from the message alone.
+        result["user_id"] = user_id
 
         flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
         return [flowfile]

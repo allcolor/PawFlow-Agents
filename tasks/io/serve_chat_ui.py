@@ -31,9 +31,12 @@ _JS_MODULES = [
     "i18n.js", "state.js", "rxbus.js", "ext_runtime.js",
     "themes.js",
     # conversations.js = list/state/render/history core (loads early);
-    # _io = delete/export/import; _menu = context menu + git dialogs.
+    # _io = delete/export/import; _menu = context menu + git dialogs;
+    # _share = shared/invite sidebar sections + share dialog. _share loads
+    # before the core because renderConvList calls into it on every render.
     # (escapeHtml is canonical in state.js, loaded earlier.)
-    "conversations.js", "conversations_io.js", "conversations_menu.js",
+    "conversations_share.js", "conversations.js", "conversations_io.js",
+    "conversations_menu.js",
     # messages.js = tool-summary/badges/technical-grouping core; _render = addMsg;
     # _tools = tool-output/diff/escape/media; _markdown = markdown/traces/scroll.
     # Order matters: core → render → tools → markdown (markdown holds load-time

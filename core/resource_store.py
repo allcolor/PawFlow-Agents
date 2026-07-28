@@ -22,6 +22,28 @@ logger = logging.getLogger(__name__)
 
 GLOBAL_USER_ID = "__global__"
 
+
+def _conv_scope_user(conversation_id: str, requester_user_id: str) -> str:
+    """The user id a conversation-scoped resource is filed under: the OWNER's.
+
+    A conversation-scoped agent, skill or MCP belongs to the conversation, not
+    to whoever happens to be asking. Keying it on the requester was invisible
+    while every requester was the owner; on a shared conversation it makes a
+    collaborator's turn resolve none of the conversation's own resources --
+    the agent the conversation runs on would simply not be found. Resolution
+    failures fall back to the requester, which is the pre-sharing behavior.
+    """
+    if not conversation_id:
+        return requester_user_id
+    try:
+        from core.conversation_store import ConversationStore
+        return ConversationStore.instance().resolve_owner(conversation_id) \
+            or requester_user_id
+    except Exception:
+        logger.debug("conv owner resolution failed for %s",
+                     conversation_id[:8], exc_info=True)
+        return requester_user_id
+
 # Mapping: ResourceStore type name → ScopedRepository rtype (plural)
 _TYPE_MAP = {
     "agent": "agents",
@@ -279,8 +301,10 @@ class ResourceStore:
         # Add conversation-scoped resources (from repository conv scope)
         if conversation_id and user_id != GLOBAL_USER_ID:
             try:
-                conv_items = repo.list(rtype, "conv",
-                                       user_id=user_id, conv_id=conversation_id)
+                conv_items = repo.list(
+                    rtype, "conv",
+                    user_id=_conv_scope_user(conversation_id, user_id),
+                    conv_id=conversation_id)
                 _merge_by_name(conv_items, "conversation")
                 result = list(merged.values())
             except Exception:
@@ -385,7 +409,8 @@ class ResourceStore:
             from core.repository import ScopedRepository
             result = ScopedRepository.instance().get(
                 rtype, name, "conv",
-                user_id=user_id, conv_id=conversation_id)
+                user_id=_conv_scope_user(conversation_id, user_id),
+                conv_id=conversation_id)
             if result is not None:
                 result["_scope"] = "conversation"
                 return result
@@ -426,7 +451,7 @@ class ResourceStore:
     def _map_scope(user_id: str, conversation_id: str = ""):
         """Map ResourceStore params to (scope, user_id, conv_id)."""
         if conversation_id and user_id != GLOBAL_USER_ID:
-            return "conv", user_id, conversation_id
+            return "conv", _conv_scope_user(conversation_id, user_id), conversation_id
         if user_id == GLOBAL_USER_ID:
             return "global", "", ""
         return "user", user_id, ""

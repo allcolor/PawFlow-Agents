@@ -98,10 +98,12 @@ class AssignTaskToAgentTask(BaseTask):
             conv_id = authorize_conversation_target(
                 ctx, conv_id, requester_user_id=requester,
                 allow_global_admin=self.config.get("allow_global_admin"))
+            # See spawn_agent: the owner addresses storage, and it is the
+            # conversation check above that authorized reaching it.
             user_id = authorize_user_target(
-                ctx, user_id or conversation_owner(conv_id),
-                requester_user_id=requester,
-                allow_global_admin=self.config.get("allow_global_admin"))
+                ctx, user_id, requester_user_id=requester,
+                allow_global_admin=self.config.get("allow_global_admin"),
+            ) if user_id else (conversation_owner(conv_id) or ctx.user_id)
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
@@ -201,6 +203,8 @@ class CancelAgentTaskTask(BaseTask):
                 authorize_conversation_target, runtime_context_from_task,
                 trusted_requester_user_id,
             )
+            # Write, despite reading agent_tasks first: it flips the task to
+            # cancelled and tears down the agent's runtime context.
             conv_id = authorize_conversation_target(
                 runtime_context_from_task(self), conv_id,
                 requester_user_id=trusted_requester_user_id(flowfile),

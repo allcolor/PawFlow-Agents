@@ -16,6 +16,53 @@ logger = logging.getLogger(__name__)
 _UNHANDLED = object()
 
 
+def _deny_conversation(flowfile):
+    """The answer an unknown conversation_id gets.
+
+    A rejection must be indistinguishable from "no such conversation": a
+    distinct "exists but forbidden" would leak the existence of someone
+    else's conversation.
+    """
+    flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+    flowfile.set_attribute("http.response.status", "404")
+    return [flowfile]
+
+
+def _authorize_conversation_action(role: str, conv_id: str, user_id: str,
+                                   store, flowfile):
+    """Check ``role`` on ``conv_id``; return a 404 response or None.
+
+    Shared by the action dispatchers that gate from a table rather than in
+    each handler. ``role`` is "read", "write" or "owner".
+    """
+    from core.conversation_access import (
+        ConversationAccessError, require_owner, require_read, require_write,
+    )
+    check = {"read": require_read, "write": require_write,
+             "owner": require_owner}[role]
+    try:
+        check(conv_id, user_id, store=store)
+    except ConversationAccessError:
+        return _deny_conversation(flowfile)
+    return None
+
+
+def _storage_user(store, conv_id: str, requester_user_id: str) -> str:
+    """The id that addresses ``conv_id`` in the store: always the owner's.
+
+    Authorization is the dispatcher's job (``_ACTION_ROLES``); this only
+    answers "whose directory holds it". Identical to the requester for an
+    unshared conversation, and falls back to the requester when the owner
+    cannot be resolved so an unknown id still produces the handler's own
+    not-found rather than a lookup against nothing.
+    """
+    try:
+        return store.resolve_owner(conv_id) or requester_user_id
+    except Exception:
+        logger.debug("owner resolution failed for %s", conv_id[:8], exc_info=True)
+        return requester_user_id
+
+
 def _zip_rel_path(name: str, prefix: str = "") -> Optional[Path]:
     """Return a safe archive-relative path, optionally stripping prefix."""
     if prefix:

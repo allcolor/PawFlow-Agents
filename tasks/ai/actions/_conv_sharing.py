@@ -46,8 +46,8 @@ def _not_found(flowfile):
 
 
 def _user_exists(user_id: str) -> bool:
-    from core.security import SecurityManager
-    return SecurityManager.get_instance().get_user(user_id) is not None
+    from core.conversation_access import user_exists
+    return user_exists(user_id)
 
 
 def _row_view(row, owner_user_id):

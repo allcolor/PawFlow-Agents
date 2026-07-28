@@ -325,12 +325,89 @@ def require_read(cid: str, requester_user_id: str, *,
     return access
 
 
+def user_exists(user_id: str) -> bool:
+    """True when ``user_id`` is a real account.
+
+    A lookup that raises answers True: an unavailable SecurityManager must
+    not be read as "every owner has been deleted", which would hand
+    conversations to collaborators on a transient failure.
+    """
+    user_id = _clean(user_id)
+    if not user_id:
+        return False
+    try:
+        from core.security import SecurityManager
+        return SecurityManager.get_instance().get_user(user_id) is not None
+    except Exception:
+        logger.warning("user lookup failed for %s; assuming it exists",
+                       user_id, exc_info=True)
+        return True
+
+
+def _owner_account_is_gone(user_id: str) -> bool:
+    """True only when the security manager positively knows the account is gone.
+
+    Absence of evidence is not evidence here. A registry with no users at all
+    looks exactly like a single-user or unauthenticated deployment, and a
+    lookup that raises says nothing whatsoever -- reading either as "the
+    owner was deleted" would hand over every shared conversation on the
+    instance at once. Both answer "not gone".
+    """
+    user_id = _clean(user_id)
+    if not user_id:
+        return False
+    try:
+        from core.security import SecurityManager
+        manager = SecurityManager.get_instance()
+        if not list(manager.list_users() or []):
+            return False
+        return manager.get_user(user_id) is None
+    except Exception:
+        logger.warning("owner account lookup failed for %s; assuming it exists",
+                       user_id, exc_info=True)
+        return False
+
+
+def _reassign_if_owner_is_gone(cid: str, access: ConversationAccess,
+                               requester_user_id: str,
+                               store=None) -> ConversationAccess:
+    """Hand a conversation to a write collaborator when its owner is gone.
+
+    A conversation lives in its owner's directory. Delete the owner's account
+    and every remaining participant loses a conversation they are still
+    entitled to write to -- so the first write by an accepted ``write``
+    collaborator moves it to them, rather than a migration job nobody runs.
+
+    Deliberately narrow: only a ``write`` collaborator (a ``read`` one is a
+    reader, not a successor), only when the owner truly no longer resolves,
+    and never for the owner's own writes -- the common path does not even
+    reach the account lookup.
+    """
+    if access.is_owner or access.role != ROLE_WRITE:
+        return access
+    if not _owner_account_is_gone(access.owner_user_id):
+        return access
+    requester = _clean(requester_user_id)
+    if not _store(store).reassign_owner(cid, requester):
+        # The move failed: the conversation is still the old owner's, and the
+        # caller keeps the write access it already had. Storage still
+        # resolves, so this degrades rather than breaks.
+        logger.warning("owner reassignment of %s to %s failed",
+                       cid[:8], requester)
+        return access
+    logger.info("conversation %s reassigned to %s (previous owner %s is gone)",
+                cid[:8], requester, access.owner_user_id)
+    return ConversationAccess(owner_user_id=requester, role=ROLE_OWNER,
+                              storage_user_id=requester)
+
+
 def require_write(cid: str, requester_user_id: str, *,
                   store=None) -> ConversationAccess:
     access = resolve_conversation_access(cid, requester_user_id, store=store)
     if not access.can_write:
         raise ConversationAccessError("Conversation not found")
-    return access
+    return _reassign_if_owner_is_gone(cid, access, requester_user_id,
+                                      store=store)
 
 
 def require_owner(cid: str, requester_user_id: str, *,
@@ -340,6 +417,39 @@ def require_owner(cid: str, requester_user_id: str, *,
     if not access.is_owner:
         raise ConversationAccessError("Conversation not found")
     return access
+
+
+def authorize_message_submission(cid: str, requester_user_id: str, *,
+                                 store=None) -> ConversationAccess:
+    """Gate a message submission that names an existing conversation.
+
+    A ``conversation_id`` in a request body is a claim, not a right. This is
+    the write-side twin of the SSE gap: without it, any authenticated user who
+    knows an id can post into someone else's conversation, and the agent runs
+    on -- and returns -- that conversation's context.
+
+    Two cases deliberately pass through instead of raising:
+
+    - **The conversation does not exist yet.** A client may mint its own id;
+      the submission creates it and the requester becomes its owner. Only a
+      resolvable owner means there is something to protect.
+    - **There is no requester.** Internal callers -- flow tasks, the task
+      poller, sub-agents -- carry no trusted principal and are authorized
+      upstream by ``core.flow_runtime_access``. Enforcing here would reject
+      them without adding any protection they do not already have.
+    """
+    access = resolve_conversation_access(cid, requester_user_id, store=store)
+    if not _clean(requester_user_id) or not access.owner_user_id:
+        return access
+    if not access.can_write:
+        raise ConversationAccessError("Conversation not found")
+    # Sending a message is the most common write there is, so it is the one
+    # that should trigger the deleted-owner recovery -- leaving it to
+    # whichever action happens to call require_write next would make the
+    # recovery arrive at an arbitrary time. Costs nothing on the common path:
+    # an owner returns before the account lookup.
+    return _reassign_if_owner_is_gone(cid, access, requester_user_id,
+                                      store=store)
 
 
 # -- Reverse index: conversations shared WITH a user -------------------

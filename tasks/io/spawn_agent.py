@@ -100,10 +100,14 @@ class SpawnAgentTask(BaseTask):
             conv_id = authorize_conversation_target(
                 ctx, conv_id, requester_user_id=requester,
                 allow_global_admin=self.config.get("allow_global_admin"))
+            # An explicitly configured user is authorized as a user target;
+            # otherwise the storage id comes from the conversation just
+            # authorized above. Re-checking its owner as a *user* target would
+            # deny every collaborator, whose own id is never the owner's.
             user_id = authorize_user_target(
-                ctx, user_id or conversation_owner(conv_id),
-                requester_user_id=requester,
-                allow_global_admin=self.config.get("allow_global_admin"))
+                ctx, user_id, requester_user_id=requester,
+                allow_global_admin=self.config.get("allow_global_admin"),
+            ) if user_id else (conversation_owner(conv_id) or ctx.user_id)
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]

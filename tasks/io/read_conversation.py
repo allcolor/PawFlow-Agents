@@ -67,13 +67,14 @@ class ReadConversationTask(BaseTask):
 
         try:
             from core.flow_runtime_access import (
-                authorize_conversation_target, conversation_owner,
+                ROLE_READ, authorize_conversation_target, conversation_owner,
                 runtime_context_from_task, trusted_requester_user_id,
             )
             conv_id = authorize_conversation_target(
                 runtime_context_from_task(self), conv_id,
                 requester_user_id=trusted_requester_user_id(flowfile),
-                allow_global_admin=self.config.get("allow_global_admin"))
+                allow_global_admin=self.config.get("allow_global_admin"),
+                required_role=ROLE_READ)
             owner = conversation_owner(conv_id)
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

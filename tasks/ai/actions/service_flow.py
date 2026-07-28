@@ -70,9 +70,90 @@ from tasks.ai.actions._sf_k9 import _handle_sf_k9
 
 logger = logging.getLogger(__name__)
 
+# Server-relay lifecycle actions, which name a conversation and until now
+# resolved it by id alone -- any authenticated user knowing an id could
+# destroy another user's server workspace (phase 5 of
+# docs/CONVERSATION_SHARING_PLAN.md).
+#
+# Management stays owner-only, deliberately: the plan defers per-collaborator
+# relay reconciliation to a later version, so a collaborator uses whichever
+# relay is already attached to the conversation and does not spawn or destroy
+# one. Status is read-only and safe to share -- a collaborator needs to know
+# whether the workspace their turn runs against is up.
+#
+# This covers the relay cluster only. The rest of the service_flow surface was
+# not audited in this pass; it is not conversation-partitioned today either.
+_RELAY_ACTION_ROLES = {
+    "create_server_workspace": "owner",
+    "destroy_server_workspace": "owner",
+    "create_server_execution_relay": "owner",
+    "destroy_server_execution_relay": "owner",
+    "server_workspace_status": "read",
+    "server_execution_relay_status": "read",
+}
+
+
+def _request_conversation_id(body, flowfile):
+    """The conversation a service_flow request names, body first.
+
+    Mirrors what the handlers themselves do, so the gate can never end up
+    checking a different conversation than the one that gets touched.
+    """
+    conv_id = str(body.get("conversation_id", "") or "").strip()
+    if conv_id:
+        return conv_id
+    return str(flowfile.get_attribute("http.conversation_id") or "").strip()
+
+
+def _authorize_relay_action(action, body, store, user_id, flowfile):
+    """Gate the server-relay actions. Returns a response, or None."""
+    role = _RELAY_ACTION_ROLES.get(action)
+    if not role:
+        return None
+    conv_id = _request_conversation_id(body, flowfile)
+    if not conv_id:
+        return None
+    from tasks.ai.actions._conv_base import _authorize_conversation_action
+    return _authorize_conversation_action(role, conv_id, user_id, store,
+                                          flowfile)
+
+
+def _authorize_conv_scoped_service(body, store, user_id, flowfile):
+    """Gate any request that asks for a conversation-scoped service.
+
+    ``_service_scope_id`` drops the requester entirely for ``scope="conv"``
+    and addresses the registry by conversation_id alone -- the conv scope
+    lives in the conversation's own extras, not under a user. Every handler
+    that reads ``scope`` from the body therefore acted on whichever
+    conversation the request named: `get_service_detail` returned another
+    user's service config (credentials included), and `update_service`,
+    `delete_service`, `toggle_service`, `move_service_scope`,
+    `service_install`/`_uninstall` mutated it.
+
+    One rule instead of a per-action table, deliberately: classifying ~50
+    actions by hand is how the wrong role gets assigned. `write` is the
+    strict answer, and service configuration is not something a read-only
+    collaborator should reach anyway. Only fires when the client explicitly
+    asks for conv scope -- the default is global, which this does not touch.
+    """
+    if _normalize_service_scope(body.get("scope", "global")) != "conv":
+        return None
+    conv_id = _request_conversation_id(body, flowfile)
+    if not conv_id:
+        return None
+    from tasks.ai.actions._conv_base import _authorize_conversation_action
+    return _authorize_conversation_action("write", conv_id, user_id, store,
+                                          flowfile)
+
 
 def _handle_service_flow(self, action, body, store, user_id, flowfile):
     """Handle service flow actions. Returns [flowfile] or None."""
+    _denied = _authorize_relay_action(action, body, store, user_id, flowfile)
+    if _denied is None:
+        _denied = _authorize_conv_scoped_service(body, store, user_id, flowfile)
+    if _denied is not None:
+        return _denied
+
     def _find_relay_svc(relay_id):
         """Find relay service across conv > user > global scopes."""
         from core.service_registry import ServiceRegistry

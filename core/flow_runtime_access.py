@@ -3,6 +3,12 @@
 Deployment scope is an authorization boundary. User and conversation scoped
 flows must stay inside their runtime owner, while global flows must either be
 explicitly administrative or be bounded by a trusted requester user.
+
+Whether a *user* may reach a given conversation is not decided here: that
+question has one answer, ``core.conversation_access``, which the webchat
+actions already consult. This module contributes the scope bound on top of it
+-- a flow deployed to one conversation cannot reach another even when its user
+owns both.
 """
 
 from dataclasses import dataclass
@@ -11,6 +17,17 @@ from typing import Any
 
 class FlowRuntimeAccessError(PermissionError):
     """Raised when a flow task targets data outside its runtime scope."""
+
+
+# What a caller intends to do with the conversation it is authorizing. The
+# default is ROLE_WRITE everywhere: a caller that does not say what it needs
+# gets the stricter answer, so adding a collaborator can never silently widen
+# a call site nobody reviewed. ROLE_OWNER is for operations that stay the
+# owner's even on a shared conversation -- deletion, key management -- and
+# mirrors the same split the webchat actions make.
+ROLE_READ = "read"
+ROLE_WRITE = "write"
+ROLE_OWNER = "owner"
 
 
 @dataclass(frozen=True)
@@ -82,6 +99,24 @@ def conversation_owner(conversation_id: str) -> str:
     return str(meta.get("user_id") or "").strip()
 
 
+def _conversation_role_allows(conversation_id: str, user_id: str,
+                              required_role: str) -> bool:
+    """True when ``user_id`` owns ``conversation_id`` or collaborates on it.
+
+    Delegates to ``core.conversation_access`` rather than comparing the owner
+    here: an owner-equality test is exactly what a collaborator can never
+    satisfy, and keeping a second ACL implementation in this module would mean
+    two places to audit and one of them eventually wrong.
+    """
+    from core.conversation_access import resolve_conversation_access
+    access = resolve_conversation_access(conversation_id, user_id)
+    if required_role == ROLE_OWNER:
+        return access.is_owner
+    if required_role == ROLE_READ:
+        return access.can_read
+    return access.can_write
+
+
 def _is_admin_enabled(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -120,11 +155,19 @@ def authorize_user_target(ctx: FlowRuntimeContext, target_user_id: str,
 def authorize_conversation_target(ctx: FlowRuntimeContext,
                                   target_conversation_id: str,
                                   *, requester_user_id: str = "",
-                                  allow_global_admin: Any = False) -> str:
+                                  allow_global_admin: Any = False,
+                                  required_role: str = ROLE_WRITE) -> str:
+    """Authorize a conversation target and return its id.
+
+    ``required_role`` says what the caller intends to do with it. It only
+    matters for a collaborator -- an owner passes either way -- so an unshared
+    conversation resolves exactly as it did before sharing existed.
+    """
     target = str(target_conversation_id or "").strip()
     if not target:
         raise FlowRuntimeAccessError("Missing conversation_id")
     if ctx.scope == "conversation":
+        # A scope bound, not an ACL: the flow is pinned to one conversation.
         if target != ctx.conversation_id:
             raise FlowRuntimeAccessError("Permission denied")
         return target
@@ -132,13 +175,13 @@ def authorize_conversation_target(ctx: FlowRuntimeContext,
     if not owner:
         raise FlowRuntimeAccessError("Conversation not found")
     if ctx.scope == "user":
-        if owner != ctx.user_id:
+        if not _conversation_role_allows(target, ctx.user_id, required_role):
             raise FlowRuntimeAccessError("Permission denied")
         return target
     if ctx.scope == "global":
         requester = str(requester_user_id or "").strip()
         if requester:
-            if owner != requester:
+            if not _conversation_role_allows(target, requester, required_role):
                 raise FlowRuntimeAccessError("Permission denied")
             return target
         if _is_admin_enabled(allow_global_admin):
@@ -151,7 +194,8 @@ def authorize_filestore_target(ctx: FlowRuntimeContext, *, file_id: str = "",
                                target_user_id: str = "",
                                target_conversation_id: str = "",
                                requester_user_id: str = "",
-                               allow_global_admin: Any = False) -> tuple[str, str]:
+                               allow_global_admin: Any = False,
+                               required_role: str = ROLE_WRITE) -> tuple[str, str]:
     user_id = str(target_user_id or "").strip()
     conv_id = str(target_conversation_id or "").strip()
     if file_id:
@@ -162,7 +206,10 @@ def authorize_filestore_target(ctx: FlowRuntimeContext, *, file_id: str = "",
     if conv_id:
         authorize_conversation_target(
             ctx, conv_id, requester_user_id=requester_user_id,
-            allow_global_admin=allow_global_admin)
+            allow_global_admin=allow_global_admin,
+            required_role=required_role)
+        # The OWNER's id addresses the store; a collaborator's own id would
+        # resolve to a directory that has none of the conversation's files.
         return conversation_owner(conv_id) or user_id, conv_id
     if ctx.scope == "global" and _is_admin_enabled(allow_global_admin) and not user_id:
         return "", ""

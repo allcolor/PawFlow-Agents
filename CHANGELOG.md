@@ -6,6 +6,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Conversation sharing is complete and reachable from the UI** (phases 4-7
+  of `docs/CONVERSATION_SHARING_PLAN.md`). The sidebar splits into Mine /
+  Invitations / Shared with me; an invite has explicit Accept and Decline
+  and grants nothing until accepted; the owner gets a share dialog with
+  inline role change and removal; a collaborator can leave from the context
+  menu; and a user bubble written by somebody else now carries an author
+  label — until sharing there was never more than one human in a
+  conversation, so every user bubble looked alike. en/fr/es throughout.
+- Channel bridges (Telegram et al.) and deployed flows honor collaborators:
+  `authorize_conversation_target` resolves through the same
+  `core.conversation_access` primitive the webchat actions use instead of
+  keeping a second owner-equality check, and takes the access level the call
+  site actually needs. The default is `write`, so a call site nobody
+  reviewed denies rather than widens.
+- A conversation whose owner's account is deleted is handed to the first
+  accepted `write` collaborator who writes to it, moving its directory under
+  the conversation lock. Without it, deleting an account silently orphaned
+  every conversation shared out of it.
+
+### Security
+
+- **A message could be submitted into any conversation by id.** The
+  submit path read `conversation_id` from the request body and never
+  checked it against the authenticated principal — and nothing below that
+  point is partitioned by requester: the agent context, the agent config and
+  the CLI session state all load from the owner's directory using the id
+  alone. Any logged-in user who knew or guessed an id could post into
+  someone else's conversation and have the agent answer with its full
+  context. This is the write-side twin of the SSE gap closed in beta.33 and
+  predates sharing. A rejection returns the same 404 an unknown id gets.
+  The check runs at the streaming ingress, before the user message is
+  persisted and published to subscribers and before the preempt logic that
+  cancels whatever agent is running on the conversation — a check placed
+  after the background-thread boundary would have run after the write it
+  exists to prevent.
+- **Git history, archives and conversation files were reachable by id.**
+  `conv_rollback`, `conv_delete_branch`, `conv_tag`, `conv_git_log`,
+  `conv_export_pawflow` (a complete archive of the conversation) and
+  `clear_store` (which deletes every FileStore file of a conversation)
+  resolved the conversation by id with no access check. They are now gated
+  by a single table, `_ACTION_ROLES`, with a test that fails if an action is
+  added to those handlers without a row in it. Rollback and branch deletion
+  are owner-only: they discard history for every participant.
+- `loop_list` returned every user's scheduled loops when called without a
+  conversation_id. It now requires one. `loop_stop` is keyed by loop rather
+  than conversation, so it resolves the loop's conversation and requires
+  write access on it — a loop spends the owner's budget on every tick.
+- Server workspace and execution-relay lifecycle actions
+  (`create/destroy_server_workspace`, `create/destroy_server_execution_relay`)
+  were reachable by id: any logged-in user could destroy another user's
+  server workspace. Now owner-only; the two status actions require read.
+- **Conversation-scoped services were reachable by conversation id.** The
+  service registry keys its conversation scope on the conversation alone —
+  `_service_scope_id` drops the requester for `scope="conv"` — so every
+  service_flow handler that reads `scope` from the request body acted on
+  whichever conversation the request named. `get_service_detail` returned
+  another user's service definition **including its config, which is where
+  service credentials live**, and `update_service`, `delete_service`,
+  `toggle_service`, `move_service_scope`, `service_install` and
+  `service_uninstall` mutated it. A request that asks for conversation scope
+  now requires write access on the conversation it names; global scope (the
+  default) is untouched.
+
+### Fixed
+
+- Conversation-scoped agents, skills and MCPs were filed under whoever asked
+  for them rather than under the conversation. Invisible while every
+  requester was the owner; on a shared conversation a collaborator's turn
+  resolved none of the conversation's own resources, so the agent it runs on
+  would simply not be found.
+- The `export` and `conv_export_claude_code` actions passed
+  `store.load(conversation_id=...)`, a keyword `load()` does not accept —
+  both had been raising `TypeError` instead of exporting.
+
 ## [1.0.0-beta.35] — 2026-07-27
 
 ### Fixed

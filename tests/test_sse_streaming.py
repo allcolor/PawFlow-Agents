@@ -574,6 +574,10 @@ class TestAgentLoopStreaming(unittest.TestCase):
         fake_store = MagicMock()
         fake_store.message_count.return_value = 0
         fake_store.get_extra.return_value = None
+        # Explicit: a MagicMock would answer the streaming ingress's
+        # authorization lookup with a truthy mock owner, which is nobody, and
+        # the submission would be refused. "" = no such conversation yet.
+        fake_store.resolve_owner.return_value = ""
 
         task = AgentLoopTask({
             "api_key": "test-key",
@@ -632,6 +636,13 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 path = self._store_dir / "u" / cid
                 path.mkdir(parents=True, exist_ok=True)
                 return path
+
+            def resolve_owner(self, cid):
+                # The streaming ingress authorizes the submitted
+                # conversation_id before persisting anything. "" is the
+                # pass-through case: no such conversation yet, so this
+                # submission creates it.
+                return ""
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -699,6 +710,13 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 path.mkdir(parents=True, exist_ok=True)
                 return path
 
+            def resolve_owner(self, cid):
+                # The streaming ingress authorizes the submitted
+                # conversation_id before persisting anything. "" is the
+                # pass-through case: no such conversation yet, so this
+                # submission creates it.
+                return ""
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             fake_store = _FakeStore(root)
@@ -761,6 +779,13 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 path = self._store_dir / "u" / cid
                 path.mkdir(parents=True, exist_ok=True)
                 return path
+
+            def resolve_owner(self, cid):
+                # The streaming ingress authorizes the submitted
+                # conversation_id before persisting anything. "" is the
+                # pass-through case: no such conversation yet, so this
+                # submission creates it.
+                return ""
 
             def message_count(self, cid):
                 return 0
@@ -842,6 +867,13 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 path = self._store_dir / "u" / cid
                 path.mkdir(parents=True, exist_ok=True)
                 return path
+
+            def resolve_owner(self, cid):
+                # The streaming ingress authorizes the submitted
+                # conversation_id before persisting anything. "" is the
+                # pass-through case: no such conversation yet, so this
+                # submission creates it.
+                return ""
 
         class _FakeAgent:
             _drain_pending = None
@@ -956,6 +988,13 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 path.mkdir(parents=True, exist_ok=True)
                 return path
 
+            def resolve_owner(self, cid):
+                # The streaming ingress authorizes the submitted
+                # conversation_id before persisting anything. "" is the
+                # pass-through case: no such conversation yet, so this
+                # submission creates it.
+                return ""
+
             def message_count(self, cid):
                 return 0
 
@@ -1020,6 +1059,13 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 path = self._store_dir / "u" / cid
                 path.mkdir(parents=True, exist_ok=True)
                 return path
+
+            def resolve_owner(self, cid):
+                # The streaming ingress authorizes the submitted
+                # conversation_id before persisting anything. "" is the
+                # pass-through case: no such conversation yet, so this
+                # submission creates it.
+                return ""
 
             def message_count(self, cid):
                 return 0

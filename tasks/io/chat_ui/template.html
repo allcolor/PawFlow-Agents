@@ -69,6 +69,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .conv-status.active { background: #4ecdc4; animation: pulse 1.5s ease-in-out infinite; }
 .conv-status.blocked { background: #f0a500; }
 .conv-branch { font-size: 10px; color: #6c5ce7; margin-left: 6px; white-space: nowrap; }
+/* Sharing: sidebar group headings, pending invites, shared conversations. */
+.conv-group { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+              color: #6c6c8a; padding: 10px 4px 4px; display: flex;
+              align-items: center; justify-content: space-between; }
+.conv-group-count { color: #4a4a68; }
+.conv-item.conv-invite { border-color: #6c5ce7; }
+.conv-invite-actions { display: flex; gap: 6px; margin-top: 6px; }
+.conv-invite-actions button { flex: 1; padding: 4px 8px; border: none; border-radius: 4px;
+                             font-size: 11px; cursor: pointer; }
+.conv-invite-accept { background: #6c5ce7; color: #fff; }
+.conv-invite-decline { background: #2a2a4a; color: #c0c0d0; }
+.conv-role-badge { font-size: 10px; margin-left: 6px; opacity: 0.7; }
+.msg-author { display: inline-block; font-size: 10px; color: #6c5ce7;
+              margin-right: 6px; vertical-align: baseline; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .sidebar-settings { padding: 8px 14px; border-top: 1px solid #0f3460; flex-shrink: 0; }
 .sidebar-settings#resourcesPanel { flex-shrink: 1; max-height: 50%; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #333 transparent; }

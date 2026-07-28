@@ -6,6 +6,7 @@ import time
 
 from tasks.ai.actions._conv_base import (
     _UNHANDLED,
+    _storage_user,
     _write_filestore_archive,
 )
 
@@ -114,7 +115,8 @@ def _handle_conv_tags_export(self, action, body, store, user_id, flowfile):
                     continue
                 zf.write(f, arcname)
             if include_filestore:
-                manifest["filestore"] = _write_filestore_archive(zf, conv_id, user_id)
+                manifest["filestore"] = _write_filestore_archive(
+                    zf, conv_id, _storage_user(store, conv_id, user_id))
             zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         filename = f"conversation_{conv_id[:8]}.pfconv.zip"
         fid = FileStore.instance().store(filename, buf.getvalue(),
@@ -132,7 +134,8 @@ def _handle_conv_tags_export(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
         from core.file_store import FileStore
-        msgs = store.load(conversation_id=conv_id, user_id=user_id)
+        msgs = store.load(conv_id,
+                          user_id=_storage_user(store, conv_id, user_id))
         if not msgs:
             flowfile.set_content(json.dumps({"error": "Conversation empty"}).encode())
             return [flowfile]

@@ -29,6 +29,9 @@ from typing import Any, Dict, List, Optional
 
 from core.flow_runtime_access import (
     FlowRuntimeContext,
+    ROLE_OWNER,
+    ROLE_READ,
+    ROLE_WRITE,
     authorize_conversation_target,
     authorize_user_target,
 )
@@ -55,11 +58,13 @@ class FlowPawflowApi:
             requester_user_id=self._requester,
             allow_global_admin=self._ctx.allow_global_admin)
 
-    def _auth_conv(self, conversation_id: str) -> str:
+    def _auth_conv(self, conversation_id: str,
+                   required_role: str = ROLE_WRITE) -> str:
         return authorize_conversation_target(
             self._ctx, conversation_id,
             requester_user_id=self._requester,
-            allow_global_admin=self._ctx.allow_global_admin)
+            allow_global_admin=self._ctx.allow_global_admin,
+            required_role=required_role)
 
     @property
     def user_id(self) -> str:
@@ -92,7 +97,9 @@ class FlowPawflowApi:
         return cid
 
     def delete_conversation(self, conversation_id: str) -> bool:
-        cid = self._auth_conv(conversation_id)
+        # Owner-only, same rule as the webchat action: a collaborator leaves,
+        # they do not delete someone else's conversation.
+        cid = self._auth_conv(conversation_id, ROLE_OWNER)
         from core.conversation_store import ConversationStore
         from core.flow_runtime_access import conversation_owner
         return ConversationStore.instance().delete(
@@ -121,7 +128,7 @@ class FlowPawflowApi:
 
     def get_extra(self, conversation_id: str, key: str,
                   default: Any = None) -> Any:
-        cid = self._auth_conv(conversation_id)
+        cid = self._auth_conv(conversation_id, ROLE_READ)
         from core.conversation_store import ConversationStore
         return ConversationStore.instance().get_extra(cid, key, default=default)
 
@@ -184,7 +191,9 @@ class FlowPawflowApi:
                                session_id: str = "") -> Dict[str, Any]:
         """Turn on encryption for ``conversation_id`` and unlock it for this
         turn. Idempotent. The server keeps no copy of ``passphrase``."""
-        cid = self._auth_conv(conversation_id)
+        # Key management is not participation: owner-only on a shared
+        # conversation, like the conv_encrypt_* webchat actions.
+        cid = self._auth_conv(conversation_id, ROLE_OWNER)
         from core.conversation_store import ConversationStore
         return ConversationStore.instance().enable_encryption(
             cid, passphrase, session_id=session_id)
@@ -193,7 +202,7 @@ class FlowPawflowApi:
                                session_id: str = "") -> bool:
         """Unwrap the DEK with ``passphrase`` into the vault so the agent runtime
         can read/write this turn. Raises on a wrong passphrase."""
-        cid = self._auth_conv(conversation_id)
+        cid = self._auth_conv(conversation_id, ROLE_OWNER)
         from core.conversation_store import ConversationStore
         return ConversationStore.instance().unlock_encryption(
             cid, passphrase, session_id=session_id)
@@ -202,7 +211,7 @@ class FlowPawflowApi:
         """Drop the DEK from RAM now (re-lock at rest). Optional — the vault's
         idle-lock sweeper does this automatically when the conversation goes
         idle."""
-        cid = self._auth_conv(conversation_id)
+        cid = self._auth_conv(conversation_id, ROLE_OWNER)
         from core.conversation_store import ConversationStore
         ConversationStore.instance().lock_encryption(cid)
 

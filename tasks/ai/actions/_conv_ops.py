@@ -5,6 +5,7 @@ import logging
 
 from tasks.ai.actions._conv_base import (
     _UNHANDLED,
+    _storage_user,
 )
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,10 @@ def _handle_conv_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "No conversation to export"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        msgs = store.load(conversation_id=conv_id, user_id=user_id)
+        # Read from the owner's directory, but file the export under the
+        # requester: it is their download.
+        msgs = store.load(conv_id,
+                          user_id=_storage_user(store, conv_id, user_id))
         if not msgs:
             flowfile.set_content(json.dumps({"error": "Conversation not found or empty"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -73,7 +77,7 @@ def _handle_conv_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        _clear_msgs = store.load(conv_id, user_id=user_id)
+        _clear_msgs = store.load(conv_id, user_id=_storage_user(store, conv_id, user_id))
         if not _clear_msgs:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -150,13 +154,40 @@ def _handle_conv_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        # Keyed by loop, not by conversation, so the dispatcher table cannot
+        # gate it: resolve the loop's conversation and require write on it.
+        # A loop spends the owner's budget on every tick.
         from core.poll_scheduler import PollScheduler
-        ok = PollScheduler.instance().cancel(key)
+        _sched = PollScheduler.instance()
+        _loop_cid = ""
+        for _entry in _sched.list_loops():
+            if _entry.get("key") == key:
+                _loop_cid = str(_entry.get("conversation_id") or "")
+                break
+        if _loop_cid:
+            from core.conversation_access import (
+                ConversationAccessError, require_write,
+            )
+            try:
+                require_write(_loop_cid, user_id, store=store)
+            except ConversationAccessError:
+                flowfile.set_content(json.dumps({
+                    "error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+        ok = _sched.cancel(key)
         flowfile.set_content(json.dumps({"stopped": ok, "key": key}).encode())
         return [flowfile]
 
     if action == "loop_list":
         conv_id = body.get("conversation_id", "")
+        # Without a conversation the scheduler lists every user's loops.
+        # The dispatcher only gates the id that is present, so require one.
+        if not conv_id:
+            flowfile.set_content(json.dumps({
+                "error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         from core.poll_scheduler import PollScheduler
         loops = PollScheduler.instance().list_loops(conv_id)
         flowfile.set_content(json.dumps({"loops": loops}).encode())

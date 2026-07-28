@@ -679,9 +679,19 @@ class AgentLoopTask(
 
         streaming = self.config.get("streaming", False)
         logger.debug("[agent_loop] dispatching to %s", "streaming" if streaming else "sync")
-        if streaming:
-            return self._execute_streaming(flowfile)
-        return self._execute_sync(flowfile)
+        from core.conversation_access import ConversationAccessError
+        try:
+            if streaming:
+                return self._execute_streaming(flowfile)
+            return self._execute_sync(flowfile)
+        except ConversationAccessError:
+            # Same answer an unknown conversation_id gets: a rejection must
+            # not confirm that the conversation exists.
+            flowfile.set_content(json.dumps({
+                "error": "Conversation not found",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
 
 
 

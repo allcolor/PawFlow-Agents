@@ -23,6 +23,62 @@ from core._conversation_store_base import (  # noqa: F401,E402
 class _CsMaintMixin:
     """delete/edit/truncate/list/cleanup."""
 
+    def reassign_owner(self, cid: str, new_user_id: str) -> bool:
+        """Move a conversation into ``new_user_id``'s directory.
+
+        The one place conversation sharing relaxes its "storage layout never
+        changes" invariant, and only as a recovery path: a conversation lives
+        under its owner's directory, so once that owner's account is gone the
+        only way to keep it reachable is to move it.
+
+        Held under the conversation lock for the whole check-then-rename, so
+        two collaborators writing at the same moment cannot both move it --
+        the loser finds it already in place and takes the ``src == dest``
+        exit. Never overwrites: a destination that already exists means some
+        other conversation owns that path, and losing it would be worse than
+        refusing the move.
+        """
+        new_user_id = str(new_user_id or "").strip()
+        if not cid or not new_user_id:
+            return False
+        lock = self._get_conv_lock(cid)
+        extras_lock = self._get_extras_lock(cid)
+        with lock:
+            with extras_lock:
+                try:
+                    src = self._conv_dir(cid)
+                except (ValueError, OSError):
+                    return False
+                if not src.is_dir():
+                    return False
+                dest = (self._store_dir / self._safe_name(new_user_id)
+                        / self._safe_name(cid))
+                if src == dest:
+                    return True
+                if dest.exists():
+                    logger.warning(
+                        "[convstore] reassign %s: destination exists, refusing",
+                        cid[:8])
+                    return False
+                # Append handles hold file descriptors into the old path;
+                # a writer resuming after the rename would keep appending to
+                # a directory nobody reads any more.
+                try:
+                    SegmentedJsonl.close_append_handles(src)
+                except Exception:
+                    logger.debug("append handle close failed", exc_info=True)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                os.rename(src, dest)
+                self._cid_user[cid] = new_user_id
+                extras = self._read_extras(cid)
+                extras["_meta_user_id"] = new_user_id
+                self._write_extras(cid, extras)
+        with self._cache_lock:
+            self._cache.pop(cid, None)
+        self._reload_cache(cid)
+        logger.info("[convstore] reassigned %s to %s", cid[:8], new_user_id)
+        return True
+
     def delete(self, cid: str, user_id: str = "") -> bool:
         import shutil
         import stat

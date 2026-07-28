@@ -377,9 +377,8 @@ best-effort owner map).
    - the reverse index holds `pending` **and** `accepted` rows (an invite has
      to be discoverable before it can be accepted); it is cleared on
      decline/kick, not on accept;
-   - `require_write` does not yet perform owner reassignment — that arrives
-     with its directory-move in Phase 6, where it can be tested against a
-     deleted-owner fixture.
+   - `require_write` performs owner reassignment as of Phase 6 below; in
+     Phase 1 it was authorization only.
 2. ~~**Close the SSE gap**~~ — **done**. `agent_sse_stream.py` resolves
    `require_read` from the trusted principal before `bus.subscribe(...)` and
    answers a rejection with the same 404 an unknown `conversation_id` gets.
@@ -436,19 +435,125 @@ best-effort owner map).
      does not exist — but a collaborator cannot export or fork a shared
      conversation either. Folded into the Phase 5 audit rather than done
      blind here.
-4. **`flow_runtime_access.py` integration** — channel bridges (Telegram et
-   al.) honor collaborators through the same primitive.
-5. **`resource_store`/`server_relay_manager` audit** — enumerate and fix any
-   remaining owner-only assumption for conversation-scoped reads, plus the
-   `_conv_ops`/`_conv_tags_export`/`_conv_import` actions left
-   requester-partitioned by Phase 3 (export, fork, tags, import).
-6. **Owner reassignment** — directory-move-on-write path, tested with a
-   deleted-owner fixture.
-7. **Frontend** — sidebar split, invite/share dialogs, author badges,
-   collaborators panel, i18n.
+4. ~~**`flow_runtime_access.py` integration**~~ — **done**.
+   `authorize_conversation_target` resolves through
+   `resolve_conversation_access` instead of comparing the owner, and takes a
+   `required_role` (`read`/`write`/`owner`, defaulting to `write` so an
+   unreviewed call site denies rather than widens). Notes on what it turned
+   up:
+   - **The message-submit path had no authorization at all.** The gate the
+     phase was meant to extend did not exist: `_agentctx_p1` took
+     `conversation_id` straight from the request body, and everything below
+     it (`load_agent_context`, agent config, CLI session state) addresses the
+     store by id alone. Any authenticated user knowing an id could post into
+     someone else's conversation and have the agent answer with its context —
+     the write-side twin of the SSE gap closed in Phase 2. Closed by
+     `authorize_message_submission`, which lets two cases through on purpose:
+     an unknown id (the submission creates it) and a caller with no trusted
+     principal (flow tasks, the poller, sub-agents — authorized upstream).
+   - **Where that gate sits matters more than the gate.** The first placement
+     was in `_agentctx_p1`, and it was ineffective on the path that carries
+     the chat UI: `_execute_streaming` pre-persists the user message and
+     publishes it to every SSE subscriber, *then* hands the turn to a
+     background thread which is where `_prepare_agent_context` runs. A check
+     below that boundary fires after the write it exists to prevent, and
+     raises where no HTTP response is left to answer 404 with — the requester
+     got a 200 ACK and the message was already in the victim's transcript.
+     The gate now runs in `_execute_streaming` before the pre-persist and
+     before the preempt block (which cancels whatever agent is running on the
+     conversation, an attack of its own). `_agentctx_p1` keeps its copy as
+     the second line for the sync path and for channel flows that resolve
+     identity late. Covered by
+     `test_conversation_sharing.py::TestStreamingSubmitGate`, which asserts
+     that nothing was enqueued.
+   - `authorize_user_target` was left alone. `spawn_agent` and
+     `conv_task_ops` used it to re-check the conversation's *owner* as a user
+     target, which no collaborator can satisfy; they now take the owner from
+     the conversation they just authorized. Equivalent for an unshared
+     conversation in every branch that does not raise.
+   - Owner-only operations reachable from the flow API (`delete_conversation`,
+     `enable/unlock/lock_conv_encryption`) pass `ROLE_OWNER`, matching the
+     split the webchat actions make. Without that, adding collaborators would
+     have let a `write` one delete the conversation.
+5. ~~**`resource_store`/`server_relay_manager` audit**~~ — **done**. The
+   inventory is `_ACTION_ROLES` in `tasks/ai/actions/conversation.py`, one
+   table rather than twenty scattered checks, with
+   `test_conversation_sharing.py::TestActionRoleTable` failing if a handled
+   action is missing from it. What the pass found:
+   - `_conv_ops`, `_conv_tags_export` and `_conv_import` address git, the
+     archive directory and the FileStore by conversation_id alone. Rollback,
+     branch deletion, tagging, the full `.pfconv` archive and
+     `clear_store` (which deletes every FileStore file of a conversation)
+     were reachable by any authenticated user who knew an id.
+   - `loop_list` with no conversation_id enumerated every user's loops; it now
+     requires one. `loop_stop` is keyed by loop, so the table cannot gate it —
+     it resolves the loop's conversation and requires write.
+   - `ResourceStore` keyed conversation-scoped resources on the *requester*.
+     Invisible while every requester was the owner; on a shared conversation a
+     collaborator's turn would resolve none of the conversation's own agents.
+     `_conv_scope_user` files them under the owner, which is what
+     "conversation-scoped" meant all along.
+   - Server-relay lifecycle (`create/destroy_server_workspace`,
+     `create/destroy_server_execution_relay`) is gated owner-only in
+     `service_flow.py`; status is read. Relay *management* stays the owner's,
+     per the v1 scope cut on per-collaborator relay reconciliation.
+   - **The rest of `service_flow` was audited in a second pass** (52 of its
+     80 actions name a conversation). Two opposite expectations both turned
+     out wrong. The registry does *not* key its conversation scope on
+     `(user, conv)` the way the repository does — it keys on the conversation
+     alone, in the conversation's own extras — so there is no
+     collaborator-breakage to fix there. But for the same reason
+     `_service_scope_id` drops the requester entirely for `scope="conv"`, and
+     every handler reading `scope` from the body acted on whichever
+     conversation the request named: `get_service_detail` returned another
+     user's service config (credentials included), and `update_service`,
+     `delete_service`, `toggle_service`, `move_service_scope`,
+     `service_install`/`_uninstall` mutated it. Closed by one rule rather
+     than a fifty-row table — a conv-scoped request requires write on the
+     conversation it names — because hand-classifying fifty actions is
+     exactly how the two wrong roles above got assigned. Covered by
+     `TestConvScopedServiceGate`.
+   - Two export actions (`export`, `conv_export_claude_code`) called
+     `store.load(conversation_id=...)`, a keyword `load()` does not take —
+     they had been raising `TypeError` in production. Found by the first test
+     that reached the handler rather than the gate.
+   - Two entries were classified by intent rather than by effect, and the
+     review corrected both: `conv_fork` reads the source *and commits a
+     "before fork" snapshot into it*, so it is `write`, not `read`; and
+     `cancelTask` in `conv_task_ops` flips the task to cancelled and tears
+     down the agent's runtime context, so it keeps the `write` default rather
+     than the `read` it was first given. Reading the handler is not enough —
+     what it calls has to be read too.
+6. ~~**Owner reassignment**~~ — **done**. `ConversationStore.reassign_owner`
+   does the check-then-rename under `_get_conv_lock`, so two collaborators
+   writing at once produce exactly one move; the loser takes the
+   `src == dest` exit. `require_write` **and the message-submit gate** trigger
+   it for an accepted `write` collaborator of an owner that no longer
+   resolves — sending a message is the most common write there is, so leaving
+   it out made the recovery arrive at an arbitrary later moment. Neither a
+   failed `SecurityManager` lookup nor an empty user registry counts as
+   "deleted": a single-user or unauthenticated deployment looks exactly like
+   an empty registry, and reading that as deletion would reassign every
+   shared conversation on the instance at once.
+   - Ownership is read from the raw id recorded in the conversation's extras,
+     never from the directory name, which is sanitized (`:` becomes `__`,
+     spaces are dropped). Verified that all four creation paths (`save`,
+     append, `fork`, import) record it, and pinned by
+     `test_conversation_access.py::TestResolveOwner::
+     test_the_raw_owner_survives_directory_name_sanitizing` — otherwise a
+     user id that sanitizing alters would stop matching its own
+     conversations, and owner-equality is where every access decision starts.
+7. ~~**Frontend**~~ — **done**. `conversations_share.js`: sidebar split
+   (Mine / Invitations / Shared with me), invite rows with explicit
+   accept/decline, owner-only share dialog with inline role change and kick,
+   leave from the shared-conversation context menu, author badges on user
+   bubbles, and en/fr/es keys. The badge compares against the *viewer* rather
+   than the owner — "not mine" is the useful signal and the only comparison
+   that reads the same way in an owned conversation and a shared one — which
+   required the resources response to carry the requester's own `user_id`.
 
-Each phase should land as its own reviewable change; 2 has no dependency on
-1/3-7 and can ship first as a standalone security fix.
+Each phase landed as its own reviewable change; 2 had no dependency on
+1/3-7 and shipped first as a standalone security fix.
 
 ## Tests (mirror existing suites)
 

@@ -466,6 +466,24 @@ class _PACPhase3Mixin:
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
+            # Passive recall: memories close to what the user just said,
+            # surfaced without the agent having to call a tool. The block was
+            # computed in the background during the previous turn; scheduling
+            # below prepares the next one. Both are best-effort and never
+            # block the turn.
+            try:
+                from core import passive_recall
+                _add_digest(passive_recall.BLOCK_TITLE,
+                            passive_recall.pending_block(
+                                st.user_id, st.conversation_id or "",
+                                st._active_agent_name))
+                passive_recall.schedule_for_turn(
+                    st.user_id, st.conversation_id or "",
+                    st._active_agent_name, st.user_text,
+                    exclude=getattr(st, "_digest", "") or "")
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
             # Inject agent diary digest
             try:
                 from core.agent_diary import AgentDiary

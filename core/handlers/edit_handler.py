@@ -40,7 +40,10 @@ class EditHandler(BaseFsHandler):
             "indentation) is tolerated when it resolves to a unique match. Set "
             "fuzzy=true to allow high-confidence fuzzy matching for one occurrence.\n"
             " - Use replace_all for renaming variables or strings across the entire file.\n"
-            " - Use the filesystem parameter to specify a non-default filesystem service."
+            " - Use the filesystem parameter to specify a non-default filesystem service.\n"
+            " - Changing 3+ separate places in one file, or editing a file you "
+            "already edited this turn? Use apply_patch instead — one atomic call "
+            "rather than N round trips that can half-apply."
         )
 
     @property

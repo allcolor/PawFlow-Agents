@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **PawFlow's own CamelCase tools were unreachable through `use_tool`.** The
+  MCP bridge lowercased any CamelCase tool name, to map Claude Code's native
+  spellings onto PawFlow tools (`Read` → `read`). PawFlow registers CamelCase
+  tools of its own — `Monitor`, `ScheduleWakeup`, `PushNotification`,
+  `EnterPlanMode`/`ExitPlanMode` — and those are precisely the ones whose CC
+  built-in equivalents are deliberately disallowed, so the intended fallback
+  path was broken: `Monitor` answered `unknown tool 'monitor'` with no way
+  through. The name is now sent as written and only lowered if the server
+  replies that it does not know it, leaving the registry as the single
+  authority. Consequence of the defect: agents fell back to polling a log file
+  with `sleep N; tail`, which costs a turn per poll and reports on the sleep
+  instead of the command.
+- **Tool guidance now names the tools that make polling unnecessary.** It said
+  "use `run_in_background` for long-running commands" and stopped there —
+  never mentioning `Monitor` (blocks until exit or regex match, 10 min cap),
+  `run_tests`, or `security_scan`, all of which exist. The `bash` tool now
+  points at `Monitor` in its own description too, where an agent reaching for
+  a shell actually reads.
+
+### Added
+
+- **Azure OpenAI and GitHub Copilot providers.** Both speak OpenAI
+  chat-completions bodies, so they reuse the entire OpenAI path; only the
+  envelope differs, and that is the whole of
+  `core/llm_providers/openai_dialects.py`. Azure could not be reached through
+  `base_url` alone: its key travels in an `api-key` header, it addresses a
+  *deployment* rather than a model, and it requires an `api-version`. Copilot
+  is a two-token provider — a device flow (no callback URL, no browser on the
+  server) yields a GitHub token, saved as the service's `api_key`, which each
+  session exchanges for a short-lived Copilot token, cached and renewed before
+  expiry rather than at it. Ollama, LM Studio, OpenRouter, DeepSeek and the
+  other OpenAI-compatible endpoints already worked through `openai` +
+  `base_url` and are unchanged.
+
 ## [1.0.0-beta.36] — 2026-07-28
 
 ### Added

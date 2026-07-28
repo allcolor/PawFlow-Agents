@@ -13,9 +13,20 @@ class ApplyPatchHandler(BaseFsHandler):
     @property
     def description(self):
         return (
-            "Apply a unified diff patch. The path parameter is optional when "
-            "the patch itself contains file paths (for example Codex/OpenAI "
-            "*** Begin Patch blocks with *** Update File lines)."
+            "Apply a unified diff patch across one or more files in a single "
+            "atomic call.\n\n"
+            "PREFER THIS OVER REPEATED `edit` CALLS when either is true:\n"
+            " - you are changing 3 or more separate places in the same file;\n"
+            " - you are about to call `edit` on a file you already edited "
+            "this turn.\n"
+            "Each `edit` is a round trip that re-reads and rewrites the file, "
+            "and a half-applied series leaves the file in a state neither you "
+            "nor the user asked for. One patch is one call, one result, and "
+            "one diff to review.\n\n"
+            "Use `edit` instead for a single replacement, and `batch_edit` "
+            "when the same textual change repeats across several files.\n\n"
+            "The path parameter is optional when the patch itself contains "
+            "file paths (*** Begin Patch / *** Update File blocks)."
         )
 
     @property

@@ -591,10 +591,19 @@ def main():
                 if _alias_match:
                     _log(f"USE_TOOL alias: {tool_name} -> {_alias_match}")
                     tool_name = _alias_match
-                elif tool_name and tool_name[0].isupper() and tool_name.lower() != tool_name:
-                    _lower = tool_name.lower()
-                    _log(f"USE_TOOL lowering CC native: {tool_name} -> {_lower}")
-                    tool_name = _lower
+                # A CamelCase name is USUALLY a CC-native spelling of a
+                # lowercase PawFlow tool (Read -> read). But PawFlow registers
+                # CamelCase tools of its own (Monitor, ScheduleWakeup,
+                # PushNotification, EnterPlanMode/ExitPlanMode), and lowering
+                # those made them permanently unreachable — exactly the tools
+                # the CC built-ins are disallowed in favour of. So the name is
+                # tried as written first and only lowered if the server says it
+                # does not exist; the registry stays the single authority.
+                _lower_fallback = ""
+                if (not _alias_match and tool_name
+                        and tool_name[0].isupper()
+                        and tool_name.lower() != tool_name):
+                    _lower_fallback = tool_name.lower()
                 if not tool_name or not str(tool_name).strip():
                     _other_keys = [k for k in args.keys() if k != "tool_name"]
                     result = (
@@ -641,6 +650,12 @@ def main():
                     else:
                         _log(f"USE_TOOL {tool_name} final={json.dumps(tool_args, default=str)[:300]}")
                         result = relay_client.request("execute_tool", tool_name=tool_name, arguments=tool_args)
+                        if (_lower_fallback and isinstance(result, str)
+                                and "unknown tool" in result):
+                            _log(f"USE_TOOL lowering CC native: {tool_name} -> {_lower_fallback}")
+                            result = relay_client.request(
+                                "execute_tool", tool_name=_lower_fallback,
+                                arguments=tool_args)
                         if result is None or result == "":
                             result = "(no output)"
         else:

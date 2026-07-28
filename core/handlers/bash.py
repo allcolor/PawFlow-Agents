@@ -90,6 +90,10 @@ class BashHandler(BaseFsHandler):
             " - run_in_background: Set to true to run in background. "
             "Use read to check the output file later. "
             "Do not use '&' at the end — use this parameter instead.\n"
+            "For a long command you intend to wait for (build, test suite, "
+            "deploy), prefer the Monitor tool: it blocks until the command "
+            "exits or a regex matches, up to 10 minutes. Never poll a log "
+            "file with 'sleep N; tail'.\n"
             " - shell: Shell to use (bash, powershell, cmd, python, node).\n"
             " - path: Working directory for the command.\n\n"
             "Git safety rules:\n"
@@ -113,7 +117,7 @@ class BashHandler(BaseFsHandler):
                 "cmd": {"type": "string", "description": "Alias for command."},
                 "description": {"type": "string", "description": "Short description of what the command does."},
                 "timeout": {"type": "integer", "description": "Optional timeout in milliseconds. Omit for no timeout (command runs until it exits)."},
-                "run_in_background": {"type": "boolean", "description": "Run command in background. Use read to check output later."},
+                "run_in_background": {"type": "boolean", "description": "Run command in background, then read the output file at checkpoints. To wait for a long command instead, use the Monitor tool — never a sleep loop."},
                 "shell": {
                     "type": "string",
                     "description": "Shell to use (default: bash). Options: bash, powershell, cmd, python, node.",

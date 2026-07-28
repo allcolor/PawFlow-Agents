@@ -506,6 +506,59 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
 
 # ── Orchestrator ──────────────────────────────────────────────────────
 
+def deliver_agent_message(conv_id: str, user_id: str, agent: str, text: str,
+                          *, source_extra: dict = None, label: str = "message"):
+    """Hand text to an agent exactly as if the user had typed it.
+
+    Persist first, publish second (visible => persisted), then run the same
+    streaming entry point a real user message runs. Used by the plan
+    orchestrator and by the auto-poke; both need identical semantics, and a
+    second implementation would drift.
+    """
+    import json as _j
+    import uuid as _uuid
+    from core import FlowFile as _FF
+    from core.conversation_writer import ConversationWriter
+    from core.llm_client import stamp_message
+
+    _msg_id = _uuid.uuid4().hex[:12]
+    _src = {"type": "user", "name": user_id, "target_agent": agent}
+    _src.update(source_extra or {})
+    _stamped = stamp_message({
+        "role": "user", "content": text, "msg_id": _msg_id, "source": _src,
+    }, conv_id)
+    _sse_evt = {"type": "new_message", "data": {
+        "role": "user", "content": text, "msg_id": _msg_id,
+        "source": _src, "ts": _stamped.get("ts"),
+    }}
+    try:
+        ConversationWriter.for_conversation(conv_id).enqueue_message(
+            dict(_stamped), agent_name=agent or "",
+            user_id=user_id, sse_events=[_sse_evt])
+    except Exception as e:
+        logger.error("%s: persist failed: %s", label, e)
+    body = _j.dumps({
+        "message": text,
+        "conversation_id": conv_id,
+        "target_agent": agent,
+        "msg_id": _msg_id,
+    })
+    ff = _FF(body.encode("utf-8"))
+    ff.set_attribute("http.auth.principal", user_id)
+    # agent_streaming.py must not double-persist this msg_id.
+    ff.set_attribute("skip_pre_persist", "1")
+    try:
+        from tasks.ai.agent_loop import AgentLoopTask
+        inst = AgentLoopTask._live_instance
+        if inst:
+            inst._execute_streaming(ff)
+            logger.info("%s sent to agent '%s' (same as user msg)", label, agent)
+        else:
+            logger.error("%s: no AgentLoopTask instance", label)
+    except Exception as e:
+        logger.error("%s send failed: %s", label, e)
+
+
 def orchestrate_next_step(conv_id, plan_id, user_id, delay: int = 10):
     """Find and schedule the next pending step. Standalone — callable from handlers."""
     return _orchestrate_next_step(None, conv_id, plan_id, user_id, delay=delay)
@@ -595,54 +648,9 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
     )
 
     def _send_step():
-        """Send via _execute_streaming — identical to user typing the message."""
-        import json as _j, uuid as _uuid_step
-        from core import FlowFile as _FF
-        from core.conversation_writer import ConversationWriter
-        from core.llm_client import stamp_message
-        _msg_id = _uuid_step.uuid4().hex[:12]
-        _src = {"type": "user", "name": user_id,
-                "target_agent": agent, "plan_id": plan_id}
-        # Persist the step instruction to disk BEFORE publishing SSE
-        # (visible => persisted). Writer fires the new_message event
-        # only after the append lands.
-        _stamped = stamp_message({
-            "role": "user", "content": _user_msg, "msg_id": _msg_id,
-            "source": _src,
-        }, conv_id)
-        _sse_evt = {"type": "new_message", "data": {
-            "role": "user", "content": _user_msg, "msg_id": _msg_id,
-            "source": _src, "ts": _stamped.get("ts"),
-        }}
-        try:
-            ConversationWriter.for_conversation(conv_id).enqueue_message(
-                dict(_stamped), agent_name=agent or "",
-                user_id=user_id, sse_events=[_sse_evt])
-        except Exception as e:
-            logger.error("Plan %s step %d: persist failed: %s",
-                         plan_id, step_num, e)
-        body = _j.dumps({
-            "message": _user_msg,
-            "conversation_id": conv_id,
-            "target_agent": agent,
-            "msg_id": _msg_id,
-        })
-        ff = _FF(body.encode("utf-8"))
-        ff.set_attribute("http.auth.principal", user_id)
-        # Tell agent_streaming.py the user message is already on disk so
-        # it doesn't double-persist with the same msg_id.
-        ff.set_attribute("skip_pre_persist", "1")
-        try:
-            from tasks.ai.agent_loop import AgentLoopTask
-            inst = AgentLoopTask._live_instance
-            if inst:
-                inst._execute_streaming(ff)
-                logger.info("Plan %s step %d sent to agent '%s' (same as user msg)",
-                            plan_id, step_num, agent)
-            else:
-                logger.error("Plan %s step %d: no AgentLoopTask instance", plan_id, step_num)
-        except Exception as e:
-            logger.error("Plan %s step %d send failed: %s", plan_id, step_num, e)
+        deliver_agent_message(conv_id, user_id, agent, _user_msg,
+                              source_extra={"plan_id": plan_id},
+                              label=f"Plan {plan_id} step {step_num}")
 
     if delay > 0:
         import threading

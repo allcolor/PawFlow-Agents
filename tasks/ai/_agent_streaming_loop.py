@@ -131,6 +131,12 @@ class _AgentStreamingLoopMixin:
             if not _had_error:
                 self._maybe_generate_title(ctx, conversation_id, bus)
 
+            # ── Auto-poke: the turn ended on unfinished plan work ──
+            # Never on an errored or interrupted turn: an error deserves the
+            # user's attention, and a force stop is a decision, not a failure.
+            if not _had_error and self._is_current_generation(gen_key, my_generation):
+                self._maybe_poke_stalled_plan(ctx, conversation_id)
+
             # Memory extraction now happens exclusively in
             # core/bg_bucket_builder.py: each sealed bucket and each
             # rollup feeds the LLM extractor. The previous periodic
@@ -283,6 +289,42 @@ class _AgentStreamingLoopMixin:
                         _store.set_extra(_parent_cid, "agent_tasks", _all_tasks)
                 except Exception as e:
                     logger.warning(f"[agent] Failed to auto-reschedule tasks: {e}")
+
+    def _maybe_poke_stalled_plan(self, ctx: Dict, conversation_id: str) -> None:
+        """Hand the turn back when it ended on a step still in progress.
+
+        The plan orchestrator only advances on `update_plan`; a turn that ends
+        without it leaves the step — and the plan — stalled with nothing to
+        wake it. Bounded by `core.auto_poke`, which refuses to poke the same
+        step forever.
+
+        Skipped when messages are already queued: those wake the agent anyway,
+        and the poke would race them.
+        """
+        user_id = ctx.get("user_id", "") or ""
+        agent_name = ctx.get("active_agent_name", "") or ""
+        try:
+            from core.pending_queue import PendingQueue
+            if PendingQueue.for_agent(conversation_id, agent_name).peek_count():
+                return
+        except Exception:
+            logger.debug("Auto-poke: pending check failed", exc_info=True)
+
+        try:
+            from core.auto_poke import poke_for_turn
+            decision = poke_for_turn(conversation_id, user_id, agent_name)
+            if not decision:
+                return
+            plan, step, message = decision
+            logger.info("[auto-poke] conv=%s plan=%s step=%s — turn ended in progress",
+                        conversation_id[:8], plan.get("id", ""), step.get("index", 0))
+            from tasks.ai.actions.plans import deliver_agent_message
+            deliver_agent_message(
+                conversation_id, user_id, agent_name, message,
+                source_extra={"plan_id": plan.get("id", ""), "auto_poke": True},
+                label=f"Auto-poke plan {plan.get('id', '')} step {step.get('index', 0)}")
+        except Exception:
+            logger.debug("Auto-poke failed", exc_info=True)
 
     def _maybe_generate_title(self, ctx: Dict, conversation_id: str, bus) -> None:
         """Spawn a background thread to generate a conversation title if needed.

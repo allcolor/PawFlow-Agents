@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Passive memory recall** (`core/passive_recall.py`). Memories close to what
+  the user just said now surface on their own, without the agent deciding to
+  call `recall` — which it can only do when it already suspects something
+  relevant exists. The embedding and the search run in a daemon thread and the
+  result is injected on the *next* turn, so a turn is never delayed and a slow
+  or missing embedding provider degrades to "no passive memories" rather than
+  to a stall. Hits below 0.4 similarity are dropped and anything already quoted
+  in the static digest is skipped. `passive_recall_limit = 0` disables it.
+- **Auto-poke** (`core/auto_poke.py`). The plan orchestrator only advances when
+  the agent calls `update_plan`; a turn that ended without it left the step
+  `in_progress` with nothing to wake the agent again, so the plan stalled until
+  somebody noticed. Such a turn now gets handed back with a message naming the
+  two acceptable exits — finish the step, or report the blocker. Bounded to two
+  consecutive pokes per step, reset by any progress; never after an error, an
+  interruption or a force stop; never when messages are already queued.
+  `auto_poke_limit = 0` disables it.
+
 ### Fixed
 
 - **The cognitive digests were invalidating the prompt cache on every turn

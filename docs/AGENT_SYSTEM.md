@@ -590,6 +590,57 @@ Every ~15 user messages (configurable via `_AUTO_SAVE_INTERVAL`):
 
 This ensures important information is captured even if the user never explicitly asks the agent to remember something.
 
+### Passive Memory Recall
+
+`recall` and `semantic_recall` are tools: they fire only when the agent decides
+to look, which requires it to already suspect that something relevant exists.
+The memory digest is the opposite — top-N per category, identical whatever the
+user just said.
+
+`core/passive_recall.py` closes the gap. Each turn:
+
+1. the block computed during the **previous** turn is injected (via the dynamic
+   channel, so it costs nothing in prompt-cache terms);
+2. the text the user just sent is embedded and matched against the memory store
+   **in a daemon thread**, and the result is stored for the next turn.
+
+One turn of latency is the price of never delaying a turn: a slow or missing
+embedding provider degrades to "no passive memories", never to a stall. In a
+conversation the delay is nearly free — the topic of turn N is almost always
+still the topic of turn N+1.
+
+Hits below `MIN_SCORE` (0.4) are dropped: with a small store something always
+scores above zero, and an unrelated memory is worse than none. Memories already
+quoted in the static digest are skipped. `passive_recall_limit` in
+`global_parameters.json` (or `PAWFLOW_PASSIVE_RECALL_LIMIT`) caps the number of
+entries; `0` disables the feature.
+
+### Auto-poke
+
+The plan orchestrator advances on one signal: the agent calling `update_plan`.
+A turn that ends without it leaves the step `in_progress` and **nothing ever
+wakes the agent again** — the plan stalls until a human notices. The common
+failure is not a wrong answer, it is an early exit.
+
+After a turn ends, `core/auto_poke.py` decides whether it left such a step
+behind and hands the turn back with a message naming the two acceptable exits:
+finish the step, or report the blocker. Delivery goes through the same
+`deliver_agent_message()` the orchestrator uses, so the poke is an ordinary
+persisted user message — visible in the transcript, auditable.
+
+Guardrails:
+
+- only a step this agent owns, `in_progress`, unpaused, on a plan that is
+  itself running — never a plan awaiting approval, never `pending_verification`;
+- at most `auto_poke_limit` consecutive pokes (default 2) per step; the counter
+  resets as soon as the step or its note changes, so progress buys patience and
+  a stuck agent is never poked forever;
+- never after an error, an interruption or a force stop — a force stop is a
+  decision, not a failure, and must never affect the next loop;
+- never when messages are already queued: those wake the agent anyway.
+
+`auto_poke_limit = 0` (or `PAWFLOW_AUTO_POKE_LIMIT=0`) disables it.
+
 ### Auto-compact
 
 Context compaction can run before or during agent turns when the selected LLM service sets `compact_threshold_pct`, or when a stateful provider reports its own compact boundary. See [Context Compaction](#context-compaction) for details.

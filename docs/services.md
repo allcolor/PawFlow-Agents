@@ -76,6 +76,22 @@ must not rely on omitting a timeout field to disable a provider default. PawFlow
 generated Codex MCP config pins `tool_timeout_sec` to `3600` seconds to avoid
 Codex's short default while keeping an explicit provider-required value.
 
+### Killing a Single Tool Call
+
+The `kill_tool` action targets one `tc_id`: `ToolRelayService.cancel_request()`
+matches the in-flight relay request by its `cc_tc_id`, so killing one tool in a
+parallel batch does not stop its siblings.
+
+A targeted miss is ambiguous, and the difference matters. A request dispatched
+before the provider stream published its `tool_call` id carries no `cc_tc_id`
+(see `bind_pending_cc_tc`), so it is running but unmatchable — widening the kill
+to the whole agent is the only way to stop it. A miss because the call already
+finished means there is nothing to kill, and widening would cancel unrelated
+live work instead. `has_unbound_inflight()` separates the two: the broad
+`cancel_agent()` fallback runs only while some in-flight request is still
+unbound. Otherwise `kill_tool` returns `ok: false` with `reason:
+"not_in_flight"` rather than killing a bystander.
+
 ### Tool Relay Timing Logs
 
 For CLI-provider latency debugging, the MCP bridge and tool relay emit correlated

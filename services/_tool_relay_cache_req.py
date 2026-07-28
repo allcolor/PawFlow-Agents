@@ -311,6 +311,31 @@ class _ToolRelayCacheReqMixin:
         return False
 
     @classmethod
+    def has_unbound_inflight(cls, conversation_id: str,
+                            agent_name: str = "") -> bool:
+        """Is there live work that a tc_id-targeted kill could have missed?
+
+        Answers the only question that justifies widening a kill to the whole
+        agent: a request may be in flight before the provider stream published
+        its tool_call id (see bind_pending_cc_tc), so a targeted cancel finds
+        nothing even though the tool IS running. That is true only while some
+        in-flight request carries no cc_tc_id. When every live request is
+        already bound to a DIFFERENT id, the kill target has finished — and
+        widening would kill a bystander instead.
+        """
+        with cls._inflight_lock:
+            for info in cls._inflight.values():
+                if not isinstance(info, dict):
+                    continue
+                if info.get("conv") != conversation_id:
+                    continue
+                if agent_name and info.get("agent") != agent_name:
+                    continue
+                if not info.get("cc_tc_id"):
+                    return True
+        return False
+
+    @classmethod
     def bind_pending_cc_tc(cls, conversation_id: str, agent_name: str,
                            tc_id: str, tool_name: str,
                            args_hash: str) -> bool:

@@ -70,12 +70,23 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         # Always run background cancel (no-op if tc_id isn't backgrounded).
         import core.background_tool as _bg
         _bg.cancel(tc_id)
-        # Only fall back to broad agent-level cancel if the targeted
-        # kill found no matching in-flight. Prevents killing sibling
-        # tools when CC runs several in parallel.
+        # Fall back to the broad agent-level cancel ONLY when live work could
+        # actually be this call: a request in flight before its tool_call id
+        # was published carries no cc_tc_id, so a targeted cancel misses it.
+        # A miss with every live request already bound to another id means
+        # this call has FINISHED — widening then kills a bystander, which is
+        # exactly what happened when a stale-looking `edit` was killed and
+        # took the running `bash` with it.
+        _widened = False
         if not _targeted and conv_id:
-            ToolRelayService.cancel_agent(conv_id, agent_name="")
-        flowfile.set_content(json.dumps({"ok": True, "tc_id": tc_id}).encode())
+            _widened = ToolRelayService.has_unbound_inflight(conv_id)
+            if _widened:
+                ToolRelayService.cancel_agent(conv_id, agent_name="")
+        _killed = bool(_targeted) or _widened
+        flowfile.set_content(json.dumps({
+            "ok": _killed, "tc_id": tc_id,
+            "reason": "" if _killed else "not_in_flight",
+        }).encode())
         return [flowfile]
 
     if action == "cancel_bg_tool":

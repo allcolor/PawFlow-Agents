@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **An agent is now told when another agent changes code under it.**
+  Several agents in one conversation share the same relay, and therefore the
+  same files. Agent B read `service.py`, reasoned about it for a few turns, and
+  agent A rewrote it in the meantime — nothing told B. It kept editing against a
+  view that no longer existed, and the collision surfaced only as a failed
+  `old_string` match, or as a silently clobbered change.
+  `core/read_conflict.py` uses the per-agent read hashes the edit guard already
+  keeps: when a write lands, every other agent whose last read no longer matches
+  what is on disk gets a notice, delivered at its next turn under *Files that
+  changed under you*. All mutation tools report it (`write`, `edit`,
+  `apply_patch`, `batch_edit`, `find_replace`, `delete`), on both the workdir and
+  the relay path.
+  It stays quiet: a single-agent conversation has no other readers and pays
+  nothing, an identical rewrite notifies nobody, and a re-read clears the notice
+  so the agent is told once rather than every turn. The notice is advisory — it
+  asks for a re-read, it never refuses an operation.
+
 ## [1.0.0-beta.40] — 2026-07-28
 
 ### Fixed

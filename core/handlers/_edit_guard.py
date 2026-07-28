@@ -1,6 +1,6 @@
 """Edit guard state — read tracking + duplicate-retry refusal.
 
-Two guardrails against the failure modes agents hit repeatedly:
+Three guardrails against the failure modes agents hit repeatedly:
 
 1. **Read tracking**: reads are tracked per agent/conversation/path so tools
    can clear stale failure state and legacy callers can still enforce a
@@ -12,15 +12,22 @@ Two guardrails against the failure modes agents hit repeatedly:
    further attempts with the same input. Breaks the retry-loop where
    agents re-send identical failing edits instead of diagnosing.
 
+3. **Cross-agent conflict notices**: the per-agent read hashes also answer
+   "who else has read this file, and is what they saw still current?". That
+   is what :mod:`core.read_conflict` uses to tell an agent when another agent
+   changed code under it. This module owns the state; the rendering and the
+   pending notices live there.
+
 State is module-level with a bounded size (LRU-ish eviction) so memory
 stays flat even in long-running servers. Scoped by
 (user_id, conversation_id, agent_name, canonical_path).
 """
 
 import hashlib
+import logging
 import os
 import threading
-from typing import Optional
+from typing import List, Optional
 
 
 _LOCK = threading.Lock()
@@ -41,6 +48,11 @@ def _canon(path: str) -> str:
         return os.path.normcase(os.path.abspath(path))
     except Exception:
         return path
+
+
+def canonical_path(path: str) -> str:
+    """Public form of the path identity this module keys its state on."""
+    return _canon(path)
 
 
 def _hash_content(content: bytes) -> str:
@@ -76,6 +88,41 @@ def track_read(user_id: str, conv_id: str, agent_name: str,
         _prune_if_full(_READ_HASHES)
         # A fresh read clears this agent's failed-edit streak for this path.
         _clear_failed_for_path(user_id, conv_id, agent_name, path)
+    # This agent's view is current again, so any "changed under you" notice
+    # for this path has nothing left to warn about. Done outside the lock:
+    # the notice store has its own, and nesting them buys a deadlock.
+    try:
+        from core.read_conflict import clear_path
+        clear_path(user_id, conv_id, agent_name, key[3])
+    except Exception:
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
+
+def readers_of(user_id: str, conv_id: str, path: str,
+               exclude_agent: str = "",
+               content: Optional[bytes] = None) -> List[str]:
+    """Agents in this conversation holding a now-stale read of ``path``.
+
+    ``exclude_agent`` drops the writer itself. When ``content`` is given, an
+    agent whose last read hashes to those exact bytes is *not* stale: a
+    rewrite that changed nothing warns nobody.
+    """
+    if not (user_id and conv_id and path):
+        return []
+    canon = _canon(path)
+    new_hash = _hash_content(content) if content is not None else None
+    out: List[str] = []
+    with _LOCK:
+        for (u_id, c_id, agent, p), read_hash in _READ_HASHES.items():
+            if u_id != user_id or c_id != conv_id or p != canon:
+                continue
+            if exclude_agent and agent == exclude_agent:
+                continue
+            if new_hash is not None and read_hash == new_hash:
+                continue
+            if agent not in out:
+                out.append(agent)
+    return out
 
 
 def track_write(user_id: str, conv_id: str, agent_name: str,
@@ -169,6 +216,11 @@ def clear_conversation(user_id: str, conv_id: str):
                     if k[0] == user_id and k[1] == conv_id]
         for k in _drop_f:
             _FAILED_EDITS.pop(k, None)
+    try:
+        from core.read_conflict import clear_conversation as _clear_notices
+        _clear_notices(user_id, conv_id)
+    except Exception:
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def clear_agent(user_id: str, conv_id: str, agent_name: str):
@@ -188,6 +240,11 @@ def clear_agent(user_id: str, conv_id: str, agent_name: str):
                     and k[2] == agent_name]
         for k in _drop_f:
             _FAILED_EDITS.pop(k, None)
+    try:
+        from core.read_conflict import clear_agent as _clear_notices
+        _clear_notices(user_id, conv_id, agent_name)
+    except Exception:
+        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
 
 def stats() -> dict:

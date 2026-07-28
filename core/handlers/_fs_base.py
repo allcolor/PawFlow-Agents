@@ -335,6 +335,22 @@ class BaseFsHandler(ToolHandler):
         except Exception as e:
             logger.debug(f"[checkpoint] capture failed for {path}: {e}")
 
+    # ── Cross-agent conflict notices ──
+
+    def _note_write(self, path: str, new_content: bytes = None):
+        """Flag ``path`` as changed for every other agent that had read it.
+
+        Pass ``new_content`` when the bytes now on disk are already in hand:
+        a rewrite that changed nothing then notifies nobody. Omit it on the
+        relay path, where reading them back would cost a round trip.
+        """
+        try:
+            from core.read_conflict import note_write
+            note_write(self._user_id, self._conversation_id,
+                       self._agent_name, path, new_content)
+        except Exception:
+            logger.debug("[read-conflict] note failed for %s", path, exc_info=True)
+
     # ── FileStore operations ──
 
     def _filestore_read(self, path: str, offset: int = 0, limit: int = 0,
@@ -447,6 +463,7 @@ class BaseFsHandler(ToolHandler):
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "w", encoding="utf-8") as f:
             f.write(content)
+        self._note_write(path, content.encode("utf-8", errors="replace"))
         return f"Written {len(content)} chars to {path}"
 
     def _workdir_list(self, path: str = ".", recursive: bool = False,
@@ -497,6 +514,7 @@ class BaseFsHandler(ToolHandler):
             shutil.rmtree(full)
         else:
             os.remove(full)
+        self._note_write(path)
         return f"Deleted: {path}"
 
     def _workdir_mkdir(self, path: str) -> str:
@@ -570,6 +588,7 @@ class BaseFsHandler(ToolHandler):
             count = 1
         with open(full, "w", encoding="utf-8") as f:
             f.write(new_content)
+        self._note_write(path, new_content.encode("utf-8", errors="replace"))
         return f"Edited {path}: {count} replacement(s)"
 
     def _workdir_find_replace(self, path: str, pattern: str, replacement: str,
@@ -583,6 +602,7 @@ class BaseFsHandler(ToolHandler):
         new_content, count = re.subn(pattern, replacement, content, flags=flags)
         with open(full, "w", encoding="utf-8") as f:
             f.write(new_content)
+        self._note_write(path, new_content.encode("utf-8", errors="replace"))
         return f"Replaced {count} occurrences in {path}"
 
     # ── Shared formatting ──

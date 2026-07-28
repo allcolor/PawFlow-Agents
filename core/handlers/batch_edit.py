@@ -114,6 +114,11 @@ class BatchEditHandler(BaseFsHandler):
             if isinstance(result, dict):
                 files = result.get("files_modified") or []
                 total = int(result.get("total_replacements", 0) or 0)
+                if files or total:
+                    # Both forms: the relay reports its own paths, which may
+                    # not be spelled the way the reading agent spelled them.
+                    for _changed in {*(e.get("path", "") for e in edits), *files}:
+                        self._note_write(_changed)
                 lines = [
                     f"Batch edited {result.get('files_modified_count', len(files))} file(s), "
                     f"{result.get('edits_applied', len(edits))} edit(s), "

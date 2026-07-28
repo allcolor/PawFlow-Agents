@@ -75,6 +75,11 @@ class ApplyPatchHandler(BaseFsHandler):
                     return f"Error: patch was not applied to {path}"
                 files = result.get("files_modified") or []
                 hunks = int(result.get("hunks_applied", 0) or 0)
+                if files or hunks:
+                    # Both forms: the relay reports its own paths, which may
+                    # not be spelled the way the reading agent spelled them.
+                    for _changed in {path, *files}:
+                        self._note_write(_changed)
                 stats = result.get("stats", "") or ""
                 output = result.get("output", "") or ""
                 if files:

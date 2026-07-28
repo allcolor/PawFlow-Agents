@@ -641,6 +641,45 @@ Guardrails:
 
 `auto_poke_limit = 0` (or `PAWFLOW_AUTO_POKE_LIMIT=0`) disables it.
 
+### Cross-agent read conflicts
+
+Several agents in one conversation share the same relay, and therefore the same
+files. Agent B reads `service.py`, reasons about it for a few turns, and
+meanwhile agent A rewrites it. Nothing used to tell B: it kept editing against a
+view that no longer existed, and the collision surfaced only as a failed
+`old_string` match — or, worse, as a silently clobbered change.
+
+`core/read_conflict.py` closes that hole using state the edit guard already
+keeps. `core/handlers/_edit_guard.py` records, per agent, the hash of every file
+that agent has read; `readers_of()` answers the question that matters when a
+write lands: *which other agents have read this path, and does what they saw
+still match what is on disk?* Every stale reader gets a pending notice, injected
+at its next turn through the dynamic channel (so it costs nothing in prompt-cache
+terms) under **Files that changed under you**.
+
+The mutation tools report through `BaseFsHandler._note_write()`: `write`,
+`edit`, `apply_patch`, `batch_edit`, `find_replace` and `delete`, on both the
+workdir and the relay path.
+
+Properties that keep it cheap and quiet:
+
+- **Zero cost when alone.** A single-agent conversation has no other readers, so
+  a write does one dict scan and stops. The common case pays nothing.
+- **Silent when nothing changed.** When the writer already holds the new bytes
+  they are hashed and compared: rewriting a file with identical content notifies
+  nobody. The relay path, where fetching them back would cost a round trip,
+  invalidates unconditionally — a successful edit there did change the content.
+- **Cleared by a re-read.** `track_read()` drops the notice: an agent whose view
+  is current again is told nothing. It is told once, not every turn.
+- **Advisory, never blocking.** The notice asks the agent to re-read; it never
+  refuses an operation. Identity is the canonical path without the filesystem
+  service, so two agents on *different* relays holding the same absolute path
+  would produce a spurious notice — the cost of that case is one wasted read.
+
+State is bounded: `MAX_PATHS` (10) paths per agent, `MAX_TRACKED` (256) agents,
+oldest evicted first. `clear_conversation()` and `clear_agent()` on the edit
+guard drop the matching notices too.
+
 ### Auto-compact
 
 Context compaction can run before or during agent turns when the selected LLM service sets `compact_threshold_pct`, or when a stateful provider reports its own compact boundary. See [Context Compaction](#context-compaction) for details.

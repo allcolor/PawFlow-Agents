@@ -109,6 +109,7 @@ class WriteHandler(BaseFsHandler):
                                     service_name=service_name)
             svc.write_file(path, content.encode("utf-8"),
                            local=bool(arguments.get("local", False)))
+            self._note_write(path, content.encode("utf-8"))
             return f"Written {len(content)} chars to {path}"
         except Exception as e:
             return f"Error writing '{path}': {e}"

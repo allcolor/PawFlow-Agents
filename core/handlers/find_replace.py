@@ -63,6 +63,8 @@ class FindReplaceHandler(BaseFsHandler):
             result = svc.find_replace(path, pattern, replacement,
                                       multiline=multiline,
                                       local=bool(arguments.get("local", False)))
+            if int(result.get("replacements", 0) or 0) > 0:
+                self._note_write(result.get("path", path))
             return f"Replaced {result.get('replacements', 0)} occurrences in {result.get('path', path)}"
         except Exception as e:
             return f"Error: {e}"

@@ -484,6 +484,18 @@ class _PACPhase3Mixin:
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
+            # Files another agent changed under this one since it last read
+            # them. Only ever non-empty in a multi-agent conversation, and
+            # cleared by the read that makes the agent's view current again.
+            try:
+                from core import read_conflict
+                _add_digest(read_conflict.BLOCK_TITLE,
+                            read_conflict.pending_block(
+                                st.user_id, st.conversation_id or "",
+                                st._active_agent_name))
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
             # Inject agent diary digest
             try:
                 from core.agent_diary import AgentDiary

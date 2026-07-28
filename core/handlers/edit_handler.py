@@ -101,7 +101,7 @@ class EditHandler(BaseFsHandler):
         # edit target matches the caller's view. If it does not match, the
         # relay returns diagnostics and the duplicate guard stops blind retries.
         from core.handlers._edit_guard import (
-            check_duplicate_failure, record_edit_failure, track_write,
+            check_duplicate_failure, record_edit_failure,
         )
         _uid = self._user_id
         _cid = self._conversation_id
@@ -118,14 +118,6 @@ class EditHandler(BaseFsHandler):
             _result = self._workdir_edit(path, old_string, new_string, replace_all)
             if _result.startswith("Error:"):
                 record_edit_failure(_uid, _cid, _agent, path, old_string)
-            else:
-                # Successful edit — update tracking so next edit doesn't
-                # require a re-read of our own output.
-                try:
-                    with open(self._sandbox_path(path, self._workdir), "rb") as _f:
-                        track_write(_uid, _cid, _agent, path, _f.read())
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
             return _result
 
         if svc is None or svc == "filestore":
@@ -141,6 +133,7 @@ class EditHandler(BaseFsHandler):
                                       start_line=start_line, end_line=end_line,
                                       new_string=new_string,
                                       local=bool(arguments.get("local", False)))
+                self._note_write(result.get("path", path))
                 return (f"Edited {result.get('path', path)}: "
                         f"replaced lines {start_line}-{end_line} "
                         f"({result.get('lines_removed', 0)} removed, "
@@ -157,6 +150,7 @@ class EditHandler(BaseFsHandler):
                     # gets refused by check_duplicate_failure.
                     record_edit_failure(_uid, _cid, _agent, path, old_string)
                     return f"Error editing '{path}': {e}"
+                self._note_write(result.get("path", path))
                 diff = result.get("diff", [])
                 if diff:
                     match_type = result.get("match_type")
@@ -187,4 +181,5 @@ class EditHandler(BaseFsHandler):
         lines[start - 1:end] = [ln + "\n" for ln in new_lines]
         with open(full, "w", encoding="utf-8") as f:
             f.writelines(lines)
+        self._note_write(path, "".join(lines).encode("utf-8", errors="replace"))
         return f"Edited {path}: replaced lines {start}-{end} ({removed} removed, {len(new_lines)} inserted)"

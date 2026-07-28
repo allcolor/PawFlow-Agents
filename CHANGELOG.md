@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Monitor` hung instead of returning early, and worst on the patterns it
+  advertises.** It piped the command through `grep --line-buffered | head -n N`,
+  which cannot stop anything: a downstream stage exiting never ends a pipeline
+  because the shell waits for every member, and `grep` only learns `head` is
+  gone when it next writes. For a pattern matching once — `FAILED`,
+  `listening on port`, its own examples — that second write never comes, so the
+  command ran to completion and `Monitor` came back at its timeout. Measured on
+  a 60-second command: a pattern matching once took the full timeout, the same
+  pipeline with a pattern matching every line returned in two seconds. The more
+  selective the pattern, the longer the hang. The command now runs in its own
+  session with its output captured to a file, and a watcher kills the whole
+  process group — children included — as soon as the pattern is satisfied or
+  the deadline passes.
+- **A `Monitor` timeout threw away everything the command had produced.** The
+  bash layer's own timeout fired first and returned its error banner in place
+  of the output, contradicting the documented "returns what was captured so
+  far". The watcher now owns the deadline and the capture file survives it; a
+  pattern that never matched returns the tail of the raw output rather than a
+  blank.
+- **`Monitor` never reported the command's exit code, and guessed its own
+  reason from the output text** — a build logging the words "timed out" was
+  reported as a Monitor timeout. The shell states `reason=` and `rc=` on their
+  own line, and the header carries `exit_code=` when the command ended by
+  itself. None of this was caught earlier because every existing test mocked
+  the bash layer and asserted the command *string*: they passed against a tool
+  that hung on every selective pattern. The suite now executes the script.
+- **An RTK rewrite would have truncated a generated script to its last line.**
+  The rewrite keeps only the final line of `rtk`'s output as the whole command,
+  which is harmless for the one-liners it was built for and destructive for a
+  multi-line script. Generated scripts opt out (`_skip_rtk`); `Monitor` uses it.
+
+### Changed
+
+- **Tool guidance: match processes by pidfile, not by command line.** `pgrep -f`
+  and `pkill -f` also match the shell that runs them, because the pattern is in
+  that shell's own command line by construction. Observed twice in one session:
+  a wait loop on `pgrep -f 'pytest tests/'` matched itself and spun until
+  killed, losing a completed test run, and a `pkill -f` killed its own shell
+  mid-command. Stated in `bash`'s description and in the tool-usage block.
+
 ## [1.0.0-beta.38] — 2026-07-28
 
 ### Fixed

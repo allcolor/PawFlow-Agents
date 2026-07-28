@@ -62,7 +62,33 @@ relay-backed calls: `bash` and `run_tests` run `rtk rewrite <command>` before
 execution, while `read` uses `rtk read`. `grep` and `glob` stay native because
 RTK output does not preserve PawFlow's grep/glob response semantics reliably.
 If the variable is not truthy, RTK is missing, or RTK cannot handle a request,
-PawFlow falls back to the native tool behavior unchanged.
+PawFlow falls back to the native tool behavior unchanged. A generated multi-line
+script opts out entirely (`_skip_rtk`): the rewrite keeps only the last line of
+RTK's output as the command, which would silently truncate the script to its
+final statement. `Monitor` uses that opt-out.
+
+### How `Monitor` waits
+
+`Monitor` runs the command in its own session, captures stdout and stderr to a
+file, and polls that file until the pattern has matched `limit` times, the
+command exits, or `timeout_ms` elapses. When it stops early it kills the
+command's whole process group, so the command and its children (the `sleep` in
+a retry loop, for instance) stop with it.
+
+It does not pipe the command through `grep | head`, and the reason is worth
+recording. A downstream stage exiting never stops a producer — the shell waits
+for every member of a pipeline — and `grep` only discovers `head` is gone when
+it next writes. For a pattern that matches once, that write never comes: the
+command ran to completion and `Monitor` returned at its timeout. Measured on a
+60-second command, a pattern matching once took the full timeout while the same
+pipeline with a pattern matching every line returned in two seconds. The tool
+failed exactly in the case it advertises (`FAILED`, `listening on port`).
+
+The result header states what actually happened rather than guessing from the
+output text: `reason=match|exit|timeout|unknown`, plus `exit_code=` when the
+command exited on its own. A timeout still returns the lines captured so far,
+and when a pattern never matched, the tail of the raw output is returned so the
+run is not a blank.
 
 ## Web and Search
 

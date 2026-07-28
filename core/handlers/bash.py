@@ -82,7 +82,14 @@ class BashHandler(BaseFsHandler):
             "travels as a hand-escaped JSON string: every double quote inside "
             "it must be escaped by hand, and one missed quote fails the whole "
             "call with 'failed to decode tool arguments'. write carries the "
-            "body in its own field and cannot fail that way.\n\n"
+            "body in its own field and cannot fail that way.\n"
+            " - Match processes by pidfile, NOT by command line. pgrep -f and "
+            "pkill -f also match the shell that runs them: your own "
+            "sh -c '... pkill -f pytest ...' has 'pytest' in its command line, "
+            "so the pattern matches the caller. A wait loop built on pgrep -f "
+            "finds itself and never ends, and pkill -f kills its own shell "
+            "mid-command. Use the bracket trick (ps -eo args | grep '[p]ytest'), "
+            "or have the process write a pidfile and act on that pid.\n\n"
             "Parameters:\n"
             " - command: The shell command to execute.\n"
             " - cmd: Alias for command.\n"
@@ -186,6 +193,11 @@ class BashHandler(BaseFsHandler):
         if shell not in _RTK_SHELLS:
             return command
         if command.strip().startswith("rtk "):
+            return command
+        # Generated scripts opt out: the rewrite keeps only the LAST line of
+        # rtk's output as the whole command, which silently truncates a
+        # multi-line script into its final statement.
+        if arguments.get("_skip_rtk"):
             return command
         if not self._rtk_enabled(arguments):
             return command

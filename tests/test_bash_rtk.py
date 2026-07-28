@@ -48,6 +48,26 @@ def test_bash_keeps_raw_command_when_rtk_is_disabled(monkeypatch):
     assert [command for _path, command, _kwargs in relay.commands] == ["git status --short"]
 
 
+def test_bash_skips_rtk_for_a_generated_script(monkeypatch):
+    # The rewrite keeps only the LAST line of rtk's output as the whole
+    # command. Monitor sends a multi-line watcher script, so a rewrite would
+    # silently reduce it to its final statement.
+    monkeypatch.setenv("PAWFLOW_USE_RTK", "true")
+    relay = RtkRelay()
+    handler = _handler(relay)
+    script = "echo one\necho two\necho three"
+
+    result = handler.execute({
+        "relay": "fs_test", "command": script, "_skip_rtk": True,
+    })
+
+    assert result == f"ran: {script}\n"
+    assert not any(
+        command.startswith("rtk rewrite")
+        for _path, command, _kwargs in relay.commands
+    )
+
+
 def test_bash_falls_back_when_rtk_cannot_rewrite(monkeypatch):
     monkeypatch.setenv("PAWFLOW_USE_RTK", "true")
     relay = RtkRelay(rewrite_stdout="", rewrite_rc=1)

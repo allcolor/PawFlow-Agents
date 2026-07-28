@@ -341,6 +341,45 @@ This creates `pawflow-claude-code:latest` (~500MB) with:
 
 The build resolves the latest published version of each agent CLI (Claude Code, Codex, Gemini) and pins it. The version is part of the npm-install layer's cache key, so a rebuild reinstalls a CLI only when a new version is actually published; otherwise it reuses the cached layer.
 
+The build also stamps `/opt/pawflow/cli_versions.json` inside the image (`docker/claude-code/stamp_versions.sh`) with the versions the installed binaries actually report, Antigravity included. That file is the server's only way to know what is in the image.
+
+### Rebuild from the admin gear menu
+
+**Server settings (gear) → Updates** shows, per component, the installed version
+versus the published one:
+
+| Component | Installed | Published |
+|---|---|---|
+| PawFlow server | `core.__version__` | latest GitHub release |
+| `pawflow-relay-dev` / `pawflow-relay-minimal` | local image tags | `relay_image_version` from `config/relay_image_catalog.json` |
+| Claude Code / Codex / Gemini | `/opt/pawflow/cli_versions.json` in the tools image | npm registry `latest` |
+| Antigravity | same file | *none* |
+
+The release tag (`1.0.0-beta.35`) and the packaged version (`1.0.0b35`) are
+compared under PEP 440, so they read as equal rather than as a permanent
+pending update.
+
+The same dialog rebuilds the agent CLI tools image. This affects only the next
+CLI pool spawn — no running relay, conversation, or user data is touched. Two
+modes:
+
+- **Rebuild** — same resolution as `build.sh`: a CLI is reinstalled only if npm
+  published a new version.
+- **Force (`--no-cache`)** — full rebuild, several minutes. Antigravity is
+  installed from an unversioned `install.sh`, so it has no version signal at
+  all: forcing is the *only* way to pick up a new Antigravity build. It also
+  recovers from a poisoned layer cache.
+
+Both require the `admin` role, run in a background thread, and stream progress
+to the dialog over the `cli_image_build` SSE event. One rebuild runs at a time;
+a concurrent request is refused with HTTP 409 rather than starting a second
+`docker build` on the same tag. Every trigger is logged with the requesting
+user, since `docker build` against the host socket is effectively root on the
+machine.
+
+Actions: `admin_check_updates` (read-only) and `admin_rebuild_cli_image`
+(`force: bool`), implemented in `core/update_manager.py`.
+
 ### Enable in service config
 
 In the admin panel, edit your `claude_code_llm_service`:
@@ -417,6 +456,56 @@ The image does not embed PawFlow relay code. Server-side relays stage the relay
 runtime from the PawFlow server image into the server data dir and bind-mount it
 at `/opt/pawflow`, while desktop/local relays use their own packaged runtime
 mounts.
+
+### Rebuild relay images from the admin gear menu
+
+**Server settings (gear) → Updates → Relay images** rebuilds the two relay
+images from the sources shipped inside the server image, using the same build
+contexts as `.github/workflows/docker-publish.yml`:
+
+| Image | Context | Dockerfile |
+|---|---|---|
+| workspace relay (`server_relay_image`) | repository root | `docker/relay-dev/Dockerfile` |
+| minimal relay (`server_relay_minimal_image`) | `docker/relay-generated/server-minimal` | generated |
+
+The minimal image has no Dockerfile until the catalog is rendered, so the
+rebuild runs `scripts/generate-relay-image.py --profile server-minimal` first
+and aborts before `docker build` if generation fails. The tag built is the one
+`global_parameters.json` names for that relay kind — a rebuild can never land on
+a tag nothing spawns.
+
+**Building changes nothing for the relays already running.** A container keeps
+the image it was started from. **Restart server relays** moves them onto the new
+image: each container is replaced in turn by `ServerRelayManager.recreate()`,
+which stops and removes the container *only*. The workspace directory, the kind
+volume, the `pawflow_home_<relay_id>` volume, the relay id, the registered relay
+service and the conversation bindings all survive — unlike `destroy()`, which
+deletes the volume and the workspace and would take the user's work with it. A
+failed respawn puts the previous metadata back instead of dropping the relay
+from the store.
+
+The sweep is sequential (each relay can carry gigabytes) and does not stop on a
+failure: the remaining relays are still moved and the failures are reported per
+relay. Each relay is briefly unavailable while its container is replaced.
+
+Both actions require the `admin` role, run in background threads, and stream
+progress over the `relay_image_build` and `relay_restart` SSE events. One relay
+build and one restart at a time; concurrent requests get HTTP 409. Triggers are
+logged with the requesting user.
+
+Actions: `admin_rebuild_relay_image` (`image: relay-dev|relay-minimal`,
+`force: bool`) and `admin_restart_relays`, implemented in
+`core/update_manager.py`.
+
+The workspace relay builds with the repository root as its context, which on a
+deployed server is `/app` — including the mounted data dirs. `.dockerignore`
+excludes `data/runtime` and `data/system`, so relay workspaces and system state
+are not sent to the Docker daemon; a test pins those two exclusions.
+
+Two limits to know: a pip-installed server has neither `docker/` nor `scripts/`,
+so the rebuild refuses cleanly ("Build context not found"); and the relay images
+are large, so a rebuild without pruning can fill the host disk — PawFlow does not
+check free space before starting.
 
 ### Building a custom image
 

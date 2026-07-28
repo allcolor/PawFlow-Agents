@@ -528,6 +528,45 @@ class ServerRelayManager:
         """Stop and remove the protected minimal execution relay."""
         return self.destroy(conv_id, kind=_KIND_MINIMAL)
 
+    def recreate(self, conv_id: str, *, kind: str = _KIND_WORKSPACE) -> Dict[str, Any]:
+        """Replace the relay container with a fresh one on the current image.
+
+        This is *not* destroy() + spawn(): destroy() deletes the Docker volume
+        and the workspace directory, which is where the user's work lives. Here
+        only the container is replaced. The workspace directory, the kind volume
+        and the ``pawflow_home_<relay_id>`` volume are never touched, and
+        ``relay_id`` is derived from the conversation, so the registered relay
+        service and the conversation bindings stay valid across the operation.
+
+        Used to move existing relays onto a rebuilt image. Raises when there is
+        no relay to recreate; on a failed respawn the previous metadata is put
+        back so the relay is not lost from the store.
+        """
+        from core.conversation_store import ConversationStore
+
+        kind = _validate_kind(kind)
+        metadata_key = _metadata_key(kind)
+        store = ConversationStore.instance()
+        meta = store.get_extra(conv_id, metadata_key)
+        if not meta or not isinstance(meta, dict) or not meta.get("relay_id"):
+            raise ValueError(f"No server {kind} relay for conversation {conv_id}")
+        user_id = meta.get("user_id", "")
+        if not user_id:
+            raise ValueError(
+                f"Server {kind} relay metadata for conversation {conv_id} has no user_id")
+
+        self._cleanup_container(meta.get("container_id", ""), remove=True)
+        # spawn() refuses to run while live metadata is present.
+        store.set_extra(conv_id, metadata_key, None)
+        try:
+            new_meta = self.spawn(conv_id, user_id, kind=kind)
+        except Exception:
+            store.set_extra(conv_id, metadata_key, meta)
+            raise
+        logger.info("Server %s relay recreated for conv %s on image %s",
+                    kind, conv_id, new_meta.get("image", ""))
+        return new_meta
+
     def stop(self, conv_id: str, *, kind: str = _KIND_WORKSPACE) -> bool:
         """Stop the relay container without removing the volume."""
         from core.conversation_store import ConversationStore

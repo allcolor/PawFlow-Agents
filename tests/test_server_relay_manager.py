@@ -186,6 +186,115 @@ def test_prepare_relay_code_dir_replaces_stale_staging(monkeypatch, tmp_path):
     assert marker["source_hash"] != "old"
 
 
+class _FakeStore:
+    """Minimal ConversationStore stand-in for the extra-metadata calls."""
+
+    def __init__(self, extras):
+        self.extras = dict(extras)
+
+    def get_extra(self, conv_id, key):
+        return self.extras.get((conv_id, key))
+
+    def set_extra(self, conv_id, key, value):
+        self.extras[(conv_id, key)] = value
+
+
+def _patch_store(monkeypatch, store):
+    import core.conversation_store as cs
+    monkeypatch.setattr(cs.ConversationStore, "instance", classmethod(lambda cls: store))
+
+
+def test_recreate_replaces_the_container_without_touching_user_data(monkeypatch):
+    # The point of the primitive: destroy() deletes the Docker volume and the
+    # workspace directory, recreate() must delete neither.
+    mgr = srm.ServerRelayManager()
+    meta = {"relay_id": "srv_ws_abcdef1234567890", "container_id": "old-cid",
+            "user_id": "alice", "kind": "workspace",
+            "volume": "pawflow_ws_conv1",
+            "workspace_dir": "/data/runtime/relay/alice/conv1"}
+    store = _FakeStore({("conv1", "server_relay"): meta})
+    _patch_store(monkeypatch, store)
+
+    cleaned = []
+    monkeypatch.setattr(mgr, "_cleanup_container",
+                        lambda cid, remove=True: cleaned.append((cid, remove)))
+    # Any volume removal or workspace deletion would show up here.
+    runs = []
+    monkeypatch.setattr(srm.subprocess, "run", lambda *a, **k: runs.append(a))
+    removed_trees = []
+    monkeypatch.setattr(srm.shutil, "rmtree",
+                        lambda path, **k: removed_trees.append(path))
+    spawned = {}
+
+    def fake_spawn(conv_id, user_id, *, kind="workspace"):
+        # spawn() refuses while live metadata is present — it must be cleared.
+        assert store.get_extra(conv_id, "server_relay") is None
+        spawned.update(conv_id=conv_id, user_id=user_id, kind=kind)
+        new_meta = dict(meta, container_id="new-cid")
+        store.set_extra(conv_id, "server_relay", new_meta)
+        return new_meta
+
+    monkeypatch.setattr(mgr, "spawn", fake_spawn)
+
+    result = mgr.recreate("conv1", kind="workspace")
+
+    assert cleaned == [("old-cid", True)]
+    assert spawned == {"conv_id": "conv1", "user_id": "alice", "kind": "workspace"}
+    assert runs == []
+    assert removed_trees == []
+    # Same identity, same volume, same workspace: the registered relay service
+    # and the conversation bindings stay valid, the files are still there.
+    assert result["relay_id"] == meta["relay_id"]
+    assert result["volume"] == "pawflow_ws_conv1"
+    assert result["workspace_dir"] == "/data/runtime/relay/alice/conv1"
+    assert result["container_id"] == "new-cid"
+
+
+def test_recreate_restores_metadata_when_the_respawn_fails(monkeypatch):
+    mgr = srm.ServerRelayManager()
+    meta = {"relay_id": "srv_min_abcdef1234567890", "container_id": "old-cid",
+            "user_id": "alice", "kind": "minimal"}
+    store = _FakeStore({("conv1", "server_minimal_relay"): meta})
+    _patch_store(monkeypatch, store)
+    monkeypatch.setattr(mgr, "_cleanup_container", lambda cid, remove=True: None)
+
+    def boom(conv_id, user_id, *, kind="workspace"):
+        raise RuntimeError("no docker")
+
+    monkeypatch.setattr(mgr, "spawn", boom)
+
+    try:
+        mgr.recreate("conv1", kind="minimal")
+    except RuntimeError as exc:
+        assert "no docker" in str(exc)
+    else:
+        raise AssertionError("recreate should propagate the spawn failure")
+
+    # A failed respawn must not erase the relay from the store: the workspace is
+    # still on disk and restart_orphans() can pick it up at the next startup.
+    assert store.get_extra("conv1", "server_minimal_relay") == meta
+
+
+def test_recreate_refuses_without_a_relay_or_without_a_user(monkeypatch):
+    mgr = srm.ServerRelayManager()
+    store = _FakeStore({("conv2", "server_relay"): {"relay_id": "srv_ws_x"}})
+    _patch_store(monkeypatch, store)
+
+    def no_spawn(*a, **k):
+        raise AssertionError("spawn should not run")
+
+    monkeypatch.setattr(mgr, "spawn", no_spawn)
+    monkeypatch.setattr(mgr, "_cleanup_container", lambda cid, remove=True: None)
+
+    for conv_id in ("conv-missing", "conv2"):
+        try:
+            mgr.recreate(conv_id)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"recreate should refuse for {conv_id}")
+
+
 def test_ensure_minimal_reuses_running_server_execution_relay(monkeypatch):
     mgr = srm.ServerRelayManager()
     existing = {"relay_id": "srv_min_abcdef1234567890", "container_id": "cid"}

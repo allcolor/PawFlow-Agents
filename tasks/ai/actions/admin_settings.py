@@ -83,6 +83,154 @@ def _set_global_param(key: str, value: Any):
     ConfigStore.save_params(GLOBAL_PARAMS_FILE, data)
 
 
+def _publish_conv_event(conversation_id: str, event: str, payload: Dict[str, Any]):
+    if not conversation_id:
+        return
+    from core.conversation_event_bus import ConversationEventBus
+    ConversationEventBus.instance().publish_event(conversation_id, event, payload)
+
+
+def _publish_build_event(conversation_id: str, payload: Dict[str, Any]):
+    _publish_conv_event(conversation_id, "cli_image_build", payload)
+
+
+def _throttled(emit, interval: float = 0.5):
+    """Wrap a progress emitter so it fires at most once per ``interval``.
+
+    A build emits thousands of lines and the dialog only ever shows the latest.
+    """
+    import time
+
+    last = [0.0]
+
+    def _emit(line: str):
+        now = time.monotonic()
+        if now - last[0] < interval:
+            return
+        last[0] = now
+        emit(line)
+
+    return _emit
+
+
+def _start_cli_image_rebuild(force: bool, conversation_id: str, user_id: str):
+    """Run the CLI tools image rebuild in a background thread.
+
+    The build outlives the action call (minutes), so the action acks immediately
+    and progress arrives on the conversation's SSE channel as `cli_image_build`
+    events. Rebuilding this image affects only the next CLI pool spawn — no
+    running relay, conversation or user data is touched.
+    """
+    import logging
+    import threading
+
+    from core import update_manager
+
+    logger = logging.getLogger(__name__)
+    # docker build runs against the host socket: effectively root on the machine.
+    # Trace who triggered it, with what, alongside the build output itself.
+    logger.info("[update] CLI image rebuild requested by %s (force=%s, image=%s)",
+                user_id or "?", force, update_manager.cli_image_name())
+
+    def _run():
+        _on_output = _throttled(lambda line: _publish_build_event(
+            conversation_id, {"status": "progress", "line": line}))
+
+        _publish_build_event(conversation_id, {"status": "started", "forced": force})
+        try:
+            result = update_manager.rebuild_cli_image(force=force, on_output=_on_output)
+        except Exception as exc:
+            logger.error("[update] CLI image rebuild crashed: %s", exc, exc_info=True)
+            _publish_build_event(conversation_id, {"status": "error", "error": str(exc)})
+            return
+        logger.info("[update] CLI image rebuild finished by %s: ok=%s exit=%s",
+                    user_id or "?", result.get("ok"), result.get("exit_code"))
+        _publish_build_event(conversation_id, {
+            "status": "done" if result.get("ok") else "error",
+            "forced": force,
+            "image": result.get("image", ""),
+            "exit_code": result.get("exit_code"),
+            "output": result.get("output", ""),
+        })
+
+    threading.Thread(target=_run, name="cli-image-rebuild", daemon=True).start()
+
+
+def _start_relay_image_rebuild(key: str, force: bool, conversation_id: str, user_id: str):
+    """Rebuild a relay image in a background thread.
+
+    Progress arrives as `relay_image_build` events. Building changes nothing for
+    the relays already running: they keep the image they were started from until
+    an explicit restart recreates their containers.
+    """
+    import logging
+    import threading
+
+    from core import update_manager
+
+    logger = logging.getLogger(__name__)
+    logger.info("[update] Relay image rebuild requested by %s (image=%s, force=%s, tag=%s)",
+                user_id or "?", key, force, update_manager.relay_image_name(key))
+
+    def _emit(payload: Dict[str, Any]):
+        _publish_conv_event(conversation_id, "relay_image_build", {"image_key": key, **payload})
+
+    def _run():
+        _on_output = _throttled(lambda line: _emit({"status": "progress", "line": line}))
+        _emit({"status": "started", "forced": force})
+        try:
+            result = update_manager.rebuild_relay_image(key, force=force, on_output=_on_output)
+        except Exception as exc:
+            logger.error("[update] Relay image rebuild crashed: %s", exc, exc_info=True)
+            _emit({"status": "error", "error": str(exc)})
+            return
+        logger.info("[update] Relay image rebuild finished by %s: image=%s ok=%s exit=%s",
+                    user_id or "?", key, result.get("ok"), result.get("exit_code"))
+        _emit({
+            "status": "done" if result.get("ok") else "error",
+            "forced": force,
+            "image": result.get("image", ""),
+            "exit_code": result.get("exit_code"),
+            "output": result.get("output", ""),
+        })
+
+    threading.Thread(target=_run, name="relay-image-rebuild", daemon=True).start()
+
+
+def _start_relay_restart(conversation_id: str, user_id: str):
+    """Recreate every server relay container in a background thread.
+
+    Each relay is briefly unavailable while its container is replaced; the
+    workspace, the volumes and the relay identity survive the operation.
+    Progress arrives as `relay_restart` events, one per relay.
+    """
+    import logging
+    import threading
+
+    from core import update_manager
+
+    logger = logging.getLogger(__name__)
+    logger.info("[update] Server relay restart requested by %s", user_id or "?")
+
+    def _emit(payload: Dict[str, Any]):
+        _publish_conv_event(conversation_id, "relay_restart", payload)
+
+    def _run():
+        _emit({"status": "started"})
+        try:
+            result = update_manager.restart_server_relays(
+                on_progress=lambda p: _emit({"status": "progress", **p}))
+        except Exception as exc:
+            logger.error("[update] Server relay restart crashed: %s", exc, exc_info=True)
+            _emit({"status": "error", "error": str(exc)})
+            return
+        logger.info("[update] Server relay restart finished by %s: %s/%s recreated",
+                    user_id or "?", result.get("restarted"), result.get("total"))
+        _emit({"status": "done", **result})
+
+    threading.Thread(target=_run, name="relay-restart", daemon=True).start()
+
+
 def _handle_admin_settings(self, action, body, store, user_id, flowfile):
     """Handle admin settings actions. Returns [flowfile] or None."""
 
@@ -266,5 +414,63 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
             return _json(flowfile, {"error": f"Unsupported system parameter '{key}'"}, "400")
         _set_global_param(key, body.get("value", ""))
         return _json(flowfile, {"ok": True})
+
+    if action == "admin_check_updates":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        from core import update_manager
+        report = update_manager.check_updates()
+        report["build_running"] = update_manager.cli_build_running()
+        report["relay_build_running"] = update_manager.relay_build_running()
+        report["relay_restart_running"] = update_manager.relay_restart_running()
+        report["relay_images"] = [
+            {"key": t["key"], "label": t["label"],
+             "image": update_manager.relay_image_name(t["key"])}
+            for t in update_manager.RELAY_BUILD_TARGETS]
+        return _json(flowfile, report)
+
+    if action == "admin_rebuild_cli_image":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        from core import update_manager
+        if update_manager.cli_build_running():
+            return _json(flowfile, {"error": "A rebuild is already running"}, "409")
+        force = bool(body.get("force"))
+        conversation_id = str(body.get("conversation_id", "") or "")
+        _start_cli_image_rebuild(force, conversation_id, user_id)
+        return _json(flowfile, {"ok": True, "started": True, "forced": force,
+                               "image": update_manager.cli_image_name()})
+
+    if action == "admin_rebuild_relay_image":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        from core import update_manager
+        key = str(body.get("image", "") or "")
+        try:
+            update_manager.relay_build_target(key)
+        except ValueError as exc:
+            return _json(flowfile, {"error": str(exc)}, "400")
+        if update_manager.relay_build_running():
+            return _json(flowfile, {"error": "A relay image rebuild is already running"}, "409")
+        force = bool(body.get("force"))
+        conversation_id = str(body.get("conversation_id", "") or "")
+        _start_relay_image_rebuild(key, force, conversation_id, user_id)
+        return _json(flowfile, {"ok": True, "started": True, "forced": force,
+                               "image_key": key,
+                               "image": update_manager.relay_image_name(key)})
+
+    if action == "admin_restart_relays":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        from core import update_manager
+        if update_manager.relay_restart_running():
+            return _json(flowfile, {"error": "A relay restart is already running"}, "409")
+        conversation_id = str(body.get("conversation_id", "") or "")
+        _start_relay_restart(conversation_id, user_id)
+        return _json(flowfile, {"ok": True, "started": True})
 
     return None

@@ -509,6 +509,25 @@ function _sseWireB() {
     if (typeof _pushCommandResult === 'function') _pushCommandResult(data);
   });
 
+  eventSource.addEventListener('cli_image_build', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    // Only the admin Updates dialog renders this; it no-ops when closed.
+    if (typeof adminBuildProgress === 'function') adminBuildProgress(data);
+  });
+
+  eventSource.addEventListener('relay_image_build', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (typeof adminRelayBuildProgress === 'function') adminRelayBuildProgress(data);
+  });
+
+  eventSource.addEventListener('relay_restart', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (typeof adminRelayRestartProgress === 'function') adminRelayRestartProgress(data);
+  });
+
   eventSource.addEventListener('vnc_login_ready', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

@@ -84,6 +84,15 @@ RUN mkdir -p /opt/pawflow /workspace /relay /cc_sessions \
     && chown pawflow:pawflow /opt/pawflow /workspace /relay /cc_sessions
 ENV PYTHONPATH="/opt/pawflow"
 
+# Record the versions of the CLIs actually installed above. core/update_manager.py
+# reads this file back (docker run --rm --entrypoint cat) to report what is in the
+# image. It is the only version signal Antigravity has, since its install script
+# is unversioned — refreshing it requires a forced (--no-cache) rebuild.
+COPY stamp_versions.sh /opt/pawflow/stamp_versions.sh
+RUN chmod +x /opt/pawflow/stamp_versions.sh \
+    && /opt/pawflow/stamp_versions.sh > /opt/pawflow/cli_versions.json \
+    && cat /opt/pawflow/cli_versions.json
+
 USER pawflow
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["claude"]

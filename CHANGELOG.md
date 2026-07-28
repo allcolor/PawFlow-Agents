@@ -8,6 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Updates panel in the admin gear menu** (`core/update_manager.py`). It
+  reports, per component, the installed version against the published one —
+  server against the latest GitHub release, agent CLIs against the npm
+  registry, relay images against the shipped catalog. The release tag
+  (`1.0.0-beta.35`) and the packaged version (`1.0.0b35`) are compared under
+  PEP 440, so they read as equal instead of flagging every install as stale
+  forever. A component whose version cannot be resolved reports "unknown"
+  rather than failing the dialog.
+- The same panel rebuilds the **agent CLI tools image**. Antigravity installs
+  from an unversioned script, so it has no version signal at all: forcing
+  (`--no-cache`) is the only way to pick it up, and the versions actually
+  installed are now stamped into the image at build time
+  (`/opt/pawflow/cli_versions.json`) instead of being inferred.
+- The panel also rebuilds the **relay images** and moves running relays onto
+  them. The move goes through a new `ServerRelayManager.recreate()`, which
+  replaces the container and nothing else: workspace directory, volumes,
+  relay id, registered service and conversation bindings all survive.
+  `destroy()` + `spawn()` would have deleted the volume and the workspace,
+  i.e. the user's work. A failed respawn restores the previous metadata
+  instead of dropping the relay from the store. The sweep is sequential and
+  does not stop on a failure. Building alone changes nothing for running
+  relays — a container keeps the image it started from until it is recreated.
+  All of these actions require the `admin` role, refuse concurrent runs with
+  HTTP 409, stream progress over SSE, and log who triggered them: `docker
+  build` against the host socket is effectively root on the machine.
 - **Conversation sharing is complete and reachable from the UI** (phases 4-7
   of `docs/CONVERSATION_SHARING_PLAN.md`). The sidebar splits into Mine /
   Invitations / Shared with me; an invite has explicit Accept and Decline

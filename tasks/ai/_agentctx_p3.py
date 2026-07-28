@@ -544,6 +544,7 @@ class _PACPhase3Mixin:
                 " `batch_edit` when the same change repeats across several files."
                 " `write` only when creating or fully replacing a file."
                 "\n  - Write files: Use `write` (NOT echo redirection or heredocs in bash). A heredoc body travels as a hand-escaped JSON string: one unescaped double quote in it fails the whole call with 'failed to decode tool arguments'. `write` carries the body in its own field."
+                "\n  - Match processes by pidfile, NOT by command line: `pgrep -f` and `pkill -f` also match the shell running them, because your own `sh -c '... pkill -f pytest ...'` has the pattern in its command line. A wait loop built on `pgrep -f` finds itself and never ends; `pkill -f` kills its own shell mid-command. Use the bracket trick (`ps -eo args | grep '[p]ytest'`) or a pidfile written by the process itself."
                 "\n- When issuing multiple commands:"
                 "\n  - Independent commands: make multiple tool calls in parallel"
                 "\n  - Dependent commands: chain with && in a single bash call"

@@ -134,6 +134,29 @@ def test_bash_edit_guidance_matches_the_context_threshold():
     assert "3+ places in the same file" in description
 
 
+def test_bash_warns_that_process_patterns_match_their_own_caller():
+    # Twice in one session: a wait loop on `pgrep -f 'pytest tests/'` matched
+    # the sh -c that ran it and spun forever, and a `pkill -f` killed its own
+    # shell mid-command. Neither is a shell quirk an agent infers -- the
+    # pattern is in the caller's command line by construction.
+    from core.handlers.bash import BashHandler
+
+    description = BashHandler().description
+
+    assert "pgrep -f" in description
+    assert "pkill -f" in description
+    assert "pidfile" in description
+
+
+def test_process_match_guidance_is_in_the_context_prompt_too():
+    # Same rule at both places an agent reads, like Monitor and apply_patch:
+    # the tool description and the tool-usage block.
+    src = (ROOT / "tasks" / "ai" / "_agentctx_p3.py").read_text(encoding="utf-8")
+
+    assert "pgrep -f" in src
+    assert "pidfile" in src
+
+
 def test_bash_states_why_a_heredoc_breaks_rather_than_just_forbidding_it():
     # "Use filesystem tools" is a preference and lost against a one-shot
     # heredoc. The escaping failure it causes is checkable, so state it.

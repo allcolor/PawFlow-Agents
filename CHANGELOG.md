@@ -6,8 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.37] — 2026-07-28
+
 ### Fixed
 
+- **Two coordinators could read one Claude Code session, splitting the turn
+  between them.** `queue.Queue` hands each event to exactly one getter, so a
+  capture coordinator (started by a manual tmux prompt, or by Claude Code
+  injecting its own background-task notification) and the next webchat turn
+  competed for the same stream. Text deltas arrived halved, producing answers
+  that begin mid-sentence; `tool_use` blocks were severed from their
+  `input_json_delta` chunks, leaving MCP wrappers un-unwrapped and rendered as
+  a bare `use_tool`. Only a compact recovered, because killing the session
+  mints a new token. Ownership is now arbitrated by epoch: a request claim
+  always wins and happens before the drain, a capture claim refuses while a
+  request coordinator polls, and an evicted capture discards its partial text
+  instead of publishing a truncated message.
+- **The webchat showed the agent idle while the tmux was visibly working.** A
+  turn PawFlow did not send — a human typing in the tmux, or Claude Code
+  resuming on a background-task notification — runs outside the streaming
+  worker, so `_active_turns` stayed empty. PawFlow attaches to such a turn
+  rather than restarting it (a second prompt would duplicate work already in
+  flight) and now publishes the active-agent marker for its duration.
+- **Killing a finished tool call cancelled a different, running one.** A
+  targeted kill that finds nothing is ambiguous: the call may be running but
+  not yet bound to its `tool_call` id, or it may simply be over. Only the
+  first justifies widening to a whole-agent cancel. A stale-looking `edit`
+  was killed and took the running `bash` with it; the broad fallback now
+  requires an unbound in-flight request, and otherwise reports that there was
+  nothing to kill.
+- **A wrapper call whose streamed input was lost is recovered from the request
+  body.** When the chunks carrying `tool_name` go missing the call is dropped
+  entirely by the MCP completeness check, so nothing was persisted and the
+  observed replay can supersede it without duplicating.
 - **PawFlow's own CamelCase tools were unreachable through `use_tool`.** The
   MCP bridge lowercased any CamelCase tool name, to map Claude Code's native
   spellings onto PawFlow tools (`Read` → `read`). PawFlow registers CamelCase

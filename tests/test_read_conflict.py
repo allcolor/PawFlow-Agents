@@ -12,6 +12,7 @@ from core.read_conflict import (
     BLOCK_TITLE, MAX_PATHS, clear_agent, clear_conversation, clear_path,
     note_write, pending_block, reset_for_tests, stats,
 )
+from tests import _anchors, _srcscan
 
 
 @pytest.fixture(autouse=True)
@@ -313,45 +314,46 @@ def test_mid_turn_delivery_consumes_the_notice_once():
 # the convention this repo already uses for agent-loop structure. They do not
 # prove runtime behaviour; they pin the three properties that a refactor would
 # silently break, each of which is invisible in the unit tests above.
+#
+# Every marker below is declared in tests/_anchors.py: a rename now breaks
+# tests/test_source_anchors.py by name, instead of breaking these three from a
+# distance with a bare substring error.
 
-def _loop_src():
-    from tests._agent_core_src import agent_core_src
-    return agent_core_src()
+def _indent_of(src, idx):
+    start = src.rfind("\n", 0, idx) + 1
+    line = src[start:src.index("\n", idx)]
+    return len(line) - len(line.lstrip())
 
 
 def test_notice_is_taken_only_when_a_result_can_carry_it():
-    # pending_block() clears on read. Taking it with an empty result batch
-    # would drop the notice on the floor.
-    src = _loop_src()
-    take = src.index("read_conflict.pending_block")
-    guard = src.rindex("if results:", 0, take)
-    assert take - guard < 400, "the take must stay under the `if results:` guard"
+    # pending_block() clears on read. Taking it outside the `if results:`
+    # guard would drop the notice on the floor when the batch is empty.
+    src = _anchors.loop_src()
+    guard = _anchors.find("tool_result_batch_guard", src)
+    take = _srcscan.find(src, "read_conflict.pending_block",
+                         what=_anchors.AGENT_LOOP, start=guard)
+    assert take < _anchors.find("tool_result_loop_header", src), \
+        "the take must happen before the loop that carries the notice"
+    assert _indent_of(src, take) > _indent_of(src, guard), \
+        "the take must sit *inside* the `if results:` guard, not after it"
 
 
 def test_notice_is_appended_after_the_untrusted_envelope():
     # _attach_platform_note must run on the *output* of _wrap_tool_output,
     # never on the raw text that goes into it.
-    src = _loop_src()
-    wrap = src.index("_wrapped = self._wrap_tool_output")
-    append = src.index("_attach_platform_note", wrap)
-    assert append > wrap
-    assert src.index("LLMMessage(role=\"tool\"", wrap) > append, \
+    src = _anchors.loop_src()
+    wrap = _anchors.find("tool_output_envelope", src)
+    attach = _anchors.find("platform_note_attach", src)
+    assert attach > wrap
+    assert _srcscan.find(src, 'LLMMessage(role="tool"',
+                         what=_anchors.AGENT_LOOP, start=wrap) > attach, \
         "the note must be added before the tool message is built"
 
 
 def test_notice_rides_only_the_last_result_of_the_batch():
     # Appending it to every result in a batch would repeat the same warning
     # once per tool call.
-    src = _loop_src()
-    assert "_results_left == 0" in src
-
-
-def test_the_tool_result_loop_header_is_left_alone():
-    # Three tests in test_codex_mid_turn_compact.py slice the loop body using
-    # this exact header as their marker. Rewriting it (an enumerate(), say)
-    # breaks them from a distance, which is how this was found the first time.
-    src = _loop_src()
-    assert "for tc, result_text in results:" in src
+    assert "_results_left == 0" in _anchors.loop_src()
 
 
 # -- Robustness --

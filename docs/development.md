@@ -274,6 +274,66 @@ pytest tests/ --cov=core --cov=engine --cov=tasks --cov=api --cov-report=term-mi
 
 ---
 
+## Source-Scan Tests
+
+A few structural properties cannot be tested by running the code. The agent
+tool loop threads one large `st` state object through a dozen collaborators and
+is not executable in isolation, so invariants like *"the notice is attached
+outside the untrusted envelope"* or *"tool results are published before the
+cancel check"* are pinned by scanning source text.
+
+The convention's weakness is that it couples a test to a marker string in a
+file that does not know it is a marker: a rename breaks a distant test, and the
+raw failure (`ValueError: substring not found`, or an assertion against a
+silently emptied region) says nothing about what happened. Two rules keep that
+manageable.
+
+**Never slice with bare `str.index()`.** Use `tests/_srcscan.py`:
+
+```python
+from tests import _srcscan
+
+body = _srcscan.region(src, "def _handler", "def _next", what="the poller")
+idx = _srcscan.find(src, "emit(", what="the poller", start=body_start)
+```
+
+`find()` and `region()` refuse a marker that is missing, ambiguous, or matches
+only as a prefix of a longer name, and say which marker, how many times, and on
+which lines. `region()` searches the end marker *after* the start marker, so a
+new symbol duplicating the end marker earlier in the file can no longer reverse
+the slice into emptiness — the failure that motivated the module (`def _append`
+silently matching a newly added `def _append_platform_note`).
+
+**Declare shared markers in `tests/_anchors.py`.** Any marker more than one
+test depends on, or that has broken once, gets a name, the file it lives in,
+and the reason it exists:
+
+```python
+"tool_result_loop_header": Anchor(
+    "for tc, result_text in results:",
+    "tasks/ai/_alc_iteration.py, as `for st.tc, st.result_text in st.results:`",
+    "test_codex_mid_turn_compact.py slices the loop body with this header ...",
+),
+```
+
+The payoff is on the day of the rename: `tests/test_source_anchors.py` fails
+once, naming the anchor and its reason, and the fix is one line in the registry
+instead of a hunt through the callers. The anchored site carries an
+`# anchor: <name> (tests/_anchors.py)` comment, which is the part that stops the
+rename before it is written.
+
+Note that markers are matched against the *reconstructed* loop source:
+`tests/_agent_core_src.py` concatenates the post-split files and mechanically
+reverses the `st.`/`_alc_*` artifacts, so a marker is generally not greppable
+verbatim — each anchor records the real spelling.
+
+A source scan pins structure, not behaviour. When the code under test *can* be
+called, call it: `st` is an explicit state object, so a fake-`st` unit test is
+usually reachable and always survives a rename. Convert opportunistically, in
+the region you are already touching.
+
+---
+
 ## Code Conventions
 
 ### Naming

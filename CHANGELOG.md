@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Source-scan tests now fail with a diagnosis instead of a substring error.**
+  Structural invariants that cannot be tested by running the code are pinned by
+  scanning source text, which couples a test to a marker string in a file that
+  does not know it is a marker. `tests/_srcscan.py` replaces bare `str.index()`
+  slicing: it refuses a marker that is missing, ambiguous, or matches only as a
+  prefix of a longer name, and reports which marker, how often and on which
+  lines. Its `region()` searches the end marker after the start marker, so a
+  newly added symbol can no longer steal a region boundary and silently empty
+  the slice — the failure that prompted this, where `def _append` matched a new
+  `def _append_platform_note`. Markers shared by several tests are declared in
+  `tests/_anchors.py` with the reason they exist, checked once by
+  `tests/test_source_anchors.py`, and carry an `# anchor: <name>` comment at the
+  anchored site so a rename is caught where it is written rather than in a
+  distant test. See `docs/development.md`.
+
 ### Changed
 
 - **A read-conflict notice now reaches the agent during the turn, not after it.**

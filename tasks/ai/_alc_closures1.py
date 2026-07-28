@@ -226,6 +226,7 @@ class _ALCClosures1Mixin:
         st.ctx["_auto_compact_usage_cache"] = usage
         return usage
 
+    # anchor: post_append_compact_helper (tests/_anchors.py)
     def _alc_maybe_auto_compact_after_append(self, st, msg: LLMMessage, reason: str):
         """Enforce compact_threshold_pct as a live invariant.
 
@@ -326,6 +327,8 @@ class _ALCClosures1Mixin:
             if not st._auto_compact_state.get("handoff"):
                 st._clear_provider_compact_barrier()
 
+    # anchor: append_helper (tests/_anchors.py) - it is the end boundary of
+    # the region above, so keep new helpers off the `_alc_append` prefix.
     def _alc_append(self, st, msg: LLMMessage):
         _append_started = time.monotonic()
         _enqueue_ms = None

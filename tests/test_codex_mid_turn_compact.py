@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import re as _re
+from tests import _anchors, _srcscan
 from tests._agent_core_src import agent_core_src
 
 _GEMINI = (Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
@@ -57,9 +58,8 @@ def test_cancelled_tool_results_are_published_before_cancel_check():
     agent loop must publish those tool_result events before it lets the stale
     generation raise, otherwise live technical-details rows stay open forever.
     """
-    block = _AGENT_CORE[
-        _AGENT_CORE.index("for tc, result_text in results:"):
-        _AGENT_CORE.index("# Per-turn aggregate cap", _AGENT_CORE.index("for tc, result_text in results:"))]
+    block = _anchors.region("tool_result_loop_header", "tool_result_batch_end",
+                            _AGENT_CORE)
     assert block.rindex("emitter.on_tool_result") < block.index("emitter.check_cancelled()")
     assert "after publishing the whole result batch" in block
 
@@ -216,10 +216,8 @@ def test_auto_compact_threshold_is_enforced_after_visible_appends():
     assert "auto threshold crossed after" in _AGENT_CORE
     assert "_maybe_auto_compact_after_append(msg, msg.role)" in _AGENT_CORE
     assert "msg.role == \"assistant\" and msg.tool_calls and not msg.content" in _AGENT_CORE
-    helper = _AGENT_CORE[
-        _AGENT_CORE.index("def _maybe_auto_compact_after_append"):
-        _AGENT_CORE.index("def _append")
-    ]
+    helper = _anchors.region("post_append_compact_helper", "append_helper",
+                             _AGENT_CORE)
     assert "trigger_fraction=trigger_fraction" in helper
     assert "force=True" in helper
 
@@ -231,14 +229,14 @@ def test_post_append_cli_compact_uses_provider_restart_path():
     as provider-native compaction, so agent_core restarts the CLI session and the
     provider can keep the fresh compacted instance live after the turn.
     """
-    helper = _AGENT_CORE[
-        _AGENT_CORE.index("def _maybe_auto_compact_after_append"):
-        _AGENT_CORE.index("def _append")
-    ]
-    cli_guard = helper[helper.index('if _client_provider in ('):
-                       helper.index('compact_owner =')]
-    except_block = helper[helper.index("except CCCompactDetected:"):
-                          helper.index("except Exception as compact_err:")]
+    helper = _anchors.region("post_append_compact_helper", "append_helper",
+                             _AGENT_CORE)
+    _WHAT = "the post-append compact helper"
+    cli_guard = _srcscan.region(helper, 'if _client_provider in (',
+                                'compact_owner =', what=_WHAT)
+    except_block = _srcscan.region(helper, "except CCCompactDetected:",
+                                   "except Exception as compact_err:",
+                                   what=_WHAT)
     assert '"claude-code"' in cli_guard
     assert '"codex-app-server"' in cli_guard
     assert '"gemini"' in cli_guard

@@ -83,6 +83,7 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             f"errors), not from the user or the system."
         )
 
+    # anchor: platform_note_attach (tests/_anchors.py)
     @classmethod
     def _attach_platform_note(cls, content, note: str):
         """Append a PawFlow-generated note *outside* the untrusted envelope.

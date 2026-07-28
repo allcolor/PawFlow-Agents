@@ -462,7 +462,7 @@ class _ALCIterationMixin:
         # when there is a result to carry it, since a block taken with
         # nowhere to put it would be dropped.
         _conflict_note = ""
-        if st.results:
+        if st.results:  # anchor: tool_result_batch_guard (tests/_anchors.py)
             try:
                 from core import read_conflict
                 _block = read_conflict.pending_block(
@@ -475,6 +475,7 @@ class _ALCIterationMixin:
 
         # Counted down rather than enumerated so the loop header stays
         # byte-identical: several structural tests use it as a marker.
+        # anchor: tool_result_loop_header (tests/_anchors.py)
         _results_left = len(st.results)
         for st.tc, st.result_text in st.results:
             _results_left -= 1
@@ -491,6 +492,8 @@ class _ALCIterationMixin:
             st.result_text = self._materialize_tool_result_images(
                 st.result_text, user_id=st.user_id,
                 conversation_id=st.conversation_id)
+            # anchor: tool_output_envelope, platform_note_attach
+            # (tests/_anchors.py)
             st._wrapped = self._wrap_tool_output(st.display_tc.name, st.result_text)
             if _conflict_note and _results_left == 0:
                 st._wrapped = self._attach_platform_note(st._wrapped, _conflict_note)
@@ -512,6 +515,7 @@ class _ALCIterationMixin:
         # generation exits.
         st.emitter.check_cancelled()
 
+        # anchor: tool_result_batch_end (tests/_anchors.py)
         # Per-turn aggregate cap: if total tool results > 200K chars,
         # persist the largest to FileStore to avoid context bloat
         st._AGG_CAP = 200_000

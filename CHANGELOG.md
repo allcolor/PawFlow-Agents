@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.38] — 2026-07-28
+
+### Fixed
+
+- **The header kept showing "Working: Command" with nothing running.** A
+  context operation (`/compact`, `/clear`, `/rewind`) reports its own progress
+  through `context_op` events, so its acknowledgement is marked
+  `suppress_command_result` to keep the raw JSON from printing as a system
+  message. The background dispatcher took that marker as permission to publish
+  nothing at all — but the browser clears a pending UI action only when a
+  result arrives, so the call stayed open and the server-side registry held it
+  pending until its 600s TTL expired. The suppressed path now publishes a
+  `command_result` carrying `{"suppressed": true}`: nothing renders, and the
+  call completes with the operation.
+
 ## [1.0.0-beta.37] — 2026-07-28
 
 ### Fixed

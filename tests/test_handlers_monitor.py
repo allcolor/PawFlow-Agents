@@ -225,6 +225,53 @@ class TestMonitorReallyTerminates(unittest.TestCase):
 
         assert res.startswith("Error:")
 
+    def test_raw_truncation_says_how_many_lines_it_dropped(self):
+        # A body that stops at the cap is indistinguishable from a command
+        # that had nothing more to say, so the cut has to be stated.
+        res = self._run_for_real({"command": "seq 1 50", "line_limit": 5})
+
+        assert "reason=exit" in res, res
+        assert "truncated=45" in res, res
+        assert "45 more line(s) not shown" in res, res
+        assert "50 produced" in res, res
+        assert "kept the first 5" in res, res
+        # The kept lines are the head, and nothing beyond them leaks in.
+        assert res.splitlines()[1:6] == ["1", "2", "3", "4", "5"], res
+
+    def test_output_within_the_cap_says_nothing_about_truncation(self):
+        # Crying truncation on every call would make the notice worthless.
+        res = self._run_for_real({"command": "seq 1 5", "line_limit": 200})
+
+        assert "truncated=" not in res, res
+        assert "not shown" not in res, res
+
+    def test_the_nomatch_fallback_reports_the_lines_it_dropped(self):
+        # This branch keeps the *tail*, so it must say which end it kept -
+        # otherwise the missing lines read as output never produced.
+        res = self._run_for_real({
+            "command": 'for i in $(seq 1 50); do echo "line $i"; done',
+            "pattern": "NEVER_MATCHES",
+            "line_limit": 5,
+        })
+
+        assert "truncated=45" in res, res
+        assert "kept the last 5" in res, res
+        assert "line 50" in res, res
+        assert "line 45" not in res, res
+
+    def test_the_hit_cap_is_not_reported_as_truncation(self):
+        # `limit` is already in the header, so a capped hit list was never a
+        # silent cut. Only the raw-output branches drop lines unannounced.
+        res = self._run_for_real({
+            "command": 'for i in $(seq 1 50); do echo "line $i"; done',
+            "pattern": "^line ",
+            "limit": 2,
+            "line_limit": 5,
+        })
+
+        assert "truncated=" not in res, res
+        assert "limit=2" in res, res
+
 
 if __name__ == "__main__":
     unittest.main()

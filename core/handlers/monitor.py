@@ -108,15 +108,25 @@ fi
 wait "$__mon_wait" 2>/dev/null
 __mon_rc=$?
 
-echo "@STATUS@ reason=$__mon_reason rc=$__mon_rc"
+# Total lines produced, so a capped body can say what it dropped instead of
+# just stopping - a body that ends at the cap reads exactly like a command
+# that had nothing more to say. `grep -c ''` counts a final unterminated
+# line; `wc -l` does not.
+__mon_total=$(grep -c '' "$__mon_out" 2>/dev/null)
+[ -z "$__mon_total" ] && __mon_total=0
+
+__mon_mode=raw
 if [ -n @PATTERN@ ]; then
   __mon_hits=$(grep -E -- @PATTERN@ "$__mon_out" 2>/dev/null | head -n @LIMIT@)
-  if [ -n "$__mon_hits" ]; then
-    printf '%s\n' "$__mon_hits"
-  else
-    echo "@NOMATCH@"
-    tail -n @LINE_LIMIT@ "$__mon_out"
-  fi
+  if [ -n "$__mon_hits" ]; then __mon_mode=hits; else __mon_mode=nomatch; fi
+fi
+
+echo "@STATUS@ reason=$__mon_reason rc=$__mon_rc total=$__mon_total mode=$__mon_mode"
+if [ "$__mon_mode" = hits ]; then
+  printf '%s\n' "$__mon_hits"
+elif [ "$__mon_mode" = nomatch ]; then
+  echo "@NOMATCH@"
+  tail -n @LINE_LIMIT@ "$__mon_out"
 else
   head -n @LINE_LIMIT@ "$__mon_out"
 fi
@@ -180,7 +190,9 @@ class MonitorHandler(ToolHandler):
                     "type": "integer",
                     "description": (
                         f"Max raw output lines to keep (default {_DEFAULT_LINE_LIMIT}). "
-                        f"Prevents runaway buffering."
+                        f"Prevents runaway buffering. Truncation is never silent: "
+                        f"the header carries truncated=N and the body ends with how "
+                        f"many lines were dropped and from which end."
                     ),
                 },
                 "timeout_ms": {
@@ -221,6 +233,9 @@ class MonitorHandler(ToolHandler):
         limit = int(arguments.get("limit", 1) or 1)
         line_limit = int(arguments.get("line_limit", _DEFAULT_LINE_LIMIT)
                          or _DEFAULT_LINE_LIMIT)
+        # The script floors it at 1; keep Python's copy identical or the
+        # dropped-line arithmetic below would be off by the difference.
+        line_limit = max(1, line_limit)
         timeout_ms = int(arguments.get("timeout_ms", _DEFAULT_TIMEOUT_MS)
                          or _DEFAULT_TIMEOUT_MS)
         timeout_ms = max(1000, min(timeout_ms, _MAX_TIMEOUT_MS))
@@ -290,6 +305,8 @@ class MonitorHandler(ToolHandler):
         # the words "timed out" as a Monitor timeout.
         reason = ""
         exit_code = None
+        total_lines = None
+        mode = ""
         body: list = []
         for line in result.splitlines():
             if line.startswith(_STATUS_PREFIX):
@@ -299,6 +316,10 @@ class MonitorHandler(ToolHandler):
                         reason = value
                     elif key == "rc" and value.lstrip("-").isdigit():
                         exit_code = int(value)
+                    elif key == "total" and value.isdigit():
+                        total_lines = int(value)
+                    elif key == "mode":
+                        mode = value
             else:
                 body.append(line)
         result = "\n".join(body).strip("\n")
@@ -310,6 +331,13 @@ class MonitorHandler(ToolHandler):
             logger.warning("[monitor] no status line after %dms", elapsed_ms)
             reason = "unknown"
 
+        # Only the raw-output branches can drop lines. A hits body is capped
+        # by `limit`, which the header already states, so that cap is not
+        # silent to begin with.
+        dropped = 0
+        if mode in ("raw", "nomatch") and total_lines is not None:
+            dropped = max(0, total_lines - line_limit)
+
         header = (
             f"[monitor] reason={reason} elapsed_ms={elapsed_ms} "
             f"lines={len(captured_lines)}"
@@ -318,7 +346,20 @@ class MonitorHandler(ToolHandler):
             header += f" exit_code={exit_code}"
         if pattern:
             header += f" pattern={pattern!r} limit={limit}"
-        return header + "\n" + result
+        if dropped:
+            header += f" truncated={dropped}"
+
+        out = header + "\n" + result
+        if dropped:
+            # Repeated at the foot because that is where the reader meets the
+            # cut, and the header has usually scrolled past by then.
+            kept = "last" if mode == "nomatch" else "first"
+            out += (
+                f"\n[monitor] {dropped} more line(s) not shown: {total_lines} "
+                f"produced, kept the {kept} {line_limit} "
+                f"(line_limit={line_limit}). Raise line_limit to see them."
+            )
+        return out
 
 
 __all__ = ["MonitorHandler"]

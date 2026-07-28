@@ -102,6 +102,8 @@ The web chat does not rely on synchronous `/api/ui` responses for action payload
 
 The UI action bus is separate from the active conversation SSE stream because the web chat may close and reopen the conversation stream while rendering history. System clients that do not provide a reply bus, such as relay registration or CLI bootstrap calls, can still receive an inline HTTP result.
 
+Every accepted call must publish exactly one `command_result`, including calls whose payload must not be rendered. A context operation (`/compact`, `/clear`, `/rewind`) reports its own progress through `context_op` events and marks its acknowledgement `suppress_command_result`, so the raw JSON is never printed as a system message — but it still publishes a `command_result` carrying `{"suppressed": true}`. The browser clears a pending action only on a result, so skipping the publication left the header's "Working: …" indicator running with nothing in flight until the status registry expired it (`PAWFLOW_UI_ACTION_STATUS_TTL`, default 600s). Suppressing the *display* of a result is never a reason to suppress the *result*.
+
 UI background actions are bounded by `PAWFLOW_MAX_BG_ACTIONS` (default `32`). Polling actions such as `list_active` also avoid overlapping browser requests; a stale poll is unsubscribed before a replacement starts.
 
 ## Concurrent Messages

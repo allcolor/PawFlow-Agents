@@ -470,6 +470,26 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                         _content = ""
                         if isinstance(result, list) and result:
                             if result[0].get_attribute("suppress_command_result") == "1":
+                                # A context op publishes its own progress and
+                                # done events, so its raw ack must not render as
+                                # a system message. The call still has to be
+                                # closed: the browser clears a pending action
+                                # only on a result, so returning here pinned the
+                                # header's "Working: Command" pill until the
+                                # status TTL expired. Publish an empty result —
+                                # it renders nothing and completes the caller.
+                                from core.conversation_event_bus import ConversationEventBus
+                                payload = {
+                                    "action": result_action,
+                                    "result": json.dumps({"suppressed": True}),
+                                    "conversation_id": conversation_id,
+                                }
+                                if call_id:
+                                    payload["_callId"] = call_id
+                                _record_ui_action_done(
+                                    reply_conversation_id, call_id, payload)
+                                ConversationEventBus.instance().publish_event(
+                                    reply_conversation_id, "command_result", payload)
                                 return
                             _content = result[0].get_content().decode("utf-8", errors="replace")
                         _put_ui_list_cache(

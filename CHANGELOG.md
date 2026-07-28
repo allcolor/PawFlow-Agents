@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.41] — 2026-07-28
+
 ### Added
 
 - **Source-scan tests now fail with a diagnosis instead of a substring error.**
@@ -23,21 +25,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   anchored site so a rename is caught where it is written rather than in a
   distant test. See `docs/development.md`.
 
-### Changed
-
-- **A read-conflict notice now reaches the agent during the turn, not after it.**
-  The notice was delivered at the next context build, which meant an agent in a
-  long tool loop kept working against a stale view for the whole loop — exactly
-  the window where the collision does damage. It now rides the last tool result
-  of a batch, so the agent sees it between tool calls. It is appended *after*
-  the untrusted-content envelope: that envelope tells the agent to treat the
-  content as external data, and a PawFlow-generated warning buried inside it
-  would teach the agent to distrust our own warnings. The next-turn channel
-  stays for turns that ended without tool calls; since taking the block clears
-  it, exactly one channel ever delivers and the notice can never arrive twice.
-
-### Added
-
 - **An agent is now told when another agent changes code under it.**
   Several agents in one conversation share the same relay, and therefore the
   same files. Agent B read `service.py`, reasoned about it for a few turns, and
@@ -54,6 +41,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   nothing, an identical rewrite notifies nobody, and a re-read clears the notice
   so the agent is told once rather than every turn. The notice is advisory — it
   asks for a re-read, it never refuses an operation.
+
+### Changed
+
+- **A read-conflict notice now reaches the agent during the turn, not after it.**
+  The notice was delivered at the next context build, which meant an agent in a
+  long tool loop kept working against a stale view for the whole loop — exactly
+  the window where the collision does damage. It now rides the last tool result
+  of a batch, so the agent sees it between tool calls. It is appended *after*
+  the untrusted-content envelope: that envelope tells the agent to treat the
+  content as external data, and a PawFlow-generated warning buried inside it
+  would teach the agent to distrust our own warnings. The next-turn channel
+  stays for turns that ended without tool calls; since taking the block clears
+  it, exactly one channel ever delivers and the notice can never arrive twice.
 
 ## [1.0.0-beta.40] — 2026-07-28
 

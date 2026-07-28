@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import subprocess  # nosec B404
 import threading
 from pathlib import Path
@@ -97,6 +98,14 @@ RELAY_BUILD_TARGETS = (
 )
 
 RELAY_IMAGE_GENERATOR = "scripts/generate-relay-image.py"
+
+#: Name of the throwaway container that restarts the stack. Kept (not --rm) so
+#: `docker logs pawflow-updater` still explains a failed update afterwards.
+UPDATER_CONTAINER = "pawflow-updater"
+
+#: Image the updater runs in. The server image ships only the static docker
+#: CLI — no compose plugin — so compose has to come from somewhere else.
+DEFAULT_UPDATER_IMAGE = "docker:cli"
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -254,12 +263,25 @@ def check_updates() -> Dict[str, Any]:
 
     catalog_version = catalog_relay_version()
     for image in RELAY_IMAGES:
+        # Two repositories name the same thing: the published one and the tag
+        # this server actually spawns (a local rebuild lands on the latter).
+        # Reporting only the published one made a freshly rebuilt relay look
+        # missing.
+        try:
+            configured = relay_image_name(image["key"])
+        except ValueError:
+            configured = ""
+        configured_repo = configured.rsplit(":", 1)[0] if configured else ""
         tags = local_image_tags(image["repository"])
+        local_tags = list(tags)
+        if configured_repo and configured_repo != image["repository"]:
+            local_tags += [f"{configured_repo}:{t}" for t in local_image_tags(configured_repo)]
         installed = catalog_version if catalog_version in tags else (tags[0] if tags else "")
         components.append(_component(
             image["key"], image["repository"].rsplit("/", 1)[-1],
             installed, catalog_version,
-            group="relay", repository=image["repository"], local_tags=tags))
+            group="relay", repository=image["repository"],
+            configured_image=configured, local_tags=local_tags))
 
     installed_clis = installed_cli_versions()
     for cli in CLI_PACKAGES:
@@ -556,3 +578,183 @@ def restart_server_relays(
         return {"ok": not failed, "total": total, "restarted": restarted, "failed": failed}
     finally:
         _relay_restart_lock.release()
+
+
+# ── server self-update ───────────────────────────────────────────────
+
+
+def updater_image() -> str:
+    """Image the updater container runs in.
+
+    ``PAWFLOW_SERVER_UPDATE_IMAGE`` first, then ``server_update_image`` in
+    ``global_parameters.json``, so an air-gapped host can point at a local
+    mirror without a rebuild.
+    """
+    configured = os.environ.get("PAWFLOW_SERVER_UPDATE_IMAGE", "").strip()
+    if not configured:
+        try:
+            from core.expression import _load_global_parameters
+            configured = str(_load_global_parameters().get("server_update_image", "")).strip()
+        except Exception:
+            logger.debug("Could not read server_update_image", exc_info=True)
+            configured = ""
+    return configured or DEFAULT_UPDATER_IMAGE
+
+
+def _updater_script(working_dir: str, pull_source: bool) -> str:
+    """Shell run by the updater, in the project directory, on the host socket.
+
+    Ordering is the safety property: everything that can fail without
+    consequence happens *before* anything that stops the server.
+
+    ``pull --ignore-buildable`` covers image-based deployments; a deployment
+    that builds from source has nothing to pull and must not fail on that.
+    ``up -d --build`` then covers both: it rebuilds what is buildable and
+    recreates only the services whose image or config actually changed.
+    """
+    lines = [
+        "set -eu",
+        f"cd {shlex.quote(working_dir)}",
+        "docker compose version",
+    ]
+    if pull_source:
+        # --ff-only: a dirty or diverged tree stops the update instead of
+        # being merged behind the operator's back.
+        lines.append("git pull --ff-only")
+    lines.extend([
+        "docker compose pull --ignore-buildable || docker compose pull || true",
+        "docker compose up -d --build",
+    ])
+    return "\n".join(lines)
+
+
+def running_agent_count() -> int:
+    """Agent turns currently in flight across the whole server.
+
+    Reported, not enforced: restarting kills them, exactly as it would from the
+    command line. The operator is told what it costs and decides.
+    """
+    try:
+        from tasks.ai.agent_loop import AgentLoopTask
+        inst = AgentLoopTask._live_instance
+        if not inst:
+            return 0
+        with inst._active_contexts_lock:
+            return len(inst._active_contexts)
+    except Exception:
+        logger.debug("Could not count active agents", exc_info=True)
+        return 0
+
+
+def server_update_preflight() -> Dict[str, Any]:
+    """Everything that must hold before the server may be told to die.
+
+    Checked here rather than inside the updater because a failure here is
+    recoverable: the server is still running and can report why.
+    """
+    from core.compose_deployment import compose_info
+
+    compose = compose_info()
+    if not compose:
+        return {"ok": False, "compose": {},
+                "reason": "This server was not started by Docker Compose "
+                          "(no compose labels on its container), so it cannot "
+                          "update itself."}
+
+    working_dir = compose.get("working_dir", "")
+    image = updater_image()
+    # One probe, three answers: the image can run, it carries a working
+    # `docker compose`, and the project directory really is where compose says
+    # it is — mounted the same way the updater will mount it. `working_dir` is
+    # a *host* path, so the server cannot stat it directly; only a container
+    # with that bind mount can.
+    probe_script = (
+        "set -e\n"
+        "docker compose version\n"
+        "test -d .git && echo PAWFLOW_GIT=1 || true\n"
+    )
+    try:
+        probe = subprocess.run(  # nosec B603
+            docker_cmd() + [
+                "run", "--rm",
+                "--volume", "/var/run/docker.sock:/var/run/docker.sock",
+                "--volume", f"{working_dir}:{working_dir}",
+                "--workdir", working_dir,
+                "--entrypoint", "sh", image, "-c", probe_script,
+            ],
+            capture_output=True, text=True, timeout=300)
+    except Exception as exc:
+        return {"ok": False, "compose": compose,
+                "reason": f"Could not run the updater image '{image}': {exc}"}
+    if probe.returncode != 0:
+        return {"ok": False, "compose": compose,
+                "reason": f"Updater preflight failed with image '{image}': "
+                          f"{(probe.stderr or probe.stdout).strip()[:300]}"}
+
+    stdout = probe.stdout or ""
+    return {"ok": True, "compose": compose, "updater_image": image,
+            "working_dir": working_dir,
+            "is_git_checkout": "PAWFLOW_GIT=1" in stdout,
+            "running_agents": running_agent_count(),
+            "compose_version": stdout.splitlines()[0].strip() if stdout.strip() else ""}
+
+
+def update_server(pull_source: bool = False) -> Dict[str, Any]:
+    """Launch the detached updater that restarts this server.
+
+    A container cannot replace itself: ``docker restart`` would come back on the
+    old image, and ``rm -f`` kills the process issuing the command. So the work
+    is handed to a short-lived container that survives the server's death, has
+    the socket, and drives compose from the project directory.
+
+    The project directory is mounted **at its own host path** — compose resolves
+    the relative paths in the compose file (``./data``, ``build: .``) against it
+    and hands the result to the daemon as host paths, so mounting it anywhere
+    else would silently produce wrong bind mounts.
+
+    Returns immediately. The caller has seconds, not minutes, before the server
+    stops answering.
+    """
+    check = server_update_preflight()
+    if not check.get("ok"):
+        return {"ok": False, "started": False, "reason": check.get("reason", "")}
+
+    working_dir = check["working_dir"]
+    image = check["updater_image"]
+
+    # Drop the previous updater so its name is free; its logs have served
+    # their purpose by now.
+    try:
+        subprocess.run(  # nosec B603
+            docker_cmd() + ["rm", "-f", UPDATER_CONTAINER],
+            capture_output=True, timeout=30)
+    except Exception:
+        logger.debug("Could not remove the previous updater", exc_info=True)
+
+    args = [
+        "run", "--detach", "--name", UPDATER_CONTAINER, "--restart", "no",
+        "--volume", "/var/run/docker.sock:/var/run/docker.sock",
+        "--volume", f"{working_dir}:{working_dir}",
+        "--workdir", working_dir,
+        "--entrypoint", "sh",
+        image, "-c", _updater_script(working_dir, pull_source),
+    ]
+    try:
+        result = subprocess.run(  # nosec B603
+            docker_cmd() + args, capture_output=True, text=True, timeout=60)
+    except Exception as exc:
+        return {"ok": False, "started": False,
+                "reason": f"Could not start the updater: {exc}"}
+    if result.returncode != 0:
+        return {"ok": False, "started": False,
+                "reason": f"Updater refused to start: {result.stderr.strip()[:300]}"}
+
+    logger.warning("[update] Updater launched (%s) — this server is about to "
+                   "be recreated from %s", UPDATER_CONTAINER, working_dir)
+    return {"ok": True, "started": True,
+            "container": UPDATER_CONTAINER,
+            "updater_image": image,
+            "working_dir": working_dir,
+            "pull_source": bool(pull_source),
+            "project": check["compose"].get("project", ""),
+            "service": check["compose"].get("service", "")}

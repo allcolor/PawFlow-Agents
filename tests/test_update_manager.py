@@ -127,6 +127,24 @@ def test_check_updates_reports_every_component_and_counts_updates(monkeypatch):
     assert report["update_count"] == 2
 
 
+def test_relay_components_name_the_image_the_server_actually_spawns(monkeypatch):
+    # The published repository and the tag this server runs are two different
+    # names; reporting only the first made a locally rebuilt relay look absent.
+    monkeypatch.setattr(update_manager, "latest_server_release", lambda: "")
+    monkeypatch.setattr(update_manager, "latest_npm_version", lambda pkg: "")
+    monkeypatch.setattr(update_manager, "installed_cli_versions", lambda: {})
+    monkeypatch.setattr(update_manager, "catalog_relay_version", lambda: "2026.07.16")
+    monkeypatch.setattr(update_manager, "relay_image_name",
+                        lambda key: f"pawflow-{key}:latest")
+    monkeypatch.setattr(update_manager, "local_image_tags",
+                        lambda repo: ["latest"] if repo.startswith("pawflow-") else [])
+
+    by_key = {c["key"]: c for c in update_manager.check_updates()["components"]}
+
+    assert by_key["relay-dev"]["configured_image"] == "pawflow-relay-dev:latest"
+    assert "pawflow-relay-dev:latest" in by_key["relay-dev"]["local_tags"]
+
+
 def test_check_updates_survives_unreachable_network(monkeypatch):
     monkeypatch.setattr(update_manager, "_fetch_json", lambda url: None)
     monkeypatch.setattr(update_manager, "local_image_tags", lambda repo: [])

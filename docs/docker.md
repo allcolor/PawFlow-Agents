@@ -507,6 +507,62 @@ so the rebuild refuses cleanly ("Build context not found"); and the relay images
 are large, so a rebuild without pruning can fill the host disk — PawFlow does not
 check free space before starting.
 
+### Update the server itself from the admin gear menu
+
+**Server settings (gear) → Updates → PawFlow server** pulls and recreates the
+compose project, which restarts this server.
+
+A container cannot replace itself: `docker restart` comes back on the *old*
+image, and `docker rm -f <self>` kills the process issuing the command. The work
+is therefore handed to a short-lived detached container (`pawflow-updater`)
+that has the Docker socket, survives the server's death, and runs:
+
+```bash
+docker compose version                 # abort here if compose is missing
+git pull --ff-only                     # only when asked, and only fast-forward
+docker compose pull --ignore-buildable || docker compose pull || true
+docker compose up -d --build
+```
+
+Everything that can fail harmlessly runs before anything that stops the server.
+`--ignore-buildable` covers a deployment that builds from source and has no
+image to pull; `up -d --build` then covers both shapes and recreates only what
+changed.
+
+**The project directory is detected, not configured.** Compose stamps every
+container it creates with `com.docker.compose.project.working_dir` (a *host*
+path), and `core/compose_deployment.py` finds this container's own id — from
+`/proc/self/mountinfo`, falling back to cgroups and only then to the hostname,
+which an explicit `hostname:` would poison — then reads that label. A container
+without compose labels is not a compose deployment and the feature refuses
+cleanly instead of guessing.
+
+The directory is bind-mounted into the updater **at its own host path**: compose
+resolves the relative paths in the compose file (`./data`, `build: .`) against
+it and hands the result to the daemon as host paths, so mounting it anywhere
+else would silently produce wrong bind mounts.
+
+Before anything is launched, a preflight runs the updater image once: it proves
+the image exists, carries a working `docker compose`, and that the project
+directory really is where compose says it is (the server cannot stat a host
+path itself). It also reports whether the directory is a git checkout, which is
+what gates the optional `git pull` checkbox.
+
+**A restart kills every running agent turn.** That is the same cost as running
+`docker compose up -d` by hand, so the dialog names it — including how many
+turns are in flight — and lets the operator decide. Nothing refuses on their
+behalf. The UI then polls `/health` until the server answers again and reloads.
+
+If the update fails, `pawflow-updater` is kept (not `--rm`), so
+`docker logs pawflow-updater` still explains why.
+
+The updater image defaults to `docker:cli` and is overridable with
+`server_update_image` in `global_parameters.json` or
+`PAWFLOW_SERVER_UPDATE_IMAGE`, for hosts that pull from a local mirror.
+
+Action: `admin_server_update_check` (read-only preflight) and
+`admin_update_server` (`pull_source: bool`), both admin-only.
+
 ### Building a custom image
 
 ```dockerfile

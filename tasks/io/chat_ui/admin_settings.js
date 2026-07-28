@@ -249,7 +249,9 @@ function openUpdatesDialog() {
     var rows = comps.map(function(c) {
       return '<tr><td style="color:var(--pf-muted);">' + adminEsc(c.group || '') + '</td>'
         + '<td><strong>' + adminEsc(c.label || c.key) + '</strong></td>'
-        + '<td>' + adminEsc(c.current || '\u2014') + '</td>'
+        + '<td>' + adminEsc(c.current || '\u2014')
+        + (c.configured_image ? '<div style="color:var(--pf-muted);font-size:10px;">runs <code>'
+            + adminEsc(c.configured_image) + '</code></div>' : '') + '</td>'
         + '<td>' + adminEsc(c.available || '\u2014') + '</td>'
         + '<td>' + _admUpdateStateCell(c) + '</td></tr>';
     }).join('') || '<tr><td colspan="5" style="color:var(--pf-muted);">No components reported</td></tr>';
@@ -264,7 +266,8 @@ function openUpdatesDialog() {
       + '<button id="adm-upd-rebuild" onclick="adminRebuildCliImage()"' + (data.build_running ? ' disabled' : '') + '>Rebuild image</button>'
       + '<pre id="adm-upd-log" style="display:none;margin-top:8px;max-height:180px;overflow:auto;font-size:11px;white-space:pre-wrap;"></pre>'
       + '</div>'
-      + _admRelaySection(data);
+      + _admRelaySection(data)
+      + _admServerSection();
     _adminOverlay('Updates', body, '');
     if (data.build_running) adminBuildProgress({ status: 'progress', line: 'A rebuild is already running\u2026' });
     if (data.relay_build_running) adminRelayBuildProgress({ status: 'progress', line: 'A relay image rebuild is already running\u2026' });
@@ -292,6 +295,89 @@ function _admRelaySection(data) {
     + '<button id="adm-relay-restart" onclick="adminRestartRelays()"' + (data.relay_restart_running ? ' disabled' : '') + '>Restart server relays</button>'
     + '<pre id="adm-relay-restart-log" style="display:none;margin-top:8px;max-height:140px;overflow:auto;font-size:11px;white-space:pre-wrap;"></pre>'
     + '</div></div>';
+}
+
+function _admServerSection() {
+  return '<div style="border-top:1px solid var(--pf-border);padding-top:10px;margin-top:10px;">'
+    + '<strong>PawFlow server</strong>'
+    + '<div style="color:var(--pf-muted);font-size:11px;margin:4px 0 8px;">Updating restarts the whole stack: '
+    + 'every running agent turn is killed, exactly as if you ran <code>docker compose up -d</code> yourself. '
+    + 'The project directory is detected from the container\'s compose labels.</div>'
+    + '<button id="adm-server-update" onclick="adminUpdateServer()">Update server\u2026</button>'
+    + '<pre id="adm-server-log" style="display:none;margin-top:8px;max-height:160px;overflow:auto;font-size:11px;white-space:pre-wrap;"></pre>'
+    + '</div>';
+}
+
+// Step 1: ask the server whether it *can* update, and what it would cost.
+function adminUpdateServer() {
+  var btn = document.getElementById('adm-server-update');
+  var log = document.getElementById('adm-server-log');
+  if (btn) btn.disabled = true;
+  action$('admin_server_update_check').subscribe(function(d) {
+    if (btn) btn.disabled = false;
+    if (d.error || !d.ok) {
+      if (log) {
+        log.style.display = '';
+        log.textContent = d.error || d.reason || 'Server update is unavailable.';
+      }
+      return;
+    }
+    _admConfirmServerUpdate(d);
+  });
+}
+
+function _admConfirmServerUpdate(info) {
+  var agents = info.running_agents || 0;
+  var body = '<div style="font-size:12px;line-height:1.6;">'
+    + '<p>This will pull and recreate the compose project, then restart this server.</p>'
+    + '<table style="width:100%;font-size:12px;border-collapse:collapse;">'
+    + '<tr><td style="color:var(--pf-muted);">Project</td><td><code>' + adminEsc(info.compose && info.compose.project || '') + '</code></td></tr>'
+    + '<tr><td style="color:var(--pf-muted);">Directory (host)</td><td><code>' + adminEsc(info.working_dir || '') + '</code></td></tr>'
+    + '<tr><td style="color:var(--pf-muted);">Updater image</td><td><code>' + adminEsc(info.updater_image || '') + '</code></td></tr>'
+    + '<tr><td style="color:var(--pf-muted);">Agent turns running</td><td><strong>' + agents + '</strong>'
+    + (agents ? ' &mdash; they will be killed' : '') + '</td></tr>'
+    + '</table>'
+    + (info.is_git_checkout
+        ? '<label style="display:block;margin-top:10px;"><input type="checkbox" id="adm-server-git"> '
+          + 'Also <code>git pull --ff-only</code> first (aborts on a dirty or diverged tree)</label>'
+        : '<div style="color:var(--pf-muted);margin-top:10px;">The project directory is not a git checkout &mdash; '
+          + 'only images are refreshed.</div>')
+    + '<p style="margin-top:12px;">The interface will go dark for a minute or two while the server restarts.</p>'
+    + '<button onclick="adminUpdateServerConfirm()" style="background:#c0392b;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Update and restart</button>'
+    + '</div>';
+  _adminOverlay('Update server', body, '');
+}
+
+function adminUpdateServerConfirm() {
+  var pull = !!(document.getElementById('adm-server-git') || {}).checked;
+  action$('admin_update_server', { pull_source: pull }).subscribe(function(d) {
+    if (d.error) { addMsg('error', d.error); return; }
+    _admWaitForServer(d);
+  });
+}
+
+// Step 3: the server is about to stop answering. Poll /health until it does
+// again, then reload — the page we are running was served by the old one.
+function _admWaitForServer(info) {
+  var started = Date.now();
+  var body = '<div style="font-size:12px;line-height:1.7;">'
+    + '<p><strong>Restarting.</strong> Updater container: <code>' + adminEsc(info.container || '') + '</code></p>'
+    + '<p id="adm-server-wait" style="color:var(--pf-muted);">Waiting for the server to come back\u2026</p>'
+    + '<p style="color:var(--pf-muted);font-size:11px;">If it does not return, the updater kept its logs: '
+    + '<code>docker logs ' + adminEsc(info.container || '') + '</code></p></div>';
+  _adminOverlay('Update server', body, '');
+
+  var poll = setInterval(function() {
+    var waited = Math.round((Date.now() - started) / 1000);
+    var note = document.getElementById('adm-server-wait');
+    if (note) note.textContent = 'Waiting for the server to come back\u2026 (' + waited + 's)';
+    fetch('/health', { cache: 'no-store' }).then(function(r) {
+      if (!r.ok) return;
+      clearInterval(poll);
+      if (note) note.textContent = 'Back up. Reloading\u2026';
+      setTimeout(function() { location.reload(); }, 800);
+    }).catch(function() { /* still down — expected */ });
+  }, 2000);
 }
 
 function _admRelayButtons() {

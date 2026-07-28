@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **The server can now update itself** from the gear menu, completing the
+  Update feature. A container cannot replace itself — `docker restart` comes
+  back on the old image and `rm -f <self>` kills the process issuing the
+  command — so the work goes to a short-lived detached container that has the
+  Docker socket, survives the server's death, and drives
+  `docker compose pull` + `up -d --build` from the project directory.
+  That directory is **detected, not configured**: compose stamps it on every
+  container it creates (`com.docker.compose.project.working_dir`, a host path),
+  and `core/compose_deployment.py` finds this container's own id to read it.
+  It is mounted into the updater at its own host path, because compose resolves
+  `./data` and `build: .` against it and hands the daemon host paths — mounting
+  it anywhere else would silently produce wrong bind mounts. A preflight proves
+  the updater image runs, carries a working `docker compose`, and that the
+  project directory is really there, before anything irreversible happens.
+  Restarting kills every running agent turn: the dialog says so, and says how
+  many, but does not refuse on the operator's behalf — it is the same cost as
+  running `docker compose up -d` by hand.
 - **Passive memory recall** (`core/passive_recall.py`). Memories close to what
   the user just said now surface on their own, without the agent deciding to
   call `recall` — which it can only do when it already suspects something

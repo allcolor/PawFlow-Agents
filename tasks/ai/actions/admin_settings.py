@@ -462,6 +462,32 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
                                "image_key": key,
                                "image": update_manager.relay_image_name(key)})
 
+    if action == "admin_server_update_check":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        from core import update_manager
+        return _json(flowfile, update_manager.server_update_preflight())
+
+    if action == "admin_update_server":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        import logging
+        from core import update_manager
+        # Restarting kills every running agent turn — the same cost as running
+        # `docker compose up -d` by hand. The UI names that cost; the decision
+        # is the operator's, so nothing here refuses on their behalf.
+        pull_source = bool(body.get("pull_source"))
+        logging.getLogger(__name__).warning(
+            "[update] Server update requested by %s (pull_source=%s, "
+            "%s agent turn(s) in flight)",
+            user_id or "?", pull_source, update_manager.running_agent_count())
+        result = update_manager.update_server(pull_source=pull_source)
+        if not result.get("ok"):
+            return _json(flowfile, {"error": result.get("reason", "Update refused")}, "409")
+        return _json(flowfile, result)
+
     if action == "admin_restart_relays":
         denied = _require_admin(flowfile)
         if denied:

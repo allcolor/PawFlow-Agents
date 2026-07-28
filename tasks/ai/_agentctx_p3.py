@@ -543,7 +543,7 @@ class _PACPhase3Mixin:
                 " — one atomic call instead of N round trips that can half-apply."
                 " `batch_edit` when the same change repeats across several files."
                 " `write` only when creating or fully replacing a file."
-                "\n  - Write files: Use filesystem tools (NOT echo redirection or heredocs in bash)"
+                "\n  - Write files: Use `write` (NOT echo redirection or heredocs in bash). A heredoc body travels as a hand-escaped JSON string: one unescaped double quote in it fails the whole call with 'failed to decode tool arguments'. `write` carries the body in its own field."
                 "\n- When issuing multiple commands:"
                 "\n  - Independent commands: make multiple tool calls in parallel"
                 "\n  - Dependent commands: chain with && in a single bash call"

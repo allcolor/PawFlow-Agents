@@ -120,3 +120,25 @@ def test_bash_points_at_monitor_where_the_agent_actually_reads():
     assert "Monitor" in handler.description
     assert "Monitor" in handler.parameters_schema[
         "properties"]["run_in_background"]["description"]
+
+
+def test_bash_edit_guidance_matches_the_context_threshold():
+    # bash.py carried its own copy of the edit guidance and kept the old
+    # "patch-shaped" wording after the context prompt moved to a count.
+    # Two descriptions disagreeing is worse than one being vague.
+    from core.handlers.bash import BashHandler
+
+    description = BashHandler().description
+
+    assert "patch-shaped" not in description
+    assert "3+ places in the same file" in description
+
+
+def test_bash_states_why_a_heredoc_breaks_rather_than_just_forbidding_it():
+    # "Use filesystem tools" is a preference and lost against a one-shot
+    # heredoc. The escaping failure it causes is checkable, so state it.
+    from core.handlers.bash import BashHandler
+
+    description = BashHandler().description
+
+    assert "failed to decode tool arguments" in description

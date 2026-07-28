@@ -83,6 +83,27 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             f"errors), not from the user or the system."
         )
 
+    @classmethod
+    def _attach_platform_note(cls, content, note: str):
+        """Append a PawFlow-generated note *outside* the untrusted envelope.
+
+        `_wrap_tool_output` marks tool output as untrusted data, because it
+        comes from files, web pages and other external sources. A note the
+        platform itself generates is not that: burying it inside the envelope
+        would teach the agent to distrust our own warnings. It therefore rides
+        after the closing tag, in the same message.
+
+        Handles both content shapes the wrapper produces — a plain string, and
+        the multimodal part list used when a tool returns images.
+        """
+        if not note:
+            return content
+        if isinstance(content, list):
+            return list(content) + [{"type": "text", "text": note}]
+        if not isinstance(content, str):
+            content = str(content)
+        return content + "\n\n" + note
+
     @staticmethod
     def _materialize_tool_result_images(content, *, user_id: str,
                                         conversation_id: str):

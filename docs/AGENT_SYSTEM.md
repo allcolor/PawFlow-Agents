@@ -653,13 +653,31 @@ view that no longer existed, and the collision surfaced only as a failed
 keeps. `core/handlers/_edit_guard.py` records, per agent, the hash of every file
 that agent has read; `readers_of()` answers the question that matters when a
 write lands: *which other agents have read this path, and does what they saw
-still match what is on disk?* Every stale reader gets a pending notice, injected
-at its next turn through the dynamic channel (so it costs nothing in prompt-cache
-terms) under **Files that changed under you**.
+still match what is on disk?* Every stale reader gets a pending notice, titled
+**Files that changed under you**.
 
 The mutation tools report through `BaseFsHandler._note_write()`: `write`,
 `edit`, `apply_patch`, `batch_edit`, `find_replace` and `delete`, on both the
 workdir and the relay path.
+
+#### Two delivery channels
+
+The notice reaches the agent by whichever of these comes first. `pending_block()`
+clears on read, so exactly one of them ever delivers it — it can never arrive
+twice.
+
+1. **Mid-turn**, riding the last tool result of a batch (`_alc_iteration.py`).
+   A long tool loop is exactly when the collision window is widest, so waiting
+   for the next turn would be waiting through the dangerous part. The notice is
+   appended *after* the `_wrap_tool_output` envelope via
+   `AgentCoreMixin._attach_platform_note()`: that envelope marks content as
+   untrusted external data, and burying a PawFlow-generated warning inside it
+   would teach the agent to distrust our own warnings. The block is only taken
+   when the batch has a result to carry it — taken with nowhere to put it, it
+   would be dropped.
+2. **Next turn**, through the dynamic-metadata channel at context build
+   (`_agentctx_p3.py`), so it costs nothing in prompt-cache terms. This covers
+   the turn that ended without tool calls.
 
 Properties that keep it cheap and quiet:
 
@@ -670,7 +688,8 @@ Properties that keep it cheap and quiet:
   nobody. The relay path, where fetching them back would cost a round trip,
   invalidates unconditionally — a successful edit there did change the content.
 - **Cleared by a re-read.** `track_read()` drops the notice: an agent whose view
-  is current again is told nothing. It is told once, not every turn.
+  is current again is told nothing. It is told once, not every turn — and by one
+  channel only, since taking the block clears it.
 - **Advisory, never blocking.** The notice asks the agent to re-read; it never
   refuses an operation. Identity is the canonical path without the filesystem
   service, so two agents on *different* relays holding the same absolute path

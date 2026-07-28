@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A read-conflict notice now reaches the agent during the turn, not after it.**
+  The notice was delivered at the next context build, which meant an agent in a
+  long tool loop kept working against a stale view for the whole loop — exactly
+  the window where the collision does damage. It now rides the last tool result
+  of a batch, so the agent sees it between tool calls. It is appended *after*
+  the untrusted-content envelope: that envelope tells the agent to treat the
+  content as external data, and a PawFlow-generated warning buried inside it
+  would teach the agent to distrust our own warnings. The next-turn channel
+  stays for turns that ended without tool calls; since taking the block clears
+  it, exactly one channel ever delivers and the notice can never arrive twice.
+
 ### Added
 
 - **An agent is now told when another agent changes code under it.**

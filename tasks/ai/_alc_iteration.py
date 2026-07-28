@@ -453,7 +453,31 @@ class _ALCIterationMixin:
             cancel_check=st.emitter.check_cancelled,
             event_cid=st.ctx.get("_event_cid", ""))
 
+        # Another agent may have changed a file this one had read, while
+        # these tools were running. Deliver the notice inside this turn
+        # rather than waiting for the next context build: a long tool loop
+        # is exactly when the collision window is widest. pending_block()
+        # clears on read, so whichever channel gets there first is the only
+        # one that delivers — the notice can never arrive twice. Taken only
+        # when there is a result to carry it, since a block taken with
+        # nowhere to put it would be dropped.
+        _conflict_note = ""
+        if st.results:
+            try:
+                from core import read_conflict
+                _block = read_conflict.pending_block(
+                    st.user_id, st.conversation_id or "",
+                    st.ctx.get("active_agent_name") or "")
+                if _block:
+                    _conflict_note = f"## {read_conflict.BLOCK_TITLE}\n{_block}"
+            except Exception:
+                logger.debug("Ignored exception", exc_info=True)
+
+        # Counted down rather than enumerated so the loop header stays
+        # byte-identical: several structural tests use it as a marker.
+        _results_left = len(st.results)
         for st.tc, st.result_text in st.results:
+            _results_left -= 1
             st.display_tc = self._tool_result_display_call(st.tc)
             st.tools_called.append(st.display_tc.name)
             st.ctx["_last_tool"] = st.display_tc.name
@@ -468,6 +492,8 @@ class _ALCIterationMixin:
                 st.result_text, user_id=st.user_id,
                 conversation_id=st.conversation_id)
             st._wrapped = self._wrap_tool_output(st.display_tc.name, st.result_text)
+            if _conflict_note and _results_left == 0:
+                st._wrapped = self._attach_platform_note(st._wrapped, _conflict_note)
             st._tr_msg = LLMMessage(role="tool", content=st._wrapped, tool_call_id=st.tc.id,
                                   conversation_id=st.conversation_id)
             st._tr_msg._tool_name = st.display_tc.name

@@ -631,6 +631,102 @@ def _apply_openai_patch(root_dir: str, patch: str, *,
     }
 
 
+def _parse_hunk_body(lines, i):
+    """Consume one hunk body. Returns (old_side, new_side, next_index)."""
+    old_side, new_side = [], []
+    while i < len(lines):
+        dl = lines[i]
+        if dl.startswith(("@@", "diff ", "--- ", "+++ ")):
+            break
+        if dl.startswith("\\"):
+            # "\ No newline at end of file" annotates the previous line.
+            i += 1
+            continue
+        if dl.startswith("-"):
+            old_side.append(dl[1:])
+        elif dl.startswith("+"):
+            new_side.append(dl[1:])
+        elif dl.startswith(" "):
+            old_side.append(dl[1:])
+            new_side.append(dl[1:])
+        elif dl in ("\n", "\r\n", ""):
+            # Some emitters drop the leading space on an empty context line.
+            old_side.append(dl)
+            new_side.append(dl)
+        else:
+            break
+        i += 1
+    return old_side, new_side, i
+
+
+def _parse_hunk_header(line):
+    """Return (old_start, old_count, new_start, new_count), or None.
+
+    None means a bare `@@` carrying no numbers at all.
+    """
+    m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+    if not m:
+        return None
+    return (int(m.group(1)), 1 if m.group(2) is None else int(m.group(2)),
+            int(m.group(3)), 1 if m.group(4) is None else int(m.group(4)))
+
+
+def _hunk_hint(header, offset):
+    """0-based index the header points at, shifted by the hunks before it.
+
+    A zero old-side count means "insert after old line N", so the index is N
+    itself rather than N-1.
+    """
+    if header is None:
+        return 0
+    old_start, old_count = header[0], header[1]
+    return (old_start - 1 if old_count else old_start) + offset
+
+
+def _header_is_sound(header, old_side, new_side, offset):
+    """True when the @@ numbers agree with the body and with what precedes.
+
+    A unified diff header is redundant three times over: each count restates
+    its side's line total, and the new-side start restates the old-side start
+    shifted by every hunk already applied. That redundancy is what makes a
+    hunk with no context checkable at all. If all three agree, the stated
+    position is corroborated by the diff's own arithmetic; if any disagrees,
+    the numbers were not produced by a diff tool and cannot be trusted to
+    place anything.
+    """
+    if header is None:
+        return False
+    old_start, old_count, new_start, new_count = header
+    if old_count != len(old_side) or new_count != len(new_side):
+        return False
+    old_index = old_start - 1 if old_count else old_start
+    new_index = new_start - 1 if new_count else new_start
+    return new_index == old_index + offset
+
+
+def _locate_hunk(content_lines, old_side, hint):
+    """Index where old_side occurs, nearest to hint; -1 when it does not.
+
+    The @@ number is treated as a hint, not an address. A diff written
+    against a slightly stale copy, or with hand-counted @@ numbers, still
+    applies as long as its context is found somewhere. What is never
+    allowed is applying a hunk *without* finding its context - an empty
+    old_side has nothing to corroborate, so it is refused here and settled
+    by the header's arithmetic instead.
+    """
+    if not old_side:
+        return -1
+    last = len(content_lines) - len(old_side)
+    if last < 0:
+        return -1
+    hint = max(0, min(hint, last))
+    for delta in range(last + 1):
+        for pos in (hint - delta, hint + delta):
+            if 0 <= pos <= last and content_lines[pos:pos + len(old_side)] == old_side:
+                return pos
+    return -1
+
+
 def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     """Apply a unified diff patch or Codex/OpenAI *** Begin Patch block."""
     patch = req.get("patch", "")
@@ -643,7 +739,11 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         return _apply_openai_patch(
             root_dir, patch.lstrip(), allow_host_absolute=allow_host_absolute)
 
-    # Try git apply first for real unified diffs.
+    # git apply is the reference implementation: it verifies context and
+    # names the offending line. Prefer it, and keep what it says when it
+    # refuses - that diagnostic used to be discarded, which is how a patch
+    # git had already rejected went on to be applied blind below.
+    git_error = ""
     try:
         result = subprocess.run(  # nosec B603, B607
             ["git", "apply", "--stat", "-"],
@@ -652,8 +752,14 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         )
         if result.returncode == 0:
             stat_output = result.stdout.strip()
+            # --unidiff-zero or git exits 0 having done nothing at all on a
+            # zero-context hunk, the shape `diff -U0` emits: it demands one
+            # line of context and skips the hunk in silence otherwise, which
+            # this tool then reported as a successful patch. The flag only
+            # relaxes hunks that carry no context; one measured against a
+            # patch that has context is applied identically either way.
             result = subprocess.run(  # nosec B603, B607
-                ["git", "apply", "-"],
+                ["git", "apply", "--unidiff-zero", "-"],
                 input=patch, cwd=root_dir,
                 capture_output=True, text=True,
             )
@@ -662,79 +768,111 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
                     raise ValueError("Patch did not contain any applicable hunks")
                 return {"method": "git_apply", "stats": stat_output, "applied": True}
             raise ValueError(f"git apply failed: {result.stderr}")
+        git_error = (result.stderr or result.stdout).strip()
     except FileNotFoundError:
-        pass
+        git_error = ""
     except subprocess.TimeoutExpired:
         raise ValueError("Patch application timed out")
 
-    # Manual fallback: simple unified diff parser.
+    # Manual fallback, for a missing git or a header git will not parse
+    # (hand-counted @@ numbers being the common one).
+    #
+    # It used to apply positionally: it took the @@ number as an index into
+    # the buffer and popped/inserted there, never comparing what it removed.
+    # That corrupted files two ways. A hunk whose context did not exist was
+    # applied anyway, to whatever happened to sit at that offset. And the
+    # old-side number was indexed into the buffer *already shifted* by the
+    # preceding hunks, so every hunk after the first landed off by the net
+    # line delta before it. Both are now located by context or refused.
+    pending = {}
     files_modified = []
     current_file = None
     current_rel = ""
     current_content = None
+    offset = 0
     hunks_applied = 0
+
+    def _fail(detail):
+        raise ValueError(
+            f"{detail}{f' (git apply said: {git_error})' if git_error else ''}")
 
     lines = patch.splitlines(True)
     i = 0
     while i < len(lines):
         line = lines[i]
-        if line.startswith("+++ b/") or line.startswith("+++ "):
-            if current_file and current_content is not None:
-                Path(current_file).write_text(current_content, encoding="utf-8")
+        if line.startswith("+++ "):
             fname = line[6:].strip() if line.startswith("+++ b/") else line[4:].strip()
             if fname == "/dev/null":
                 current_file = None
                 current_content = None
+                offset = 0
                 i += 1
                 continue
             target, current_rel = _patch_target(
                 root_dir, fname, allow_host_absolute=allow_host_absolute)
             current_file = str(target)
-            current_content = target.read_text(encoding="utf-8") if target.is_file() else ""
-            files_modified.append(current_rel)
+            current_content = pending.get(
+                current_file,
+                target.read_text(encoding="utf-8") if target.is_file() else "")
+            pending[current_file] = current_content
+            if current_rel not in files_modified:
+                files_modified.append(current_rel)
+            offset = 0
             i += 1
             continue
         if line.startswith("--- "):
             i += 1
             continue
         if line.startswith("@@") and current_content is not None:
-            m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
-            if not m:
-                i += 1
+            header = _parse_hunk_header(line)
+            old_side, new_side, i = _parse_hunk_body(lines, i + 1)
+            if not old_side and not new_side:
                 continue
-            orig_start = int(m.group(1)) - 1
             content_lines = current_content.splitlines(True)
-            while len(content_lines) <= orig_start:
-                content_lines.append("")
-            j = orig_start
-            i += 1
-            applied_this_hunk = False
-            while i < len(lines):
-                dl = lines[i]
-                if dl.startswith(("@@", "diff ", "--- ", "+++ ")):
-                    break
-                if dl.startswith("-"):
-                    if j < len(content_lines):
-                        content_lines.pop(j)
-                    applied_this_hunk = True
-                elif dl.startswith("+"):
-                    content_lines.insert(j, dl[1:])
-                    j += 1
-                    applied_this_hunk = True
-                else:
-                    j += 1
-                i += 1
+            where = header[0] if header else "?"
+            if old_side:
+                # Context is the strongest anchor, and it survives numbers
+                # that are wrong or absent.
+                pos = _locate_hunk(
+                    content_lines, old_side, _hunk_hint(header, offset))
+                if pos < 0:
+                    _fail(
+                        f"hunk at line {where} does not apply to {current_rel}: "
+                        f"its context is nowhere in the file"
+                    )
+            else:
+                # A pure insertion (as `diff -U0` emits) has nothing to match,
+                # so the header's own arithmetic is the only evidence there is.
+                # It therefore has to hold exactly, rather than be trusted.
+                if not _header_is_sound(header, old_side, new_side, offset):
+                    _fail(
+                        f"hunk at line {where} inserts into {current_rel} with no "
+                        f"context, and its @@ numbers do not check out against "
+                        f"the hunk body or the hunks before it - refusing to "
+                        f"guess where it goes"
+                    )
+                pos = _hunk_hint(header, offset)
+                if not 0 <= pos <= len(content_lines):
+                    _fail(
+                        f"hunk at line {where} inserts past the end of "
+                        f"{current_rel}"
+                    )
+            content_lines[pos:pos + len(old_side)] = new_side
             current_content = "".join(content_lines)
-            if applied_this_hunk:
-                hunks_applied += 1
+            pending[current_file] = current_content
+            offset += len(new_side) - len(old_side)
+            hunks_applied += 1
             continue
         i += 1
 
-    if current_file and current_content is not None:
-        Path(current_file).write_text(current_content, encoding="utf-8")
-
     if not files_modified or hunks_applied <= 0:
-        raise ValueError("Patch did not contain any applicable unified diff hunks")
+        _fail("Patch did not contain any applicable unified diff hunks")
+
+    # Written only once every hunk has been located, so a bad hunk late in
+    # the patch cannot leave the earlier files rewritten.
+    for abs_path, content in pending.items():
+        Path(abs_path).write_text(content, encoding="utf-8")
+
     return {"method": "manual_unified", "files_modified": files_modified,
             "hunks_applied": hunks_applied, "applied": True}
 

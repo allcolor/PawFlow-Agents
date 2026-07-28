@@ -103,6 +103,13 @@ class _ALCClosures2Mixin:
             f"Context: ~{_est_used_local}/{st._max_ctx} tokens "
                             f"(~{_remaining_local} remaining)")
         _meta_note_local = "\n\n[System: " + ". ".join(_meta_parts_local) + "]"
+        # Cognitive digests ride the same channel: they are rebuilt from live
+        # stores every turn, so putting them in the system prompt would move
+        # the cached prefix on any remember/diary_write/kg_add and invalidate
+        # the whole KV cache behind it.
+        for _title, _body in (st.ctx.get("_dynamic_blocks") or []):
+            if _body:
+                _meta_note_local += f"\n\n## {_title}\n{_body}"
         for _mi in range(len(provider_context) - 1, -1, -1):
             if provider_context[_mi].role == "user":
                 _um = provider_context[_mi]

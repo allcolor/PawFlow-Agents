@@ -166,11 +166,43 @@ The system prompt is assembled in layers during `_prepare_agent_context()`:
 5. **Behavior rules** -- Narration requirement, read_history hint, resilience style.
 6. **Relay context** -- Connected relay services, filesystem roots, docker/local modes.
 7. **Identity suffix** -- Ephemeral model/provider/service metadata (injected at call time, never persisted).
-8. **Memory digest** -- Persistent memories relevant to this user+agent, built by `build_memory_digest()`.
-9. **Diary digest** -- Past diary entries (observations, decisions, learnings) from `AgentDiary`.
-10. **Cognitive tools hint** -- Summary of available cognitive tools (memory, knowledge graph, diary, project graph) so the agent knows what is available.
-11. **Plan mode directive** -- If plan mode is active, forces the agent to call `create_plan` before executing tools.
-12. **Claude Code rules** -- For CC providers, rules about using MCP tools exclusively.
+8. **Cognitive digests** -- memory, diary, knowledge graph and project structure. On CLI providers they are appended here; on API providers they are **not** part of the system prompt at all (see *Prompt cache prefix* below).
+9. **Cognitive tools hint** -- Summary of available cognitive tools (memory, knowledge graph, diary, project graph) so the agent knows what is available.
+10. **Plan mode directive** -- If plan mode is active, forces the agent to call `create_plan` before executing tools.
+11. **Claude Code rules** -- For CC providers, rules about using MCP tools exclusively.
+
+### Prompt cache prefix
+
+Provider caching is prefix-based: a single changed byte in the system block
+invalidates the system block, the tool definitions **and every message behind
+them**. On a long conversation that is the difference between paying for a few
+hundred tokens and re-reading the whole history.
+
+The rule is therefore: **anything that can change between two turns of the same
+conversation must not be in the prefix.** Two such things exist, and both are
+merged into the *last user message* by `_alc_inject_dynamic_metadata()`, after
+all cache breakpoints:
+
+- the current date/time and the context-usage gauge;
+- the cognitive digests (memory, diary, KG, project structure), which are
+  rebuilt from live stores and therefore move on any `remember`,
+  `diary_write`, `kg_add` or graph rebuild.
+
+CLI providers keep the digests in the system prompt: their prompt goes through
+the cold-start bootstrap file, the same text would also be echoed in the prompt
+handed to the CLI binary, and those runtimes manage their own caching.
+
+What stays stable, deliberately: the tool list is exactly two meta-tools
+(`get_tool_schema`, `use_tool`) regardless of what is installed, so tool
+definitions never move mid-conversation.
+
+`core/cache_diagnostics.py` watches for breaks — a significant drop in
+`cache_read` tokens — and names the cause (system prompt, tools, model, or
+prefix restructuring). Its state is keyed **per conversation**: one
+`LLMConnection` service owns a single `LLMClient` shared by every conversation
+using it, so a single slot would compare one conversation's turn against
+another's and report a break on every switch. Observed hit rates are visible in
+the usage dashboard (`cache_read / (tokens_in + cache_read)`).
 
 ### Project Instructions (`{agent_name}.md`)
 

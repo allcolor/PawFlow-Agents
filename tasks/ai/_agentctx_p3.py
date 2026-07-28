@@ -429,18 +429,40 @@ class _PACPhase3Mixin:
             ),
         ]
 
+        # Volatile context merged into the last user message rather than the
+        # system prompt. API providers only: on a CLI provider the same text
+        # would land in the cold-start bootstrap file *and* in the prompt
+        # handed to the CLI binary, reading as if the user had said it — and
+        # those providers manage their own caching anyway.
+        st._dynamic_blocks = []
+        st._defer_digests = not st._is_cli_provider
+
+        def _add_digest(title: str, body: str) -> None:
+            if not body:
+                return
+            if st._defer_digests:
+                st._dynamic_blocks.append((title, body))
+            else:
+                st.system_prompt += f"\n\n## {title}\n{body}"
+
         if st._cli_has_session:
             logger.info(
                 "[context:%s] CLI session active — skipping provider prompt decoration",
                 (st.conversation_id or "")[:8],
             )
         else:
-            # Inject persistent memory digest (same for CC and API)
+            # Cognitive digests are rebuilt from live stores, so they change
+            # whenever the agent remembers something, writes a diary entry or
+            # adds a KG fact. In the system prompt they would move the cached
+            # prefix on those turns and invalidate the whole KV cache — system
+            # block, tools and every message behind it. `_add_digest` routes
+            # them past all cache breakpoints on API providers (see above).
+
+            # Persistent memory digest (same for CC and API)
             try:
                 from core.memory_digest import build_memory_digest
                 st._digest = build_memory_digest(st.user_id, agent_name=st._active_agent_name)
-                if st._digest:
-                    st.system_prompt += f"\n\n## Persistent memory\n{st._digest}"
+                _add_digest("Persistent memory", st._digest)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
@@ -449,8 +471,7 @@ class _PACPhase3Mixin:
                 from core.agent_diary import AgentDiary
                 st._diary = AgentDiary.instance().build_diary_digest(
                     st.user_id, st._active_agent_name)
-                if st._diary:
-                    st.system_prompt += f"\n\n## Your diary (past observations)\n{st._diary}"
+                _add_digest("Your diary (past observations)", st._diary)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
@@ -460,8 +481,7 @@ class _PACPhase3Mixin:
             try:
                 from core.kg_digest import build_kg_digest
                 st._kg = build_kg_digest(st.user_id)
-                if st._kg:
-                    st.system_prompt += f"\n\n## Knowledge graph\n{st._kg}"
+                _add_digest("Knowledge graph", st._kg)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
@@ -475,8 +495,10 @@ class _PACPhase3Mixin:
                 from core.project_graph_digest import build_project_graph_digest
                 st._pg = build_project_graph_digest(st.user_id, st.conversation_id or "")
                 if st._pg:
+                    _add_digest("Project structure", st._pg)
+                    # The guidance itself is static: it stays in the prefix,
+                    # gated on a graph existing at all.
                     st.system_prompt += (
-                        f"\n\n## Project structure\n{st._pg}"
                         "\n\n**Reach for `project_graph` BEFORE read/grep when:**"
                         "\n- User mentions a function/class/module by name"
                         " → `project_graph(action='node', question='X')` for location + neighbours."
@@ -539,8 +561,8 @@ class _PACPhase3Mixin:
                 "memory directory** (e.g. `/workspace/projects/-workspace/memory/MEMORY.md` and "
                 "`.md` files). That system is deprecated in PawFlow. Do NOT use `write` to create "
                 "`.md` memory files. Use the `remember` / `recall` / `forget` tools — they write "
-                "to the persistent MemoryStore which feeds the digest above and the UI Memories "
-                "panel. One source of truth."
+                "to the persistent MemoryStore which feeds the memory digest you "
+                "receive each turn and the UI Memories panel. One source of truth."
             )
 
             # Skill loop hint — crystallize/improve skills (see core/skill_loop.py)

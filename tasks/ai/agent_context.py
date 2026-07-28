@@ -146,6 +146,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
             "_agent_md_content": st._agent_md_content,
             "_provider_system_prompt": st._provider_system_prompt,
             "_datetime_str": st._datetime_str,
+            # Volatile blocks (memory/diary/KG/project digests) merged into
+            # the last user message so the cached prefix stays byte-stable.
+            "_dynamic_blocks": getattr(st, "_dynamic_blocks", []),
         }
 
     def _auto_compact_messages(self, messages: List[LLMMessage],

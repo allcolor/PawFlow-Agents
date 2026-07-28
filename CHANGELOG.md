@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The cognitive digests were invalidating the prompt cache on every turn
+  that wrote to a store.** Memory, diary, knowledge-graph and project-structure
+  digests sat in the system prompt, and they are rebuilt from live stores — so
+  any `remember`, `diary_write`, `kg_add` or graph rebuild moved the cached
+  prefix. Provider caching is prefix-based: that invalidates the system block,
+  the tool definitions and every message behind them, i.e. the entire
+  conversation is re-read at full price on the next turn. On API providers the
+  digests now ride the same channel as the date/time — merged into the last
+  user message, after all cache breakpoints. CLI providers keep them in the
+  system prompt: their prompt goes through the cold-start bootstrap file and
+  would otherwise be echoed back in the prompt handed to the CLI binary.
+- Cache-break diagnostics were comparing conversations against each other. One
+  `LLMConnection` service owns a single `LLMClient` shared by every
+  conversation using it, and the detector kept one slot of state, so every
+  switch between conversations looked like a cache break — noise that hid the
+  real ones. State is now keyed per conversation and bounded.
+
 ### Added
 
 - **Updates panel in the admin gear menu** (`core/update_manager.py`). It

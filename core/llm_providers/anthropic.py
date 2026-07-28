@@ -63,7 +63,8 @@ class LLMAnthropicMixin:
         # Record pre-call state for cache break detection
         detector = self._get_cache_detector()
         tool_defs = [{"name": t.name, "description": t.description, "parameters": t.parameters} for t in tools] if tools else []
-        detector.record_pre_call(system_text, tool_defs, model)
+        detector.record_pre_call(system_text, tool_defs, model,
+                                 conversation_id=call_conversation_id)
 
         body = {
             "model": model,
@@ -297,7 +298,9 @@ class LLMAnthropicMixin:
                 tokens_in, cache_creation_tokens, cache_read_tokens)
 
             # Check for cache break
-            _diag = detector.check_post_call(cache_read_tokens, cache_creation_tokens)
+            _diag = detector.check_post_call(
+                cache_read_tokens, cache_creation_tokens,
+                conversation_id=call_conversation_id)
             if _diag:
                 logger.warning("Anthropic cache diagnostics: %s", _diag)
 
@@ -635,7 +638,8 @@ class LLMAnthropicMixin:
         # Record pre-call state for cache break detection
         detector = self._get_cache_detector()
         tool_defs = [{"name": t.name, "description": t.description, "parameters": t.parameters} for t in tools] if tools else []
-        detector.record_pre_call(system_text, tool_defs, model)
+        detector.record_pre_call(system_text, tool_defs, model,
+                                 conversation_id=call_conversation_id)
 
         body: Dict[str, Any] = {"model": model, "messages": api_messages, "max_tokens": max_tokens if max_tokens > 0 else 64000, "temperature": temperature}
         if thinking_budget > 0:
@@ -711,7 +715,9 @@ class LLMAnthropicMixin:
             tokens_in, cache_creation_tokens, cache_read_tokens)
 
         # Check for cache break
-        _diag = detector.check_post_call(cache_read_tokens, cache_creation_tokens)
+        _diag = detector.check_post_call(
+            cache_read_tokens, cache_creation_tokens,
+            conversation_id=call_conversation_id)
         if _diag:
             logger.warning("Anthropic cache diagnostics: %s", _diag)
 

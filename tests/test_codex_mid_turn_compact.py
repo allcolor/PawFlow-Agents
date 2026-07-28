@@ -100,8 +100,9 @@ def test_stateful_cli_resume_skips_provider_prompt_decoration():
     start = _AGENT_CONTEXT.index(
         "if _cli_has_session:\n            logger.info(\n"
         "                \"[context:%s] CLI session active")
-    stop = _AGENT_CONTEXT.index(
-        "else:\n            # Inject persistent memory digest", start)
+    # Anchor on the branch structure, not on comment prose: the fast path is
+    # everything up to the `else:` that opens the decoration branch.
+    stop = _AGENT_CONTEXT.index("\n        else:\n", start)
     fast_path = _AGENT_CONTEXT[start:stop]
     assert "build_memory_digest" not in fast_path
     assert "build_diary_digest" not in fast_path

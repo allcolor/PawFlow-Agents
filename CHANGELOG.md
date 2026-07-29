@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.48] — 2026-07-29
+
 ### Changed
 
 - **The collapsed activity cues stack instead of taking turns.** One cue at a

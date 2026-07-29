@@ -914,6 +914,11 @@ def test_list_active_does_not_transport_context_usage_or_count_tokens():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def get_extra(self, *_args, **_kwargs):
             raise AssertionError("list_active must not read context_usage")
 
@@ -950,6 +955,11 @@ def test_list_active_does_not_surface_assigned_task_between_turns():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def get_extra_snapshot(self, cid, key, default=None):
             raise AssertionError("list_active must not read assigned/scheduled tasks")
 
@@ -986,6 +996,11 @@ def test_list_active_surfaces_agent_currently_working_inside_task():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def get_extra_snapshot(self, *_args, **_kwargs):
             raise AssertionError("active task-agent rows must come from live execution state")
 
@@ -1054,6 +1069,11 @@ def test_list_context_usage_prefers_active_context_over_disk():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def load_agent_context(self, *_args, **_kwargs):
             raise AssertionError("active agent gauge must not read disk context")
 
@@ -1089,6 +1109,11 @@ def test_inactive_context_usage_reuses_persisted_snapshot_cache():
         stored_messages, 123, 10000, source="message_meta")
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def load_agent_context(self, *_args, **_kwargs):
             return stored_messages
 
@@ -1138,6 +1163,11 @@ def test_cli_resumed_context_usage_uses_stored_context_plus_live_delta():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def load_agent_context(self, *_args, **_kwargs):
             return stored_messages
 
@@ -1179,6 +1209,11 @@ def test_cli_gauge_uses_stored_context_after_session_restart():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def load_agent_context(self, *_args, **_kwargs):
             return stored_messages
 
@@ -1212,6 +1247,11 @@ def test_cli_claude_gauge_adds_invisible_overhead():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def load_agent_context(self, *_args, **_kwargs):
             return stored
 
@@ -1383,6 +1423,11 @@ def test_list_active_keeps_idle_live_sessions_out_of_active_payload():
         _active_contexts={}, _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def get_extra(self, *_args, **_kwargs):
             return {}
 
@@ -1432,6 +1477,11 @@ def test_list_active_uses_provider_agnostic_active_turn_without_context():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def get_extra(self, *_args, **_kwargs):
             return {}
 
@@ -1496,6 +1546,11 @@ def test_live_badge_requires_reused_live_process():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
+        def resolve_owner(self, _cid):
+            # The gate now asks who owns the conversation.
+            # In these tests the caller does.
+            return "user"
+
         def get_extra(self, *_args, **_kwargs):
             return {}
 

@@ -6,7 +6,69 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **Context and usage actions were not gated by the sharing ACL at all.** Phase
+  3 of the sharing work put a role table in front of the conversation
+  dispatcher, but `_ctxops_*` and `usage` were never given one, and neither
+  called `require_read`/`require_write`. They took whatever `conversation_id`
+  they were handed and acted on it. Measured before the fix, against a
+  conversation owned by someone else:
+
+  - a user with **no relationship to the conversation at all** got `200` on
+    `get_context`, `view_context`, `usage_conversation`, `get_cost` and
+    `list_context_usage` — reading another account's agent contexts and what
+    their conversation cost;
+  - a **read-only collaborator** got `200` on `delete_agent_context` and
+    `add_context_message`, and `202` on `git_prune` — destroying an agent's
+    whole context and pruning the conversation's git history from a role whose
+    entire meaning is that it cannot write.
+
+  Both dispatchers now gate from a role table, like the conversation one, with
+  a completeness test per cluster so an action added without a row fails the
+  build instead of shipping ungated. All of the above answer `404` — the same
+  answer an unknown id gets, so the gate leaks no existence either.
+
+- **Realtime sessions refused write collaborators.** `_livekit_sessions.py`
+  still used the owner-equality test inherited from the legacy voice bridge, so
+  a collaborator who could drive the agent by typing was denied the microphone.
+  Not a leak — the opposite — but the ACL is the single source of truth for
+  that question. A non-owner is now allowed exactly when `require_write`
+  allows them.
+
 ### Fixed
+
+- **`conversation_search` kept serving text that had been edited or deleted.**
+  The index skips a conversation whose `updated_at` has not moved, and only
+  rebuilds one whose row count shrank. Neither sees a redaction: editing a
+  message in place leaves `updated_at` untouched — it is the newest message's
+  timestamp — at a constant row count, and deleting the newest message moves it
+  *backwards*, which reads as "older than what I already hold". A password
+  redacted out of a transcript, or a message deleted from it, stayed searchable
+  indefinitely. The store now keeps a `transcript_generation` counter, bumped by
+  every rewrite and never by a plain append; the index compares it and rebuilds
+  the conversation when it moves. Appends stay incremental — a search pays for
+  the refresh, so re-reading every transcript would trade a correctness bug for
+  a performance one. An index written before the counter existed is rebuilt
+  once, since it may hold exactly the text this fixes.
+
+- **Two invitations sent at the same moment could lose one from the "shared
+  with me" list.** The reverse index is a whole-file read-modify-write with no
+  lock, so two invites to the same person from two conversations both read the
+  old list and the second write dropped the first. The ACL is authoritative and
+  was never affected — nothing was granted or denied wrongly — but the
+  conversation was missing from that user's sidebar until the index was
+  rebuilt. Now serialised per user, and the staging file carries a unique name:
+  a fixed `.json.tmp` let one writer publish another's bytes.
+
+- **A bad server image destroyed the running server before it was found to be
+  bad.** `scripts/run-pawflow-docker.sh` probes the new image twice — does it
+  carry the Docker CLI, can it reach the mounted daemon — and both probes ran
+  *after* `docker rm -f` on the server container. An image missing the CLI, or
+  a socket the container could not reach, left the operator with no server at
+  all and a message about how to rebuild one. The probes read and start
+  nothing, so they now run first; the destruction is the last step before
+  `docker run`. An update that fails must leave the old server running.
 
 - **The update refreshed the server image but never the host files that came
   with it.** `install-pawflow.sh` copies a set of artifacts out of the image

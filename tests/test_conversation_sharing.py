@@ -957,3 +957,225 @@ class TestOwnerReassignment:
 
         assert access.role == ca.ROLE_WRITE
         assert store.resolve_owner(conv) == OWNER
+
+
+class TestSharedIndexConcurrency:
+    """The reverse index survives several invitations landing at once.
+
+    It is a whole-file read-modify-write. Two invitations to the same person
+    at the same moment, from two conversations, both read the old list and the
+    second write drops the first. The ACL stays authoritative -- this never
+    grants anything -- but the conversation vanishes from that user's sidebar
+    until someone rebuilds the index, which is indistinguishable from a bug
+    for whoever cannot find it.
+    """
+
+    def test_simultaneous_invites_all_reach_the_index(self, store):
+        import threading
+
+        cids = []
+        for _ in range(12):
+            cid = store.generate_id()
+            store.save(cid, [], user_id=OWNER)
+            cids.append(cid)
+
+        start = threading.Barrier(len(cids))
+        errors = []
+
+        def _share(cid):
+            try:
+                start.wait(timeout=10)
+                ca.set_collaborator(cid, COLLAB, role=ca.ROLE_READ,
+                                    status=ca.STATUS_PENDING,
+                                    invited_by=OWNER, store=store)
+            except Exception as exc:  # surfaced below, never swallowed
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_share, args=(c,)) for c in cids]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert errors == []
+        assert set(ca.shared_conversation_ids(COLLAB, store=store)) == set(cids)
+
+    def test_the_staging_file_is_never_shared_between_writers(self, store):
+        """A fixed `.json.tmp` lets one writer publish another's content.
+
+        Two writers staging into the same path can interleave: one renames the
+        other's bytes into place, and the loser's rename hits a file that is
+        already gone.
+        """
+        import inspect
+
+        src = inspect.getsource(ca._write_shared_index)
+        assert '.with_suffix(".json.tmp")' not in src
+        assert "uuid" in src
+
+
+class _CtxTask(_Task):
+    """The extra surface the context handlers touch past authorization.
+
+    Only reached once a request is *allowed*, which is exactly why it has to
+    exist here: a harness that blew up on the allowed path would let a test
+    pass for denying everyone.
+    """
+
+    def _deserialize_messages(self, messages, conversation_id=""):
+        return list(messages or [])
+
+    def _serialize_messages(self, messages, conversation_id=""):
+        return list(messages or [])
+
+    def _estimate_tokens(self, messages):
+        return sum(len(str(m.get("content", ""))) for m in messages or []) // 4
+
+    def _run_bg_context_op(self, *args, **kwargs):
+        """Owner-only ops hand off to a background worker.
+
+        Stubbed: what is under test is that the request got *past* the gate,
+        not what the worker then does to a git repository.
+        """
+        flowfile = next((a for a in args if isinstance(a, FlowFile)), None)
+        if flowfile is None:
+            return []
+        flowfile.set_content(json.dumps({"started": True}).encode())
+        flowfile.set_attribute("http.response.status", "202")
+        return [flowfile]
+
+
+def _call_ctx(store, action, body, requester):
+    from tasks.ai.actions.context_ops import _handle_context_ops
+    ff = FlowFile(content=b"")
+    ff.set_attribute("http.auth.principal", requester)
+    out = _handle_context_ops(_CtxTask(), action, body, store, requester, ff)
+    assert out == [ff]
+    status = ff.get_attribute("http.response.status") or "200"
+    return json.loads(ff.get_content().decode("utf-8")), status
+
+
+def _call_usage(store, action, body, requester):
+    from tasks.ai.actions.usage import _handle_usage
+    ff = FlowFile(content=b"")
+    ff.set_attribute("http.auth.principal", requester)
+    out = _handle_usage(_Task(), action, body, store, requester, ff)
+    assert out == [ff]
+    status = ff.get_attribute("http.response.status") or "200"
+    return json.loads(ff.get_content().decode("utf-8")), status
+
+
+class TestContextAndUsageAreGatedToo:
+    """The two clusters the sharing phases left ungated.
+
+    `_ctxops_*` and `usage` took a conversation_id and acted on it. Neither
+    called into the sharing primitive at all, and no dispatcher gated them, so
+    any authenticated user knowing an id could read an agent context or what a
+    conversation had cost, and a read-only collaborator could edit or delete
+    contexts they were only ever meant to see.
+    """
+
+    @pytest.fixture
+    def talking(self, store):
+        cid = store.generate_id()
+        store.save(cid, [{"role": "user", "content": "ship the release"}],
+                   user_id=OWNER)
+        return cid
+
+    def test_every_context_action_is_classified(self):
+        import re
+        from pathlib import Path
+        from tasks.ai.actions import context_ops as dispatcher
+
+        known = set(dispatcher._ACTION_ROLES) | set(dispatcher._UNSCOPED_ACTIONS)
+        root = Path(dispatcher.__file__).parent
+        handled = set()
+        for module in ("_ctxops_k1", "_ctxops_k2", "_ctxops_k3", "_ctxops_k4"):
+            source = (root / f"{module}.py").read_text(encoding="utf-8")
+            handled |= set(re.findall(r'action == "([a-z_]+)"', source))
+
+        assert handled, "action scan found nothing -- the regex went stale"
+        assert handled - known == set()
+
+    def test_every_usage_action_is_classified(self):
+        import re
+        from pathlib import Path
+        from tasks.ai.actions import usage as dispatcher
+
+        known = set(dispatcher._ACTION_ROLES) | set(dispatcher._UNSCOPED_ACTIONS)
+        source = Path(dispatcher.__file__).read_text(encoding="utf-8")
+        handled = set(re.findall(r'action == "([a-z_]+)"', source))
+
+        assert handled, "action scan found nothing -- the regex went stale"
+        assert handled - known == set()
+
+    def test_a_stranger_cannot_read_a_context(self, store, talking):
+        assert _call_ctx(store, "get_context",
+                         {"conversation_id": talking}, STRANGER)[1] == "404"
+
+    def test_a_stranger_cannot_read_what_a_conversation_cost(self, store,
+                                                             talking):
+        assert _call_usage(store, "usage_conversation",
+                           {"conversation_id": talking}, STRANGER)[1] == "404"
+        assert _call_usage(store, "get_cost",
+                           {"conversation_id": talking}, STRANGER)[1] == "404"
+
+    def test_a_reader_may_look_but_not_edit(self, store, talking):
+        _invite(store, talking, role=ca.ROLE_READ)
+        _accept(store, talking)
+
+        assert _call_ctx(store, "get_context",
+                         {"conversation_id": talking}, COLLAB)[1] == "200"
+        assert _call_usage(store, "usage_conversation",
+                           {"conversation_id": talking}, COLLAB)[1] == "200"
+        assert _call_ctx(store, "edit_context",
+                         {"conversation_id": talking, "messages": []},
+                         COLLAB)[1] == "404"
+        assert _call_ctx(store, "delete_agent_context",
+                         {"conversation_id": talking, "agent_name": "a"},
+                         COLLAB)[1] == "404"
+
+    def test_a_writer_may_edit_but_not_discard_history(self, store, talking):
+        _invite(store, talking, role=ca.ROLE_WRITE)
+        _accept(store, talking)
+
+        assert _call_ctx(store, "get_context",
+                         {"conversation_id": talking}, COLLAB)[1] == "200"
+        # Owner-only: these throw away history for every participant.
+        assert _call_ctx(store, "restart_from",
+                         {"conversation_id": talking, "msg_id": "x"},
+                         COLLAB)[1] == "404"
+        assert _call_ctx(store, "git_prune",
+                         {"conversation_id": talking}, COLLAB)[1] == "404"
+        assert _call_ctx(store, "delete_sub_context",
+                         {"conversation_id": talking, "sub_id": "x"},
+                         COLLAB)[1] == "404"
+
+    def test_a_reader_cannot_destroy_an_agent_context_or_the_git_history(
+            self, store, talking):
+        """The two that were not merely readable but *destructive*.
+
+        Measured before the table: a read-only collaborator got 200 on
+        `delete_agent_context` and 202 on `git_prune`. Read meant read.
+        """
+        _invite(store, talking, role=ca.ROLE_READ)
+        _accept(store, talking)
+
+        assert _call_ctx(store, "delete_agent_context",
+                         {"conversation_id": talking, "agent_name": "a"},
+                         COLLAB)[1] == "404"
+        assert _call_ctx(store, "git_prune",
+                         {"conversation_id": talking}, COLLAB)[1] == "404"
+        assert _call_ctx(store, "add_context_message",
+                         {"conversation_id": talking,
+                          "message": {"role": "user", "content": "x"}},
+                         COLLAB)[1] == "404"
+
+    def test_the_owner_is_refused_nothing(self, store, talking):
+        assert _call_ctx(store, "get_context",
+                         {"conversation_id": talking}, OWNER)[1] == "200"
+        assert _call_usage(store, "usage_conversation",
+                           {"conversation_id": talking}, OWNER)[1] == "200"
+        # Not a 404: whatever the handler answers, it is not an access denial.
+        assert _call_ctx(store, "git_prune",
+                         {"conversation_id": talking}, OWNER)[1] != "404"

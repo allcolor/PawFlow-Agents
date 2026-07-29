@@ -47,6 +47,28 @@ def _authorize_conversation_action(role: str, conv_id: str, user_id: str,
     return None
 
 
+def _gate_conversation_action(roles, action: str, body, store, user_id,
+                              flowfile):
+    """Gate ``action`` against the conversation it names, from a role table.
+
+    The dispatcher-level counterpart to per-handler checks: one table per
+    cluster, one place to audit, and an action added without a row is caught by
+    that cluster's completeness test rather than shipping ungated.
+
+    Returns a response to send back, or None to continue dispatching. An action
+    with no ``conversation_id`` falls through untouched -- the handler owns
+    that error, and answering 404 here would turn its 400 into a lie.
+    """
+    role = roles.get(action)
+    if not role:
+        return None
+    conv_id = str(body.get("conversation_id", "") or "").strip()
+    if not conv_id:
+        return None
+    return _authorize_conversation_action(role, conv_id, user_id, store,
+                                          flowfile)
+
+
 def _storage_user(store, conv_id: str, requester_user_id: str) -> str:
     """The id that addresses ``conv_id`` in the store: always the owner's.
 

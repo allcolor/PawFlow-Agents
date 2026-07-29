@@ -34,7 +34,10 @@ and a re-invite is a status transition rather than a duplicate row.
 
 import json
 import logging
+import os
+import threading
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -477,13 +480,44 @@ def shared_conversation_ids(user_id: str, *, store=None) -> List[str]:
     return [c for c in (_clean(x) for x in data) if c]
 
 
+#: One lock per indexed user. The index is a read-modify-write of a whole
+#: file, so two invitations sent to the same person at the same moment -- from
+#: two different conversations -- would both read the old list and the second
+#: write would drop the first. That never grants access the ACL refuses, but
+#: an invitation vanishing from the sidebar until someone rebuilds the index
+#: looks exactly like a bug to the person who cannot find it.
+#:
+#: Threads only: PawFlow serves a user from one process. A second process
+#: writing the same index would still race, which the unique temp name below
+#: keeps from corrupting the file even though it cannot order the writes.
+_shared_index_locks: Dict[str, threading.Lock] = {}
+_shared_index_locks_guard = threading.Lock()
+
+
+def _shared_index_lock(user_id: str) -> threading.Lock:
+    with _shared_index_locks_guard:
+        lock = _shared_index_locks.get(user_id)
+        if lock is None:
+            lock = threading.Lock()
+            _shared_index_locks[user_id] = lock
+        return lock
+
+
 def _write_shared_index(user_id: str, cids: List[str], store=None) -> None:
     path = _store(store).shared_index_path(user_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(cids, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        # Unique per write: a fixed `.json.tmp` is shared by every writer of
+        # this user's index, so one could overwrite another's staging file and
+        # publish the wrong content -- or rename a file the other already
+        # renamed away.
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            tmp.write_text(json.dumps(cids, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+        finally:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
     except Exception:
         # The index is a cache, not the ACL: a failed write costs a
         # conversation its place in the sidebar until the next rebuild, it
@@ -493,21 +527,26 @@ def _write_shared_index(user_id: str, cids: List[str], store=None) -> None:
 
 def _sync_shared_index(cid: str, user_id: str,
                        rows: List[Dict[str, Any]], store=None) -> None:
-    """Add/remove ``cid`` from ``user_id``'s index to match ``rows``."""
+    """Add/remove ``cid`` from ``user_id``'s index to match ``rows``.
+
+    Read, modify and write happen under the user's lock: without it two
+    concurrent invitations to the same person race and one is silently lost.
+    """
     cid = _clean(cid)
     user_id = _clean(user_id)
     if not cid or not user_id:
         return
     row = next((r for r in rows or [] if r.get("user_id") == user_id), None)
     should_index = bool(row) and row.get("status") in _INDEXED_STATUSES
-    current = shared_conversation_ids(user_id, store=store)
-    if should_index == (cid in current):
-        return
-    if should_index:
-        current.append(cid)
-    else:
-        current = [c for c in current if c != cid]
-    _write_shared_index(user_id, current, store=store)
+    with _shared_index_lock(user_id):
+        current = shared_conversation_ids(user_id, store=store)
+        if should_index == (cid in current):
+            return
+        if should_index:
+            current.append(cid)
+        else:
+            current = [c for c in current if c != cid]
+        _write_shared_index(user_id, current, store=store)
 
 
 def rebuild_shared_index(user_id: str, *, store=None) -> List[str]:
@@ -529,5 +568,8 @@ def rebuild_shared_index(user_id: str, *, store=None) -> List[str]:
         row = get_collaborator(cid, user_id, store=store)
         if row is not None and row["status"] in _INDEXED_STATUSES:
             found.append(cid)
-    _write_shared_index(user_id, found, store=store)
+    # Under the same lock as the incremental updates: a rebuild racing one of
+    # them would otherwise publish a sweep taken before that update landed.
+    with _shared_index_lock(user_id):
+        _write_shared_index(user_id, found, store=store)
     return found

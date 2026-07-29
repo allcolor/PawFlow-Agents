@@ -11,6 +11,7 @@ import time
 import pytest
 
 from core import FlowFile
+from core.conversation_store import ConversationStore
 from core.usage_ledger import UsageLedger, compute_cost
 
 
@@ -21,6 +22,21 @@ def ledger(tmp_path):
     UsageLedger._instance = inst
     yield inst
     UsageLedger.reset()
+
+
+@pytest.fixture()
+def conv_store(tmp_path):
+    """A store where alice owns "c1".
+
+    The usage actions are gated on the conversation they name, so an action
+    carrying a conversation_id has to be given the store that answers for it.
+    Passing ``None`` used to work only because nothing checked.
+    """
+    ConversationStore.reset()
+    store = ConversationStore(store_dir=str(tmp_path / "conversations"))
+    store.save("c1", [], user_id="alice")
+    yield store
+    ConversationStore.reset()
 
 
 class TestRecord:
@@ -202,12 +218,12 @@ class TestConversationBreakdown:
         assert {"ts", "agent_name", "channel", "cost_usd"} <= \
             set(data["recent"][0])
 
-    def test_usage_conversation_action(self, ledger):
+    def test_usage_conversation_action(self, ledger, conv_store):
         self._seed(ledger)
         from tasks.ai.actions.usage import _handle_usage
         ff = _ff()
         out = _handle_usage(None, "usage_conversation",
-                            {"conversation_id": "c1"}, None, "alice", ff)
+                            {"conversation_id": "c1"}, conv_store, "alice", ff)
         assert out == [ff]
         data = json.loads(ff.get_content())
         assert data["totals"]["tokens_in"] == 150
@@ -266,10 +282,10 @@ class TestUsageQueryActions:
                       agent_name="claude", llm_service="svc-a", model="m1",
                       tokens_in=400, tokens_out=40)
 
-    def _run(self, action, body, user_id="alice", roles=""):
+    def _run(self, action, body, user_id="alice", roles="", store=None):
         from tasks.ai.actions.usage import _handle_usage
         ff = _ff(roles)
-        out = _handle_usage(None, action, body, None, user_id, ff)
+        out = _handle_usage(None, action, body, store, user_id, ff)
         assert out == [ff]
         return ff
 
@@ -325,9 +341,9 @@ class TestUsageQueryActions:
         assert svc["cost"] == pytest.approx(110 * 10.0 / 1_000_000)
         assert data["total_in"] == 100
 
-    def test_get_cost_action_reads_ledger(self, ledger):
+    def test_get_cost_action_reads_ledger(self, ledger, conv_store):
         self._seed(ledger)
-        ff = self._run("get_cost", {"conversation_id": "c1"})
+        ff = self._run("get_cost", {"conversation_id": "c1"}, store=conv_store)
         data = json.loads(ff.get_content())
         assert data["total_usd"] == pytest.approx(110 * 10.0 / 1_000_000)
         assert data["by_model"]["m1"]["in"] == 100

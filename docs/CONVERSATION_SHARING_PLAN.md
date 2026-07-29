@@ -382,6 +382,14 @@ best-effort owner map).
    - the reverse index holds `pending` **and** `accepted` rows (an invite has
      to be discoverable before it can be accepted); it is cleared on
      decline/kick, not on accept;
+   - it is a whole-file read-modify-write, so it is serialised per user and
+     stages through a uniquely named temp file. Without the lock, two invites
+     to the same person landing together both read the old list and the second
+     write dropped the first: never a wrong grant — the ACL is the authority —
+     but a conversation missing from that user's sidebar until a rebuild, which
+     to them is simply a conversation that vanished. Threads only; a second
+     process would still race, which the unique temp name keeps from corrupting
+     the file even though it cannot order the writes;
    - `require_write` performs owner reassignment as of Phase 6 below; in
      Phase 1 it was authorization only.
 2. ~~**Close the SSE gap**~~ — **done**. `agent_sse_stream.py` resolves
@@ -529,6 +537,22 @@ best-effort owner map).
      down the agent's runtime context, so it keeps the `write` default rather
      than the `read` it was first given. Reading the handler is not enough —
      what it calls has to be read too.
+   - **The audit missed two whole clusters**, found by an external review of
+     beta.23→beta.45 and closed after: `context_ops` (22 actions) and `usage`
+     (13). Neither called the primitive nor had a table, so both acted on
+     whatever `conversation_id` they were handed. Measured before the fix,
+     against someone else's conversation: a complete stranger got `200` on
+     `get_context`, `view_context`, `usage_conversation`, `get_cost` and
+     `list_context_usage`; a **read-only** collaborator got `200` on
+     `delete_agent_context` and `add_context_message` and `202` on
+     `git_prune`. Each now has its own `_ACTION_ROLES` plus a completeness
+     test, and `_gate_conversation_action` in `_conv_base.py` is the shared
+     gate. The lesson for the next audit: the inventory has to be built from
+     the *dispatcher list* (`_ACTION_HANDLERS`), not from the clusters someone
+     remembers — an untabled dispatcher is invisible to a per-cluster test.
+   - `_livekit_sessions.py` still used owner-equality, which excluded write
+     collaborators from realtime rather than leaking anything. A non-owner is
+     now allowed exactly when `require_write` allows them.
 6. ~~**Owner reassignment**~~ — **done**. `ConversationStore.reassign_owner`
    does the check-then-rename under `_get_conv_lock`, so two collaborators
    writing at once produce exactly one move; the loser takes the

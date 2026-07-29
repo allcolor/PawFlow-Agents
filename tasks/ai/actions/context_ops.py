@@ -19,11 +19,65 @@ from tasks.ai.actions._ctxops_k2 import _handle_ctxops_k2
 from tasks.ai.actions._ctxops_k3 import _handle_ctxops_k3
 from tasks.ai.actions._ctxops_k4 import _handle_ctxops_k4
 
+from tasks.ai.actions._conv_base import _gate_conversation_action
+
 logger = logging.getLogger(__name__)
+
+# Every context action, and the access it needs. Same three levels as the
+# conversation dispatcher:
+#
+# read  -- shows what the conversation holds
+# write -- mutates a context, the way a collaborator working in it does
+# owner -- discards history for every participant, or removes a whole context
+#
+# Before this table these handlers took a conversation_id and acted on it: any
+# authenticated user knowing an id could read an agent context, and a read-only
+# collaborator could edit or delete one.
+_ACTION_ROLES = {
+    # _ctxops_k1
+    "view_context": "read",
+    "rewind": "owner",        # restores a checkpoint over everyone's history
+    "git_prune": "owner",     # drops the conversation's git history
+    # _ctxops_k2. Compaction rewrites a context in place, which is what a write
+    # collaborator does all day; refusing it would break shared work.
+    "compact": "write",
+    "rebuild": "write",
+    "rebuild_full": "write",
+    # _ctxops_k3
+    "get_context": "read",
+    "get_context_full": "read",
+    "add_context_message": "write",
+    "edit_context": "write",
+    "replace_context": "write",
+    "delete_context_message": "write",
+    "delete_context_messages": "write",
+    # Removing a whole context is not editing one: it destroys an agent's
+    # entire memory of the conversation, for everyone.
+    "delete_agent_context": "owner",
+    "delete_sub_context": "owner",
+    # _ctxops_k4
+    "edit_message": "write",
+    "delete_message": "write",
+    "restart_from": "owner",  # truncates the transcript from a message on
+    "get_permission_mode": "read",
+    "get_tool_permissions": "read",
+    # What tools may run here. A write collaborator already drives the agent,
+    # so this is theirs to set; a reader must not widen it.
+    "set_permission_mode": "write",
+    "set_tool_permission": "write",
+}
+
+# Handled here but not scoped to an existing conversation. Empty today, and
+# listed so the completeness test can tell reviewed from forgotten.
+_UNSCOPED_ACTIONS = frozenset()
 
 
 def _handle_context_ops(self, action, body, store, user_id, flowfile):
     """Handle context ops actions. Returns [flowfile] or None."""
+    _denied = _gate_conversation_action(_ACTION_ROLES, action, body, store,
+                                        user_id, flowfile)
+    if _denied is not None:
+        return _denied
 
     def _ctx_agent_name(agent_name=""):
         """Normalize UI context selectors to store agent names."""

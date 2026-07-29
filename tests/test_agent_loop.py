@@ -1670,6 +1670,11 @@ class TestContextActionsAsync(unittest.TestCase):
 
         try:
             ff = FlowFile(content=json.dumps(body).encode())
+            # The dispatcher reads the requester from here, and context
+            # actions are now gated on the conversation they name. A real
+            # request always carries it; these tests own their conversations
+            # as "testuser".
+            ff.set_attribute("http.auth.principal", "testuser")
             result = task.execute(ff)
             ack = json.loads(result[0].get_content())
 

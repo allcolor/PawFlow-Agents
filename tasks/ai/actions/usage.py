@@ -8,11 +8,44 @@ from typing import Dict, Any, List, Optional
 
 from core import FlowFile
 
+from tasks.ai.actions._conv_base import _gate_conversation_action
+
 logger = logging.getLogger(__name__)
+
+# Every usage action that can name a conversation. All of them only read, so
+# all of them need read -- but they needed *something*: before this table
+# `get_cost`, `usage_conversation`, `list_context_usage` and the dashboard
+# filters took whatever conversation_id they were given and answered for it,
+# so any authenticated user knowing an id could read what someone else spent
+# and on what.
+#
+# Actions that carry no conversation_id fall through and are answered as
+# before: they are deployment-wide aggregates, and who may see those is a
+# separate question from who may see one conversation.
+_ACTION_ROLES = {
+    "cost": "read",
+    "get_cost": "read",
+    "get_usage": "read",
+    "list_context_usage": "read",
+    "list_active": "read",
+    "usage_conversation": "read",
+    "usage_dashboard": "read",
+    "usage_summary": "read",
+    "usage_timeseries": "read",
+    "usage_top": "read",
+}
+
+# Reviewed and deliberately unscoped: budgets are keyed by their own id and
+# gated by the budget handlers themselves.
+_UNSCOPED_ACTIONS = frozenset({"budget_list", "budget_create", "budget_update"})
 
 
 def _handle_usage(self, action, body, store, user_id, flowfile):
     """Handle usage actions. Returns [flowfile] or None."""
+    _denied = _gate_conversation_action(_ACTION_ROLES, action, body, store,
+                                        user_id, flowfile)
+    if _denied is not None:
+        return _denied
 
     if action == "cost":
         # Read persistent stats from the usage ledger (survives restarts)

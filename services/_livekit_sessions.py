@@ -137,11 +137,23 @@ def start_livekit_session(*, service_id: str, conversation_id: str,
         raise PermissionError(
             "realtime sessions require a user session (not an API key)")
 
-    # Conversation ownership — same policy as the legacy voice bridge.
+    # Conversation access, inherited from the legacy voice bridge.
     from core.flow_runtime_access import conversation_owner
     owner = conversation_owner(conversation_id)
     if owner and owner != user_id and (role or "").lower() != "admin":
-        raise PermissionError("not your conversation")
+        # Not the owner. This used to end here, which silently excluded write
+        # collaborators: sharing lets them drive the agent by typing, and the
+        # microphone was refused for no reason anyone chose -- the check
+        # predates sharing and was never revisited. The ACL is the one source
+        # of truth for that question, and a realtime session speaks as the
+        # conversation, so it is a write-level action.
+        from core.conversation_access import (
+            ConversationAccessError, require_write,
+        )
+        try:
+            require_write(conversation_id, user_id)
+        except ConversationAccessError:
+            raise PermissionError("not your conversation")
 
     from core.service_registry import ServiceRegistry
     reg = ServiceRegistry.get_instance()

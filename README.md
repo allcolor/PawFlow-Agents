@@ -124,6 +124,12 @@ The update command recreates the PawFlow server container on the requested image
 while keeping persistent data under `PAWFLOW_HOME`, then removes older PawFlow
 server/relay image tags unless `--keep-old-images` is set.
 
+A running deployment can also update itself from the browser: **Admin → Update
+server** runs the same steps in a throw-away `pawflow-updater` container, then
+waits for a *different* server process to answer `/health` before reloading the
+page. If it never does, the panel says which failure happened and points at
+`docker logs pawflow-updater`. See [Docker](docs/docker.md) for the mechanism.
+
 On Linux hosts with AppArmor (Ubuntu, Debian, ...), the installer also loads
 the PawFlow AppArmor profiles (`pawflow-mount` for provider pool containers,
 `pawflow-relay` for relay containers) into `/etc/apparmor.d/` — sudo may
@@ -348,6 +354,8 @@ Expressions resolve through a cascade: secrets → flow parameters → conversat
 ## Web Chat
 
 - Real-time streaming via SSE
+- Two conversation views: **Simplified** (the default) shows each turn as your message, one live activity block, and the turn's last message below it; **Classic** keeps the flat transcript. Switch per conversation from the View menu.
+- New conversations start in **auto** permission mode; change it per conversation from the permission selector, or with `/permission default|approve_edits|read_only|auto` (see [Security Model](docs/security_model.md#permission-modes)).
 - Shared conversations across web, PawCode CLI, VS Code, API clients, and channel flows
 - File explorer with relay filesystem access
 - Context editor (view/edit agent context)
@@ -357,6 +365,7 @@ Expressions resolve through a cascade: secrets → flow parameters → conversat
 - Desktop/VNC entry points plus relay-backed `screen` actions
 - Escape key: 1x = graceful interrupt, 2x = force stop
 - Multi-agent with agent switching
+- Admin → Update server: pull a new release and restart from the browser, without touching the command line
 
 ## Authentication
 
@@ -392,7 +401,7 @@ See `.env.example` for environment variables.
 ## Tests
 
 ```bash
-pytest tests/ -v    # 2500+ tests across 100+ test files
+pytest tests/ -v    # 6600+ tests across 330+ test files
 ```
 
 ## Documentation

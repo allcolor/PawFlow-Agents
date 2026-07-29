@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A new conversation opens in the simplified view.** `chat.view_mode` now
+  falls back to `simplified` instead of `classic`, so a conversation nobody
+  configured gets the live turn view; an explicit choice at any scope of the
+  cascade still wins, and the View menu switches back per conversation.
+- **A new conversation starts in `auto` permission mode.** The mode is written
+  once, at creation, by the shared creation contract — web chat, Telegram and
+  the flow API alike — rather than becoming the fallback every reader applies.
+  Conversations that already exist keep the mode they have been running under.
+  On a deployment where agents touch production systems or untrusted input, set
+  the conversation back to `default` or `read_only` before giving it work.
+
+### Documentation
+
+- The webchat view reference described correlated turn grouping and a classic
+  default, both of which stopped being true in beta.47. It now describes the
+  positional boundaries, the last-message spot, the replayed-history exemption,
+  the header timer and the glyph rain, and names simplified as the default.
+- The in-app update is documented as it now behaves: `/health` carries the
+  running version and a per-process id, the panel waits for a *different*
+  process before reloading, and after ten minutes it says which of the two
+  failures happened. The `chown` handover and its incomplete-uid/gid fallback
+  are documented with it.
+- The security model states the `auto` creation default and when to move off it;
+  README covers both views, the creation defaults, and the browser update path;
+  the website carries an update how-to, a view how-to, and FAQ answers matching
+  them.
+
 ## [1.0.0-beta.50] — 2026-07-29
 
 ### Changed

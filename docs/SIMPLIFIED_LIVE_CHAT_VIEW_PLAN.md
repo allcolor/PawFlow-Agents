@@ -375,9 +375,10 @@ chat.view_mode = classic | simplified
 }
 ```
 
-The default remains `classic` for existing behavior unless product rollout
-explicitly changes the default later. Invalid values fail closed to `classic`
-and should be rejected when written through the UI.
+The rollout is done: `simplified` is the default the cascade falls back to, and
+an unreadable value falls back to it as well. A conversation that never chose
+follows the default; an explicit `classic` at any scope still wins, and the UI
+rejects anything that is neither.
 
 The View menu gains an exclusive mode selector:
 
@@ -979,8 +980,9 @@ the feature is usable without motion or a pointer.
 2. Validate SSE gap recovery and late results.
 3. Validate tasks, delegates, concurrent agents, and background events.
 4. Update reference documentation.
-5. Ship behind `chat.view_mode=simplified`; retain classic default for the first
-   release.
+5. Ship behind `chat.view_mode=simplified`, classic default for the first
+   releases (beta.47-50), then make simplified the default a conversation gets
+   when nobody chose.
 
 Exit criterion: targeted tests, full suite, and manual browser matrix pass.
 

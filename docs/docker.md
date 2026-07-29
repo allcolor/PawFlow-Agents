@@ -596,9 +596,22 @@ the same reason. **A failed refresh aborts**, leaving a running server on its
 old version, because the files it did not manage to write include the start
 script about to run. The dialog offers a checkbox to continue anyway; taking it
 starts the new server image with the host-side files of the version it is
-replacing, and says so on stderr. The updater runs as root, so what it extracts
-is chowned back to the uid/gid the deployment runs as — otherwise the
-operator's next command-line install could not overwrite it.
+replacing, and says so on stderr. When the refresh failed on the *first*
+artifact — the start script itself — the new directory exists and is empty, so
+forcing past the failure hands over to the directory being replaced, which does
+carry a working script.
+
+The updater runs as root, so what it extracts is chowned back to the uid/gid the
+deployment runs as — otherwise the operator's next command-line install could
+not overwrite it. That pair is read from `PAWFLOW_RUN_UID`/`PAWFLOW_RUN_GID`
+when both are present, and off the install directory being replaced when they
+are not: a container created by an older start script carries only the first,
+and requiring both skipped the `chown` silently, on an update whose log
+otherwise reads clean. The step runs whatever the refresh did, not only on the
+success path. Its absence is what `unlinkat: permission denied` from
+`install-pawflow.sh` looks like from the command line; the installer now checks
+the runtime directory's ownership up front and prints the `chown` that takes it
+back.
 
 The environment of the running container is replayed, so the deployment keeps
 its bootstrap gateway key, its uid/gid and its relay images. Two exceptions:
@@ -640,7 +653,19 @@ is what gates the optional `git pull` checkbox.
 **A restart kills every running agent turn.** That is the same cost as running
 `docker compose up -d` by hand, so the dialog names it — including how many
 turns are in flight — and lets the operator decide. Nothing refuses on their
-behalf. The UI then polls `/health` until the server answers again and reloads.
+behalf.
+
+**The panel waits for a different process, not for an answer.** `/health`
+returns `{ok, version, instance}`, where `instance` is a per-process id minted
+at startup. The panel reads it *before* the update, then polls until a
+different `instance` answers and only then reloads — the page it is running was
+served by the old process. Waiting for any answer at all ended on the first
+poll whenever the updater failed before stopping anything: the server never went
+away, the page reloaded onto the version it started from, and nothing said the
+update had not happened. After ten minutes the panel gives up and names which
+of the two failures occurred — the server stopped answering and never came back
+(the new container failed to start), or it never stopped answering (the updater
+failed before touching it) — and prints `docker logs pawflow-updater`.
 
 **The image is proved usable before the old server is destroyed.** The start
 script probes the new image twice — does it carry the Docker CLI, can it reach

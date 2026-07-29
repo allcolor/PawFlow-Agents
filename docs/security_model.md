@@ -32,6 +32,18 @@ Agents should run with the least privilege needed:
 
 Use approval gates for shell, edit, delete, desktop, VNC, and external network operations.
 
+**A new conversation is created in `auto`.** The mode is written once, at
+creation, by the shared creation contract (`core/conversation_creation.py`) —
+web chat, Telegram, and the flow API alike — and by the installer for the
+first conversation it hands over. Conversations that already exist are
+untouched: the mode is not a fallback the readers apply, so anything created
+before this default keeps running under `default`. Change it per
+conversation from the permission selector in the web chat, or with
+`/permission default|approve_edits|read_only|auto`. On a deployment where
+agents run against production systems or untrusted input, set the conversation
+back to `default` or `read_only` before giving it work — `auto` approves every
+tool the mode allows, without asking.
+
 ## Desktop and VNC Risk
 
 `/desktop local` and `screen(local=true)` can act on the user's real desktop. This is equivalent to allowing an agent to see the screen and operate mouse/keyboard. Prefer Docker desktop unless local control is specifically required.

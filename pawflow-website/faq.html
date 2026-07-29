@@ -193,7 +193,15 @@
       "name": "How do I update a Docker install?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Pull the new image/tag and recreate the server container while keeping bind-mounted persistent data. Do not delete `~/pawflow` data unless you explicitly want a fresh install."
+        "text": "From the browser: Admin > Update server pulls the release and recreates the server container from a throw-away updater container, keeping persistent data. The page waits for a different server process to answer /health before reloading, so a failed update reports the failure instead of looking finished. From the command line: run the installer with --check-updates, then --version NEW_VERSION --pull-images. Do not delete ~/pawflow data unless you explicitly want a fresh install."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What permissions does a new conversation start with?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "New conversations are created in auto permission mode, which approves the tools the mode allows without prompting. Existing conversations keep the mode they were running under. Change it per conversation from the permission selector in the web chat; use default or read_only when agents work against production systems or untrusted input."
       }
     }
   ]
@@ -230,7 +238,8 @@
       <details data-reveal><summary>Can I talk to an agent live, like a phone call?</summary><p>Yes. Add a <code>realtimeVoiceConnection</code> service (OpenAI Realtime with a <code>gpt-realtime</code> model, or Gemini Live with a <code>gemini</code> connection that has an <code>api_key</code>) and click the microphone button in the webchat. You get a full-duplex spoken conversation with live captions, barge-in, optional push-to-talk, spoken tool use, and transcripts saved as normal conversation history. Agents pinned to a voice service also answer Telegram voice notes with voice notes. See the <a href="howtos.html#realtime-voice">realtime voice how-to</a>.</p></details>
       <details data-reveal><summary>Can I run PawFlow on a VPS?</summary><p>Yes. Use the Docker install path, persistent volumes, HTTPS or a reverse proxy, strong secrets, the Private Gateway for exposed demos, and restrictive relay/tool permissions.</p></details>
       <details data-reveal><summary>Is PawFlow production-ready?</summary><p>It is beta software with a substantial runtime, docs, tests, and deployment path. Treat internet-facing deployments carefully: use production env settings, HTTPS, strong secrets, restricted tools, budget caps, and reviewed OAuth redirects.</p></details>
-      <details data-reveal><summary>How do I update a Docker install?</summary><p>Pull the new image/tag and recreate the server container while keeping bind-mounted persistent data. Do not delete `~/pawflow` data unless you explicitly want a fresh install.</p></details>
+      <details data-reveal><summary>How do I update a Docker install?</summary><p>From the browser: <strong>Admin &rarr; Update server</strong> pulls the release and recreates the server container from a throw-away <code>pawflow-updater</code> container, keeping bind-mounted persistent data. The page waits for a <em>different</em> server process to answer <code>/health</code> before reloading, so a failed update reports the failure and points at <code>docker logs pawflow-updater</code> instead of looking finished. From the command line: <code>bash scripts/install-pawflow.sh --check-updates</code>, then <code>--version NEW_VERSION --port PORT --pull-images</code>. Do not delete <code>~/pawflow</code> data unless you explicitly want a fresh install. See the <a href="howtos.html#server-update">update how-to</a>.</p></details>
+      <details data-reveal><summary>What permissions does a new conversation start with?</summary><p>New conversations are created in <strong>auto</strong> permission mode: the tools the mode allows run without prompting. Conversations created before this default keep the mode they were running under. Change it per conversation from the permission selector in the web chat &mdash; use <code>default</code> or <code>read_only</code> when agents work against production systems or untrusted input. See the <a href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/security_model.md">security model</a>.</p></details>
     </div></section>
     <section class="section"><div class="container cta-panel" data-reveal><div><p class="eyebrow">Ready enough to try</p><h2>The fastest answer is still the quickstart.</h2><p>Install locally, open the wizard, configure one provider, and test a relay-backed conversation.</p></div><a class="button button-primary" href="quickstart.html">Install PawFlow</a></div></section>
   </main>

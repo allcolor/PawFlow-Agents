@@ -655,7 +655,14 @@ class _CodexAppStreamMixin:
             _first_event_done.set()
             _first_event_timer.cancel()
             _flush_live_thinking(force=True)
-            content = "".join(final_text_parts).strip() or "".join(text_parts).strip()
+            # One entry per *completed* assistant message, so they are joined
+            # with a blank line: gluing them left "as requested.I'm scoping"
+            # where two messages met, and made the turn read as one run-on
+            # paragraph with no way to tell where its answer starts.
+            # `text_parts` is the delta fallback -- those are fragments of a
+            # single message and stay glued.
+            content = ("\n\n".join(p for p in final_text_parts if p).strip()
+                       or "".join(text_parts).strip())
             return LLMResponse(
                 content=content,
                 model=model,

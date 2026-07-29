@@ -299,7 +299,7 @@ def test_simplified_view_owns_accessible_tabs_and_terminal_handoff():
         "setAttribute('role', 'tablist')",
         "setAttribute('role', 'tab')",
         "setAttribute('role', 'tabpanel')",
-        "state.blockEl.parentNode.insertBefore(state.finalEl, state.blockEl.nextSibling)",
+        "s.blockEl.parentNode.insertBefore(s.finalEl, s.blockEl.nextSibling)",
     ):
         assert contract in source
 

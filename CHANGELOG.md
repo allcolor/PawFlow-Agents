@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.52] — 2026-07-29
+
+### Fixed
+
+- **The simplified view collapsed to a flat transcript on a long turn.** Top
+  level holds a user row, that turn's block, and the block's last message —
+  nothing else. The view enforced that as rows arrived, and only then: a block
+  was built from a user row and died with it. On a conversation where the agent
+  works for hundreds of rows without being spoken to, the 50-row history window
+  holds no user row at all, so no turn ever opened and every thought, tool call
+  and message rendered inline with no block anywhere — and each reload
+  reproduced it exactly. Activity with nothing above it now opens a turn of its
+  own, a turn outlives the row it was anchored on, and `turnViewReconcile`
+  enforces the rule against the DOM after every history render: a stray row is
+  filed into the turn it falls in, and a replayed turn is given its last
+  message under its block instead of buried inside it.
+
+- **A delegate left nothing on screen in the simplified view.** Delegate
+  grouping had been filed with the classic-only view options and forced off,
+  and it is the only thing that draws a sub-agent at all: the box was never
+  built, and a stored trace — whose content is empty by construction — rendered
+  as a blank row. A sub-agent could run, work and return with nothing visible
+  but its result message. The box is activity, so it is drawn again and the
+  turn view files it with the tool calls, inside the block.
+
+- **A delegate result was previewed by its opening, not its conclusion.** What
+  lands in the caller's context and in the transcript is a preview of the
+  sub-agent's answer, cut from the head — so it showed the agent announcing
+  what it was about to do and stopped before anything it found. On a provider
+  whose turn is several messages long the conclusion was never in it. The
+  preview is now the tail, starting on a line boundary when one sits near the
+  cut, and the full text stays in its FileStore copy.
+
+- **The codex app-server glued its assistant messages together.** Each
+  completed message was one entry of `final_text_parts`, joined with nothing:
+  two messages met as `as requested.I'm scoping`, and a turn read as one
+  run-on paragraph with no way to tell where its answer started. They are
+  joined with a blank line; the delta fallback, whose entries are fragments of
+  a single message, still is not.
+
 ## [1.0.0-beta.51] — 2026-07-29
 
 ### Changed

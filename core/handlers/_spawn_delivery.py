@@ -13,6 +13,35 @@ from typing import Dict
 
 logger = logging.getLogger(__name__)
 
+#: How much of a sub-agent's answer is inlined in the caller's context and in
+#: the transcript. The rest stays in the FileStore copy.
+DELEGATE_PREVIEW_CHARS = 800
+
+
+def _delegate_result_preview(response: str):
+    """The end of a sub-agent's answer, not its beginning.
+
+    A preview cut from the head shows the agent announcing what it is about to
+    do -- "I'll load the context first, then audit..." -- and stops before it
+    says anything it found. That is what the caller reacts to and what the user
+    reads in the transcript, and on a provider whose turn is several messages
+    long the conclusion was never in it at all. The tail is the answer.
+
+    Returns (preview, truncated).
+    """
+    text = (response or "").strip()
+    if len(text) <= DELEGATE_PREVIEW_CHARS:
+        return text, False
+    tail = text[-DELEGATE_PREVIEW_CHARS:]
+    # Prefer starting on a paragraph or line boundary when one is close to the
+    # cut, so the preview does not open mid-sentence.
+    for sep in ("\n\n", "\n"):
+        cut = tail.find(sep)
+        if 0 <= cut <= DELEGATE_PREVIEW_CHARS // 4:
+            tail = tail[cut + len(sep):]
+            break
+    return tail.strip(), True
+
 
 class _SpawnDeliveryMixin:
     """Delivery/dedup methods composed onto SpawnAgentsHandler via MRO."""
@@ -253,13 +282,11 @@ class _SpawnDeliveryMixin:
                     f"Read it and decide how to react (retry, fallback, tell the user)."
                 )
             else:
-                # Cap inline preview so the context isn't flooded.
-                _preview = (result.response or "")[:800]
-                _more = (len(result.response or "") > 800)
+                _preview, _more = _delegate_result_preview(result.response)
                 _summary = (
                     f"[Delegate result for task_id={result.task_id}] "
                     f"Sub-agent '{result.agent_name}' finished.\n\n"
-                    f"{_preview}{'…' if _more else ''}\n\n"
+                    f"{'…' if _more else ''}{_preview}\n\n"
                     f"{'Full response in file ' + _file_id + ' — read it with `read` if you need more.' if _file_id and _more else ''}\n"
                     f"READ this result and REACT: integrate it into your work, "
                     f"or reply to the user with what you learned. Do not ignore it."
@@ -304,7 +331,8 @@ class _SpawnDeliveryMixin:
                          "question to the user.")
             else:
                 _text = (f"Background delegate '{result.agent_name}' "
-                         f"finished. Result: {(result.response or '')[:800]}"
+                         f"finished. Result: "
+                         f"{_delegate_result_preview(result.response)[0]}"
                          "\nReport the relevant outcome to the user in a "
                          "concise spoken summary.")
             if announce_to_conversation_session(_cid, source_agent, _text):

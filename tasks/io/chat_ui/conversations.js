@@ -578,7 +578,12 @@ function _renderHistory(data) {
     if (viewMode === 'simplified') setTechnicalMessageGrouping(false);
   }
   if (typeof setTaskMessageGrouping === 'function') setTaskMessageGrouping(viewMode === 'classic' && groupTaskMessages);
-  if (typeof setDelegateMessageGrouping === 'function') setDelegateMessageGrouping(viewMode === 'classic' && groupDelegateMessages);
+  // Delegate grouping is not a classic-only option like the two above: it is
+  // the only thing that draws a sub-agent at all. Forcing it off in simplified
+  // meant a delegate ran, returned, and left nothing on screen but the result
+  // message -- no box, and a stored trace rendered as an empty row. The box is
+  // activity, so the turn view files it in the block like everything else.
+  if (typeof setDelegateMessageGrouping === 'function') setDelegateMessageGrouping(groupDelegateMessages);
   updateViewMenuVisibility();
   updateViewMenuItem('technical', groupTechnicalMessages);
   updateViewMenuItem('task', groupTaskMessages);

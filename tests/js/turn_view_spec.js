@@ -247,12 +247,59 @@ test('a user message nothing followed gets no empty block', () => {
   eq(e.block(), null);
 });
 
-test('rows before any user message are left top level', () => {
+// Activity with no user row above it is still a turn. Leaving those rows at
+// top level is what made the view collapse to a flat transcript on a long
+// conversation: the history window opens in the middle of a turn, the user
+// message that started it is hundreds of rows above, and every tool call,
+// thought and message rendered inline with no block anywhere.
+test('activity with no user row above it opens a turn of its own', () => {
   const e = env('simplified');
   const orphan = e.row('old-1');
-  eq(e.ctx.turnViewIngest('assistant', { msg_id: 'old-1' }, orphan), false);
-  eq(e.block(), null, 'no block without a user boundary');
-  assert(orphan.parentNode === e.messages, 'row stays top level');
+  eq(e.ctx.turnViewIngest('assistant', { msg_id: 'old-1' }, orphan), true);
+  const block = e.block();
+  assert(block, 'a block is built for the agent-opened turn');
+  // USER > BLOCK > last message, minus the user row nobody has: the block
+  // takes the row's place and the row becomes the message below it.
+  eq(block.nextSibling, orphan, 'the row is the block\'s last message');
+  eq(e.messages.children[0], block, 'the block sits where the row was');
+});
+
+// The rule, whatever happened before: top level holds a user row, its block,
+// and that block's last message -- nothing else. This is the pass that makes
+// it true after a reload, where rows are replayed through a path that may
+// never have reached the view at all.
+test('reconcile files stray rows into the turn they fall in', () => {
+  const e = env('simplified');
+  const user = e.row('u1');
+  user.dataset.messageRole = 'user';
+  const think = e.row('t1'); think.dataset.messageRole = 'thinking';
+  const call = e.row('c1'); call.dataset.messageRole = 'tool_call';
+  const answer = e.row('a1'); answer.dataset.messageRole = 'assistant';
+  answer.dataset.rawText = 'the answer';
+  e.ctx.turnViewReconcile();
+  const block = e.block();
+  assert(block, 'the turn got its block');
+  const top = Array.from(e.messages.children);
+  eq(top.length, 3, 'top level is user + block + last message');
+  eq(top[0], user, 'user row first');
+  eq(top[1], block, 'block second');
+  eq(top[2], answer, 'the last message below the block');
+  assert(think.parentNode !== e.messages, 'thinking went into the block');
+  assert(call.parentNode !== e.messages, 'the tool call went into the block');
+});
+
+// A turn the server closed does not orphan what comes after it. The provider
+// ends a turn, the agent goes back to work without a new user message, and
+// every following row must still land in a block.
+test('activity after a finished turn keeps a block', () => {
+  const e = env('simplified');
+  const user = startTurn(e, 'u1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, e.row('a1'));
+  e.ctx.turnViewFinalize({ final_msg_id: 'a1' });
+  const late = e.row('c9');
+  eq(e.ctx.turnViewIngest('tool_call', { msg_id: 'c9' }, late), true);
+  assert(late.parentNode !== e.messages, 'the late tool call is in a block');
+  assert(user.isConnected, 'the user row is untouched');
 });
 
 // ── Reload: the whole turn must rebuild from classifier rows ────────────
@@ -654,6 +701,99 @@ test('the working class tracks the status and is dropped on every terminal path'
     eq(finish(e), true);
     assert(!block.classList.contains('turn-working'), 'a finished turn does not');
   }
+});
+
+// The whole contract in one sequence, which is what the reader actually sees:
+//
+//   USER > finished block > its last message > USER > running block > its last
+//
+// A message sent while a turn is still working closes that turn -- it keeps
+// its own last message under it -- and opens the next one.
+test('a message sent mid-turn closes the block and opens the next', () => {
+  const e = env('simplified');
+  const user1 = startTurn(e, 'u1');
+  const first = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, first);
+  const block1 = e.block();
+  const user2 = e.row('u2');
+  user2.dataset.messageRole = 'user';
+  e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, user2);
+  const second = e.row('a2');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a2' }, second);
+  const blocks = e.messages.querySelectorAll('.simple-turn-block');
+  eq(blocks.length, 2, 'one block per turn');
+  const top = Array.from(e.messages.children);
+  eq(top[0], user1, 'first user row');
+  eq(top[1], block1, 'its block');
+  eq(top[2], first, 'its last message, under it');
+  eq(top[3], user2, 'the new user row');
+  eq(top[4], blocks[1], 'the new block');
+  eq(top[5], second, 'and its last message');
+  eq(top.length, 6, 'nothing else at top level');
+});
+
+// The reported failure, end to end. A long autonomous run: the user message
+// that opened the turn is hundreds of rows above, so the 50-row history window
+// holds nothing but activity. Every one of those rows used to render inline --
+// no block anywhere, the simplified view indistinguishable from a broken
+// classic one -- and every reload reproduced it exactly.
+test('a reload whose window opens mid-turn still shows one block', () => {
+  const e = env('simplified');
+  const rows = [];
+  for (const spec of [['thinking', 't1', ''], ['tool_call', 'c1', ''],
+                      ['tool_result', 'r1', ''], ['assistant', 'a1', 'the answer']]) {
+    const el = e.row(spec[1]);
+    el.dataset.messageRole = spec[0];
+    if (spec[2]) el.dataset.rawText = spec[2];
+    rows.push(el);
+    e.ctx.turnViewIngest(spec[0], { msg_id: spec[1], _history: true }, el);
+  }
+  e.ctx.turnViewReconcile();
+  const block = e.block();
+  assert(block, 'the window got a block even with no user row in it');
+  const top = Array.from(e.messages.children);
+  eq(top.length, 2, 'top level is the block and its last message');
+  eq(top[0], block, 'block first');
+  eq(top[1], rows[3], 'the answer under it');
+  for (const el of rows.slice(0, 3)) {
+    assert(el.parentNode !== e.messages, 'activity is inside the block');
+  }
+});
+
+// After a reload, the work carries on. The rows that arrive next are live, and
+// they must land in the block the reconciliation left open -- not at top level,
+// which is what turned the rest of a long session into a flat list.
+test('live rows after a reload land in the reconciled turn', () => {
+  const e = env('simplified');
+  const user = e.row('u1');
+  user.dataset.messageRole = 'user';
+  const answer = e.row('a1');
+  answer.dataset.messageRole = 'assistant';
+  answer.dataset.rawText = 'replayed answer';
+  e.ctx.turnViewReconcile();
+  const block = e.block();
+  assert(block, 'the replayed turn has a block');
+  const late = e.row('c9');
+  eq(e.ctx.turnViewIngest('tool_call', { msg_id: 'c9' }, late), true);
+  assert(late.parentNode !== e.messages, 'the live tool call went into the block');
+  eq(e.messages.querySelectorAll('.simple-turn-block').length, 1,
+    'and no second block was invented for it');
+});
+
+// A delegate box is activity. In simplified mode it used not to be drawn at
+// all -- delegate grouping was filed with the classic-only view options and
+// forced off, so a sub-agent ran, returned, and left nothing on screen but its
+// result message.
+test('a delegate box is filed in the block, not left beside it', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const box = e.row('d1');
+  box.dataset.messageRole = 'sub_agent_trace';
+  eq(e.ctx.turnViewIngest('tool_call', {}, box), true);
+  assert(box.parentNode !== e.messages, 'the box went into the block');
+  assert(e.block(), 'the turn has a block');
+  assert(String(box.parentNode.className).includes('simple-turn-panel-scroll'),
+    'and the box sits in one of its panels');
 });
 
 if (failures.length) {

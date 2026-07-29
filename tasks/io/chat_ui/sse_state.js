@@ -381,6 +381,9 @@ function _getOrCreateGroup(delegateTcId, srcAgent, total, sourceTaskId) {
     if (typingEl) container.insertBefore(details, typingEl);
     else container.appendChild(details);
   }
+  // A delegate box is activity: in the simplified view it belongs in the block
+  // of the turn that spawned it, not at top level next to it.
+  if (typeof turnViewIngest === 'function') turnViewIngest('tool_call', {}, details);
   if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
   scrollBottom();
   _delegateGroups[delegateTcId] = { el: details, content, summary, total: total || 1, doneCount: 0, subBlocks: {} };

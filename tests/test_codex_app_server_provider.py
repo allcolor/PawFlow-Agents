@@ -368,7 +368,10 @@ def test_codex_app_server_uses_completed_message_as_text_source_of_truth():
     assert "turn_text_is_final = True" in src
     assert "dropping non-final assistant delta text" in src
     assert "final_text_parts.append(final_text)" in src
-    assert '"".join(final_text_parts).strip() or "".join(text_parts).strip()' in src
+    # Completed messages are separated, deltas are not: one entry of
+    # final_text_parts is a whole message, one of text_parts is a fragment.
+    assert '"\\n\\n".join(p for p in final_text_parts if p).strip()' in src
+    assert '"".join(text_parts).strip()' in src
 
 
 def test_codex_app_server_does_not_stop_live_turn_at_tool_boundary_for_preempt():

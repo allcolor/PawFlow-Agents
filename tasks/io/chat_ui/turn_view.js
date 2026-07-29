@@ -92,10 +92,11 @@ function turnViewRegisterUser(extra, element) {
   _turnOpen = { turnId: id, userEl: element, data: extra || {}, state: null };
 }
 
-function _turnCreateState(turnId, userEl, data) {
-  if (!userEl) return null;
+function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
+  if (!userEl && !anchorBeforeEl) return null;
   const state = {
-    turnId, userMsgId: userEl.dataset.msgid || turnId, userEl, agentName: '', llmService: '',
+    turnId, userMsgId: (userEl && userEl.dataset.msgid) || turnId, userEl: userEl || null,
+    agentName: '', llmService: '',
     status: 'working', expanded: false, activeTab: 'messages', finalMsgId: '', finalEl: null,
     identityRendered: false,
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
@@ -144,8 +145,29 @@ function _turnCreateState(turnId, userEl, data) {
   state.elapsedEl = header.querySelector('.simple-turn-elapsed');
   state.startedAt = Date.now(); state.elapsedTimer = null;
   simplifiedTurns.set(turnId, state);
-  _turnUpdateIdentity(state, data || {}); _turnUpdateStatus(state, 'working'); _turnPlaceBlock(state);
+  _turnUpdateIdentity(state, data || {}); _turnUpdateStatus(state, 'working');
+  // A turn opened by the agent itself has no user row to sit under: its block
+  // takes the place of the first row it is about to swallow.
+  if (!userEl && anchorBeforeEl && anchorBeforeEl.parentNode) {
+    anchorBeforeEl.parentNode.insertBefore(block, anchorBeforeEl);
+  } else {
+    _turnPlaceBlock(state);
+  }
   _turnStartElapsed(state); _turnStartRain(state); _turnSyncIdle(state);
+  return state;
+}
+
+// A stretch of activity with no user row above it -- a history window that
+// opens mid-turn, work resumed after a turn the server already closed. The
+// reader is owed a block for it exactly like any other turn.
+function _turnOpenOrphanTurn(element) {
+  if (!element || !element.parentNode) return null;
+  const container = document.getElementById('messages');
+  if (container && element.parentNode !== container) return null;
+  const id = 'turn-' + (++_turnSeq);
+  const state = _turnCreateState(id, null, {}, element);
+  if (!state) return null;
+  _turnOpen = { turnId: id, userEl: null, data: {}, state };
   return state;
 }
 
@@ -267,7 +289,14 @@ function _turnTabForKind(kind) {
 // Rows that precede any user message -- a partial first page, a system notice --
 // have no open turn and stay top level rather than being forced into a wrong one.
 function _turnCurrentState(create) {
-  if (!_turnOpen || !_turnOpen.userEl.isConnected) return null;
+  // A turn outlives its anchor. The user row can be moved, folded into a
+  // technical group or evicted; what the reader sees is the block, and the
+  // block is what decides whether the turn is still on screen. Requiring the
+  // user row instead dropped every following row to top level -- the whole
+  // view collapsing to a flat transcript because one element moved.
+  if (!_turnOpen) return null;
+  const anchor = (_turnOpen.state && _turnOpen.state.blockEl) || _turnOpen.userEl;
+  if (!anchor || !anchor.isConnected) return null;
   if (!_turnOpen.state && create) {
     _turnOpen.state = _turnCreateState(_turnOpen.turnId, _turnOpen.userEl, _turnOpen.data);
   }
@@ -276,7 +305,12 @@ function _turnCurrentState(create) {
 
 function turnViewIngest(kind, data, element) {
   if (!turnViewIsSimplified()) return false;
-  const state = _turnCurrentState(true);
+  // No open turn means the agent is working without a user row above it: a
+  // history page that starts mid-turn, a provider that ended a turn and went
+  // back to work, a delegate returning. That is still a turn, and its rows
+  // still belong in a block -- top level holds user rows, blocks, and the last
+  // message of a block, never activity.
+  const state = _turnCurrentState(true) || _turnOpenOrphanTurn(element);
   if (!state || !state.blockEl.isConnected) return false;
   _turnUpdateIdentity(state, data || {});
   if (kind === 'tool_result' && turnViewHandleToolResult(data, element)) return true;
@@ -753,12 +787,129 @@ function turnViewFail(turnId, status, message) {
   return true;
 }
 
+// Rows that are activity: they belong inside a block, never at top level.
+// Everything else at top level is left alone -- an approval, a question, an
+// error or a notification is something the reader must act on, and burying it
+// in a collapsed block would hide it.
+const TURN_FILABLE_ROLES = new Set([
+  'assistant', 'agent-result', 'thinking', 'tool_call', 'tool_result',
+  'system', 'sub_agent_trace',
+]);
+
+function _turnRowRole(el) {
+  return (el && el.dataset && el.dataset.messageRole) || '';
+}
+
+function _turnIsUserRow(el) {
+  return _turnRowRole(el) === 'user';
+}
+
+// ── The display rule, enforced on the DOM ──────────────────────────────────
+// Top level is this, repeated, and nothing else:
+//
+//     USER > BLOCK > the block's last message
+//
+// The event path already builds it as rows arrive. This pass is what makes it
+// true *whatever happened* -- a reload, a page of older history, a row created
+// by a path that never called the view, an anchor that moved into a technical
+// group. It reads the DOM rather than the event stream, so it cannot be wrong
+// about what is actually on screen: every stray row is filed into the block of
+// the turn it falls in, and a stretch of activity with no user row above it
+// gets a block of its own.
 function turnViewReconcile() {
   if (!turnViewIsSimplified()) return;
-  for (const state of simplifiedTurns.values()) {
-    _turnPlaceBlock(state);
-    if (state.finalEl && state.blockEl.parentNode) state.blockEl.parentNode.insertBefore(state.finalEl, state.blockEl.nextSibling);
+  const container = document.getElementById('messages');
+  if (!container) return;
+  const touched = new Set();
+  let state = null;
+  // What the live path must carry on into once the pass is over: the last turn
+  // on screen. Leaving it on whatever the previous render left behind is how a
+  // reload ends up filing new rows into a turn that scrolled away -- or into
+  // none at all.
+  let open = null;
+  for (const el of Array.from(container.children)) {
+    if (!el || !el.dataset || !el.classList) continue;
+    if (el.classList.contains('simple-turn-block')) {
+      const owner = simplifiedTurns.get(el.dataset.turnId || '');
+      if (owner) {
+        state = owner; touched.add(owner);
+        open = { turnId: owner.turnId, userEl: owner.userEl, data: {}, state: owner };
+      }
+      continue;
+    }
+    if (_turnIsUserRow(el)) {
+      // A user row closes whatever came before and opens the next turn. Its
+      // block is built by the first row that follows: a user message nothing
+      // followed is not given an empty one.
+      const id = el.dataset.turnId || el.dataset.msgid || ('turn-' + (++_turnSeq));
+      el.dataset.turnId = id;
+      const existing = simplifiedTurns.get(id);
+      if (existing && existing.blockEl.isConnected) {
+        state = existing; touched.add(existing);
+        open = { turnId: id, userEl: el, data: {}, state: existing };
+      } else {
+        state = null;
+        open = { turnId: id, userEl: el, data: {}, state: null };
+      }
+      _turnOpen = open;
+      continue;
+    }
+    if (!TURN_FILABLE_ROLES.has(_turnRowRole(el))) continue;
+    if (state && el === state.finalEl) continue;
+    if (!state) {
+      state = (_turnOpen && _turnOpen.userEl && _turnOpen.userEl.isConnected)
+        ? _turnCurrentState(true) : _turnOpenOrphanTurn(el);
+      if (!state) continue;
+      touched.add(state);
+      open = _turnOpen;
+      if (el.parentNode !== container) continue;  // the block took its place
+    }
+    touched.add(state);
+    _turnFileRow(state, el);
   }
+  if (open) _turnOpen = open;
+  for (const s of touched) {
+    // Every block owes the reader its last message, under it. A live row takes
+    // that spot as it arrives; a replayed turn has to be given it here, or a
+    // reload shows a block with the answer buried inside it.
+    if (!s.finalEl || !s.finalEl.isConnected) _turnPromoteRecordedLast(s);
+    _turnPlaceBlock(s);
+    if (s.finalEl && s.blockEl.parentNode) s.blockEl.parentNode.insertBefore(s.finalEl, s.blockEl.nextSibling);
+  }
+}
+
+// The last thing the turn said, taken from its own record. Only consulted when
+// nothing holds the spot below the block: a final the server named wins.
+function _turnPromoteRecordedLast(state) {
+  const tab = state.tabs && state.tabs.messages;
+  if (!tab) return;
+  const rows = Array.from(tab.bodyEl.children);
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const el = rows[i];
+    if (_turnRowRole(el) === 'system') continue;
+    if (!String((el.dataset && el.dataset.rawText) || '').trim()) continue;
+    _turnPromoteLast(state, el);
+    return;
+  }
+}
+
+// File one stray row into its turn, in the tab its role belongs to. The last
+// message of the turn is hoisted back out immediately after: the block's own
+// answer is the one thing that sits below it.
+function _turnFileRow(state, el) {
+  const role = _turnRowRole(el);
+  // A delegate box is a tool call by another name -- it is what the `delegate`
+  // and `flash_delegate` calls draw -- so it lives with the tool calls.
+  const tabKey = _turnTabForKind(role === 'sub_agent_trace' ? 'tool_call' : role);
+  const tab = state.tabs[tabKey];
+  if (!tab) return;
+  const msgId = (el.dataset && el.dataset.msgid) || '';
+  if (msgId) state.elementsByMsgId.set(msgId, el);
+  if (tabKey === 'messages' && role !== 'system' && String(el.dataset.rawText || '').trim()) {
+    _turnPromoteLast(state, el);
+    return;
+  }
+  if (el.parentNode !== tab.bodyEl) tab.bodyEl.appendChild(el);
 }
 
 function turnViewEvictionGroup(element) {

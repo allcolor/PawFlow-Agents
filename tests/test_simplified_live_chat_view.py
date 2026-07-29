@@ -331,3 +331,45 @@ def test_view_mode_selector_and_locale_key_parity():
         "expandTurnDetails", "collapseTurnDetails",
     }
     assert required <= catalogs[0].keys()
+
+
+def test_every_live_row_creator_hands_its_row_to_the_turn_view():
+    # Observed in the browser against beta.47: tool_result rows sat at top
+    # level between the block and the next user message, and a user message
+    # from another client landed inside the previous turn's Messages tab.
+    # Top level must only ever be user / block / final answer.
+    state = (CHAT_UI / "sse_state.js").read_text(encoding="utf-8")
+    handlers_a = (CHAT_UI / "sse_handlers_a.js").read_text(encoding="utf-8")
+    handlers_b = (CHAT_UI / "sse_handlers_b.js").read_text(encoding="utf-8")
+    # A result whose tool call never arrived is rendered standalone after a
+    # 750ms grace period -- that row was the one nobody handed over.
+    fallback = state.split("function _queueUnmatchedToolResult", 1)[1]
+    assert "turnViewIngest('tool_result', pending.data, row)" in fallback
+    # A live user message opens a turn; it is never turn content.
+    assert "if (data.role === 'user') {" in handlers_a
+    assert "turnViewRegisterUser(data, el)" in handlers_a
+    # Standalone assistant narration, with no delegate or task frame to hold it.
+    assert "turnViewIngest('assistant', data, dEl)" in handlers_a
+    assert "turnViewIngest('assistant', data, rEl)" in handlers_b
+
+
+def test_turn_block_cannot_be_squeezed_by_the_message_column():
+    # .messages is a scrolling column flex container. A flex item whose overflow
+    # is not visible loses its automatic minimum size, so an overflowing
+    # transcript shrinks this block to its padding: a bare bar with no readable
+    # header and no reachable click target. It must opt out of shrinking.
+    template = (CHAT_UI / "template.html").read_text(encoding="utf-8")
+    columns = [chunk.split("}", 1)[0] for chunk in template.split(".messages {")[1:]]
+    assert any("display: flex; flex-direction: column" in rule for rule in columns)
+    rule = template.split(".msg.simple-turn-block {", 1)[1].split("}", 1)[0]
+    assert "overflow: hidden" in rule
+    assert "flex: none" in rule
+    assert "padding: 0" in rule
+    # The .msg padding is declared after this rule, so equal specificity loses.
+    assert ".msg.simple-turn-block {" in template
+    # A reloaded transcript is all finished turns: no empty animation band.
+    assert ".simple-turn-block:not(.turn-working) .simple-turn-ephemeral { display: none; }" in template
+    # _turnSvg emits a viewBox and no dimensions: unsized, one icon fills its
+    # whole tab column and pushes the label out of the block.
+    assert "function _turnSvg(kind)" in (CHAT_UI / "turn_view.js").read_text(encoding="utf-8")
+    assert ".simple-turn-tab svg { width: 16px; height: 16px; flex: none; }" in template

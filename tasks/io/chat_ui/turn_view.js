@@ -1,9 +1,12 @@
 // Conversation-scoped simplified turn presentation. Existing renderers create
 // every durable node; this controller only reparents those canonical nodes.
 const TURN_TEXT_COALESCE_MS = 300;
-const TURN_ANIMATION_MS = 1500;
+// Each cue lives on its own: it enters blurred, sharpens, holds, then blurs
+// out again and removes itself. Cues do not take turns -- several are on
+// screen at once, stacked, each one at its own point in that arc.
+const TURN_CUE_LIFETIME_MS = 2600;
 const TURN_TRANSIENT_MAX_CHARS = 180;
-const TURN_TRANSIENT_MAX_QUEUE = 3;
+const TURN_TRANSIENT_MAX_STACK = 4;
 
 let PAWFLOW_CHAT_VIEW_MODE = 'classic';
 const simplifiedTurns = new Map();
@@ -71,8 +74,7 @@ function _turnCreateState(turnId, userEl, data) {
     identityRendered: false,
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
     artifactElementsByFileId: new Map(), artifactFileIdByCallId: new Map(),
-    transient: { current: null, queue: [], timer: null, coalesceTimer: null,
-                 pendingText: '', pendingKind: '' },
+    transient: { cues: [], coalesceTimer: null, pendingText: '', pendingKind: '' },
     tabs: {},
   };
   const block = document.createElement('section');
@@ -87,8 +89,6 @@ function _turnCreateState(turnId, userEl, data) {
   block.appendChild(header);
   const ephemeral = document.createElement('div'); ephemeral.className = 'simple-turn-ephemeral';
   ephemeral.setAttribute('aria-live', 'polite');
-  ephemeral.innerHTML = '<span class="simple-turn-ephemeral-icons" aria-hidden="true"></span>'
-    + '<span class="simple-turn-ephemeral-text"></span>';
   block.appendChild(ephemeral);
   const details = document.createElement('div'); details.className = 'simple-turn-details';
   const tablist = document.createElement('div'); tablist.className = 'simple-turn-tabs'; tablist.setAttribute('role', 'tablist');
@@ -149,6 +149,10 @@ function _turnUpdateStatus(state, status) {
   const pair = labels[status] || labels.working;
   const el = state.headerEl.querySelector('.simple-turn-status');
   el.className = 'simple-turn-status ' + status; el.textContent = _turnText(pair[0], pair[1]);
+  // The ephemeral surface only ever shows a cue while the turn runs. A reloaded
+  // transcript is all finished turns, so leaving it laid out would give every
+  // one of them an empty band under its header.
+  state.blockEl.classList.toggle('turn-working', status === 'working');
 }
 
 function _turnSetExpanded(state, expanded) {
@@ -319,36 +323,72 @@ function _turnFlushTransient(state) {
   _turnEnqueueTransient(state, { kind, text });
 }
 
+// The cues share one spot and stack in depth, not in a column. The newest
+// zooms in at the front; every cue behind it is pushed back a step -- smaller,
+// dimmer, blurrier -- until it falls off the back of the stack. Depth is a
+// function of arrival order alone, so it is recomputed, never accumulated.
 function _turnEnqueueTransient(state, item) {
-  const kind = item.kind;
-  const tail = state.transient.queue[state.transient.queue.length - 1];
-  if (tail && tail.kind === kind && (kind === 'messages' || kind === 'thinking')) Object.assign(tail, item);
-  else { state.transient.queue.push(item); if (state.transient.queue.length > TURN_TRANSIENT_MAX_QUEUE) state.transient.queue.shift(); }
-  if (!state.transient.timer) _turnRunTransient(state);
+  if (!state.ephemeralEl) return;
+  const cue = document.createElement('span');
+  cue.className = 'simple-turn-cue ' + item.kind;
+  const icons = document.createElement('span');
+  icons.className = 'simple-turn-ephemeral-icons'; icons.setAttribute('aria-hidden', 'true');
+  const icon = document.createElement('span');
+  icon.className = 'simple-turn-ephemeral-icon'; icon.innerHTML = _turnSvg(item.kind);
+  icons.appendChild(icon);
+  const text = document.createElement('span');
+  text.className = 'simple-turn-ephemeral-text'; text.textContent = item.text;
+  cue.appendChild(icons); cue.appendChild(text);
+  // Enter small and blurred; the transition to depth 0 is the zoom in.
+  _turnStyleCue(cue, -1);
+  state.ephemeralEl.appendChild(cue);
+  const entry = { el: cue, timer: null, enter: null };
+  // Restack rather than jump to the front: a cue that arrives during this
+  // delay has already taken depth 0, and this one belongs behind it.
+  entry.enter = setTimeout(() => { entry.enter = null; _turnRestackCues(state); }, 16);
+  entry.timer = setTimeout(() => _turnRetireCue(state, entry), TURN_CUE_LIFETIME_MS);
+  state.transient.cues.push(entry);
+  _turnRestackCues(state);
 }
 
-function _turnRunTransient(state) {
-  if (state.expanded || state.status !== 'working') { _turnStopTransient(state); return; }
-  const item = state.transient.queue.shift(); if (!item) { state.transient.timer = null; return; }
-  state.transient.current = item;
-  const textEl = state.ephemeralEl.querySelector('.simple-turn-ephemeral-text');
-  const iconEl = state.ephemeralEl.querySelector('.simple-turn-ephemeral-icons');
-  textEl.textContent = item.text; iconEl.innerHTML = '<span class="simple-turn-ephemeral-icon">' + _turnSvg(item.kind) + '</span>';
-  textEl.style.animation = 'none'; iconEl.firstChild.style.animation = 'none'; void textEl.offsetWidth;
-  textEl.style.animation = ''; iconEl.firstChild.style.animation = '';
-  state.transient.timer = setTimeout(() => { state.transient.timer = null; _turnRunTransient(state); }, TURN_ANIMATION_MS);
+// depth 0 is the front. -1 is the pre-entry pose; anything past the last
+// visible step is gone.
+function _turnStyleCue(el, depth) {
+  const scale = depth < 0 ? 0.72 : Math.max(0.4, 1 - depth * 0.15);
+  const lift = depth < 0 ? 10 : -depth * 7;
+  const blur = depth < 0 ? 9 : depth * 2.2;
+  el.style.transform = 'translate(-50%, calc(-50% + ' + lift + 'px)) scale(' + scale + ')';
+  el.style.opacity = depth < 0 ? '0' : String(Math.max(0, 1 - depth * 0.34));
+  el.style.filter = 'blur(' + blur + 'px)';
+  el.style.zIndex = String(20 - Math.max(0, depth));
+}
+
+function _turnRestackCues(state) {
+  // Snapshot: retiring splices the live array, and depth is read off the
+  // order as it was when the pass started.
+  const cues = state.transient.cues.slice();
+  for (let i = 0; i < cues.length; i++) {
+    const depth = cues.length - 1 - i;
+    if (depth >= TURN_TRANSIENT_MAX_STACK) { _turnRetireCue(state, cues[i]); continue; }
+    if (!cues[i].enter) _turnStyleCue(cues[i].el, depth);
+  }
+}
+
+function _turnRetireCue(state, entry) {
+  if (!entry) return;
+  const index = state.transient.cues.indexOf(entry);
+  if (index >= 0) state.transient.cues.splice(index, 1);
+  if (entry.timer) clearTimeout(entry.timer);
+  if (entry.enter) clearTimeout(entry.enter);
+  entry.timer = null; entry.enter = null;
+  if (entry.el && entry.el.parentNode) entry.el.parentNode.removeChild(entry.el);
 }
 
 function _turnStopTransient(state) {
-  if (state.transient.timer) clearTimeout(state.transient.timer);
   if (state.transient.coalesceTimer) clearTimeout(state.transient.coalesceTimer);
-  state.transient.timer = null; state.transient.coalesceTimer = null; state.transient.current = null; state.transient.queue = [];
+  state.transient.coalesceTimer = null;
   state.transient.pendingText = ''; state.transient.pendingKind = '';
-  if (state.ephemeralEl) {
-    const textEl = state.ephemeralEl.querySelector('.simple-turn-ephemeral-text');
-    const iconEl = state.ephemeralEl.querySelector('.simple-turn-ephemeral-icons');
-    if (textEl) textEl.textContent = ''; if (iconEl) iconEl.textContent = '';
-  }
+  while (state.transient.cues.length) _turnRetireCue(state, state.transient.cues[0]);
 }
 
 function turnViewFinalize(data) {

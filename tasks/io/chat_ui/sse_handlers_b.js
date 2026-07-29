@@ -602,7 +602,8 @@ function _sseWireB() {
     if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
     if (data.duration_ms) extra.duration_ms = data.duration_ms;
     extra.ts = data.ts;
-    addMsg('assistant', data.response || '', extra);
+    const rEl = addMsg('assistant', data.response || '', extra);
+    if (typeof turnViewIngest === 'function') turnViewIngest('assistant', data, rEl);
     scrollBottom();
   });
 

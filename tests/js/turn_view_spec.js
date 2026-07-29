@@ -67,9 +67,11 @@ function env(mode) {
     },
     block() { return messages.querySelector('.simple-turn-block'); },
     ephemeralText() {
-      const el = messages.querySelector('.simple-turn-ephemeral-text');
-      return el ? el.textContent : null;
+      const els = messages.querySelectorAll('.simple-turn-ephemeral-text');
+      const last = els[els.length - 1];
+      return last ? last.textContent : null;
     },
+    cues() { return messages.querySelectorAll('.simple-turn-cue').length; },
   };
   ctx.turnViewSetMode(mode);
   return api;
@@ -331,9 +333,50 @@ test('streamed tokens coalesce into a single cue', () => {
   for (let i = 0; i < 50; i++) {
     e.ctx.turnViewIngest('token', { turn_id: 'u1', msg_id: 'a1', content: 'tok' + i }, stream);
   }
-  eq(e.ephemeralText(), '', 'no cue is rendered before the coalescing window closes');
+  eq(e.cues(), 0, 'no cue is rendered before the coalescing window closes');
   e.clock.tick(300);
-  eq(e.ephemeralText(), 'tok49', 'exactly one cue, carrying the newest excerpt');
+  eq(e.cues(), 1, 'exactly one cue for the window');
+  eq(e.ephemeralText(), 'tok49', 'carrying the newest excerpt');
+});
+
+// ── The cue stack: entries coexist, newest in front, oldest pushed off ──
+
+test('cues stack instead of taking turns, and the stack is bounded', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  for (let i = 0; i < 3; i++) {
+    e.ctx.turnViewIngest('tool_call', { msg_id: 'c' + i, tc_id: 'tc-' + i }, e.row('c' + i));
+  }
+  eq(e.cues(), 3, 'three cues are on screen at once');
+  for (let i = 3; i < 9; i++) {
+    e.ctx.turnViewIngest('tool_call', { msg_id: 'c' + i, tc_id: 'tc-' + i }, e.row('c' + i));
+  }
+  eq(e.cues(), 4, 'the stack is capped, the oldest fall off the back');
+});
+
+test('each cue retires on its own timer', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c1', tc_id: 'tc-1' }, e.row('c1'));
+  e.clock.tick(1000);
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c2', tc_id: 'tc-2' }, e.row('c2'));
+  eq(e.cues(), 2, 'both are up');
+  e.clock.tick(1700);   // first cue past 2600ms, second not yet
+  eq(e.cues(), 1, 'the older one left on its own, the newer one stayed');
+  e.clock.tick(1000);
+  eq(e.cues(), 0, 'and then the newer one, at its own time');
+});
+
+test('a finished turn drops every cue it had on screen', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c1', tc_id: 'tc-1' }, e.row('c1'));
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c2', tc_id: 'tc-2' }, e.row('c2'));
+  eq(e.cues(), 2);
+  const answer = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, answer);
+  e.ctx.turnViewFinalize({ msg_id: 'a1', final_msg_id: 'a1' });
+  eq(e.cues(), 0, 'nothing keeps animating under a completed block');
 });
 
 test('discrete tool cues are not delayed by coalescing', () => {
@@ -425,6 +468,25 @@ test('failure finalizes the block without inventing an answer', () => {
   eq(e.ctx.turnViewFail('u1', 'cancelled'), true);
   assert(block.querySelector('.simple-turn-status').classList.contains('cancelled'));
   eq(block.nextSibling, null, 'no answer is manufactured on cancellation');
+});
+
+// The ephemeral surface is laid out by CSS only while .turn-working is set.
+// A reloaded transcript is nothing but finished turns, so a block that keeps
+// the class after a terminal event gives every one of them an empty band.
+test('the working class tracks the status and is dropped on every terminal path', () => {
+  for (const finish of [
+    e => e.ctx.turnViewFinalize({ msg_id: 'a1', final_msg_id: 'a1' }),
+    e => e.ctx.turnViewFail('u1', 'cancelled'),
+    e => e.ctx.turnViewFail('u1', 'error', 'boom'),
+  ]) {
+    const e = env('simplified');
+    startTurn(e, 'u1');
+    e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, e.row('a1'));
+    const block = e.block();
+    assert(block.classList.contains('turn-working'), 'a running turn animates');
+    eq(finish(e), true);
+    assert(!block.classList.contains('turn-working'), 'a finished turn does not');
+  }
 });
 
 if (failures.length) {

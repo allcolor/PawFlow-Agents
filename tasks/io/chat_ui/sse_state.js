@@ -110,6 +110,12 @@ function _queueUnmatchedToolResult(tcId, data) {
       msg_id: pending.data.msg_id || '',
       tc_id: tcId,
     });
+    // Same hand-off as the standalone fallback in the tool_result handler: a
+    // result whose call never showed up is still part of the open turn, and
+    // the simplified view is the only thing that knows where that is. Without
+    // this the row is left at top level between the turn block and the next
+    // user message -- the one shape the view exists to prevent.
+    if (typeof turnViewIngest === 'function') turnViewIngest('tool_result', pending.data, row);
     if (pending.data.task_id && row) {
       const tb = _getTaskBlock(pending.data.task_id, pending.data.task_iteration, pending.data.agent_name || '');
       if (tb) tb.content.appendChild(row);

@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The collapsed activity cues stack instead of taking turns.** One cue at a
+  time, each waiting 1.5 s for the one before it, hid most of what the agent was
+  doing and read as a slideshow. Cues now share one spot and stack in depth: the
+  newest zooms in at the front, sharp, while the ones behind it are pushed back
+  a step — smaller, dimmer, motion-blurred — and drop off the back of the stack.
+  Each leaves at its own moment. A cue's pose is a function of its depth alone,
+  so it is recomputed on arrival, and the surface is a fixed-height clipped
+  stage: a burst of activity never shifts the layout.
+
+### Fixed
+
+- **Tool results escaped the turn block.** A result whose `tool_call` row is
+  not in the DOM is queued for 750 ms and then rendered standalone. That
+  fallback in `sse_state.js` was the one row-creating path never wired to the
+  turn view, so every unmatched result — backgrounded MCP calls, results
+  arriving after a view switch reload — was dropped at top level between the
+  block and the next user message. Read off the live DOM: the block held 54
+  `tool_call` rows and zero `tool_result` rows while three sat outside it.
+- **A user message from another client was filed inside the previous turn.**
+  The live `new_message` handler ingested every role, so a user message that
+  this tab did not itself submit became turn content instead of a boundary.
+  It now opens a turn, exactly like the local submit path.
+- Standalone assistant narration — a delegate reply with no delegate frame, an
+  agent response — is handed to the block instead of being left at top level.
+- **The simplified turn block rendered as a bare bar and swallowed its own
+  header.** The message column is a scrolling flex column, so its items shrink
+  once the transcript is taller than the viewport. Every other `.msg` is
+  protected by the automatic minimum size — which, per the flexbox spec, does
+  not apply to a flex item whose overflow is not visible. The activity block is
+  the one `.msg` with `overflow: hidden`, so on any conversation long enough to
+  scroll it collapsed to the 22 pixels of its own padding: no readable header,
+  no animation, and a two pixel sliver as the only clickable target. Measured
+  in headless Chromium against the real stylesheet and the real controller:
+  22px before, 100px while working and 46px once completed after. The block now
+  declares `flex: none`, and drops the `.msg` padding it never wanted — as
+  `.msg.simple-turn-block`, because the `.msg` padding is declared further down
+  the sheet and wins on source order at equal specificity.
+- **The tab icons filled their own tabs.** `_turnSvg` emits a `viewBox` and no
+  dimensions, so each inline SVG scaled to the full width of its grid column —
+  four ~180px pictograms with their labels pushed out of the block. They are
+  sized at 16px and the tab lays its icon and label out on one row.
+- A completed turn no longer reserves the ephemeral animation band. It is laid
+  out only while the block carries `turn-working`, so a reloaded transcript —
+  which is nothing but finished turns — shows headers instead of empty strips.
+
 ## [1.0.0-beta.47] — 2026-07-29
 
 ### Fixed

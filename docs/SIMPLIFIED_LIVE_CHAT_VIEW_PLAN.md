@@ -523,6 +523,27 @@ An event without a valid turn id is left to the existing renderer. The simplifie
 controller must never guess by currently active agent in the live path; multiple
 agents can run concurrently.
 
+### Every row creator hands its row over
+
+Top level holds three kinds of node only: a user message, its turn block, and
+the terminal answer. Any code path that creates a transcript row must therefore
+call `turnViewRegisterUser` (user messages, which are boundaries) or
+`turnViewIngest` (everything else) before it returns. A path that renders a row
+and returns without doing so leaves it stranded at top level — it looks like a
+rendering bug in the block, but it is a missing hand-off in the creator.
+
+The non-obvious creators, each found stranding rows in a browser:
+
+| Creator | Kind |
+|---|---|
+| `sse_state.js` `_queueUnmatchedToolResult` 750 ms fallback | a result whose `tool_call` row never arrived |
+| `sse_handlers_a.js` `new_message` with `role === 'user'` | a user message this tab did not submit — a boundary, not content |
+| `sse_handlers_a.js` delegate fallback, `sse_handlers_b.js` agent response | assistant narration with no delegate or task frame |
+
+Rows that own an enclosing frame — task blocks, delegate blocks — stay in that
+frame, and system/error notices stay top level by design (see Actionable and
+exceptional UI).
+
 ### Live tabs
 
 The tabs update for the full duration of the live turn:
@@ -621,26 +642,37 @@ content through the normal `msg_id` dedupe path.
 Animating every token would create an unbounded backlog and show stale activity
 after the turn completed. Use one scheduler per turn with bounded coalescing.
 
-Recommended constants for V1:
+Cues do not take turns. They share one spot and stack in depth: the newest zooms
+in at the front, sharp and opaque, and every cue already on screen is pushed back
+a step — smaller, dimmer, blurrier — until it falls off the back of the stack.
+Several cues are visible at once and each one leaves at its own moment, either
+because newer arrivals displaced it or because its own lifetime ran out.
+
+A cue's pose is a pure function of its current depth, so depth is recomputed on
+every arrival and never accumulated. Motion is transition-driven rather than
+keyframed: a keyframe would have to guess when the next cue arrives, and the
+effect being asked for is precisely that the arrival moves everything behind it.
+
+Constants:
 
 ```js
 const TURN_TEXT_COALESCE_MS = 300;
-const TURN_ANIMATION_MS = 1500;
+const TURN_CUE_LIFETIME_MS = 2600;
 const TURN_TRANSIENT_MAX_CHARS = 180;
-const TURN_TRANSIENT_MAX_QUEUE = 3;
-const TURN_ICON_POP_MS = 720;
-const TURN_ICON_MAX_PARTICLES = 3;
+const TURN_TRANSIENT_MAX_STACK = 4;
 ```
 
 Rules:
 
-- Merge text/thinking deltas received within the coalescing window.
-- Keep at most one current and three pending semantic items.
-- Replace an older pending text item of the same kind instead of appending.
+- Merge text/thinking deltas received within the coalescing window; one window
+  produces one cue, and the next window produces the next cue in front of it.
+- Keep at most `TURN_TRANSIENT_MAX_STACK` cues alive; the oldest retires early
+  rather than growing the surface.
+- The surface is a fixed-height clipped stage, so a burst never shifts layout.
 - Tool-call activity uses the fixed translated label `Calling tool...`.
 - Do not animate raw tool arguments or output.
-- Treat `{kind, text, iconKey}` as one queue item. Coalescing or replacing text
-  necessarily coalesces or replaces its icons too.
+- Treat `{kind, text, iconKey}` as one cue. A cue owns its icon: they enter,
+  recede, and are removed together, never on separate schedules.
 - On terminal completion, cancel timers, clear pending items, and transition the
   status immediately.
 - While expanded, do not run hidden animations. New events still update tabs;

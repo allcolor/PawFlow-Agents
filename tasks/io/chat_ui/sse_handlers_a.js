@@ -16,8 +16,16 @@ function _sseWireA() {
         task_id: data.task_id || '', task_iteration: data.task_iteration,
       });
       const el = addMsg(data.role, data.content, messageExtra);
-      const ownedByTurn = typeof turnViewIngest === 'function'
-        && turnViewIngest(data.role, data, el);
+      // A user message is a boundary, never turn content. The local submit
+      // path registers the row it renders itself; this is the same message
+      // arriving from another client or another tab, and ingesting it would
+      // file the question inside the answer of the turn before it.
+      let ownedByTurn = false;
+      if (data.role === 'user') {
+        if (typeof turnViewRegisterUser === 'function') turnViewRegisterUser(data, el);
+      } else if (typeof turnViewIngest === 'function') {
+        ownedByTurn = turnViewIngest(data.role, data, el);
+      }
       if (typeof conversationTTSOnMessage === 'function') {
         try { conversationTTSOnMessage(data); } catch (_ttsErr) {}
       }
@@ -494,7 +502,10 @@ function _sseWireA() {
         extra.tokens_out = data.tokens_out || 0;
         extra.duration_ms = (data.duration_s || 0) * 1000;
         extra.ts = data.ts;
-        addMsg('assistant', data.response, extra);
+        const dEl = addMsg('assistant', data.response, extra);
+        // Narration produced during the turn, with no delegate frame to hold
+        // it: it belongs in the block like every other intermediate message.
+        if (typeof turnViewIngest === 'function') turnViewIngest('assistant', data, dEl);
       } else if (data.error) {
         addMsg('agent-result', t('errorWithMessage', { error: data.error }), agent);
       }

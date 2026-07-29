@@ -153,9 +153,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .view-menu-item.active .view-menu-radio { border-color: var(--pf-accent); }
 .view-menu-item.active .view-menu-radio::after { content: ''; position: absolute; inset: 3px;
                                                   border-radius: 50%; background: var(--pf-accent); }
-.simple-turn-block { position: relative; margin: 8px 0; border: 1px solid var(--pf-border);
+/* flex: none is load-bearing. .messages is a scrolling column flex container,
+   so its items shrink once the transcript overflows. Every other .msg is saved
+   by the automatic minimum size -- which does NOT apply to a flex item whose
+   overflow is not visible. This block is the one .msg with overflow: hidden,
+   so without it the header, the ephemeral cue and the tabs are squeezed to
+   nothing: the block renders as a 22px bar of its own padding, leaving a two
+   pixel sliver of the header as the only place a click can land.
+   padding: 0 for the same reason .technical-group has none: the header, tabs
+   and panels bring their own and must reach the rounded edges -- and it is
+   selected as .msg.simple-turn-block because the .msg padding is declared
+   further down and would otherwise win on source order. */
+.msg.simple-turn-block { position: relative; margin: 8px 0; border: 1px solid var(--pf-border);
                      border-radius: 12px; background: color-mix(in srgb, var(--pf-panel) 90%, transparent);
-                     overflow: hidden; }
+                     overflow: hidden; flex: none; padding: 0; }
 .simple-turn-header { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 8px;
                       padding: 8px 12px; border: 0; color: var(--pf-text); background: transparent;
                       cursor: pointer; text-align: left; }
@@ -168,19 +179,39 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .simple-turn-status.error, .simple-turn-status.cancelled, .simple-turn-status.stopped { color: var(--pf-danger); }
 .simple-turn-chevron { transition: transform .16s ease; }
 .simple-turn-block.expanded .simple-turn-chevron { transform: rotate(90deg); }
-.simple-turn-ephemeral { min-height: 54px; padding: 8px 14px 14px; display: flex; align-items: center;
-                         justify-content: center; gap: 10px; color: var(--pf-muted); overflow: hidden; }
-.simple-turn-block.expanded .simple-turn-ephemeral { display: none; }
-.simple-turn-ephemeral-text { max-width: min(90%, 720px); overflow: hidden; text-overflow: ellipsis;
-                              white-space: nowrap; animation: simpleTurnCue 1.5s ease both; }
-.simple-turn-ephemeral-icons { width: 28px; height: 28px; display: grid; place-items: center; pointer-events: none; }
-.simple-turn-ephemeral-icon { width: 24px; height: 24px; color: var(--pf-accent);
-                              animation: simpleTurnIcon .72s ease both; }
+/* The cues occupy one spot and stack in depth, so the surface is a stage:
+   fixed height, positioned, clipped. Motion is transition-driven, not keyframed
+   -- a cue's pose is a function of its current depth, and depth changes when
+   another cue arrives, which is exactly what the reader should see. */
+.simple-turn-ephemeral { position: relative; height: 76px; padding: 6px 14px 12px;
+                         color: var(--pf-muted); overflow: hidden; }
+.simple-turn-cue { position: absolute; left: 50%; top: 50%; display: flex; align-items: center;
+                   gap: 10px; max-width: min(88%, 640px); pointer-events: none;
+                   transform: translate(-50%, -50%); transform-origin: 50% 50%;
+                   transition: transform .42s cubic-bezier(.22, .61, .36, 1),
+                               opacity .42s ease, filter .42s ease;
+                   will-change: transform, opacity, filter; }
+.simple-turn-block.expanded .simple-turn-ephemeral,
+.simple-turn-block:not(.turn-working) .simple-turn-ephemeral { display: none; }
+.simple-turn-ephemeral-text { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                              white-space: nowrap; }
+.simple-turn-ephemeral-icons { width: 26px; height: 26px; display: grid; place-items: center;
+                               flex: none; pointer-events: none; }
+.simple-turn-ephemeral-icon { width: 22px; height: 22px; color: var(--pf-accent);
+                              animation: simpleTurnIcon .6s ease both; }
+.simple-turn-ephemeral-icon svg { width: 100%; height: 100%; display: block; }
 .simple-turn-details { display: none; border-top: 1px solid var(--pf-border); }
 .simple-turn-block.expanded .simple-turn-details { display: block; }
 .simple-turn-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 6px; gap: 4px; }
+/* The inline SVGs carry a viewBox and no width/height, so without an explicit
+   size they scale to the whole grid column and swallow their own label. */
 .simple-turn-tab { min-height: 40px; border: 0; border-radius: 7px; background: transparent;
-                   color: var(--pf-muted); cursor: pointer; position: relative; }
+                   color: var(--pf-muted); cursor: pointer; position: relative;
+                   display: flex; align-items: center; justify-content: center; gap: 6px;
+                   font-size: 12px; padding: 0 8px; min-width: 0; }
+.simple-turn-tab svg { width: 16px; height: 16px; flex: none; }
+.simple-turn-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.simple-turn-ephemeral-icon svg { width: 100%; height: 100%; display: block; }
 .simple-turn-tab[aria-selected="true"] { color: var(--pf-text); background: var(--pf-border); }
 .simple-turn-tab.has-unread::after { content: ''; position: absolute; top: 6px; right: 8px; width: 6px;
                                      height: 6px; border-radius: 50%; background: var(--pf-accent); }
@@ -196,13 +227,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .simple-turn-artifact-meta span { color: var(--pf-muted); }
 .simple-turn-artifact-open, .simple-turn-artifact-link { border: 0; background: transparent; color: var(--pf-accent); cursor: pointer; }
 .simple-turn-artifact-link { display: block; margin: 5px 0 0 20px; font-size: 11px; }
-@keyframes simpleTurnCue { 0% { opacity: 0; transform: scale(.94); } 20% { opacity: 1; transform: scale(1.04); }
-                           55% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(.98); } }
+/* A pop that settles and stays: the cue's own fade is driven by its depth
+   transition, so an icon that keyframed itself back to opacity 0 would go
+   missing while its text was still at the front of the stack. */
 @keyframes simpleTurnIcon { 0% { opacity: 0; transform: scale(.55) rotate(-8deg); }
-                            35% { opacity: 1; transform: scale(1.1) rotate(3deg); }
-                            70% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(.95); } }
+                            55% { opacity: 1; transform: scale(1.12) rotate(3deg); }
+                            100% { opacity: 1; transform: scale(1) rotate(0deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .simple-turn-ephemeral-text, .simple-turn-ephemeral-icon, .simple-turn-chevron { animation: none; transition: none; }
+  .simple-turn-cue, .simple-turn-ephemeral-icon, .simple-turn-chevron { animation: none; transition: none; }
 }
 .header .user-info { font-size: 12px; color: #8888aa; }
 /* ── Mobile layout (narrow viewports) ──

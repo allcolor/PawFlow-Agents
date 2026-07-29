@@ -78,7 +78,8 @@ class _GeminiStreamMixin:
         def _prompt_text_for_mode(mode: str) -> str:
             if str(mode or "").startswith("resume"):
                 return self._gemini_acp_resume_text(messages)
-            return self._gemini_acp_full_initial_text(messages, workdir, container_dir)
+            return self._gemini_acp_full_initial_text(
+                messages, workdir, container_dir, conv_id, agent_name)
 
         store = None
         session_id = ""

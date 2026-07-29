@@ -688,11 +688,15 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                             from core.conversation_store import ConversationStore
                             from tasks.ai.context_usage import (
                                 compute_context_usage, persist_context_usage,
-                                usage_event_payload)
+                                reset_cli_context_usage, usage_event_payload)
                             _store = ConversationStore.instance()
-                            _usage = compute_context_usage(
-                                conv_id, _agent, store=_store,
-                                source="compact_done")
+                            _usage = reset_cli_context_usage(
+                                conv_id, _agent, user_id=_resume_user_id,
+                                store=_store, source="compact_done")
+                            if _usage is None:
+                                _usage = compute_context_usage(
+                                    conv_id, _agent, store=_store,
+                                    source="compact_done")
                             persist_context_usage(
                                 conv_id, _agent, _usage, store=_store)
                             bus.publish_event(

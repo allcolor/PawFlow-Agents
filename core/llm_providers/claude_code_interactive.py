@@ -150,6 +150,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 workdir=workdir,
                 provider_workdir=container_workdir,
                 rel_path=".pawflow_cci/initial_context.md",
+                conversation_id=conversation_id,
+                agent_name=agent_name,
             )
             parts.append(prompt)
         if image_lines:
@@ -161,7 +163,11 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             current = self._cci_live_text(messages) or user_text
             if current:
                 parts.append(current)
-        return "\n\n".join(parts).strip() + "\n"
+        rendered = "\n\n".join(parts).strip() + "\n"
+        if initial_context:
+            self._remember_cli_bootstrap_prompt(
+                rendered, messages, conversation_id, agent_name)
+        return rendered
 
     def _cci_catchup_context(self, conversation_id: str, agent_name: str = "") -> str:
         agent = agent_name or getattr(self, "_cci_active_agent_name", "") or getattr(self, "_agent_name", "") or ""

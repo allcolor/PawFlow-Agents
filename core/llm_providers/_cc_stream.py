@@ -137,6 +137,8 @@ class _CCStreamMixin:
                 user_text=user_text,
                 workdir=st.workdir,
                 provider_workdir=st._provider_workdir,
+                conversation_id=st.conv_id,
+                agent_name=st.agent_name,
             )
         logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d session=%s",
                      len(system_prompt), len(user_text), len(image_blocks), len(messages),

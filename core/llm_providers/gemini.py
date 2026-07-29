@@ -533,7 +533,8 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
         )
 
     def _gemini_acp_full_initial_text(self, messages, workdir: str,
-                                      container_dir: str) -> str:
+                                      container_dir: str, conversation_id: str = "",
+                                      agent_name: str = "") -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         system_prompt = (
             self._GEMINI_PAWFLOW_PREAMBLE
@@ -545,6 +546,8 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
             user_text=user_text,
             workdir=workdir,
             provider_workdir=container_dir,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
         )
         return prompt
 

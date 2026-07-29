@@ -50,11 +50,13 @@ session. Idle sliding-window cleanup only kills the live Docker runtime; it does
 not clear the logical provider session, so providers that can resume may do so on
 the next turn.
 
-For `claude-code-interactive`, the live context gauge uses provider-observed
-Anthropic `usage` from the MITM SSE stream, including cache creation/read input
-tokens. PawFlow does not recompute that gauge from its serialized context during
-CCI heartbeats, because Claude Code's actual prompt includes provider-managed
-state that can differ substantially from the stored PawFlow message list.
+CLI gauges follow the context actually present in the provider session. A compact
+or context edit invalidates that session and resets the gauge to zero. On the next
+cold turn, PawFlow first counts only the short injected bootstrap prompt. When the
+CLI reads `initial_context.md`, the native tool result becomes part of the gauge;
+the same serialized PawFlow messages are not counted a second time. This lifecycle
+applies to Claude Code, Claude Code interactive, Codex app-server, Antigravity, and
+Gemini CLI. Direct API-provider gauges continue to count their request messages.
 
 ## Agent Configuration
 

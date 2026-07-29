@@ -133,6 +133,8 @@ class TestSerializeMessages(unittest.TestCase):
                 user_text=user_text,
                 workdir=tmp,
                 provider_workdir="/cc_sessions/u/c/a",
+                conversation_id="test_conv",
+                agent_name="assistant",
             )
             with open(f"{tmp}/.pawflow_cli/initial_context.md", encoding="utf-8") as fh:
                 body = fh.read()
@@ -154,6 +156,11 @@ class TestSerializeMessages(unittest.TestCase):
         self.assertEqual(body.count('<message role="user">\nlatest request\n</message>'), 1)
         self.assertIn("## Bootstrap Contract", body)
         self.assertGreater(body.index("## Latest User Request"), body.index("## Bootstrap Contract"))
+        self.assertGreater(
+            self.client._cli_bootstrap_tokens_by_stream[
+                ("test_conv", "assistant")],
+            0,
+        )
 
     def test_cli_initial_context_keeps_compact_tail_without_current_user_marker(self):
         msgs = [

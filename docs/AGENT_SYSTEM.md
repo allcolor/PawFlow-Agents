@@ -270,7 +270,7 @@ Independent contexts, such as task and isolated delegate sub-conversations, do n
 
 ### Context-usage gauge (per-agent)
 
-`tasks.ai.context_usage.compute_context_usage(conversation_id, agent_name, user_id=...)` is the single server-side calculation point for the gauge. It resolves the agent's LLM service, computes the effective context window, loads the current PawFlow agent context (live in-memory context when the agent is running, otherwise the persisted private context or personalized transcript), and returns `used / max / pct`.
+`tasks.ai.context_usage.compute_context_usage(conversation_id, agent_name, user_id=...)` is the single server-side calculation point for the gauge. It resolves the agent's LLM service, computes the effective context window, and returns `used / max / pct`. Direct API providers count the PawFlow messages sent in the request. Stateful CLI providers count their provider-side phase instead: zero after session invalidation, only the short injected bootstrap prompt before `initial_context.md` is read, then the observed native read result and subsequent deltas. The serialized file body is never counted before the CLI actually reads it.
 
 Gauge updates are emitted as `message_meta` SSE events carrying `conversation_id` and `agent_name`, so the chat UI updates only the matching conversation and agent surfaces. `compact_progress`, `list_active`, and `list_resources` do not compute alternate live gauge values.
 

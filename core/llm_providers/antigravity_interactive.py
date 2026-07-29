@@ -499,6 +499,8 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
                 workdir=workdir,
                 provider_workdir=container_workdir,
                 rel_path=".pawflow_ag/initial_context.md",
+                conversation_id=conversation_id,
+                agent_name=agent_name,
             ))
         if image_lines:
             parts.append("Attachments:\n" + "\n".join(image_lines))
@@ -509,7 +511,11 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
             current = self._agi_live_text(messages) or user_text
             if current:
                 parts.append(current)
-        return "\n\n".join(parts).strip() + "\n"
+        rendered = "\n\n".join(parts).strip() + "\n"
+        if initial_context:
+            self._remember_cli_bootstrap_prompt(
+                rendered, messages, conversation_id, agent_name)
+        return rendered
 
     def _agi_catchup_context(self, conversation_id: str, agent_name: str = "") -> str:
         agent = agent_name or getattr(self, "_agi_active_agent_name", "") or getattr(self, "_agent_name", "") or ""

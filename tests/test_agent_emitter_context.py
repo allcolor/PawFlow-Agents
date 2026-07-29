@@ -77,10 +77,9 @@ class TestOnDoneContextFields(unittest.TestCase):
         self.assertNotIn("context_max", data)
         self.assertNotIn("context_pct", data)
 
-    def test_cci_gauge_recomputes_pawflow_context_like_other_providers(self):
-        # The gauge is the size of the agent's PawFlow context, computed
-        # identically for every provider. claude-code-interactive must NOT
-        # be special-cased: _context_usage_payload recomputes it too.
+    def test_cci_gauge_uses_authoritative_context_phase_calculation(self):
+        # The shared calculation owns provider-phase accounting; the emitter
+        # must not substitute raw provider usage or a second estimate.
         em, _bus = self._make_cci_emitter()
         with patch("tasks.ai.context_usage.compute_context_usage") as compute:
             compute.return_value = {

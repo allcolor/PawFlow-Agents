@@ -224,16 +224,21 @@ class _ALCLlmTurnMixin:
                     st._gauge_t0 = time.monotonic()
                     from core.conversation_event_bus import ConversationEventBus
                     from tasks.ai.context_usage import (
-                        context_usage_for_messages, usage_event_payload)
+                        context_usage_for_messages, reset_cli_context_usage,
+                        usage_event_payload)
                     st._svc_cfg = dict(getattr(st.ctx.get("resolved_svc"), "config", None) or {})
                     if int(st.ctx.get("max_context_size") or 0) > 0:
                         st._svc_cfg["max_context_size"] = int(st.ctx.get("max_context_size") or 0)
-                    st._post_usage = context_usage_for_messages(
-                        st.conversation_id, st._agent_name, st._compacted_messages,
-                        svc_cfg=st._svc_cfg,
-                        real_window=int(st.ctx.get("real_context_size") or 0),
-                        provider=str(st.ctx.get("active_llm_provider", "") or getattr(st.client, "provider", "") or ""),
+                    st._post_usage = reset_cli_context_usage(
+                        st.conversation_id, st._agent_name, user_id=st.user_id,
                         source="compact_post")
+                    if st._post_usage is None:
+                        st._post_usage = context_usage_for_messages(
+                            st.conversation_id, st._agent_name, st._compacted_messages,
+                            svc_cfg=st._svc_cfg,
+                            real_window=int(st.ctx.get("real_context_size") or 0),
+                            provider=str(st.ctx.get("active_llm_provider", "") or getattr(st.client, "provider", "") or ""),
+                            source="compact_post")
                     st.ctx["_context_usage_cache"] = st._post_usage
                     ConversationEventBus.instance().publish_event(
                         st.conversation_id, "message_meta",

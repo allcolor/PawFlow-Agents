@@ -8,13 +8,13 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 
-# Fixed token allowance for the invisible context a Claude Code CLI
-# session always carries on top of the PawFlow transcript: the CLI's
-# own system prompt, tool definitions and harness scaffolding. PawFlow
-# never sees these tokens but the provider counts them, so the gauge
-# adds them as a flat offset. Applied only to claude-code providers.
-_CLI_INVISIBLE_OVERHEAD_TOKENS = 30000
-_CLI_CLAUDE_PROVIDERS = ("claude-code", "claude-code-interactive")
+_CLI_CONTEXT_PROVIDERS = (
+    "claude-code",
+    "claude-code-interactive",
+    "antigravity-interactive",
+    "codex-app-server",
+    "gemini",
+)
 _USAGE_CACHE_LOCK = threading.RLock()
 _USAGE_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
@@ -124,13 +124,16 @@ def _context_messages(conversation_id: str, agent_name: str, user_id: str,
     if active_ctx:
         live_messages = active_ctx.get("messages") or []
         if active_ctx.get("_is_cli_provider"):
-            # CLI providers manage their own context; active_ctx["messages"]
-            # only holds the transient delta (catch-up + current prompt)
-            # and collapses to near-zero right after a tmux/container
-            # restart. The gauge must track the *stored* PawFlow agent
-            # context, which changes only on compaction or a context
-            # edit — never on a session restart. Unseen live messages are
-            # still merged in so an in-flight turn is reflected.
+            if (not active_ctx.get("_cli_has_session")
+                    and not active_ctx.get("_cli_bootstrap_read_seen")):
+                # The PawFlow context is externalized in initial_context.md.
+                # Before the provider reads that file, none of those stored
+                # messages belongs to the new CLI context window.
+                return [], None, False
+            # Once the bootstrap has been read, merge persisted native blocks
+            # with the in-flight delta. context_usage_cache uses the marked
+            # read boundary to exclude the externalized PawFlow representation
+            # and count the native tool result exactly once.
             stored = list(_stored_context_messages(
                 conversation_id, agent_name, store) or [])
             seen = {_message_identity(msg) for msg in stored}
@@ -145,15 +148,33 @@ def _context_messages(conversation_id: str, agent_name: str, user_id: str,
     return _stored_context_messages(conversation_id, agent_name, store), None, False
 
 
+def _cli_bootstrap_tokens(active_ctx: Optional[Dict[str, Any]],
+                          conversation_id: str, agent_name: str) -> int:
+    if not active_ctx:
+        return 0
+    client = active_ctx.get("client")
+    token_counts = getattr(client, "_cli_bootstrap_tokens_by_stream", None)
+    if not isinstance(token_counts, dict):
+        return 0
+    return max(0, int(token_counts.get((conversation_id, agent_name), 0) or 0))
+
+
 def context_usage_for_messages(conversation_id: str, agent_name: str,
                                messages: Any, *, svc_cfg: Optional[Dict[str, Any]] = None,
                                real_window: int = 0, provider: str = "",
                                source: str = "context_usage",
-                               cache: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                               cache: Optional[Dict[str, Any]] = None,
+                               bootstrap_prompt_tokens: int = 0,
+                               cli_context_state: str = "") -> Dict[str, Any]:
     """Build a context gauge from an already-loaded message list."""
     svc_cfg = dict(svc_cfg or {})
-    overhead = (_CLI_INVISIBLE_OVERHEAD_TOKENS
-                if str(provider) in _CLI_CLAUDE_PROVIDERS else 0)
+    from core.token_counter import resolve_token_multiplier
+    token_multiplier = resolve_token_multiplier(svc_cfg)
+    overhead = max(0, int(bootstrap_prompt_tokens or 0))
+    cache_params = cache.get("cache_params", {}) if isinstance(cache, dict) else {}
+    if (overhead == 0 and str(provider) in _CLI_CONTEXT_PROVIDERS
+            and cache_params.get("accounting_version") == 3):
+        overhead = max(0, int(cache.get("overhead_tokens", 0) or 0))
     configured = int(svc_cfg.get("max_context_size", 0) or 0)
     from core.context_window import effective_context_window
     max_ctx = effective_context_window(configured, int(real_window or 0), fallback=0)
@@ -169,11 +190,10 @@ def context_usage_for_messages(conversation_id: str, agent_name: str,
             "message_count": 0,
             "cache_mode": "none",
         }
-    from core.token_counter import resolve_token_multiplier
     from tasks.ai.context_usage_cache import context_usage_from_cache
     usage = context_usage_from_cache(
         messages or [], max_ctx, cache, source=source,
-        token_multiplier=resolve_token_multiplier(svc_cfg),
+        token_multiplier=token_multiplier,
         overhead=overhead)
     usage.update({
         "conversation_id": conversation_id,
@@ -182,6 +202,8 @@ def context_usage_for_messages(conversation_id: str, agent_name: str,
         "max": int(usage.get("max", 0) or 0),
         "pct": float(usage.get("pct", 0.0) or 0.0),
     })
+    if cli_context_state:
+        usage["cli_context_state"] = cli_context_state
     return usage
 
 
@@ -190,7 +212,7 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
                           owner: Any = None, source: str = "context_usage") -> Dict[str, Any]:
     """Compute the authoritative gauge for one PawFlow agent context.
 
-    used = size(active PawFlow agent context)
+    used = size(active provider context representation)
     max = effective_context_window(configured max_context_size, provider runtime window)
     pct = used / max
     """
@@ -205,6 +227,20 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     active_ctx = _active_context(conversation_id, agent_name)
     svc_cfg, real_window, provider = _service_config(
         conversation_id, agent_name, user_id, active_ctx)
+    is_cli = bool(
+        (active_ctx and active_ctx.get("_is_cli_provider"))
+        or provider in _CLI_CONTEXT_PROVIDERS)
+    bootstrap_prompt_tokens = (
+        _cli_bootstrap_tokens(active_ctx, conversation_id, agent_name)
+        if is_cli else 0)
+    cli_context_state = ""
+    if is_cli:
+        if (active_ctx and not active_ctx.get("_cli_has_session")
+                and not active_ctx.get("_cli_bootstrap_read_seen")):
+            cli_context_state = (
+                "bootstrap" if bootstrap_prompt_tokens > 0 else "cold")
+        else:
+            cli_context_state = "active"
     configured = int(svc_cfg.get("max_context_size", 0) or 0)
     if active_ctx and int(active_ctx.get("max_context_size") or 0) > 0:
         configured = int(active_ctx.get("max_context_size") or 0)
@@ -236,6 +272,16 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
         except Exception:
             logging.getLogger(__name__).debug(
                 "context usage snapshot lookup failed", exc_info=True)
+    if (is_cli and active_ctx is None and isinstance(cache, dict)
+            and cache.get("cli_context_state") == "cold"):
+        usage = dict(cache)
+        usage.update({
+            "conversation_id": conversation_id,
+            "agent_name": agent_name,
+            "source": source,
+            "updated_at": time.time(),
+        })
+        return usage
     messages = raw_messages or []
     cfg_for_count = dict(svc_cfg)
     if configured > 0:
@@ -243,7 +289,8 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     usage = context_usage_for_messages(
         conversation_id, agent_name, messages, svc_cfg=cfg_for_count,
         real_window=real_window, provider=provider, source=source,
-        cache=cache)
+        cache=cache, bootstrap_prompt_tokens=bootstrap_prompt_tokens,
+        cli_context_state=cli_context_state)
     if active_ctx is not None:
         try:
             from tasks.ai.agent_loop import AgentLoopTask
@@ -258,6 +305,51 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
                             break
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+    return usage
+
+
+def reset_cli_context_usage(conversation_id: str, agent_name: str, *,
+                            user_id: str = "", store: Any = None,
+                            source: str = "cli_context_reset") -> Optional[Dict[str, Any]]:
+    """Return and install an empty gauge after CLI session invalidation."""
+    active_ctx = _active_context(conversation_id, agent_name)
+    svc_cfg, real_window, provider = _service_config(
+        conversation_id, agent_name, user_id, active_ctx)
+    if not ((active_ctx and active_ctx.get("_is_cli_provider"))
+            or provider in _CLI_CONTEXT_PROVIDERS):
+        return None
+    configured = int(svc_cfg.get("max_context_size", 0) or 0)
+    if active_ctx and int(active_ctx.get("max_context_size") or 0) > 0:
+        configured = int(active_ctx.get("max_context_size") or 0)
+    cfg_for_count = dict(svc_cfg)
+    if configured > 0:
+        cfg_for_count["max_context_size"] = configured
+    usage = context_usage_for_messages(
+        conversation_id, agent_name, [], svc_cfg=cfg_for_count,
+        real_window=real_window, provider=provider, source=source,
+        cli_context_state="cold")
+    client = active_ctx.get("client") if active_ctx else None
+    token_counts = getattr(client, "_cli_bootstrap_tokens_by_stream", None)
+    if isinstance(token_counts, dict):
+        token_counts.pop((conversation_id, agent_name), None)
+    try:
+        from tasks.ai.agent_loop import AgentLoopTask
+        inst = AgentLoopTask._live_instance
+        if inst:
+            with inst._active_contexts_lock:
+                for key, ctx in inst._active_contexts.items():
+                    if not key.startswith(conversation_id + ":"):
+                        continue
+                    if _agent_key(ctx.get("active_agent_name", "")) != _agent_key(agent_name):
+                        continue
+                    ctx["_cli_has_session"] = False
+                    ctx["_cli_bootstrap_read_seen"] = False
+                    ctx["_context_usage_cache"] = usage
+                    ctx.pop("_auto_compact_usage_cache", None)
+                    break
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "CLI context gauge reset failed", exc_info=True)
     return usage
 
 
@@ -303,5 +395,6 @@ def usage_event_payload(usage: Dict[str, Any]) -> Dict[str, Any]:
         "context_source": usage.get("source", "context_usage"),
         "context_message_count": usage.get("message_count", 0),
         "context_cache_mode": usage.get("cache_mode", ""),
+        "cli_context_state": usage.get("cli_context_state", ""),
         "updated_at": float(usage.get("updated_at", 0.0) or 0.0),
     }

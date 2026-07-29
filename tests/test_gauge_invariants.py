@@ -69,12 +69,13 @@ _FILESYSTEM_SERVICE_PY = (
 _HTTP_LISTENER_SERVICE_PY = "".join(Path(_f).read_text(encoding="utf-8") for _f in ("services/http_listener_service.py", "services/_http_base.py", "services/_http_request.py", "services/_http_server.py"))
 
 
-def test_set_context_usage_blocks_demote_to_zero():
-    """setContextUsage must short-circuit when realUsed===0 and the
-    cache already holds a non-zero value."""
+def test_set_context_usage_accepts_authoritative_cold_cli_zero():
+    """Only an explicit cold CLI state may demote a gauge to zero."""
     body = _extract_function_body(_ACTIVE_AGENTS_JS, "setContextUsage")
     assert "realUsed === 0" in body and "cachedUsed > 0" in body, (
-        "Rule 1 (no demote-to-zero) is missing from setContextUsage")
+        "The unexplained-zero guard is missing from setContextUsage")
+    assert "usage.cli_context_state === 'cold'" in body
+    assert "&& !isColdCli" in body
 
 
 def test_set_context_usage_accepts_real_decrease_and_rejects_stale_timestamp():
@@ -1183,11 +1184,11 @@ def test_cli_resumed_context_usage_uses_stored_context_plus_live_delta():
     assert usage["used"] > 0
 
 
-def test_cli_gauge_uses_stored_context_after_session_restart():
-    """Regression: a tmux/container restart leaves active_ctx["messages"]
-    nearly empty (_cli_has_session is False). The gauge must still count
-    the stored PawFlow context — it changes only on compaction/edit, not
-    on a session restart.
+def test_cold_cli_gauge_does_not_count_externalized_stored_context():
+    """A cold CLI has not loaded initial_context.md yet.
+
+    Its gauge starts empty even though PawFlow has a compacted context ready
+    to serialize for the provider.
     """
     from tasks.ai.context_usage import compute_context_usage
 
@@ -1222,24 +1223,30 @@ def test_cli_gauge_uses_stored_context_after_session_restart():
             "conv-live", "assistant", user_id="user", store=_Store(),
             source="test")
 
-    assert usage["message_count"] == len(stored_messages)
-    assert usage["used"] > 0
+    assert usage["message_count"] == 0
+    assert usage["used"] == 0
+    assert usage["cli_context_state"] == "cold"
 
 
-def test_cli_claude_gauge_adds_invisible_overhead():
-    """claude-code gauges add a fixed offset for the CLI's invisible
-    system-prompt/tooling tokens that PawFlow never sees."""
-    from tasks.ai.context_usage import (
-        compute_context_usage, _CLI_INVISIBLE_OVERHEAD_TOKENS)
+def test_cold_cli_gauge_counts_only_injected_bootstrap_prompt():
+    """Once sent, the short bootstrap prompt is the whole CLI context."""
+    from tasks.ai.context_usage import compute_context_usage
 
     stored = [{"role": "user", "content": "hello world", "msg_id": "s1"}]
+    client = SimpleNamespace(
+        provider="claude-code-interactive",
+        _cli_bootstrap_tokens_by_stream={("c", "assistant"): 17},
+    )
     fake_exec = SimpleNamespace(
         _active_contexts={
             "c:assistant": {
                 "active_agent_name": "assistant",
                 "messages": [],
                 "_is_cli_provider": True,
+                "_cli_has_session": False,
+                "_cli_bootstrap_read_seen": False,
                 "active_llm_provider": "claude-code-interactive",
+                "client": client,
                 "resolved_svc": SimpleNamespace(
                     config={"max_context_size": 1000000}),
             },
@@ -1259,8 +1266,75 @@ def test_cli_claude_gauge_adds_invisible_overhead():
         usage = compute_context_usage(
             "c", "assistant", user_id="user", store=_Store(), source="test")
 
-    assert usage["overhead_tokens"] == _CLI_INVISIBLE_OVERHEAD_TOKENS
-    assert usage["used"] >= _CLI_INVISIBLE_OVERHEAD_TOKENS
+    assert usage["message_count"] == 0
+    assert usage["used"] == 17
+    assert usage["overhead_tokens"] == usage["used"]
+    assert usage["cli_context_state"] == "bootstrap"
+
+
+def test_cli_context_reset_clears_prompt_and_installs_cold_cache():
+    from tasks.ai.context_usage import reset_cli_context_usage
+
+    client = SimpleNamespace(
+        provider="codex-app-server",
+        _cli_bootstrap_tokens_by_stream={("c", "assistant"): 12},
+    )
+    active_ctx = {
+        "active_agent_name": "assistant",
+        "messages": [{"role": "user", "content": "stored" * 100}],
+        "_is_cli_provider": True,
+        "_cli_has_session": True,
+        "_cli_bootstrap_read_seen": True,
+        "active_llm_provider": "codex-app-server",
+        "client": client,
+        "resolved_svc": SimpleNamespace(
+            config={"max_context_size": 200000}),
+    }
+    fake_exec = SimpleNamespace(
+        _active_contexts={"c:assistant": active_ctx},
+        _active_contexts_lock=threading.Lock(),
+    )
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec):
+        usage = reset_cli_context_usage(
+            "c", "assistant", user_id="user", source="compact_done")
+
+    assert usage is not None
+    assert usage["used"] == 0
+    assert usage["cli_context_state"] == "cold"
+    assert active_ctx["_cli_has_session"] is False
+    assert active_ctx["_cli_bootstrap_read_seen"] is False
+    assert active_ctx["_context_usage_cache"] == usage
+    assert ("c", "assistant") not in client._cli_bootstrap_tokens_by_stream
+
+
+def test_persisted_cold_cli_gauge_survives_inactive_reload():
+    from tasks.ai.context_usage import compute_context_usage
+
+    cold = {
+        "used": 0, "max": 200000, "pct": 0.0,
+        "source": "compact_done", "updated_at": 1.0,
+        "message_count": 0, "cli_context_state": "cold",
+    }
+
+    class _Store:
+        def load_agent_context(self, *_args, **_kwargs):
+            return [{"role": "user", "content": "externalized " * 500}]
+
+        def get_extra_snapshot(self, *_args, **_kwargs):
+            return {"assistant": cold}
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", None), \
+            patch("tasks.ai.context_usage._service_config",
+                  return_value=({"max_context_size": 200000}, 0,
+                                "codex-app-server")):
+        usage = compute_context_usage(
+            "cold-reload", "assistant", user_id="user",
+            store=_Store(), source="list_context_usage")
+
+    assert usage["used"] == 0
+    assert usage["message_count"] == 0
+    assert usage["cli_context_state"] == "cold"
 
 
 def test_claude_final_metadata_does_not_rewrite_conversation_rows():

@@ -211,6 +211,8 @@ class LLMCliSharedMixin:
         workdir: str,
         provider_workdir: str,
         rel_path: str = ".pawflow_cli/initial_context.md",
+        conversation_id: str = "",
+        agent_name: str = "",
     ) -> str:
         """Write full cold-start context to a session file and return bootstrap text."""
         rel = Path(rel_path)
@@ -256,7 +258,37 @@ class LLMCliSharedMixin:
         ]
         if latest:
             prompt.extend(["", "Latest turn to answer now:", latest.strip()])
-        return "\n".join(prompt).strip() + "\n"
+        rendered_prompt = "\n".join(prompt).strip() + "\n"
+        self._remember_cli_bootstrap_prompt(
+            rendered_prompt, messages, conversation_id, agent_name)
+        return rendered_prompt
+
+    def _remember_cli_bootstrap_prompt(self, prompt: str, messages: List[Any],
+                                       conversation_id: str = "",
+                                       agent_name: str = "") -> None:
+        """Remember only the text injected into a new CLI context window."""
+        if not conversation_id:
+            for message in reversed(messages or []):
+                conversation_id = str(
+                    getattr(message, "conversation_id", "") or "")
+                if conversation_id:
+                    break
+        agent_name = agent_name or str(getattr(self, "_agent_name", "") or "")
+        if not conversation_id or not agent_name:
+            return
+        from core.token_counter import (
+            count_messages_tokens, resolve_token_multiplier)
+        cfg = (getattr(self, "_config_ref", None)
+               or getattr(self, "config", None) or {})
+        token_count = int(count_messages_tokens(
+            [{"role": "user", "content": str(prompt or "")}],
+            multiplier=resolve_token_multiplier(cfg),
+        ) or 0)
+        token_counts = getattr(self, "_cli_bootstrap_tokens_by_stream", None)
+        if not isinstance(token_counts, dict):
+            token_counts = {}
+            self._cli_bootstrap_tokens_by_stream = token_counts
+        token_counts[(conversation_id, agent_name)] = token_count
 
     @staticmethod
     def _clean_control_chars(text: str) -> str:

@@ -19,7 +19,7 @@ _CLI_BOOTSTRAP_CONTEXT_PATHS = (
     "/.pawflow_cci/initial_context.md",
     "/.pawflow_ag/initial_context.md",
 )
-_CONTEXT_ACCOUNTING_VERSION = 2
+_CONTEXT_ACCOUNTING_VERSION = 3
 
 
 def _scrub_image_payloads(text: str) -> str:

@@ -88,7 +88,8 @@ class _CodexAppStreamMixin:
             initial_text = self._codex_app_resume_text(messages)
         else:
             prompt_mode = "cold"
-            initial_text = self._codex_app_full_initial_text(messages, workdir, container_dir)
+            initial_text = self._codex_app_full_initial_text(
+                messages, workdir, container_dir, conv_id, agent_name)
         prompt_tokens = self._codex_app_estimate_prompt_tokens(initial_text)
         logger.info(
             "[codex-app] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",
@@ -313,7 +314,7 @@ class _CodexAppStreamMixin:
                         thread_id = ""
                         prompt_mode = "cold-after-stale-resume"
                         initial_text = self._codex_app_full_initial_text(
-                            messages, workdir, container_dir)
+                            messages, workdir, container_dir, conv_id, agent_name)
                         prompt_tokens = self._codex_app_estimate_prompt_tokens(initial_text)
                         logger.info(
                             "[codex-app] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",

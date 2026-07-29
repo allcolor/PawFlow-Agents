@@ -68,9 +68,10 @@ function setContextUsage(agentName, usage) {
   const incomingAt = Number(usage.updated_at || usage.ts || 0) || 0;
   const cachedAt = Number(cached && cached._updatedAt || 0) || 0;
 
-  // Never demote a non-zero gauge back to zero. A zero update on an already
-  // populated context usually means the provider had no usage data yet.
-  if (realUsed === 0 && cachedUsed > 0) {
+  // Ignore an unexplained provider zero, but accept the authoritative empty
+  // state emitted when compact invalidates a stateful CLI session.
+  const isColdCli = usage.cli_context_state === 'cold';
+  if (realUsed === 0 && cachedUsed > 0 && !isColdCli) {
     return;
   }
   // Reject older persisted/polled values when we have timestamps on both

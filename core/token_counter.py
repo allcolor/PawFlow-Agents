@@ -12,7 +12,6 @@ unset = 1.0 (no correction).
 """
 
 import logging
-import tiktoken
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +40,11 @@ def _get_encoding():
     if _encoding_failed_at and (now - _encoding_failed_at) < _ENCODING_RETRY_SECONDS:
         return None
     try:
+        # Imported here, not at module scope: tiktoken is an optional
+        # dependency and every fallback below exists precisely so its absence
+        # degrades the count instead of killing the caller. A top-level import
+        # turned that designed degradation into a ModuleNotFoundError.
+        import tiktoken
         _encoding = tiktoken.get_encoding("cl100k_base")
         _encoding_failed_at = 0.0
         return _encoding

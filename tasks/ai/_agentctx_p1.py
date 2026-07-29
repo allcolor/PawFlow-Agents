@@ -507,3 +507,37 @@ class _PACPhase1Mixin:
                                 st._agent_key)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
+            # A cold CLI session is about to be handed a freshly built
+            # initial_context.md, so the provider's window starts empty. The
+            # persisted gauge still describes the session that just died:
+            # compute_context_usage returns it verbatim while no agent runs,
+            # so a server restart redisplays the old percentage against a
+            # window nothing has filled yet. Zero it here, at the one place
+            # that knows the session is gone.
+            if not st._cli_has_session:
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    from tasks.ai.context_usage import (
+                        persist_context_usage, reset_cli_context_usage,
+                        usage_event_payload)
+                    _cold_agent = (st._active_agent_name or st._context_agent
+                                   or "")
+                    _cold_usage = (
+                        reset_cli_context_usage(
+                            st.conversation_id, _cold_agent,
+                            user_id=st._user_id_for_svc,
+                            source="cli_session_cold_start")
+                        if _cold_agent else None)
+                    if _cold_usage is not None:
+                        persist_context_usage(
+                            st.conversation_id, _cold_agent, _cold_usage)
+                        ConversationEventBus.instance().publish_event(
+                            st.conversation_id, "message_meta",
+                            usage_event_payload(_cold_usage))
+                        logger.info(
+                            "[context:%s] cold CLI session — gauge reset for %s",
+                            st.conversation_id[:8], _cold_agent)
+                except Exception:
+                    logging.getLogger(__name__).debug(
+                        "cold CLI gauge reset failed", exc_info=True)

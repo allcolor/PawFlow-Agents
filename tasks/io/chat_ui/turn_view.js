@@ -296,10 +296,15 @@ function turnViewIngest(kind, data, element) {
     // Replayed history is not live: an older page arrives *after* rows that
     // came before it, so "the last one ingested" is not "the last one of the
     // turn". Those rows are filed, and only what is marked final is promoted.
+    //
+    // A system notice -- compact finished, git history pruned -- is not the
+    // agent's answer either. It goes in the record like everything else, but
+    // it must never take the outside spot, or it displaces the very message
+    // the reader came for.
     const claimed = data && data.turn_final
       && turnViewFinalize(Object.assign({}, data, { final_msg_id: msgId }));
     if (!claimed) {
-      if (tabKey === 'messages' && !(data && data._history)) _turnPromoteLast(state, element);
+      if (tabKey === 'messages' && kind !== 'system' && !(data && data._history)) _turnPromoteLast(state, element);
       else if (element.parentNode !== tab.bodyEl) tab.bodyEl.appendChild(element);
     }
   }

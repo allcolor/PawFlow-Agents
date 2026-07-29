@@ -6,6 +6,69 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A cold CLI session starts with room to work.** The proactive compact that
+  runs before a CLI session is handed its context was evaluated against
+  `compact_threshold_pct` — 95% in practice. That threshold is right for a
+  live session, where it guards against overflow, but a cold session receives
+  its whole context in one go: the stored messages are serialized into
+  `initial_context.md` and read back as a single tool result. At 95% a session
+  could therefore open at 94% of its window, having done nothing yet, and be
+  compacted again within a few turns. A cold start is now held to
+  `CLI_COLD_START_TRIGGER_FRACTION` (40% of `max_context_size`) instead —
+  whatever `compact_threshold_pct` says, including 0, where the provider's own
+  mechanism cannot help because the file is written before it sees anything.
+  A stricter configured value is never loosened, and live sessions and direct
+  API providers are untouched.
+
+### Added
+
+- **`tools/gauge_probe.py`** — runs the gauge counter and the compaction
+  counter over a stored agent context and reports how much of their difference
+  the cold-CLI bootstrap boundary accounts for. `UNEXPLAINED` must be 0.
+  It also lists every *structural* bootstrap marker, which a grep for the
+  marker string cannot do: that also matches messages which merely quote it,
+  such as tool output from reading this repository's own source. Read-only, no
+  network, works without `tiktoken`, and accepts a bare `.jsonl` so a version
+  recovered from conversation git history can be inspected.
+
+### Fixed
+
+- **The context gauge no longer survives the CLI session it describes.** On a
+  CLI provider the gauge measures the provider's window since the last
+  `initial_context.md` read -- everything before that boundary is deliberately
+  counted as zero, because the provider received a file reference, not those
+  messages. A server restart kills that session but left the persisted entry
+  untouched, and `compute_context_usage` returns it verbatim while no agent is
+  running: the next turn redisplayed the dead session's percentage against a
+  window nothing had filled. Measured in the field at 35% of 800k on a cold
+  start. `_prepare_agent_context` now zeroes and republishes the gauge at the
+  one place that knows the session is gone.
+
+  The compaction that followed the restart was not a second bug. While a CLI
+  session is live the threshold is evaluated against the gauge itself, so a
+  gauge below the threshold means no compaction. The whole stored context is
+  measured only on a cold session, where the provider window is empty by
+  definition and the size that matters is what is about to be written into
+  `initial_context.md`. The stale reading was the only defect: with the gauge
+  at 0 the sequence reads as it should -- cold start, oversized store,
+  squeeze, then a gauge that climbs as the provider reads the file.
+
+- **A compact notice no longer escapes the simplified view.** The
+  `compact_progress` handler creates its system row through `addMsg` rather
+  than a message event, which made it the last row-creating path not routed
+  through `turnViewIngest`: it landed at top level, outside every block, and
+  stayed there. Same for the git-prune notice. Both are now filed in the
+  block -- and explicitly barred from the outside spot, which belongs to the
+  last message of the turn, not to a status line.
+
+- **`tiktoken` is imported lazily.** `core/token_counter.py` carries a full
+  fallback path for when the tokenizer is unavailable -- approximate counting,
+  a five-minute retry window -- but imported the module at file scope, so its
+  absence raised `ModuleNotFoundError` instead of degrading. Running any tool
+  that touches token counting outside the server image failed outright.
+
 ## [1.0.0-beta.49] — 2026-07-29
 
 ### Changed

@@ -136,6 +136,25 @@ test('a turn with no turn_id anywhere still groups', () => {
   assert(narration.parentNode !== e.messages, 'the message it replaced went back in');
 });
 
+// The compact notice is born of a compact_progress event, not of a message
+// event, so it was the one row-creating path left uninstrumented: it sat at
+// top level, outside every block, for the rest of the conversation. Ingesting
+// it is only half the fix -- it must not then displace the answer, which is
+// what happens to anything that lands in the messages tab live.
+test('a system notice is filed in the block, never in the outside spot', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const answer = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, answer);
+  const block = e.block();
+  assert(block.nextSibling === answer, 'the answer holds the outside spot');
+
+  const notice = e.row('s1');
+  eq(e.ctx.turnViewIngest('system', {}, notice), true, 'the notice is ingested');
+  assert(notice.parentNode !== e.messages, 'it does not stay at top level');
+  assert(block.nextSibling === answer, 'and it does not displace the answer');
+});
+
 test('a user message with no id at all still opens its own turn', () => {
   const e = env('simplified');
   const user = e.row('');

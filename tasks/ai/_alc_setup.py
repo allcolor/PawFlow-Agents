@@ -177,6 +177,8 @@ class _ALCSetupMixin:
 
         st._agent_compact_threshold_fraction = lambda : self._alc_agent_compact_threshold_fraction(st)
 
+        st._cold_start_trigger_fraction = lambda : self._alc_cold_start_trigger_fraction(st)
+
         st._auto_compact_usage = lambda max_ctx, source: self._alc_auto_compact_usage(st, max_ctx, source)
 
         st._maybe_auto_compact_after_append = lambda msg, reason: self._alc_maybe_auto_compact_after_append(st, msg, reason)

@@ -92,7 +92,11 @@ class _ALCIterationMixin:
             if st._should_proactive_compact(st.messages, st._max_ctx, st._cpt):
                 st.compacted_messages = self._compact(
                     copy.deepcopy(st.messages), st.compact_client, st._max_ctx,
-                    trigger_fraction=st._trigger_frac,
+                    # The same bar _should_proactive_compact just cleared. On a
+                    # cold CLI session that is the cold-start fraction, not the
+                    # live threshold: hand _compact the live one and it skips,
+                    # silently, what was just decided here.
+                    trigger_fraction=st._cold_start_trigger_fraction(),
                     conversation_id=st.conversation_id,
                     agent_name=st.ctx.get("active_agent_name") or "",
                     tool_defs=st.ctx.get("tool_defs"),
@@ -126,7 +130,11 @@ class _ALCIterationMixin:
             if st._should_proactive_compact(st.messages, st._max_ctx, st._cpt):
                 st.compacted_messages = self._compact(
                     copy.deepcopy(st.messages), st.compact_client, st._max_ctx,
-                    trigger_fraction=st._trigger_frac,
+                    # The same bar _should_proactive_compact just cleared. On a
+                    # cold CLI session that is the cold-start fraction, not the
+                    # live threshold: hand _compact the live one and it skips,
+                    # silently, what was just decided here.
+                    trigger_fraction=st._cold_start_trigger_fraction(),
                     conversation_id=st.conversation_id,
                     agent_name=st.ctx.get("active_agent_name") or "",
                     tool_defs=st.ctx.get("tool_defs"),

@@ -276,6 +276,18 @@ Gauge updates are emitted as `message_meta` SSE events carrying `conversation_id
 
 The latest value is persisted under the conversation `context_usage` extra as a dict keyed by agent instance name: `{"<agent>": {"used": int, "max": int, "pct": float, "updated_at": float}}`. Persistence is per-agent and keyed on the instance name (not the definition), which means each Resource Panel agent card shows its own gauge and the header badge shows the gauge for `selectedAgent`.
 
+The persisted entry is what `compute_context_usage` returns while no agent is running, so it must be invalidated whenever the thing it describes disappears. A CLI session dies with the server: `_prepare_agent_context` therefore calls `reset_cli_context_usage` as soon as it finds a CLI provider with no live session, persists the zeroed entry, and publishes it. Without that, a restart redisplays the dead session's percentage against a provider window nothing has filled yet.
+
+**Two different quantities drive compaction, at two different moments, and both are correct where they apply.** While a CLI session is live, `_alc_maybe_auto_compact_after_append` evaluates `compact_threshold_pct` against `compute_context_usage` — the gauge itself. The provider window is what can overflow, so the provider window is what is watched, and a gauge reading below the threshold means no compaction will fire.
+
+The whole stored agent context is measured at one place only: the cold-session branch of `_prepare_agent_context` (`_agentctx_p2`, gated on `not _cli_has_session`). That is the bootstrap moment, when the provider window is empty by definition and the quantity that matters is the size of what is about to be serialized into `initial_context.md`. A store above the threshold is squeezed before it is written.
+
+A cold start is held to a lower bar than the live threshold, `CLI_COLD_START_TRIGGER_FRACTION` (0.40 of `max_context_size`), rather than to `compact_threshold_pct`. The live threshold guards against overflow, and 95% is the right bar for that; but a cold session receives its whole context at once — serialized into `initial_context.md` and read back as one tool result — so the same 95% would open a session at 94% of the window with nothing done yet. The cold-start bar applies whatever `compact_threshold_pct` says, including when it is 0: the provider's own compaction mechanism cannot help here, because the file is written before the provider sees anything. A stricter configured value is never loosened.
+
+Both `_should_proactive_compact` and the `_compact` call it guards read this fraction through `st._cold_start_trigger_fraction()`. They must agree: `_compact` re-checks the threshold itself and returns the messages untouched when it is not met, so a decision taken at 40% and handed a 95% bar is reversed silently.
+
+When the gauge and the compaction threshold appear to disagree, measure rather than reason: `python3 tools/gauge_probe.py <conversation_dir> [agent]` runs both counters over a stored agent context and reports how much of the difference the boundary accounts for. `UNEXPLAINED` must be 0; anything else means the gauge is losing messages. It also lists every *structural* bootstrap marker — a plain grep for the marker string is unusable, because it matches any message that merely quotes it, including tool output from reading this repository's own source. The probe is read-only, needs no network, and falls back to approximate counting when `tiktoken` is absent (the ratio between the two counters stays valid either way). A bare `.jsonl` path is accepted, which is how a version recovered from the conversation's git history is inspected.
+
 ---
 
 ## 5. Multi-Agent

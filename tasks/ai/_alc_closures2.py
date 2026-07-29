@@ -16,6 +16,17 @@ from tasks.ai._alc_base import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+# A cold CLI session receives its whole context in one go: the stored messages
+# are serialized into initial_context.md and read back as a single tool result.
+# The live threshold (compact_threshold_pct, 0.95 in practice) would let that
+# file open a session at 94% of the window -- nothing done yet and already out
+# of room. A session must start with room to work, so a cold start is held to a
+# lower bar, and to it whatever the live setting says: when
+# compact_threshold_pct is 0 the provider's own mechanism cannot help either,
+# because the file is written before the provider sees anything at all.
+CLI_COLD_START_TRIGGER_FRACTION = 0.40
+
+
 class _ALCClosures2Mixin:
     def _alc_apply_vision_fallback(self, st, messages, call_kwargs):
         """Apply the active llmConnection's vision fallback before a direct
@@ -145,10 +156,28 @@ class _ALCClosures2Mixin:
             chars_per_token=cpt,
             token_multiplier=_tmul)
 
-    def _alc_should_proactive_compact(self, st, stored_msgs, max_ctx, cpt):
+    def _alc_cold_start_trigger_fraction(self, st):
+        """The trigger fraction in force for this turn.
+
+        Identical to the configured one while a CLI session is live -- the
+        provider window is what can overflow, and the live threshold watches
+        it. On a cold session the fraction governs the size of the file that
+        opens the session instead, and that answers to
+        CLI_COLD_START_TRIGGER_FRACTION.
+        """
+        if not st.ctx.get("_is_cli_provider") or st.ctx.get("_cli_has_session"):
+            return st._trigger_frac
         if st._trigger_frac <= 0:
+            return CLI_COLD_START_TRIGGER_FRACTION
+        return min(st._trigger_frac, CLI_COLD_START_TRIGGER_FRACTION)
+
+    def _alc_should_proactive_compact(self, st, stored_msgs, max_ctx, cpt):
+        # Must agree with what _compact is handed, or the decision made here
+        # is re-taken there against a different bar and silently reversed.
+        frac = st._cold_start_trigger_fraction()
+        if frac <= 0:
             return False
-        trigger_tokens = int(max_ctx * st._trigger_frac)
+        trigger_tokens = int(max_ctx * frac)
         if trigger_tokens <= 0:
             return False
         used_tokens = st._threshold_estimate(stored_msgs, cpt)

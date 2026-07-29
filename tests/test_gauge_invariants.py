@@ -2381,3 +2381,107 @@ def _extract_action_block(src: str, marker: str) -> str:
     start = src.index(marker)
     next_marker = src.find('\n    if action == "', start + len(marker))
     return src[start:next_marker if next_marker != -1 else len(src)]
+
+
+def test_cold_cli_session_resets_the_persisted_gauge():
+    """A server restart kills the CLI session but not the persisted gauge.
+
+    compute_context_usage hands the stored entry back verbatim while no agent
+    runs, so without this reset the next turn redisplays the dead session's
+    percentage against a window nothing has filled yet. Measured once at 35%
+    of 800k while the provider's window was empty.
+    """
+    import ast
+
+    src = Path("tasks/ai/_agentctx_p1.py").read_text(encoding="utf-8")
+    marker = "cold CLI session"
+    assert marker in src, "the cold-start gauge reset is gone"
+    block = src[src.index(marker):]
+
+    assert "if not st._cli_has_session:" in block
+    assert "reset_cli_context_usage(" in block
+    # Resetting in memory is not enough: the stale value lives in the store,
+    # and the UI needs the event to drop the gauge without waiting for a turn.
+    assert "persist_context_usage(" in block
+    assert '"message_meta"' in block
+
+    # The reset must sit inside the CLI-provider branch. A non-CLI agent's
+    # context is not invalidated by a restart, and zeroing its gauge would be
+    # a lie in the other direction.
+    tree = ast.parse(src)
+    guards = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and "_is_cli_provider" in ast.dump(node.test)
+        and marker in ast.get_source_segment(src, node)
+    ]
+    assert guards, "the reset escaped the CLI-provider branch"
+
+
+def test_gauge_reset_is_a_no_op_for_a_non_cli_provider():
+    from tasks.ai.context_usage import reset_cli_context_usage
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", None), \
+            patch("tasks.ai.context_usage._service_config",
+                  return_value=({"max_context_size": 800000}, 0, "anthropic")):
+        assert reset_cli_context_usage("c", "assistant") is None
+
+
+def _cold_start_fraction(*, is_cli, has_session, configured):
+    from types import SimpleNamespace as _NS
+
+    from tasks.ai._alc_closures2 import _ALCClosures2Mixin
+
+    st = _NS(ctx={"_is_cli_provider": is_cli, "_cli_has_session": has_session},
+             _trigger_frac=configured)
+    return _ALCClosures2Mixin._alc_cold_start_trigger_fraction(None, st)
+
+
+def test_cold_cli_start_is_held_to_a_lower_bar_than_the_live_threshold():
+    """A cold session's stored context is serialized into initial_context.md
+    and read back whole, so it lands in the provider window in one go. The
+    live threshold would let that file open a session at 94% of the window --
+    nothing done yet and already out of room.
+    """
+    from tasks.ai._alc_closures2 import CLI_COLD_START_TRIGGER_FRACTION
+
+    assert CLI_COLD_START_TRIGGER_FRACTION == 0.40
+    assert _cold_start_fraction(
+        is_cli=True, has_session=False, configured=0.95) == 0.40
+    # Also when compact_threshold_pct is 0, where the provider's own mechanism
+    # is nominally in charge: it cannot help, the file is written before the
+    # provider sees anything at all.
+    assert _cold_start_fraction(
+        is_cli=True, has_session=False, configured=0.0) == 0.40
+    # A stricter configured bar is never loosened.
+    assert _cold_start_fraction(
+        is_cli=True, has_session=False, configured=0.20) == 0.20
+
+
+def test_live_and_non_cli_paths_keep_the_configured_threshold():
+    # Live CLI session: the provider window is what can overflow, and the live
+    # threshold already watches exactly that.
+    assert _cold_start_fraction(
+        is_cli=True, has_session=True, configured=0.95) == 0.95
+    # A direct API provider has no bootstrap file to size in the first place.
+    assert _cold_start_fraction(
+        is_cli=False, has_session=False, configured=0.95) == 0.95
+
+
+def test_cold_start_decision_and_compact_are_held_to_one_bar():
+    """Deciding at 40% and then handing _compact the 95% threshold reverses
+    the decision inside _compact's own skip check, silently."""
+    src = Path("tasks/ai/_alc_iteration.py").read_text(encoding="utf-8")
+    assert src.count("trigger_fraction=st._cold_start_trigger_fraction()") == 2, (
+        "both proactive compact sites must use the bar the decision used")
+    assert "trigger_fraction=st._trigger_frac" in src, (
+        "the forced pre-send compact keeps the live threshold")
+
+    closures = Path("tasks/ai/_alc_closures2.py").read_text(encoding="utf-8")
+    decide = closures[closures.index("def _alc_should_proactive_compact"):]
+    assert "st._cold_start_trigger_fraction()" in decide
+
+
+def test_cold_start_fraction_is_wired_into_the_loop_state():
+    src = Path("tasks/ai/_alc_setup.py").read_text(encoding="utf-8")
+    assert "st._cold_start_trigger_fraction = lambda" in src

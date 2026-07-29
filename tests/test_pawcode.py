@@ -741,6 +741,8 @@ class TestTokenCounter:
         assert long > short
 
     def test_count_tokens_falls_back_when_tiktoken_encoding_unavailable(self, monkeypatch):
+        import tiktoken
+
         from core import token_counter
 
         monkeypatch.setattr(token_counter, "_encoding", None)
@@ -749,10 +751,34 @@ class TestTokenCounter:
         def fail_get_encoding(_name):
             raise RuntimeError("busy")
 
-        monkeypatch.setattr(token_counter.tiktoken, "get_encoding", fail_get_encoding)
+        # tiktoken is imported inside _get_encoding, so patch the module
+        # itself rather than an attribute of token_counter.
+        monkeypatch.setattr(tiktoken, "get_encoding", fail_get_encoding)
 
         assert token_counter.count_tokens("Hello, world!") > 0
         assert token_counter.count_tokens("") == 0
+        assert token_counter._encoding_failed_at > 0.0
+
+    def test_count_tokens_survives_tiktoken_not_installed(self, monkeypatch):
+        """The fallback exists so a missing optional dependency degrades the
+        count. A module-scope import turned that into ModuleNotFoundError."""
+        import builtins
+
+        from core import token_counter
+
+        monkeypatch.setattr(token_counter, "_encoding", None)
+        monkeypatch.setattr(token_counter, "_encoding_failed_at", 0.0)
+
+        real_import = builtins.__import__
+
+        def no_tiktoken(name, *args, **kwargs):
+            if name == "tiktoken":
+                raise ModuleNotFoundError("No module named 'tiktoken'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", no_tiktoken)
+
+        assert token_counter.count_tokens("Hello, world!") > 0
         assert token_counter._encoding_failed_at > 0.0
 
 

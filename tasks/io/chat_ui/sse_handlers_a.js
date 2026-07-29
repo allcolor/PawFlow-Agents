@@ -693,7 +693,11 @@ function _sseWireA() {
         const afterMb = data.size_after !== undefined ? (data.size_after / 1048576).toFixed(1) : '?';
         const beforeCommits = data.commits_before !== undefined ? data.commits_before : '?';
         const afterCommits = data.commits_after !== undefined ? data.commits_after : '?';
-        addMsg('system', 'Git history pruned: ' + beforeCommits + ' -> ' + afterCommits + ' commits, ' + beforeMb + ' MB -> ' + afterMb + ' MB.');
+        const pruneEl = addMsg('system', 'Git history pruned: ' + beforeCommits + ' -> ' + afterCommits + ' commits, ' + beforeMb + ' MB -> ' + afterMb + ' MB.');
+        // Born of compact_progress, not of a message event -- which is how it
+        // escaped the simplified view and sat at top level, outside every
+        // block, for the rest of the conversation.
+        if (typeof turnViewIngest === 'function') turnViewIngest('system', {}, pruneEl);
         return;
       }
       const agent = data.agent || 'shared';
@@ -717,12 +721,15 @@ function _sseWireA() {
       const tokAfter = data.tokens_after !== undefined ? data.tokens_after : '?';
       const tokTarget = data.target_tokens !== undefined ? data.target_tokens : null;
       const tokenText = tokTarget !== null ? (tokAfter + '/' + tokTarget) : tokAfter;
-      addMsg('system', t('contextCompactedStatus', {
+      const compactEl = addMsg('system', t('contextCompactedStatus', {
         agent: agent,
         before: total,
         after: after,
         tokens: tokenText,
       }));
+      if (typeof turnViewIngest === 'function') {
+        turnViewIngest('system', { agent: agent }, compactEl);
+      }
     } else if (data.stage === 'error') {
       hideContextOp();
       addMsg('error', t('contextOperationFailed', { error: data.error }));

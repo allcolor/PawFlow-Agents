@@ -58,7 +58,7 @@ HTTP_TIMEOUT = 15
 #: Anonymous pull scope for a public GHCR repository, then its tag list. The
 #: relay images are published there by ``.github/workflows/docker-publish.yml``,
 #: so this is where "published" is actually true.
-GHCR_TOKEN_URL = "https://ghcr.io/token?scope=repository:{repo}:pull&service=ghcr.io"
+GHCR_TOKEN_URL = "https://ghcr.io/token?scope=repository:{repo}:pull&service=ghcr.io"  # nosec B105
 GHCR_TAGS_URL = "https://ghcr.io/v2/{repo}/tags/list"
 
 #: Pristine copy of the shipped config, baked into the server image. ``/app/config``

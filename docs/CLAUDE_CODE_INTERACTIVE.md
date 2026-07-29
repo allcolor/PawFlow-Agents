@@ -165,6 +165,20 @@ tmux activity by default and is *suspended* only while PawFlow drives a turn.
 The rule both providers implement: everything the proxy intercepts reaches the
 SSE listeners while it happens, whoever started the turn.
 
+A capture also builds its coordinator with **the session's tool-id dedup sets**,
+not fresh ones. A live Claude Code session replays its entire context on every
+API request, so the proxy re-observes every prior `tool_use` and `tool_result`
+block of the session on each turn. PawFlow-driven turns dedup against the
+pooled container's sets (`emitted_tool_use_ids` / `emitted_tool_result_ids`);
+a capture that starts with empty sets re-emits the whole history — one
+transcript row and one `tool_call` event per replayed block. The webchat keys
+tool blocks by `tc_id` and absorbs the repeat, so the damage surfaced first on
+a channel bridge: a Telegram user received a hundred tool-call messages at once
+when a background result resumed the session (2026-07-29). The sets are
+resolved by `_capture_dedup_sets` from the pool via
+`find_by_session_token`, falling back to a pair carried on the event session so
+two chained captures still dedup against each other.
+
 A capture evicted mid-turn by a real coordinator keeps the blocks it already
 flushed — they were complete when written — and loses only the block still
 being accumulated.

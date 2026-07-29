@@ -2669,12 +2669,19 @@ def test_cc_interactive_event_service_publishes_manual_tmux_response(monkeypatch
 
     class _Coordinator:
         def __init__(self, service, session_token, callback=None,
-                     block_callback=None, consumer_kind="request"):
+                     block_callback=None, consumer_kind="request",
+                     emitted_tool_use_ids=None,
+                     emitted_tool_result_ids=None):
             assert session_token == "sess"
             # The capture path must declare itself as the safety net so it
             # yields to a live request coordinator instead of splitting the
             # session's event stream with it.
             assert consumer_kind == "capture"
+            # And it must dedup against the session's own tool ids: Claude
+            # Code replays its whole context, so fresh sets re-emit every
+            # earlier tool_use of the session.
+            assert emitted_tool_use_ids is not None
+            assert emitted_tool_result_ids is not None
             # It must also stream: a capture without callbacks runs the whole
             # turn silently and the webchat stays empty until it ends.
             assert callback is not None

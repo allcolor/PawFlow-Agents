@@ -76,6 +76,11 @@ class CCInteractiveSessionEvents:
     # detect that and capture the orphan turn like a manual tmux one.
     last_wait_at: float = 0.0
     injected_intent_at: float = 0.0
+    # Tool-id dedup fallback, used only when the pool no longer knows the
+    # container behind this session (see _capture_dedup_sets). Lives here so
+    # two chained captures of the same session still dedup against each other.
+    emitted_tool_use_ids: set = field(default_factory=set)
+    emitted_tool_result_ids: set = field(default_factory=set)
     # Exactly one consumer may read `events`: queue.Queue hands each item to
     # a single getter, so two live coordinators SPLIT the SSE stream between
     # them. Claiming bumps the epoch; the previous holder is evicted on its
@@ -791,6 +796,33 @@ class CCInteractiveEventService(BaseService):
 
         return _text_callback, _block_callback
 
+    def _capture_dedup_sets(self, state: CCInteractiveSessionEvents):
+        """The tool-id dedup sets a capture must share with PawFlow-driven turns.
+
+        Owned by the pool's container, which is what the replayed context
+        belongs to: when the container dies the context dies with it, so the
+        sets resetting together is exactly right. The session-local pair is a
+        fallback for a capture whose container the pool no longer knows —
+        still better than per-coordinator sets, which forget between two
+        chained captures of the same session.
+        """
+        try:
+            from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+            container = InteractiveClaudeCodePool.instance().find_by_session_token(
+                state.session_token)
+        except Exception:
+            logger.debug("CC interactive pool lookup failed for capture",
+                         exc_info=True)
+            container = None
+        if container is not None:
+            return (container.emitted_tool_use_ids,
+                    container.emitted_tool_result_ids)
+        logger.info(
+            "CC interactive capture: no pooled container for session=%s — "
+            "deduping tool ids on the event session only",
+            state.session_token[:8])
+        return state.emitted_tool_use_ids, state.emitted_tool_result_ids
+
     def _run_manual_capture(self, session_token: str) -> None:
         state = self.session_state(session_token)
         try:
@@ -803,9 +835,20 @@ class CCInteractiveEventService(BaseService):
             # the coordinator ran the whole turn silently and the webchat saw
             # nothing until it ended, while the tmux was visibly working.
             _text_cb, _block_cb = self._capture_stream_callbacks(state)
+            # The session's own dedup sets, not fresh per-coordinator ones.
+            # A live Claude Code session replays its ENTIRE context on every
+            # API request, so a capture that starts with empty sets re-emits
+            # every tool_use of every earlier turn: each one persisted as a
+            # new transcript row and published as a tool_call event. The
+            # webchat keys tool blocks by tc_id and absorbs it; a channel
+            # bridge does not, so Telegram received the whole history of the
+            # previous turn in one burst.
+            _use_ids, _result_ids = self._capture_dedup_sets(state)
             coord = _CCITurnCoordinator(self, session_token,
                                         callback=_text_cb,
                                         block_callback=_block_cb,
+                                        emitted_tool_use_ids=_use_ids,
+                                        emitted_tool_result_ids=_result_ids,
                                         consumer_kind="capture")
             response = coord.run()
             logger.info(

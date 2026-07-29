@@ -172,3 +172,87 @@ def test_capture_passes_the_callbacks_to_its_coordinator():
     assert "_capture_stream_callbacks(state)" in src
     assert "callback=_text_cb" in src
     assert "block_callback=_block_cb" in src
+
+
+class TestCaptureSharesTheSessionToolDedup:
+    """A capture must not re-emit tool ids an earlier turn already emitted.
+
+    Claude Code replays its ENTIRE context on every API request, so the proxy
+    observes every prior tool_use again. The PawFlow-driven turns dedup against
+    the container's sets; a capture that built its coordinator with fresh sets
+    re-emitted the whole history — one persisted transcript row and one
+    `tool_call` event each. The webchat keys tool blocks by tc_id and absorbs
+    the repeat; Telegram does not, so a user got a hundred tool-call messages
+    in one burst after a background result resumed the session
+    (production, 2026-07-29).
+    """
+
+    def test_it_reuses_the_pooled_containers_sets(self, captured, monkeypatch):
+        svc, state, _written, _published = captured
+
+        class _Container:
+            session_token = "sess"
+            emitted_tool_use_ids = {"tc-from-an-earlier-turn"}
+            emitted_tool_result_ids = {"tr-from-an-earlier-turn"}
+
+        class _Pool:
+            @staticmethod
+            def instance():
+                return _Pool()
+
+            def find_by_session_token(self, token):
+                return _Container() if token == "sess" else None
+
+        import core.claude_code_interactive_pool as pool_mod
+        monkeypatch.setattr(pool_mod, "InteractiveClaudeCodePool", _Pool)
+
+        use_ids, result_ids = svc._capture_dedup_sets(state)
+
+        assert "tc-from-an-earlier-turn" in use_ids
+        assert "tr-from-an-earlier-turn" in result_ids
+
+    def test_without_a_pooled_container_it_still_dedups_per_session(
+            self, captured, monkeypatch):
+        # Two chained captures of one session must not forget between them.
+        svc, state, _written, _published = captured
+
+        class _Pool:
+            @staticmethod
+            def instance():
+                return _Pool()
+
+            def find_by_session_token(self, _token):
+                return None
+
+        import core.claude_code_interactive_pool as pool_mod
+        monkeypatch.setattr(pool_mod, "InteractiveClaudeCodePool", _Pool)
+
+        first_use, first_result = svc._capture_dedup_sets(state)
+        first_use.add("tc1")
+        first_result.add("tr1")
+        second_use, second_result = svc._capture_dedup_sets(state)
+
+        assert second_use is first_use and second_result is first_result
+
+    def test_a_broken_pool_lookup_does_not_break_the_capture(
+            self, captured, monkeypatch):
+        svc, state, _written, _published = captured
+
+        class _Pool:
+            @staticmethod
+            def instance():
+                raise RuntimeError("pool unavailable")
+
+        import core.claude_code_interactive_pool as pool_mod
+        monkeypatch.setattr(pool_mod, "InteractiveClaudeCodePool", _Pool)
+
+        use_ids, result_ids = svc._capture_dedup_sets(state)
+
+        assert use_ids is state.emitted_tool_use_ids
+        assert result_ids is state.emitted_tool_result_ids
+
+    def test_the_coordinator_actually_receives_them(self):
+        import inspect
+        src = inspect.getsource(CCInteractiveEventService._run_manual_capture)
+        assert "emitted_tool_use_ids=_use_ids" in src
+        assert "emitted_tool_result_ids=_result_ids" in src

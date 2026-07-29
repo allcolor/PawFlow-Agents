@@ -263,6 +263,21 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 self._sessions.pop(state.key, None)
         return None
 
+    def find_by_session_token(self, session_token: str) -> Optional[InteractiveContainer]:
+        """The live container behind a proxy session token, if any.
+
+        No liveness probe: the caller is reading that session's event stream,
+        which is evidence enough that the container is up, and a docker
+        inspect on every capture start would be pure latency.
+        """
+        if not session_token:
+            return None
+        with self._lock:
+            for state in self._sessions.values():
+                if state.session_token == session_token:
+                    return state
+        return None
+
     def list_sessions(self, user_id: str, conversation_id: str,
                       service_id: str = "") -> list[dict]:
         """Return live interactive sessions for a conversation."""

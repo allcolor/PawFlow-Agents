@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import core.paths as _paths
+from core._conversation_store_base import TRANSCRIPT_GENERATION
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,12 @@ CREATE TABLE IF NOT EXISTS indexed_conversations (
     title TEXT NOT NULL DEFAULT '',
     rows_indexed INTEGER NOT NULL DEFAULT 0,
     source_updated_at REAL NOT NULL DEFAULT 0,
-    updated_at REAL NOT NULL DEFAULT 0
+    updated_at REAL NOT NULL DEFAULT 0,
+    -- The store's transcript rewrite counter as of the last index. -1 on a
+    -- database written before this column existed, which differs from every
+    -- real generation and so forces one full reindex -- exactly what an index
+    -- that may hold deleted text needs.
+    source_generation INTEGER NOT NULL DEFAULT -1
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
     content,
@@ -114,6 +120,16 @@ class ConversationIndex:
                 self._conn.close()
                 raise FTSUnavailable(
                     f"SQLite FTS5 is not available: {exc}") from exc
+            # CREATE TABLE IF NOT EXISTS leaves an older database's columns
+            # alone, so the column is added here. Existing rows take the -1
+            # default and are reindexed once, which is the point: such a
+            # database may hold text that has since been edited or deleted.
+            try:
+                self._conn.execute(
+                    "ALTER TABLE indexed_conversations "
+                    "ADD COLUMN source_generation INTEGER NOT NULL DEFAULT -1")
+            except sqlite3.OperationalError:
+                pass  # already there
             try:
                 self._conn.execute("PRAGMA journal_mode=WAL")
             except sqlite3.DatabaseError:
@@ -184,15 +200,23 @@ class ConversationIndex:
                 continue
             title = str(entry.get("title") or "")
             updated_at = float(entry.get("updated_at") or 0.0)
+            generation = int(entry.get(TRANSCRIPT_GENERATION) or 0)
             row = known.get(cid)
+            # `updated_at` alone cannot see a rewrite: an in-place edit leaves
+            # it untouched and deleting the newest message moves it backwards,
+            # so both read as "nothing new" and the conversation would keep
+            # serving text that was redacted or deleted. The generation is the
+            # signal that survives both.
             if (row is not None and updated_at > 0
                     and updated_at <= row["source_updated_at"]
-                    and title == row["title"]):
+                    and title == row["title"]
+                    and generation == row["source_generation"]):
                 stats["unchanged"] += 1
                 continue
             added = self._index_conversation(
                 store, cid, title, row["rows_indexed"] if row else 0,
-                updated_at)
+                updated_at, generation,
+                stale=row is not None and generation != row["source_generation"])
             if added:
                 stats["indexed"] += 1
                 stats["messages"] += added
@@ -206,13 +230,15 @@ class ConversationIndex:
     def _known(self) -> Dict[str, Dict[str, Any]]:
         with self._db_lock:
             rows = self._conn.execute(
-                "SELECT conversation_id, title, rows_indexed, source_updated_at "
-                "FROM indexed_conversations"
+                "SELECT conversation_id, title, rows_indexed, source_updated_at, "
+                "source_generation FROM indexed_conversations"
             ).fetchall()
         return {r["conversation_id"]: {
             "title": str(r["title"] or ""),
             "rows_indexed": int(r["rows_indexed"] or 0),
             "source_updated_at": float(r["source_updated_at"] or 0.0),
+            "source_generation": int(r["source_generation"]
+                                     if r["source_generation"] is not None else -1),
         } for r in rows}
 
     @staticmethod
@@ -247,17 +273,22 @@ class ConversationIndex:
         return str(msg.get("agent") or msg.get("agent_name") or "")
 
     def _index_conversation(self, store, cid: str, title: str,
-                            watermark: int, source_updated_at: float = 0.0) -> int:
+                            watermark: int, source_updated_at: float = 0.0,
+                            source_generation: int = 0,
+                            stale: bool = False) -> int:
         try:
             messages = store.load(cid, user_id=self._user_id) or []
         except Exception:
             logger.debug("transcript unreadable for %s", cid[:8], exc_info=True)
             return 0
         total = len(messages)
-        if total < watermark:
-            # The transcript shrank (rollback, context edit, deletion): the
-            # watermark no longer addresses the same rows, so reindex it whole
-            # rather than append onto stale ones.
+        if stale or total < watermark:
+            # `stale`: the store's rewrite counter moved, so rows already
+            # indexed may hold text that has since been edited or deleted.
+            # Appending onto them would keep serving it -- and an edit that
+            # keeps the row count identical leaves nothing else to notice.
+            # `total < watermark`: the transcript shrank, so the watermark no
+            # longer addresses the same rows.
             self.purge(cid)
             watermark = 0
         fresh = messages[watermark:]
@@ -300,13 +331,16 @@ class ConversationIndex:
             # only by len(rows) would re-read every tool row on each refresh.
             self._conn.execute(
                 "INSERT INTO indexed_conversations (conversation_id, title, "
-                "rows_indexed, source_updated_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "rows_indexed, source_updated_at, updated_at, "
+                "source_generation) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(conversation_id) DO UPDATE SET "
                 "title=excluded.title, rows_indexed=excluded.rows_indexed, "
                 "source_updated_at=excluded.source_updated_at, "
-                "updated_at=excluded.updated_at",
-                (cid, title, total, source_updated_at, time.time()))
+                "updated_at=excluded.updated_at, "
+                "source_generation=excluded.source_generation",
+                (cid, title, total, source_updated_at, time.time(),
+                 source_generation))
             self._conn.commit()
         return len(rows)
 

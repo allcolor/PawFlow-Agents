@@ -77,6 +77,14 @@ Two deviations from the P4 text above, both deliberate:
   only past its row watermark — so the only difference is when the cost lands,
   and putting it on the append path would make the chat UI wait for a feature
   that turn may never use.
+- **"Untouched" cannot be read from `updated_at`.** It is the newest message's
+  timestamp, so an in-place edit leaves it unchanged at a constant row count,
+  and deleting the newest message moves it *backwards* — both read as "nothing
+  new" and the index kept serving text that had been redacted or deleted. The
+  store keeps a `transcript_generation` counter instead, bumped by every
+  transcript rewrite and never by an append; when it moves, the conversation is
+  purged and reindexed rather than appended to. Right to be forgotten is a
+  correctness property of this index, not a nice-to-have.
 - **Encrypted conversations are never indexed.** An FTS index is plaintext, so
   indexing one would copy its content out of the encrypted store. Fails closed:
   an unreadable encryption state counts as encrypted.

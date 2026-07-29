@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # ConversationStore (invariant 2: MRO/shared state on the host).
 
 from core._conversation_store_base import (  # noqa: F401,E402
-    _CTX_CACHE_MAX_MESSAGES, _CTX_CACHE_MAX_CHARS, _CTX_CACHE_MAX_CONVS, _CONV_LOCK_DIAG_MS, _GIT_RETENTION_DAYS, _GIT_RETENTION_COMMITS, _GIT_RETENTION_INTERVAL_SEC, _HOT_METADATA_FLUSH_INTERVAL_SEC, _HOT_METADATA_FLUSH_MSG_DELTA, _HOT_METADATA_KEYS, _HOT_METADATA_EXECUTOR, _GIT_RETENTION_EXECUTOR, _GIT_RETENTION_RUNNING, _GIT_RETENTION_RUNNING_LOCK, ConversationLockedError, _ConversationTimedRLock)
+    _CTX_CACHE_MAX_MESSAGES, _CTX_CACHE_MAX_CHARS, _CTX_CACHE_MAX_CONVS, _CONV_LOCK_DIAG_MS, _GIT_RETENTION_DAYS, _GIT_RETENTION_COMMITS, _GIT_RETENTION_INTERVAL_SEC, _HOT_METADATA_FLUSH_INTERVAL_SEC, _HOT_METADATA_FLUSH_MSG_DELTA, _HOT_METADATA_KEYS, _HOT_METADATA_EXECUTOR, _GIT_RETENTION_EXECUTOR, _GIT_RETENTION_RUNNING, _GIT_RETENTION_RUNNING_LOCK, ConversationLockedError, TRANSCRIPT_GENERATION, _ConversationTimedRLock)
 
 
 class _CsMaintMixin:
@@ -146,6 +146,22 @@ class _CsMaintMixin:
         self._invalidate_ctx_cache(cid)
         return True
 
+    def bump_transcript_generation(self, cid: str) -> int:
+        """Record that the transcript was rewritten, not merely appended to.
+
+        ``updated_at`` cannot answer this. It is the newest message timestamp,
+        so editing a message in place leaves it untouched, and deleting the
+        newest message moves it *backwards*. Anything deriving from the
+        transcript -- the full-text index above all -- would conclude nothing
+        had happened and keep serving the text that was redacted or deleted.
+
+        A counter, bumped by every rewrite, says what timestamps cannot: these
+        rows are not the rows you indexed.
+        """
+        current = int(self.get_extra(cid, TRANSCRIPT_GENERATION, 0) or 0)
+        self.set_extra(cid, TRANSCRIPT_GENERATION, current + 1)
+        return current + 1
+
     def edit_message(self, cid: str, msg_id: str, content: Any,
                      role: str = "", user_id: str = "") -> int:
         """Edit a message by msg_id in transcript + shared + all agent contexts."""
@@ -190,6 +206,9 @@ class _CsMaintMixin:
             self._invalidate_ctx_cache(cid)
             self._load_cache(cid)
             self.invalidate_claude_sessions(cid)
+            # Rows changed under stable ids and timestamps: nothing else would
+            # tell a derived index that what it holds is now wrong.
+            self.bump_transcript_generation(cid)
         return updated
 
     def delete_message(self, cid: str, msg_id: str = "", index: int = -1,
@@ -345,6 +364,10 @@ class _CsMaintMixin:
             cached = self._reload_cache(cid)
             self._persist_recomputed_hot_metadata(cid, cached)
             self.invalidate_claude_sessions(cid)
+            # Deleting the newest message moves `updated_at` *backwards*, so a
+            # derived index would read it as "older than what I hold" and never
+            # look again. The counter is the only signal that survives that.
+            self.bump_transcript_generation(cid)
         return removed
 
     def list_conversations(self, user_id: str = "") -> List[Dict]:
@@ -369,6 +392,11 @@ class _CsMaintMixin:
                     "created_at": c.get("created_at", 0),
                     "updated_at": c.get("updated_at", 0),
                     "expires_at": c.get("expires_at", 0),
+                    # Carried here so a consumer can tell a rewrite from an
+                    # append without opening every transcript on disk -- which
+                    # is the whole point of listing before indexing.
+                    TRANSCRIPT_GENERATION: int(
+                        (c.get("extras") or {}).get(TRANSCRIPT_GENERATION, 0) or 0),
                 })
         result.sort(key=lambda x: x["updated_at"], reverse=True)
         return result

@@ -384,6 +384,124 @@ class TestHandler:
         assert "needs a conversation context" in out
 
 
+class TestTheRightToBeForgotten:
+    """Search must not keep serving text the transcript no longer holds.
+
+    The refresh skips a conversation whose ``updated_at`` has not moved, and
+    only purges when the row count shrank. Neither sees an edit: editing a
+    message in place leaves ``updated_at`` untouched (it is the newest message
+    timestamp) at a constant row count, and deleting the newest message moves
+    it *backwards*, which reads as "older than what I hold". Redacted and
+    deleted text kept coming back, indefinitely.
+    """
+
+    def test_redacted_text_stops_being_searchable(self, store, index):
+        cid = _conv(store, [
+            {"role": "user", "content": "my password is hunter2",
+             "msg_id": "m1", "ts": 100.0},
+            {"role": "assistant", "content": "noted", "msg_id": "m2",
+             "ts": 101.0},
+        ])
+        index.refresh(store)
+        assert len(index.search("hunter2")) == 1
+
+        # Same row count, same timestamps: only the content changes.
+        assert store.edit_message(cid, "m1", "my password is REDACTED",
+                                  user_id=USER) == 1
+        index.refresh(store)
+
+        assert index.search("hunter2") == []
+        assert len(index.search("REDACTED")) == 1
+
+    def test_a_deleted_message_stops_being_searchable(self, store, index):
+        cid = _conv(store, [
+            {"role": "user", "content": "keep this one", "msg_id": "m1",
+             "ts": 100.0},
+            {"role": "assistant", "content": "forget this one",
+             "msg_id": "m2", "ts": 101.0},
+        ])
+        index.refresh(store)
+        assert len(index.search("forget")) == 1
+
+        # The newest message: updated_at moves backwards after this.
+        assert store.delete_message(cid, msg_id="m2", user_id=USER) is True
+        index.refresh(store)
+
+        assert index.search("forget") == []
+        # And the rebuild did not lose what was still there.
+        assert len(index.search("keep")) == 1
+
+    def test_a_plain_append_is_still_read_incrementally(self, store, index):
+        """The fix must not turn every refresh into a full reindex.
+
+        A search pays for the refresh, so re-reading every transcript would
+        trade a correctness bug for a performance one.
+        """
+        cid = _conv(store, [
+            {"role": "user", "content": "alpha line", "msg_id": "m1",
+             "ts": 100.0},
+        ])
+        index.refresh(store)
+        assert index.refresh(store)["unchanged"] == 1
+
+        store.save(cid, [
+            {"role": "user", "content": "alpha line", "msg_id": "m1",
+             "ts": 100.0},
+            {"role": "assistant", "content": "beta line", "msg_id": "m2",
+             "ts": 200.0},
+        ], user_id=USER)
+
+        stats = index.refresh(store)
+        # One row read, not two: the watermark still applies.
+        assert stats["messages"] == 1
+        assert len(index.search("beta")) == 1
+        assert index.refresh(store)["unchanged"] == 1
+
+    def test_an_index_written_before_the_counter_is_rebuilt_once(self, store,
+                                                                 tmp_path):
+        """Such a database may already hold text that has since been deleted.
+
+        Its rows carry no generation, so they must not be trusted: the missing
+        column defaults to -1, which differs from every real generation.
+        """
+        import sqlite3
+
+        db = tmp_path / "legacy.db"
+        conn = sqlite3.connect(str(db))
+        conn.executescript(
+            "CREATE TABLE indexed_conversations ("
+            " conversation_id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',"
+            " rows_indexed INTEGER NOT NULL DEFAULT 0,"
+            " source_updated_at REAL NOT NULL DEFAULT 0,"
+            " updated_at REAL NOT NULL DEFAULT 0);"
+            "CREATE VIRTUAL TABLE messages USING fts5("
+            " content, conversation_id UNINDEXED, title UNINDEXED,"
+            " agent UNINDEXED, role UNINDEXED, msg_id UNINDEXED,"
+            " ts UNINDEXED, tokenize = 'unicode61');")
+        cid = _conv(store, [
+            {"role": "user", "content": "the current text", "msg_id": "m1",
+             "ts": 100.0},
+        ])
+        # A row claiming this conversation is indexed and up to date, holding
+        # text the transcript no longer has.
+        conn.execute(
+            "INSERT INTO indexed_conversations (conversation_id, rows_indexed,"
+            " source_updated_at, updated_at) VALUES (?, 1, ?, ?)",
+            (cid, 9e9, 9e9))
+        conn.execute(
+            "INSERT INTO messages (content, conversation_id, title, agent,"
+            " role, msg_id, ts) VALUES ('a secret long since deleted', ?,"
+            " '', '', 'user', 'gone', 1.0)", (cid,))
+        conn.commit()
+        conn.close()
+
+        index = ConversationIndex(USER, path=str(db))
+        index.refresh(store)
+
+        assert index.search("secret") == []
+        assert len(index.search("current text")) == 1
+
+
 class TestToolWiring:
 
     def test_the_tool_is_registered(self):

@@ -22,6 +22,11 @@ _HOT_METADATA_FLUSH_INTERVAL_SEC = float(os.getenv("PAWFLOW_HOT_METADATA_FLUSH_I
 _HOT_METADATA_FLUSH_MSG_DELTA = int(os.getenv("PAWFLOW_HOT_METADATA_FLUSH_MSG_DELTA", "20") or "20")
 _HOT_METADATA_KEYS = (
     "_meta_msg_count", "_meta_preview", "_meta_updated_at", "_meta_max_seq")
+#: Extra holding the transcript rewrite counter. Bumped whenever rows are
+#: edited or removed, never on a plain append -- appends are already visible as
+#: a growing row count. Consumers that derive from the transcript compare it to
+#: decide between "read the new rows" and "throw everything away and reread".
+TRANSCRIPT_GENERATION = "transcript_generation"
 _HOT_METADATA_EXECUTOR = ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="conv-meta-flush")
 _GIT_RETENTION_EXECUTOR = ThreadPoolExecutor(

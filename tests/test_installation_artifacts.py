@@ -125,6 +125,37 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert '"$REPO_DIR"' in relay_build
 
 
+def test_the_installer_refuses_a_runtime_dir_it_does_not_own(tmp_path):
+    """What a failed in-app update leaves behind must not be a cryptic failure.
+
+    The updater writes the per-version runtime directory as root. When one of
+    its runs failed halfway, the operator's next command-line install hit files
+    it could not replace and died on docker cp's own
+    ``unlinkat ...: permission denied`` -- which names neither the cause nor the
+    way out, so the command line stopped being the way to recover.
+    """
+    import pytest
+
+    if os.geteuid() == 0:
+        pytest.skip("root owns everything; there is no foreign owner to find")
+
+    src = Path("scripts/install-pawflow.sh").read_text(encoding="utf-8")
+    body = src.split("extract_image_artifacts() (", 1)[1].split("\n)\n", 1)[0]
+    fn = tmp_path / "fn.sh"
+    fn.write_text("extract_image_artifacts() (" + body + "\n)\n", encoding="utf-8")
+
+    # A directory owned by another user, and one owned by us.
+    foreign = subprocess.run(
+        ["bash", "-c", f"source {fn}; extract_image_artifacts img /etc/ssl/certs"],
+        capture_output=True, text=True, timeout=60)
+    assert foreign.returncode != 0
+    assert "belongs to another user" in foreign.stderr
+    assert f"sudo chown -R {os.getuid()}:{os.getgid()}" in foreign.stderr
+    # It refuses before creating anything: the throw-away container is never
+    # made, so there is nothing left running either.
+    assert "docker" not in foreign.stdout
+
+
 def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     install = Path("scripts/install-pawflow.sh")
     install_zip = Path("scripts/build-pawflow-install-zip.sh")

@@ -559,6 +559,22 @@ extract_image_artifacts() (
   local image="$1" out_dir="$2" cid rel
   echo "Extracting PawFlow runtime artifacts from image: $image -> $out_dir" >&2
   mkdir -p "$out_dir"
+
+  # An in-app update runs its updater as root, so everything it writes here is
+  # root-owned. When one of those runs failed halfway, this directory was left
+  # with files the operator can no longer replace, and the install died on
+  # docker cp's own "unlinkat ...: permission denied" -- which names neither the
+  # cause nor the way out. Checked once, up front, before anything is created.
+  local intruder
+  intruder="$(find "$out_dir" ! -user "$(id -u)" -print -quit 2>/dev/null || true)"
+  if [[ -n "$intruder" ]]; then
+    echo "Cannot write $out_dir: $intruder belongs to another user." >&2
+    echo "An in-app update writes this directory as root; a failed one can leave it that way." >&2
+    echo "Take it back, then run this installer again:" >&2
+    echo "  sudo chown -R $(id -u):$(id -g) $out_dir" >&2
+    return 1
+  fi
+
   cid="$(docker create "$image" true)"
   trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
 

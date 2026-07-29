@@ -100,8 +100,12 @@ def test_the_start_script_is_run_from_the_new_directory_and_the_label_moves():
     new_dir = "/home/pawflow/.pawflow/runtime/1.0.0-beta.45"
     script = update_manager._installer_updater_script(
         _info(), IMAGE, False, artifact_dir=new_dir)
-    assert f"cd {new_dir}" in script
-    assert f"PAWFLOW_SOURCE_DIR={new_dir}" in script
+    assert f"_pf_start_dir={new_dir}" in script
+    assert 'cd "$_pf_start_dir"' in script
+    # The label follows whichever directory is actually started from, so it can
+    # never name one the server did not come up out of.
+    assert 'PAWFLOW_SOURCE_DIR="$_pf_start_dir"' in script
+    assert f"PAWFLOW_SOURCE_DIR={new_dir}" not in script
 
 
 def test_a_git_checkout_is_never_overwritten_from_the_image():
@@ -118,10 +122,15 @@ def test_the_refresh_aborts_by_default_and_only_warns_when_forced():
         _info(), IMAGE, False, artifact_dir=new_dir)
     forced = update_manager._installer_updater_script(
         _info(), IMAGE, False, artifact_dir=new_dir, force_artifacts=True)
-    # Last three lines: the refresh, then cd, then the start script.
-    assert strict.rstrip().splitlines()[-3] == "_pf_refresh_artifacts"
-    assert "_pf_refresh_artifacts || echo " in forced
+    # Default: a non-zero refresh ends the updater, so the server it has not
+    # touched yet keeps running on its old version.
+    assert '[ "$_pf_rc" -eq 0 ] || exit "$_pf_rc"' in strict
+    assert "WARNING host artifacts were not refreshed" not in strict
+    # Forced: the same status only warns, and the start script still runs.
+    assert '[ "$_pf_rc" -eq 0 ] || exit' not in forced
     assert "WARNING host artifacts were not refreshed" in forced
+    assert forced.rstrip().splitlines()[-1].endswith(
+        "bash scripts/run-pawflow-docker.sh")
 
 
 def test_extracted_files_are_chowned_to_the_uid_the_server_runs_as():
@@ -131,10 +140,24 @@ def test_extracted_files_are_chowned_to_the_uid_the_server_runs_as():
         _info(env={"PAWFLOW_RUN_UID": "1000", "PAWFLOW_RUN_GID": "1000"}),
         IMAGE, False, artifact_dir=new_dir)
     assert f"chown -R 1000:1000 {new_dir}" in script
-    # Unknown uid/gid: nothing is guessed.
-    unknown = update_manager._installer_updater_script(
-        _info(), IMAGE, False, artifact_dir=new_dir)
-    assert "chown" not in unknown
+
+
+def test_half_a_uid_pair_still_hands_the_files_over():
+    """The silent way this went wrong on a real deployment.
+
+    A container created by an older start script carries PAWFLOW_RUN_UID and no
+    PAWFLOW_RUN_GID. Requiring both meant no chown at all -- and no warning
+    either, so the updater's log showed a clean run while the new directory was
+    left root-owned and the operator's own installer could no longer write it.
+    The install directory being replaced is on the host and has the right
+    owner, so it is read there instead of being guessed here.
+    """
+    old_dir = "/home/pawflow/.pawflow/runtime/1.0.0-beta.44"
+    new_dir = "/home/pawflow/.pawflow/runtime/1.0.0-beta.45"
+    for env in ({"PAWFLOW_RUN_UID": "1000"}, {}, {"PAWFLOW_RUN_GID": "1000"}):
+        script = update_manager._installer_updater_script(
+            _info(app_dir=old_dir, env=env), IMAGE, False, artifact_dir=new_dir)
+        assert f'chown -R "$(stat -c %u:%g {old_dir})" {new_dir}' in script, env
 
 
 def test_the_script_covers_every_artifact_the_installer_extracts():
@@ -249,6 +272,71 @@ def test_force_starts_the_server_anyway_and_says_so(tmp_path, dirs):
     assert result.returncode == 0, result.stderr
     assert "WARNING" in result.stderr
     assert (tmp_path / "start.log").exists()
+
+
+def test_the_chown_runs_and_the_files_stay_reachable(tmp_path, dirs):
+    """The chown is executed, not merely emitted, and it names a real owner.
+
+    Run as an ordinary user the chown is a no-op -- everything is already ours
+    -- but it still exercises the whole line: `stat -c` must parse on this
+    shell, the substitution must produce a usable owner, and the warning must
+    stay silent. On the deployment it is the difference between an install
+    directory the operator can still write and one they cannot.
+    """
+    old, new = dirs
+    script = update_manager._installer_updater_script(
+        _info(app_dir=str(old)), IMAGE, False, artifact_dir=str(new))
+
+    result = _run_script(tmp_path, script)
+
+    assert result.returncode == 0, result.stderr
+    assert "could not chown" not in result.stderr
+    assert (new / "scripts" / "run-pawflow-docker.sh").stat().st_uid == os.getuid()
+
+
+def test_force_falls_back_to_the_directory_that_has_the_start_script(tmp_path, dirs):
+    """The failure that left a server on its old version with nothing to show.
+
+    When the refresh fails on the *first* artifact -- the start script itself --
+    the new directory exists and is empty. Forcing past that used to cd into it
+    and run a script that is not there: the updater died, the server was never
+    touched, and the UI reported a launched update. The directory being replaced
+    still carries a working script, so the server comes up on the new image.
+    """
+    old, new = dirs
+    script = update_manager._installer_updater_script(
+        _info(app_dir=str(old)), IMAGE, False, artifact_dir=str(new),
+        force_artifacts=True)
+
+    result = _run_script(tmp_path, script,
+                         fail_rel="scripts/run-pawflow-docker.sh")
+
+    assert result.returncode == 9, result.stderr  # the old script's own exit
+    assert "carries no scripts/run-pawflow-docker.sh" in result.stderr
+
+
+def test_a_failed_refresh_still_hands_the_directory_back_to_its_owner(tmp_path, dirs):
+    """What broke the operator's own install-pawflow.sh after a failed update.
+
+    The updater runs as root, so everything it creates is root-owned. Chowning
+    only after a successful copy left a half-written root-owned directory that
+    the operator's next command-line install could not overwrite -- it failed on
+    unlinkat with permission denied, and the command line stopped being the way
+    out of a broken update.
+    """
+    old, new = dirs
+    script = update_manager._installer_updater_script(
+        _info(app_dir=str(old),
+              env={"PAWFLOW_RUN_UID": "1000", "PAWFLOW_RUN_GID": "1000"}),
+        IMAGE, False, artifact_dir=str(new))
+
+    lines = script.splitlines()
+    chown = next(i for i, ln in enumerate(lines) if ln.startswith("chown -R"))
+    rc = next(i for i, ln in enumerate(lines) if "_pf_rc=$?" in ln)
+    fail = next(i for i, ln in enumerate(lines) if '"$_pf_rc" -eq 0' in ln)
+    # The chown sits between capturing the status and acting on it: outside the
+    # subshell, and on the failure path as much as on the success one.
+    assert rc < chown < fail
 
 
 def test_an_artifact_an_older_image_lacks_is_only_a_warning(tmp_path, dirs):

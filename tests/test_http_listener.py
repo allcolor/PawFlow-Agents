@@ -1175,9 +1175,20 @@ class TestHTTPListenerIntegration:
             with urllib.request.urlopen(
                     f"http://127.0.0.1:{port}/health", timeout=5) as resp:
                 assert resp.status == 200
-                assert json.loads(resp.read().decode()) == {"ok": True}
+                body = json.loads(resp.read().decode())
         finally:
             svc.disconnect()
+
+        from core import __version__
+        from services import _http_request
+
+        assert body["ok"] is True
+        assert body["version"] == str(__version__)
+        # The identity of this process, not of the version: a client waiting on
+        # a restart cannot otherwise tell a server that came back from one that
+        # never went away -- and a restart onto the same tag is legitimate.
+        assert body["instance"] == _http_request._INSTANCE_ID
+        assert body["instance"]
 
     def test_full_cycle(self):
         """Test: HTTP request -> httpReceiver -> handleHTTPResponse -> HTTP response."""

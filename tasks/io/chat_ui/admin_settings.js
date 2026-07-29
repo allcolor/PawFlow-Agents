@@ -370,19 +370,37 @@ function _admConfirmServerUpdate(info) {
 function adminUpdateServerConfirm() {
   var pull = !!(document.getElementById('adm-server-git') || {}).checked;
   var force = !!(document.getElementById('adm-server-force') || {}).checked;
-  action$('admin_update_server', { pull_source: pull, force_artifacts: force }).subscribe(function(d) {
-    if (d.error) { addMsg('error', d.error); return; }
-    _admWaitForServer(d);
-  });
+  // Identify the process we are about to kill *before* killing it: an update
+  // that dies before touching the container leaves this exact server
+  // answering, and without a baseline that is indistinguishable from a server
+  // that has already come back.
+  fetch('/health', { cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .catch(function() { return {}; })
+    .then(function(before) {
+      action$('admin_update_server', { pull_source: pull, force_artifacts: force }).subscribe(function(d) {
+        if (d.error) { addMsg('error', d.error); return; }
+        _admWaitForServer(d, before || {});
+      });
+    });
 }
 
-// Step 3: the server is about to stop answering. Poll /health until it does
-// again, then reload — the page we are running was served by the old one.
-function _admWaitForServer(info) {
+//: How long a restart may take before the panel calls it a failure. Pulling a
+//: server image on a slow line is the long case.
+var ADM_UPDATE_TIMEOUT_S = 600;
+
+// Step 3: the server is about to stop answering. Poll /health until a
+// *different* process answers, then reload — the page we are running was
+// served by the old one. Waiting for any answer at all ended on the first poll
+// whenever the updater failed before stopping anything: the page reloaded
+// immediately, onto the version it started from, reporting success.
+function _admWaitForServer(info, before) {
   var started = Date.now();
+  var wasInstance = (before || {}).instance || '';
+  var wentDown = false;
   var body = '<div style="font-size:12px;line-height:1.7;">'
     + '<p><strong>Restarting.</strong> Updater container: <code>' + adminEsc(info.container || '') + '</code></p>'
-    + '<p id="adm-server-wait" style="color:var(--pf-muted);">Waiting for the server to come back\u2026</p>'
+    + '<p id="adm-server-wait" style="color:var(--pf-muted);">Waiting for the server to restart\u2026</p>'
     + '<p style="color:var(--pf-muted);font-size:11px;">If it does not return, the updater kept its logs: '
     + '<code>docker logs ' + adminEsc(info.container || '') + '</code></p></div>';
   _adminOverlay('Update server', body, '');
@@ -390,14 +408,43 @@ function _admWaitForServer(info) {
   var poll = setInterval(function() {
     var waited = Math.round((Date.now() - started) / 1000);
     var note = document.getElementById('adm-server-wait');
-    if (note) note.textContent = 'Waiting for the server to come back\u2026 (' + waited + 's)';
-    fetch('/health', { cache: 'no-store' }).then(function(r) {
-      if (!r.ok) return;
+    if (note) {
+      note.textContent = (wentDown ? 'Server stopped; waiting for it to come back\u2026 ('
+                                   : 'Waiting for the server to restart\u2026 (') + waited + 's)';
+    }
+    if (waited > ADM_UPDATE_TIMEOUT_S) {
       clearInterval(poll);
-      if (note) note.textContent = 'Back up. Reloading\u2026';
+      _admUpdateStalled(info, wentDown);
+      return;
+    }
+    fetch('/health', { cache: 'no-store' }).then(function(r) {
+      if (!r.ok) return null;
+      return r.json();
+    }).then(function(now) {
+      // The same process answering means nothing has restarted yet, however
+      // healthy it is.
+      if (!now || (wasInstance && now.instance === wasInstance)) return;
+      clearInterval(poll);
+      if (note) note.textContent = 'Back up on ' + (now.version || '?') + '. Reloading\u2026';
       setTimeout(function() { location.reload(); }, 800);
-    }).catch(function() { /* still down — expected */ });
+    }).catch(function() { wentDown = true; /* still down — expected */ });
   }, 2000);
+}
+
+// The server never restarted. Say so, and name the one command that explains
+// why: the updater keeps its logs until the next update replaces it.
+function _admUpdateStalled(info, wentDown) {
+  _adminOverlay('Update server',
+    '<div style="font-size:12px;line-height:1.7;">'
+    + '<p><strong>The server did not restart.</strong> '
+    + (wentDown
+        ? 'It stopped answering and never came back, so the new container failed to start.'
+        : 'It never stopped answering, so the updater failed before it touched the container '
+          + '&mdash; you are still on the version you started from.')
+    + '</p><p>The updater kept its logs:</p>'
+    + '<pre style="user-select:text;">docker logs ' + adminEsc(info.container || 'pawflow-updater') + '</pre>'
+    + '<button onclick="location.reload()" style="padding:6px 12px;border-radius:4px;cursor:pointer;">Reload anyway</button>'
+    + '</div>', '');
 }
 
 function _admRelayButtons() {

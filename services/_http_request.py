@@ -29,6 +29,17 @@ from services._http_base import (
 
 logger = logging.getLogger("services.http_listener_service")  # canonical name preserved across the module split
 
+#: Identity of *this* server process, minted once at import.
+#:
+#: A client waiting on a restart -- the admin update panel -- polls /health and
+#: reloads when it answers. Answering ``ok`` was all it had to go on, so an
+#: update that died before it ever touched the container looked exactly like one
+#: that had already finished: the very first poll succeeded and the page
+#: reloaded, on the same version, instantly. The version alone would not settle
+#: it either -- a restart onto the same tag is a legitimate outcome. A value
+#: that cannot survive the process does.
+_INSTANCE_ID = uuid.uuid4().hex[:12]
+
 
 class _RequestHandler(BaseHTTPRequestHandler):
     """Handler dispatching to the RouteRegistry on the server."""
@@ -254,11 +265,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # Built-in health endpoint for container/orchestrator checks. Keep it
         # before auth/gateway routing; it returns no sensitive state.
         if method == "GET" and path == "/health":
+            from core import __version__ as _pf_version
+
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(b'{"ok":true}')
+            self.wfile.write(json.dumps({
+                "ok": True,
+                "version": str(_pf_version),
+                "instance": _INSTANCE_ID,
+            }).encode("utf-8"))
             return
 
         if not self._check_global_rate_limit(path):

@@ -121,6 +121,16 @@ bash scripts/install-pawflow.sh --self-update
 bash scripts/install-pawflow.sh --version 1.0.0.prealpha.2 --port PORT --pull-images
 ```
 
+The in-app update (Admin → Update server) writes the same per-version runtime
+directory, but its updater container runs as root and hands the files back to
+the deployment's uid afterwards. If an update fails in a way that skips that
+step, the installer refuses the directory rather than failing later inside
+`docker cp`, and prints the command that takes it back:
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" ~/.pawflow/runtime
+```
+
 ### Forced source install
 
 To skip the prebuilt server image lookup and build from source, use:

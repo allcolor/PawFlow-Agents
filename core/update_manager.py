@@ -709,7 +709,8 @@ def published_server_image(current_image: str) -> str:
 
 
 def _artifact_refresh_lines(image: str, target_dir: str,
-                            env: Dict[str, str], force: bool) -> List[str]:
+                            env: Dict[str, str], force: bool,
+                            owner_dir: str = "") -> List[str]:
     """Shell that copies the new image's host artifacts into ``target_dir``.
 
     ``docker cp`` out of a throw-away container, exactly as
@@ -720,7 +721,15 @@ def _artifact_refresh_lines(image: str, target_dir: str,
     Runs in a subshell with its own trap, so a copy that fails still removes
     the container it created. The updater runs as root, so the files land
     root-owned; they are chowned to the uid/gid the deployment itself runs as,
-    or the operator's next command-line install could not overwrite them.
+    or the operator's next command-line install could not overwrite them. The
+    chown is outside the subshell and runs whatever the copy did: a failed
+    refresh leaves root-owned files too, and those are exactly the ones the
+    operator needs to be able to replace.
+
+    ``owner_dir`` is the install directory being replaced: when the container's
+    environment does not carry both ``PAWFLOW_RUN_UID`` and ``PAWFLOW_RUN_GID``
+    -- an older start script set only the first -- its owner on the host is who
+    the new directory belongs to.
 
     Ordering is the safety property, as everywhere else on this path: this runs
     after the pull and before the server is touched, so a failure here still
@@ -766,23 +775,47 @@ def _artifact_refresh_lines(image: str, target_dir: str,
         '      echo "WARNING this server image does not carry $_rel" >&2',
         "  done",
         f"  chmod +x {quoted}/scripts/*.sh 2>/dev/null || true",
+        ")",
     ]
+    # Outside the subshell, and run whatever the refresh did: the updater is
+    # root, so every file and directory it creates is root-owned -- including
+    # the ones a failed refresh leaves behind. Chowning on the success path
+    # only left the operator with a directory their own install-pawflow.sh
+    # could no longer overwrite, failing on unlinkat with permission denied:
+    # the command line stopped being the way out of a broken update.
     uid = (env.get("PAWFLOW_RUN_UID") or "").strip()
     gid = (env.get("PAWFLOW_RUN_GID") or "").strip()
+    warn = _echo(f"WARNING could not chown {target_dir}", stderr=True)
     if uid and gid:
-        warn = _echo(f"WARNING could not chown {target_dir}", stderr=True)
-        lines.append(
-            f"  chown -R {shlex.quote(uid)}:{shlex.quote(gid)} {quoted} "
-            f"2>/dev/null || {warn}")
-    lines.append(")")
+        owner = f"{shlex.quote(uid)}:{shlex.quote(gid)}"
+    elif owner_dir:
+        # Half the pair, or neither: a container created by an older start
+        # script carries PAWFLOW_RUN_UID and no PAWFLOW_RUN_GID, and requiring
+        # both meant no chown at all and no warning either -- the silent way
+        # this went wrong. The directory being replaced was created by the
+        # install this one continues, so its owner is the answer, read on the
+        # host at run time rather than guessed here. `stat -c` is busybox's
+        # spelling as much as coreutils'; the updater image is Alpine.
+        owner = f'"$(stat -c %u:%g {shlex.quote(owner_dir)})"'
+    else:
+        owner = ""
+    chown = (f"chown -R {owner} {quoted} 2>/dev/null || {warn}"
+             if owner else "true")
+    lines.extend([
+        # errexit would abort on the failure itself, before the chown, so the
+        # status is captured and acted on after the directory has been handed
+        # back to its owner.
+        "_pf_refresh_artifacts && _pf_rc=0 || _pf_rc=$?",
+        chown,
+    ])
     if force:
         warn = _echo(
             "WARNING host artifacts were not refreshed; the server is being "
             "started with the host-side files of the version it is replacing",
             stderr=True)
-        lines.append(f"_pf_refresh_artifacts || {warn}")
+        lines.append(f'[ "$_pf_rc" -eq 0 ] || {warn}')
     else:
-        lines.append("_pf_refresh_artifacts")
+        lines.append('[ "$_pf_rc" -eq 0 ] || exit "$_pf_rc"')
     return lines
 
 
@@ -804,16 +837,27 @@ def _installer_updater_script(info: Dict[str, Any], image: str,
     ``artifact_dir`` empty means no refresh: a git checkout carries its own
     host-side files and ``git pull`` is what moves them, so copying image
     contents over a tracked tree would dirty it.
+
+    The directory the server is started from is decided at run time, not here:
+    a refresh that failed under ``force_artifacts`` leaves the new directory
+    existing and empty, and starting from it would kill the updater on a script
+    that is not there -- leaving the server untouched on its old version. The
+    directory being replaced still carries a working one.
     """
     from core.installer_deployment import RESET_ON_UPDATE, start_script_env
 
-    work_dir = artifact_dir or info.get("host_app_dir", "")
+    app_dir = info.get("host_app_dir", "")
+    work_dir = artifact_dir or app_dir
     env = start_script_env(info, image, source_dir=artifact_dir)
     # Empty values are dropped, except the first-run flags: those must reach
     # the script *as* empty to override what the running container carries.
+    # PAWFLOW_SOURCE_DIR is decided at run time when there is an artifact
+    # directory: which one the server starts from depends on which one actually
+    # carries the start script.
     assignments = " ".join(
         f"{k}={shlex.quote(v)}" for k, v in sorted(env.items())
-        if v != "" or k in RESET_ON_UPDATE)
+        if (v != "" or k in RESET_ON_UPDATE)
+        and not (artifact_dir and k == "PAWFLOW_SOURCE_DIR"))
     lines = [
         "set -eu",
         # The updater image is docker:cli, which is Alpine and ships ash; the
@@ -828,9 +872,32 @@ def _installer_updater_script(info: Dict[str, Any], image: str,
     lines.append(f"docker pull {shlex.quote(image)}")
     if artifact_dir:
         lines.extend(_artifact_refresh_lines(image, artifact_dir, env,
-                                             force=force_artifacts))
-    lines.append(f"cd {shlex.quote(work_dir)}")
-    lines.append(f"{assignments} bash scripts/run-pawflow-docker.sh")
+                                             force=force_artifacts,
+                                             owner_dir=app_dir))
+    if artifact_dir:
+        # Never hand over to a directory that does not carry the start script.
+        # A refresh that failed under force leaves a directory that exists and
+        # is empty, and cd-ing into it kills the updater instead of the server:
+        # the deployment then stays on its old version, with the UI told the
+        # update was launched and nothing else. The install directory it is
+        # replacing does carry the script, so the fallback still restarts the
+        # server on the new image -- which is exactly what force asks for.
+        warn = shlex.quote(
+            f"WARNING {artifact_dir} carries no scripts/run-pawflow-docker.sh; "
+            f"starting from {app_dir} instead")
+        lines.extend([
+            f"_pf_start_dir={shlex.quote(artifact_dir)}",
+            'if [ ! -f "$_pf_start_dir/scripts/run-pawflow-docker.sh" ]; then',
+            f"  echo {warn} >&2",
+            f"  _pf_start_dir={shlex.quote(app_dir)}",
+            "fi",
+            'cd "$_pf_start_dir"',
+            f'{assignments} PAWFLOW_SOURCE_DIR="$_pf_start_dir" '
+            "bash scripts/run-pawflow-docker.sh",
+        ])
+    else:
+        lines.append(f"cd {shlex.quote(work_dir)}")
+        lines.append(f"{assignments} bash scripts/run-pawflow-docker.sh")
     return "\n".join(lines)
 
 

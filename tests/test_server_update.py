@@ -475,13 +475,29 @@ def test_an_unknown_data_directory_stops_the_update(monkeypatch):
     assert "data directory" in check["reason"]
 
 
-def test_published_server_image_keeps_the_repository():
-    assert update_manager.published_server_image("ghcr.io/allcolor/pawflow:1.0.0b40")
-    monkeyless = update_manager.published_server_image
+def test_published_server_image_keeps_the_repository(monkeypatch):
+    # The release lookup is a live GitHub API call. Unpatched, a rate-limited
+    # or offline runner returns no tag, every result here is empty, and the
+    # failure says nothing about the repository handling under test -- which
+    # is the only thing this test is about. Pin the tag and assert the whole
+    # string rather than a prefix, so an empty tag cannot pass either.
+    monkeypatch.setattr(update_manager, "latest_server_release", lambda: "1.0.0-beta.48")
+    published = update_manager.published_server_image
+
+    assert published("ghcr.io/allcolor/pawflow:1.0.0b40") == \
+        "ghcr.io/allcolor/pawflow:1.0.0-beta.48"
     # A digest pin or a registry with a port must not lose its repository.
-    assert monkeyless("ghcr.io/a/b@sha256:" + "0" * 64).startswith("ghcr.io/a/b:")
-    assert monkeyless("registry.local:5000/pawflow").startswith(
-        "registry.local:5000/pawflow:")
+    assert published("ghcr.io/a/b@sha256:" + "0" * 64) == "ghcr.io/a/b:1.0.0-beta.48"
+    assert published("registry.local:5000/pawflow") == \
+        "registry.local:5000/pawflow:1.0.0-beta.48"
+
+
+def test_no_published_release_yields_no_image(monkeypatch):
+    # The empty tag the CI runner actually hit: it must resolve to "no image",
+    # never to a repository with a dangling colon that a pull would then fail on.
+    monkeypatch.setattr(update_manager, "latest_server_release", lambda: "")
+
+    assert update_manager.published_server_image("ghcr.io/allcolor/pawflow:1.0.0b40") == ""
 
 
 def test_the_installer_script_pulls_before_it_touches_the_server(monkeypatch):

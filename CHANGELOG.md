@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The server-update test suite no longer calls the live GitHub API. One test
+  resolved the published image without pinning the release lookup, so a
+  rate-limited or offline runner got an empty tag and the build failed on
+  beta.48 for a reason unrelated to the change under test. The whole suite now
+  passes with outbound HTTP refused.
+
 ## [1.0.0-beta.48] — 2026-07-29
 
 ### Changed

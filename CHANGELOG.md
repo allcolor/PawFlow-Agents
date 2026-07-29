@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Simplified live chat view.** The View menu now stores `chat.view_mode` at
+  conversation scope. `classic` keeps the existing transcript; `simplified`
+  presents each user turn as the user message, one expandable activity block
+  with live Messages, Thinking, Tool calls and Artifacts tabs, and the same
+  canonical final assistant message below it. The block reparents the nodes the
+  existing renderers already produce instead of re-rendering them, so tool
+  result attachment, diffs, inline media, message actions and `msg_id` dedupe
+  keep working unchanged. Only a successful `show_file` result becomes an
+  artifact card; approvals, questions, errors and notifications stay top-level.
+  Turns carry durable `turn_id`/`turn_final` metadata so reload, pagination and
+  reconnect rebuild the same grouping. Classic mode is untouched.
+
 ### Security
 
 - **Context and usage actions were not gated by the sharing ACL at all.** Phase
@@ -45,6 +59,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   allows them.
 
 ### Fixed
+
+- **The simplified view hid the answer of every turn it could not prove was
+  final.** The view lifts the row carrying `turn_final` out of the activity
+  block to render it as the standalone answer, so a turn without that marker
+  showed a user message, a collapsed block, and no visible reply. The marker is
+  written by a patch that legitimately never lands: rows recorded before the
+  feature carry none, terminal paths that leave `final_msg_id` empty produce
+  none, and a patch matching no row was discarded in silence. Every
+  pre-existing conversation reloaded in simplified mode therefore lost its
+  answers. Reconstruction no longer depends on the marker: when no row of a
+  turn carries `turn_final`, the display classifier marks the last visible
+  assistant row and flags it `turn_final_derived`. Error rows, tool traffic and
+  display-only rows are never promoted, and a turn that produced no visible
+  answer still gets no final row. Classification runs per page, so a derived
+  marker never displaces a final already placed, and an authoritative one
+  reclaims the row it supersedes. `patch_message` now warns when it matches no
+  row instead of returning quietly.
+
+- **Live-window trimming could destroy a turn that was still running.** The
+  trim reaches a turn through its user anchor, which is never marked live even
+  while the block below it streams, so the existing live guard was bypassed and
+  the whole group was evicted mid-flight. The guard now covers every node of
+  the group.
+
+- **Streamed text queued one animation cue per token.** The coalescing window
+  the simplified view declared was never wired up, and turn identity was
+  re-rendered twice per token on top of it. Text now emits one cue per window
+  and identity re-renders only when it changes; discrete tool cues stay
+  immediate. The transient excerpt also took the last characters of the stream
+  rather than the first, and the load-more banner counted nested `msg_id`s in
+  classic mode, inflating its total.
+
+- **CLI context gauges counted a session's context before the session had it.**
+  The gauge now follows the context actually present in the provider session: a
+  compact or context edit invalidates that session and resets it to zero, the
+  next cold turn counts only the short injected bootstrap prompt, and the
+  serialized PawFlow messages join the gauge when the CLI reads
+  `initial_context.md` — counted once, not twice. This lifecycle now covers
+  Claude Code, Claude Code interactive, Codex app-server, Antigravity and
+  Gemini CLI, replacing the flat invisible-overhead offset that applied to
+  Claude Code alone. Direct API providers keep counting their request messages.
 
 - **`conversation_search` kept serving text that had been edited or deleted.**
   The index skips a conversation whose `updated_at` has not moved, and only

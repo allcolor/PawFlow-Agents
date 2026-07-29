@@ -29,6 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   build instead of shipping ungated. All of the above answer `404` — the same
   answer an unknown id gets, so the gate leaks no existence either.
 
+- **The deployment-wide cost total was readable by any authenticated user.**
+  `get_cost` with no `conversation_id` answers `UsageLedger.total_cost()` —
+  every turn every user of the install has ever run. With an id it is now gated
+  on that conversation; without one there is nothing to gate it on but the
+  role, so it requires admin. The other usage actions were already scoped:
+  `cost` reads `user_usage(user_id)`, and `_usage_query_filters` pins non-admins
+  to their own id.
+
 - **Realtime sessions refused write collaborators.** `_livekit_sessions.py`
   still used the owner-equality test inherited from the legacy voice bridge, so
   a collaborator who could drive the agent by typing was denied the microphone.

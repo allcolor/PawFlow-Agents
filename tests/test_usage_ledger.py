@@ -341,6 +341,21 @@ class TestUsageQueryActions:
         assert svc["cost"] == pytest.approx(110 * 10.0 / 1_000_000)
         assert data["total_in"] == 100
 
+    def test_the_deployment_total_is_admin_only(self, ledger):
+        """`get_cost` with no conversation id answers for the whole install.
+
+        Every turn every user has ever run. With an id it is gated on that
+        conversation; without one there is nothing to gate it on but the role.
+        """
+        self._seed(ledger)
+        ff = self._run("get_cost", {})
+        assert ff.get_attribute("http.response.status") == "403"
+        assert "admin" in json.loads(ff.get_content())["error"]
+
+        admin = self._run("get_cost", {}, roles="admin")
+        assert admin.get_attribute("http.response.status") in (None, "200")
+        assert "total_usd" in json.loads(admin.get_content())
+
     def test_get_cost_action_reads_ledger(self, ledger, conv_store):
         self._seed(ledger)
         ff = self._run("get_cost", {"conversation_id": "c1"}, store=conv_store)

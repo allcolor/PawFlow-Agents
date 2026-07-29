@@ -126,6 +126,19 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         # Per-conversation cost from the ledger (persistent, cost frozen
         # at the service rates in effect when each turn ran)
         conv_id = body.get("conversation_id", "")
+        # With a conversation id this is gated on that conversation, above.
+        # Without one it answers `total_cost()` -- every turn every user of
+        # this deployment has ever run -- which any authenticated account
+        # could read. Nothing else here is deployment-wide: `cost` reads
+        # `user_usage(user_id)` and the query actions scope non-admins to
+        # themselves in `_usage_query_filters`.
+        if not conv_id and "admin" not in (
+                flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps(
+                {"error": "admin role required to read the deployment total"}
+            ).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
         try:
             from core.usage_ledger import UsageLedger
             ledger = UsageLedger.instance()

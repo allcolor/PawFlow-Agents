@@ -686,6 +686,55 @@ def test_run_docker_recreates_existing_container_for_updates(tmp_path):
     assert "ghcr.io/allcolor/pawflow:1.0.0.prealpha.2" in log
 
 
+def test_run_docker_keeps_the_old_server_when_the_new_image_is_unusable(tmp_path):
+    """A failed check must not cost the operator their running server.
+
+    The image probes ("does it carry the Docker CLI", "can it reach the
+    daemon") used to run *after* `docker rm -f $CONTAINER`. An image that
+    failed either of them left no server at all, and a message explaining how
+    to rebuild one. They are read-only, so they belong above the destruction.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = bin_dir / "docker"
+    # An image without the Docker CLI: the first probe returns nothing usable.
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+        "if [[ \"$1\" == \"ps\" ]]; then printf 'pawflow-server\\n'; exit 0; fi\n"
+        "if [[ \"$1\" == \"run\" ]]; then printf 'sh: docker: not found\\n'; exit 127; fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    env = {
+        "DOCKER_LOG": str(docker_log),
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "PAWFLOW_HOME": str(tmp_path / "pawflow-home"),
+        "PAWFLOW_IMAGE": "ghcr.io/allcolor/pawflow:broken",
+        "PAWFLOW_PORT": "19990",
+    }
+    result = subprocess.run(
+        ["bash", "scripts/run-pawflow-docker.sh"],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    log = docker_log.read_text(encoding="utf-8")
+    assert result.returncode == 1
+    assert "does not contain the Docker CLI" in result.stderr
+    # The whole point: nothing was destroyed.
+    assert "rm -f pawflow-server" not in log
+    assert "rm -f pawflow-relay" not in log
+    assert "run -d --name pawflow-server" not in log
+
+
 def test_run_docker_recreates_the_server_even_when_a_relay_cannot_be_removed(tmp_path):
     """A wedged relay must not stop the server from being recreated.
 

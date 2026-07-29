@@ -129,19 +129,6 @@ mkdir -p \
   "$PAWFLOW_HOME/certs" \
   "$PAWFLOW_HOME/logs"
 
-if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-  if [[ "$RECREATE_CONTAINER" == "1" || "$RECREATE_CONTAINER" == "true" || "$RECREATE_CONTAINER" == "yes" ]]; then
-    echo "Container '$CONTAINER' already exists; recreating it with image $IMAGE while keeping persistent volumes."
-    remove_managed_relay_containers
-    docker rm -f "$CONTAINER" >/dev/null
-  else
-    echo "Container '$CONTAINER' already exists."
-    echo "Start it with: docker start $CONTAINER"
-    echo "Or allow in-place recreation with: PAWFLOW_RECREATE_CONTAINER=1"
-    exit 1
-  fi
-fi
-
 if [[ -S /var/run/docker.sock ]]; then
   DOCKER_ARGS+=("-v" "/var/run/docker.sock:/var/run/docker.sock")
   if command -v stat >/dev/null 2>&1; then
@@ -187,6 +174,25 @@ Server-side login needs both:
 Docker daemon check output:
 $DOCKER_SOCKET_CHECK
 MSG
+    exit 1
+  fi
+fi
+
+# Only now, with the image proved usable, is the running server destroyed.
+# Everything above is read-only: it pulls nothing down and starts nothing. The
+# two probes above used to run *after* this block, so an image without the
+# Docker CLI -- or a socket the container cannot reach -- left the operator
+# with no server at all and a message about how to rebuild one. An update that
+# fails must leave the old server running.
+if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+  if [[ "$RECREATE_CONTAINER" == "1" || "$RECREATE_CONTAINER" == "true" || "$RECREATE_CONTAINER" == "yes" ]]; then
+    echo "Container '$CONTAINER' already exists; recreating it with image $IMAGE while keeping persistent volumes."
+    remove_managed_relay_containers
+    docker rm -f "$CONTAINER" >/dev/null
+  else
+    echo "Container '$CONTAINER' already exists."
+    echo "Start it with: docker start $CONTAINER"
+    echo "Or allow in-place recreation with: PAWFLOW_RECREATE_CONTAINER=1"
     exit 1
   fi
 fi

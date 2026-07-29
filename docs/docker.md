@@ -642,6 +642,14 @@ is what gates the optional `git pull` checkbox.
 turns are in flight — and lets the operator decide. Nothing refuses on their
 behalf. The UI then polls `/health` until the server answers again and reloads.
 
+**The image is proved usable before the old server is destroyed.** The start
+script probes the new image twice — does it carry the Docker CLI, can it reach
+the mounted daemon — and both probes used to run *after* `docker rm -f` on the
+server container. An image that failed either left the operator with no server
+at all and a message about how to rebuild one. The probes are read-only, so
+they now run first: the destruction is the last thing that happens before
+`docker run`.
+
 **Managed relays are removed, best-effort.** Before recreating the server, the
 start script drops the `pawflow-relay-srv-*` / `pawflow-relay-min-*` containers
 so they come back with the current runtime code; their home volumes and

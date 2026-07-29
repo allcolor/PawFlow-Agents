@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.44] — 2026-07-29
+
+### Fixed
+
+- **The beta.43 tag never produced an image: the CI security gate failed on a
+  false positive.** `bandit` reads `GHCR_TOKEN_URL` as a hardcoded password
+  (B105) because the name contains `TOKEN` and the value is a string literal.
+  The constant is the public GHCR *endpoint* that hands out an anonymous pull
+  token for a public repository — there is no credential in the source. Marked
+  `# nosec B105`, as the OAuth `token_url` entries already are. This release
+  carries everything beta.43 contained; upgrade straight from beta.42.
+
 ## [1.0.0-beta.43] — 2026-07-29
 
 ### Added

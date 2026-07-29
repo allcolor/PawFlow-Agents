@@ -128,17 +128,20 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
         def _resolve_view_mode() -> str:
+            # Simplified is the default view. A conversation that never chose
+            # gets it; an explicit choice at any scope of the cascade
+            # (conversation, user, global) still wins.
             try:
                 from core.expression import resolve_expression
                 raw = resolve_expression(
-                    '$' + '{chat.view_mode:default("classic")}',
+                    '$' + '{chat.view_mode:default("simplified")}',
                     owner=user_id,
                     conversation_id=conv_id,
                 )
             except Exception:
-                raw = "classic"
+                raw = "simplified"
             mode = str(raw).strip().lower()
-            return mode if mode in ("classic", "simplified") else "classic"
+            return mode if mode in ("classic", "simplified") else "simplified"
 
         group_technical_messages = _resolve_chat_flag("group_technical_messages")
         group_task_messages = _resolve_chat_flag("group_task_messages")

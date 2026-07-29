@@ -364,6 +364,29 @@ class TestAgentLoopActions(unittest.TestCase):
         assert "messages" in body
         assert body["message_count"] == 3
         assert body["group_technical_messages"] is True
+        # Nobody chose a view for this conversation: it opens simplified.
+        assert body["view_mode"] == "simplified"
+
+    def test_an_explicit_view_choice_beats_the_simplified_default(self):
+        from core.conv_agent_config import add_agent_to_conv
+        store = ConversationStore.instance()
+        store.save("c1", [{"role": "user", "content": "Hello"}],
+                   ttl=60, user_id="alice@test.com")
+        add_agent_to_conv("c1", "assistant", llm_service="default",
+                          definition="assistant")
+
+        self._execute_async_action({
+            "action": "set_param",
+            "conversation_id": "c1",
+            "scope": "conversation",
+            "key": "chat.view_mode",
+            "value": "classic",
+        })
+        _ack, body = self._execute_async_action({
+            "action": "load_history",
+            "conversation_id": "c1",
+        })
+        assert body["view_mode"] == "classic"
 
     def test_load_history_cursor_returns_adjacent_older_messages(self):
         from core.conv_agent_config import add_agent_to_conv

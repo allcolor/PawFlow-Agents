@@ -52,6 +52,10 @@ def create_conversation(user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
         "agents": instance_names,
         "agent": instance_names[0],
     })
+    # New conversations start in auto permission mode. It is written at
+    # creation rather than made the fallback of every reader, so conversations
+    # that already exist keep the mode they were running under.
+    store.set_extra(conversation_id, "permission_mode", "auto")
 
     for entry in valid_entries:
         if entry.get("skills") is not None:

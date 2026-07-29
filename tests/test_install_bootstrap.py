@@ -1308,6 +1308,12 @@ def test_create_first_conversation_links_selected_relay(tmp_path, monkeypatch):
 
         assert get_default(conv_id) == "workspace_relay"
         assert get_linked(conv_id) == ["workspace_relay"]
+        # The installer builds its conversation by hand rather than through the
+        # shared creation contract, so the creation defaults have to be applied
+        # here too -- otherwise the very first conversation is the one that
+        # misses them.
+        assert ConversationStore.instance().get_extra(
+            conv_id, "permission_mode") == "auto"
     finally:
         from core.conversation_store import ConversationStore
         from core.resource_store import ResourceStore

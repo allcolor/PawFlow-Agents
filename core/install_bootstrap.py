@@ -153,6 +153,9 @@ def _create_first_conversation(
         "active_resources",
         {"agents": agent_names, "agent": agent_names[0]},
     )
+    # Same creation default as core.conversation_creation: the conversation the
+    # installer lands the operator in is a created conversation like any other.
+    store.set_extra(conv_id, "permission_mode", "auto")
     if spec.get("relay_id"):
         from core.relay_bindings import link_relay, set_default_relay
         link_relay(conv_id, spec["relay_id"], user_id=admin_user)

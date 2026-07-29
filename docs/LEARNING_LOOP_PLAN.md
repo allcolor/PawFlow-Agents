@@ -16,7 +16,7 @@ PawFlow's cognitive stack (see `docs/COGNITIVE_TOOLS.md`) already covers a large
 | Agent-created skills | ✅ core feature, nudged | ⚠️ **plumbing exists, loop does not**: `manage_resource` can create/update/assign skills from a conversation, `load_skill` loads them — but nothing tells the agent when to crystallize experience into a skill |
 | Skill self-improvement | ✅ agent edits skills that failed | ❌ update path exists (`manage_resource`), no feedback capture, no instruction |
 | Curator (usage, staleness, archival, LLM review) | ✅ background process | ❌ nothing — no usage counters, no lifecycle |
-| Cross-session recall | FTS5 search over past sessions + LLM summarization | ❌ recall works over *extracted memories* only; raw past conversations are not searchable |
+| Cross-session recall | FTS5 search over past sessions + LLM summarization | ✅ `conversation_search` (P4): FTS5 over raw transcripts, optional `summarize` via `summarizer_service`. `recall` still covers extracted memories |
 | User modeling | Honcho (external provider) | Memory L0 identity tier + KG about the user — adequate, different approach |
 
 **Net gap = three things**: (a) the *trigger side* of skill creation/improvement, (b) a curator lifecycle, (c) raw conversation search. Everything else is storage/plumbing we already have.
@@ -61,10 +61,33 @@ A lightweight periodic trigger (same cadence family as auto-save) prompting the 
 | P1 prompts + extraction change | Small (days) | none | **Done 2026-07-16** — `core/skill_loop.py`, hint injected in `tasks/ai/_agentctx_p3.py`, drafts proposed from `core/_bg_bucket_build.py` (bucket + rollup), footer via `load_skill` |
 | P2 stats + promotion | Small/medium | P1 | **Done 2026-07-16** — `core/skill_stats.py` (`data/runtime/skill_stats.json`), promotion suggestion in `core/handlers/skills.py` |
 | P3 curator flow | Medium | P2 (needs stats) | **Done 2026-07-16** — `skillCurator` task (`tasks/system/skill_curator.py`), report-only; schedule with a cron trigger |
-| P4 conversation FTS | Medium | none (parallel) | Pending |
-| P5 reflection trigger | Small | none | Pending |
+| P4 conversation FTS | Medium | none (parallel) | **Done 2026-07-29** — `core/conversation_index.py` (SQLite FTS5, one DB per user under `data/runtime/conversation_index/`), `conversation_search` tool (`core/handlers/conversation_search.py`), approval-exempt and read-only-mode allowed |
+| P5 reflection trigger | Small | none | **Done 2026-07-29** — `core/reflection_trigger.py`, injected as a digest block next to the diary digest in `tasks/ai/_agentctx_p3.py` |
 
-Tests: `tests/test_skill_loop.py` (18 tests: drafts, stats, footer/promotion, curator).
+Tests: `tests/test_skill_loop.py` (18 tests: drafts, stats, footer/promotion,
+curator); `tests/test_conversation_index.py` (31 tests: incremental refresh,
+encryption never indexed, query fallback, handler rendering and summarize).
+`tests/test_reflection_trigger.py` (12 tests: mostly about when the nudge
+stays silent).
+
+Two deviations from the P4 text above, both deliberate:
+
+- **The index refreshes at search time, not on append.** Incremental on two
+  levels — an untouched conversation is never opened, a touched one is read
+  only past its row watermark — so the only difference is when the cost lands,
+  and putting it on the append path would make the chat UI wait for a feature
+  that turn may never use.
+- **Encrypted conversations are never indexed.** An FTS index is plaintext, so
+  indexing one would copy its content out of the encrypted store. Fails closed:
+  an unreadable encryption state counts as encrypted.
+
+P5 landed as a *conditional* prompt block rather than a periodic trigger. A
+standing "remember to reflect" instruction is one an agent learns to skip, and
+a wall-clock trigger nags a diary nothing has been added to. The block appears
+only when both conditions hold: at least `MIN_ENTRIES_SINCE` (5) diary entries
+written since the last reflection, and at least `MIN_INTERVAL_S` (6h) since
+that reflection. It asks for one `reflection` entry plus a check for a `kg_add`
+triple or a skill worth crystallizing — which is what closes P5 back into P1.
 
 ## 4. Positioning note
 

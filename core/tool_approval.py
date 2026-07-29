@@ -41,7 +41,7 @@ class ToolApprovalGate:
         # Web / search
         "web_search",
         # History / context
-        "read_history", "read_parent_context",
+        "read_history", "read_parent_context", "conversation_search",
         # User interaction (no data modification)
         "notify_user", "ask_user",
         # Meta / internal
@@ -85,7 +85,7 @@ class ToolApprovalGate:
         "show_file",
         # Memory / history (read)
         "recall", "semantic_recall",
-        "read_history", "read_parent_context",
+        "read_history", "read_parent_context", "conversation_search",
         # Help / introspection
         "pawflow_help", "get_tool_schema", "list_secrets",
         # Web search (read-only by definition)

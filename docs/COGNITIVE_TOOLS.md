@@ -394,6 +394,27 @@ Both auto-triggers use the `summarizer_service` -- a lightweight LLM configured 
 
 ---
 
+### 6.1 Reflection nudge
+
+The diary accepts a `reflection` entry type that nothing ever asked for: agents
+write observations and decisions as they work, and the synthesis across them
+never happens. `core/reflection_trigger.py` injects a `Reflection due` block
+next to the diary digest asking for exactly one — and for a check of whether
+the synthesis deserves a `kg_add` triple or a skill.
+
+It is deliberately silent most of the time. Both conditions must hold:
+
+| Condition | Default | Why |
+|---|---|---|
+| Diary entries since the last reflection | ≥ 5 (`MIN_ENTRIES_SINCE`) | Nothing to synthesize otherwise |
+| Time since the last reflection | ≥ 6h (`MIN_INTERVAL_S`) | A busy afternoon should not produce three |
+
+A standing "remember to reflect" instruction is one an agent learns to skip;
+this one appears only when it is actually due, and disappears once the
+reflection is written.
+
+---
+
 ## 7. System Prompt Injection
 
 At every conversation turn, three cognitive blocks are appended to the agent's system prompt:
@@ -435,8 +456,9 @@ All paths are relative to the PawFlow data directory:
 | Knowledge graph | `data/knowledge_graphs/{user_id}.json` | JSON with `entities` and `triples` |
 | Agent diary | `data/memories/{user_id}/diary_{agent_name}.jsonl` | JSONL, one record per line |
 | Project graph | `data/graphs/{user_id}/{conv_id}/graph.json` | JSON with `nodes`, `edges`, `metadata` |
+| Conversation index | `data/runtime/conversation_index/{user_id}.db` | SQLite FTS5, derived from transcripts |
 
-All writes use the atomic tmp-then-replace pattern: write to `.tmp` file first, then `replace()` to the final path.
+All writes use the atomic tmp-then-replace pattern: write to `.tmp` file first, then `replace()` to the final path. The conversation index is the exception and deliberately so: it is SQLite (WAL), and it is *derived* data — deleting the file costs the next search one rebuild and loses nothing.
 
 ---
 
@@ -492,11 +514,30 @@ Complete table of all 21 cognitive tools with their parameters:
 | `report` | _(none)_ | Summary with god nodes, stats, confidence breakdown |
 | `node` | `question` (node label) | Details about a specific code entity |
 
-### Summary: 21 Tools Total
+### Conversation Search (1)
+
+| # | Tool | Parameters | Description |
+|---|---|---|---|
+| 20 | **`conversation_search`** | `query` (string, required), `agent` (string), `limit` (integer, max 50), `include_current` (boolean), `summarize` (boolean) | Full-text search over the raw text of the user's past conversations |
+
+This is the counterpart of `recall`, not a duplicate of it. `recall` searches
+memories — what an agent decided at the time was worth keeping. This searches
+what was actually said, which is the only way to answer "we solved this
+before, where?" when nobody extracted a memory back then. `read_history`
+remains the tool for the *current* conversation.
+
+Encrypted conversations are never indexed (the index is plaintext, so
+indexing one would undo the encryption), and only the searching user's own
+conversations are in their index. See
+[tool_catalog.md](tool_catalog.md#searching-past-conversations) for the full
+behaviour.
+
+### Summary: 20 Tools Total
 
 - 6 memory tools (`remember`, `recall`, `semantic_recall`, `forget`, `check_duplicate`, `memory_navigate`)
 - 10 knowledge graph tools (`kg_add`, `kg_query`, `kg_invalidate`, `kg_timeline`, `kg_stats`, `query_graph`, `kg_god_nodes`, `kg_surprises`, `kg_hyperedges`, `kg_communities`)
 - 2 diary tools (`diary_write`, `diary_read`)
 - 1 project graph tool with 4 actions (`project_graph`)
+- 1 conversation search tool (`conversation_search`)
 
 **Note on `end_memory`**: Ending a memory (marking it as no longer valid without deleting it) is done via the `MemoryStore.end_memory()` API method. There is no dedicated tool exposed to agents for this -- agents should use `forget` to remove obsolete memories or manage temporal validity through the knowledge graph's `kg_invalidate` instead.

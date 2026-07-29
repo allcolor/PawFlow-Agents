@@ -421,6 +421,8 @@ def create_default_registry() -> ToolRegistry:
     registry.register(DiaryReadHandler())
     from core.handlers.learn import LearnHandler
     registry.register(LearnHandler())
+    from core.handlers.conversation_search import ConversationSearchHandler
+    registry.register(ConversationSearchHandler())
     from core.handlers.project_graph import ProjectGraphHandler
     registry.register(ProjectGraphHandler())
 

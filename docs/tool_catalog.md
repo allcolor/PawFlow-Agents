@@ -220,6 +220,7 @@ pages before image results before video results.
 | `check_duplicate` | Detect duplicate memories. |
 | `memory_navigate` | Browse memory taxonomy. |
 | `learn` | Extract learnings from conversation. |
+| `conversation_search` | Full-text search across the user's past conversations (raw messages, not extracted memories). Read-only, approval-exempt, allowed in read-only mode. Encrypted conversations are never indexed and never appear in results. See [Searching past conversations](#searching-past-conversations). |
 | `diary_write` | Write an agent diary entry. |
 | `diary_read` | Read diary entries. |
 | `kg_add` | Add knowledge graph triples. |
@@ -229,6 +230,35 @@ pages before image results before video results.
 | `kg_stats` | Graph statistics. |
 | `query_graph` | Traverse graph connections. |
 | `kg_god_nodes` | Find highly connected entities. |
+
+### Searching past conversations
+
+`conversation_search` answers "we solved this before, in which conversation?".
+`recall` cannot: it searches memories, which exist only where an agent decided
+at the time that something was worth keeping. This searches the transcripts
+themselves.
+
+The index (`core/conversation_index.py`) is one SQLite FTS5 database per user
+under `data/runtime/conversation_index/`, and it is derived data — deleting a
+file costs the next search one rebuild and nothing else.
+
+Three properties worth knowing before relying on it:
+
+- **Encrypted conversations are never indexed.** An FTS index is plaintext by
+  construction, so indexing one would copy its content back out of the
+  encrypted store. A conversation encrypted after being indexed is purged on
+  the next refresh, and an unreadable encryption state counts as encrypted —
+  the check fails closed. Results say how many conversations were skipped.
+- **The index refreshes when you search, not when a message is appended.** The
+  refresh is incremental twice over — a conversation whose `updated_at` has not
+  moved since it was indexed is never opened, and one that has moved is read
+  only past its row watermark — so the difference is only *when* the cost
+  lands; putting it on append would make the chat UI wait for a feature that
+  turn may never use.
+- **Only `user` and `assistant` rows are indexed**, and only conversations the
+  searching user owns. Tool output is machine text that would dominate every
+  ranking, and a shared conversation is searchable by its owner, not yet by
+  its collaborators.
 
 ## Multi-Agent, Plans, and Tasks
 

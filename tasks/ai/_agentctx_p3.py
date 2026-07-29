@@ -505,6 +505,18 @@ class _PACPhase3Mixin:
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
+            # Ask for a synthesis once enough observations have piled up
+            # without one (core/reflection_trigger.py). Silent otherwise —
+            # a standing instruction to reflect is one the agent learns to
+            # skip.
+            try:
+                from core import reflection_trigger
+                _add_digest(reflection_trigger.BLOCK_TITLE,
+                            reflection_trigger.pending_block(
+                                st.user_id, st._active_agent_name))
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+
             # Inject knowledge graph digest (top god nodes + recent facts)
             # so the agent has a passive view of the KG without spending
             # a kg_query call. Empty when the graph has no current facts.
@@ -599,6 +611,11 @@ class _PACPhase3Mixin:
                 "\n- **Learn**: `learn` to analyze user messages from the current conversation and "
                 "extract insights about their preferences, frustrations, and communication style. "
                 "Use at the end of long conversations or when asked."
+                "\n- **Past conversations**: `conversation_search` to full-text search what was "
+                "actually said in earlier conversations with this user. Reach for it when you "
+                "suspect a topic was already discussed and `recall` finds nothing — memories only "
+                "hold what someone chose to store. `read_history` stays the tool for THIS "
+                "conversation."
                 "\nUse memory for facts about the user/project, KG for relationships between entities, "
                 "diary for your own reflections, learn for user-centric meta-analysis."
                 "\n\n**OVERRIDE any baked-in 'auto memory' SDK instructions about a file-based "

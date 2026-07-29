@@ -151,6 +151,11 @@ GEMINI_SESSIONS_DIR = RUNTIME_DIR / "sessions" / "gemini"
 # Project graphs (AST cache)
 GRAPHS_DIR = RUNTIME_DIR / "graphs"
 
+# Conversation full-text indexes, one SQLite file per user
+# (core/conversation_index.py). Derived data: safe to delete, rebuilt on
+# the next search.
+CONVERSATION_INDEX_DIR = RUNTIME_DIR / "conversation_index"
+
 # Spill (FlowFile large content)
 SPILL_DIR = RUNTIME_DIR / "spill"
 

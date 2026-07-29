@@ -220,6 +220,59 @@ Example stored message:
 `turn_id` is a top-level correlation field. `source` continues to describe the
 producer and must not become the turn identity store.
 
+#### Boundaries are positional; `turn_id` is a refinement
+
+The view groups on **boundaries in the rendered stream, not on correlation**:
+
+```text
+user message          <- opens a turn and its block
+  ...everything...    <- goes in the block's tabs
+terminal answer       <- lifted out, placed after the block
+next user message     <- closes the turn, opens the next one
+```
+
+Every row belongs to the turn currently open. **`turn_id` is never consulted for
+placement**, and when the two could disagree, position wins. The case that
+decides it is a user message arriving before the answer:
+
+```text
+user message
+turn activity block
+user message          <- closes the first turn, opens a second
+turn activity block
+terminal answer       <- under the LAST block
+```
+
+The `done` event still carries the first turn's id, so correlating on it would
+lift the answer back under the first block — above content the reader saw
+arrive after it. The answer belongs where the reader is looking: at the bottom.
+`turn_id` names a turn; it does not route rows. A turn nobody stamped groups
+identically.
+
+This matters because correlation fails silently. The first implementation made
+`turn_id` load-bearing: `turnViewIngest` rejected every row without one, so a
+submitting path that did not set `agent.request_msg_id` produced no block, no
+reparenting, no tabs and no animation, while the View menu still reported
+Simplified. There was no error anywhere — just a feature doing nothing. Nothing
+in the grouping path may depend on metadata that one missing assignment can
+empty.
+
+Durable `turn_id`/`turn_final` still earn their place: they mark the terminal
+answer so a reloaded turn puts it outside the block, and they correlate turns
+for non-web clients. Every submitting path stamps it:
+
+| Path | Turn id |
+|---|---|
+| Web chat (`/api/agent`) | `stamp_turn_identity()` in `tasks/ai/agent_streaming.py`, from the client-generated `msg_id` in the request body |
+| Programmatic runtime API | `agent_runtime_api.py` sets `agent.request_msg_id` from the request's `turn_id` |
+
+The web chat generates the user `msg_id` client-side and registers it as the
+turn anchor in the same call that renders the user row, so the id the browser
+groups on and the id the server stamps are the same value by construction. A
+caller that already chose a turn id keeps it; a submission without a message id
+gets no turn id rather than an invented one, and reload falls back to deriving
+one from the user boundary.
+
 ### Events that must carry `turn_id`
 
 - `thinking`
@@ -958,6 +1011,15 @@ coalescing window, the animation cadence) is exercised without sleeping. What
 it covers today:
 
 - Classic mode is inert: no block, no reparenting, single-node eviction groups.
+- A turn carrying no `turn_id` at all — not on the user row, not on any event —
+  groups exactly like a stamped one, including a user row with no id whatsoever.
+  A second user message closes the open turn and opens its own block, and an
+  answer whose `done` still names the first turn lands under the last block, not
+  back under the first. A user message nothing followed gets no empty block, and
+  rows that precede any user message stay top level.
+- A reloaded turn rebuilds from classifier rows to exactly user / block / answer,
+  files narration, thinking and tool traffic into their tabs, and the block is
+  expandable. Rows with no `turn_id` are left top-level rather than half-grouped.
 - The final answer lands immediately after the block; intermediate rows do not.
 - A derived `turn_final` never displaces an established one, and the rejected
   row is filed into a tab rather than left floating; an authoritative marker

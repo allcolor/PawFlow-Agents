@@ -7,8 +7,13 @@ const TURN_TRANSIENT_MAX_QUEUE = 3;
 
 let PAWFLOW_CHAT_VIEW_MODE = 'classic';
 const simplifiedTurns = new Map();
-const _turnUserAnchors = new Map();
-const _turnPendingRows = new Map();
+// Turn boundaries are positional, not correlated: a user message opens a turn,
+// the terminal answer and the next user message close it. Everything rendered
+// in between belongs to the open turn's detail block. A turn id, when the
+// server provides one, only names a turn that is already open -- it is never
+// required, so a row nobody stamped still lands where it belongs.
+let _turnOpen = null;
+let _turnSeq = 0;
 
 function turnViewIsSimplified() { return PAWFLOW_CHAT_VIEW_MODE === 'simplified'; }
 
@@ -40,28 +45,26 @@ function turnViewSetMode(mode) {
 function turnViewReset() {
   for (const state of simplifiedTurns.values()) _turnStopTransient(state);
   simplifiedTurns.clear();
-  _turnUserAnchors.clear();
-  _turnPendingRows.clear();
+  _turnOpen = null;
 }
 
+// A user message is a boundary: it closes whatever turn was open and opens the
+// next one. Nothing here may fail on missing metadata -- this is the only thing
+// the whole view is built on. The block itself is built on the turn's first
+// row, so a user message nothing followed (a pending prompt, the tail of a
+// page) is not given an empty one.
 function turnViewRegisterUser(extra, element) {
   if (!turnViewIsSimplified() || !element) return;
-  const id = _turnId(extra) || String((extra && extra.msg_id) || (element.dataset && element.dataset.msgid) || '').trim();
-  if (!id) return;
+  if (_turnOpen && _turnOpen.state) _turnStopTransient(_turnOpen.state);
+  const id = _turnId(extra)
+    || String((extra && extra.msg_id) || (element.dataset && element.dataset.msgid) || '').trim()
+    || ('turn-' + (++_turnSeq));
   element.dataset.turnId = id;
-  _turnUserAnchors.set(id, element);
-  const state = simplifiedTurns.get(id);
-  if (state) { state.userEl = element; _turnPlaceBlock(state); }
-  const pending = _turnPendingRows.get(id);
-  if (pending && pending.length) {
-    _turnPendingRows.delete(id);
-    for (const row of pending) turnViewIngest(row.kind, row.data, row.element);
-  }
+  _turnOpen = { turnId: id, userEl: element, data: extra || {}, state: null };
 }
 
-function _turnCreateState(turnId, data) {
-  const userEl = _turnUserAnchors.get(turnId);
-  if (!userEl || !userEl.isConnected) return null;
+function _turnCreateState(turnId, userEl, data) {
+  if (!userEl) return null;
   const state = {
     turnId, userMsgId: userEl.dataset.msgid || turnId, userEl, agentName: '', llmService: '',
     status: 'working', expanded: false, activeTab: 'messages', finalMsgId: '', finalEl: null,
@@ -183,16 +186,28 @@ function _turnTabForKind(kind) {
   return 'messages';
 }
 
+// Every row belongs to the turn currently open -- position decides, and only
+// position. A turn_id is never consulted here: when the two disagree the layout
+// on screen has to win. A second user message arriving before the answer gives
+// user / block / user / block / answer, with the answer under the LAST block,
+// which is where the reader is looking; routing it back under the first block
+// because the done event still carries the first turn's id would put it above
+// content that came after it.
+//
+// Rows that precede any user message -- a partial first page, a system notice --
+// have no open turn and stay top level rather than being forced into a wrong one.
+function _turnCurrentState(create) {
+  if (!_turnOpen || !_turnOpen.userEl.isConnected) return null;
+  if (!_turnOpen.state && create) {
+    _turnOpen.state = _turnCreateState(_turnOpen.turnId, _turnOpen.userEl, _turnOpen.data);
+  }
+  return _turnOpen.state;
+}
+
 function turnViewIngest(kind, data, element) {
   if (!turnViewIsSimplified()) return false;
-  const id = _turnId(data); if (!id) return false;
-  let state = simplifiedTurns.get(id) || _turnCreateState(id, data);
-  if (!state) {
-    const pending = _turnPendingRows.get(id) || [];
-    if (!pending.some(row => row.element === element && row.kind === kind)) pending.push({ kind, data, element });
-    _turnPendingRows.set(id, pending.slice(-100));
-    return false;
-  }
+  const state = _turnCurrentState(true);
+  if (!state || !state.blockEl.isConnected) return false;
   _turnUpdateIdentity(state, data || {});
   if (kind === 'tool_result' && turnViewHandleToolResult(data, element)) return true;
   const tabKey = _turnTabForKind(kind); const tab = state.tabs[tabKey];
@@ -240,7 +255,7 @@ function _turnCompactPresentedResult(state, tcId, callEl) {
 
 function turnViewHandleToolResult(data, resultElement) {
   if (!turnViewIsSimplified()) return false;
-  const id = _turnId(data); const state = simplifiedTurns.get(id); if (!state) return false;
+  const state = _turnCurrentState(false); if (!state) return false;
   const tcId = String((data && (data.tc_id || data.tool_call_id)) || (resultElement && resultElement.dataset && resultElement.dataset.tcId) || '');
   const callEl = (tcId && state.toolElementsByCallId.get(tcId))
     || (tcId && typeof findToolCallElement === 'function' ? findToolCallElement(tcId) : null);
@@ -338,7 +353,7 @@ function _turnStopTransient(state) {
 
 function turnViewFinalize(data) {
   if (!turnViewIsSimplified()) return false;
-  const id = _turnId(data); const state = simplifiedTurns.get(id); if (!state) return false;
+  const state = _turnCurrentState(false); if (!state) return false;
   const finalId = String((data && (data.final_msg_id || data.msg_id)) || '');
   // A derived marker is a reconstruction guess, not an authority: pagination
   // classifies each page on its own, so an older page can derive a second
@@ -365,7 +380,9 @@ function turnViewFinalize(data) {
 
 function turnViewFail(turnId, status, message) {
   if (!turnViewIsSimplified()) return false;
-  const state = simplifiedTurns.get(String(turnId || '')); if (!state) return false;
+  // Never build a block here: a turn that failed before producing a single row
+  // has nothing to show, and an empty block is worse than none.
+  const state = _turnCurrentState(false); if (!state) return false;
   if (state.status === 'completed') return false;
   _turnStopTransient(state); _turnUpdateStatus(state, ['stopped', 'cancelled', 'error'].includes(status) ? status : 'error');
   if (message) _turnOfferTransient(state, 'messages', message);
@@ -397,7 +414,9 @@ function turnViewForgetElement(element) {
   if (!element) return;
   for (const [id, state] of simplifiedTurns.entries()) {
     if (state.userEl === element || state.blockEl === element || state.finalEl === element) {
-      _turnStopTransient(state); simplifiedTurns.delete(id); _turnUserAnchors.delete(id); _turnPendingRows.delete(id); return;
+      _turnStopTransient(state); simplifiedTurns.delete(id);
+      if (_turnOpen && _turnOpen.state === state) _turnOpen = null;
+      return;
     }
   }
 }

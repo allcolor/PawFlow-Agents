@@ -33,6 +33,76 @@ class _Bus:
         self.events.append((cid, event_type, data))
 
 
+# ── Turn identity has to reach the turn in the first place ──
+#
+# Everything below the emitter keys off ctx["request_msg_id"], which comes from
+# the flowfile attribute agent.request_msg_id. If the submitting path does not
+# set it, no row and no event carries a turn_id and the simplified view has
+# nothing to group -- it renders a classic transcript while reporting itself as
+# simplified.
+
+
+def test_web_chat_submission_carries_its_user_message_id_as_the_turn_id():
+    from core import FlowFile
+    from tasks.ai.agent_streaming import stamp_turn_identity
+
+    flowfile = FlowFile(content=b"")
+
+    stamped = stamp_turn_identity(flowfile, "user-1")
+
+    assert stamped == "user-1"
+    assert flowfile.get_attribute("agent.request_msg_id") == "user-1"
+    assert flowfile.get_attribute("_user_msg_id") == "user-1"
+
+
+def test_a_turn_id_the_caller_already_chose_is_never_overridden():
+    from core import FlowFile
+    from tasks.ai.agent_streaming import stamp_turn_identity
+
+    flowfile = FlowFile(content=b"")
+    flowfile.set_attribute("agent.request_msg_id", "runtime-api-turn")
+
+    stamped = stamp_turn_identity(flowfile, "user-1")
+
+    assert stamped == "runtime-api-turn"
+
+
+def test_a_submission_without_a_message_id_invents_no_turn_id():
+    from core import FlowFile
+    from tasks.ai.agent_streaming import stamp_turn_identity
+
+    flowfile = FlowFile(content=b"")
+
+    assert stamp_turn_identity(flowfile, "") == ""
+    assert not (flowfile.get_attribute("agent.request_msg_id") or "")
+
+
+def test_the_context_reads_the_attribute_the_submission_writes():
+    # The bug was two names for one thing: the submission wrote _user_msg_id
+    # while the context read agent.request_msg_id. Pin the seam so a rename on
+    # either side fails here instead of silently emptying every turn id.
+    from core import FlowFile
+    from tasks.ai.agent_streaming import stamp_turn_identity
+
+    flowfile = FlowFile(content=b"")
+    stamp_turn_identity(flowfile, "user-1")
+
+    class _St:
+        pass
+
+    st = _St()
+    st.flowfile = flowfile
+    ctx_value = st.flowfile.get_attribute("agent.request_msg_id") or ""
+
+    emitter = StreamEmitter(
+        "conv-1", _Bus(), {"request_msg_id": ctx_value,
+                          "active_agent_name": "assistant"},
+        agent=None, gen_key="conv-1", generation=1)
+    emitter._emit("tool_call", {"tool": "read"})
+
+    assert emitter.bus.events[0][2]["turn_id"] == "user-1"
+
+
 def test_stream_emitter_stamps_turn_correlation_on_live_events():
     bus = _Bus()
     emitter = StreamEmitter(

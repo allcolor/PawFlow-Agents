@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The simplified chat view did nothing at all in the web chat.** Grouping was
+  built on `turn_id` correlation, which the runtime derives from the flowfile
+  attribute `agent.request_msg_id`. Only the programmatic runtime API ever set
+  it, so every turn submitted from the web chat — the only client the view
+  exists for — ran with an empty one. No stored message and no live event
+  carried a `turn_id`, so `turnViewIngest` rejected every row: no activity
+  block was built, nothing was reparented, and there were no tabs, no ephemeral
+  text and no icons. Selecting Simplified persisted the mode and switched the
+  menu, then rendered an ordinary classic transcript, with no error anywhere.
+
+  The view no longer groups by correlation. Boundaries are positional, which is
+  what they always were on screen: a user message opens a turn and its block,
+  everything rendered after it goes into the block, the terminal answer is
+  lifted out and placed below it, and the next user message closes the turn and
+  opens the next one. A user message that arrives before the answer therefore
+  reads user / block / user / block / answer, with the answer under the last
+  block — where the reader is looking — rather than lifted back above content
+  that arrived after it. `turn_id` names a turn but no longer routes rows, so it
+  can no longer be missing: a turn nobody stamped groups identically, including
+  one whose user message has no id at all.
+
+  The submitting path also stamps the turn id it was always meant to carry, from
+  the user message id the browser already generates, so stored rows are
+  self-describing and the terminal-answer marker lands on reload. That stamp is
+  no longer load-bearing for the view itself.
+
 ## [1.0.0-beta.46] — 2026-07-29
 
 ### Added

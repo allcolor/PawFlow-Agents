@@ -24,6 +24,24 @@ from core import FlowFile  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+
+def stamp_turn_identity(flowfile, user_msg_id: str) -> str:
+    """Carry the submitting user message id into the turn as its turn id.
+
+    The user message id IS the turn id: every assistant, thinking and tool row
+    the turn produces persists and emits it, and the simplified chat view groups
+    on it. Only the programmatic runtime API ever set `agent.request_msg_id`, so
+    web chat turns ran with an empty one -- nothing downstream could stamp a
+    `turn_id`, so the simplified view had no turn to build and silently rendered
+    a classic transcript. A turn id the caller already chose always wins.
+    """
+    if not user_msg_id:
+        return flowfile.get_attribute("agent.request_msg_id") or ""
+    flowfile.set_attribute("_user_msg_id", user_msg_id)
+    if not (flowfile.get_attribute("agent.request_msg_id") or ""):
+        flowfile.set_attribute("agent.request_msg_id", user_msg_id)
+    return flowfile.get_attribute("agent.request_msg_id") or ""
+
 from tasks.ai.agent_sync import AgentSyncMixin  # noqa: E402
 from tasks.ai.agent_side_channels import AgentSideChannelsMixin  # noqa: E402
 from tasks.ai._agent_streaming_loop import _AgentStreamingLoopMixin  # noqa: E402
@@ -120,8 +138,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         _user_msg_id = _body.get("msg_id", "")
-        if _user_msg_id:
-            flowfile.set_attribute("_user_msg_id", _user_msg_id)
+        stamp_turn_identity(flowfile, _user_msg_id)
 
         # Authorization has to happen HERE, not in _prepare_agent_context.
         # This method pre-persists the user message and publishes it to every

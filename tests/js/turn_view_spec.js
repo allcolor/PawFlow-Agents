@@ -102,6 +102,164 @@ test('classic mode eviction groups stay single-node', () => {
   assert(group[0] === user);
 });
 
+// ── Boundaries are positional: no turn_id required anywhere ─────────────
+//
+// The block holds everything between a user message and the terminal answer,
+// or between two user messages. Correlation metadata is a refinement, never a
+// precondition -- a turn nobody stamped must group exactly the same.
+
+test('a turn with no turn_id anywhere still groups', () => {
+  const e = env('simplified');
+  const user = e.row('u1');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, user);        // no turn_id
+
+  const narration = e.row('a1');
+  eq(e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, narration), true);
+  const call = e.row('c1');
+  eq(e.ctx.turnViewIngest('tool_call', { msg_id: 'c1', tc_id: 'tc-1' }, call), true);
+
+  const block = e.block();
+  assert(block, 'block created from the user boundary alone');
+  assert(user.nextSibling === block, 'block sits right after the user message');
+  assert(narration.parentNode !== e.messages, 'narration moved into a tab');
+  assert(call.parentNode !== e.messages, 'tool call moved into a tab');
+
+  const answer = e.row('a2');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a2' }, answer);
+  e.ctx.turnViewFinalize({ msg_id: 'a2', final_msg_id: 'a2' });
+  assert(block.nextSibling === answer, 'terminal answer lifted out after the block');
+});
+
+test('a user message with no id at all still opens its own turn', () => {
+  const e = env('simplified');
+  const user = e.row('');
+  e.ctx.turnViewRegisterUser({}, user);
+  eq(e.ctx.turnViewIngest('assistant', {}, e.row('a1')), true);
+  assert(e.block(), 'block created without a single identifier');
+});
+
+test('a second user message closes the previous turn and opens a new block', () => {
+  const e = env('simplified');
+  const user1 = e.row('u1');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, user1);
+  const first = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, first);
+  const block1 = e.block();
+
+  const user2 = e.row('u2');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, user2);
+  const second = e.row('a2');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a2' }, second);
+
+  const blocks = e.messages.querySelectorAll('.simple-turn-block');
+  eq(blocks.length, 2, 'one block per turn');
+  assert(blocks[0] === block1, 'the first block is untouched');
+  assert(user2.nextSibling === blocks[1], 'the second block follows the second user message');
+  assert(second.parentNode !== e.messages, 'the later row joined the later turn');
+  assert(first.parentNode !== e.messages, 'the earlier row stayed in the earlier turn');
+});
+
+test('a user message before the answer gives user / block / user / block / answer', () => {
+  const e = env('simplified');
+  const user1 = e.row('u1');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, user1);
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a1' }, e.row('a1'));
+
+  // The user speaks again before the agent is done.
+  const user2 = e.row('u2');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, user2);
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a2' }, e.row('a2'));
+
+  // The done event still carries the FIRST turn's id -- position must win.
+  const answer = e.row('a3');
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a3' }, answer);
+  e.ctx.turnViewFinalize({ turn_id: 'u1', final_msg_id: 'a3' });
+
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,u2,BLOCK,a3');
+});
+
+test('a user message nothing followed gets no empty block', () => {
+  const e = env('simplified');
+  const user = e.row('u1');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, user);
+  e.ctx.turnViewReconcile();
+  eq(e.block(), null, 'a pending prompt is not given a block of its own');
+  eq(e.ctx.turnViewFail('u1', 'cancelled'), false, 'a failure builds no block either');
+  eq(e.block(), null);
+});
+
+test('rows before any user message are left top level', () => {
+  const e = env('simplified');
+  const orphan = e.row('old-1');
+  eq(e.ctx.turnViewIngest('assistant', { msg_id: 'old-1' }, orphan), false);
+  eq(e.block(), null, 'no block without a user boundary');
+  assert(orphan.parentNode === e.messages, 'row stays top level');
+});
+
+// ── Reload: the whole turn must rebuild from classifier rows ────────────
+//
+// A restart plus a hard reload replays history through _renderHistoryRow, not
+// through live SSE. That path was never exercised here, and it is the one the
+// user hits first after a restart.
+
+// The rows tasks/ai/agent_serialization.py emits for one completed turn.
+const HISTORY_ROWS = [
+  { type: 'user', role: 'user', msg_id: 'u1', turn_id: 'u1' },
+  { type: 'assistant', role: 'assistant', msg_id: 'a1', turn_id: 'u1', turn_final: false, content: 'Je regarde.' },
+  { type: 'thinking', role: 'thinking', msg_id: 't1', turn_id: 'u1', turn_final: false, content: 'hmm' },
+  { type: 'tool_call', role: 'tool_call', msg_id: 'c1', tc_id: 'tc-1', turn_id: 'u1', turn_final: false },
+  { type: 'tool_result', role: 'tool', msg_id: 'r1', tc_id: 'tc-1', turn_id: 'u1', turn_final: false },
+  { type: 'assistant', role: 'assistant', msg_id: 'a2', turn_id: 'u1', turn_final: true, content: 'Le CHANGELOG est pret.' },
+];
+
+// Same branch _renderHistoryRow takes, minus addMsg.
+function replayHistory(e, rows) {
+  for (const m of rows) {
+    const el = e.row(m.msg_id);
+    const role = m.type || m.role;
+    const data = Object.assign({}, m, { _history: true });
+    if (role === 'user') e.ctx.turnViewRegisterUser(data, el);
+    else e.ctx.turnViewIngest(role, data, el);
+  }
+  e.ctx.turnViewReconcile();
+}
+
+function topLevelIds(e) {
+  return Array.from(e.messages.children)
+    .map(el => el.dataset.msgid || (el.className.indexOf('simple-turn-block') >= 0 ? 'BLOCK' : '?'))
+    .filter(Boolean);
+}
+
+test('a reloaded turn shows only the user message, the block and the answer', () => {
+  const e = env('simplified');
+  replayHistory(e, HISTORY_ROWS);
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a2');
+});
+
+test('a reloaded turn files every intermediate row into its tab', () => {
+  const e = env('simplified');
+  replayHistory(e, HISTORY_ROWS);
+  const rows = key => {
+    const panel = e.block().querySelector('#turn-panel-u1-' + key + ' .simple-turn-panel-scroll');
+    return panel ? panel.children.length : -1;
+  };
+  eq(rows('messages'), 1, 'narration in Messages');
+  eq(rows('thinking'), 1, 'thinking in Thinking');
+  eq(rows('tools'), 2, 'call and result in Tool calls');
+});
+
+test('a reloaded block is expandable and exposes its four tabs', () => {
+  const e = env('simplified');
+  replayHistory(e, HISTORY_ROWS);
+  const block = e.block();
+  eq(block.querySelectorAll('.simple-turn-tab').length, 4);
+  const header = block.querySelector('.simple-turn-header');
+  assert(header, 'header exists');
+  header.click();
+  eq(header.getAttribute('aria-expanded'), 'true', 'clicking the header expands');
+  assert(block.className.indexOf('expanded') >= 0, 'block carries the expanded class');
+});
+
 // ── Turn layout: user / block / final answer ────────────────────────────
 
 test('final answer is placed after the block and intermediates inside it', () => {

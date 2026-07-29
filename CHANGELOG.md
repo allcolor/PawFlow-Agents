@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.46] — 2026-07-29
+
 ### Added
 
 - **Simplified live chat view.** The View menu now stores `chat.view_mode` at

@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The update refreshed the server image but never the host files that came
+  with it.** `install-pawflow.sh` copies a set of artifacts out of the image
+  onto the host — the start script the update itself runs, `doctor-pawflow.sh`,
+  the relay image catalog, the AppArmor profiles, `docker/claude-code`,
+  `docker/pawflow_sdk`, `tools/mcp_bridge.py`, `core/tool_json.py` and
+  `pawflow_relay`. They live outside the container, so pulling a new image left
+  them untouched: every update from the UI kept whatever version had last been
+  installed from the command line, indefinitely. A fix to any of those files
+  could only ever reach a host through a manual reinstall.
+
+  The updater now extracts them from the image it just pulled, into the new
+  version's `~/.pawflow/runtime/<tag>` directory, and starts the server from
+  there — `PAWFLOW_SOURCE_DIR` moves the `org.pawflow.host-app-dir` label with
+  it, so the next update finds what this one wrote, and the previous version's
+  directory stays intact to fall back to. An install started with
+  `--runtime-dir` is refreshed in place instead, and a git checkout is left
+  alone: `git pull` is what moves its files.
+
+  The refresh happens between the pull and the start script, the window where
+  failing is still free. **It aborts by default** — the files it could not
+  write include the start script about to run — with an opt-in checkbox to
+  continue anyway, which warns that the new server image is being started with
+  the host-side files of the version it replaces.
+
 ## [1.0.0-beta.45] — 2026-07-29
 
 ### Fixed

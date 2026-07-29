@@ -342,6 +342,9 @@ function _admConfirmServerUpdate(info) {
           + '<tr><td style="color:var(--pf-muted);">New image</td><td><code>' + adminEsc(info.target_image || '') + '</code></td></tr>'
         : '<tr><td style="color:var(--pf-muted);">Project</td><td><code>' + adminEsc(info.compose && info.compose.project || '') + '</code></td></tr>')
     + '<tr><td style="color:var(--pf-muted);">Directory (host)</td><td><code>' + adminEsc(info.working_dir || '') + '</code></td></tr>'
+    + (info.artifact_dir && info.artifact_dir !== info.working_dir
+        ? '<tr><td style="color:var(--pf-muted);">New host files</td><td><code>' + adminEsc(info.artifact_dir) + '</code></td></tr>'
+        : '')
     + '<tr><td style="color:var(--pf-muted);">Updater image</td><td><code>' + adminEsc(info.updater_image || '') + '</code></td></tr>'
     + '<tr><td style="color:var(--pf-muted);">Agent turns running</td><td><strong>' + agents + '</strong>'
     + (agents ? ' &mdash; they will be killed' : '') + '</td></tr>'
@@ -350,7 +353,14 @@ function _admConfirmServerUpdate(info) {
         ? '<label style="display:block;margin-top:10px;"><input type="checkbox" id="adm-server-git"> '
           + 'Also <code>git pull --ff-only</code> first (aborts on a dirty or diverged tree)</label>'
         : '<div style="color:var(--pf-muted);margin-top:10px;">The project directory is not a git checkout &mdash; '
-          + 'only images are refreshed.</div>')
+          + (info.artifact_dir
+              ? 'the image and the host files it carries are refreshed.'
+              : 'only images are refreshed.') + '</div>')
+    + (info.artifact_dir
+        ? '<label style="display:block;margin-top:6px;"><input type="checkbox" id="adm-server-force"> '
+          + 'Continue even if the host files cannot be refreshed (the server would start '
+          + 'with the previous version\'s start script)</label>'
+        : '')
     + '<p style="margin-top:12px;">The interface will go dark for a minute or two while the server restarts.</p>'
     + '<button onclick="adminUpdateServerConfirm()" style="background:#c0392b;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Update and restart</button>'
     + '</div>';
@@ -359,7 +369,8 @@ function _admConfirmServerUpdate(info) {
 
 function adminUpdateServerConfirm() {
   var pull = !!(document.getElementById('adm-server-git') || {}).checked;
-  action$('admin_update_server', { pull_source: pull }).subscribe(function(d) {
+  var force = !!(document.getElementById('adm-server-force') || {}).checked;
+  action$('admin_update_server', { pull_source: pull, force_artifacts: force }).subscribe(function(d) {
     if (d.error) { addMsg('error', d.error); return; }
     _admWaitForServer(d);
   });

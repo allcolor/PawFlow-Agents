@@ -566,6 +566,40 @@ reproducing its `docker run` from an inspect dump — a second source of truth
 would drift. The image to pull is the repository of the running image plus the
 latest GitHub release tag, which is exactly how the publish workflow tags it.
 
+**The host-side files are refreshed too.** `install-pawflow.sh` copies a set of
+artifacts out of the image onto the host (`extract_image_artifacts`): the start
+script itself, `doctor-pawflow.sh`, `config/relay_image_catalog.json`,
+`docker/apparmor`, `docker/claude-code`, `docker/pawflow_sdk`,
+`tools/mcp_bridge.py`, `core/tool_json.py` and `pawflow_relay`. These run
+*outside* the container, so pulling a new image does not touch them. Until they
+were refreshed here, every update from the UI left them frozen at whatever
+version had last been installed from the command line — including the start
+script the update itself runs. The list lives in
+`core/installer_deployment.py` (`IMAGE_ARTIFACTS`), a test asserts the installer
+still extracts every entry, and the copy is a `docker cp` out of a throw-away
+container, exactly as the installer does it.
+
+**Into the new version's directory.** The installer lays these out per version,
+in `~/.pawflow/runtime/<tag>`, so the update extracts into the *new* tag's
+directory and runs the start script from there. `PAWFLOW_SOURCE_DIR` points at
+it, so `org.pawflow.host-app-dir` moves with it and the next update finds what
+this one wrote. The previous version's directory is left intact to fall back
+to, and no directory ever claims a version it does not hold. An install that
+does not follow that naming — `--runtime-dir` — is refreshed in place instead:
+the operator chose that path, and a tag-named sibling would be a directory
+PawFlow invented behind their back. A git checkout is never touched at all;
+`git pull` is what moves its files, and copying image contents over a tracked
+tree would dirty it.
+
+The refresh sits between the pull and the start script — the same window, for
+the same reason. **A failed refresh aborts**, leaving a running server on its
+old version, because the files it did not manage to write include the start
+script about to run. The dialog offers a checkbox to continue anyway; taking it
+starts the new server image with the host-side files of the version it is
+replacing, and says so on stderr. The updater runs as root, so what it extracts
+is chowned back to the uid/gid the deployment runs as — otherwise the
+operator's next command-line install could not overwrite it.
+
 The environment of the running container is replayed, so the deployment keeps
 its bootstrap gateway key, its uid/gid and its relay images. Two exceptions:
 `PAWFLOW_BOOTSTRAP_RESET` is forced empty — a fresh install may have been

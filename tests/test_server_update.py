@@ -563,9 +563,11 @@ def test_update_action_does_not_refuse_because_agents_are_running(monkeypatch):
 
     monkeypatch.setattr(update_manager, "running_agent_count", lambda: 7)
     monkeypatch.setattr(update_manager, "update_server",
-                        lambda pull_source=False: {"ok": True, "started": True,
-                                                   "container": "pawflow-updater",
-                                                   "pull_source": pull_source})
+                        lambda pull_source=False, force_artifacts=False: {
+                            "ok": True, "started": True,
+                            "container": "pawflow-updater",
+                            "pull_source": pull_source,
+                            "force_artifacts": force_artifacts})
 
     result = admin_settings._handle_admin_settings(
         None, "admin_update_server", {"pull_source": True}, None, "admin",
@@ -574,14 +576,17 @@ def test_update_action_does_not_refuse_because_agents_are_running(monkeypatch):
 
     assert payload["started"] is True
     assert payload["pull_source"] is True
+    # Forcing past a failed artifact refresh is opt-in, never the default.
+    assert payload["force_artifacts"] is False
 
 
 def test_update_action_reports_a_refusal_as_409(monkeypatch):
     from tasks.ai.actions import admin_settings
 
     monkeypatch.setattr(update_manager, "update_server",
-                        lambda pull_source=False: {"ok": False,
-                                                   "reason": "not a compose deployment"})
+                        lambda pull_source=False, force_artifacts=False: {
+                            "ok": False,
+                            "reason": "not a compose deployment"})
 
     result = admin_settings._handle_admin_settings(
         None, "admin_update_server", {}, None, "admin", _admin_flowfile())

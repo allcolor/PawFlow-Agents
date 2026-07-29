@@ -708,21 +708,107 @@ def published_server_image(current_image: str) -> str:
     return f"{repo}:{tag}" if repo and tag else ""
 
 
+def _artifact_refresh_lines(image: str, target_dir: str,
+                            env: Dict[str, str], force: bool) -> List[str]:
+    """Shell that copies the new image's host artifacts into ``target_dir``.
+
+    ``docker cp`` out of a throw-away container, exactly as
+    ``install-pawflow.sh`` does: the image is the source of truth for what a
+    version's host side looks like, and re-deriving it here would be a second
+    one that drifts.
+
+    Runs in a subshell with its own trap, so a copy that fails still removes
+    the container it created. The updater runs as root, so the files land
+    root-owned; they are chowned to the uid/gid the deployment itself runs as,
+    or the operator's next command-line install could not overwrite them.
+
+    Ordering is the safety property, as everywhere else on this path: this runs
+    after the pull and before the server is touched, so a failure here still
+    leaves a running server on its old version.
+    """
+    from core.installer_deployment import (
+        IMAGE_ARTIFACTS,
+        OPTIONAL_IMAGE_ARTIFACTS,
+    )
+
+    quoted = shlex.quote(target_dir)
+    required = " ".join(shlex.quote(rel) for rel in IMAGE_ARTIFACTS)
+    optional = " ".join(shlex.quote(rel) for rel in OPTIONAL_IMAGE_ARTIFACTS)
+    # Every message goes through shlex.quote: these strings carry host paths
+    # and an image name, and an apostrophe in one of them would end the shell
+    # string and break the script at the worst possible moment.
+    def _echo(message: str, stderr: bool = False) -> str:
+        return f"echo {shlex.quote(message)}" + (" >&2" if stderr else "")
+
+    lines = [
+        _echo(f"Refreshing host artifacts from {image} into {target_dir}"),
+        # A subshell, so the trap that removes the throw-away container is its
+        # own. Every required step ends in `|| exit 1` rather than relying on
+        # `set -e`: errexit is neutralised inside a command whose result is
+        # tested, which is exactly what the forced call below does — without
+        # this, a forced update would skip past failures in silence instead of
+        # warning about them.
+        "_pf_refresh_artifacts() (",
+        "  set -eu",
+        f"  mkdir -p {quoted} || exit 1",
+        f'  _cid="$(docker create {shlex.quote(image)} true)" || exit 1',
+        '  [ -n "$_cid" ] || exit 1',
+        "  trap 'docker rm -f \"$_cid\" >/dev/null 2>&1 || true' EXIT",
+        f"  for _rel in {required}; do",
+        f'    mkdir -p {quoted}/"$(dirname "$_rel")" || exit 1',
+        f'    rm -rf {quoted}/"$_rel" || exit 1',
+        f'    docker cp "$_cid:/app/$_rel" {quoted}/"$_rel" || exit 1',
+        "  done",
+        f"  for _rel in {optional}; do",
+        f'    mkdir -p {quoted}/"$(dirname "$_rel")"',
+        f'    rm -rf {quoted}/"$_rel"',
+        f'    docker cp "$_cid:/app/$_rel" {quoted}/"$_rel" 2>/dev/null ||',
+        '      echo "WARNING this server image does not carry $_rel" >&2',
+        "  done",
+        f"  chmod +x {quoted}/scripts/*.sh 2>/dev/null || true",
+    ]
+    uid = (env.get("PAWFLOW_RUN_UID") or "").strip()
+    gid = (env.get("PAWFLOW_RUN_GID") or "").strip()
+    if uid and gid:
+        warn = _echo(f"WARNING could not chown {target_dir}", stderr=True)
+        lines.append(
+            f"  chown -R {shlex.quote(uid)}:{shlex.quote(gid)} {quoted} "
+            f"2>/dev/null || {warn}")
+    lines.append(")")
+    if force:
+        warn = _echo(
+            "WARNING host artifacts were not refreshed; the server is being "
+            "started with the host-side files of the version it is replacing",
+            stderr=True)
+        lines.append(f"_pf_refresh_artifacts || {warn}")
+    else:
+        lines.append("_pf_refresh_artifacts")
+    return lines
+
+
 def _installer_updater_script(info: Dict[str, Any], image: str,
-                              pull_source: bool) -> str:
+                              pull_source: bool, artifact_dir: str = "",
+                              force_artifacts: bool = False) -> str:
     """Shell run by the updater for a ``docker run`` (installer) deployment.
 
     It does what the installer does, in the installer's own order: pull the new
-    server image first, then hand over to ``run-pawflow-docker.sh``, which is
-    the single source of truth for how a PawFlow container is started and which
-    already recreates an existing container in place.
+    server image first, refresh the host-side artifacts it carries, then hand
+    over to ``run-pawflow-docker.sh``, which is the single source of truth for
+    how a PawFlow container is started and which already recreates an existing
+    container in place.
 
     The pull comes before the start script for the same reason the compose path
-    checks compose first: a failed pull must leave the server running.
+    checks compose first: a failed pull must leave the server running. The
+    artifact refresh sits in the same window, and for the same reason.
+
+    ``artifact_dir`` empty means no refresh: a git checkout carries its own
+    host-side files and ``git pull`` is what moves them, so copying image
+    contents over a tracked tree would dirty it.
     """
     from core.installer_deployment import RESET_ON_UPDATE, start_script_env
 
-    env = start_script_env(info, image)
+    work_dir = artifact_dir or info.get("host_app_dir", "")
+    env = start_script_env(info, image, source_dir=artifact_dir)
     # Empty values are dropped, except the first-run flags: those must reach
     # the script *as* empty to override what the running container carries.
     assignments = " ".join(
@@ -739,10 +825,12 @@ def _installer_updater_script(info: Dict[str, Any], image: str,
         # Same rule as the compose path: a dirty or diverged tree stops the
         # update instead of being merged behind the operator's back.
         lines.append("git pull --ff-only")
-    lines.extend([
-        f"docker pull {shlex.quote(image)}",
-        f"{assignments} bash scripts/run-pawflow-docker.sh",
-    ])
+    lines.append(f"docker pull {shlex.quote(image)}")
+    if artifact_dir:
+        lines.extend(_artifact_refresh_lines(image, artifact_dir, env,
+                                             force=force_artifacts))
+    lines.append(f"cd {shlex.quote(work_dir)}")
+    lines.append(f"{assignments} bash scripts/run-pawflow-docker.sh")
     return "\n".join(lines)
 
 
@@ -813,8 +901,28 @@ def _compose_preflight(compose: Dict[str, Any]) -> Dict[str, Any]:
             "compose_version": stdout.splitlines()[0].strip() if stdout.strip() else ""}
 
 
+def _artifact_mount_dir(app_dir: str, artifact_dir: str) -> str:
+    """Host directory the updater must carry to reach both install directories.
+
+    When the update moves to a new per-version directory, the updater has to
+    create a *sibling* of the current one, so mounting the current directory
+    alone would leave it writing into its own filesystem instead of the host's.
+    Their common parent covers both, and it is still mounted at its own host
+    path -- the start script resolves ``$PAWFLOW_HOME`` against it and hands the
+    result to the daemon as a host path, so any other mount point would
+    silently produce wrong bind mounts.
+    """
+    import posixpath
+
+    if not artifact_dir or artifact_dir == app_dir:
+        return app_dir
+    return posixpath.dirname(artifact_dir.rstrip("/")) or app_dir
+
+
 def _installer_preflight(installer: Dict[str, Any]) -> Dict[str, Any]:
     """The installer deployment's equivalent: can we re-run the start script?"""
+    from core.installer_deployment import artifact_dir_for_update
+
     app_dir = installer.get("host_app_dir", "")
     image = updater_image()
     target = published_server_image(installer.get("image", ""))
@@ -843,27 +951,40 @@ def _installer_preflight(installer: Dict[str, Any]) -> Dict[str, Any]:
                           "on, so the update could not restart it on the same "
                           "one."}
 
+    # The artifacts the installer put on the host are refreshed from the new
+    # image, so the directory they go to -- and the directory that holds it --
+    # must be writable before anything is pulled or stopped.
+    artifact_dir = artifact_dir_for_update(app_dir, installer.get("image", ""),
+                                           target)
+    mount_dir = _artifact_mount_dir(app_dir, artifact_dir)
     probe_script = (
         "set -e\n"
-        "test -f scripts/run-pawflow-docker.sh\n"
-        "test -d .git && echo PAWFLOW_GIT=1 || true\n"
+        f"test -f {shlex.quote(app_dir)}/scripts/run-pawflow-docker.sh\n"
+        f"test -w {shlex.quote(mount_dir)}\n"
+        f"test -d {shlex.quote(app_dir)}/.git && echo PAWFLOW_GIT=1 || true\n"
     )
     try:
-        probe = _probe(image, app_dir, probe_script)
+        probe = _probe(image, mount_dir, probe_script)
     except Exception as exc:
         return {"ok": False, "installer": installer,
                 "reason": f"Could not run the updater image '{image}': {exc}"}
     if probe.returncode != 0:
         return {"ok": False, "installer": installer,
                 "reason": f"The install directory '{app_dir}' does not carry "
-                          "scripts/run-pawflow-docker.sh, so the update cannot "
-                          "start the server the way the installer did: "
+                          "scripts/run-pawflow-docker.sh, or "
+                          f"'{mount_dir}' is not writable, so the update "
+                          "cannot start the server the way the installer did: "
                           f"{(probe.stderr or probe.stdout).strip()[:200]}"}
 
+    # A git checkout carries its own host-side files and `git pull` is what
+    # moves them; copying image contents over a tracked tree would dirty it.
+    is_git = "PAWFLOW_GIT=1" in (probe.stdout or "")
     return {"ok": True, "deployment": "installer", "installer": installer,
             "updater_image": image, "working_dir": app_dir,
             "target_image": target,
-            "is_git_checkout": "PAWFLOW_GIT=1" in (probe.stdout or ""),
+            "artifact_dir": "" if is_git else artifact_dir,
+            "mount_dir": mount_dir,
+            "is_git_checkout": is_git,
             "running_agents": running_agent_count(),
             "container": installer.get("container_name", "")}
 
@@ -895,8 +1016,14 @@ def server_update_preflight() -> Dict[str, Any]:
                       "PAWFLOW_HOST_APP_DIR), so it cannot update itself."}
 
 
-def update_server(pull_source: bool = False) -> Dict[str, Any]:
+def update_server(pull_source: bool = False,
+                  force_artifacts: bool = False) -> Dict[str, Any]:
     """Launch the detached updater that restarts this server.
+
+    ``force_artifacts`` downgrades a failed host-artifact refresh from an abort
+    to a warning. Off by default: the refreshed files include the start script
+    the update is about to run, so proceeding without them silently starts the
+    new server image with the previous version's host side.
 
     A container cannot replace itself: ``docker restart`` would come back on the
     old image, and ``rm -f`` kills the process issuing the command. So the work
@@ -920,8 +1047,14 @@ def update_server(pull_source: bool = False) -> Dict[str, Any]:
     working_dir = check["working_dir"]
     image = check["updater_image"]
     deployment = check.get("deployment", "compose")
+    artifact_dir = check.get("artifact_dir", "")
+    # The updater has to reach the directory the artifacts go to, which may be
+    # a sibling of the current one; the compose path has nothing to extract.
+    mount_dir = (check.get("mount_dir") or working_dir
+                 if deployment == "installer" else working_dir)
     script = (_installer_updater_script(check["installer"], check["target_image"],
-                                        pull_source)
+                                        pull_source, artifact_dir=artifact_dir,
+                                        force_artifacts=force_artifacts)
               if deployment == "installer"
               else _updater_script(working_dir, pull_source))
 
@@ -937,7 +1070,7 @@ def update_server(pull_source: bool = False) -> Dict[str, Any]:
     args = [
         "run", "--detach", "--name", UPDATER_CONTAINER, "--restart", "no",
         "--volume", "/var/run/docker.sock:/var/run/docker.sock",
-        "--volume", f"{working_dir}:{working_dir}",
+        "--volume", f"{mount_dir}:{mount_dir}",
         "--workdir", working_dir,
         "--entrypoint", "sh",
         image, "-c", script,
@@ -958,7 +1091,9 @@ def update_server(pull_source: bool = False) -> Dict[str, Any]:
             "container": UPDATER_CONTAINER,
             "updater_image": image,
             "working_dir": working_dir,
+            "artifact_dir": artifact_dir,
             "pull_source": bool(pull_source),
+            "force_artifacts": bool(force_artifacts),
             "deployment": deployment,
             "target_image": check.get("target_image", ""),
             "project": check.get("compose", {}).get("project", ""),

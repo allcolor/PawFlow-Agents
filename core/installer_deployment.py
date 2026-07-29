@@ -27,12 +27,78 @@ second source of truth that drifts.
 from __future__ import annotations
 
 import logging
+import posixpath
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.compose_deployment import inspect_container, self_container_id
 
 logger = logging.getLogger(__name__)
+
+#: Files ``scripts/install-pawflow.sh`` copies out of the server image onto the
+#: host (``extract_image_artifacts``). They are what the host runs *outside* the
+#: container -- the start script itself, the relay runtime, the AppArmor
+#: profiles, the relay image catalog -- so an update that refreshes only the
+#: image leaves them frozen at whatever version was installed from the command
+#: line. Kept in the installer's own order; it is the source of truth and this
+#: list mirrors it.
+IMAGE_ARTIFACTS: Tuple[str, ...] = (
+    "scripts/run-pawflow-docker.sh",
+    "scripts/doctor-pawflow.sh",
+    "scripts/doctor-pawflow.ps1",
+    "config/relay_image_catalog.json",
+    "docker/claude-code",
+    "docker/pawflow_sdk",
+    "tools/mcp_bridge.py",
+    "core/tool_json.py",
+    "pawflow_relay",
+)
+
+#: Artifacts an older image may simply not carry. The installer warns and
+#: continues for exactly these; so does the update.
+OPTIONAL_IMAGE_ARTIFACTS: Tuple[str, ...] = (
+    "scripts/install-pawflow.ps1",
+    "scripts/test_apparmor_profile.sh",
+    "scripts/test_apparmor_relay_profile.sh",
+    "docker/apparmor",
+)
+
+
+def image_tag_dirname(image: str) -> str:
+    """The directory name ``install-pawflow.sh`` derives from an image tag.
+
+    Mirrors its ``image_runtime_dir``: the tag, with everything outside
+    ``[A-Za-z0-9._-]`` replaced by ``_``. A digest-pinned or tagless image has
+    no tag to speak of and yields ``latest``, exactly as the installer does.
+    """
+    ref = (image or "").split("@", 1)[0]
+    tag = ref.rsplit(":", 1)[-1] if ":" in ref.rsplit("/", 1)[-1] else ""
+    tag = tag or "latest"
+    return "".join(c if (c.isalnum() or c in "._-") else "_" for c in tag)
+
+
+def artifact_dir_for_update(host_app_dir: str, current_image: str,
+                            target_image: str) -> str:
+    """Where the update should extract the new image's host artifacts.
+
+    The installer lays them out per version, in ``~/.pawflow/runtime/<tag>``, so
+    an update moves to the *new* tag's directory and leaves the old one intact:
+    the previous version stays on disk to fall back to, and the directory never
+    claims a version it does not hold.
+
+    That only holds when the directory actually follows the installer's naming.
+    An operator who passed ``--runtime-dir`` chose their own path, and a sibling
+    named after a tag would be a directory PawFlow invented behind their back;
+    those are refreshed in place instead. Returns an empty string when there is
+    nothing to work from.
+    """
+    if not host_app_dir or not target_image:
+        return ""
+    parent = posixpath.dirname(host_app_dir.rstrip("/"))
+    current = posixpath.basename(host_app_dir.rstrip("/"))
+    if not parent or current != image_tag_dirname(current_image):
+        return host_app_dir
+    return posixpath.join(parent, image_tag_dirname(target_image))
 
 #: Written by ``scripts/run-pawflow-docker.sh`` onto the server container.
 LABEL_DEPLOYMENT = "org.pawflow.deployment"
@@ -159,20 +225,27 @@ def installer_info(refresh: bool = False) -> Dict[str, Any]:
     return dict(info)
 
 
-def start_script_env(info: Dict[str, Any], image: str) -> Dict[str, str]:
+def start_script_env(info: Dict[str, Any], image: str,
+                     source_dir: str = "") -> Dict[str, str]:
     """Environment that makes ``run-pawflow-docker.sh`` reproduce this server.
 
     Everything the running container carries is replayed, so a deployment keeps
     its bootstrap key, its uid/gid and its relay images across an update. Only
     what the update itself decides is overridden: the new image, and the
     first-run flags that must not be replayed.
+
+    ``source_dir`` moves the deployment to a new host directory. The start
+    script stamps it onto the container as ``org.pawflow.host-app-dir`` and
+    ``PAWFLOW_HOST_APP_DIR``, which is how the *next* update finds the
+    artifacts this one extracted; without it the label would keep pointing at
+    the directory of the version that has just been replaced.
     """
     env = dict(info.get("env") or {})
     env.update({
         "PAWFLOW_IMAGE": image,
         "PAWFLOW_CONTAINER": info.get("container_name", ""),
         "PAWFLOW_HOME": info.get("pawflow_home", ""),
-        "PAWFLOW_SOURCE_DIR": info.get("host_app_dir", ""),
+        "PAWFLOW_SOURCE_DIR": source_dir or info.get("host_app_dir", ""),
         "PAWFLOW_RECREATE_CONTAINER": "1",
     })
     for key, value in (("PAWFLOW_PORT", info.get("port", "")),

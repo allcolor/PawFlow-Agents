@@ -616,8 +616,10 @@ is a loud warning, never fatal. A relay the daemon refuses to kill (`could not
 kill container: tried to kill container, but did not receive an exit event`)
 once aborted the whole script under `set -e` — after the pull, before
 `docker rm -f` on the server — leaving the operator with a server still on the
-old image and a half-killed relay. Relays are accessory and recreated on
-demand; the server recreation is what the update exists for.
+old image and a half-killed relay. The server recreation is what the update
+exists for, and it must be reached. A relay left behind is recovered by the
+service itself — see *A managed container that dies is respawned* in
+`docs/relay_client.md`.
 
 If the update fails, `pawflow-updater` is kept (not `--rm`), so
 `docker logs pawflow-updater` still explains why.

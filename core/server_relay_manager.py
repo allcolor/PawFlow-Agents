@@ -422,6 +422,19 @@ class ServerRelayManager:
         logger.info("Managed server relay service spawned: %s", relay_id)
         return metadata
 
+    def service_relay_running(self, relay_id: str,
+                              kind: str = _KIND_WORKSPACE) -> bool:
+        """Is the managed container of an installed relay service alive?
+
+        Asked by the service before it decides to respawn: the container is
+        started with ``--rm``, so a crash or an operator's ``docker rm -f``
+        leaves nothing behind to inspect and no trace in the service config.
+        The name is the only durable handle, and it is derived, not stored.
+        """
+        if not relay_id:
+            return False
+        return self._is_container_running(_relay_container_name(relay_id, kind))
+
     def cleanup_service_relay(self, config: Dict[str, Any]) -> bool:
         """Stop a managed relay container and delete its managed runtime dir."""
         if not config or not config.get("server_managed"):

@@ -93,6 +93,13 @@ class _RelayFsOpsMixin:
                     "(attempt %d/%d): %s",
                     action, self._service_id, _RELAY_RETRY_DELAY_SECONDS,
                     attempt + 2, attempts, exc)
+                # Retrying only helps while there is something to reconnect.
+                # A managed container that died (or was removed by hand) is
+                # never re-created by anything else, so every retry — and every
+                # later request — would fail until the server itself restarts.
+                # No-op unless this service owns a container and that container
+                # is really gone.
+                self.ensure_managed_relay_alive()
                 time.sleep(_RELAY_RETRY_DELAY_SECONDS)
         if last_exc is not None:
             raise Exception(

@@ -16,9 +16,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   container was recreated. A beta.42 → beta.44 update hit exactly that (`could
   not kill container: tried to kill container, but did not receive an exit
   event`): the server stayed on beta.42 while its relay was left half-killed,
-  and the update looked like it had simply reloaded. Relays are accessory and
-  are recreated on demand, so each is now removed on its own and a failure is a
-  loud warning on stderr instead of an abort.
+  and the update looked like it had simply reloaded. Each relay is now removed
+  on its own and a failure is a loud warning on stderr instead of an abort.
+
+- **A managed relay container that died stayed dead until the server was
+  restarted.** The container of a managed server relay is started once, from
+  `RelayService.connect()`, and runs with `--rm`. Nothing re-created it, so a
+  crash — or an operator running `docker rm -f pawflow-relay-srv-<id>` to
+  unblock the update above — left the transport retrying against a container
+  that no longer existed, for as long as the server stayed up. The relay now
+  respawns itself: when a request fails with a disconnect error and is about to
+  be retried, `ensure_managed_relay_alive()` re-creates the container if, and
+  only if, it is really gone. A live container is left strictly alone (the
+  ordinary disconnect is the relay client reconnecting, and a respawn would
+  turn it into a cold start), unmanaged operator-run relays are never touched,
+  and a burst of failing calls asks for one container start rather than one per
+  call. This is what made the previous entry's "relays are recreated on demand"
+  actually true; it was not, while the server kept running.
 
 ## [1.0.0-beta.44] — 2026-07-29
 

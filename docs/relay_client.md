@@ -24,6 +24,34 @@ and uninstall the old relay explicitly when its workspace is no longer needed.
 
 Server-side relay sessions track in-flight reverse filesystem requests per WebSocket connection. When a relay disconnects or is removed from the pool, those pending request tasks are cancelled so stale connections cannot retain writers, loops, or queued FUSE work.
 
+## A managed container that dies is respawned
+
+The container of a managed server relay is started once, from
+`RelayService.connect()`, and runs with `--rm`. Nothing else used to re-create
+it: if it crashed, or an operator ran `docker rm -f pawflow-relay-srv-<id>`,
+the transport kept retrying against a container that no longer existed and the
+relay stayed down until the whole PawFlow server was restarted.
+
+So when a request fails with a disconnect error and is about to be retried, the
+service calls `ensure_managed_relay_alive()`:
+
+- **Unmanaged relays are never touched.** An operator-run relay is theirs to
+  restart; PawFlow owns no container for it.
+- **A live container is left strictly alone.** The ordinary disconnect is the
+  relay client reconnecting over a container that never died — respawning then
+  would turn a few seconds of retry into a cold start and kill whatever the
+  relay was running. `ServerRelayManager.service_relay_running()` answers that
+  question from the container name, which is derived, not stored.
+- **One respawn per cooldown window** (60 s), so a burst of failing tool calls
+  asks for one container start rather than one per call.
+- **A failed respawn is logged, not raised.** The caller is a transport retry
+  that has its own error to report.
+
+The retry window is five attempts, five seconds apart, which is usually enough
+for the new container to come up and connect back. If it is not, the request
+still fails — but the relay is on its way back, and the next tool call finds it
+connected instead of needing a server restart.
+
 ## CLI
 
 The standalone relay client is exposed as `pawflow-relay` when installed from the Python package, or as `python -m pawflow_relay` from a checkout.

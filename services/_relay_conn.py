@@ -24,6 +24,14 @@ from services._relay_ws import (
 
 logger = logging.getLogger(__name__)
 
+#: A managed relay container is spawned once, from connect(). Nothing else
+#: re-creates it, and it runs with `--rm`, so a crash or an operator's
+#: `docker rm -f` used to take the relay out until the next server restart —
+#: the transport retried against a container that no longer existed. One
+#: respawn per window, so a burst of failing tool calls asks for one container
+#: start rather than one per call.
+_MANAGED_RESPAWN_COOLDOWN_SECONDS = 60.0
+
 
 class _RelayConnMixin:
     """Connection, relay-session and dispatch methods for RelayService."""
@@ -71,6 +79,51 @@ class _RelayConnMixin:
             logger.error("RelayService %s: failed to start managed relay container: %s",
                          self._service_id, e, exc_info=True)
             raise
+
+    def ensure_managed_relay_alive(self) -> bool:
+        """Re-create this service's managed relay container if it is gone.
+
+        Only for `server_managed` services: an operator-run relay has no
+        container PawFlow owns, and restarting it is the operator's call.
+
+        The container is checked *first*, and a live one is left strictly
+        alone. The ordinary disconnect is the relay client reconnecting over a
+        container that never died; respawning then would turn a few seconds of
+        retry into a cold start and kill whatever the relay was running.
+
+        Returns True when a respawn was launched.
+        """
+        if not self.config.get("server_managed"):
+            return False
+        now = time.monotonic()
+        with self._managed_respawn_lock:
+            since = now - self._managed_respawn_at
+            if self._managed_respawn_at and since < _MANAGED_RESPAWN_COOLDOWN_SECONDS:
+                return False
+            self._managed_respawn_at = now
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            alive = ServerRelayManager.get_instance().service_relay_running(
+                self._service_id,
+                kind=str(self.config.get("server_kind") or "workspace"),
+            )
+        except Exception:
+            logger.debug("RelayService %s: could not inspect the managed container",
+                         self._service_id, exc_info=True)
+            return False
+        if alive:
+            return False
+        logger.warning(
+            "RelayService %s: managed relay container is gone — respawning it",
+            self._service_id)
+        try:
+            self._start_managed_server_relay()
+        except Exception:
+            # Already logged with a traceback by _start_managed_server_relay.
+            # Reported, never fatal: the caller is a transport retry that has
+            # its own error to raise if this does not bring the relay back.
+            return False
+        return True
 
     def is_connected(self) -> bool:
         with self._relay_pool_lock:

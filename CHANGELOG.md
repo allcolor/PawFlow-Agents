@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.51] — 2026-07-29
+
 ### Changed
 
 - **A new conversation opens in the simplified view.** `chat.view_mode` now

@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.43] — 2026-07-29
+
+### Added
+
+- **`conversation_search` — an agent can now search what was actually said in
+  past conversations, not only what it remembered to store.** `recall` reads
+  the memory store, which holds what some agent decided at the time was worth
+  keeping; anything nobody extracted was simply gone. The new tool runs a
+  SQLite FTS5 index over the raw transcripts (one database per user under
+  `data/runtime/conversation_index/`), with an optional `summarize=true` that
+  has the summarizer synthesize the hits. Read-only, approval-exempt, and
+  allowed in read-only mode. **Encrypted conversations are never indexed** —
+  an FTS index is plaintext, so indexing one would put its content back in the
+  clear; a conversation encrypted after indexing is purged, and an unreadable
+  encryption state counts as encrypted. Closes P4 of
+  `docs/LEARNING_LOOP_PLAN.md`.
+
+- **Agents are now asked to reflect, once there is something to reflect on.**
+  The diary has always accepted a `reflection` entry type that nothing ever
+  requested, so agents accumulated observations and never synthesized them. A
+  `Reflection due` block now appears next to the diary digest — but only after
+  5 diary entries since the last reflection *and* 6 hours since it, because a
+  standing instruction to reflect is one an agent learns to skip and a
+  wall-clock trigger nags a diary nothing was added to. The nudge also asks
+  whether the synthesis deserves a `kg_add` triple or a skill, which closes the
+  loop back into skill creation. Closes P5 of `docs/LEARNING_LOOP_PLAN.md`.
+
+### Fixed
+
+- **A resumed tmux session replayed the whole previous turn into Telegram.**
+  After a background result woke the Claude Code session, the user received a
+  hundred tool-call messages at once — every tool call of the previous turn,
+  again. A live Claude Code session replays its **entire context** on every API
+  request, so the MITM proxy observes every prior `tool_use` block each time;
+  PawFlow-driven turns dedup against the container's id sets, but
+  `_run_manual_capture` built its coordinator without them and fell back to
+  fresh per-coordinator sets, re-emitting the lot. Each one was persisted as a
+  transcript row and published as a `tool_call` event. The webchat keys tool
+  blocks by `tc_id` and absorbed the repeat, which is why it looked like a
+  Telegram-only bug — it was not: the duplicate rows were also going into the
+  transcript. The capture now shares the pooled container's dedup sets, with a
+  per-session fallback so two chained captures still dedup against each other.
+
+- **A message refused by the runtime left a channel client waiting forever.**
+  `AgentRuntimeAPI.submit_message` is how every non-HTTP transport submits —
+  Telegram today. When the runtime refuses a submission it answers the same
+  404 an unknown conversation gets, and that body carries neither `status`
+  nor `wait_for_done`, so both defaulted to "accepted" and `True`. The caller
+  then waited on the correlated `done` of a turn that was never started, and
+  the Telegram bridge waits with no timeout by project rule — the user got
+  silence, and the bridge thread stayed parked. Refusals now cancel the
+  registered waiter and raise `AgentSubmissionRejected`, which the Telegram
+  client already reports to the user. Found while writing the channel-bridge
+  test that `docs/CONVERSATION_SHARING_PLAN.md` had been asking for.
+
 ## [1.0.0-beta.42] — 2026-07-28
 
 ### Fixed

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.47] — 2026-07-29
+
 ### Fixed
 
 - **The simplified chat view did nothing at all in the web chat.** Grouping was

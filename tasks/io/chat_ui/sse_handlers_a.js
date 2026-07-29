@@ -10,15 +10,18 @@ function _sseWireA() {
       finalizeThinkingFromEvent(data, 'message');
       // Dedup by msg_id — don't render if already in DOM
       if (data.msg_id && document.querySelector('[data-msgid="' + data.msg_id + '"]')) return;
-      const el = addMsg(data.role, data.content, {
+      const messageExtra = Object.assign({}, data, {
         source: data.source, msg_id: data.msg_id, ts: data.ts,
         attachments: data.attachments || [],
         task_id: data.task_id || '', task_iteration: data.task_iteration,
       });
+      const el = addMsg(data.role, data.content, messageExtra);
+      const ownedByTurn = typeof turnViewIngest === 'function'
+        && turnViewIngest(data.role, data, el);
       if (typeof conversationTTSOnMessage === 'function') {
         try { conversationTTSOnMessage(data); } catch (_ttsErr) {}
       }
-      if (data.task_id && el) {
+      if (!ownedByTurn && data.task_id && el) {
         const tb = _getTaskBlock(data.task_id, data.task_iteration, data.agent_name || (data.source && data.source.name) || '');
         if (tb) tb.content.appendChild(el);
       }
@@ -86,13 +89,15 @@ function _sseWireA() {
   eventSource.addEventListener('thinking_delta', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    renderThinkingContent(data, false);
+    const el = renderThinkingContent(data, false);
+    if (typeof turnViewIngest === 'function') turnViewIngest('thinking_delta', data, el);
   });
 
   eventSource.addEventListener('thinking_content', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    renderThinkingContent(data, !!data.msg_id);
+    const el = renderThinkingContent(data, !!data.msg_id);
+    if (typeof turnViewIngest === 'function') turnViewIngest('thinking_content', data, el);
   });
 
   eventSource.addEventListener('token', (e) => {
@@ -162,6 +167,9 @@ function _sseWireA() {
       if (meta) s.el.appendChild(meta);
     }
     contentEl.innerHTML = badge + renderMarkdown(displayText);
+    if (typeof turnViewIngest === 'function') {
+      turnViewIngest('token', Object.assign({}, data, { content: data.text }), s.el);
+    }
     if (displayText.trim() && s.el && s.el.dataset) delete s.el.dataset.transientUi;
     if (displayText.trim() && s.el && !s.el.dataset.technicalGroupsCollapsed) {
       collapseTechnicalGroups();
@@ -542,6 +550,7 @@ function _sseWireA() {
       tool_origin: data.tool_origin || '',
       ts: data.ts,
       live: true,
+      turn_id: data.turn_id || data.request_msg_id || '',
     };
     if (data.parent_tc_id) tcExtra.parent_tc_id = data.parent_tc_id;
     const tcEl = addMsg('tool_call', data.tool, tcExtra);
@@ -570,6 +579,7 @@ function _sseWireA() {
       }
     }
     if (tcEl && data.tc_id) _attachPendingToolResult(tcEl, data.tc_id);
+    if (typeof turnViewIngest === 'function') turnViewIngest('tool_call', data, tcEl);
     if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     scrollBottom();
     if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: (_TOOL_DISPLAY[data.tool] || data.tool)});
@@ -592,10 +602,13 @@ function _sseWireA() {
         ? findToolCallElement(tcId)
         : document.querySelector('[data-tc-id="' + tcId + '"]');
       if (tcEl) {
-        _attachToolResult(tcEl, _resultText(data.result || ''));
+        const artifactOwned = typeof turnViewHandleToolResult === 'function'
+          && turnViewHandleToolResult(data, null);
+        if (!artifactOwned) _attachToolResult(tcEl, _resultText(data.result || ''));
         if (tcEl.dataset) delete tcEl.dataset.live;
         if (data.msg_id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
         if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+        if (!artifactOwned && typeof turnViewIngest === 'function') turnViewIngest('tool_result', data, tcEl);
         scrollBottom();
         return;
       }
@@ -613,7 +626,9 @@ function _sseWireA() {
       ts: data.ts,
       msg_id: data.msg_id || '',
       tc_id: tcId,
+      turn_id: data.turn_id || data.request_msg_id || '',
     });
+    if (typeof turnViewIngest === 'function') turnViewIngest('tool_result', data, trEl);
     // Route into task block if this is a task event
     if (data.task_id && trEl) {
       const tb = _getTaskBlock(data.task_id, data.task_iteration, data.agent_name || '');

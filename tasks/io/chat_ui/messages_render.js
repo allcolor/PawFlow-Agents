@@ -17,22 +17,37 @@ function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
   });
   let excess = rows.length - maxVisible;
   if (excess <= 0) return;
+  const removed = new Set();
   for (const el of rows) {
     if (excess <= 0) break;
-    const mid = el.dataset && el.dataset.msgid;
-    if (mid && typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.has(mid)) continue;
+    if (removed.has(el)) continue;
+    const group = (typeof turnViewEvictionGroup === 'function') ? turnViewEvictionGroup(el) : [el];
+    const selected = group.some(node => {
+      const nodeId = node.dataset && node.dataset.msgid;
+      return nodeId && typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.has(nodeId);
+    });
+    if (selected) continue;
     const evicted = [];
-    if (mid) evicted.push(mid);
-    if (el.querySelectorAll) {
-      for (const child of el.querySelectorAll('[data-msgid]')) {
-        if (child.dataset && child.dataset.msgid) evicted.push(child.dataset.msgid);
+    for (const node of group) {
+      const mid = node.dataset && node.dataset.msgid;
+      if (mid) evicted.push(mid);
+      if (node.querySelectorAll) {
+        for (const child of node.querySelectorAll('[data-msgid]')) {
+          if (child.dataset && child.dataset.msgid) evicted.push(child.dataset.msgid);
+        }
       }
     }
     if (typeof _seenMsgIds !== 'undefined') {
       for (const msgId of evicted) _seenMsgIds.delete(msgId);
     }
-    el.remove();
-    excess--;
+    if (typeof turnViewForgetElement === 'function') turnViewForgetElement(el);
+    if (group.length === 1 && group[0] === el) {
+      removed.add(el);
+      el.remove();
+    } else {
+      for (const node of group) { removed.add(node); node.remove(); }
+    }
+    excess -= group.filter(node => rows.includes(node)).length || 1;
   }
   hasMoreMessages = true;
   if (typeof _updateLoadMoreBanner === 'function') _updateLoadMoreBanner();

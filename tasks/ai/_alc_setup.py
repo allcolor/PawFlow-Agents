@@ -29,6 +29,7 @@ class _ALCSetupMixin:
         st.final_model = ""
         st.finish_reason = ""
         st.response_content = ""
+        st.final_msg_id = ""
         st._need_more_retried = False
         st._fatal_error = False
         st._fatal_error_msg = ""

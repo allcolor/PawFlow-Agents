@@ -129,6 +129,39 @@ function renderMarkdown(text) {
   return parts.join('');
 }
 
+// Strict parser used by simplified turn artifacts. It deliberately requires
+// the resolved tool name; arbitrary prose or another tool returning a similar
+// JSON object must never create an artifact card.
+function parseShowFileArtifact(resultText, toolName) {
+  if (String(toolName || '').toLowerCase() !== 'show_file') return null;
+  let parsed;
+  try { parsed = typeof resultText === 'string' ? JSON.parse(resultText) : resultText; }
+  catch (_err) { return null; }
+  if (!parsed || parsed.__show_file__ !== true) return null;
+  const fileId = String(parsed.file_id || '').trim();
+  const filename = String(parsed.filename || '').trim();
+  const url = String(parsed.url || '').trim();
+  if (!fileId || !filename || !url) return null;
+  const match = url.match(new RegExp('^fs://filestore/([a-f0-9]+)/[^?#]+$', 'i'));
+  if (!match || match[1] !== fileId) return null;
+  return {
+    file_id: fileId, filename: filename, url: url,
+    content_type: String(parsed.content_type || ''),
+    size_kb: Number.isFinite(Number(parsed.size_kb)) ? Number(parsed.size_kb) : 0,
+    http_url: '/files/' + encodeURIComponent(fileId) + '/' + encodeURIComponent(filename),
+  };
+}
+
+function renderShowFileArtifactHtml(artifact) {
+  if (!artifact) return '';
+  const url = artifact.http_url; const filename = artifact.filename;
+  if (isImageFile(filename)) return inlineImageHtml(url, filename, artifact.size_kb ? artifact.size_kb + ' KB' : '');
+  if (isAudioFile(filename)) return inlineAudioHtml(url, filename);
+  if (isVideoFile(filename)) return inlineVideoHtml(url, filename);
+  return '<button type="button" class="simple-turn-artifact-open" data-file-url="' + escapeHtml(artifact.url)
+    + '" onclick="openFileViewer(this.dataset.fileUrl)">' + escapeHtml(filename) + '</button>';
+}
+
 function renderSubAgentTrace(content, extra) {
   const source = (extra && extra.source) || {};
   const trace = (extra && extra.trace) || [];

@@ -56,6 +56,10 @@ class _FakeStore:
         with self.lock:
             self.events.append(("flush", cid, None))
 
+    def patch_message(self, cid, msg_id, **fields):
+        with self.lock:
+            self.events.append(("patch", cid, msg_id, dict(fields)))
+
     def instance(self):
         return self
 
@@ -338,6 +342,39 @@ def test_enqueue_sse_events_is_non_blocking_fifo_barrier(fake_store, monkeypatch
     assert ConversationWriter.shutdown_all(wait_timeout=5.0)
     assert fake_store.routed[0][2]["content"] == "visible"
     assert published == [(cid, "done", {"agent_name": "assistant"})]
+
+
+def test_patch_message_runs_after_append_and_before_done(fake_store, monkeypatch):
+    published = []
+
+    class _Bus:
+        def subscriber_count(self, _cid):
+            return 1
+
+        def publish_event(self, cid, event_type, data=None):
+            fake_store.events.append(("sse", cid, event_type))
+            published.append((cid, event_type, data or {}))
+
+    monkeypatch.setattr(
+        "core.conversation_event_bus.ConversationEventBus.instance",
+        staticmethod(lambda: _Bus()))
+
+    cid = "conv-final-patch"
+    w = ConversationWriter.for_conversation(cid)
+    message = _msg(content="final answer")
+    w.enqueue_message(message)
+    w.enqueue_patch_message(
+        message["msg_id"], turn_id="user-1", turn_final=True)
+    w.enqueue_sse_events([{
+        "type": "done",
+        "data": {"final_msg_id": message["msg_id"]},
+    }])
+
+    assert ConversationWriter.shutdown_all(wait_timeout=5.0)
+    operation_names = [event[0] for event in fake_store.events]
+    assert operation_names.index("append") < operation_names.index("patch")
+    assert operation_names.index("patch") < operation_names.index("sse")
+    assert published[0][2]["final_msg_id"] == message["msg_id"]
 
 
 def test_writer_publishes_each_sse_after_its_own_append(fake_store, monkeypatch):

@@ -315,6 +315,9 @@ async function send() {
   const targetAgent = selectedAgent || '';
   const userSource = { type: 'user', name: '', target_agent: targetAgent };
   const msgEl = addMsg('user', text || '', { source: userSource, msg_id: userMsgId });
+  if (typeof turnViewRegisterUser === 'function') {
+    turnViewRegisterUser({ source: userSource, msg_id: userMsgId, turn_id: userMsgId }, msgEl);
+  }
   if (attachmentsForDisplay.length > 0) {
     msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text || '') + renderUserAttachments(attachmentsForDisplay);
   }

@@ -344,6 +344,12 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             st._turn_cost_ref = [0.0]
 
             def _make_result(reason=""):
+                _result_reason = reason or st.finish_reason
+                _is_final = bool(
+                    st.final_msg_id
+                    and not st._fatal_error
+                    and _result_reason not in {
+                        "discarded", "error", "cancelled", "interrupted"})
                 return AgentResult(
                     response_content=st.response_content,
                     conversation_id=st.conversation_id,
@@ -352,10 +358,12 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     tokens_in=st.total_tokens_in, tokens_out=st.total_tokens_out,
                     tools_called=st.tools_called, iterations=st.iteration,
                     duration_ms=(time.time() - st.start_time) * 1000,
-                    finish_reason=reason or st.finish_reason,
+                    finish_reason=_result_reason,
                     source=st._agent_source_cached(),
                     messages=st.messages, new_messages=st.new_messages,
                     all_msg_ids=st.all_assistant_msg_ids,
+                    final_msg_id=st.final_msg_id if _is_final else "",
+                    is_final=_is_final,
                     cost_usd=st._turn_cost_ref[0])
 
             # Final drain: pick up any messages that arrived during the last turn

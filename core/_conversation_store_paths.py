@@ -132,7 +132,8 @@ class _CsPathsMixin:
             }
             if thinking_signature:
                 trow["thinking_signature"] = thinking_signature
-            for key in ("source", "channel", "conversation_id", "user_id"):
+            for key in ("source", "channel", "conversation_id", "user_id",
+                        "turn_id", "turn_final"):
                 if anchor.get(key) is not None:
                     trow[key] = anchor[key]
             rows.append(trow)
@@ -157,7 +158,8 @@ class _CsPathsMixin:
                 crow["arguments"] = call.get("arguments")
             elif "input" in call:
                 crow["arguments"] = call.get("input")
-            for key in ("source", "channel", "conversation_id", "user_id"):
+            for key in ("source", "channel", "conversation_id", "user_id",
+                        "turn_id", "turn_final"):
                 if anchor.get(key) is not None:
                     crow[key] = anchor[key]
             rows.append(crow)

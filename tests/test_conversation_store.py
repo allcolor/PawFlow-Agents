@@ -1112,6 +1112,8 @@ class TestAppendMessage:
             "role": "assistant",
             "content": "answer",
             "thinking": "plan",
+            "turn_id": "user-1",
+            "turn_final": False,
             "tool_calls": [{"id": "tc1", "name": "read", "arguments": {}}],
         })
 
@@ -1120,6 +1122,8 @@ class TestAppendMessage:
         assert anchor_id
         assert rows[1]["parent_message_id"] == anchor_id
         assert rows[2]["parent_message_id"] == anchor_id
+        assert [row["turn_id"] for row in rows] == ["user-1"] * 3
+        assert [row["turn_final"] for row in rows] == [False] * 3
 
     def test_system_context_rows_do_not_receive_msg_id(self, conv):
         store, cid, _uid = conv

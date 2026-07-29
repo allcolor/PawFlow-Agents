@@ -471,6 +471,10 @@ class _ALCClosures1Mixin:
                     "ts": getattr(msg, "timestamp", 0) or None,
                     "seq": getattr(msg, "seq", 0) or None,
                 }
+                _turn_id = st.ctx.get("request_msg_id") or ""
+                if _turn_id:
+                    _store_msg["turn_id"] = _turn_id
+                    _store_msg["turn_final"] = False
                 if msg.thinking:
                     _store_msg["thinking"] = msg.thinking
                 if msg.tool_calls:
@@ -601,6 +605,11 @@ class _ALCClosures1Mixin:
                         if _raw_tool_origin:
                             _tr_data["tool_origin"] = _raw_tool_origin
                         _sse.append({"type": "tool_result", "data": _tr_data})
+                if _turn_id:
+                    for _event in _sse:
+                        _event_data = _event.setdefault("data", {})
+                        _event_data.setdefault("turn_id", _turn_id)
+                        _event_data.setdefault("request_msg_id", _turn_id)
                 _agent_for_route = st.ctx.get("active_agent_name", "") or ""
                 logger.info(
                     "[_append] role=%s msg_id=%s content_len=%d "

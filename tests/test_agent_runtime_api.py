@@ -84,6 +84,47 @@ def test_stream_done_payload_includes_transport_correlation():
     assert data["turn_id"] == "telegram:1:2"
     assert data["request_msg_id"] == "telegram:1:2"
     assert data["finish_reason"] == "stop"
+    assert data["is_final"] is False
+    assert data["final_msg_id"] == ""
+
+
+def test_stream_done_queues_durable_final_patch_before_done(monkeypatch):
+    from tasks.ai.agent_emitter import AgentResult, StreamEmitter
+
+    queued = []
+
+    class _Writer:
+        def enqueue_patch_message(self, msg_id, **fields):
+            queued.append(("patch", msg_id, fields))
+
+        def enqueue_sse_events(self, events):
+            queued.append(("events", events))
+
+    class _ConversationWriter:
+        @staticmethod
+        def for_conversation(cid):
+            assert cid == "conv1"
+            return _Writer()
+
+    monkeypatch.setattr(
+        "core.conversation_writer.ConversationWriter", _ConversationWriter)
+
+    emitter = StreamEmitter(
+        "conv1", object(),
+        {"request_msg_id": "user-1", "use_conv_store": True,
+         "active_agent_name": "assistant"},
+        agent=None, gen_key="conv1", generation=1)
+    emitter.enqueue_done_after_writes(AgentResult(
+        response_content="answer", finish_reason="stop",
+        all_msg_ids=["intermediate", "final-1"],
+        final_msg_id="final-1", is_final=True))
+
+    assert queued[0] == ("patch", "final-1", {
+        "turn_id": "user-1", "turn_final": True})
+    done = queued[1][1][0]["data"]
+    assert done["msg_id"] == "final-1"
+    assert done["final_msg_id"] == "final-1"
+    assert done["is_final"] is True
 
 
 def test_telegram_agent_client_conv_commands(monkeypatch):

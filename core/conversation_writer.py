@@ -195,6 +195,23 @@ class ConversationWriter:
             evt.wait(timeout=30)
         return evt
 
+    def enqueue_patch_message(self, msg_id: str, wait: bool = False,
+                              **fields: Any) -> Optional[threading.Event]:
+        """Patch one persisted message after all prior FIFO writes."""
+        if not msg_id or not fields:
+            raise ValueError("msg_id and patch fields are required")
+        self._ensure_can_accept_writes()
+        evt = threading.Event() if wait else None
+        self._queue.put({
+            "op": "patch_message",
+            "msg_id": msg_id,
+            "fields": dict(fields),
+            "_done_event": evt,
+        })
+        if wait and evt:
+            evt.wait(timeout=30)
+        return evt
+
     def _publish_sse_events(self, item: Dict[str, Any]) -> None:
         sse_events = item.get("sse_events")
         if not sse_events:
@@ -331,9 +348,20 @@ class ConversationWriter:
                 write_item = batch[i]
                 try:
                     op = write_item.get("op", "append_message")
+                    if op == "patch_message":
+                        flush_before_sse()
+                        _write_started = time.monotonic()
+                        store.patch_message(
+                            self._cid, write_item["msg_id"],
+                            **write_item.get("fields", {}))
+                        _write_ms += ((time.monotonic() - _write_started)
+                                      * 1000.0)
+                        written.append(write_item)
+                        i += 1
+                        continue
                     if op != "append_message":
                         raise ValueError(
-                            f"[conv-writer] unknown op: {op!r} (only 'append_message' supported)")
+                            f"[conv-writer] unknown op: {op!r}")
 
                     can_batch = (
                         not write_item.get("sse_events")
@@ -348,8 +376,7 @@ class ConversationWriter:
                             next_item = batch[j]
                             next_op = next_item.get("op", "append_message")
                             if next_op != "append_message":
-                                raise ValueError(
-                                    f"[conv-writer] unknown op: {next_op!r} (only 'append_message' supported)")
+                                break
                             if next_item.get("sse_events"):
                                 break
                             if (next_item.get("agent_name", "") != batch_agent

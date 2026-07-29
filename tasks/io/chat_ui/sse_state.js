@@ -224,7 +224,7 @@ function renderThinkingContent(data, reconcileFinal) {
   const aKey = agentKey(agent);
   const textDelta = data.text || '';
   const msgId = data.msg_id || '';
-  if (!textDelta && !thinkingElements[aKey]) return;
+  if (!textDelta && !thinkingElements[aKey]) return null;
   const current = thinkingElements[aKey];
   if (current && msgId && current.msgId && current.msgId !== msgId) {
     finalizeThinking(agent, 'thinking-message');
@@ -290,6 +290,7 @@ function renderThinkingContent(data, reconcileFinal) {
   te.content.textContent = te.text;
   if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
   scrollBottom();
+  return te.el;
 }
 
 

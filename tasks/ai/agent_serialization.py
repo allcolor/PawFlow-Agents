@@ -312,6 +312,7 @@ class AgentSerializationMixin:
                     "content": preview + ("..." if len(display_content) > _limit else ""),
                     "tool_call_id": tool_call_id,
                     "tc_id": tool_call_id,
+                    "raw_index": raw_idx,
                 }
                 if m.get("msg_id"):
                     _tr_entry["msg_id"] = m["msg_id"]
@@ -478,6 +479,27 @@ class AgentSerializationMixin:
                     else:
                         entry["source"] = {"type": "agent", "name": ""}
                 result.append(entry)
+        # Preserve durable turn metadata and derive a display-only turn id for
+        # older rows from the nearest preceding visible user boundary.
+        _turn_by_raw_index = {}
+        _current_turn_id = ""
+        for _raw_index, _raw in enumerate(raw_messages):
+            if _raw.get("role") == "user" and _raw.get("msg_id"):
+                _current_turn_id = str(_raw["msg_id"])
+            _turn_by_raw_index[_raw_index] = (
+                str(_raw.get("turn_id") or "") or _current_turn_id)
+        for _item in result:
+            _raw_index = _item.get("raw_index")
+            if isinstance(_raw_index, int) and 0 <= _raw_index < len(raw_messages):
+                _raw = raw_messages[_raw_index]
+                _turn_id = str(_raw.get("turn_id") or "")
+                if not _turn_id:
+                    _turn_id = _turn_by_raw_index.get(_raw_index, "")
+                if _turn_id:
+                    _item["turn_id"] = _turn_id
+                if "turn_final" in _raw:
+                    _item["turn_final"] = bool(_raw.get("turn_final"))
+
         # Propagate task_id from source to top-level for frontend task block grouping
         for _item in result:
             _src = _item.get("source")

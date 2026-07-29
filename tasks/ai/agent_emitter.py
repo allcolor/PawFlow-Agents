@@ -32,6 +32,8 @@ class AgentResult:
     messages: List[LLMMessage] = field(default_factory=list)
     new_messages: List[LLMMessage] = field(default_factory=list)
     all_msg_ids: List[str] = field(default_factory=list)  # all assistant msg_ids (survives flush)
+    final_msg_id: str = ""
+    is_final: bool = False
     cost_usd: float = 0.0
 
 
@@ -135,6 +137,10 @@ class StreamEmitter(AgentEmitter):
                 logger.debug("heartbeat stop failed", exc_info=True)
 
     def _emit(self, event_type: str, data: dict):
+        turn_id = self.ctx.get("request_msg_id") or ""
+        if turn_id:
+            data.setdefault("turn_id", turn_id)
+            data.setdefault("request_msg_id", turn_id)
         if self._task_id:
             data['task_id'] = self._task_id
             data['task_iteration'] = self.ctx.get("_task_iteration", 0)
@@ -307,12 +313,14 @@ class StreamEmitter(AgentEmitter):
     def _done_payload(self, result: AgentResult) -> Dict[str, Any]:
         # Use all_msg_ids from the full turn (survives flush)
         _all_ids = result.all_msg_ids or []
-        _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
+        _last_id = result.final_msg_id or (_all_ids[-1] if _all_ids else self._current_msg_id)
         # The context gauge is emitted once through message_meta above. Done
         # closes the turn only; it must not be a second gauge publisher.
         data = {
             "response": result.response_content,
             "msg_id": _last_id,
+            "final_msg_id": result.final_msg_id if result.is_final else "",
+            "is_final": bool(result.is_final),
             "turn_id": self.ctx.get("request_msg_id") or "",
             "request_msg_id": self.ctx.get("request_msg_id") or "",
             "channel": self._channel or "web",
@@ -341,8 +349,15 @@ class StreamEmitter(AgentEmitter):
         if self._use_conv_store and self.conversation_id:
             try:
                 from core.conversation_writer import ConversationWriter
-                ConversationWriter.for_conversation(
-                    self.conversation_id).enqueue_sse_events([{
+                writer = ConversationWriter.for_conversation(self.conversation_id)
+                turn_id = self.ctx.get("request_msg_id") or ""
+                if result.is_final and result.final_msg_id and turn_id:
+                    writer.enqueue_patch_message(
+                        result.final_msg_id,
+                        turn_id=turn_id,
+                        turn_final=True,
+                    )
+                writer.enqueue_sse_events([{
                         "type": "done",
                         "cid": self.event_cid,
                         "data": self._done_payload(result),

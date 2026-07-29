@@ -133,6 +133,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
              background: var(--pf-panel); border: 1px solid var(--pf-border); border-radius: 8px;
              box-shadow: 0 4px 14px rgba(0,0,0,0.4); padding: 6px 0; z-index: 5000; }
 .view-menu.open { display: block; }
+.view-menu.disabled { pointer-events: none; opacity: .65; }
 .view-menu-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer;
                   font-size: 13px; color: var(--pf-text); user-select: none; }
 .view-menu-item:hover { background: rgba(255,255,255,0.05); }
@@ -144,6 +145,65 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .view-menu-item.active .vmi-switch { background: var(--pf-accent); }
 .view-menu-item.active .vmi-switch::after { left: 16px; }
 .view-menu-item.disabled { opacity: 0.6; pointer-events: none; }
+.view-menu-section-label { padding: 7px 12px 4px; color: var(--pf-muted); font-size: 10px;
+                           font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.view-menu-divider { height: 1px; margin: 5px 0; background: var(--pf-border); opacity: .75; }
+.view-menu-radio { width: 14px; height: 14px; border: 2px solid var(--pf-muted); border-radius: 50%;
+                   position: relative; flex-shrink: 0; }
+.view-menu-item.active .view-menu-radio { border-color: var(--pf-accent); }
+.view-menu-item.active .view-menu-radio::after { content: ''; position: absolute; inset: 3px;
+                                                  border-radius: 50%; background: var(--pf-accent); }
+.simple-turn-block { position: relative; margin: 8px 0; border: 1px solid var(--pf-border);
+                     border-radius: 12px; background: color-mix(in srgb, var(--pf-panel) 90%, transparent);
+                     overflow: hidden; }
+.simple-turn-header { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 8px;
+                      padding: 8px 12px; border: 0; color: var(--pf-text); background: transparent;
+                      cursor: pointer; text-align: left; }
+.simple-turn-header:hover { background: color-mix(in srgb, var(--pf-border) 22%, transparent); }
+.simple-turn-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.simple-turn-service { color: var(--pf-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.simple-turn-status { font-size: 11px; color: var(--pf-muted); white-space: nowrap; }
+.simple-turn-status.working { color: var(--pf-accent-2); }
+.simple-turn-status.completed { color: var(--pf-success); }
+.simple-turn-status.error, .simple-turn-status.cancelled, .simple-turn-status.stopped { color: var(--pf-danger); }
+.simple-turn-chevron { transition: transform .16s ease; }
+.simple-turn-block.expanded .simple-turn-chevron { transform: rotate(90deg); }
+.simple-turn-ephemeral { min-height: 54px; padding: 8px 14px 14px; display: flex; align-items: center;
+                         justify-content: center; gap: 10px; color: var(--pf-muted); overflow: hidden; }
+.simple-turn-block.expanded .simple-turn-ephemeral { display: none; }
+.simple-turn-ephemeral-text { max-width: min(90%, 720px); overflow: hidden; text-overflow: ellipsis;
+                              white-space: nowrap; animation: simpleTurnCue 1.5s ease both; }
+.simple-turn-ephemeral-icons { width: 28px; height: 28px; display: grid; place-items: center; pointer-events: none; }
+.simple-turn-ephemeral-icon { width: 24px; height: 24px; color: var(--pf-accent);
+                              animation: simpleTurnIcon .72s ease both; }
+.simple-turn-details { display: none; border-top: 1px solid var(--pf-border); }
+.simple-turn-block.expanded .simple-turn-details { display: block; }
+.simple-turn-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 6px; gap: 4px; }
+.simple-turn-tab { min-height: 40px; border: 0; border-radius: 7px; background: transparent;
+                   color: var(--pf-muted); cursor: pointer; position: relative; }
+.simple-turn-tab[aria-selected="true"] { color: var(--pf-text); background: var(--pf-border); }
+.simple-turn-tab.has-unread::after { content: ''; position: absolute; top: 6px; right: 8px; width: 6px;
+                                     height: 6px; border-radius: 50%; background: var(--pf-accent); }
+.simple-turn-panel[hidden] { display: none; }
+.simple-turn-panel-scroll { max-height: min(50vh, 520px); overflow: auto; padding: 8px 10px 12px; }
+.simple-turn-panel-scroll > .msg { margin-left: 0; margin-right: 0; }
+.simple-turn-artifact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.simple-turn-artifact-card { min-width: 0; border: 1px solid var(--pf-border); border-radius: 9px; padding: 8px;
+                              background: color-mix(in srgb, var(--pf-bg) 45%, transparent); }
+.simple-turn-artifact-preview img, .simple-turn-artifact-preview video { max-width: 100% !important; height: auto; }
+.simple-turn-artifact-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 11px; }
+.simple-turn-artifact-meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.simple-turn-artifact-meta span { color: var(--pf-muted); }
+.simple-turn-artifact-open, .simple-turn-artifact-link { border: 0; background: transparent; color: var(--pf-accent); cursor: pointer; }
+.simple-turn-artifact-link { display: block; margin: 5px 0 0 20px; font-size: 11px; }
+@keyframes simpleTurnCue { 0% { opacity: 0; transform: scale(.94); } 20% { opacity: 1; transform: scale(1.04); }
+                           55% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(.98); } }
+@keyframes simpleTurnIcon { 0% { opacity: 0; transform: scale(.55) rotate(-8deg); }
+                            35% { opacity: 1; transform: scale(1.1) rotate(3deg); }
+                            70% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(.95); } }
+@media (prefers-reduced-motion: reduce) {
+  .simple-turn-ephemeral-text, .simple-turn-ephemeral-icon, .simple-turn-chevron { animation: none; transition: none; }
+}
 .header .user-info { font-size: 12px; color: #8888aa; }
 /* ── Mobile layout (narrow viewports) ──
    Base layout above assumes desktop width: sidebar pushes .main over at a
@@ -732,6 +792,20 @@ if (typeof hljs !== 'undefined') {
               data-i18n-title="viewMenuTitle" data-i18n-aria-label="viewMenuTitle"
               onclick="toggleViewMenu()">&#x1F441;</button>
       <div class="view-menu" id="viewMenu" role="menu">
+        <div class="view-menu-section-label" data-i18n="viewMode">View mode</div>
+        <div class="view-menu-item active" id="viewItemClassic" role="menuitemradio" aria-checked="true"
+             onclick="onViewModeSelect('classic')">
+          <span class="view-menu-radio" aria-hidden="true"></span>
+          <span class="vmi-label" data-i18n="classicView">Classic</span>
+        </div>
+        <div class="view-menu-item" id="viewItemSimplified" role="menuitemradio" aria-checked="false"
+             onclick="onViewModeSelect('simplified')">
+          <span class="view-menu-radio" aria-hidden="true"></span>
+          <span class="vmi-label" data-i18n="simplifiedView">Simplified</span>
+        </div>
+        <div class="view-menu-divider"></div>
+        <div id="viewClassicOptions">
+        <div class="view-menu-section-label" data-i18n="classicOptions">Classic options</div>
         <div class="view-menu-item" id="viewItemTechnical" role="menuitemcheckbox" aria-checked="false"
              onclick="onViewGroupingToggle('technical')">
           <span class="vmi-label" data-i18n="viewGroupTechnical">Group technical details</span>
@@ -746,6 +820,7 @@ if (typeof hljs !== 'undefined') {
              onclick="onViewGroupingToggle('delegate')">
           <span class="vmi-label" data-i18n="viewGroupDelegates">Group delegate messages</span>
           <span class="vmi-switch" aria-hidden="true"></span>
+        </div>
         </div>
       </div>
     </div>

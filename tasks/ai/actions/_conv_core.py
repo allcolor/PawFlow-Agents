@@ -127,9 +127,23 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
                 raw = default
             return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
+        def _resolve_view_mode() -> str:
+            try:
+                from core.expression import resolve_expression
+                raw = resolve_expression(
+                    '$' + '{chat.view_mode:default("classic")}',
+                    owner=user_id,
+                    conversation_id=conv_id,
+                )
+            except Exception:
+                raw = "classic"
+            mode = str(raw).strip().lower()
+            return mode if mode in ("classic", "simplified") else "classic"
+
         group_technical_messages = _resolve_chat_flag("group_technical_messages")
         group_task_messages = _resolve_chat_flag("group_task_messages")
         group_delegate_messages = _resolve_chat_flag("group_delegate_messages")
+        view_mode = _resolve_view_mode()
 
         result = json.dumps({
             "conversation_id": conv_id,
@@ -144,6 +158,7 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             "group_technical_messages": group_technical_messages,
             "group_task_messages": group_task_messages,
             "group_delegate_messages": group_delegate_messages,
+            "view_mode": view_mode,
         }, ensure_ascii=False)
         flowfile.set_content(result.encode("utf-8"))
         return [flowfile]

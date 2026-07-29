@@ -144,6 +144,7 @@ function _sseWireB() {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || '';
+    if (typeof turnViewFail === 'function') turnViewFail(data.turn_id || data.request_msg_id, 'stopped');
     trackAgentDone(agentName);
     // Remove any streamed tokens for this agent
     const ds = streams[agentName.toLowerCase()];
@@ -161,6 +162,7 @@ function _sseWireB() {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || '';
+    if (typeof turnViewFail === 'function') turnViewFail(data.turn_id || data.request_msg_id, 'stopped');
     if (agentName) _finalizeLiveToolCalls(agentName, '[Stopped]');
     if (agentName) trackAgentDone(agentName);
     if (Object.keys(activeInteractions).length === 0) {
@@ -178,6 +180,9 @@ function _sseWireB() {
   eventSource.addEventListener('done', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    if (data.cancelled && typeof turnViewFail === 'function') {
+      turnViewFail(data.turn_id || data.request_msg_id, 'cancelled');
+    }
     const doneAgent = data.agent_name || data.source?.name || '';
     // Task done: finalize task block
     if (data.task_id) {
@@ -264,6 +269,8 @@ function _sseWireB() {
     extra.cost_usd = data.cost_usd || 0;
     extra.duration_ms = data.duration_ms || 0;
     extra.ts = data.ts;
+    extra.turn_id = data.turn_id || data.request_msg_id || '';
+    extra.turn_final = !!data.final_msg_id;
     const allIds = data.all_msg_ids || [];
     if (extra.msg_id) allIds.push(extra.msg_id);
     if (s.msg_id) allIds.push(s.msg_id);
@@ -307,7 +314,8 @@ function _sseWireB() {
       }
     }
     if (finalText && !anyExists && !data.force_stopped) {
-      addMsg('assistant', finalText, extra);
+      existingEl = addMsg('assistant', finalText, extra);
+      anyExists = !!existingEl;
     }
     if (typeof conversationTTSOnDone === 'function') {
       try { conversationTTSOnDone(Object.assign({}, data, extra, {response: finalText})); } catch (_ttsErr) {}
@@ -337,6 +345,18 @@ function _sseWireB() {
           && existingEl.parentNode && existingEl.parentNode.id === 'messages') {
         _insertMessageChronologically(existingEl.parentNode, existingEl, Number(extra.ts), true);
       }
+    }
+    if (!data.continuing && !data.force_stopped && data.is_final && data.final_msg_id
+        && typeof turnViewIngest === 'function') {
+      const finalId = data.final_msg_id || data.msg_id || extra.msg_id;
+      const exactFinalEl = finalId
+        ? document.querySelector('#messages [data-msgid="' + CSS.escape(finalId) + '"]')
+        : existingEl;
+      const finalData = Object.assign({}, data, extra, {
+        msg_id: finalId, turn_final: true,
+      });
+      turnViewIngest('assistant', finalData, exactFinalEl || existingEl);
+      if (typeof turnViewFinalize === 'function') turnViewFinalize(finalData);
     }
     clearStream(doneAgent);
     scrollBottom();
@@ -392,6 +412,7 @@ function _sseWireB() {
     lastSSEActivity = Date.now();
     const cancelData = e.data ? JSON.parse(e.data) : {};
     const cancelAgent = cancelData.agent_name || 'all';
+    if (typeof turnViewFail === 'function') turnViewFail(cancelData.turn_id || cancelData.request_msg_id, 'cancelled');
     _finalizeLiveToolCalls(cancelAgent === 'all' ? '' : cancelAgent, '[Cancelled]');
     if (cancelAgent === 'all') {
       // Don't clear activeInteractions — server is source of truth via syncActive
@@ -545,6 +566,7 @@ function _sseWireB() {
   eventSource.addEventListener('error_event', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    if (typeof turnViewFail === 'function') turnViewFail(data.turn_id || data.request_msg_id, 'error', data.message || '');
     // data.ts is the server's real publish_event() timestamp -- stamped at
     // the moment the error actually happened, BEFORE any event-bus buffering
     // for a disconnected client. A buffered error can be replayed minutes

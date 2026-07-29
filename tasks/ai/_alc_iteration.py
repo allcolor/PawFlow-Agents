@@ -373,6 +373,11 @@ class _ALCIterationMixin:
                 st._schedule_cc_turn_gauge_patch(
                     st.response, getattr(st.client, '_last_turn_msg_id', ''),
                     "final")
+                st.final_msg_id = (
+                    getattr(st.client, '_last_turn_msg_id', '')
+                    or (st.all_assistant_msg_ids[-1]
+                        if st.all_assistant_msg_ids else "")
+                )
                 st._release_active_after_terminal_visible_answer(force=True)
                 st.emitter.stop_heartbeat(st._iter_hb)
                 return _ALC_BREAK
@@ -418,6 +423,13 @@ class _ALCIterationMixin:
                 st._append(st._m)
             if st.action == "break":
                 st.response_content = st.final
+                for st._final_message in reversed(st.msgs):
+                    if (st._final_message.role == "assistant"
+                            and not st._final_message.tool_calls
+                            and isinstance(st._final_message.content, str)
+                            and st._final_message.content.strip()):
+                        st.final_msg_id = st._final_message.msg_id or ""
+                        break
                 st._release_active_after_terminal_visible_answer(force=True)
                 st.emitter.stop_heartbeat(st._iter_hb)
                 return _ALC_BREAK

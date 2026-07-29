@@ -153,6 +153,7 @@ function _clearConvState() {
     clearTimeout(sseReconnectTimer); sseReconnectTimer = null;
   }
   stopSSEHealthTimer();
+  if (typeof turnViewReset === 'function') turnViewReset();
   _expectingClear = true;
   document.getElementById('messages').innerHTML = '';
   _expectingClear = false;
@@ -211,6 +212,42 @@ const VIEW_TOGGLES = {
     setter: 'setDelegateMessageGrouping',
   },
 };
+
+function updateViewModeItems(mode) {
+  const simplified = mode === 'simplified';
+  const classicItem = document.getElementById('viewItemClassic');
+  const simpleItem = document.getElementById('viewItemSimplified');
+  const classicOptions = document.getElementById('viewClassicOptions');
+  if (classicItem) {
+    classicItem.classList.toggle('active', !simplified);
+    classicItem.setAttribute('aria-checked', simplified ? 'false' : 'true');
+  }
+  if (simpleItem) {
+    simpleItem.classList.toggle('active', simplified);
+    simpleItem.setAttribute('aria-checked', simplified ? 'true' : 'false');
+  }
+  if (classicOptions) classicOptions.style.display = simplified ? 'none' : '';
+}
+
+function onViewModeSelect(mode) {
+  if (!conversationId || !['classic', 'simplified'].includes(mode)) return;
+  if (typeof turnViewIsSimplified === 'function'
+      && turnViewIsSimplified() === (mode === 'simplified')) { closeViewMenu(); return; }
+  const menu = document.getElementById('viewMenu');
+  if (menu) menu.classList.add('disabled');
+  action$('set_param', {
+    conversation_id: conversationId, scope: 'conversation',
+    key: 'chat.view_mode', value: mode,
+  }).subscribe({
+    next: data => {
+      if (data && data.error) { addMsg('error', data.error); return; }
+      if (typeof turnViewSetMode === 'function') turnViewSetMode(mode);
+      updateViewModeItems(mode); closeViewMenu(); resumeConv(conversationId, true);
+    },
+    error: e => addMsg('error', e.message),
+    complete: () => { if (menu) menu.classList.remove('disabled'); },
+  });
+}
 
 function updateViewMenuItem(kind, enabled) {
   const cfg = VIEW_TOGGLES[kind];
@@ -436,6 +473,12 @@ function _renderHistoryRow(m) {
     content = content.replace(/^\[[^\]]+\]:\s*/, '');
   }
   const el = addMsg(m.type || m.role, content, m);
+  if (el && typeof turnViewIsSimplified === 'function' && turnViewIsSimplified()) {
+    const role = m.type || m.role;
+    const turnData = Object.assign({}, m, { _history: true });
+    if (role === 'user') turnViewRegisterUser(turnData, el);
+    else turnViewIngest(role, turnData, el);
+  }
   // task_id can be top-level (SSE) or in source (stored messages)
   // Use task_iteration to create separate blocks per iteration.
   // Delegate traces are their own top-level block — never wrap them
@@ -489,6 +532,7 @@ function reconcileMissedMessages() {
       if (recovered) {
         console.warn('[SSE] recovered ' + recovered + ' message(s) missed while disconnected');
         if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+        if (typeof turnViewReconcile === 'function') turnViewReconcile();
         scrollBottom();
       }
     });
@@ -523,14 +567,18 @@ function _renderHistory(data) {
     }
     return;
   }
+  const viewMode = data.view_mode === 'simplified' ? 'simplified' : 'classic';
+  if (typeof turnViewSetMode === 'function') turnViewSetMode(viewMode);
+  updateViewModeItems(viewMode);
   const groupTechnicalMessages = !!data.group_technical_messages;
   const groupTaskMessages = data.group_task_messages === undefined ? true : !!data.group_task_messages;
   const groupDelegateMessages = data.group_delegate_messages === undefined ? true : !!data.group_delegate_messages;
   if (typeof setTechnicalMessageGrouping === 'function') {
     setTechnicalMessageGrouping(groupTechnicalMessages);
+    if (viewMode === 'simplified') setTechnicalMessageGrouping(false);
   }
-  if (typeof setTaskMessageGrouping === 'function') setTaskMessageGrouping(groupTaskMessages);
-  if (typeof setDelegateMessageGrouping === 'function') setDelegateMessageGrouping(groupDelegateMessages);
+  if (typeof setTaskMessageGrouping === 'function') setTaskMessageGrouping(viewMode === 'classic' && groupTaskMessages);
+  if (typeof setDelegateMessageGrouping === 'function') setDelegateMessageGrouping(viewMode === 'classic' && groupDelegateMessages);
   updateViewMenuVisibility();
   updateViewMenuItem('technical', groupTechnicalMessages);
   updateViewMenuItem('task', groupTaskMessages);
@@ -546,6 +594,7 @@ function _renderHistory(data) {
     if (typeof resumeTechnicalMessageGrouping === 'function') resumeTechnicalMessageGrouping(false);
   }
   if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+  if (typeof turnViewReconcile === 'function') turnViewReconcile();
   serverMsgCount = data.message_count || 0;
   currentOffset = data.raw_count || (data.messages || []).length;
   hasMoreMessages = data.has_more || false;
@@ -615,7 +664,8 @@ function _updateLoadMoreBanner() {
       banner.onclick = loadMoreMessages;
     }
     _placeLoadMoreBanner(banner);
-    const shown = document.querySelectorAll('#messages > .msg').length;
+    const shown = new Set(Array.from(document.querySelectorAll('#messages [data-msgid]'))
+      .map(el => el.dataset.msgid).filter(Boolean)).size;
     const total = serverMsgCount || '?';
     banner.innerHTML = '&#x25B2; Load more messages (showing ' + shown + ' of ' + total + ')';
   } else if (banner) {
@@ -649,6 +699,14 @@ function loadMoreMessages() {
       const rawCount = data.raw_count || (data.messages || []).length;
       currentOffset = (Number(data.offset) || 0) + rawCount;
       const insertPoint = banner && banner.parentNode === container ? banner.nextSibling : container.firstChild;
+      if (typeof turnViewIsSimplified === 'function' && turnViewIsSimplified()) {
+        if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
+        try { for (const m of (data.messages || [])) _renderHistoryRow(m); }
+        finally { if (typeof resumeTechnicalMessageGrouping === 'function') resumeTechnicalMessageGrouping(false); }
+        if (typeof turnViewReconcile === 'function') turnViewReconcile();
+        setMessagesScrollTop(container.scrollHeight - prevHeight);
+        _updateLoadMoreBanner(); loadingMore = false; return;
+      }
       // Build elements in a fragment, then insert at the right position.
       // Task messages go into their task block (existing or new).
       // Non-task messages go into the fragment for insertion.

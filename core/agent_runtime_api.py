@@ -55,6 +55,21 @@ class AgentFinalResult:
     data: Dict[str, Any] = field(default_factory=dict)
 
 
+class AgentSubmissionRejected(RuntimeError):
+    """The runtime refused the submission instead of starting a turn.
+
+    Raised rather than returned because the acknowledgement of a refusal
+    carries no ``status`` and no ``wait_for_done``, so both default to
+    "accepted" and True -- a caller that waits on the correlated ``done``
+    would block forever on a turn that was never started (the Telegram
+    bridge waits with no timeout, by project rule).
+    """
+
+    def __init__(self, message: str, *, status_code: str = ""):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class AgentResultWaiter:
     """Wait for correlated agent final events without changing SSE broadcast."""
 
@@ -216,6 +231,19 @@ class AgentRuntimeAPI:
             ack = json.loads(out.get_content().decode("utf-8", errors="replace"))
         except Exception:
             ack = {}
+        if not isinstance(ack, dict):
+            ack = {}
+        http_status = str(out.get_attribute("http.response.status") or "")
+        if http_status[:1] in {"4", "5"} or ack.get("error"):
+            # An authorization refusal answers with the same 404 an unknown
+            # conversation_id gets. Nothing was enqueued, so no `done` will
+            # ever fire: drop the waiter rather than leave the caller
+            # blocked on it.
+            if request.conversation_id:
+                waiter.cancel(request.conversation_id, turn_id)
+            raise AgentSubmissionRejected(
+                str(ack.get("error") or "Agent submission was refused"),
+                status_code=http_status)
         conversation_id = str(ack.get("conversation_id") or request.conversation_id or
                               out.get_attribute("agent.conversation_id") or "")
         if conversation_id and not request.conversation_id:

@@ -577,6 +577,112 @@ class TestStreamingSubmitGate:
         assert out.get_attribute("http.response.status") != "404"
 
 
+# -- Channel bridges ---------------------------------------------------
+
+class TestChannelBridgeSubmit:
+    """A collaborator writing from Telegram, not from the web chat.
+
+    ``AgentRuntimeAPI.submit_message`` is the shared entry point for non-HTTP
+    transports. It stamps ``http.auth.principal`` from the request, so the
+    submit gate applies there exactly as it does to the chat UI -- this is the
+    coverage the plan's Tests section asks for.
+
+    A refusal also has to reach the transport. The 404 body carries no
+    ``status`` and no ``wait_for_done``, so both defaulted to "accepted" and
+    True: the Telegram client then waited on a correlated ``done`` -- with no
+    timeout, by project rule -- for a turn that was never started.
+    """
+
+    @pytest.fixture
+    def talking(self, store):
+        cid = store.generate_id()
+        store.save(cid, [{"role": "user", "content": "ship the release"}],
+                   user_id=OWNER)
+        return cid
+
+    def _submit(self, store, cid, requester):
+        from unittest.mock import MagicMock, patch
+        from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
+        from tasks.ai.agent_loop import AgentLoopTask
+
+        task = AgentLoopTask({
+            "api_key": "test-key",
+            "streaming": True,
+            "conversation_store": True,
+        })
+        task._streaming_agent_loop = MagicMock()
+        task._prepare_agent_context = MagicMock()
+        request = AgentRequest(
+            user_id=requester,
+            conversation_id=cid,
+            message="give me the transcript",
+            target_agent="assistant",
+            msg_id=f"telegram:4242:{requester}",
+            channel="telegram",
+        )
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=store), \
+                patch("core.conversation_writer.ConversationWriter."
+                      "for_conversation") as writer_for_conv, \
+                patch.object(AgentLoopTask, "_live_instance", task,
+                             create=True):
+            writer_for_conv.return_value.enqueue_message = MagicMock()
+            try:
+                submission = AgentRuntimeAPI.submit_message(request)
+            finally:
+                enqueued = writer_for_conv.return_value.enqueue_message
+        return submission, enqueued, task
+
+    def test_a_write_collaborator_reaches_the_shared_conversation(
+            self, store, talking):
+        _invite(store, talking)
+        _accept(store, talking)
+
+        submission, _enqueued, _task = self._submit(store, talking, COLLAB)
+
+        assert submission.conversation_id == talking
+        assert submission.turn_id == f"telegram:4242:{COLLAB}"
+
+    def test_a_kicked_collaborator_is_refused_and_writes_nothing(
+            self, store, talking):
+        from core.agent_runtime_api import AgentSubmissionRejected
+
+        _invite(store, talking)
+        _accept(store, talking)
+        _call(store, "kick_collaborator",
+              {"conversation_id": talking, "collaborator_id": COLLAB}, OWNER)
+
+        with pytest.raises(AgentSubmissionRejected) as refusal:
+            self._submit(store, talking, COLLAB)
+        # The same answer an unknown id gets -- a refusal must not confirm
+        # that the conversation exists.
+        assert str(refusal.value) == "Conversation not found"
+        assert refusal.value.status_code == "404"
+
+    def test_a_stranger_is_refused_before_the_transcript_is_touched(
+            self, store, talking):
+        from core.agent_runtime_api import AgentSubmissionRejected
+
+        with pytest.raises(AgentSubmissionRejected):
+            self._submit(store, talking, STRANGER)
+        transcript = store.load(talking, user_id=OWNER)
+        assert [m["content"] for m in transcript] == ["ship the release"]
+
+    def test_a_refusal_leaves_no_waiter_for_a_turn_that_never_runs(
+            self, store, talking):
+        from core.agent_runtime_api import (AgentResultWaiter,
+                                            AgentSubmissionRejected)
+
+        waiter = AgentResultWaiter.instance()
+        with pytest.raises(AgentSubmissionRejected):
+            self._submit(store, talking, STRANGER)
+
+        # Left registered, the Telegram bridge's unbounded wait_for_done()
+        # would block on it forever.
+        assert waiter.wait(talking, f"telegram:4242:{STRANGER}",
+                           timeout=0.05) is None
+
+
 # -- Dispatcher table (phase 5) ----------------------------------------
 
 class TestActionRoleTable:

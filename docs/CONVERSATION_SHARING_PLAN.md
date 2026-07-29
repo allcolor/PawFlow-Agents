@@ -1,10 +1,15 @@
 # Conversation Sharing — Implementation Plan
 
-Status: **in progress** — Phases 1 (core primitive + data model,
-`core/conversation_access.py`), 2 (SSE authorization) and 3 (write-path
-actions) are implemented; Phases 4-7 are still design only. Sharing is
-reachable through the actions, but has no UI yet (Phase 7) and does not
-reach the channel bridges yet (Phase 4).
+Status: **implemented** — all seven phases below have landed (the last of
+them, the frontend, in `8b3edff6`). Sharing is reachable from the sidebar,
+authorized on every write path, and reaches the channel bridges: a
+collaborator writing from Telegram goes through `AgentRuntimeAPI`, which
+stamps `http.auth.principal` and so passes the same submit gate as the chat
+UI (`tests/test_conversation_sharing.py::TestChannelBridgeSubmit`).
+
+What is deliberately *not* here is listed under "Scope cuts for v1" — no
+real-time invite push, no proactive SSE teardown on kick, no nested sharing,
+no per-collaborator relay reconciliation.
 
 ## Goal
 
@@ -564,9 +569,15 @@ Each phase landed as its own reviewable change; 2 had no dependency on
   → accept → write access → role change → kick → access revoked; leave;
   reassignment on deleted owner; never-leak-existence for every rejected
   path.
-- `tests/test_agent_runtime_api.py` / a new channel-bridge test — a
-  collaborator submitting via `AgentRuntimeAPI` (simulating Telegram) reaches
-  the shared conversation, a kicked user does not.
+- `test_conversation_sharing.py::TestChannelBridgeSubmit` — a collaborator
+  submitting via `AgentRuntimeAPI` (simulating Telegram) reaches the shared
+  conversation, a kicked user does not, and the refusal reaches the transport
+  instead of leaving it waiting. Writing this test is what surfaced the
+  silent-hang defect: a refusal answers 404 with a body carrying neither
+  `status` nor `wait_for_done`, so both defaulted to "accepted" and True and
+  the bridge waited — with no timeout, by project rule — on a `done` for a
+  turn that was never started. `submit_message` now cancels the correlated
+  waiter and raises `AgentSubmissionRejected`.
 - SSE: extend whatever exercises `agent_sse_stream.py` today (or add one) —
   unauthorized `conversation_id` gets rejected before `subscribe()`; an
   accepted `read`-role collaborator receives events; a `read`-role

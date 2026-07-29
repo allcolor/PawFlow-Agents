@@ -6,8 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The simplified view's activity surface is a rain of glyphs, and every cue
+  condenses out of it.** The block draws a themed glyph rain behind its cues --
+  one shared 15 fps ticker for every running block on the page, stopped the
+  moment the last one ends -- and a cue arrives by resolving character by
+  character out of that same alphabet, text and copied tool call alike. Cues no
+  longer share one spot: they form a column, newest on top at full strength,
+  older ones pushed down and fading out. Nothing leaves on a timer any more --
+  a cue holds its place until a newer one arrives, so a minute of silence no
+  longer blanks the surface. A tool call is shown as the classic view draws it,
+  copied in full, instead of the label "Calling tool..." that named neither the
+  tool nor its arguments. The surface is taller (190px) and its text is meant
+  to be read rather than glimpsed.
+- **The block header counts the turn's seconds**, ticking while it runs and
+  frozen at what it took once it ends. Through a long silent stretch it is the
+  one thing on screen that keeps moving.
+
 ### Fixed
 
+- **The last message of a turn is shown outside its block, always.** Which row
+  is the answer was decided from the done payload, so a provider that ends a
+  turn without naming a final message -- the CLI ones do -- left its answer
+  inside a collapsed tab under a header still reading "working". It is
+  positional now: the last message row of a turn takes the spot under the
+  block and hands it back when a newer one arrives. Replayed history is
+  exempt, since an older page arrives after rows that precede it.
+- **A done event closes the block even when it names no final message.** The
+  close used to require `is_final` *and* `final_msg_id` together; what the
+  server names still decides which row is hoisted out, but whether the turn is
+  over no longer depends on it.
+- **A new user message closes the block above it.** A turn the server never
+  closed stayed on "working", with its clock running, above a message the
+  reader had already moved past. A turn that ended on an error or a stop keeps
+  that status.
+
+- **The update panel reloaded onto the version it started from.** It polled
+  `/health` and reloaded on the first answer, and `/health` said only `ok`. An
+  updater that failed before stopping anything therefore looked exactly like a
+  finished update: the server never went away, the first poll succeeded, the
+  page reloaded at once on the old version, and nothing said the update had not
+  happened. `/health` now carries the running version and a per-process id, the
+  panel waits for a *different* process, and after ten minutes it says which of
+  the two failures happened and prints `docker logs pawflow-updater`.
+- **The update left its new install directory owned by root, silently.** The
+  updater runs as root, so the per-version directory it extracts is root-owned
+  until it hands it back. That `chown` required *both* `PAWFLOW_RUN_UID` and
+  `PAWFLOW_RUN_GID` in the server container's environment; a container created
+  by an older start script carries only the first, so the step was skipped
+  altogether -- with no warning, on an update whose log otherwise reads clean.
+  The owner is now read off the install directory being replaced when the pair
+  is incomplete, and the `chown` runs whatever the refresh did rather than only
+  on the success path.
+- **A failed host-artifact refresh could leave the deployment unstartable.**
+  When the refresh failed on the first artifact -- the start script itself --
+  the new directory existed and was empty, and forcing past the failure still
+  `cd`-ed into it: the updater died on a script that was not there and the
+  server was never touched. The handover now falls back to the directory being
+  replaced, which does carry a working script.
+- **`install-pawflow.sh` failed on `unlinkat: permission denied`.** That is what
+  the leftovers above look like from the command line, and the message named
+  neither the cause nor the way out. The extraction now checks the runtime
+  directory's ownership up front, before creating anything, and prints the
+  `chown` that takes it back.
 - The server-update test suite no longer calls the live GitHub API. One test
   resolved the published image without pinning the release lookup, so a
   rate-limited or offline runner got an empty tag and the build failed on

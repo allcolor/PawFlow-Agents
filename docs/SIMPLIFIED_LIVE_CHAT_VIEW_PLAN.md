@@ -1133,6 +1133,47 @@ fails. A test that passes against the broken code is worse than no test.
 - Keyboard, screen reader, mobile, theme, and reduced-motion requirements pass.
 - Targeted tests and the full test suite pass.
 
+## Revisions after use
+
+What the plan specified and what surviving contact with a live server changed.
+
+**The visible answer is positional, not declared.** The plan hoisted the row the
+done payload marked final. A provider that ends a turn without naming one --
+the CLI providers do -- left its answer inside a collapsed tab under a header
+still reading "working". The rule is now: the last message row of a turn sits
+outside the block, and hands that place back when a newer one arrives. Replayed
+history is exempt, because an older page arrives after rows that precede it and
+"last ingested" is not "last of the turn" there.
+
+**A turn ends when the turn ends.** Closing the block required `is_final` and
+`final_msg_id` together; it now happens on any done that is not `continuing`,
+and on the next user message for a turn nobody closed. What the server names
+still decides which row is hoisted, never whether the turn is over.
+
+**The ephemeral surface is a column over a glyph rain, not a depth stack.**
+Cues sharing one spot reads well for four words and falls apart the moment one
+carries a tool call rendered in full: three cues blurred through each other on
+the same square inch. They now form a column, newest on top. Nothing retires on
+a timer -- a cue holds its place until a newer one arrives, because a surface
+that blanks itself after 2.6s reads as a stall during a long tool call. Behind
+them, a themed glyph rain runs while the turn runs, and each cue condenses out
+of it character by character. One shared 15 fps ticker drives every canvas on
+the page, and it stops itself when the last block finishes.
+
+**A tool cue shows the call.** "Calling tool..." named neither the tool nor its
+arguments, on the one surface whose whole purpose is to say what is happening.
+The cue carries a copy of the canonical row, rendered as the classic view draws
+it; the original stays in its tab.
+
+**The header counts.** Elapsed seconds, ticking while the turn runs, frozen at
+the total once it ends.
+
+Two layout facts, measured in a browser against the real stylesheet rather than
+reasoned about (`tests/js/bench_simplified_block.py` builds the bench): a cue
+body with no flex basis of its own computes to zero width in its row, and the
+same body with `overflow: hidden` measured 442x0 with a scrollHeight of 41 --
+on the newest cue only. The clipping lives on the cue above it instead.
+
 ## Delivery strategy
 
 Deliver in two reviewable implementation changes:

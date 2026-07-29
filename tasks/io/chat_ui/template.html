@@ -179,22 +179,62 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .simple-turn-status.error, .simple-turn-status.cancelled, .simple-turn-status.stopped { color: var(--pf-danger); }
 .simple-turn-chevron { transition: transform .16s ease; }
 .simple-turn-block.expanded .simple-turn-chevron { transform: rotate(90deg); }
-/* The cues occupy one spot and stack in depth, so the surface is a stage:
-   fixed height, positioned, clipped. Motion is transition-driven, not keyframed
-   -- a cue's pose is a function of its current depth, and depth changes when
-   another cue arrives, which is exactly what the reader should see. */
-.simple-turn-ephemeral { position: relative; height: 76px; padding: 6px 14px 12px;
-                         color: var(--pf-muted); overflow: hidden; }
-.simple-turn-cue { position: absolute; left: 50%; top: 50%; display: flex; align-items: center;
-                   gap: 10px; max-width: min(88%, 640px); pointer-events: none;
-                   transform: translate(-50%, -50%); transform-origin: 50% 50%;
+/* The cues form a column, newest on top, on a clipped fixed-height stage that
+   fades out at the bottom. Motion is transition-driven, not keyframed -- a
+   cue's pose is a function of its depth, and depth changes when another cue
+   arrives, which is exactly what the reader should see.
+   They used to share one spot and stack in depth: readable for four words,
+   unreadable the moment a cue carries a tool call rendered in full, with three
+   of them blurred through each other on the same square inch. */
+.simple-turn-ephemeral { position: relative; height: 190px; padding: 10px 14px 14px;
+                         color: var(--pf-muted); overflow: hidden;
+                         display: flex; flex-direction: column; gap: 10px;
+                         -webkit-mask-image: linear-gradient(180deg, #000 62%, transparent);
+                         mask-image: linear-gradient(180deg, #000 62%, transparent); }
+/* The rain sits behind everything on the surface, sized by the surface itself.
+   Its glyphs are drawn in the theme's accent, read off the block at run time. */
+.simple-turn-rain { position: absolute; inset: 0; width: 100%; height: 100%;
+                    opacity: .32; pointer-events: none; z-index: 0; }
+.simple-turn-cue { position: relative; z-index: 1;
+                   display: flex; align-items: flex-start; gap: 10px; flex: none;
+                   max-height: 140px; overflow: hidden;
+                   pointer-events: none; transform-origin: 50% 0;
                    transition: transform .42s cubic-bezier(.22, .61, .36, 1),
                                opacity .42s ease, filter .42s ease;
                    will-change: transform, opacity, filter; }
 .simple-turn-block.expanded .simple-turn-ephemeral,
 .simple-turn-block:not(.turn-working) .simple-turn-ephemeral { display: none; }
-.simple-turn-ephemeral-text { min-width: 0; overflow: hidden; text-overflow: ellipsis;
-                              white-space: nowrap; }
+/* Readable, not a ticker: a cue holds the front until the next one arrives, so
+   what it shows is meant to be read, over several lines, not glimpsed. */
+/* Two measured facts, not preferences. flex: 1 -- without a basis of its own
+   this body computes to zero width in the row, and the text is in the DOM,
+   laid out, and invisible. And no overflow/clipping *on the body*: with
+   overflow: hidden it measured 442x0 with a scrollHeight of 41, on the newest
+   cue only, and setting overflow: visible put it straight back to 41. The cue
+   above it does the clipping instead, which measures correctly. */
+.simple-turn-ephemeral-text { flex: 1; min-width: 0; text-align: left; line-height: 1.45; }
+/* A tool call is shown as the classic view draws it -- the copy keeps that
+   rendering and is only bounded, so a long argument list cannot outgrow the
+   stage it sits on. */
+.simple-turn-ephemeral-node { min-width: 0; flex: 1; overflow: hidden; max-height: 150px;
+                              text-align: left; font-size: 12px;
+                              -webkit-mask-image: linear-gradient(180deg, #000 76%, transparent);
+                              mask-image: linear-gradient(180deg, #000 76%, transparent); }
+.simple-turn-ephemeral-node .msg { margin: 0; }
+.simple-turn-cue-copy { pointer-events: none; }
+/* Waiting is a state, not a blank. Minutes can pass between two events, and an
+   empty band under a header that says "working" reads as a stall. */
+.simple-turn-idle { position: relative; z-index: 1;
+                    display: flex; align-items: center; gap: 7px; pointer-events: none;
+                    color: var(--pf-muted); font-size: 12px; padding: 6px 0; }
+.simple-turn-idle-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pf-accent);
+                        animation: simpleTurnIdle 1.25s ease-in-out infinite; }
+.simple-turn-idle-dot:nth-child(2) { animation-delay: .16s; }
+.simple-turn-idle-dot:nth-child(3) { animation-delay: .32s; }
+.simple-turn-idle-label { opacity: .75; }
+.simple-turn-elapsed { font-size: 11px; color: var(--pf-muted); white-space: nowrap;
+                       font-variant-numeric: tabular-nums; }
+.simple-turn-block.turn-working .simple-turn-elapsed { color: var(--pf-accent-2); }
 .simple-turn-ephemeral-icons { width: 26px; height: 26px; display: grid; place-items: center;
                                flex: none; pointer-events: none; }
 .simple-turn-ephemeral-icon { width: 22px; height: 22px; color: var(--pf-accent);
@@ -233,8 +273,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 @keyframes simpleTurnIcon { 0% { opacity: 0; transform: scale(.55) rotate(-8deg); }
                             55% { opacity: 1; transform: scale(1.12) rotate(3deg); }
                             100% { opacity: 1; transform: scale(1) rotate(0deg); } }
+@keyframes simpleTurnIdle { 0%, 100% { opacity: .25; transform: translateY(2px) scale(.85); }
+                            50% { opacity: 1; transform: translateY(-2px) scale(1); } }
+/* Something is always moving while the turn runs, cue or no cue. It rides the
+   surface's own edge rather than the cues: a cue's opacity, blur and transform
+   are set inline from its depth, and an animation on those properties would
+   override the inline value and flatten the stack. */
+@keyframes simpleTurnSweep { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
+.simple-turn-block.turn-working .simple-turn-ephemeral::after {
+  content: ''; position: absolute; left: 0; bottom: 0; height: 2px; width: 28%;
+  background: linear-gradient(90deg, transparent, var(--pf-accent), transparent);
+  opacity: .5; animation: simpleTurnSweep 2.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .simple-turn-cue, .simple-turn-ephemeral-icon, .simple-turn-chevron { animation: none; transition: none; }
+  .simple-turn-cue, .simple-turn-ephemeral-icon, .simple-turn-chevron,
+  .simple-turn-idle-dot { animation: none; transition: none; }
+  .simple-turn-block.turn-working .simple-turn-ephemeral::after { animation: none; }
 }
 .header .user-info { font-size: 12px; color: #8888aa; }
 /* ── Mobile layout (narrow viewports) ──

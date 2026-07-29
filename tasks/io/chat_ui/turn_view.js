@@ -1,12 +1,28 @@
 // Conversation-scoped simplified turn presentation. Existing renderers create
 // every durable node; this controller only reparents those canonical nodes.
 const TURN_TEXT_COALESCE_MS = 300;
-// Each cue lives on its own: it enters blurred, sharpens, holds, then blurs
-// out again and removes itself. Cues do not take turns -- several are on
-// screen at once, stacked, each one at its own point in that arc.
-const TURN_CUE_LIFETIME_MS = 2600;
-const TURN_TRANSIENT_MAX_CHARS = 180;
+// A cue has no lifetime of its own: it holds the front of the stack until the
+// next one arrives and pushes it back. Nothing on this surface disappears
+// because a timer said so -- what the reader last saw stays readable until
+// there is something newer to read.
+const TURN_TRANSIENT_MAX_CHARS = 400;
 const TURN_TRANSIENT_MAX_STACK = 4;
+const TURN_ELAPSED_TICK_MS = 1000;
+// The waiting state is a rain of glyphs behind the cues, and a cue arrives by
+// condensing out of it: its own characters land one after another out of the
+// same alphabet. 15 fps on a timer rather than a frame loop -- it is a
+// background texture, it costs what it costs even when four turns run at once,
+// and a timer is something a test can advance.
+const TURN_RAIN_TICK_MS = 66;
+const TURN_RAIN_COLUMN_PX = 12;
+const TURN_SCRAMBLE_TICK_MS = 40;
+const TURN_SCRAMBLE_TICKS = 14;
+const TURN_SCRAMBLE_MAX_CHARS = 400;
+const TURN_GLYPHS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノabcdefghijklmnopqrstuvwxyz0123456789<>/\\{}[]()=+*-#$%&@';
+// Every live rain canvas, driven by one shared ticker: N blocks must not mean
+// N timers.
+const _turnRainCanvases = new Set();
+let _turnRainTimer = null;
 
 let PAWFLOW_CHAT_VIEW_MODE = 'classic';
 const simplifiedTurns = new Map();
@@ -46,7 +62,7 @@ function turnViewSetMode(mode) {
 }
 
 function turnViewReset() {
-  for (const state of simplifiedTurns.values()) _turnStopTransient(state);
+  for (const state of simplifiedTurns.values()) { _turnStopTransient(state); _turnStopElapsed(state); }
   simplifiedTurns.clear();
   _turnOpen = null;
 }
@@ -58,7 +74,17 @@ function turnViewReset() {
 // page) is not given an empty one.
 function turnViewRegisterUser(extra, element) {
   if (!turnViewIsSimplified() || !element) return;
-  if (_turnOpen && _turnOpen.state) _turnStopTransient(_turnOpen.state);
+  // A new user message ends the previous turn, whatever the server did or did
+  // not send: leaving the old block on "working" with a ticking clock, above a
+  // message the reader has already moved past, states something false. A turn
+  // that already ended on an error or a stop keeps that status -- only a turn
+  // still claiming to work is closed here.
+  if (_turnOpen && _turnOpen.state) {
+    const previous = _turnOpen.state;
+    _turnStopTransient(previous);
+    if (previous.status === 'working') _turnUpdateStatus(previous, 'completed');
+    _turnStopElapsed(previous);
+  }
   const id = _turnId(extra)
     || String((extra && extra.msg_id) || (element.dataset && element.dataset.msgid) || '').trim()
     || ('turn-' + (++_turnSeq));
@@ -84,6 +110,7 @@ function _turnCreateState(turnId, userEl, data) {
   header.type = 'button'; header.className = 'simple-turn-header'; header.setAttribute('aria-expanded', 'false');
   header.innerHTML = '<span class="simple-turn-chevron" aria-hidden="true">&#9656;</span>'
     + '<span class="simple-turn-title"></span><span class="simple-turn-service"></span>'
+    + '<span class="simple-turn-elapsed" aria-hidden="true"></span>'
     + '<span class="simple-turn-status working"></span>';
   header.addEventListener('click', () => _turnSetExpanded(state, !state.expanded));
   block.appendChild(header);
@@ -114,8 +141,11 @@ function _turnCreateState(turnId, userEl, data) {
   });
   details.appendChild(tablist); details.appendChild(panels); block.appendChild(details);
   state.blockEl = block; state.headerEl = header; state.ephemeralEl = ephemeral;
+  state.elapsedEl = header.querySelector('.simple-turn-elapsed');
+  state.startedAt = Date.now(); state.elapsedTimer = null;
   simplifiedTurns.set(turnId, state);
   _turnUpdateIdentity(state, data || {}); _turnUpdateStatus(state, 'working'); _turnPlaceBlock(state);
+  _turnStartElapsed(state); _turnStartRain(state); _turnSyncIdle(state);
   return state;
 }
 
@@ -142,6 +172,37 @@ function _turnUpdateIdentity(state, data) {
   serviceEl.textContent = state.llmService; serviceEl.title = state.llmService;
 }
 
+// How long the turn has been running, ticking while it runs and frozen at the
+// moment it ends. It is the only thing on the header that keeps moving during
+// a long silent stretch, which is precisely when the reader wonders whether
+// anything is still happening.
+function _turnFormatElapsed(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  if (total < 60) return total + 's';
+  const mins = Math.floor(total / 60); const secs = total % 60;
+  if (mins < 60) return mins + 'm ' + String(secs).padStart(2, '0') + 's';
+  return Math.floor(mins / 60) + 'h ' + String(mins % 60).padStart(2, '0') + 'm';
+}
+
+function _turnRenderElapsed(state) {
+  if (!state.elapsedEl) return;
+  state.elapsedEl.textContent = _turnFormatElapsed(Date.now() - state.startedAt);
+}
+
+function _turnStartElapsed(state) {
+  _turnRenderElapsed(state);
+  if (state.elapsedTimer) return;
+  state.elapsedTimer = setInterval(() => _turnRenderElapsed(state), TURN_ELAPSED_TICK_MS);
+}
+
+// Freeze, do not clear: the total a turn took is worth as much after the fact
+// as during, and a reader scrolling back is entitled to it.
+function _turnStopElapsed(state) {
+  if (state.elapsedTimer) clearInterval(state.elapsedTimer);
+  state.elapsedTimer = null;
+  _turnRenderElapsed(state);
+}
+
 function _turnUpdateStatus(state, status) {
   state.status = status;
   const labels = { working: ['turnWorking', 'Working'], completed: ['turnCompleted', 'Completed'],
@@ -153,6 +214,7 @@ function _turnUpdateStatus(state, status) {
   // transcript is all finished turns, so leaving it laid out would give every
   // one of them an empty band under its header.
   state.blockEl.classList.toggle('turn-working', status === 'working');
+  if (status === 'working') _turnStartElapsed(state); else _turnStopElapsed(state);
 }
 
 function _turnSetExpanded(state, expanded) {
@@ -160,6 +222,10 @@ function _turnSetExpanded(state, expanded) {
   state.headerEl.setAttribute('aria-expanded', state.expanded ? 'true' : 'false');
   state.headerEl.setAttribute('aria-label', _turnText(state.expanded ? 'collapseTurnDetails' : 'expandTurnDetails', state.expanded ? 'Collapse turn details' : 'Expand turn details'));
   if (state.expanded) { _turnStopTransient(state); _turnActivateTab(state, state.activeTab, false); }
+  // Collapsing a turn that is still running brings its surface back: the rain
+  // and the pulse are what say it is alive, and expanding to look at a tab must
+  // not cost the reader that for the rest of the turn.
+  else if (state.status === 'working') { _turnStartRain(state); _turnSyncIdle(state); }
 }
 
 function _turnActivateTab(state, key, focus) {
@@ -220,16 +286,42 @@ function turnViewIngest(kind, data, element) {
     if (msgId) state.elementsByMsgId.set(msgId, element);
     const tcId = String((data && (data.tc_id || data.tool_call_id)) || (element.dataset && element.dataset.tcId) || '');
     if (tcId) state.toolElementsByCallId.set(tcId, element);
-    if (data && data.turn_final
-        && turnViewFinalize(Object.assign({}, data, { final_msg_id: msgId }))) return true;
-    // A rejected finalize (a derived guess losing to an established final) is
-    // an ordinary in-turn row: it still belongs in a tab, never left floating.
-    if (element.parentNode !== tab.bodyEl) tab.bodyEl.appendChild(element);
+    // The visible answer is positional: the last message of a turn is the one
+    // the reader is owed, and it lives *outside* the block. Deciding it from
+    // the done payload instead left it inside whenever the server did not name
+    // a final message -- with the block stuck on "working" and the answer
+    // buried in a collapsed tab. A live message row takes the outside spot as
+    // it arrives and hands it back to the block when a newer one appears.
+    //
+    // Replayed history is not live: an older page arrives *after* rows that
+    // came before it, so "the last one ingested" is not "the last one of the
+    // turn". Those rows are filed, and only what is marked final is promoted.
+    const claimed = data && data.turn_final
+      && turnViewFinalize(Object.assign({}, data, { final_msg_id: msgId }));
+    if (!claimed) {
+      if (tabKey === 'messages' && !(data && data._history)) _turnPromoteLast(state, element);
+      else if (element.parentNode !== tab.bodyEl) tab.bodyEl.appendChild(element);
+    }
   }
   if (state.expanded && state.activeTab !== tabKey) { tab.unread++; tab.tabEl.classList.add('has-unread'); }
   const text = data && (data.text || data.content || data.response || '');
-  if (!(data && data._history)) _turnOfferTransient(state, tabKey, text);
+  if (!(data && data._history)) _turnOfferTransient(state, tabKey, text, element);
   return true;
+}
+
+// The one place the outside spot changes hands. The row that held it goes back
+// into the Messages tab -- appended, because it is the newest thing the tab has
+// seen -- and the newcomer takes its place directly under the block.
+function _turnPromoteLast(state, element) {
+  if (!element) return;
+  if (state.finalEl && state.finalEl !== element && state.tabs.messages) {
+    state.tabs.messages.bodyEl.appendChild(state.finalEl);
+  }
+  state.finalEl = element;
+  state.finalMsgId = String((element.dataset && element.dataset.msgid) || state.finalMsgId || '');
+  const parent = state.blockEl.parentNode;
+  if (parent && element.parentNode !== parent) parent.insertBefore(element, state.blockEl.nextSibling);
+  else if (parent && state.blockEl.nextSibling !== element) parent.insertBefore(element, state.blockEl.nextSibling);
 }
 
 function _turnResolvedToolName(data, element, state) {
@@ -294,15 +386,29 @@ function turnViewHandleToolResult(data, resultElement) {
   return true;
 }
 
-function _turnOfferTransient(state, kind, text) {
+function _turnOfferTransient(state, kind, text, element) {
   if (state.expanded || state.status !== 'working') return;
   let label = String(text || '').replace(/\s+/g, ' ').trim();
-  if (kind === 'tools') label = _turnText('turnCallingTool', 'Calling tool...');
+  // A tool call shows itself. "Calling tool..." named neither the tool nor its
+  // arguments, so the one surface meant to say what is happening said the
+  // least at the moment most worth watching. The canonical row is already
+  // rendered; the cue carries a copy of it, exactly as the classic view draws
+  // it, and the original stays the tab's own.
+  if (kind === 'tools') {
+    if (element) { _turnEnqueueTransient(state, { kind, node: element }); return; }
+    label = label || _turnText('turnCallingTool', 'Calling tool...');
+  }
   if (!label) return; label = label.slice(0, TURN_TRANSIENT_MAX_CHARS);
   // Streaming text arrives token by token: hold the newest excerpt and emit
   // one cue per coalescing window instead of one per token. Tool and artifact
   // cues are discrete events and are queued immediately.
   if (kind === 'messages' || kind === 'thinking') {
+    // One buffer per kind. Sharing a single one meant a message arriving in the
+    // same window overwrote the reasoning that preceded it, and the thinking
+    // the reader was told they would see never reached the surface at all.
+    if (state.transient.pendingKind && state.transient.pendingKind !== kind) {
+      _turnFlushTransient(state);
+    }
     state.transient.pendingKind = kind;
     state.transient.pendingText = label;
     if (!state.transient.coalesceTimer) {
@@ -336,31 +442,245 @@ function _turnEnqueueTransient(state, item) {
   const icon = document.createElement('span');
   icon.className = 'simple-turn-ephemeral-icon'; icon.innerHTML = _turnSvg(item.kind);
   icons.appendChild(icon);
-  const text = document.createElement('span');
-  text.className = 'simple-turn-ephemeral-text'; text.textContent = item.text;
-  cue.appendChild(icons); cue.appendChild(text);
-  // Enter small and blurred; the transition to depth 0 is the zoom in.
+  const body = document.createElement('span');
+  const entry = { el: cue, enter: null, scramble: null };
+  if (item.node) {
+    // A copy, never the row itself: the original is the tab's canonical node
+    // and moving it here would take it out of the record the reader opens.
+    body.className = 'simple-turn-ephemeral-node';
+    const clone = item.node.cloneNode(true);
+    if (clone.removeAttribute) { clone.removeAttribute('id'); clone.removeAttribute('data-msgid'); }
+    if (clone.classList) clone.classList.add('simple-turn-cue-copy');
+    body.appendChild(clone);
+    _turnScrambleNode(clone, entry);
+  } else {
+    body.className = 'simple-turn-ephemeral-text';
+    _turnScrambleInto(body, item.text, entry);
+  }
+  cue.appendChild(icons); cue.appendChild(body);
+  // Enter blurred and offset; the transition to depth 0 is the arrival. The
+  // newest goes on top, so the reader's eye lands on it and follows the older
+  // ones down as they fade.
   _turnStyleCue(cue, -1);
-  state.ephemeralEl.appendChild(cue);
-  const entry = { el: cue, timer: null, enter: null };
+  // After the rain canvas, which stays at the back of the surface.
+  state.ephemeralEl.insertBefore(cue, state.rainEl ? state.rainEl.nextSibling
+                                                  : state.ephemeralEl.firstChild);
   // Restack rather than jump to the front: a cue that arrives during this
   // delay has already taken depth 0, and this one belongs behind it.
   entry.enter = setTimeout(() => { entry.enter = null; _turnRestackCues(state); }, 16);
-  entry.timer = setTimeout(() => _turnRetireCue(state, entry), TURN_CUE_LIFETIME_MS);
   state.transient.cues.push(entry);
   _turnRestackCues(state);
+  _turnSyncIdle(state);
 }
 
-// depth 0 is the front. -1 is the pre-entry pose; anything past the last
-// visible step is gone.
+// ── The rain, and the cues that condense out of it ──────────────────────
+
+function _turnGlyph() {
+  return TURN_GLYPHS.charAt(Math.floor(Math.random() * TURN_GLYPHS.length));
+}
+
+function _turnReducedMotion() {
+  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  catch (_e) { return false; }
+}
+
+// One timer for every canvas on the page. It stops itself the moment the last
+// block finishes, so a quiet conversation costs nothing.
+function _turnRainTick() {
+  for (const canvas of Array.from(_turnRainCanvases)) {
+    if (!canvas.isConnected) { _turnRainCanvases.delete(canvas); continue; }
+    _turnRainDraw(canvas);
+  }
+  if (!_turnRainCanvases.size && _turnRainTimer) {
+    clearInterval(_turnRainTimer); _turnRainTimer = null;
+  }
+}
+
+function _turnRainDraw(canvas) {
+  const ctx = canvas._pfCtx || (typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null);
+  if (!ctx) return;
+  canvas._pfCtx = ctx;
+  const width = canvas.clientWidth || canvas.width || 0;
+  const height = canvas.clientHeight || canvas.height || 0;
+  if (!width || !height) return;
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width; canvas.height = height; canvas._pfDrops = null;
+  }
+  const columns = Math.max(1, Math.floor(width / TURN_RAIN_COLUMN_PX));
+  if (!canvas._pfDrops || canvas._pfDrops.length !== columns) {
+    canvas._pfDrops = Array.from({ length: columns },
+      () => Math.random() * height / TURN_RAIN_COLUMN_PX);
+  }
+  // The trail: each frame paints the whole surface with a translucent wash, so
+  // older glyphs decay instead of being erased.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.14)';
+  ctx.fillRect(0, 0, width, height);
+  ctx.font = (TURN_RAIN_COLUMN_PX - 2) + 'px monospace';
+  ctx.textBaseline = 'top';
+  // Head bright, trail dimmed through globalAlpha rather than a second colour:
+  // the accent arrives as whatever string the theme defines, and deriving a
+  // faded variant from an arbitrary colour notation is not this code's job.
+  const drops = canvas._pfDrops;
+  ctx.fillStyle = canvas._pfHead || '#7cf';
+  for (let i = 0; i < drops.length; i++) {
+    const y = drops[i] * TURN_RAIN_COLUMN_PX;
+    ctx.globalAlpha = 1;
+    ctx.fillText(_turnGlyph(), i * TURN_RAIN_COLUMN_PX, y);
+    ctx.globalAlpha = 0.5;
+    ctx.fillText(_turnGlyph(), i * TURN_RAIN_COLUMN_PX, y - TURN_RAIN_COLUMN_PX);
+    ctx.globalAlpha = 0.25;
+    ctx.fillText(_turnGlyph(), i * TURN_RAIN_COLUMN_PX, y - TURN_RAIN_COLUMN_PX * 2);
+    drops[i] = (y > height && Math.random() > 0.965) ? 0 : drops[i] + 1;
+  }
+  ctx.globalAlpha = 1;
+}
+
+// The colours are the theme's, read off the block itself: the rain belongs to
+// the skin the user chose, it does not impose one.
+function _turnRainColours(state, canvas) {
+  let accent = '#7cf';
+  try {
+    const cs = getComputedStyle(state.blockEl);
+    accent = (cs.getPropertyValue('--pf-accent') || '').trim()
+      || (cs.getPropertyValue('--pf-accent-2') || '').trim() || accent;
+  } catch (_e) { /* no computed style (tests): the default stands */ }
+  canvas._pfHead = accent;
+}
+
+function _turnStartRain(state) {
+  if (!state.ephemeralEl || state.rainEl || _turnReducedMotion()) return;
+  const canvas = document.createElement('canvas');
+  canvas.className = 'simple-turn-rain';
+  canvas.setAttribute('aria-hidden', 'true');
+  state.ephemeralEl.insertBefore(canvas, state.ephemeralEl.firstChild);
+  state.rainEl = canvas;
+  _turnRainColours(state, canvas);
+  _turnRainCanvases.add(canvas);
+  if (!_turnRainTimer) _turnRainTimer = setInterval(_turnRainTick, TURN_RAIN_TICK_MS);
+}
+
+function _turnStopRain(state) {
+  if (!state.rainEl) return;
+  _turnRainCanvases.delete(state.rainEl);
+  if (state.rainEl.parentNode) state.rainEl.parentNode.removeChild(state.rainEl);
+  state.rainEl = null;
+  if (!_turnRainCanvases.size && _turnRainTimer) {
+    clearInterval(_turnRainTimer); _turnRainTimer = null;
+  }
+}
+
+// A cue does not appear, it condenses: every character starts as a glyph from
+// the rain and resolves, left to right, into what it really is. The element
+// always ends on the true text -- the scramble is decoration on top of a value
+// that is set from the first tick, never a substitute for it.
+function _turnScrambleInto(el, text, entry) {
+  const full = String(text == null ? '' : text);
+  if (_turnReducedMotion() || full.length > TURN_SCRAMBLE_MAX_CHARS) {
+    el.textContent = full; return;
+  }
+  let tick = 0;
+  const render = () => {
+    const revealed = Math.ceil(full.length * (tick / TURN_SCRAMBLE_TICKS));
+    let out = full.slice(0, revealed);
+    for (let i = revealed; i < full.length; i++) {
+      out += full.charAt(i) === ' ' ? ' ' : _turnGlyph();
+    }
+    el.textContent = out;
+  };
+  render();
+  const timer = setInterval(() => {
+    tick++;
+    if (tick >= TURN_SCRAMBLE_TICKS) {
+      clearInterval(timer);
+      if (entry) entry.scramble = null;
+      el.textContent = full;
+      return;
+    }
+    render();
+  }, TURN_SCRAMBLE_TICK_MS);
+  if (entry) entry.scramble = timer;
+}
+
+// The same effect over a copied row: its text nodes are scrambled in place, so
+// a tool call materialises as the call it is, rendered as the classic view
+// draws it, rather than as a label describing one.
+function _turnScrambleNode(root, entry) {
+  if (_turnReducedMotion()) return;
+  const texts = [];
+  const walk = node => {
+    for (const child of Array.from(node.childNodes || [])) {
+      if (child.nodeType === 3) {
+        const value = String(child.textContent || '');
+        if (value.trim()) texts.push({ node: child, full: value });
+      } else if (child.nodeType === 1) walk(child);
+    }
+  };
+  walk(root);
+  const total = texts.reduce((sum, t) => sum + t.full.length, 0);
+  if (!texts.length || total > TURN_SCRAMBLE_MAX_CHARS) return;
+  let tick = 0;
+  const render = () => {
+    const ratio = tick / TURN_SCRAMBLE_TICKS;
+    for (const item of texts) {
+      const revealed = Math.ceil(item.full.length * ratio);
+      let out = item.full.slice(0, revealed);
+      for (let i = revealed; i < item.full.length; i++) {
+        out += /\s/.test(item.full.charAt(i)) ? item.full.charAt(i) : _turnGlyph();
+      }
+      item.node.textContent = out;
+    }
+  };
+  render();
+  const timer = setInterval(() => {
+    tick++;
+    if (tick >= TURN_SCRAMBLE_TICKS) {
+      clearInterval(timer);
+      if (entry) entry.scramble = null;
+      for (const item of texts) item.node.textContent = item.full;
+      return;
+    }
+    render();
+  }, TURN_SCRAMBLE_TICK_MS);
+  if (entry) entry.scramble = timer;
+}
+
+// The surface is never blank while the turn runs. Between two events -- and
+// the gap can be minutes -- an empty band reads as a stall, so the waiting
+// state is drawn as such: a pulse that says the turn is alive, standing in
+// for the cue that has not arrived yet, and stepping aside as soon as one does.
+function _turnSyncIdle(state) {
+  if (!state.ephemeralEl) return;
+  const busy = state.transient.cues.length > 0;
+  if (busy) {
+    if (state.idleEl && state.idleEl.parentNode) state.idleEl.parentNode.removeChild(state.idleEl);
+    state.idleEl = null;
+    return;
+  }
+  if (state.idleEl && state.idleEl.parentNode) return;
+  const idle = document.createElement('span');
+  idle.className = 'simple-turn-idle';
+  idle.innerHTML = '<span class="simple-turn-idle-dot"></span><span class="simple-turn-idle-dot"></span>'
+    + '<span class="simple-turn-idle-dot"></span>';
+  const label = document.createElement('span');
+  label.className = 'simple-turn-idle-label';
+  label.textContent = _turnText('turnWorking', 'Working');
+  idle.appendChild(label);
+  state.ephemeralEl.appendChild(idle);
+  state.idleEl = idle;
+}
+
+// depth 0 is the newest, at the top of the column. -1 is the pre-entry pose;
+// anything past the last visible step is gone.
+//
+// A column, not a pile: cues used to share one spot and stack in depth, which
+// works for four words and falls apart for a tool call rendered in full --
+// three cues on the same square inch, each blurred through the others, and
+// nothing readable. Here the newest arrives at the top at full strength and
+// pushes the older ones down, fading as they go.
 function _turnStyleCue(el, depth) {
-  const scale = depth < 0 ? 0.72 : Math.max(0.4, 1 - depth * 0.15);
-  const lift = depth < 0 ? 10 : -depth * 7;
-  const blur = depth < 0 ? 9 : depth * 2.2;
-  el.style.transform = 'translate(-50%, calc(-50% + ' + lift + 'px)) scale(' + scale + ')';
-  el.style.opacity = depth < 0 ? '0' : String(Math.max(0, 1 - depth * 0.34));
-  el.style.filter = 'blur(' + blur + 'px)';
-  el.style.zIndex = String(20 - Math.max(0, depth));
+  el.style.transform = depth < 0 ? 'translateY(-14px) scale(.96)' : 'translateY(0) scale(1)';
+  el.style.opacity = depth < 0 ? '0' : String(Math.max(0.12, 1 - depth * 0.28));
+  el.style.filter = depth < 0 ? 'blur(6px)' : 'blur(' + (depth * 1.1) + 'px)';
 }
 
 function _turnRestackCues(state) {
@@ -372,15 +692,16 @@ function _turnRestackCues(state) {
     if (depth >= TURN_TRANSIENT_MAX_STACK) { _turnRetireCue(state, cues[i]); continue; }
     if (!cues[i].enter) _turnStyleCue(cues[i].el, depth);
   }
+  _turnSyncIdle(state);
 }
 
 function _turnRetireCue(state, entry) {
   if (!entry) return;
   const index = state.transient.cues.indexOf(entry);
   if (index >= 0) state.transient.cues.splice(index, 1);
-  if (entry.timer) clearTimeout(entry.timer);
   if (entry.enter) clearTimeout(entry.enter);
-  entry.timer = null; entry.enter = null;
+  if (entry.scramble) clearInterval(entry.scramble);
+  entry.enter = null; entry.scramble = null;
   if (entry.el && entry.el.parentNode) entry.el.parentNode.removeChild(entry.el);
 }
 
@@ -389,6 +710,9 @@ function _turnStopTransient(state) {
   state.transient.coalesceTimer = null;
   state.transient.pendingText = ''; state.transient.pendingKind = '';
   while (state.transient.cues.length) _turnRetireCue(state, state.transient.cues[0]);
+  if (state.idleEl && state.idleEl.parentNode) state.idleEl.parentNode.removeChild(state.idleEl);
+  state.idleEl = null;
+  _turnStopRain(state);
 }
 
 function turnViewFinalize(data) {
@@ -403,17 +727,12 @@ function turnViewFinalize(data) {
       && data && data.turn_final_derived) return false;
   let element = finalId ? state.elementsByMsgId.get(finalId) : null;
   if (!element && finalId) element = document.querySelector('#messages [data-msgid="' + CSS.escape(finalId) + '"]');
-  if (element) {
-    // Reloading a still-running turn derives a final from the last narration.
-    // When the real terminal answer arrives, hand the block back its row
-    // instead of leaving two standalone messages after the block.
-    if (state.finalEl && state.finalEl !== element && state.finalEl.isConnected
-        && state.tabs.messages) {
-      state.tabs.messages.bodyEl.appendChild(state.finalEl);
-    }
-    state.finalMsgId = finalId; state.finalEl = element; element.classList.remove('streaming');
-    const parent = state.blockEl.parentNode; if (parent) parent.insertBefore(element, state.blockEl.nextSibling);
-  }
+  // A named final only moves the outside spot when the server names a row the
+  // positional rule did not already put there. Closing the turn does not
+  // depend on it: a done that names nothing still ends the block, or the
+  // header stays on "working" over a turn that is visibly finished.
+  if (element) { element.classList.remove('streaming'); _turnPromoteLast(state, element); }
+  if (finalId) state.finalMsgId = finalId;
   _turnStopTransient(state); _turnUpdateStatus(state, 'completed'); _turnPlaceBlock(state);
   return true;
 }
@@ -454,7 +773,7 @@ function turnViewForgetElement(element) {
   if (!element) return;
   for (const [id, state] of simplifiedTurns.entries()) {
     if (state.userEl === element || state.blockEl === element || state.finalEl === element) {
-      _turnStopTransient(state); simplifiedTurns.delete(id);
+      _turnStopTransient(state); _turnStopElapsed(state); simplifiedTurns.delete(id);
       if (_turnOpen && _turnOpen.state === state) _turnOpen = null;
       return;
     }

@@ -22,6 +22,7 @@ class ClassList {
 
 class TextNode {
   constructor(text) { this.nodeType = 3; this.textContent = String(text); this.parentNode = null; }
+  cloneNode() { return new TextNode(this.textContent); }
 }
 
 function makeDataset(el) {
@@ -112,6 +113,19 @@ class Element {
   }
 
   remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+
+  // Deep by default here: the only caller copies a rendered tool-call row into
+  // an ephemeral cue, and a shallow copy would drop everything worth showing.
+  cloneNode() {
+    const copy = new Element(this.tagName);
+    copy.classList.value = this.classList.value;
+    for (const [name, value] of this.attributes) copy.attributes.set(name, value);
+    copy.hidden = this.hidden;
+    for (const child of this.childNodes) copy.appendChild(child.cloneNode());
+    return copy;
+  }
+
+  removeAttribute(name) { this.attributes.delete(name); }
 
   get textContent() { return this.childNodes.map(n => n.textContent).join(''); }
   set textContent(v) {
@@ -293,6 +307,16 @@ function setTimeout(fn, ms) {
   return id;
 }
 function clearTimeout(id) { clock.timers.delete(id); }
+// Intervals are the same machinery with a period: the elapsed counter reschedules
+// itself, so a one-shot timer would tick once and the test would prove nothing
+// about a turn that runs for minutes.
+function setInterval(fn, ms) {
+  const id = clock.seq++;
+  const period = Math.max(1, Number(ms) || 0);
+  clock.timers.set(id, { fn, at: clock.now + period, every: period });
+  return id;
+}
+function clearInterval(id) { clock.timers.delete(id); }
 clock.tick = function (ms) {
   const target = clock.now + ms;
   for (;;) {
@@ -301,11 +325,17 @@ clock.tick = function (ms) {
       if (timer.at <= target && (!next || timer.at < next.timer.at)) next = { id, timer };
     }
     if (!next) break;
-    clock.timers.delete(next.id);
     clock.now = next.timer.at;
+    if (next.timer.every) next.timer.at = clock.now + next.timer.every;
+    else clock.timers.delete(next.id);
     next.timer.fn();
   }
   clock.now = target;
 };
+// The controller stamps turn start and reads elapsed off Date.now(); the same
+// clock drives both, or a tick would move the timers without moving the time
+// they are meant to measure.
+const Date_ = { now: () => clock.now };
 
-module.exports = { document, documentElement, Element, TextNode, clock, setTimeout, clearTimeout };
+module.exports = { document, documentElement, Element, TextNode, clock, setTimeout,
+                   clearTimeout, setInterval, clearInterval, Date: Date_ };

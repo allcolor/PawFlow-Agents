@@ -346,17 +346,30 @@ function _sseWireB() {
         _insertMessageChronologically(existingEl.parentNode, existingEl, Number(extra.ts), true);
       }
     }
-    if (!data.continuing && !data.force_stopped && data.is_final && data.final_msg_id
-        && typeof turnViewIngest === 'function') {
-      const finalId = data.final_msg_id || data.msg_id || extra.msg_id;
+    // A done that is not `continuing` ends the turn. It used to close the
+    // simplified block only when the payload also carried is_final AND a
+    // final_msg_id; a provider that ends a turn without naming its last
+    // message -- the CLI ones do -- left the block on "working" for good, with
+    // its answer buried inside it. What the server names still decides which
+    // row is hoisted out; whether the turn is over does not depend on it.
+    if (!data.continuing && typeof turnViewFinalize === 'function') {
+      const finalId = data.final_msg_id || '';
       const exactFinalEl = finalId
         ? document.querySelector('#messages [data-msgid="' + CSS.escape(finalId) + '"]')
-        : existingEl;
+        : null;
       const finalData = Object.assign({}, data, extra, {
-        msg_id: finalId, turn_final: true,
+        msg_id: finalId || extra.msg_id, final_msg_id: finalId, turn_final: !!finalId,
       });
-      turnViewIngest('assistant', finalData, exactFinalEl || existingEl);
-      if (typeof turnViewFinalize === 'function') turnViewFinalize(finalData);
+      if (finalId && typeof turnViewIngest === 'function') {
+        turnViewIngest('assistant', finalData, exactFinalEl || existingEl);
+      }
+      if (data.force_stopped) {
+        if (typeof turnViewFail === 'function') {
+          turnViewFail(extra.turn_id, 'stopped');
+        }
+      } else {
+        turnViewFinalize(finalData);
+      }
     }
     clearStream(doneAgent);
     scrollBottom();

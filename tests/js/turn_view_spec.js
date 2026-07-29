@@ -36,6 +36,9 @@ function env(mode) {
     document: dom.document,
     setTimeout: dom.setTimeout,
     clearTimeout: dom.clearTimeout,
+    setInterval: dom.setInterval,
+    clearInterval: dom.clearInterval,
+    Date: dom.Date,
     console,
     CSS: { escape: s => String(s).replace(/["\\\]]/g, '\\$&') },
     t: k => k,
@@ -123,13 +126,14 @@ test('a turn with no turn_id anywhere still groups', () => {
   const block = e.block();
   assert(block, 'block created from the user boundary alone');
   assert(user.nextSibling === block, 'block sits right after the user message');
-  assert(narration.parentNode !== e.messages, 'narration moved into a tab');
+  assert(block.nextSibling === narration, 'the last message so far is readable outside');
   assert(call.parentNode !== e.messages, 'tool call moved into a tab');
 
   const answer = e.row('a2');
   e.ctx.turnViewIngest('assistant', { msg_id: 'a2' }, answer);
   e.ctx.turnViewFinalize({ msg_id: 'a2', final_msg_id: 'a2' });
   assert(block.nextSibling === answer, 'terminal answer lifted out after the block');
+  assert(narration.parentNode !== e.messages, 'the message it replaced went back in');
 });
 
 test('a user message with no id at all still opens its own turn', () => {
@@ -156,9 +160,40 @@ test('a second user message closes the previous turn and opens a new block', () 
   const blocks = e.messages.querySelectorAll('.simple-turn-block');
   eq(blocks.length, 2, 'one block per turn');
   assert(blocks[0] === block1, 'the first block is untouched');
+  assert(block1.nextSibling === first, 'the first turn keeps its last message readable');
+  assert(first.nextSibling === user2, 'and it sits before the message that follows it');
   assert(user2.nextSibling === blocks[1], 'the second block follows the second user message');
-  assert(second.parentNode !== e.messages, 'the later row joined the later turn');
-  assert(first.parentNode !== e.messages, 'the earlier row stayed in the earlier turn');
+  assert(blocks[1].nextSibling === second, 'the second turn shows its own last message');
+});
+
+// A turn the server never closed is closed by the next thing the user says:
+// leaving it on "working", with its clock still running, above a message the
+// reader has already moved past, states something false.
+test('a new user message closes the block above it', () => {
+  const e = env('simplified');
+  const user1 = e.row('u1');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, user1);
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, e.row('a1'));
+  const block1 = e.block();
+  assert(block1.classList.contains('turn-working'), 'it is working while it runs');
+
+  e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, e.row('u2'));
+
+  assert(!block1.classList.contains('turn-working'), 'and not once the user has moved on');
+  eq(block1.querySelector('.simple-turn-status').textContent, 'Completed');
+});
+
+test('a block that ended badly keeps saying so', () => {
+  const e = env('simplified');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, e.row('u1'));
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, e.row('a1'));
+  const block1 = e.block();
+  eq(e.ctx.turnViewFail('u1', 'error', 'boom'), true);
+
+  e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, e.row('u2'));
+
+  assert(block1.querySelector('.simple-turn-status').classList.contains('error'),
+         'closing the turn must not overwrite how it ended');
 });
 
 test('a user message before the answer gives user / block / user / block / answer', () => {
@@ -177,7 +212,10 @@ test('a user message before the answer gives user / block / user / block / answe
   e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a3' }, answer);
   e.ctx.turnViewFinalize({ turn_id: 'u1', final_msg_id: 'a3' });
 
-  eq(topLevelIds(e).join(','), 'u1,BLOCK,u2,BLOCK,a3');
+  // Each turn keeps its own last message where the reader can read it: a1 for
+  // the interrupted first turn, a3 for the second. a2 went back into the second
+  // block when a3 replaced it.
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1,u2,BLOCK,a3');
 });
 
 test('a user message nothing followed gets no empty block', () => {
@@ -273,21 +311,29 @@ test('final answer is placed after the block and intermediates inside it', () =>
   const block = e.block();
   assert(block, 'block created');
   assert(user.nextSibling === block, 'block sits right after the user message');
-  assert(narration.parentNode !== e.messages, 'narration moved into a tab');
+  assert(block.nextSibling === narration, 'until something newer arrives, it is the answer');
 
   const answer = e.row('a2');
   e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a2', turn_final: true }, answer);
   assert(answer.parentNode === e.messages, 'final answer is top level');
   assert(block.nextSibling === answer, 'final answer sits right after the block');
+  assert(narration.parentNode !== e.messages, 'the intermediate one is back in the block');
 });
 
-test('a turn with no final answer leaves nothing after the block', () => {
+// The failure on screen: a turn whose done named no final message left its only
+// answer inside a collapsed tab, under a header that still said "working".
+test('a turn the server never closed still shows its last message', () => {
   const e = env('simplified');
-  const user = startTurn(e, 'u1');
-  const narration = e.row('a1');
-  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a1' }, narration);
+  startTurn(e, 'u1');
+  const only = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a1' }, only);
   const block = e.block();
-  eq(block.nextSibling, null, 'nothing is promoted out of the block');
+  assert(block.nextSibling === only, 'the last message is outside the block');
+
+  // A done that names nothing at all still ends the turn.
+  eq(e.ctx.turnViewFinalize({ turn_id: 'u1' }), true);
+  assert(block.nextSibling === only, 'and it stays there');
+  eq(block.querySelector('.simple-turn-status').textContent, 'Completed');
 });
 
 // ── Derived vs authoritative final (pagination reconstruction) ──────────
@@ -300,9 +346,12 @@ test('a derived final never displaces an established final', () => {
   const block = e.block();
   assert(block.nextSibling === real);
 
+  // A derived final comes from replaying an older page: it arrives last but it
+  // is not the last row of the turn, so the positional rule must not see it.
   const guess = e.row('a1');
   e.ctx.turnViewIngest('assistant',
-    { turn_id: 'u1', msg_id: 'a1', turn_final: true, turn_final_derived: true }, guess);
+    { turn_id: 'u1', msg_id: 'a1', turn_final: true, turn_final_derived: true, _history: true },
+    guess);
 
   assert(block.nextSibling === real, 'established final stays in place');
   assert(guess.parentNode !== e.messages, 'the rejected guess is filed into a tab');
@@ -336,7 +385,23 @@ test('streamed tokens coalesce into a single cue', () => {
   eq(e.cues(), 0, 'no cue is rendered before the coalescing window closes');
   e.clock.tick(300);
   eq(e.cues(), 1, 'exactly one cue for the window');
-  eq(e.ephemeralText(), 'tok49', 'carrying the newest excerpt');
+  // It condenses out of the rain: the text starts as glyphs and resolves.
+  assert(e.ephemeralText() !== 'tok49', 'the cue arrives scrambled, not typed out');
+  e.clock.tick(14 * 40);
+  eq(e.ephemeralText(), 'tok49', 'and resolves to the newest excerpt');
+});
+
+// The scramble is decoration over a value that is always there: whatever the
+// animation is doing, the cue ends on the real text and leaves no timer behind.
+test('a cue always resolves to its true text', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'compiling the plan' }, e.row('a1'));
+  e.clock.tick(300 + 14 * 40 + 200);
+  eq(e.ephemeralText(), 'compiling the plan');
+  const before = e.dom.clock.timers.size;
+  e.clock.tick(5000);
+  assert(e.dom.clock.timers.size <= before, 'the scramble stopped rescheduling itself');
 });
 
 // ── The cue stack: entries coexist, newest in front, oldest pushed off ──
@@ -354,17 +419,59 @@ test('cues stack instead of taking turns, and the stack is bounded', () => {
   eq(e.cues(), 4, 'the stack is capped, the oldest fall off the back');
 });
 
-test('each cue retires on its own timer', () => {
+// Nothing on this surface disappears because a timer said so: what the reader
+// last saw stays readable until there is something newer to read.
+test('a cue only leaves when a newer one pushes it out', () => {
   const e = env('simplified');
   startTurn(e, 'u1');
   e.ctx.turnViewIngest('tool_call', { msg_id: 'c1', tc_id: 'tc-1' }, e.row('c1'));
-  e.clock.tick(1000);
+  eq(e.cues(), 1);
+  e.clock.tick(60000);
+  eq(e.cues(), 1, 'a minute of silence does not blank the surface');
   e.ctx.turnViewIngest('tool_call', { msg_id: 'c2', tc_id: 'tc-2' }, e.row('c2'));
-  eq(e.cues(), 2, 'both are up');
-  e.clock.tick(1700);   // first cue past 2600ms, second not yet
-  eq(e.cues(), 1, 'the older one left on its own, the newer one stayed');
-  e.clock.tick(1000);
-  eq(e.cues(), 0, 'and then the newer one, at its own time');
+  eq(e.cues(), 2, 'the older one is pushed back, not removed');
+});
+
+// The rain is the resting state of the surface: it runs while the turn runs,
+// on one shared ticker, and leaves nothing behind when the turn ends.
+test('the rain runs while the turn runs and stops with it', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, e.row('a1'));
+  const rain = () => e.messages.querySelectorAll('.simple-turn-rain').length;
+  eq(rain(), 1, 'a running turn rains');
+
+  e.ctx.turnViewFinalize({ msg_id: 'a1', final_msg_id: 'a1' });
+  eq(rain(), 0, 'a finished one does not');
+  const idle = e.dom.clock.timers.size;
+  e.clock.tick(10000);
+  eq(e.dom.clock.timers.size, idle, 'and nothing keeps ticking for it');
+});
+
+test('two running turns share one ticker', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, e.row('a1'));
+  const oneTurn = e.dom.clock.timers.size;
+  e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, e.row('u2'));
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a2' }, e.row('a2'));
+
+  eq(e.messages.querySelectorAll('.simple-turn-rain').length, 1,
+     'the closed turn stopped raining, the new one started');
+  assert(e.dom.clock.timers.size <= oneTurn + 1,
+         'a second block must not mean a second rain ticker');
+});
+
+// Between two events the band must not read as a stall.
+test('an empty surface shows the turn is still alive', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'x' }, e.row('a1'));
+  const idle = () => e.messages.querySelectorAll('.simple-turn-idle').length;
+  eq(idle(), 1, 'a block with no cue yet pulses instead of sitting blank');
+  e.clock.tick(300);
+  eq(e.cues(), 1);
+  eq(idle(), 0, 'and steps aside as soon as there is something to show');
 });
 
 test('a finished turn drops every cue it had on screen', () => {
@@ -383,8 +490,27 @@ test('discrete tool cues are not delayed by coalescing', () => {
   const e = env('simplified');
   startTurn(e, 'u1');
   const call = e.row('c1');
+  call.appendChild(e.dom.document.createElement('div')).textContent = 'edit(path="x.js")';
   e.ctx.turnViewIngest('tool_call', { turn_id: 'u1', msg_id: 'c1', tc_id: 'tc-1' }, call);
-  eq(e.ephemeralText(), 'Calling tool...', 'tool cue renders immediately');
+  eq(e.cues(), 1, 'tool cue renders immediately');
+});
+
+// "Calling tool..." named neither the tool nor its arguments -- the one surface
+// meant to say what is happening said the least at the moment worth watching.
+test('a tool cue shows the call itself, copied, not a label', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const call = e.row('c1');
+  call.appendChild(e.dom.document.createElement('div')).textContent = 'edit(path="x.js")';
+  e.ctx.turnViewIngest('tool_call', { turn_id: 'u1', msg_id: 'c1', tc_id: 'tc-1' }, call);
+
+  e.clock.tick(14 * 40);
+  const copy = e.messages.querySelectorAll('.simple-turn-cue-copy');
+  eq(copy.length, 1, 'the cue carries a copy of the rendered call');
+  assert(copy[0].textContent.indexOf('edit(path="x.js")') >= 0, 'with what the call says');
+  assert(copy[0] !== call, 'a copy, never the canonical row');
+  assert(call.parentNode !== e.messages, 'which stays filed in its tab');
+  eq(copy[0].getAttribute('data-msgid'), null, 'the copy carries no identity of its own');
 });
 
 test('identity is not re-rendered on every token', () => {
@@ -467,7 +593,29 @@ test('failure finalizes the block without inventing an answer', () => {
   const block = e.block();
   eq(e.ctx.turnViewFail('u1', 'cancelled'), true);
   assert(block.querySelector('.simple-turn-status').classList.contains('cancelled'));
-  eq(block.nextSibling, null, 'no answer is manufactured on cancellation');
+  // What it said before it was cancelled is still what it said: the last
+  // message stays readable. Nothing is invented on top of it.
+  assert(block.nextSibling === narration, 'the last message it produced is still shown');
+  eq(narration.nextSibling, null, 'and nothing was manufactured after it');
+});
+
+// The counter is the only thing that keeps moving through a long silence, and
+// it is what tells the reader how long that silence has been.
+test('the header counts the seconds and freezes them at the end', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, e.row('a1'));
+  const elapsed = () => e.block().querySelector('.simple-turn-elapsed').textContent;
+  eq(elapsed(), '0s');
+  e.clock.tick(7000);
+  eq(elapsed(), '7s', 'it ticks while the turn runs');
+  e.clock.tick(95000);
+  eq(elapsed(), '1m 42s', 'and stays readable past a minute');
+
+  e.ctx.turnViewFinalize({ msg_id: 'a1', final_msg_id: 'a1' });
+  const atEnd = elapsed();
+  e.clock.tick(60000);
+  eq(elapsed(), atEnd, 'a finished turn keeps the time it took');
 });
 
 // The ephemeral surface is laid out by CSS only while .turn-working is set.

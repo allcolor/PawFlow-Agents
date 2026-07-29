@@ -65,9 +65,11 @@ function _turnCreateState(turnId, data) {
   const state = {
     turnId, userMsgId: userEl.dataset.msgid || turnId, userEl, agentName: '', llmService: '',
     status: 'working', expanded: false, activeTab: 'messages', finalMsgId: '', finalEl: null,
+    identityRendered: false,
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
     artifactElementsByFileId: new Map(), artifactFileIdByCallId: new Map(),
-    transient: { current: null, queue: [], timer: null, coalesceTimer: null, pendingText: '' },
+    transient: { current: null, queue: [], timer: null, coalesceTimer: null,
+                 pendingText: '', pendingKind: '' },
     tabs: {},
   };
   const block = document.createElement('section');
@@ -123,8 +125,14 @@ function _turnPlaceBlock(state) {
 
 function _turnUpdateIdentity(state, data) {
   const src = data.source || {};
-  state.agentName = data.agent_name || src.name || state.agentName || '';
-  state.llmService = data.llm_service || data.model || state.llmService || '';
+  const agentName = data.agent_name || src.name || state.agentName || '';
+  const llmService = data.llm_service || data.model || state.llmService || '';
+  // Called once per streamed token. Identity almost never changes mid-turn,
+  // so re-rendering it per token is pure waste on the hot path.
+  if (state.identityRendered && agentName === state.agentName
+      && llmService === state.llmService) return;
+  state.agentName = agentName; state.llmService = llmService;
+  state.identityRendered = true;
   const title = state.agentName ? displayAgentName(state.agentName) : _turnText('agentWorking', 'Agent activity');
   state.headerEl.querySelector('.simple-turn-title').textContent = title;
   const serviceEl = state.headerEl.querySelector('.simple-turn-service');
@@ -193,7 +201,10 @@ function turnViewIngest(kind, data, element) {
     if (msgId) state.elementsByMsgId.set(msgId, element);
     const tcId = String((data && (data.tc_id || data.tool_call_id)) || (element.dataset && element.dataset.tcId) || '');
     if (tcId) state.toolElementsByCallId.set(tcId, element);
-    if (data && data.turn_final) { turnViewFinalize(Object.assign({}, data, { final_msg_id: msgId })); return true; }
+    if (data && data.turn_final
+        && turnViewFinalize(Object.assign({}, data, { final_msg_id: msgId }))) return true;
+    // A rejected finalize (a derived guess losing to an established final) is
+    // an ordinary in-turn row: it still belongs in a tab, never left floating.
     if (element.parentNode !== tab.bodyEl) tab.bodyEl.appendChild(element);
   }
   if (state.expanded && state.activeTab !== tabKey) { tab.unread++; tab.tabEl.classList.add('has-unread'); }
@@ -268,8 +279,33 @@ function _turnOfferTransient(state, kind, text) {
   if (state.expanded || state.status !== 'working') return;
   let label = String(text || '').replace(/\s+/g, ' ').trim();
   if (kind === 'tools') label = _turnText('turnCallingTool', 'Calling tool...');
-  if (!label) return; label = label.slice(-TURN_TRANSIENT_MAX_CHARS);
-  const item = { kind, text: label };
+  if (!label) return; label = label.slice(0, TURN_TRANSIENT_MAX_CHARS);
+  // Streaming text arrives token by token: hold the newest excerpt and emit
+  // one cue per coalescing window instead of one per token. Tool and artifact
+  // cues are discrete events and are queued immediately.
+  if (kind === 'messages' || kind === 'thinking') {
+    state.transient.pendingKind = kind;
+    state.transient.pendingText = label;
+    if (!state.transient.coalesceTimer) {
+      state.transient.coalesceTimer = setTimeout(() => {
+        state.transient.coalesceTimer = null;
+        _turnFlushTransient(state);
+      }, TURN_TEXT_COALESCE_MS);
+    }
+    return;
+  }
+  _turnEnqueueTransient(state, { kind, text: label });
+}
+
+function _turnFlushTransient(state) {
+  const kind = state.transient.pendingKind; const text = state.transient.pendingText;
+  state.transient.pendingKind = ''; state.transient.pendingText = '';
+  if (!text || state.expanded || state.status !== 'working') return;
+  _turnEnqueueTransient(state, { kind, text });
+}
+
+function _turnEnqueueTransient(state, item) {
+  const kind = item.kind;
   const tail = state.transient.queue[state.transient.queue.length - 1];
   if (tail && tail.kind === kind && (kind === 'messages' || kind === 'thinking')) Object.assign(tail, item);
   else { state.transient.queue.push(item); if (state.transient.queue.length > TURN_TRANSIENT_MAX_QUEUE) state.transient.queue.shift(); }
@@ -292,6 +328,7 @@ function _turnStopTransient(state) {
   if (state.transient.timer) clearTimeout(state.transient.timer);
   if (state.transient.coalesceTimer) clearTimeout(state.transient.coalesceTimer);
   state.transient.timer = null; state.transient.coalesceTimer = null; state.transient.current = null; state.transient.queue = [];
+  state.transient.pendingText = ''; state.transient.pendingKind = '';
   if (state.ephemeralEl) {
     const textEl = state.ephemeralEl.querySelector('.simple-turn-ephemeral-text');
     const iconEl = state.ephemeralEl.querySelector('.simple-turn-ephemeral-icons');
@@ -303,9 +340,22 @@ function turnViewFinalize(data) {
   if (!turnViewIsSimplified()) return false;
   const id = _turnId(data); const state = simplifiedTurns.get(id); if (!state) return false;
   const finalId = String((data && (data.final_msg_id || data.msg_id)) || '');
+  // A derived marker is a reconstruction guess, not an authority: pagination
+  // classifies each page on its own, so an older page can derive a second
+  // final for a turn whose real answer is already placed. Never let a guess
+  // displace a final that is already established.
+  if (state.finalEl && state.finalMsgId && state.finalMsgId !== finalId
+      && data && data.turn_final_derived) return false;
   let element = finalId ? state.elementsByMsgId.get(finalId) : null;
   if (!element && finalId) element = document.querySelector('#messages [data-msgid="' + CSS.escape(finalId) + '"]');
   if (element) {
+    // Reloading a still-running turn derives a final from the last narration.
+    // When the real terminal answer arrives, hand the block back its row
+    // instead of leaving two standalone messages after the block.
+    if (state.finalEl && state.finalEl !== element && state.finalEl.isConnected
+        && state.tabs.messages) {
+      state.tabs.messages.bodyEl.appendChild(state.finalEl);
+    }
     state.finalMsgId = finalId; state.finalEl = element; element.classList.remove('streaming');
     const parent = state.blockEl.parentNode; if (parent) parent.insertBefore(element, state.blockEl.nextSibling);
   }

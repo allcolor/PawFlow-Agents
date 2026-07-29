@@ -499,6 +499,30 @@ class AgentSerializationMixin:
                     _item["turn_id"] = _turn_id
                 if "turn_final" in _raw:
                     _item["turn_final"] = bool(_raw.get("turn_final"))
+        # A turn is only readable in the simplified view when one row carries
+        # turn_final: that row is lifted out of the activity block and shown as
+        # the standalone answer. Rows written before turn_final existed, and
+        # turns whose terminal patch never landed, would otherwise render as a
+        # user message followed by a collapsed block hiding the answer. Derive
+        # the marker from the last visible assistant row of the turn so
+        # reconstruction never depends on the patch having succeeded.
+        _rows_by_turn: Dict[str, List[Dict[str, Any]]] = {}
+        for _item in result:
+            _item_turn_id = str(_item.get("turn_id") or "")
+            if _item_turn_id:
+                _rows_by_turn.setdefault(_item_turn_id, []).append(_item)
+        for _turn_rows in _rows_by_turn.values():
+            if any(_row.get("turn_final") for _row in _turn_rows):
+                continue
+            for _row in reversed(_turn_rows):
+                if (_row.get("type") == "assistant"
+                        and _row.get("role") == "assistant"
+                        and not _row.get("display_only")
+                        and isinstance(_row.get("content"), str)
+                        and _row["content"].strip()):
+                    _row["turn_final"] = True
+                    _row["turn_final_derived"] = True
+                    break
 
         # Propagate task_id from source to top-level for frontend task block grouping
         for _item in result:

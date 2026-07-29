@@ -22,6 +22,12 @@ function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
     if (excess <= 0) break;
     if (removed.has(el)) continue;
     const group = (typeof turnViewEvictionGroup === 'function') ? turnViewEvictionGroup(el) : [el];
+    // `rows` already excludes live nodes, but a turn group is reached through
+    // its user anchor -- which is never live even while the block below it
+    // still streams. Re-check the whole group or eviction kills a running turn.
+    const groupIsLive = group.some(node => (node.dataset && node.dataset.live === '1')
+      || (node.querySelector && node.querySelector('[data-live="1"]')));
+    if (groupIsLive) continue;
     const selected = group.some(node => {
       const nodeId = node.dataset && node.dataset.msgid;
       return nodeId && typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.has(nodeId);

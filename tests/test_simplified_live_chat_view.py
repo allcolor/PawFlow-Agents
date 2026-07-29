@@ -1,9 +1,24 @@
 """Contract tests for the conversation-scoped simplified live chat view."""
 from pathlib import Path
 import json
+import logging
 
+from core.conversation_store import ConversationStore
 from tasks.ai.agent_emitter import StreamEmitter
 from tasks.ai.agent_loop import AgentLoopTask
+
+
+def _final_ids(rows):
+    """msg_ids the simplified view will lift out of the activity block."""
+    return [r.get("msg_id") for r in rows if r.get("turn_final")]
+
+
+def _finals_per_turn(rows):
+    counts = {}
+    for row in rows:
+        if row.get("turn_final"):
+            counts[row.get("turn_id")] = counts.get(row.get("turn_id"), 0) + 1
+    return counts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,6 +83,132 @@ def test_display_classification_derives_legacy_turn_at_user_boundary_only():
     assert "turn_id" not in by_id["old-1"]
     assert by_id["a-1"]["turn_id"] == "user-1"
     assert by_id["a-2"]["turn_id"] == "user-2"
+
+
+# ── Reconstruction: every turn must expose exactly one final answer ──
+#
+# The view lifts the row carrying turn_final out of the activity block and
+# renders it as the standalone answer. A turn with no such row renders as a
+# user message followed by a collapsed block that hides the answer.
+
+
+def test_legacy_turns_without_stored_metadata_still_expose_their_answer():
+    rows = AgentLoopTask._classify_messages_for_display([
+        {"role": "user", "content": "first", "msg_id": "user-1"},
+        {"role": "assistant", "content": "answer one", "msg_id": "a-1"},
+        {"role": "user", "content": "second", "msg_id": "user-2"},
+        {"role": "assistant", "content": "answer two", "msg_id": "a-2"},
+    ])
+
+    assert _final_ids(rows) == ["a-1", "a-2"]
+    assert _finals_per_turn(rows) == {"user-1": 1, "user-2": 1}
+
+
+def test_derived_final_is_the_last_assistant_row_not_an_intermediate_one():
+    rows = AgentLoopTask._classify_messages_for_display([
+        {"role": "user", "content": "go", "msg_id": "user-1"},
+        {"role": "assistant", "content": "let me look", "msg_id": "a-1"},
+        {"role": "tool", "content": "ok", "msg_id": "result-1",
+         "tool_call_id": "tc-1"},
+        {"role": "assistant", "content": "here it is", "msg_id": "a-2"},
+    ])
+
+    assert _final_ids(rows) == ["a-2"]
+    by_id = {r.get("msg_id"): r for r in rows}
+    assert not by_id["a-1"].get("turn_final")
+
+
+def test_stored_turn_final_wins_and_is_never_doubled_by_derivation():
+    rows = AgentLoopTask._classify_messages_for_display([
+        {"role": "user", "content": "go", "msg_id": "user-1"},
+        {"role": "assistant", "content": "the answer", "msg_id": "a-1",
+         "turn_id": "user-1", "turn_final": True},
+        {"role": "assistant", "content": "a later aside", "msg_id": "a-2",
+         "turn_id": "user-1", "turn_final": False},
+    ])
+
+    assert _final_ids(rows) == ["a-1"]
+    by_id = {r.get("msg_id"): r for r in rows}
+    assert "turn_final_derived" not in by_id["a-1"]
+
+
+def test_derivation_marks_itself_so_a_missed_patch_stays_diagnosable():
+    rows = AgentLoopTask._classify_messages_for_display([
+        {"role": "user", "content": "go", "msg_id": "user-1"},
+        {"role": "assistant", "content": "answer", "msg_id": "a-1",
+         "turn_id": "user-1"},
+    ])
+
+    by_id = {r.get("msg_id"): r for r in rows}
+    assert by_id["a-1"]["turn_final"] is True
+    assert by_id["a-1"]["turn_final_derived"] is True
+
+
+def test_turn_without_a_visible_answer_never_manufactures_one():
+    rows = AgentLoopTask._classify_messages_for_display([
+        {"role": "user", "content": "go", "msg_id": "user-1"},
+        {"role": "tool_call", "content": "", "msg_id": "call-1",
+         "tool_call_id": "tc-1", "tool_name": "read",
+         "arguments": {"path": "a.py"}},
+        {"role": "tool", "content": "ok", "msg_id": "result-1",
+         "tool_call_id": "tc-1"},
+    ])
+
+    assert _final_ids(rows) == []
+
+
+def test_error_row_is_not_promoted_to_the_turn_answer():
+    rows = AgentLoopTask._classify_messages_for_display([
+        {"role": "user", "content": "go", "msg_id": "user-1"},
+        {"role": "assistant", "content": "partial answer", "msg_id": "a-1"},
+        {"role": "assistant", "content": "boom", "msg_id": "e-1",
+         "is_error": True},
+    ])
+
+    assert _final_ids(rows) == ["a-1"]
+
+
+def test_every_turn_with_an_answer_gets_exactly_one_final_across_a_mixed_history():
+    rows = AgentLoopTask._classify_messages_for_display([
+        # legacy turn: nothing stored
+        {"role": "user", "content": "one", "msg_id": "user-1"},
+        {"role": "assistant", "content": "answer one", "msg_id": "a-1"},
+        # modern turn: patch landed
+        {"role": "user", "content": "two", "msg_id": "user-2"},
+        {"role": "assistant", "content": "work", "msg_id": "a-2",
+         "turn_id": "user-2", "turn_final": False},
+        {"role": "assistant", "content": "answer two", "msg_id": "a-3",
+         "turn_id": "user-2", "turn_final": True},
+        # modern turn: patch was lost
+        {"role": "user", "content": "three", "msg_id": "user-3"},
+        {"role": "assistant", "content": "answer three", "msg_id": "a-4",
+         "turn_id": "user-3", "turn_final": False},
+    ])
+
+    assert _finals_per_turn(rows) == {"user-1": 1, "user-2": 1, "user-3": 1}
+    assert _final_ids(rows) == ["a-1", "a-3", "a-4"]
+
+
+def test_patch_message_warns_when_it_matches_no_row(tmp_path, caplog):
+    ConversationStore.reset()
+    try:
+        store = ConversationStore(store_dir=str(tmp_path / "conversations"))
+        cid = store.generate_id()
+        store.save(cid, [], user_id="testuser")
+        store.append_message(
+            cid, {"role": "assistant", "content": "hi", "msg_id": "real-1"},
+            user_id="testuser")
+
+        with caplog.at_level(logging.WARNING):
+            store.patch_message(cid, "does-not-exist", turn_final=True)
+        assert "matched no row" in caplog.text
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            store.patch_message(cid, "real-1", turn_final=True)
+        assert "matched no row" not in caplog.text
+    finally:
+        ConversationStore.reset()
 
 
 def test_turn_view_module_loads_between_renderer_and_sse_handlers():

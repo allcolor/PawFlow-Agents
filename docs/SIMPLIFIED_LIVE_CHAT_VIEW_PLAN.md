@@ -281,6 +281,24 @@ or force stop must not set `turn_final`.
 tool calls, and tool results. The existing task metadata propagation pattern is
 a suitable precedent.
 
+Reconstruction must not depend on the durable marker existing. The stored
+`turn_final` is written by a patch that can legitimately never land: rows
+recorded before this feature carry no marker at all, a terminal path that
+leaves `final_msg_id` empty produces none, and a patch that matches no row is
+logged but cannot be retried. Because the view lifts the marked row out of the
+activity block, a turn with no marker renders as a user message followed by a
+collapsed block hiding the answer.
+
+The classifier therefore closes the gap after propagation: for every turn whose
+rows carry no `turn_final`, it marks the last visible assistant row —
+`type == "assistant"`, not `display_only`, non-empty text, so error rows and
+tool traffic are never promoted — and flags it `turn_final_derived: true` to
+keep a missed patch diagnosable. A turn that produced no visible answer keeps
+no final row: cancellation and force stop still never manufacture one.
+
+The invariant to test is per-turn, not per-row: **every turn that contains a
+visible assistant answer exposes exactly one `turn_final` row.**
+
 For pre-feature rows without `turn_id`, history loading may derive a display-only
 turn id from the nearest preceding visible user message. This compatibility path
 must be deterministic and limited to display classification; it must never
@@ -925,6 +943,34 @@ Exit criterion: targeted tests, full suite, and manual browser matrix pass.
 Where practical, keep event classification and queue reduction as pure functions
 so they can be tested without a browser DOM. Structural source assertions alone
 are not sufficient for ordering and dedupe invariants.
+
+#### Behavioural JS harness
+
+Ordering, coalescing, and eviction are stateful and cannot be asserted from the
+source text, so `tests/js/turn_view_spec.js` drives the real controller under
+Node against `tests/js/dom_stub.js` — a small DOM implementation covering only
+what `turn_view.js` and the live-window trim in `messages_render.js` touch. No
+npm dependency is required. `tests/test_turn_view_js.py` puts it on the pytest
+gate and skips when Node is absent.
+
+The stub supplies a deterministic clock, so timer-driven behaviour (the
+coalescing window, the animation cadence) is exercised without sleeping. What
+it covers today:
+
+- Classic mode is inert: no block, no reparenting, single-node eviction groups.
+- The final answer lands immediately after the block; intermediate rows do not.
+- A derived `turn_final` never displaces an established one, and the rejected
+  row is filed into a tab rather than left floating; an authoritative marker
+  displaces a derived one and reclaims it.
+- Streamed tokens produce one cue per coalescing window, not one per token,
+  while discrete tool cues are not delayed.
+- Turn identity is not re-rendered per token, but a changed identity still is.
+- Eviction never destroys a turn whose block is still live, and classic-mode
+  trimming is unchanged.
+- A cancelled turn keeps its status and manufactures no answer.
+
+When changing this controller, neutralize each guard and confirm the suite
+fails. A test that passes against the broken code is worse than no test.
 
 ### Browser integration matrix
 

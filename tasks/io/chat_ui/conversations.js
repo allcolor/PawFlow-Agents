@@ -664,8 +664,14 @@ function _updateLoadMoreBanner() {
       banner.onclick = loadMoreMessages;
     }
     _placeLoadMoreBanner(banner);
-    const shown = new Set(Array.from(document.querySelectorAll('#messages [data-msgid]'))
-      .map(el => el.dataset.msgid).filter(Boolean)).size;
+    // Simplified mode reparents rows into the turn block, so top-level `.msg`
+    // undercounts. Classic keeps the top-level count: descending into every
+    // nested [data-msgid] there would also count tool results inside technical
+    // and task groups, inflating the banner.
+    const shown = (typeof turnViewIsSimplified === 'function' && turnViewIsSimplified())
+      ? new Set(Array.from(document.querySelectorAll('#messages [data-msgid]'))
+        .map(el => el.dataset.msgid).filter(Boolean)).size
+      : document.querySelectorAll('#messages > .msg').length;
     const total = serverMsgCount || '?';
     banner.innerHTML = '&#x25B2; Load more messages (showing ' + shown + ' of ' + total + ')';
   } else if (banner) {

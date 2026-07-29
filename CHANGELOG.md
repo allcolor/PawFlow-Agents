@@ -6,17 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A relay container the Docker daemon refused to kill aborted the whole server
+  update.** `scripts/run-pawflow-docker.sh` removes the managed relay containers
+  before recreating the server, so they restart with current runtime code. It
+  did so in a single `docker rm -f` whose failure, under `set -e`, stopped the
+  script — *after* the new image had been pulled and *before* the server
+  container was recreated. A beta.42 → beta.44 update hit exactly that (`could
+  not kill container: tried to kill container, but did not receive an exit
+  event`): the server stayed on beta.42 while its relay was left half-killed,
+  and the update looked like it had simply reloaded. Relays are accessory and
+  are recreated on demand, so each is now removed on its own and a failure is a
+  loud warning on stderr instead of an abort.
+
 ## [1.0.0-beta.44] — 2026-07-29
 
 ### Fixed
 
-- **The beta.43 tag never produced an image: the CI security gate failed on a
-  false positive.** `bandit` reads `GHCR_TOKEN_URL` as a hardcoded password
-  (B105) because the name contains `TOKEN` and the value is a string literal.
-  The constant is the public GHCR *endpoint* that hands out an anonymous pull
-  token for a public repository — there is no credential in the source. Marked
-  `# nosec B105`, as the OAuth `token_url` entries already are. This release
-  carries everything beta.43 contained; upgrade straight from beta.42.
+- **The CI security gate failed on a false positive.** `bandit` reads
+  `GHCR_TOKEN_URL` as a hardcoded password (B105) because the name contains
+  `TOKEN` and the value is a string literal. The constant is the public GHCR
+  *endpoint* that hands out an anonymous pull token for a public repository —
+  there is no credential in the source. Marked `# nosec B105`, as the OAuth
+  `token_url` entries already are. The beta.43 image itself published normally:
+  `docker-publish.yml` and `ci.yml` are independent workflows.
 
 ## [1.0.0-beta.43] — 2026-07-29
 

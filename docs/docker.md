@@ -608,6 +608,17 @@ is what gates the optional `git pull` checkbox.
 turns are in flight — and lets the operator decide. Nothing refuses on their
 behalf. The UI then polls `/health` until the server answers again and reloads.
 
+**Managed relays are removed, best-effort.** Before recreating the server, the
+start script drops the `pawflow-relay-srv-*` / `pawflow-relay-min-*` containers
+so they come back with the current runtime code; their home volumes and
+workspace directories are untouched. Each is removed on its own and a failure
+is a loud warning, never fatal. A relay the daemon refuses to kill (`could not
+kill container: tried to kill container, but did not receive an exit event`)
+once aborted the whole script under `set -e` — after the pull, before
+`docker rm -f` on the server — leaving the operator with a server still on the
+old image and a half-killed relay. Relays are accessory and recreated on
+demand; the server recreation is what the update exists for.
+
 If the update fails, `pawflow-updater` is kept (not `--rm`), so
 `docker logs pawflow-updater` still explains why.
 

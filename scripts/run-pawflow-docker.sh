@@ -92,7 +92,20 @@ remove_managed_relay_containers() {
   fi
   echo "Removing managed PawFlow relay containers so they restart with current runtime code: ${names[*]}"
   echo "Relay home volumes and workspace directories are preserved."
-  docker rm -f "${names[@]}" >/dev/null
+  # Best-effort, never fatal. A relay wedged in the daemon ("could not kill
+  # container: tried to kill container, but did not receive an exit event")
+  # used to abort the whole script under `set -e` — after the new image was
+  # pulled and just before the server itself was recreated, leaving the server
+  # on its old image with its relays half-killed. Relays are accessory: they
+  # are recreated on demand, so a failure here is reported loudly and the
+  # update carries on.
+  local name
+  for name in "${names[@]}"; do
+    if ! docker rm -f "$name" >/dev/null 2>&1; then
+      echo "WARNING could not remove relay container '$name'; it keeps running old runtime code. Remove it by hand: docker rm -f $name" >&2
+    fi
+  done
+  return 0
 }
 
 while [[ $# -gt 0 ]]; do

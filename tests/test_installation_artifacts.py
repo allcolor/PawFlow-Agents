@@ -312,7 +312,10 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "data/runtime/relay_runtime/current" not in run_src
     assert "pawflow-relay-srv|pawflow-relay-min" in run_src
     assert "Relay home volumes and workspace directories are preserved." in run_src
-    assert 'docker rm -f "${names[@]}"' in run_src
+    # One by one and best-effort: a relay the daemon refuses to kill must not
+    # abort the server recreation that follows. Behaviour covered by
+    # test_run_docker_recreates_the_server_even_when_a_relay_cannot_be_removed.
+    assert 'if ! docker rm -f "$name"' in run_src
 
     install_ps1_src = install_ps1.read_text(encoding="utf-8")
     assert "Install or update PawFlow on Windows" in install_ps1_src
@@ -681,6 +684,77 @@ def test_run_docker_recreates_existing_container_for_updates(tmp_path):
     assert "rm -f pawflow-server" in log
     assert "run -d --name pawflow-server" in log
     assert "ghcr.io/allcolor/pawflow:1.0.0.prealpha.2" in log
+
+
+def test_run_docker_recreates_the_server_even_when_a_relay_cannot_be_removed(tmp_path):
+    """A wedged relay must not stop the server from being recreated.
+
+    Seen for real on a beta.42 -> beta.44 update: the daemon answered
+    "could not kill container: tried to kill container, but did not receive an
+    exit event" for a relay. Under `set -e` that aborted the script *after* the
+    image pull and *before* `docker rm -f pawflow-server`, so the operator got a
+    server still on the old image and a half-killed relay. Relays are accessory
+    and recreated on demand; only the server recreation is the point here.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = bin_dir / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+        "if [[ \"$1\" == \"ps\" ]]; then\n"
+        "  printf 'pawflow-server\\npawflow-relay-srv-MyWorkspace\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$1\" == \"rm\" ]]; then\n"
+        "  if [[ \"$3\" == pawflow-relay-* ]]; then\n"
+        "    printf 'Error response from daemon: could not kill container\\n' >&2\n"
+        "    exit 1\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$1\" == \"run\" ]]; then\n"
+        "  args=\"$*\"\n"
+        "  if [[ \"$args\" == *\"command -v docker && docker --version\"* ]]; then\n"
+        "    printf '/usr/bin/docker\\nDocker version 27.0.0\\n'\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  if [[ \"$args\" == *\"docker version >/dev/null\"* ]]; then exit 0; fi\n"
+        "  printf 'container-id\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    env = {
+        "DOCKER_LOG": str(docker_log),
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "PAWFLOW_HOME": str(tmp_path / "pawflow-home"),
+        "PAWFLOW_IMAGE": "ghcr.io/allcolor/pawflow:1.0.0-beta.44",
+        "PAWFLOW_PORT": "19990",
+    }
+    result = subprocess.run(
+        ["bash", "scripts/run-pawflow-docker.sh"],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    log = docker_log.read_text(encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert "rm -f pawflow-relay-srv-MyWorkspace" in log
+    # The failure is reported, not swallowed.
+    assert "pawflow-relay-srv-MyWorkspace" in result.stderr
+    # And the update reaches what it exists for.
+    assert "rm -f pawflow-server" in log
+    assert "run -d --name pawflow-server" in log
+    assert "ghcr.io/allcolor/pawflow:1.0.0-beta.44" in log
 
 
 def test_install_docs_and_agent_prompt_capture_bootstrap_contract():

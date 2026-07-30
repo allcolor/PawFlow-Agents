@@ -279,6 +279,30 @@ def _with_docker_init(args: list) -> list:
     return ["--init", *args]
 
 
+PAWFLOW_SPAWNED_LABEL = "org.pawflow.spawned"
+PAWFLOW_SERVER_LABEL = "org.pawflow.server-id"
+
+
+def pawflow_container_labels(kind: str = "") -> list:
+    """`--label` argv marking a container as spawned by THIS server.
+
+    Nothing PawFlow starts may outlive it, and the shutdown reaper used to
+    match container NAMES: every new family of container had to remember to
+    add its prefix there, and two of them (interactive Claude Code, the
+    Antigravity observer) never did -- they survived `docker stop` and had to
+    be cleaned up by hand. A label is declared once, at the only place that
+    can know: the spawn.
+
+    The server id keeps it precise when several PawFlow servers share a Docker
+    host: a shutdown reaps its own containers and nobody else's.
+    """
+    labels = ["--label", f"{PAWFLOW_SPAWNED_LABEL}=1",
+              "--label", f"{PAWFLOW_SERVER_LABEL}={get_server_id()}"]
+    if kind:
+        labels += ["--label", f"org.pawflow.kind={kind}"]
+    return labels
+
+
 def docker_exec(container: str, cmd_args: list, **kwargs) -> subprocess.CompletedProcess:
     """Run 'docker exec' with correct prefix."""
     cmd = docker_cmd() + ["exec"] + cmd_args

@@ -444,6 +444,42 @@ class _PACPhase1Mixin:
                     st._session_val = st._store_session.get_extra(st.conversation_id, st._session_key)
                     st._session_ver = st._store_session.get_extra(st.conversation_id, st._session_ver_key)
                     st._cli_has_session = bool(st._session_val) and st._session_ver == "2"
+                    if st._cli_has_session:
+                        # A persisted id is not a live window. Same rule as
+                        # every other CLI: a new instance ingests the initial
+                        # context file from zero, so only a live process can
+                        # claim the provider still holds this context.
+                        st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
+                        st._live = None
+                        try:
+                            from core.gemini_live_registry import GeminiLiveRegistry
+                            st._pool_key = f"gemini_acp_pool_idx:{st._agent_key}"
+                            try:
+                                st._pool_idx = int(st._store_session.get_extra(
+                                    st.conversation_id, st._pool_key) or -1)
+                            except Exception:
+                                st._pool_idx = -1
+                            st._live_reg = GeminiLiveRegistry.instance()
+                            st._live = st._live_reg.get((
+                                st._user_id_for_svc, st.conversation_id,
+                                st._agent_key, st._svc_id, st._pool_idx))
+                            if st._live is None:
+                                st._compat = st._live_reg.get_compatible(
+                                    st._user_id_for_svc, st.conversation_id,
+                                    st._agent_key, st._svc_id)
+                                st._live = st._compat[1] if st._compat else None
+                        except Exception:
+                            logging.getLogger(__name__).debug(
+                                "Ignored gemini live-session validation exception",
+                                exc_info=True)
+                        if not (st._live and st._live.is_process_alive()):
+                            st._store_session.set_extra(
+                                st.conversation_id, st._session_key, "")
+                            st._cli_has_session = False
+                            logger.warning(
+                                "[context:%s] no live gemini instance for %s — "
+                                "loading PawFlow context",
+                                st.conversation_id[:8], st._agent_key)
                 elif st._is_codex_app_server:
                     st._session_key = f"codex_app_server_thread:{st._agent_key}"
                     st._session_val = st._store_session.get_extra(st.conversation_id, st._session_key)
@@ -469,10 +505,11 @@ class _PACPhase1Mixin:
                                     st._agent_key, st._svc_id)
                                 st._live = st._compat[1] if st._compat else None
                             # A live app-server process already owns the thread
-                            # state. A merely-alive container does not: the new
-                            # app-server must resume from a rollout jsonl, so we
-                            # still validate that path below before skipping the
-                            # PawFlow context load.
+                            # state. Nothing else does: a rollout jsonl on disk
+                            # proves only that the thread COULD be replayed, and
+                            # replaying it costs as much as -- or more than --
+                            # our own (possibly compacted) context. Starting an
+                            # instance is a cold start, like every other CLI.
                             st._session_valid = bool(
                                 st._live and st._live.is_process_alive())
                         except Exception:
@@ -480,29 +517,13 @@ class _PACPhase1Mixin:
                                 "Ignored codex live-session validation exception",
                                 exc_info=True)
                         if not st._session_valid:
-                            try:
-                                import os as _os
-                                from core.llm_providers.codex_session import _get_sessions_base
-                                from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
-                                st._uid = st._user_id_for_svc or st._store_session.get_user_id(st.conversation_id) or "default"
-                                st._workdir = _os.path.join(
-                                    _get_sessions_base(), st._uid,
-                                    st.conversation_id.replace(":", "_"), st._agent_key)
-                                st._session_valid = bool(
-                                    LLMCodexAppServerMixin._codex_app_rollout_path(
-                                        st._workdir, str(st._session_val)))
-                            except Exception:
-                                logging.getLogger(__name__).debug(
-                                    "Ignored codex rollout validation exception",
-                                    exc_info=True)
-                        if not st._session_valid:
                             st._store_session.set_extra(st.conversation_id, st._session_key, "")
                             st._store_session.set_extra(
                                 st.conversation_id,
                                 f"codex_app_pool_idx:{st._agent_key}", "")
                             st._cli_has_session = False
                             logger.warning(
-                                "[context:%s] stale codex app-server thread %s for %s — loading PawFlow context",
+                                "[context:%s] no live codex app-server for thread %s (%s) — loading PawFlow context",
                                 st.conversation_id[:8], str(st._session_val)[:12],
                                 st._agent_key)
             except Exception:

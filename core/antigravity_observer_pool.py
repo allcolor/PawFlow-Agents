@@ -22,7 +22,9 @@ import uuid
 
 import core.paths as _paths
 from core.cc_interactive_certs import ca_private_key_is_host_only, generate_leaf
-from core.docker_utils import docker_cmd, get_server_id, to_host_path, translate_path
+from core.docker_utils import (docker_cmd, get_server_id,
+                               pawflow_container_labels, to_host_path,
+                               translate_path)
 from core.apparmor import apparmor_security_opts
 
 if TYPE_CHECKING:
@@ -434,6 +436,7 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         image = os.environ.get("PAWFLOW_ANTIGRAVITY_IMAGE", os.environ.get("PAWFLOW_GEMINI_IMAGE", "pawflow-claude-code:latest"))
         run_args = [
             "-d", "--rm", "--name", name, "--init",
+            *pawflow_container_labels("antigravity-observer"),
             *mounts,
             "--add-host", f"{ANTIGRAVITY_BACKEND_HOST}:127.0.0.1",
             "--add-host", "host.docker.internal:host-gateway",

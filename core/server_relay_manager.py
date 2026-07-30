@@ -21,7 +21,8 @@ from pathlib import Path  # noqa: F401  # re-exported: tests read srm.Path(srm._
 from typing import Any, Dict, Optional
 
 from core.apparmor import relay_apparmor_security_opts
-from core.docker_utils import docker_cmd, get_host_ip
+from core.docker_utils import (docker_cmd, get_host_ip,
+                               pawflow_container_labels)
 from core._relay_naming import (
     _KIND_MINIMAL,
     _KIND_WORKSPACE,
@@ -212,6 +213,7 @@ class ServerRelayManager:
         if _ws_extra_env:
             docker_run_args.extend(_ws_extra_env)
 
+        docker_run_args.extend(pawflow_container_labels("relay"))
         docker_run_args.extend([
             relay_image,
             "python3", _SCRIPT_IN_CONTAINER,
@@ -384,6 +386,7 @@ class ServerRelayManager:
             docker_run_args.extend([
                 "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
             ])
+        docker_run_args.extend(pawflow_container_labels("relay-managed"))
         docker_run_args.extend([
             relay_image,
             "python3", _SCRIPT_IN_CONTAINER,

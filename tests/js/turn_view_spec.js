@@ -215,7 +215,7 @@ test('a block that ended badly keeps saying so', () => {
          'closing the turn must not overwrite how it ended');
 });
 
-test('a correlated late answer stays with its own turn', () => {
+test('a user message before the answer gives user / block / user / block / answer', () => {
   const e = env('simplified');
   const user1 = e.row('u1');
   e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, user1);
@@ -226,17 +226,18 @@ test('a correlated late answer stays with its own turn', () => {
   e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, user2);
   e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a2' }, e.row('a2'));
 
-  // The done event still carries the FIRST turn's id. Durable correlation wins
-  // even though another user row has since opened a different turn.
+  // The done event still carries the FIRST turn's id -- position must win.
+  // Correlating here would insert the first turn's answer ABOVE the message
+  // the reader has just sent. This expectation IS the product rule; if it
+  // fails, the router was reintroduced, not the test that went stale.
   const answer = e.row('a3');
   e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a3' }, answer);
   e.ctx.turnViewFinalize({ turn_id: 'u1', final_msg_id: 'a3' });
 
-  eq(topLevelIds(e).join(','), 'u1,BLOCK,a3,u2');
-
-  const answer2 = e.row('b1');
-  e.ctx.turnViewIngest('assistant', { turn_id: 'u2', msg_id: 'b1' }, answer2);
-  eq(topLevelIds(e).join(','), 'u1,BLOCK,a3,u2,BLOCK,b1');
+  // Each turn keeps its own last message where the reader can read it: a1 for
+  // the interrupted first turn, a3 for the second. a2 went back into the second
+  // block when a3 replaced it.
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1,u2,BLOCK,a3');
 });
 
 test('a user message nothing followed gets no empty block', () => {
@@ -342,6 +343,32 @@ test('a reloaded turn shows only the user message, the block and the answer', ()
   const e = env('simplified');
   replayHistory(e, HISTORY_ROWS);
   eq(topLevelIds(e).join(','), 'u1,BLOCK,a2');
+});
+
+// The runtime snapshot says what was running when the page was built. It keeps
+// the live turn open -- no promotion, no closing -- and stops being true the
+// moment that turn ends. Left behind, it would hold a finished turn open and
+// keep its answer buried at the next reconciliation (a load-more, a recovery).
+test('a runtime turn stops protecting itself once it has ended', () => {
+  const e = env('simplified');
+  e.ctx.turnViewSetRuntimeTurns([
+    { turn_id: 'u1', started_at: 1000, duration: 3, status: 'running' },
+  ]);
+  // An active turn carries no turn_final: the server refuses to derive one.
+  const user = e.row('u1');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1', turn_id: 'u1', _history: true }, user);
+  const answer = e.row('a1');
+  answer.dataset.messageRole = 'assistant';
+  answer.dataset.rawText = 'voila';
+  e.ctx.turnViewIngest('assistant',
+    { msg_id: 'a1', turn_id: 'u1', content: 'voila', _history: true }, answer);
+  e.ctx.turnViewReconcile();
+  eq(topLevelIds(e).join(','), 'u1,BLOCK', 'a live turn keeps its rows inside');
+
+  e.ctx.turnViewFinalize({ turn_id: 'u1' });   // done, naming nothing
+  e.ctx.turnViewReconcile();                    // load more, recovery, anything
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1',
+     'the ended turn owes the reader its last message');
 });
 
 test('a reloaded turn files every intermediate row into its tab', () => {

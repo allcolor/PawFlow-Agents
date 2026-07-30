@@ -588,8 +588,16 @@ function _renderHistory(data) {
     if (viewMode === 'simplified') setTechnicalMessageGrouping(false);
   }
   if (typeof setTaskMessageGrouping === 'function') setTaskMessageGrouping(viewMode === 'classic' && groupTaskMessages);
+  // Delegate grouping is not a classic-only option like the two above: it is
+  // the only thing that draws a sub-agent at all. Forcing it off in simplified
+  // left a delegate that ran, returned, and showed nothing but its result
+  // message -- no live box (sse_state returns null on the flag) and a stored
+  // trace rendered as a bare row. The box is activity, so the turn view files
+  // it in the block like everything else. The toggle itself lives in
+  // viewClassicOptions, hidden in simplified, so a persisted classic `false`
+  // would otherwise be unreachable from this mode.
   if (typeof setDelegateMessageGrouping === 'function') {
-    setDelegateMessageGrouping(groupDelegateMessages);
+    setDelegateMessageGrouping(viewMode === 'simplified' ? true : groupDelegateMessages);
   }
   updateViewMenuVisibility();
   updateViewMenuItem('technical', groupTechnicalMessages);

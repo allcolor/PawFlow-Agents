@@ -71,7 +71,7 @@ def conv(store):
 class _Task:
     """The AgentLoopTask surface the exercised handlers actually touch."""
 
-    def _classify_messages_for_display(self, messages):
+    def _classify_messages_for_display(self, messages, active_turn_ids=None):
         return list(messages)
 
     def _ensure_active_agent(self, conv_id, active_res, uid):

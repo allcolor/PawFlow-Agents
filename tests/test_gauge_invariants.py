@@ -1414,17 +1414,37 @@ def test_cci_gauge_uses_pawflow_calculation_not_provider_usage():
     assert "claude_code_interactive_provider" not in src
 
 
-def test_cci_gauge_refreshes_between_tool_rounds():
-    """CCI gauge must update mid-run, not freeze until the agent stops.
+def test_cli_gauge_refreshes_between_tool_rounds_for_every_provider():
+    """Every CLI gauge must update mid-run, not freeze until the agent stops.
 
-    The emitter skips CCI (_context_usage_payload returns None) and the
-    final-turn patch only fires on a no-tool response. Without a per-round
-    patch, a long tool-looping run freezes the context gauge.
+    A CLI turn streams from the provider's own loop: the emitter sees no
+    per-round append, and the final-turn patch only fires on a no-tool
+    response. Without a per-round patch, a long tool-looping run freezes the
+    context gauge. This was keyed on claude-code-interactive alone, which left
+    codex, gemini and antigravity moving their gauge only at end of turn.
     """
     src = agent_core_src()
     round_block = src  # split: per-round patch markers span files
-    assert 'if _client_provider == "claude-code-interactive":' in round_block
+    assert 'if _client_provider == "claude-code-interactive":' not in round_block
+    assert 'if ctx.get("_is_cli_provider"):' in round_block
     assert "_patch_cc_turn_gauge(" in round_block
+
+
+def test_every_message_meta_carries_the_cli_cold_marker():
+    """A zero without `cli_context_state` is discarded by the browser.
+
+    active_agents.js refuses `used == 0` over a non-zero cache unless the
+    event says the CLI window is cold. Two of the message_meta payloads are
+    built by hand instead of through usage_event_payload, and both dropped
+    the marker -- so a cold turn could measure an empty window and still be
+    unable to say so.
+    """
+    src = agent_core_src()
+    # Assert the emitted KEY, not the lookup that feeds it: reading
+    # `cli_context_state` and then publishing it under another name is exactly
+    # the bug this guards.
+    assert '"cli_context_state": _ctx_cache.get(' in src
+    assert '_payload["cli_context_state"] = (' in src
 
 
 def test_context_panel_token_estimate_uses_gauge_when_available():

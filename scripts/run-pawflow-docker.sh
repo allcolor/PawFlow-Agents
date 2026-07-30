@@ -119,7 +119,8 @@ restore_previous_server() {
   echo "ERROR replacement server failed $reason; restoring the previous container configuration." >&2
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   if [[ -n "$OLD_CONTAINER_BACKUP" ]]; then
-    if docker rename "$OLD_CONTAINER_BACKUP" "$CONTAINER" \n+        && docker start "$CONTAINER" >/dev/null; then
+    if docker rename "$OLD_CONTAINER_BACKUP" "$CONTAINER" \
+        && docker start "$CONTAINER" >/dev/null; then
       echo "Previous PawFlow server restarted as '$CONTAINER'." >&2
     else
       echo "CRITICAL could not restart previous PawFlow server '$OLD_CONTAINER_BACKUP'." >&2

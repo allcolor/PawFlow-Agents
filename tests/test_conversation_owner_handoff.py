@@ -251,6 +251,30 @@ def test_owner_publication_waits_for_resources_and_filestore_under_concurrency(
     assert files.get_metadata(late_file[0])["user_id"] == COLLAB
 
 
+def test_one_attachment_with_no_bytes_does_not_strand_the_others(
+        store, conv, users, files):
+    """A row pointing at nothing must not hold the whole transfer hostage.
+
+    Its bytes are already gone -- under either owner. Refusing the handoff for
+    it would leave every intact file of a departed owner's conversation
+    unreachable, which is the failure the transfer exists to prevent.
+    """
+    _share(store, conv)
+    ghost = files.store("gone.txt", b"gone", user_id=OWNER,
+                       conversation_id=conv)
+    kept = files.store("kept.txt", b"kept", user_id=OWNER,
+                      conversation_id=conv)
+    from pathlib import Path as _Path
+    _Path(files._entries[ghost]["path"]).unlink()
+    users._users.pop(OWNER, None)
+
+    access = ca.require_write(conv, COLLAB, store=store)
+
+    assert access.owner_user_id == COLLAB
+    assert files.get_metadata(kept)["user_id"] == COLLAB
+    assert files.get(kept, user_id=COLLAB)[1] == b"kept"
+
+
 def test_publication_failure_rolls_back_conversation_resources_and_files(
         store, conv, repository, files, monkeypatch):
     resource = _conv_agent(repository, OWNER, conv)

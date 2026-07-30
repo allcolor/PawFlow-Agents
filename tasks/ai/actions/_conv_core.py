@@ -133,9 +133,8 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
         raw_count = len(raw_messages)
         active_turn_ids = {turn["turn_id"] for turn in active_turns
                            if turn.get("turn_id")}
-        history = (self._classify_messages_for_display(
+        history = self._classify_messages_for_display(
             raw_messages, active_turn_ids=active_turn_ids)
-            if active_turn_ids else self._classify_messages_for_display(raw_messages))
         extras = store.get_extras_snapshot(conv_id)
         nicknames = extras.get("agent_nicknames") or {}
         active_res = extras.get("active_resources") or {}

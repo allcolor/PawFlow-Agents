@@ -28,7 +28,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from core.docker_utils import docker_cmd, to_host_path, get_host_ip
+from core.docker_utils import (docker_cmd, to_host_path, get_host_ip,
+                               pawflow_container_labels)
 from core.apparmor import apparmor_security_opts
 
 logger = logging.getLogger(__name__)
@@ -627,6 +628,7 @@ class CodexPool:
             "--rm",  # auto-remove on exit — prevents dead-container pileup
             "--name", name,
             "--init",
+            *pawflow_container_labels("codex-pool"),
             "--cpus", self.cpu_limit,
             "--memory", self.memory_limit,
             *workspace_mount_args,

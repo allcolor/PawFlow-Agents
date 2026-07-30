@@ -287,13 +287,36 @@ def test_compact_done_event_exposes_target_tokens():
     assert '"target_tokens": cap' in done_block
 
 
-def test_codex_context_session_skip_requires_live_session_or_rollout():
+def test_codex_context_session_skip_requires_a_live_instance():
+    """A rollout jsonl on disk is not a session.
+
+    It outlives the process, so it kept `_cli_has_session` true after the idle
+    sweeper had reaped the app-server. The context was then never reloaded and
+    the gauge never passed through zero -- while replaying the thread cost as
+    much as, or more than, sending our own compacted context.
+    """
     block = _AGENT_CONTEXT[
         _AGENT_CONTEXT.index('elif _is_codex_app_server:'):
         _AGENT_CONTEXT.index('# Resolve max_context early')]
     assert "CodexLiveRegistry" in block
-    assert "_codex_app_rollout_path" in block
-    assert 'stale codex app-server thread' in block
+    assert "is_process_alive()" in block
+    assert "_codex_app_rollout_path" not in block
+    assert 'no live codex app-server' in block
+    assert '_cli_has_session = False' in block
+
+
+def test_gemini_context_session_skip_requires_a_live_instance():
+    """Same rule for gemini, which checked no liveness at all.
+
+    Its condition was a persisted id plus a version string, both of which
+    survive the process that owned the window.
+    """
+    block = _AGENT_CONTEXT[
+        _AGENT_CONTEXT.index('elif _is_gemini_acp:'):
+        _AGENT_CONTEXT.index('elif _is_codex_app_server:')]
+    assert "GeminiLiveRegistry" in block
+    assert "is_process_alive()" in block
+    assert 'no live gemini instance' in block
     assert '_cli_has_session = False' in block
 
 

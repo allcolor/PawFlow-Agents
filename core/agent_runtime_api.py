@@ -9,6 +9,7 @@ the final ``done`` event.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 import uuid
@@ -16,6 +17,18 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
 from core import FlowFile
+
+logger = logging.getLogger(__name__)
+
+# Attributes this API alone decides. A caller's provenance metadata must never
+# reach them: `http.auth.principal` is what every conversation ACL downstream
+# authorizes against, and a flow that forwards a visitor payload into
+# source_attributes would otherwise let that visitor choose an identity.
+_RESERVED_REQUEST_ATTRIBUTES = frozenset({
+    "http.auth.principal",
+    "agent.client_channel",
+    "agent.request_msg_id",
+})
 
 
 @dataclass
@@ -206,7 +219,15 @@ class AgentRuntimeAPI:
         ff.set_attribute("http.auth.principal", request.user_id)
         ff.set_attribute("agent.client_channel", request.channel or "web")
         ff.set_attribute("agent.request_msg_id", turn_id)
+        # Provenance the flow wants carried, never identity. This is the one
+        # place a bot's turn gets its authenticated principal -- every ACL gate
+        # downstream reads it -- and source_attributes is the field a flow is
+        # most likely to fill from its own visitor payload.
         for key, value in (request.source_attributes or {}).items():
+            if str(key) in _RESERVED_REQUEST_ATTRIBUTES:
+                logger.warning(
+                    "agent runtime: ignoring source attribute %s (reserved)", key)
+                continue
             ff.set_attribute(str(key), str(value))
 
         inst = None

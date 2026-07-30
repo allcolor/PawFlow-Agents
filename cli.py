@@ -360,6 +360,12 @@ def cmd_start(args):
         t = threading.Thread(target=_stop_all, daemon=True)
         t.start()
         t.join(timeout=3)
+        # Reap BEFORE the writer drain. `docker stop` gives 10s by default,
+        # then SIGKILL: a reap queued behind a 20s drain simply never runs,
+        # which is how a stopped server used to leave its containers up.
+        # Killing them cannot lose a message -- executors are already stopped
+        # and PawFlow's own rows are written by the in-process writer below.
+        _kill_spawned_docker_containers()
         # Drain the ConversationWriter FIFO BEFORE os._exit. The writer
         # runs on a daemon thread; os._exit kills it instantly, and any
         # message still in the queue is gone. Executors are stopped first
@@ -373,20 +379,23 @@ def cmd_start(args):
         except Exception as _cw_err:
             logger.error("ConversationWriter drain failed: %s", _cw_err,
                          exc_info=True)
-        # Nothing we spawned should outlive us. Reap provider pools and
-        # server-side provider login containers before exiting.
-        _kill_spawned_docker_containers()
         os._exit(0)
 
 
     def _kill_spawned_docker_containers():
         """Hard-kill all containers this PawFlow server spawned.
 
-        Covers provider pool containers (`pf-*-pool-*`), server-side
-        relay containers (`pawflow-relay-srv-*`, `pawflow-relay-min-*`),
-        and login containers (`pawflow-*-login-*`) for Claude Code,
-        Codex, and Gemini. This is the normal `docker stop pawflow-server`
-        cleanup path.
+        Authoritative pass: every container carries this server's
+        `org.pawflow.server-id` label, stamped at spawn (see
+        `core.docker_utils.pawflow_container_labels`). The name-prefix pass
+        that follows only catches containers started by an OLDER build, from
+        before the label existed -- a name list has to be updated by hand for
+        each new family, and two of them (interactive Claude Code, the
+        Antigravity observer) were never added, which is why they survived
+        `docker stop` and had to be removed by hand.
+
+        Scoped to this server id on purpose: several PawFlow servers can share
+        one Docker host, and each may only reap its own.
         """
         for _pool_mod, _pool_cls in (
             ("core.claude_code_pool", "ClaudeCodePool"),
@@ -401,10 +410,33 @@ def cmd_start(args):
         try:
             import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd
+            from core.docker_utils import (PAWFLOW_SERVER_LABEL, get_server_id)
+            # Pass 1 — the label. One filter, every family, now and later.
+            try:
+                _sel = f"{PAWFLOW_SERVER_LABEL}={get_server_id()}"
+                _r = _sp.run(  # nosec B603
+                    docker_cmd() + ["ps", "-a", "-q", "--filter",
+                                     f"label={_sel}"],
+                    capture_output=True, text=True, timeout=5)
+                _ids = [i for i in (_r.stdout or "").split() if i]
+                if _ids:
+                    _sp.run(docker_cmd() + ["rm", "-f"] + _ids,  # nosec B603
+                            capture_output=True, timeout=20)
+                    logger.info("Reaped %d container(s) spawned by this server",
+                                len(_ids))
+            except Exception:
+                pass  # nosec B110
+            # Pass 2 — legacy names, for containers started before the label.
+            # The two interactive families embed the server id in their name,
+            # so they stay scoped to us; the older pool prefixes do not carry
+            # one and keep their historical, host-wide match.
+            _own = get_server_id()[:12]
             for _prefix in (
                 "pf-cc-pool-",
                 "pf-codex-pool-",
                 "pf-gemini-pool-",
+                f"pf-{_own}-cci-",
+                f"pf-{_own}-agyobs-",
                 "pawflow-relay-srv-",
                 "pawflow-relay-min-",
                 "pawflow-claude-login-",

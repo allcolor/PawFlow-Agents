@@ -210,10 +210,13 @@ def _handle_sf_k3(self, action, body, store, user_id, flowfile, _helpers):
         def _bg_setup():
             import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd as _docker_cmd
+            from core.docker_utils import (
+                pawflow_container_labels as _pawflow_container_labels)
             try:
                 docker_cmd = _docker_cmd() + [
                     "run", "--rm", "--detach",
                     "--name", container_name,
+                    *_pawflow_container_labels("login"),
                     "-p", f"{free_port}:6080",
                     "--tmpfs", "/workspace:rw,size=64m",
                     "--shm-size", "512m",
@@ -280,6 +283,8 @@ def _handle_sf_k3(self, action, body, store, user_id, flowfile, _helpers):
         if session:
             import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd as _docker_cmd
+            from core.docker_utils import (
+                pawflow_container_labels as _pawflow_container_labels)
             try:
                 _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],  # nosec B603
                         capture_output=True, timeout=10)

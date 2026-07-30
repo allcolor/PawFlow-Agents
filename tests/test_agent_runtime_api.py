@@ -60,6 +60,40 @@ def test_agent_runtime_wait_timeout_keeps_live_callback_until_done():
     assert result.response == "late final"
 
 
+def test_submitted_turn_carries_the_authenticated_principal(monkeypatch):
+    """Every non-HTTP transport gets its identity here, and only here.
+
+    A bot flow (web_help_bot, telegram) never calls the UI actions directly:
+    it submits a turn through this API, and everything the turn then does is
+    authorized against the principal stamped on that FlowFile. Losing the
+    stamp -- or letting a caller choose it -- either locks a public bot out of
+    its own conversation or hands a visitor an identity.
+    """
+    from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
+
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    captured = {}
+
+    class _Task:
+        def execute(self, flowfile):
+            captured["ff"] = flowfile
+            flowfile.set_content(b'{"status": "queued"}')
+            return [flowfile]
+
+    monkeypatch.setattr(AgentLoopTask, "_live_instance", _Task())
+
+    AgentRuntimeAPI.submit_message(AgentRequest(
+        user_id="botowner", conversation_id="conv1", message="hello",
+        msg_id="web:1", channel="web",
+        source_attributes={"web.session": "abc",
+                           "http.auth.principal": "visitor"}))
+
+    ff = captured["ff"]
+    assert ff.get_attribute("http.auth.principal") == "botowner"
+    assert ff.get_attribute("web.session") == "abc", "provenance still travels"
+
+
 def test_stream_done_payload_includes_transport_correlation():
     from tasks.ai.agent_emitter import AgentResult, StreamEmitter
 

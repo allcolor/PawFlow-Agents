@@ -569,13 +569,14 @@ class _ALCIterationMixin:
             st.max_rounds, st.tools_called)
         st.emitter.drain_pending(st.messages, st._append, st.iteration)
         st.emitter.check_cancelled()
-        # CCI gauge refresh between tool rounds. For
-        # claude-code-interactive the emitter skips the gauge
-        # (_context_usage_payload returns None) and the
-        # final-turn _patch_cc_turn_gauge only fires once the
-        # agent stops. Without this, a long tool-looping run
-        # freezes the context gauge at the last completed turn.
-        if st._client_provider == "claude-code-interactive":
+        # Gauge refresh between tool rounds, for every CLI provider. A CLI
+        # turn streams from the provider's own loop: the emitter does not see
+        # per-round appends, and the final-turn _patch_cc_turn_gauge only
+        # fires once the agent stops. Without this, a long tool-looping run
+        # freezes the context gauge at the last completed turn. This was
+        # keyed on claude-code-interactive alone, which left codex, gemini and
+        # antigravity with a gauge that only ever moved at end of turn.
+        if st.ctx.get("_is_cli_provider"):
             st._patch_cc_turn_gauge(
                 st.response, getattr(st.client, '_last_turn_msg_id', ''))
         return None

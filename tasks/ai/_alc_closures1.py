@@ -140,6 +140,11 @@ class _ALCClosures1Mixin:
                     "context_source": _cc_src.get("context_source", ""),
                     "context_message_count": _cc_src.get("context_message_count", 0),
                     "context_cache_mode": _cc_src.get("context_cache_mode", ""),
+                    # The browser only lets the gauge fall to zero when the
+                    # event says the CLI window is cold (active_agents.js).
+                    # Dropping the marker here made a cold turn's own gauge
+                    # unable to report the empty window it had just measured.
+                    "cli_context_state": _ctx_cache.get("cli_context_state", ""),
                     "updated_at": float(
                         _ctx_cache.get("updated_at") or time.time()),
                 })
@@ -719,6 +724,12 @@ class _ALCClosures1Mixin:
                         _payload["context_used"] = _src["context_used"]
                         _payload["context_max"] = _src["context_max"]
                         _payload["context_pct"] = _src["context_pct"]
+                        # Same reason as the turn gauge: without this marker a
+                        # zero is discarded by the browser as an unexplained
+                        # provider zero.
+                        _payload["cli_context_state"] = (
+                            _src.get("context_cache") or {}).get(
+                                "cli_context_state", "")
                         _payload["updated_at"] = float((
                             _src.get("context_cache") or {}).get("updated_at")
                             or time.time())

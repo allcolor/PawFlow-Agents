@@ -199,9 +199,43 @@ def test_cli_provider_pools_run_as_configured_pawflow_uid_gid():
 
 def test_server_stop_reaps_managed_relay_containers():
     src = Path("cli.py").read_text(encoding="utf-8")
-    assert "normal `docker stop pawflow-server`" in src
     assert '"pawflow-relay-srv-"' in src
     assert '"pawflow-relay-min-"' in src
+
+
+def test_server_stop_reaps_every_container_it_spawned():
+    """Nothing PawFlow starts may outlive it.
+
+    Two guarantees, both learned from containers left running after a stop:
+
+    - the reap is driven by a LABEL, not by a hand-maintained list of name
+      prefixes -- interactive Claude Code and the Antigravity observer were
+      never added to that list and survived every shutdown;
+    - it runs BEFORE the ConversationWriter drain, because `docker stop` sends
+      SIGKILL after 10s by default and a reap queued behind a 20s drain never
+      runs at all.
+    """
+    src = Path("cli.py").read_text(encoding="utf-8")
+    assert "PAWFLOW_SERVER_LABEL" in src
+    assert 'f"label={_sel}"' in src
+    reap = src.index("_kill_spawned_docker_containers()\n        # Drain")
+    drain = src.index("ConversationWriter.shutdown_all")
+    assert reap < drain, "the reap must not sit behind the writer drain"
+
+
+def test_every_spawned_container_carries_the_server_label():
+    for path in (
+        "core/claude_code_pool.py",
+        "core/codex_pool.py",
+        "core/gemini_pool.py",
+        "core/_cci_pool_spawn.py",
+        "core/antigravity_observer_pool.py",
+        "core/server_relay_manager.py",
+        "tasks/ai/actions/_sf_k3.py",
+        "tasks/ai/actions/_sf_k8.py",
+    ):
+        src = Path(path).read_text(encoding="utf-8")
+        assert "pawflow_container_labels" in src, path
 
 
 def test_cli_image_prepares_workspace_mountpoints():

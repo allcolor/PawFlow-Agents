@@ -74,6 +74,41 @@ class FileStore:
 
     # ── Store ────────────────────────────────────────────────────
 
+    def _reserve_scope(self, conversation_id: str, user_id: str,
+                       disk_name: str):
+        """Pick where a new file goes, under the conversation's owner now.
+
+        The owner override is what a handoff publishes: a caller still holding
+        the departed owner's id must not file the new bytes under an account
+        the conversation has left.
+        """
+        with self._store_lock:
+            self._ensure_loaded()
+            owner = self._conversation_owners.get(conversation_id, user_id)
+            scope_dir = self._scope_dir(owner, conversation_id)
+            bucket = self._pick_bucket(scope_dir)
+            bucket_dir = scope_dir / bucket
+            bucket_dir.mkdir(parents=True, exist_ok=True)
+            return owner, bucket, bucket_dir / disk_name
+
+    def _settle_scope(self, conversation_id: str, owner: str, bucket: str,
+                      file_path: Path):
+        """Follow a handoff that landed while the bytes were being written.
+
+        Caller holds ``_store_lock``. The transfer snapshots the entries under
+        that lock, so a file registered after it would otherwise stay behind
+        under the previous owner -- unreachable exactly like the sidecars the
+        transfer exists to move.
+        """
+        current = self._conversation_owners.get(conversation_id, owner)
+        if current == owner:
+            return owner, file_path
+        dest_dir = self._scope_dir(current, conversation_id) / bucket
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / file_path.name
+        os.replace(file_path, dest)
+        return current, dest
+
     def store(self, filename: str, content: bytes,
               content_type: str = "application/octet-stream",
               conversation_id: str = "",
@@ -91,18 +126,16 @@ class FileStore:
             raise ValueError(f"FileStore.store: user_id is required (filename={filename!r})")
         if not conversation_id:
             raise ValueError(f"FileStore.store: conversation_id is required (filename={filename!r})")
+        file_id = uuid.uuid4().hex[:12]
+        safe_name = Path(filename).name or "file"
+        user_id, bucket, file_path = self._reserve_scope(
+            conversation_id, user_id, f"{file_id}_{safe_name}")
+        # The bytes land outside the lock: a multi-megabyte write must not
+        # stall every other upload, retrieval and index save in the process.
+        file_path.write_bytes(content)
         with self._store_lock:
-            self._ensure_loaded()
-            user_id = self._conversation_owners.get(conversation_id, user_id)
-            file_id = uuid.uuid4().hex[:12]
-            safe_name = Path(filename).name or "file"
-            disk_name = f"{file_id}_{safe_name}"
-            scope_dir = self._scope_dir(user_id, conversation_id)
-            bucket = self._pick_bucket(scope_dir)
-            bucket_dir = scope_dir / bucket
-            bucket_dir.mkdir(parents=True, exist_ok=True)
-            file_path = bucket_dir / disk_name
-            file_path.write_bytes(content)
+            user_id, file_path = self._settle_scope(
+                conversation_id, user_id, bucket, file_path)
             self._entries[file_id] = {
                 "filename": safe_name,
                 "path": str(file_path),
@@ -135,20 +168,16 @@ class FileStore:
         src = Path(source_path).expanduser().resolve()
         if not src.is_file():
             raise FileNotFoundError(f"FileStore.store_file: source file not found: {source_path}")
+        file_id = uuid.uuid4().hex[:12]
+        safe_name = Path(filename).name or src.name or "file"
+        user_id, bucket, file_path = self._reserve_scope(
+            conversation_id, user_id, f"{file_id}_{safe_name}")
+        with src.open("rb") as inp, file_path.open("wb") as out:
+            shutil.copyfileobj(inp, out, length=1024 * 1024)
+        size = file_path.stat().st_size
         with self._store_lock:
-            self._ensure_loaded()
-            user_id = self._conversation_owners.get(conversation_id, user_id)
-            file_id = uuid.uuid4().hex[:12]
-            safe_name = Path(filename).name or src.name or "file"
-            disk_name = f"{file_id}_{safe_name}"
-            scope_dir = self._scope_dir(user_id, conversation_id)
-            bucket = self._pick_bucket(scope_dir)
-            bucket_dir = scope_dir / bucket
-            bucket_dir.mkdir(parents=True, exist_ok=True)
-            file_path = bucket_dir / disk_name
-            with src.open("rb") as inp, file_path.open("wb") as out:
-                shutil.copyfileobj(inp, out, length=1024 * 1024)
-            size = file_path.stat().st_size
+            user_id, file_path = self._settle_scope(
+                conversation_id, user_id, bucket, file_path)
             self._entries[file_id] = {
                 "filename": safe_name,
                 "path": str(file_path),
@@ -567,7 +596,14 @@ class FileStore:
                 bucket = src.parent.name if src.parent.name.isdigit() else "0000"
                 dest = self._scope_dir(new_user_id, conversation_id) / bucket / src.name
                 if not src.is_file():
-                    raise FileNotFoundError(f"FileStore bytes missing for {fid}")
+                    # The bytes are already gone: this entry addresses nothing,
+                    # under either owner. Refusing the whole handoff for it
+                    # would strand every *intact* file of a departed owner's
+                    # conversation behind one stale row.
+                    logger.warning(
+                        "FileStore: %s of %s has no bytes at %s; left behind",
+                        fid, conversation_id[:8], src)
+                    continue
                 if dest.exists():
                     raise FileExistsError(f"FileStore destination exists for {fid}")
                 planned.append((fid, entry, src, dest))

@@ -33,10 +33,24 @@ def _browser_result(tmp_path, *, body, prelude, sources, test):
         + "JSON.stringify({ok:false,error:String(error && error.stack || error)}); }</script></body></html>",
         encoding="utf-8",
     )
+    # Every flag here is about determinism in CI, where this hung for 20s and
+    # took the build down while passing in a second locally:
+    #   * a private user-data-dir -- the default profile is shared, and two of
+    #     these tests running at once (xdist) block on its lock;
+    #   * dev-shm -- a container's 64 MB /dev/shm wedges the renderer;
+    #   * the networking/first-run switches -- a runner with no egress waits on
+    #     component update and sync before it ever renders the page;
+    #   * a virtual time budget so the page cannot outlive the process timeout.
     proc = subprocess.run(
         [CHROMIUM, "--headless", "--no-sandbox", "--disable-gpu",
+         "--disable-dev-shm-usage",
+         f"--user-data-dir={tmp_path / 'chromium-profile'}",
+         "--no-first-run", "--no-default-browser-check",
+         "--disable-background-networking", "--disable-component-update",
+         "--disable-sync", "--disable-extensions",
+         "--virtual-time-budget=5000",
          "--allow-file-access-from-files", "--dump-dom", page.as_uri()],
-        text=True, capture_output=True, timeout=20, check=True,
+        text=True, capture_output=True, timeout=120, check=True,
     )
     match = re.search(r'<pre id="result">(.*?)</pre>', proc.stdout, re.S)
     assert match, proc.stdout[-2000:]
@@ -45,7 +59,7 @@ def _browser_result(tmp_path, *, body, prelude, sources, test):
     return result["value"]
 
 
-def test_turn_controller_routes_concurrent_ids_and_rehydrates_live_surfaces(tmp_path):
+def test_turn_controller_keeps_positional_boundaries_and_rehydrates_live(tmp_path):
     value = _browser_result(
         tmp_path,
         body='<div id="messages"></div>',
@@ -77,13 +91,15 @@ def test_turn_controller_routes_concurrent_ids_and_rehydrates_live_surfaces(tmp_
             {turn_id:'turn-B', started_at:Date.now()/1000 - 4, duration:4,
              status:'running', agent_name:'beta'}
           ]);
+          // Rows in the order the reader sees them: each partial sits under
+          // the user message it followed.
           const uA = row('turn-A', 'user', 'A');
           turnViewRegisterUser({msg_id:'turn-A', turn_id:'turn-A', _history:true}, uA);
-          const uB = row('turn-B', 'user', 'B');
-          turnViewRegisterUser({msg_id:'turn-B', turn_id:'turn-B', _history:true}, uB);
           const partialA = row('partial-A', 'assistant', 'partial A');
           turnViewIngest('assistant', {msg_id:'partial-A', turn_id:'turn-A',
             content:'partial A', _history:true}, partialA);
+          const uB = row('turn-B', 'user', 'B');
+          turnViewRegisterUser({msg_id:'turn-B', turn_id:'turn-B', _history:true}, uB);
           const partialB = row('partial-B', 'assistant', 'partial B');
           turnViewIngest('assistant', {msg_id:'partial-B', turn_id:'turn-B',
             content:'partial B', _history:true}, partialB);
@@ -96,21 +112,23 @@ def test_turn_controller_routes_concurrent_ids_and_rehydrates_live_surfaces(tmp_
             aElapsed:Date.now() - a.startedAt >= 11000,
             aTimer:!!a.elapsedTimer, aRain:!!a.rainEl, aCue:a.transient.cues.length > 0,
             bPulse:!!b.idleEl,
-            routedA:a.tabs.messages.bodyEl.contains(partialA),
-            routedB:b.tabs.messages.bodyEl.contains(partialB)
+            filedA:a.tabs.messages.bodyEl.contains(partialA),
+            filedB:b.tabs.messages.bodyEl.contains(partialB)
           };
-          const finalA = row('final-A', 'assistant', 'final A');
-          turnViewIngest('assistant', {msg_id:'final-A', turn_id:'turn-A', content:'final A'}, finalA);
-          turnViewFinalize({turn_id:'turn-A', final_msg_id:'final-A'});
-          turnViewFail('turn-B', 'error', 'boom');
+          // The done carries turn-A's id while turn-B is the one on screen.
+          // An id NAMES a turn, it never selects one: the open block closes.
+          const finalB = row('final-B', 'assistant', 'final B');
+          turnViewIngest('assistant', {msg_id:'final-B', turn_id:'turn-A',
+            content:'final B'}, finalB);
+          turnViewFinalize({turn_id:'turn-A', final_msg_id:'final-B'});
           return {hydrated, aStatus:a.status, bStatus:b.status,
-            aFinal:a.finalEl === finalA, bOwnsPartial:b.tabs.messages.bodyEl.contains(partialB)};
+            bFinal:b.finalEl === finalB, aUntouched:!a.finalEl};
         """,
     )
     assert all(value["hydrated"].values())
     assert value | {"hydrated": None} == {
-        "hydrated": None, "aStatus": "completed", "bStatus": "error",
-        "aFinal": True, "bOwnsPartial": True,
+        "hydrated": None, "aStatus": "working", "bStatus": "completed",
+        "bFinal": True, "aUntouched": True,
     }
 
 

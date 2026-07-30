@@ -728,6 +728,17 @@ def _run_docker_replacement_case(tmp_path, *, final_run_rc=0, health_rc=0):
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
         "if [[ \"$1\" == ps ]]; then printf 'pawflow-server\\n'; exit 0; fi\n"
+        # Real `docker rename` takes exactly two operands. A fake that accepts
+        # any arity let a mangled line continuation ship: the rollback called
+        # `rename OLD NEW n+`, docker refused it, and the whole restore was
+        # dead code while these tests stayed green.
+        "if [[ \"$1\" == rename ]]; then\n"
+        "  if [[ $# -ne 3 ]]; then\n"
+        "    echo \"docker rename accepts 2 operands, got $(($# - 1))\" >&2\n"
+        "    exit 1\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
         "if [[ \"$1\" == run ]]; then\n"
         "  args=\"$*\"\n"
         "  if [[ \"$args\" == *\"command -v docker && docker --version\"* ]]; then\n"
@@ -766,6 +777,10 @@ def test_final_docker_run_failure_restores_the_previous_server(tmp_path):
     assert "rename pawflow-server-pawflow-rollback-" in log
     assert " pawflow-server" in log
     assert "start pawflow-server" in log
+    # The operator must end up with a server again, not with the rollback
+    # container left renamed and stopped.
+    assert "CRITICAL" not in result.stderr
+    assert "Previous PawFlow server restarted" in result.stderr
 
 
 def test_failed_post_start_health_check_restores_previous_server(tmp_path):
@@ -777,6 +792,8 @@ def test_failed_post_start_health_check_restores_previous_server(tmp_path):
     assert "rm -f pawflow-server" in log
     assert "rename pawflow-server-pawflow-rollback-" in log
     assert "start pawflow-server" in log
+    assert "CRITICAL" not in result.stderr
+    assert "Previous PawFlow server restarted" in result.stderr
 
 
 def test_run_docker_keeps_the_old_server_when_the_new_image_is_unusable(tmp_path):

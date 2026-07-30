@@ -163,10 +163,31 @@ def test_codex_app_server_ephemeral_streams_bypass_cold_bootstrap():
     src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
     prompt_block = src[
         src.index("if is_ephemeral:"):
-        src.index("elif thread_id:")]
+        src.index("elif is_reuse and thread_id:")]
     assert 'prompt_mode = "ephemeral"' in prompt_block
     assert "initial_text = self._codex_app_resume_text(messages)" in prompt_block
     assert "_codex_app_full_initial_text" not in prompt_block
+
+
+def test_codex_app_server_resumes_only_a_live_instance():
+    """Starting an app-server is a cold start, like every other PawFlow CLI.
+
+    A persisted thread id and its rollout jsonl outlive the process. Treating
+    them as a session meant a relaunch after the idle timeout replayed the
+    thread -- for as many tokens as our own, possibly compacted, context --
+    and, because no bootstrap was rebuilt, left the context gauge on the dead
+    session's numbers instead of passing through zero.
+    """
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    prompt_block = src[
+        src.index("elif is_reuse and thread_id:"):
+        src.index("prompt_tokens = self._codex_app_estimate_prompt_tokens")]
+    # The cold branch must drop the pointer, or the thread would be resumed
+    # below and the full context stacked on top of the replay.
+    assert 'thread_id = ""' in prompt_block
+    assert "_codex_app_full_initial_text" in prompt_block
+    # And the decision must be taken after the live lookup that sets is_reuse.
+    assert src.index("is_reuse = True") < src.index("elif is_reuse and thread_id:")
 
 
 def test_codex_app_server_ephemeral_streams_delete_workdir():

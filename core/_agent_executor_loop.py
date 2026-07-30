@@ -717,6 +717,26 @@ class _SubAgentExecutorLoopMixin:
                     ToolApprovalGate.unmark_advisor_read_only(sub_conv_id)
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
+            # Give the CLI container back. A sub-agent run -- flash, delegate,
+            # task, plan step -- is one-shot: there is no next turn to keep a
+            # process warm for, and the pool is 1:1 and capped, so holding the
+            # slot until the idle sweeper reaps it (one full service timeout
+            # later) is a slot nobody else can take. Reuse is keyed on
+            # identity, never on availability, so nothing would have borrowed
+            # it in the meantime.
+            #
+            # `persist` is the exception the caller asks for explicitly: a
+            # multi-turn delegate is meant to be spoken to again, and its warm
+            # session is the point.
+            if not task.persist and _delegate_conv_id and task.agent_name:
+                try:
+                    from core.cli_live_sessions import release_cli_live_sessions
+                    release_cli_live_sessions(
+                        _delegate_conv_id, task.agent_name,
+                        reason="subagent_run_finished")
+                except Exception:
+                    logger.debug("sub-agent CLI container release failed",
+                                 exc_info=True)
 
         result.duration_ms = (time.time() - start) * 1000
 

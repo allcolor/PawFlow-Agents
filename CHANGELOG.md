@@ -6,6 +6,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.56] — 2026-07-30
+
+### Security
+
+- An agent turn submitted through the runtime API keeps the principal that API
+  stamped: `source_attributes` can no longer overwrite `http.auth.principal`,
+  the channel or the request id. A flow forwarding its own visitor payload as
+  provenance could otherwise choose the identity every conversation ACL
+  downstream authorizes against.
+
+### Changed
+
+- A finished sub-agent gives its CLI container back. A flash agent, delegate,
+  task or plan step kept its warm container until the idle sweeper reaped it
+  one service timeout later (30 min), while the pool is 1:1 and capped at 50
+  and reuse is keyed on identity, never availability — so a fan-out of
+  differently named flash agents consumed slots nobody could borrow. Only an
+  explicitly persistent delegate keeps its session.
+- Everything PawFlow spawns now carries an `org.pawflow.server-id` label and
+  the shutdown reap is driven by it instead of a hand-maintained list of name
+  prefixes. Interactive Claude Code and the Antigravity observer containers
+  were never in that list and survived `docker stop`. The reap also runs before
+  the ConversationWriter drain: `docker stop` SIGKILLs after 10 s by default,
+  so a reap queued behind a 20 s drain never ran at all.
+- Starting a CLI instance is a cold start for codex and gemini too. Codex
+  accepted a rollout jsonl on disk as proof of session and gemini checked no
+  liveness at all, so a relaunch after the 1800 s idle sweep resumed the
+  provider thread instead of reloading `initial_context.md` — for as many
+  tokens as our own, possibly compacted, context, and with a gauge left on the
+  dead session's numbers. Both now require a live process, like CCI and
+  antigravity already did.
+- Simplified-view turn boundaries are positional again. beta.55 made a durable
+  `turn_id` route rows to the block it names, so answering a first message while
+  the reader had already sent a second inserted that answer *above* the newer
+  message. An id names a turn; it never selects one. The rule, why correlation
+  loses, and the fact that it has now been reverted once are stated in
+  `turn_view.js` and `docs/SIMPLIFIED_LIVE_CHAT_VIEW_PLAN.md`. The runtime
+  `active_turns` snapshot stays: it reports liveness, never placement.
+
+### Fixed
+
+- The installer's rollback works again: a mangled line continuation made it
+  call `docker rename` with a third operand, so a failed replacement removed
+  the new container and left the previous server stopped and renamed instead
+  of restoring it. The fake docker in the tests now checks argument arity,
+  which is what let this ship green.
+- Simplified view draws sub-agent boxes again. A classic-mode
+  `group_delegate_messages: false` followed the user into simplified, where
+  the delegate box is the only sub-agent renderer and its toggle is hidden.
+- A turn that was live when the page loaded stops being treated as live once
+  it ends: its runtime entry is retired on both terminal paths, so the block
+  closes and the reader gets its last message back at the next reconciliation.
+- A conversation handed over is no longer blocked by a FileStore row whose
+  bytes are already gone; the intact attachments move and the stale row is
+  logged. Storing a file no longer holds the global FileStore lock across the
+  disk write, while still following an owner handoff that lands mid-write.
+- The CLI context gauge passes through zero on every cold start, for every
+  provider. The two hand-built `message_meta` payloads dropped
+  `cli_context_state`, and the browser discards a zero that does not carry it,
+  so a turn could measure an empty window and be unable to say so.
+- The between-rounds gauge refresh covers all four CLI providers instead of
+  claude-code-interactive alone; codex, gemini and antigravity no longer freeze
+  their gauge until the agent stops.
+- The browser-level webchat tests run with a private Chromium profile and no
+  first-run/network work, so they no longer hang the CI runner.
+
 ## [1.0.0-beta.55] — 2026-07-30
 
 ### Security

@@ -23,7 +23,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from core.cc_interactive_certs import generate_leaf, ca_private_key_is_host_only
-from core.docker_utils import get_host_ip, get_server_id, to_host_path, translate_path
+from core.docker_utils import (get_host_ip, get_server_id,
+                               pawflow_container_labels, to_host_path,
+                               translate_path)
 from core.apparmor import apparmor_security_opts
 import core.paths as _paths
 
@@ -233,6 +235,7 @@ class _InteractiveContainerSpawnMixin:
         image = os.environ.get("PAWFLOW_CLAUDE_CODE_IMAGE", "pawflow-claude-code:latest")
         run_args = [
             "-d", "--rm", "--name", name, "--init",
+            *pawflow_container_labels("cci"),
             *mounts,
             "--add-host", f"{upstream_host or 'api.anthropic.com'}:127.0.0.1",
             "--add-host", "host.docker.internal:host-gateway",

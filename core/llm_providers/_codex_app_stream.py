@@ -80,21 +80,6 @@ class _CodexAppStreamMixin:
         os.makedirs(workdir, exist_ok=True)
         container_dir = self._codex_app_container_dir(workdir)
 
-        if is_ephemeral:
-            prompt_mode = "ephemeral"
-            initial_text = self._codex_app_resume_text(messages)
-        elif thread_id:
-            prompt_mode = "resume"
-            initial_text = self._codex_app_resume_text(messages)
-        else:
-            prompt_mode = "cold"
-            initial_text = self._codex_app_full_initial_text(
-                messages, workdir, container_dir, conv_id, agent_name)
-        prompt_tokens = self._codex_app_estimate_prompt_tokens(initial_text)
-        logger.info(
-            "[codex-app] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",
-            prompt_tokens, prompt_mode, len(messages), len(initial_text))
-
         resume_pool_idx = -1
         if thread_id and conv_id and store is not None:
             try:
@@ -204,6 +189,41 @@ class _CodexAppStreamMixin:
                     live_key = None
             _, internal_token = self._codex_setup_mcp_config(
                 workdir, user_id=user_id, conversation_id=conv_id, agent_name=agent_name)
+
+        # Cold vs resume is decided on a LIVE instance, never on persisted
+        # state. Starting an app-server IS a cold start: the new process holds
+        # nothing, and replaying its rollout jsonl costs as much as -- or more
+        # than -- sending our own, possibly compacted, context. This is the
+        # same rule as every other PawFlow CLI (CCI and antigravity ask their
+        # live pool, not the disk), and it is what makes the context gauge pass
+        # through zero when an instance is started: a cold turn rebuilds
+        # initial_context.md and records its bootstrap tokens, a resumed one
+        # records nothing and leaves the gauge on the dead session's numbers.
+        if is_ephemeral:
+            prompt_mode = "ephemeral"
+            initial_text = self._codex_app_resume_text(messages)
+        elif is_reuse and thread_id:
+            prompt_mode = "resume"
+            initial_text = self._codex_app_resume_text(messages)
+        else:
+            if thread_id and conv_id and store is not None:
+                # Drop the pointer too: keeping it would resume the thread
+                # below and stack the full context on top of the replay.
+                try:
+                    store.set_extra(
+                        conv_id,
+                        f"codex_app_server_thread:{agent_name or 'default'}", "")
+                except Exception:
+                    logger.debug("[codex-app] failed to clear thread id for cold start",
+                                 exc_info=True)
+            thread_id = ""
+            prompt_mode = "cold"
+            initial_text = self._codex_app_full_initial_text(
+                messages, workdir, container_dir, conv_id, agent_name)
+        prompt_tokens = self._codex_app_estimate_prompt_tokens(initial_text)
+        logger.info(
+            "[codex-app] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",
+            prompt_tokens, prompt_mode, len(messages), len(initial_text))
 
         active_key = (user_id, conv_id, agent_name, time.time())
         text_parts: List[str] = []

@@ -109,6 +109,22 @@ Set `PAWFLOW_AG_OBSERVER_LOG_B64=1` to include base64 payload samples. This is
 off by default because payloads may contain private prompts, tool arguments, or
 model output.
 
+Each session writes two files under the `logs/` directory above:
+`observer-<id>.jsonl`, the structured observation log, and
+`proxy-<id>.stderr.log`, where the starting shell appends the proxy's stderr.
+
+Only the stderr file is bounded, by a daemon thread that checks it at startup
+and every 60 s and truncates it to zero once it passes 20 MB
+(`PAWFLOW_AG_OBSERVER_STDERR_MAX_BYTES`,
+`PAWFLOW_AG_OBSERVER_STDERR_CHECK_SECONDS`; a max of `0` disables it). The pool
+passes its path as `PAWFLOW_AG_OBSERVER_STDERR`, and with no path there is no
+guard.
+
+The `.jsonl` is deliberately never truncated: the pool reads it back looking for
+the `proxy_start` event to decide whether a session is still usable
+(`AntigravityObserverPool._proxy_log_ready`), so zeroing it would make a live
+observer look dead and get restarted.
+
 ## Configuration
 
 - `PAWFLOW_ANTIGRAVITY_IMAGE`: Docker image used for observer sessions.
@@ -116,6 +132,9 @@ model output.
 - `PAWFLOW_ANTIGRAVITY_BIN`: CLI binary to run inside tmux. Defaults to `agy`.
 - `PAWFLOW_AG_OBSERVER_LOG_B64`: include base64 payload samples in logs.
 - `PAWFLOW_AG_OBSERVER_MAX_B64_BYTES`: max bytes per base64 sample.
+- `PAWFLOW_AG_OBSERVER_STDERR_MAX_BYTES`: truncate the proxy stderr capture file
+  past this size. Defaults to 20 MB; `0` disables the guard.
+- `PAWFLOW_AG_OBSERVER_STDERR_CHECK_SECONDS`: how often to check it. Defaults to 60.
 
 The shared CLI image installs the `agy` binary in `/usr/local/bin` and includes
 the `h2` package so rebuilt images can decode HTTP/2 headers in the observer

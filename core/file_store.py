@@ -55,6 +55,13 @@ class FileStore:
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._entries: Dict[str, Dict[str, Any]] = {}
         self._conversation_owners: Dict[str, str] = {}
+        # Bumped every time a conversation is wiped. A store() that reserved a
+        # path before the wipe and finishes writing after it would otherwise
+        # register a file belonging to a conversation that no longer exists --
+        # an entry and its bytes that nothing will ever collect, because the
+        # delete already walked the entries it could see. Comparing the count
+        # across the unlocked write is what tells the two apart.
+        self._conversation_wipes: Dict[str, int] = {}
         self._store_lock = threading.RLock()
         self._loaded = False
         self._last_cleanup: float = 0.0
@@ -109,6 +116,30 @@ class FileStore:
         os.replace(file_path, dest)
         return current, dest
 
+    def _wipe_count(self, conversation_id: str) -> int:
+        """How many times this conversation has been wiped. Caller holds nothing."""
+        with self._store_lock:
+            return self._conversation_wipes.get(conversation_id, 0)
+
+    def _abandon_if_wiped(self, conversation_id: str, seen: int,
+                          file_path: Path) -> bool:
+        """Drop a just-written file whose conversation was deleted mid-write.
+
+        Caller must hold ``_store_lock``. Registering it would resurrect a
+        conversation the user deleted: ``delete_by`` snapshots the entries it
+        can see, and this one did not exist yet.
+        """
+        if self._conversation_wipes.get(conversation_id, 0) == seen:
+            return False
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        logging.getLogger(__name__).info(
+            "Discarded a FileStore write for conversation %s: it was deleted "
+            "while the bytes were being written", conversation_id[:8])
+        return True
+
     def store(self, filename: str, content: bytes,
               content_type: str = "application/octet-stream",
               conversation_id: str = "",
@@ -121,6 +152,10 @@ class FileStore:
         user_id and conversation_id are REQUIRED — every file lives
         within a (user, conversation) scope. There is no '_system'
         fallback — calls without context raise ValueError.
+
+        Returns "" when the conversation was deleted while the bytes were
+        being written: there is nothing left to attach the file to, and the
+        entry would outlive the conversation it belongs to.
         """
         if not user_id:
             raise ValueError(f"FileStore.store: user_id is required (filename={filename!r})")
@@ -128,12 +163,27 @@ class FileStore:
             raise ValueError(f"FileStore.store: conversation_id is required (filename={filename!r})")
         file_id = uuid.uuid4().hex[:12]
         safe_name = Path(filename).name or "file"
+        # Read the wipe counter before anything touches the filesystem: the
+        # reservation already creates directories, so the window this guards
+        # opens there, not at the write.
+        _wipes = self._wipe_count(conversation_id)
         user_id, bucket, file_path = self._reserve_scope(
             conversation_id, user_id, f"{file_id}_{safe_name}")
         # The bytes land outside the lock: a multi-megabyte write must not
         # stall every other upload, retrieval and index save in the process.
-        file_path.write_bytes(content)
+        try:
+            file_path.write_bytes(content)
+        except OSError:
+            # A wipe that lands mid-write also removes the bucket directory
+            # once it empties, so the write itself is how we usually learn the
+            # conversation is gone. That is not an error worth raising at the
+            # caller: there is nothing left to store into.
+            if self._wipe_count(conversation_id) != _wipes:
+                return ""
+            raise
         with self._store_lock:
+            if self._abandon_if_wiped(conversation_id, _wipes, file_path):
+                return ""
             user_id, file_path = self._settle_scope(
                 conversation_id, user_id, bucket, file_path)
             self._entries[file_id] = {
@@ -160,7 +210,10 @@ class FileStore:
                    ttl: int = 0,
                    agent_name: str = "",
                    category: str = "") -> str:
-        """Store a file by copying it from disk. Returns file_id."""
+        """Store a file by copying it from disk. Returns file_id.
+
+        Returns "" when the conversation was deleted mid-copy, like ``store``.
+        """
         if not user_id:
             raise ValueError(f"FileStore.store_file: user_id is required (filename={filename!r})")
         if not conversation_id:
@@ -170,12 +223,20 @@ class FileStore:
             raise FileNotFoundError(f"FileStore.store_file: source file not found: {source_path}")
         file_id = uuid.uuid4().hex[:12]
         safe_name = Path(filename).name or src.name or "file"
+        _wipes = self._wipe_count(conversation_id)
         user_id, bucket, file_path = self._reserve_scope(
             conversation_id, user_id, f"{file_id}_{safe_name}")
-        with src.open("rb") as inp, file_path.open("wb") as out:
-            shutil.copyfileobj(inp, out, length=1024 * 1024)
-        size = file_path.stat().st_size
+        try:
+            with src.open("rb") as inp, file_path.open("wb") as out:
+                shutil.copyfileobj(inp, out, length=1024 * 1024)
+            size = file_path.stat().st_size
+        except OSError:
+            if self._wipe_count(conversation_id) != _wipes:
+                return ""
+            raise
         with self._store_lock:
+            if self._abandon_if_wiped(conversation_id, _wipes, file_path):
+                return ""
             user_id, file_path = self._settle_scope(
                 conversation_id, user_id, bucket, file_path)
             self._entries[file_id] = {
@@ -494,6 +555,11 @@ class FileStore:
         if conversation_id and not category and not agent_name:
             with self._store_lock:
                 self._conversation_owners.pop(conversation_id, None)
+                # Announce the wipe to any store() whose bytes are in flight:
+                # it reserved its path before this ran, so its entry is not in
+                # the snapshot above and would land after the delete finished.
+                self._conversation_wipes[conversation_id] = (
+                    self._conversation_wipes.get(conversation_id, 0) + 1)
         return len(to_delete)
 
     def _delete_entry(self, file_id: str):

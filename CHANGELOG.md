@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A CLI turn no longer loses its context when the session it was told to reuse
+  disappears first. The context phase empties the message list whenever it
+  finds a live codex or gemini session, because a resume only needs the delta —
+  but that check reserves nothing, and the idle sweeper, a cleanup or a crashed
+  process can take the session away before the provider acquires its turn lock.
+  The provider then correctly went cold with a list that no longer described
+  the conversation: no transcript, no persona, no skills, no tool config. The
+  context phase now leaves a one-shot callback the provider invokes on its cold
+  path to reload the real context; gemini additionally stops loading its stored
+  session in that case, since replaying it on top of a rebuilt context would
+  send the transcript twice and leave the gauge on the dead session's numbers.
+  Nothing changes on the happy path, where the session really is still there.
+
+- The Gemini and Antigravity VNC logins start their container again. The
+  beta.56 label work added the `pawflow_container_labels` call to that
+  background thread but not its import — the identical imports in the Claude
+  and Codex branches are local to *their* nested functions — so both logins
+  died on a `NameError` reported as a generic "Login failed", before any
+  `docker run`. The test that shipped with the label work only checked that the
+  name appeared somewhere in the file, which a grep cannot distinguish from a
+  name that is actually bound; the new test runs the thread.
+- Stopping one PawFlow server no longer removes another one's containers. The
+  shutdown reaper's first pass filters on this server's label and is exact, but
+  the legacy name pass that follows matches prefixes carrying no server id
+  (`pf-cc-pool-`, `pawflow-relay-srv-`, the logins…), which on a shared Docker
+  daemon also name a second instance's containers — and those survived pass 1
+  precisely because their label was not ours. The label now decides in both
+  directions: a container owned by another server is left alone, and only an
+  unlabelled one, which can only predate the label, is reaped by name. The
+  decision moved into `core.docker_utils.legacy_reap_ids` so it can be tested
+  at all. `pawflow-agy-login-` was also missing from the list, so an old
+  Antigravity login could survive instead.
+- A FileStore write no longer outlives the conversation it belongs to. Moving
+  the bytes outside the global lock (beta.55) left a window: `delete_by`
+  snapshots the entries it can see, and a store that reserved its path earlier
+  is not among them, so it registered afterwards and resurrected a file for a
+  deleted conversation — or crashed with `FileNotFoundError` when the wipe took
+  the bucket directory with it. A per-conversation wipe counter, read before
+  the reservation and rechecked under the lock, now discards such a write and
+  its bytes; `store`/`store_file` return `""` in that case.
+
+- The interactive proxies no longer grow their capture log without bound. The
+  shell that starts each one appends its stderr to a file, and for
+  claude-code-interactive that file sits on the container's 512 MB `/tmp`
+  tmpfs, shared with every tool call — so a long-lived container did not merely
+  waste space, it eventually broke the tool calls that needed to write there. A
+  daemon thread now checks the file at startup and every 60 s and truncates it
+  past 20 MB, which is safe under the live writer because the redirect opened it
+  with `O_APPEND`. The Antigravity observer gets the same guard on its stderr
+  capture file; its `observer-<id>.jsonl` is deliberately exempt, because the
+  pool reads that one back for the `proxy_start` event to decide a session is
+  still alive.
+
 ## [1.0.0-beta.57] — 2026-07-30
 
 ### Fixed

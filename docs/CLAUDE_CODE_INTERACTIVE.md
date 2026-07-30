@@ -307,6 +307,22 @@ screenful. Before PawFlow injects a chat turn into the live tmux, it also sends 
 best-effort `tmux send-keys -X cancel` so a debug attach left in copy-mode cannot
 swallow the server-side paste or final `Enter`.
 
+### Proxy capture log
+
+The shell that starts the proxy appends its stderr to `/tmp/cci_proxy.log`
+inside the container, which is where interpreter-level tracebacks raised before
+logging is configured end up. Nothing reads that file programmatically, so it
+can be inspected freely with `docker exec <container> cat /tmp/cci_proxy.log`.
+
+`/tmp` is a 512 MB tmpfs shared with every tool call in the container, so the
+proxy guards the file itself: a daemon thread checks it at startup and every
+60 s and truncates it to zero once it passes 20 MB. Truncating under the live
+writer is safe because the redirect opened the file with `O_APPEND`. The path is
+set once in `core/_cci_pool_spawn.py` (`CCI_PROXY_LOG`) and passed to the proxy
+as `PAWFLOW_CCI_PROXY_LOG`, so the redirect and the guard cannot drift apart.
+Tune with `PAWFLOW_CCI_PROXY_LOG_MAX_BYTES` and
+`PAWFLOW_CCI_PROXY_LOG_CHECK_SECONDS`; a max of `0` disables the guard.
+
 ## Vision
 
 User image attachments are materialized into `.pawflow_vision/` in the session

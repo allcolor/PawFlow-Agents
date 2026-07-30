@@ -6,12 +6,15 @@ serialization.
 
 import json
 import http.client
+import logging
 import os
 import re
 from html import escape
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 
 def request_path(base_url: str, endpoint_path: str = "") -> str:
@@ -153,6 +156,40 @@ def textualize_message(
 
 class LLMCliSharedMixin:
     """Methods shared across CLI and HTTP providers."""
+
+    def _cli_cold_context(self, messages: List[Any]) -> List[Any]:
+        """The messages a cold CLI start should actually send.
+
+        The context phase empties the message list whenever it finds a live
+        session for this conversation, because a resume only needs the delta.
+        That check reserves nothing, though: the session can be swept, killed
+        or crash before this provider acquires its turn lock, and then we are
+        starting a fresh process with a list that no longer describes the
+        conversation -- no transcript, no persona, no skills, no tool config.
+
+        When that happens the context phase left a one-shot callback here.
+        Calling it reloads the real cold context. On an ordinary cold start --
+        where the context phase never saw a session -- there is no callback and
+        this returns ``messages`` untouched.
+
+        Consumed on use: a turn rebuilds at most once, and a stale callback
+        must not fire on a later turn whose context is already correct.
+        """
+        rebuild = getattr(self, "_pawflow_cold_context_rebuild", None)
+        self._pawflow_cold_context_rebuild = None
+        if not callable(rebuild):
+            return messages
+        try:
+            rebuilt = rebuild()
+        except Exception:
+            logger.error("cold context rebuild failed; keeping the delta",
+                         exc_info=True)
+            return messages
+        if not rebuilt:
+            return messages
+        logger.info("cold context rebuilt: %d message(s) recovered for a turn "
+                    "whose CLI session disappeared", len(rebuilt))
+        return rebuilt
 
     @staticmethod
     def _cli_escape_text(text: str, *, quote: bool = False) -> str:

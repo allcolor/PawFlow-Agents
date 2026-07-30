@@ -30,6 +30,16 @@ LISTEN_PORT = int(os.environ.get("PAWFLOW_AG_PROXY_PORT", "443"))
 CERT_FILE = os.environ.get("PAWFLOW_AG_LEAF_CERT", "/tmp/aicode-googleapis.crt")  # nosec B108 - ephemeral container fallback; production passes a session path.
 KEY_FILE = os.environ.get("PAWFLOW_AG_LEAF_KEY", "/tmp/aicode-googleapis.key")  # nosec B108 - ephemeral container fallback; production passes a session path.
 LOG_FILE = os.environ.get("PAWFLOW_AG_OBSERVER_LOG", "/tmp/pawflow-antigravity-observer.jsonl")  # nosec B108 - ephemeral container fallback; production passes a session path.
+# The shell that starts this proxy appends its stderr here. Unset means the
+# caller did not name a capture file, so there is nothing to bound.
+#
+# Only this file is ever truncated. LOG_FILE above must NOT be: the pool reads
+# it back looking for the ``proxy_start`` event to decide whether a session is
+# usable (``AntigravityObserverPool._proxy_log_ready``), so zeroing it would
+# make a perfectly live observer look dead and get restarted.
+STDERR_LOG_FILE = os.environ.get("PAWFLOW_AG_OBSERVER_STDERR", "")
+STDERR_LOG_MAX_BYTES = int(os.environ.get("PAWFLOW_AG_OBSERVER_STDERR_MAX_BYTES", str(20 * 1024 * 1024)))
+STDERR_LOG_CHECK_SECONDS = float(os.environ.get("PAWFLOW_AG_OBSERVER_STDERR_CHECK_SECONDS", "60"))
 LOG_B64 = os.environ.get("PAWFLOW_AG_OBSERVER_LOG_B64", "0").lower() in {"1", "true", "yes"}
 MAX_B64_BYTES = int(os.environ.get("PAWFLOW_AG_OBSERVER_MAX_B64_BYTES", "4096") or "4096")
 MAX_BODY_CAPTURE_BYTES = int(os.environ.get("PAWFLOW_AG_OBSERVER_MAX_BODY_BYTES", str(8 * 1024 * 1024)) or str(8 * 1024 * 1024))
@@ -602,8 +612,43 @@ def handle_client(client: ssl.SSLSocket) -> None:
                     _event({"type": "socket_close_error", "connection_id": connection_id, "error": str(exc)})
 
 
+def _truncate_log_if_oversized(path: str, max_bytes: int) -> bool:
+    """Zero ``path`` once it has grown past ``max_bytes``; say whether it did.
+
+    Truncating under the live writer is safe because the redirect opened the
+    file with ``O_APPEND``: the next write lands at offset 0 rather than leaving
+    a sparse hole. A path that cannot be measured or truncated is left alone --
+    this runs beside the proxy and must never be the reason it stops.
+    """
+    if not path or max_bytes <= 0:
+        return False
+    try:
+        if os.path.getsize(path) <= max_bytes:
+            return False
+        os.truncate(path, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _start_stderr_log_guard() -> None:
+    """Check the stderr capture file now, then every interval, forever."""
+    if not STDERR_LOG_FILE:
+        return
+
+    def _run() -> None:
+        while True:
+            if _truncate_log_if_oversized(STDERR_LOG_FILE, STDERR_LOG_MAX_BYTES):
+                _stderr(f"capture log {STDERR_LOG_FILE} passed "
+                        f"{STDERR_LOG_MAX_BYTES} bytes and was truncated")
+            time.sleep(STDERR_LOG_CHECK_SECONDS)
+
+    threading.Thread(target=_run, name="ag-log-guard", daemon=True).start()
+
+
 def main() -> None:
     os.makedirs(os.path.dirname(LOG_FILE) or ".", exist_ok=True)
+    _start_stderr_log_guard()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(CERT_FILE, KEY_FILE)
     ctx.set_alpn_protocols(["h2", "http/1.1"])

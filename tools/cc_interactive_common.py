@@ -31,6 +31,54 @@ def _log(msg: str) -> None:
     sys.stderr.write(f"[cc-interactive-proxy] {msg}\n")
     sys.stderr.flush()
 
+# The shell that starts this proxy appends its stderr to a capture file on the
+# container's /tmp, a 512 MB tmpfs shared with every tool call. Nothing reads
+# that file programmatically -- it exists to catch interpreter-level tracebacks
+# raised before logging is configured -- so it may be zeroed at any moment. Left
+# alone it fills the tmpfs instead, and the tool calls that need to write there
+# are what break.
+PROXY_LOG_FILE = os.environ.get("PAWFLOW_CCI_PROXY_LOG", "/tmp/cci_proxy.log")  # nosec B108 - container-local tmpfs capture file.
+PROXY_LOG_MAX_BYTES = int(os.environ.get("PAWFLOW_CCI_PROXY_LOG_MAX_BYTES", str(20 * 1024 * 1024)))
+PROXY_LOG_CHECK_SECONDS = float(os.environ.get("PAWFLOW_CCI_PROXY_LOG_CHECK_SECONDS", "60"))
+
+
+def _truncate_log_if_oversized(path: str, max_bytes: int) -> bool:
+    """Zero ``path`` once it has grown past ``max_bytes``; say whether it did.
+
+    Truncating under the live writer is safe because the redirect opened the
+    file with ``O_APPEND``: the next write lands at offset 0 rather than leaving
+    a sparse hole, so no descriptor has to be reopened. A path that cannot be
+    measured or truncated is left alone -- this runs beside the proxy and must
+    never be the reason it stops.
+    """
+    if not path or max_bytes <= 0:
+        return False
+    try:
+        if os.path.getsize(path) <= max_bytes:
+            return False
+        os.truncate(path, 0)
+    except OSError:
+        return False
+    return True
+
+
+def start_log_guard(path: str = "", max_bytes: int = 0,
+                    interval: float = 0.0) -> threading.Thread:
+    """Check the capture log now, then every ``interval`` seconds."""
+    path = path or PROXY_LOG_FILE
+    max_bytes = max_bytes or PROXY_LOG_MAX_BYTES
+    interval = interval or PROXY_LOG_CHECK_SECONDS
+
+    def _run() -> None:
+        while True:
+            if _truncate_log_if_oversized(path, max_bytes):
+                _log(f"capture log {path} passed {max_bytes} bytes and was truncated")
+            time.sleep(interval)
+
+    thread = threading.Thread(target=_run, name="cci-log-guard", daemon=True)
+    thread.start()
+    return thread
+
 def _preview(text: str, limit: int = 80) -> str:
     text = (text or "").replace("\r", "\\r").replace("\n", "\\n")
     return text[:limit]

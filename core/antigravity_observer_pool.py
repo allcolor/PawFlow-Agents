@@ -503,11 +503,17 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             )
         env = [
             "-e", f"PAWFLOW_AG_OBSERVER_LOG={container_log}",
+            "-e", f"PAWFLOW_AG_OBSERVER_STDERR={container_stderr}",
             "-e", f"PAWFLOW_AG_UPSTREAM_IPS={','.join(ips)}",
             "-e", f"PAWFLOW_AG_LEAF_CERT={container_workdir}/.pawflow_ag/certs/{Path(certs.cert_path).name}",
             "-e", f"PAWFLOW_AG_LEAF_KEY={container_workdir}/.pawflow_ag/certs/{Path(certs.key_path).name}",
         ]
         for key in ("PAWFLOW_AG_OBSERVER_LOG_B64", "PAWFLOW_AG_OBSERVER_MAX_B64_BYTES"):
+            value = os.environ.get(key)
+            if value:
+                env += ["-e", f"{key}={value}"]
+        for key in ("PAWFLOW_AG_OBSERVER_STDERR_MAX_BYTES",
+                    "PAWFLOW_AG_OBSERVER_STDERR_CHECK_SECONDS"):
             value = os.environ.get(key)
             if value:
                 env += ["-e", f"{key}={value}"]

@@ -13,6 +13,116 @@ logger = logging.getLogger(__name__)
 
 
 class _PACPhase2Mixin:
+    def _arm_cold_context_rebuild(self, st):
+        """Give the provider a way back to the full context.
+
+        The liveness check that decided this conversation has a warm CLI
+        session RESERVES NOTHING: between it and the moment the provider
+        acquires the session's turn lock, the idle sweeper, a cleanup, a
+        crashed process or a stopped container can take it away. The provider
+        then correctly goes cold -- but the context phase has already emptied
+        the message list on the strength of that session, so a cold start would
+        send a bare delta and the turn would lose its transcript, persona,
+        skills and tool configuration.
+
+        Rather than hold a lock across the whole context phase, the provider
+        gets a one-shot callback it invokes only on the cold path. Nothing
+        changes on the happy path, where the session really is still there.
+        """
+        client = getattr(st, "client", None)
+        if client is None:
+            return
+
+        def _rebuild():
+            logger.warning(
+                "[context:%s] CLI session vanished between the liveness check "
+                "and the turn — rebuilding the cold context",
+                (st.conversation_id or "?")[:8])
+            st._context_diverged = False
+            st._uses_pawflow_initial = False
+            self._load_cold_cli_context(st)
+            return list(st.messages or [])
+
+        client._pawflow_cold_context_rebuild = _rebuild
+
+    def _load_cold_cli_context(self, st):
+        """Load the full PawFlow context a cold CLI process must receive.
+
+        Called once on the ordinary cold path, and again from the rebuild
+        callback when a session that looked live turned out to be gone. It is
+        therefore written to be safely repeatable: everything it needs comes
+        from ``st`` and the store, and it assigns rather than appends.
+        """
+        from core.conversation_store import ConversationStore
+        st.store = ConversationStore.instance()
+
+        def _load_pawflow_initial_context():
+            """Build the canonical PawFlow start context for a cold CLI session.
+
+            The source is the personalized shared context. If it is too
+            large, the normal compactor below is responsible for using
+            the shared pyramid/buckets and preserving the recent tail.
+            Do not pre-collapse to a pyramid header here: small shared
+            contexts must be injected in full.
+            """
+            existing = st.store.load_shared_for_agent(
+                st.conversation_id, st._context_agent)
+            if not existing:
+                return None, ""
+            try:
+                shared_msgs = self._deserialize_messages(
+                    existing, conversation_id=st.conversation_id)
+            except (KeyError, TypeError) as deser_err:
+                logger.error(
+                    f"[context:{st.conversation_id[:8]}] shared load failed: {deser_err}")
+                return None, ""
+            return shared_msgs, "shared"
+
+        st.context_data = st.store.load_agent_context(st.conversation_id, st._context_agent)
+        st._uses_pawflow_initial = False
+        if st.context_data is not None:
+            # Agent context exists: use it as the PawFlow agent
+            # context. For CLI providers, a valid session means the
+            # provider resume path sends only the delta; no valid
+            # session means the new CLI process receives this full
+            # PawFlow agent context.
+            try:
+                st.messages = self._deserialize_messages(
+                    st.context_data, conversation_id=st.conversation_id)
+                st._context_diverged = True
+                logger.info(f"[context:{st.conversation_id[:8]}] loaded diverged context: "
+                            f"{len(st.messages)} messages")
+                # Cold CLI start: the loaded agent context is the
+                # full PawFlow transcript. Run the real compactor on
+                # it so an oversized context.jsonl is rewritten
+                # compacted. The CLI resume path only ever sends the
+                # live delta, so without this the stored context
+                # never crosses the in-loop compaction trigger and
+                # grows unbounded.
+                st._uid_dv = st.flowfile.get_attribute("http.auth.principal") or ""
+                st.messages = self._auto_compact_messages(
+                    st.messages, st.conversation_id, st._context_agent, st._uid_dv,
+                    max_context=st._max_ctx)
+            except (KeyError, TypeError) as deser_err:
+                logger.error(f"[context:{st.conversation_id[:8]}] context load failed: {deser_err}")
+        else:
+            # No established agent context: build it from PawFlow
+            # shared context. _auto_compact_messages decides whether
+            # buckets are needed to fit the provider context window.
+            st.messages, st._cold_cli_initial_source = _load_pawflow_initial_context()
+            if st.messages:
+                st._uses_pawflow_initial = True
+                logger.info(
+                    f"[context:{st.conversation_id[:8]}] loaded PawFlow initial "
+                    f"{st._cold_cli_initial_source or 'shared'} context: {len(st.messages)} messages")
+                st._uid2 = st.flowfile.get_attribute("http.auth.principal") or ""
+                st.messages = self._auto_compact_messages(
+                    st.messages, st.conversation_id, st._context_agent, st._uid2,
+                    max_context=st._max_ctx)
+            else:
+                logger.warning(f"[context:{st.conversation_id[:8]}] store.load() returned None — "
+                               f"starting fresh conversation")
+
     def _pac_p2(self, st):
         # Resolve max_context early (needed for compact-if-not-fit decision)
         st._svc_cfg_early = (getattr(st.resolved_svc, 'config', {}) or {})
@@ -51,78 +161,14 @@ class _PACPhase2Mixin:
                 st.messages = []
                 st.base_message_count = 0
                 st._context_diverged = True  # skip compact
+                # The session can still die before the provider acquires it;
+                # this is how the provider asks for the real context if it
+                # has to go cold after all. See _arm_cold_context_rebuild.
+                self._arm_cold_context_rebuild(st)
                 logger.info(
                     f"[context:{st.conversation_id[:8]}] CLI session active — skipping context load")
             else:
-                from core.conversation_store import ConversationStore
-                st.store = ConversationStore.instance()
-
-                def _load_pawflow_initial_context():
-                    """Build the canonical PawFlow start context for a cold CLI session.
-
-                    The source is the personalized shared context. If it is too
-                    large, the normal compactor below is responsible for using
-                    the shared pyramid/buckets and preserving the recent tail.
-                    Do not pre-collapse to a pyramid header here: small shared
-                    contexts must be injected in full.
-                    """
-                    existing = st.store.load_shared_for_agent(
-                        st.conversation_id, st._context_agent)
-                    if not existing:
-                        return None, ""
-                    try:
-                        shared_msgs = self._deserialize_messages(
-                            existing, conversation_id=st.conversation_id)
-                    except (KeyError, TypeError) as deser_err:
-                        logger.error(
-                            f"[context:{st.conversation_id[:8]}] shared load failed: {deser_err}")
-                        return None, ""
-                    return shared_msgs, "shared"
-
-                st.context_data = st.store.load_agent_context(st.conversation_id, st._context_agent)
-                st._uses_pawflow_initial = False
-                if st.context_data is not None:
-                    # Agent context exists: use it as the PawFlow agent
-                    # context. For CLI providers, a valid session means the
-                    # provider resume path sends only the delta; no valid
-                    # session means the new CLI process receives this full
-                    # PawFlow agent context.
-                    try:
-                        st.messages = self._deserialize_messages(
-                            st.context_data, conversation_id=st.conversation_id)
-                        st._context_diverged = True
-                        logger.info(f"[context:{st.conversation_id[:8]}] loaded diverged context: "
-                                    f"{len(st.messages)} messages")
-                        # Cold CLI start: the loaded agent context is the
-                        # full PawFlow transcript. Run the real compactor on
-                        # it so an oversized context.jsonl is rewritten
-                        # compacted. The CLI resume path only ever sends the
-                        # live delta, so without this the stored context
-                        # never crosses the in-loop compaction trigger and
-                        # grows unbounded.
-                        st._uid_dv = st.flowfile.get_attribute("http.auth.principal") or ""
-                        st.messages = self._auto_compact_messages(
-                            st.messages, st.conversation_id, st._context_agent, st._uid_dv,
-                            max_context=st._max_ctx)
-                    except (KeyError, TypeError) as deser_err:
-                        logger.error(f"[context:{st.conversation_id[:8]}] context load failed: {deser_err}")
-                else:
-                    # No established agent context: build it from PawFlow
-                    # shared context. _auto_compact_messages decides whether
-                    # buckets are needed to fit the provider context window.
-                    st.messages, st._cold_cli_initial_source = _load_pawflow_initial_context()
-                    if st.messages:
-                        st._uses_pawflow_initial = True
-                        logger.info(
-                            f"[context:{st.conversation_id[:8]}] loaded PawFlow initial "
-                            f"{st._cold_cli_initial_source or 'shared'} context: {len(st.messages)} messages")
-                        st._uid2 = st.flowfile.get_attribute("http.auth.principal") or ""
-                        st.messages = self._auto_compact_messages(
-                            st.messages, st.conversation_id, st._context_agent, st._uid2,
-                            max_context=st._max_ctx)
-                    else:
-                        logger.warning(f"[context:{st.conversation_id[:8]}] store.load() returned None — "
-                                       f"starting fresh conversation")
+                self._load_cold_cli_context(st)
 
         elif st.conv_attr:
             st.existing = st.flowfile.get_attribute(st.conv_attr)

@@ -487,7 +487,15 @@ Findings from the read-only review of the 2026-06-03 → 2026-06-10 commit range
 (159 commits, full suite green at HEAD `84fa2e08`). None are regressions; all
 three are hardening/robustness improvements to schedule later.
 
-### G1. Narrow container security-opt (drop blanket `unconfined`)
+### G1. Narrow container security-opt (drop blanket `unconfined`) ✅ DONE
+**Status:** shipped. `docker/apparmor/pawflow-mount` and
+`docker/apparmor/pawflow-relay` ship with the installer; `core/apparmor.py`
+probes whether the profile is loaded and falls back to `apparmor:unconfined`
+otherwise, and all five pools go through it. `seccomp=unconfined` was dropped
+outright — default seccomp already allows `unshare`/`mount` with
+`CAP_SYS_ADMIN`, as step 1 predicted — and `tests/test_cli_workspace_mounts.py`
+asserts it never comes back.
+
 **Priority:** P2 — security hardening
 **Effort:** Medium (0.5–1 day, includes empirical verification)
 **Dependencies:** None
@@ -522,7 +530,26 @@ agent CLIs with `--dangerously-skip-permissions` is much weaker than needed.
    `tests/test_antigravity_observer.py`; manual smoke on a real host.
 6. Docs: security section of `docs/docker.md` + `docs/CLAUDE_CODE_INTERACTIVE.md`.
 
-### G2. Rotate interactive proxy logs inside containers
+### G2. Rotate interactive proxy logs inside containers ✅ DONE
+**Status:** shipped. A daemon thread in each proxy checks its capture file at
+startup and every 60 s and truncates it to zero past 20 MB
+(`start_log_guard` in `tools/cc_interactive_common.py`,
+`_start_stderr_log_guard` in `tools/ag_observer_proxy.py`). Tests in
+`tests/test_proxy_log_rotation.py`.
+
+Two deviations from the plan below, both deliberate:
+
+- **The helper is shared, not duplicated, for CCI.** The plan assumed each file
+  is copied standalone into the container. `cc_interactive_common.py` is copied
+  too and the proxy already imports it, so the guard lives there. Antigravity's
+  proxy really is standalone, so it carries its own copy.
+- **Only the stderr capture file is guarded on the Antigravity side.** Its
+  `observer-<id>.jsonl` is read back by `_proxy_log_ready` to decide a session
+  is usable, so truncating it would make a live observer look dead and get
+  restarted. The tmpfs argument does not apply there either: Antigravity logs
+  land in the session workdir on disk, not on `/tmp`. The 512 MB tmpfs risk the
+  context below describes is real for `/tmp/cci_proxy.log` only.
+
 **Priority:** P3 — robustness
 **Effort:** Small (1–2h)
 **Dependencies:** None

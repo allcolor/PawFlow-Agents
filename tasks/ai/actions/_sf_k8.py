@@ -319,6 +319,7 @@ def _handle_sf_k8(self, action, body, store, user_id, flowfile, _helpers):
             import subprocess as _sp  # nosec B404
             from core.docker_utils import (
                 docker_cmd as _docker_cmd,
+                pawflow_container_labels as _pawflow_container_labels,
                 to_host_path as _to_host_path,
                 translate_path as _translate_path,
             )

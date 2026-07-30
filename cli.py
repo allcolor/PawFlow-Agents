@@ -410,7 +410,9 @@ def cmd_start(args):
         try:
             import subprocess as _sp  # nosec B404
             from core.docker_utils import docker_cmd
-            from core.docker_utils import (PAWFLOW_SERVER_LABEL, get_server_id)
+            from core.docker_utils import (LEGACY_REAP_FORMAT,
+                                           PAWFLOW_SERVER_LABEL,
+                                           get_server_id, legacy_reap_ids)
             # Pass 1 — the label. One filter, every family, now and later.
             try:
                 _sel = f"{PAWFLOW_SERVER_LABEL}={get_server_id()}"
@@ -426,11 +428,19 @@ def cmd_start(args):
                                 len(_ids))
             except Exception:
                 pass  # nosec B110
-            # Pass 2 — legacy names, for containers started before the label.
-            # The two interactive families embed the server id in their name,
-            # so they stay scoped to us; the older pool prefixes do not carry
-            # one and keep their historical, host-wide match.
+            # Pass 2 — legacy names, for containers started before the label
+            # existed. Most of these prefixes carry no server id at all, so the
+            # name match alone is host-wide: on a shared Docker daemon it also
+            # names another PawFlow server's pools, relays and logins, which
+            # survived pass 1 precisely because their label is not ours.
+            # Reaping those would kill a running instance's agents.
+            #
+            # So the label decides here too, in the other direction: a
+            # container that carries SOMEBODY ELSE's server id is left alone,
+            # and only an unlabelled one -- which can only come from a build
+            # older than the label -- is reaped by name.
             _own = get_server_id()[:12]
+            _own_full = get_server_id()
             for _prefix in (
                 "pf-cc-pool-",
                 "pf-codex-pool-",
@@ -442,13 +452,15 @@ def cmd_start(args):
                 "pawflow-claude-login-",
                 "pawflow-codex-login-",
                 "pawflow-gemini-login-",
+                "pawflow-agy-login-",
             ):
                 try:
                     _r = _sp.run(  # nosec B603
-                        docker_cmd() + ["ps", "-a", "-q",
-                                         "--filter", f"name={_prefix}"],
+                        docker_cmd() + ["ps", "-a",
+                                         "--filter", f"name={_prefix}",
+                                         "--format", LEGACY_REAP_FORMAT],
                         capture_output=True, text=True, timeout=5)
-                    _ids = [i for i in (_r.stdout or "").split() if i]
+                    _ids = legacy_reap_ids(_r.stdout or "", _own_full)
                     if _ids:
                         _sp.run(docker_cmd() + ["rm", "-f"] + _ids,  # nosec B603
                                 capture_output=True, timeout=10)

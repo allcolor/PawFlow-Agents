@@ -206,6 +206,10 @@ class _CodexAppStreamMixin:
             prompt_mode = "resume"
             initial_text = self._codex_app_resume_text(messages)
         else:
+            # The context phase may have emptied the message list on the
+            # strength of a session that has since gone. Get the real context
+            # back before building the cold prompt from it.
+            messages = self._cli_cold_context(messages)
             if thread_id and conv_id and store is not None:
                 # Drop the pointer too: keeping it would resume the thread
                 # below and stack the full context on top of the replay.

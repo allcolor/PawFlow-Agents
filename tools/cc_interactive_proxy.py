@@ -22,10 +22,10 @@ import uuid
 
 try:  # standalone (/opt/pawflow on path) vs package (tools.cc_interactive_common)
     from cc_interactive_common import (  # noqa: F401
-        UPSTREAM_HOST, UPSTREAM_PORT, UPSTREAM_SCHEME, LISTEN_HOST, LISTEN_PORT, CERT_FILE, KEY_FILE, SESSION_TOKEN, CONTAINER_ID, EVENT_URL, EVENT_TOKEN, WIRE_LOG_ENABLED, WIRE_LOG_ALL, WIRE_LOG_PATHS, SENSITIVE_HEADERS, EVENTS, _log, _preview, _scrub, _wire_path_allowed, _redact_header_block, _text_repr, _read_headers, _header_map, _content_length, _is_chunked, _is_quota_probe, _content_text, EventClient, HTTPExchangeTracker)
+        UPSTREAM_HOST, UPSTREAM_PORT, UPSTREAM_SCHEME, LISTEN_HOST, LISTEN_PORT, CERT_FILE, KEY_FILE, SESSION_TOKEN, CONTAINER_ID, EVENT_URL, EVENT_TOKEN, WIRE_LOG_ENABLED, WIRE_LOG_ALL, WIRE_LOG_PATHS, SENSITIVE_HEADERS, EVENTS, _log, _preview, _scrub, _wire_path_allowed, _redact_header_block, _text_repr, _read_headers, _header_map, _content_length, _is_chunked, _is_quota_probe, _content_text, EventClient, HTTPExchangeTracker, start_log_guard)
 except ImportError:
     from tools.cc_interactive_common import (  # noqa: F401
-        UPSTREAM_HOST, UPSTREAM_PORT, UPSTREAM_SCHEME, LISTEN_HOST, LISTEN_PORT, CERT_FILE, KEY_FILE, SESSION_TOKEN, CONTAINER_ID, EVENT_URL, EVENT_TOKEN, WIRE_LOG_ENABLED, WIRE_LOG_ALL, WIRE_LOG_PATHS, SENSITIVE_HEADERS, EVENTS, _log, _preview, _scrub, _wire_path_allowed, _redact_header_block, _text_repr, _read_headers, _header_map, _content_length, _is_chunked, _is_quota_probe, _content_text, EventClient, HTTPExchangeTracker)
+        UPSTREAM_HOST, UPSTREAM_PORT, UPSTREAM_SCHEME, LISTEN_HOST, LISTEN_PORT, CERT_FILE, KEY_FILE, SESSION_TOKEN, CONTAINER_ID, EVENT_URL, EVENT_TOKEN, WIRE_LOG_ENABLED, WIRE_LOG_ALL, WIRE_LOG_PATHS, SENSITIVE_HEADERS, EVENTS, _log, _preview, _scrub, _wire_path_allowed, _redact_header_block, _text_repr, _read_headers, _header_map, _content_length, _is_chunked, _is_quota_probe, _content_text, EventClient, HTTPExchangeTracker, start_log_guard)
 try:  # standalone (/opt/pawflow on path) vs package (tools.cc_interactive_observers)
     from cc_interactive_observers import (  # noqa: F401
         SSEObserver, _emit_observed_tool_blocks, HTTPRequestObserver, ChunkedBodyObserver, DecodingObserver, HTTPResponseObserver, JSONResponseObserver, _NullObserver)
@@ -298,6 +298,8 @@ def handle_client(client):
 def main():
     if not SESSION_TOKEN:
         raise SystemExit("PAWFLOW_CCI_SESSION_TOKEN is required")
+    # Nothing else bounds the capture file this proxy's stderr appends to.
+    start_log_guard()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(CERT_FILE, KEY_FILE)
     lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

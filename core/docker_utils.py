@@ -303,6 +303,40 @@ def pawflow_container_labels(kind: str = "") -> list:
     return labels
 
 
+LEGACY_REAP_FORMAT = '{{.ID}} {{.Label "' + PAWFLOW_SERVER_LABEL + '"}}'
+
+
+def legacy_reap_ids(ps_output: str, own_server_id: str) -> list:
+    """Ids the name-prefix shutdown pass may reap, from `docker ps` output.
+
+    The shutdown reaper's first pass filters on this server's label and is
+    exact. The second pass exists only for containers started by a build older
+    than the label, and it matches NAMES -- most prefixes (`pf-cc-pool-`,
+    `pawflow-relay-srv-`, the logins) carry no server id at all, so on a shared
+    Docker daemon they also name another PawFlow server's containers. Those
+    survived pass 1 precisely because their label is not ours; reaping them by
+    name would kill a running instance's agents, relays and logins.
+
+    So a container that carries somebody else's server id is left alone. Only
+    an unlabelled one -- which can only predate the label -- or one already
+    ours is reaped. Expects rows of ``<id> [<server-id>]``
+    (``LEGACY_REAP_FORMAT``); a row with no label prints the id alone.
+    """
+    out = []
+    for line in (ps_output or "").splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        owner = parts[1] if len(parts) > 1 else ""
+        # Docker prints this for a missing label under some format versions.
+        if owner == "<no":
+            owner = ""
+        if owner and owner != own_server_id:
+            continue
+        out.append(parts[0])
+    return out
+
+
 def docker_exec(container: str, cmd_args: list, **kwargs) -> subprocess.CompletedProcess:
     """Run 'docker exec' with correct prefix."""
     cmd = docker_cmd() + ["exec"] + cmd_args

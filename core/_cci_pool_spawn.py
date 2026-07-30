@@ -29,6 +29,11 @@ from core.docker_utils import (get_host_ip, get_server_id,
 from core.apparmor import apparmor_security_opts
 import core.paths as _paths
 
+# Where the shell that starts the proxy appends its stderr, inside the
+# container. The proxy is told the same path so its own size guard can keep the
+# file off the 512 MB /tmp tmpfs; one literal, both sides.
+CCI_PROXY_LOG = "/tmp/cci_proxy.log"  # nosec B108 - container-local tmpfs capture file.
+
 logger = logging.getLogger(__name__)
 
 
@@ -309,11 +314,14 @@ class _InteractiveContainerSpawnMixin:
             "-e", f"PAWFLOW_CCI_PROXY_PORT={int(listen_port or 443)}",
             "-e", f"PAWFLOW_CCI_LEAF_CERT={container_workdir}/.pawflow_cci/certs/api-anthropic.crt",
             "-e", f"PAWFLOW_CCI_LEAF_KEY={container_workdir}/.pawflow_cci/certs/api-anthropic.key",
+            "-e", f"PAWFLOW_CCI_PROXY_LOG={CCI_PROXY_LOG}",
         ]
         for key in (
             "PAWFLOW_CCI_PROXY_WIRE_LOG",
             "PAWFLOW_CCI_PROXY_WIRE_LOG_ALL",
             "PAWFLOW_CCI_PROXY_WIRE_LOG_PATHS",
+            "PAWFLOW_CCI_PROXY_LOG_MAX_BYTES",
+            "PAWFLOW_CCI_PROXY_LOG_CHECK_SECONDS",
         ):
             value = os.environ.get(key)
             if value:
@@ -321,7 +329,8 @@ class _InteractiveContainerSpawnMixin:
         r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "-d", "--user", "root", *env, name,
                             "bash", "-lc",
-                            "exec python3 /opt/pawflow/cc_interactive_proxy.py >> /tmp/cci_proxy.log 2>&1"],
+                            "exec python3 /opt/pawflow/cc_interactive_proxy.py "
+                            f">> {shlex.quote(CCI_PROXY_LOG)} 2>&1"],
             capture_output=True, text=True, timeout=10)
         if r.returncode != 0:
             raise RuntimeError(f"Failed to start CC interactive proxy: {r.stderr[:300]}")

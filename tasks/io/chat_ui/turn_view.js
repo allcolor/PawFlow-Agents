@@ -79,7 +79,11 @@ function turnViewRegisterUser(extra, element) {
   // message the reader has already moved past, states something false. A turn
   // that already ended on an error or a stop keeps that status -- only a turn
   // still claiming to work is closed here.
-  if (_turnOpen && _turnOpen.state) {
+  // Replaying an older history page must not stop the live turn currently on
+  // screen. The DOM reconciliation below rebuilds positional boundaries once
+  // the page is inserted; only a genuinely new live user message closes the
+  // current state here.
+  if (_turnOpen && _turnOpen.state && !(extra && extra._history)) {
     const previous = _turnOpen.state;
     _turnStopTransient(previous);
     if (previous.status === 'working') _turnUpdateStatus(previous, 'completed');
@@ -273,7 +277,7 @@ function _turnTabKeydown(state, key, ev) {
 
 function _turnTabForKind(kind) {
   if (kind === 'thinking' || kind === 'thinking_delta' || kind === 'thinking_content') return 'thinking';
-  if (kind === 'tool_call' || kind === 'tool_result') return 'tools';
+  if (kind === 'tool_call' || kind === 'tool_result' || kind === 'sub_agent_trace') return 'tools';
   if (kind === 'artifact') return 'artifacts';
   return 'messages';
 }
@@ -838,6 +842,13 @@ function turnViewReconcile() {
       continue;
     }
     if (_turnIsUserRow(el)) {
+      // A user boundary seen in the final chronological DOM closes the turn
+      // before it. This also settles a historical page that ended mid-turn,
+      // without touching the newest live turn (nothing follows that one).
+      if (state && state.status === 'working') {
+        _turnStopTransient(state);
+        _turnUpdateStatus(state, 'completed');
+      }
       // A user row closes whatever came before and opens the next turn. Its
       // block is built by the first row that follows: a user message nothing
       // followed is not given an empty one.

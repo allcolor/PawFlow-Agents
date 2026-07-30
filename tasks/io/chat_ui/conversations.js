@@ -583,7 +583,13 @@ function _renderHistory(data) {
   // meant a delegate ran, returned, and left nothing on screen but the result
   // message -- no box, and a stored trace rendered as an empty row. The box is
   // activity, so the turn view files it in the block like everything else.
-  if (typeof setDelegateMessageGrouping === 'function') setDelegateMessageGrouping(groupDelegateMessages);
+  if (typeof setDelegateMessageGrouping === 'function') {
+    // The delegate box is the simplified view's renderer for sub-agent
+    // activity, not an optional classic grouping. A persisted classic-mode
+    // choice of false would otherwise leave an empty stored trace and no live
+    // box, while the toggle itself is hidden in simplified mode.
+    setDelegateMessageGrouping(viewMode === 'simplified' ? true : groupDelegateMessages);
+  }
   updateViewMenuVisibility();
   updateViewMenuItem('technical', groupTechnicalMessages);
   updateViewMenuItem('task', groupTaskMessages);

@@ -780,6 +780,38 @@ test('live rows after a reload land in the reconciled turn', () => {
     'and no second block was invented for it');
 });
 
+// Loading an older page while the agent is still working temporarily replays
+// old user boundaries. Those boundaries must not complete the live block; the
+// final DOM pass restores the newest turn as the open one.
+test('loading older history does not complete the live turn', () => {
+  const e = env('simplified');
+  const liveUser = startTurn(e, 'u-live');
+  const liveAnswer = e.row('a-live');
+  liveAnswer.dataset.messageRole = 'assistant';
+  liveAnswer.dataset.rawText = 'still working';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a-live' }, liveAnswer);
+  const liveBlock = e.block();
+  eq(liveBlock.querySelector('.simple-turn-status').textContent, 'Working');
+
+  const oldUser = e.row('u-old');
+  oldUser.dataset.messageRole = 'user';
+  e.messages.insertBefore(oldUser, liveUser);
+  e.ctx.turnViewRegisterUser({ msg_id: 'u-old', _history: true }, oldUser);
+  const oldAnswer = e.row('a-old');
+  oldAnswer.dataset.messageRole = 'assistant';
+  oldAnswer.dataset.rawText = 'old answer';
+  e.messages.insertBefore(oldAnswer, liveUser);
+  e.ctx.turnViewIngest('assistant',
+    { msg_id: 'a-old', _history: true }, oldAnswer);
+
+  e.ctx.turnViewReconcile();
+  eq(liveBlock.querySelector('.simple-turn-status').textContent, 'Working',
+    'history replay did not stop the live block');
+  const late = e.row('c-live');
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c-live' }, late);
+  assert(late.parentNode !== e.messages, 'new live activity still enters that block');
+});
+
 // A delegate box is activity. In simplified mode it used not to be drawn at
 // all -- delegate grouping was filed with the classic-only view options and
 // forced off, so a sub-agent ran, returned, and left nothing on screen but its
@@ -789,11 +821,15 @@ test('a delegate box is filed in the block, not left beside it', () => {
   startTurn(e, 'u1');
   const box = e.row('d1');
   box.dataset.messageRole = 'sub_agent_trace';
-  eq(e.ctx.turnViewIngest('tool_call', {}, box), true);
+  // This is the role used by _renderHistoryRow. The live SSE group enters as a
+  // tool_call, so using that here would miss the reload regression.
+  eq(e.ctx.turnViewIngest('sub_agent_trace', { _history: true }, box), true);
   assert(box.parentNode !== e.messages, 'the box went into the block');
   assert(e.block(), 'the turn has a block');
   assert(String(box.parentNode.className).includes('simple-turn-panel-scroll'),
     'and the box sits in one of its panels');
+  assert(String(box.parentNode.parentNode.id).includes('-tools'),
+    'the historical delegate is in Tool calls, not Messages');
 });
 
 if (failures.length) {

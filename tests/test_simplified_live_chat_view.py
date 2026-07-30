@@ -304,6 +304,15 @@ def test_simplified_view_owns_accessible_tabs_and_terminal_handoff():
         assert contract in source
 
 
+def test_simplified_view_forces_delegate_boxes_when_classic_grouping_is_off():
+    source = (CHAT_UI / "conversations.js").read_text(encoding="utf-8")
+    contract = (
+        "setDelegateMessageGrouping(viewMode === 'simplified' ? true : "
+        "groupDelegateMessages)"
+    )
+    assert contract in source
+
+
 def test_show_file_artifact_parser_is_strict_and_dedupes_by_file_id():
     markdown = (CHAT_UI / "messages_markdown.js").read_text(encoding="utf-8")
     controller = (CHAT_UI / "turn_view.js").read_text(encoding="utf-8")

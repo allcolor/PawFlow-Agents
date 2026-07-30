@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.53] — 2026-07-30
+
+### Fixed
+
+- Loading an older history page in simplified view no longer completes the
+  newest live block or leaves a historical partial turn ticking forever.
+- Persisted delegate traces now reload in Tool calls, and simplified view always
+  renders delegate boxes even when classic delegate grouping was disabled.
+
 ## [1.0.0-beta.52] — 2026-07-29
 
 ### Fixed

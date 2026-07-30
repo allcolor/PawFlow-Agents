@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.57] — 2026-07-30
+
+### Fixed
+
+- A browser that cannot run says so instead of failing the build. Headless
+  Chromium never produces a DOM for a local file on the CI runners, and neither
+  extra flags nor a longer timeout changed that — it hung at 20 s, then at
+  120 s. The line is now drawn at the DOM: no DOM at all is an environment
+  verdict and skips, a DOM carrying an error is a behaviour verdict and still
+  fails. The verdict is remembered, so the file costs one 25 s wait instead of
+  four. The invariants that test asserted also run under Node in
+  `tests/js/turn_view_spec.js`, which needs no browser.
+
 ## [1.0.0-beta.56] — 2026-07-30
 
 ### Security

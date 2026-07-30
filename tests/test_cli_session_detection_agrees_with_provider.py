@@ -173,3 +173,68 @@ def test_both_cli_branches_go_through_the_one_helper():
     src = _p1_source()
     assert src.count("find_live_cli_session(") == 2   # the two call sites
     assert src.count("import find_live_cli_session") == 2
+
+
+# ── Same question means same policy AND same inputs ────────────────────────
+#
+# One helper is not agreement. The providers do not answer alike: codex takes
+# any compatible session, gemini refuses one when the stored slot is concrete,
+# because a slot that changed on purpose (rotation, removal) means the old
+# container holds the previous account's session. A rule baked into the helper
+# aligns one caller by breaking the other, so the policy belongs to the caller.
+#
+# And both providers read the stored pool index ONLY while they still hold a
+# session id. A caller that reads it unconditionally passes a concrete slot
+# where the provider passes -1, which flips the fallback and parts them again
+# -- in the opposite direction from the original bug.
+
+def test_a_concrete_slot_that_misses_does_not_borrow_another_ones_container():
+    """Gemini's rule. Without it we resurrect the previous account's session."""
+    reg = _Registry(exact={}, compatible=(("u", "conv", "agent", "svc", 3),
+                                          _Session()))
+    assert find_live_cli_session(reg, "u", "conv", "agent", "svc", 0,
+                                 allow_pool_fallback=False) is None
+    # ... and the exact lookup still happened, with the slot it was given.
+    assert reg.exact_keys_asked == [("u", "conv", "agent", "svc", 0)]
+
+
+def test_the_fallback_stays_available_to_the_caller_that_wants_it():
+    """Codex's rule, and the default: any compatible live session will do."""
+    reg = _Registry(exact={}, compatible=(("u", "conv", "agent", "svc", 3),
+                                          _Session()))
+    assert find_live_cli_session(reg, "u", "conv", "agent", "svc", 0) is not None
+    assert find_live_cli_session(reg, "u", "conv", "agent", "svc", 0,
+                                 allow_pool_fallback=True) is not None
+
+
+def test_gemini_reads_the_pool_index_only_while_it_holds_a_session():
+    src = _p1_source()
+    block = _branch(src, "elif st._is_gemini_acp:", "elif st._is_codex_app_server:")
+    assert 'if st._session_val and st._session_ver == "2":' in block, (
+        "a legacy-version id is no id at all -- the provider clears one "
+        "before it looks at the pool index")
+    assert "allow_pool_fallback=st._pool_idx < 0" in block
+
+
+def test_codex_reads_the_pool_index_only_while_it_holds_a_thread():
+    src = _p1_source()
+    block = _branch(src, "elif st._is_codex_app_server:")
+    assert "if st._session_val:" in block
+    assert "allow_pool_fallback=True" in block
+
+
+def test_the_providers_own_rules_are_what_the_context_phase_mirrors():
+    """Pin both provider rules: if one changes, the mirror above is stale and
+    this fails instead of drifting silently back into disagreement."""
+    from pathlib import Path
+    gem = Path("core/llm_providers/_gemini_stream.py").read_text(encoding="utf-8")
+    cdx = Path("core/llm_providers/_codex_app_stream.py").read_text(encoding="utf-8")
+
+    # Gemini guards the fallback on an unset slot; codex does not guard it.
+    assert "if live_session is None and resume_pool_idx < 0:" in gem
+    assert "if live_session is None and resume_pool_idx < 0:" not in cdx
+    assert "if live_session is None:\n                    compatible = live_reg.get_compatible(" in cdx
+
+    # Both read the stored slot only while they still hold an id.
+    assert "if session_id and conv_id and store is not None:" in gem
+    assert "if thread_id and conv_id and store is not None:" in cdx

@@ -24,12 +24,21 @@ logger = logging.getLogger(__name__)
 
 def find_live_cli_session(registry, user_id: str, conversation_id: str,
                           agent_key: str, service_id: str,
-                          pool_idx: int = -1):
+                          pool_idx: int = -1,
+                          allow_pool_fallback: bool = True):
     """The live session for this (user, conversation, agent, service), or None.
 
-    Exact key first, then the compatible lookup that ignores the pool index:
-    the stored index can be missing or stale while the process is very much
-    alive. Only a process that answers counts as a session.
+    Exact key first, then -- if the caller allows it -- the compatible lookup
+    that ignores the pool index: the stored index can be missing or stale
+    while the process is very much alive. Only a process that answers counts
+    as a session.
+
+    ``allow_pool_fallback`` is the CALLER's policy, never this helper's,
+    because the providers do not agree on it: codex takes any compatible
+    session, gemini only when the stored slot is missing -- a concrete index
+    that misses means the slot changed on purpose (rotation, slot removal),
+    and the old-slot container would resurrect the previous account's session.
+    Deciding here would align one caller by breaking the other.
 
     This is THE question the context phase and every CLI provider must answer
     the same way, and they did not: the providers asked their live registry,
@@ -40,6 +49,12 @@ def find_live_cli_session(registry, user_id: str, conversation_id: str,
     provider then found the live process, resumed, and threw all of it away.
     Every turn, because nothing on the reuse path wrote the id back.
 
+    Answering the same way also means asking with the same inputs: both
+    providers read the stored pool index ONLY when they still hold a session
+    id, so a caller that read it unconditionally would pass a concrete index
+    where the provider passes -1, and the two would part company again on the
+    fallback.
+
     Never raises: a registry that cannot answer means no session, which is the
     safe verdict -- it costs a context load, not a lost conversation.
     """
@@ -47,7 +62,7 @@ def find_live_cli_session(registry, user_id: str, conversation_id: str,
     try:
         session = registry.get(
             (user_id, conversation_id, agent_key, service_id, pool_idx))
-        if session is None:
+        if session is None and allow_pool_fallback:
             compatible = registry.get_compatible(
                 user_id, conversation_id, agent_key, service_id)
             session = compatible[1] if compatible else None

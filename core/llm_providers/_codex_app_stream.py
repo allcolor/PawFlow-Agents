@@ -199,6 +199,24 @@ class _CodexAppStreamMixin:
                              exc_info=True)
 
         if not is_reuse:
+            # We are about to launch a process, so this turn is a cold start
+            # and needs the full context. If what we hold is a resume delta --
+            # the context phase found a live process that has since gone --
+            # this raises and the turn is rebuilt as the cold start it is.
+            #
+            # It is asked HERE, before anything below is taken: the MCP token
+            # is minted a few lines down and the turn's try/finally, which
+            # revokes it and gives back the live turn lock, starts later
+            # still. An ephemeral call is exempt -- it builds its own full
+            # text and never carries a delta, but it clones a client that
+            # may.
+            if not is_ephemeral:
+                def _give_back_live_lock():
+                    if owns_live_lock and live_session is not None:
+                        live_session.turn_lock.release()
+
+                self._cli_require_cold_context(
+                    "codex-app", release=_give_back_live_lock)
             self._codex_setup_credentials(
                 workdir, pool_index=resume_pool_idx,
                 user_id=user_id, conversation_id=conv_id)
@@ -233,11 +251,6 @@ class _CodexAppStreamMixin:
             prompt_mode = "resume"
             initial_text = self._codex_app_resume_text(messages)
         else:
-            # We are about to launch a process, so this turn is a cold start
-            # and needs the full context. If what we hold is a resume delta --
-            # the context phase found a live process that has since gone --
-            # this raises and the turn is rebuilt as the cold start it is.
-            self._cli_require_cold_context("codex-app")
             if thread_id and conv_id and store is not None:
                 # Drop the pointer too: keeping it would resume the thread
                 # below and stack the full context on top of the replay.

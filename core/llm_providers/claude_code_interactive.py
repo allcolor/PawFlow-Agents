@@ -46,7 +46,18 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             raise LLMClientError("claude-code-interactive requires user_id, conversation_id and agent_name")
 
         pool = InteractiveClaudeCodePool.instance()
-        state = pool.ensure_started(self, model or "", user_id, conversation_id, agent_name)
+        # One rule for every CLI: launching a process is a cold start, and a
+        # cold start gets the full context. The pool calls this back only if
+        # it is actually going to launch, never on the reuse path.
+        # An ephemeral call is exempt: it builds its own full text, but it
+        # clones a client that may carry the marker.
+        _ephemeral = bool(call_ephemeral_stream if call_ephemeral_stream is not None
+                          else getattr(self, "_ephemeral_stream", False))
+        state = pool.ensure_started(
+            self, model or "", user_id, conversation_id, agent_name,
+            before_launch=None if _ephemeral else (
+                lambda: self._cli_require_cold_context(
+                    "claude-code-interactive")))
         pool.touch(state)
         self._cci_active_user_id = user_id
         self._cci_active_conversation_id = conversation_id

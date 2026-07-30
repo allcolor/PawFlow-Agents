@@ -11,7 +11,7 @@ import os
 import re
 from html import escape
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from core._llm_types import ColdStartRequired
@@ -159,7 +159,8 @@ def textualize_message(
 class LLMCliSharedMixin:
     """Methods shared across CLI and HTTP providers."""
 
-    def _cli_require_cold_context(self, provider: str) -> None:
+    def _cli_require_cold_context(self, provider: str, *,
+                                  release=None) -> None:
         """Refuse to launch a process holding a resume's context.
 
         Two cases, no third one: no process -> we launch -> cold start -> full
@@ -175,6 +176,14 @@ class LLMCliSharedMixin:
         yet, so the restart costs no tokens.
 
         An ordinary cold start carries no marker and this returns at once.
+
+        ``release`` is called just before raising. Callers reach this point
+        holding things their own ``finally`` gives back -- the live session's
+        turn lock, most of all -- and that ``finally`` belongs to a ``try``
+        this raise never enters. A caller that took something before asking
+        must hand ``release`` a callable that gives it back, or the lock is
+        held forever and the next turn on that session waits for a turn that
+        already ended.
         """
         if not getattr(self, "_pawflow_context_is_delta", False):
             return
@@ -185,6 +194,12 @@ class LLMCliSharedMixin:
             "[%s] the live process is gone; this turn has to launch one, so "
             "it needs the full context and not a resume delta — restarting "
             "the turn as a cold start", provider)
+        if release is not None:
+            try:
+                release()
+            except Exception:
+                logger.debug("[%s] cold-start release hook failed", provider,
+                             exc_info=True)
         raise ColdStartRequired(
             f"{provider}: cold start required, context was built as a delta")
 

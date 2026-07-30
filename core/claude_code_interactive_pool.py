@@ -150,7 +150,16 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         )
 
     def ensure_started(self, client, model: str, user_id: str,
-                       conversation_id: str, agent_name: str) -> InteractiveContainer:
+                       conversation_id: str, agent_name: str,
+                       before_launch=None) -> InteractiveContainer:
+        """Return the live container for this key, launching one if there is none.
+
+        ``before_launch`` is called at the instant this becomes a LAUNCH and
+        not a reuse, and may refuse it by raising. That is the one place a
+        caller can still say "the context I hold was built for a running
+        process, so do not start a fresh one with it" -- see
+        ``_cli_require_cold_context``. It is never called on the reuse path.
+        """
         idle_ttl = getattr(client, "timeout", None)
         self.ensure_sweeper(idle_ttl_seconds=int(idle_ttl) if idle_ttl else None)
         service_id = getattr(client, "_agent_service", "") or ""
@@ -162,6 +171,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 return existing
             if existing:
                 self._sessions.pop(key, None)
+            # About to launch. Ask before claiming a credential slot, so a
+            # refusal costs nothing and releases nothing.
+            if before_launch is not None:
+                before_launch()
             # Claim an exclusive credential slot BEFORE spawning: Anthropic
             # refresh_tokens are single-use, so two concurrent containers on one
             # slot race and invalidate the loser. Reserved under the lock so a

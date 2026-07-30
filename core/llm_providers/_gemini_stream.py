@@ -199,7 +199,18 @@ class _GeminiStreamMixin:
             # and needs the full context. If what we hold is a resume delta --
             # the context phase found a live process that has since gone --
             # this raises and the turn is rebuilt as the cold start it is.
-            self._cli_require_cold_context("gemini-acp")
+            #
+            # The live turn lock is already held here and the turn's
+            # try/finally has not started, so it is given back explicitly.
+            # An ephemeral call is exempt: it builds its own full text and
+            # never carries a delta, but it clones a client that may.
+            if not is_ephemeral:
+                def _give_back_live_lock():
+                    if owns_live_lock and live_session is not None:
+                        live_session.turn_lock.release()
+
+                self._cli_require_cold_context(
+                    "gemini-acp", release=_give_back_live_lock)
             if session_id:
                 logger.info(
                     "[gemini-acp-live] stored session %s has no live process; loading in fresh ACP process",

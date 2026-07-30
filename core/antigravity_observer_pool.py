@@ -132,7 +132,16 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         return state
 
     def ensure_started(self, client, model: str, user_id: str,
-                       conversation_id: str, agent_name: str) -> AntigravityObserverSession:
+                       conversation_id: str, agent_name: str,
+                       before_launch=None) -> AntigravityObserverSession:
+        """Return the live session for this key, launching one if there is none.
+
+        ``before_launch`` is called at the instant this becomes a LAUNCH and
+        not a reuse, and may refuse it by raising -- see
+        ``_cli_require_cold_context``. It is never called on the reuse path,
+        and it runs before the stale session is killed, so a refusal changes
+        nothing.
+        """
         service_id = getattr(client, "_agent_service", "") or ""
         key = (user_id, conversation_id, agent_name, service_id)
         stale = None
@@ -144,6 +153,8 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             if existing:
                 self._sessions.pop(key, None)
                 stale = existing
+        if before_launch is not None:
+            before_launch()
         if stale:
             logger.info("Restarting stale Antigravity interactive session %s", stale.name)
             self.kill(stale)

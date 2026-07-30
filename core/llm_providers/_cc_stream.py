@@ -272,9 +272,20 @@ class _CCStreamMixin:
                 raise
         else:
             st._owns_turn_lock = False
+            # No live process, so this turn LAUNCHES one -- and launching is a
+            # cold start, exactly like every other CLI. claude-code does not
+            # resume from disk any more: a fresh process gets the full
+            # PawFlow context, never `--resume` plus a delta. The stored
+            # session id describes a process that is gone; keeping it here
+            # would replay CC's own jsonl on top of the context we are about
+            # to send, and made the turn depend on a file whose path we
+            # re-derive and whose validity only CC can judge.
+            if not st._is_ephemeral:
+                self._cli_require_cold_context("claude-code")
+            st.session_id = ""
             st.proc, self._pool_container_name, st._mcp_internal_token = (
                 self._spawn_cc_stream(st.workdir, st.user_id, st.conv_id, st.agent_name,
-                                      st.session_id, st.model,
+                                      st.model,
                                       ephemeral_stream=st._is_ephemeral))
 
         # Multi-agent catch-up: when resuming a session, inject messages

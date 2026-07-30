@@ -465,10 +465,12 @@ class LLMClaudeCodeMixin(
         `cwd=/cc_sessions/<conv>/<agent>`, so the key becomes
         `-cc-sessions-<conv>-<agent>`.
 
-        If this derivation drifts from CC's real algorithm, `--resume`
-        would silently fall through to a fresh NEW session; the
-        file_exists guard in _stream_claude_code drops --resume in that
-        case rather than losing history without warning.
+        Used to LOCATE a live session's jsonl -- checking whether CC has
+        read a preempt off stdin -- never to decide whether a session can be
+        continued. Nothing resumes from that file: a launch is a cold start
+        and receives the full PawFlow context. So a derivation that drifts
+        from CC's real algorithm costs a preempt verdict, not a
+        conversation.
         """
         rel = os.path.relpath(workdir, _get_sessions_base()).replace(
             "\\", "/").split("/", 1)[-1]
@@ -634,7 +636,7 @@ class LLMClaudeCodeMixin(
             return ""
 
     def _spawn_cc_stream(self, workdir: str, user_id: str, conv_id: str,
-                         agent_name: str, session_id: str, model,
+                         agent_name: str, model,
                          *, ephemeral_stream: bool = False):
         """Spawn a fresh Claude Code subprocess (CC container exec + CLI).
 
@@ -642,9 +644,11 @@ class LLMClaudeCodeMixin(
         can skip spawning and pull proc + mcp token from a cached session.
         This is a pure move; behavior is identical when called.
 
-        Writes .mcp.json + mints an internal-auth token, computes the
-        effective --resume session id (dropped if the jsonl is missing), builds
-        the CLI command, and launches via the pool.
+        Writes .mcp.json + mints an internal-auth token, builds the CLI
+        command and launches via the pool. The session it starts is always a
+        NEW one: spawning means there was no live process, which makes this a
+        cold start, and a cold start receives the full PawFlow context. There
+        is no `--resume` path -- see the caller.
 
         Side effects:
             - self._claude_proc  (unless _ephemeral_stream)
@@ -671,34 +675,7 @@ class LLMClaudeCodeMixin(
             _container_workdir = f"/cc_sessions/{_rel_no_user}"
             _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
 
-        # Gate --resume on the jsonl actually existing at the expected
-        # path. If it doesn't, CC would silently create a NEW empty
-        # session under the same sid and we'd lose all history without
-        # any error. Fall back to a true NEW session (drop --resume),
-        # which is a well-defined state the caller can detect via the
-        # SESSION MISMATCH check downstream.
-        _effective_session_id = session_id
-        _expected_session_file = ""
-        _exists = False
-        if session_id:
-            _proj_key = self._cc_project_key(workdir)
-            _expected_session_file = os.path.join(
-                workdir, "projects", _proj_key, f"{session_id}.jsonl")
-            _exists = os.path.exists(_expected_session_file)
-            _size = os.path.getsize(_expected_session_file) if _exists else 0
-            if _exists:
-                logger.info(
-                    "claude-code RESUME: session_id=%s file_size=%d path=%s",
-                    session_id, _size, _expected_session_file)
-            else:
-                logger.warning(
-                    "claude-code NEW (resume jsonl MISSING at expected path): "
-                    "session_id=%s expected=%s — dropping --resume, "
-                    "starting fresh CC session",
-                    session_id, _expected_session_file)
-                _effective_session_id = ""
-
-        cmd = self._build_claude_cmd(model, _effective_session_id,
+        cmd = self._build_claude_cmd(model,
                                      mcp_config_path=_mcp_arg,
                                      workdir=workdir)
 

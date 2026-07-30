@@ -676,6 +676,16 @@ def _updater_script(working_dir: str, pull_source: bool) -> str:
     that builds from source has nothing to pull and must not fail on that.
     ``up -d --build`` then covers both: it rebuilds what is buildable and
     recreates only the services whose image or config actually changed.
+
+    The flag is probed rather than tried-and-fallen-back-from. The old shape,
+    ``pull --ignore-buildable || pull || true``, turned two failures into a
+    success: a registry that was unreachable, a login that had expired, a rate
+    limit -- all of it swallowed, and ``up`` then cleanly restarted the image
+    already on the host while the UI reported the update as done. With the
+    probe, a real pull failure stops the update on a compose that supports the
+    flag, and only the legacy fallback -- where a source-built deployment and a
+    failed pull are genuinely indistinguishable -- is still tolerated, and says
+    so.
     """
     lines = [
         "set -eu",
@@ -687,7 +697,18 @@ def _updater_script(working_dir: str, pull_source: bool) -> str:
         # being merged behind the operator's back.
         lines.append("git pull --ff-only")
     lines.extend([
-        "docker compose pull --ignore-buildable || docker compose pull || true",
+        "if docker compose pull --help 2>/dev/null | grep -q -- --ignore-buildable; then",
+        # Supported: buildable services are skipped, so anything left that
+        # fails to pull is a real failure and must stop the update.
+        "  docker compose pull --ignore-buildable",
+        "else",
+        # Legacy compose: this pull also tries the services built from source,
+        # so a failure here does not tell us which of the two happened.
+        "  docker compose pull ||",
+        "    echo 'WARNING docker compose pull failed; if this deployment does"
+        " not build from source, the server is about to restart on the image"
+        " it already has' >&2",
+        "fi",
         "docker compose up -d --build",
     ])
     return "\n".join(lines)
@@ -760,19 +781,37 @@ def _artifact_refresh_lines(image: str, target_dir: str,
         "_pf_refresh_artifacts() (",
         "  set -eu",
         f"  mkdir -p {quoted} || exit 1",
+        # Copy everything out of the image FIRST, into a staging directory
+        # beside the target, and only swap once every required artifact is
+        # there. Deleting each artifact just before copying its replacement
+        # meant one failed `docker cp` -- a missing path, a full disk, a
+        # daemon that went away mid-copy -- left the operator's installation
+        # with that artifact simply gone. Staging is inside the target so the
+        # swap is a rename on the same filesystem, not a second copy that can
+        # fail halfway too.
+        f'  _stage={quoted}/.pawflow-refresh.$$',
+        '  rm -rf "$_stage" || exit 1',
+        '  mkdir -p "$_stage" || exit 1',
         f'  _cid="$(docker create {shlex.quote(image)} true)" || exit 1',
         '  [ -n "$_cid" ] || exit 1',
-        "  trap 'docker rm -f \"$_cid\" >/dev/null 2>&1 || true' EXIT",
+        "  trap 'docker rm -f \"$_cid\" >/dev/null 2>&1 || true; "
+        "rm -rf \"$_stage\" >/dev/null 2>&1 || true' EXIT",
         f"  for _rel in {required}; do",
-        f'    mkdir -p {quoted}/"$(dirname "$_rel")" || exit 1',
-        f'    rm -rf {quoted}/"$_rel" || exit 1',
-        f'    docker cp "$_cid:/app/$_rel" {quoted}/"$_rel" || exit 1',
+        '    mkdir -p "$_stage/$(dirname "$_rel")" || exit 1',
+        '    docker cp "$_cid:/app/$_rel" "$_stage/$_rel" || exit 1',
         "  done",
         f"  for _rel in {optional}; do",
-        f'    mkdir -p {quoted}/"$(dirname "$_rel")"',
-        f'    rm -rf {quoted}/"$_rel"',
-        f'    docker cp "$_cid:/app/$_rel" {quoted}/"$_rel" 2>/dev/null ||',
+        '    mkdir -p "$_stage/$(dirname "$_rel")"',
+        '    docker cp "$_cid:/app/$_rel" "$_stage/$_rel" 2>/dev/null ||',
         '      echo "WARNING this server image does not carry $_rel" >&2',
+        "  done",
+        # Nothing has been destroyed up to here. From here on, each swap is a
+        # delete immediately followed by a rename on the same filesystem.
+        f"  for _rel in {required} {optional}; do",
+        '    [ -e "$_stage/$_rel" ] || continue',
+        f'    mkdir -p {quoted}/"$(dirname "$_rel")" || exit 1',
+        f'    rm -rf {quoted}/"$_rel" || exit 1',
+        f'    mv "$_stage/$_rel" {quoted}/"$_rel" || exit 1',
         "  done",
         f"  chmod +x {quoted}/scripts/*.sh 2>/dev/null || true",
         ")",

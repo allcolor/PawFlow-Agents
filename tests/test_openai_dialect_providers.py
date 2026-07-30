@@ -71,6 +71,50 @@ def test_a_complete_endpoint_url_is_left_alone():
     assert openai_dialects.endpoint_path("azure-openai", full, "m", _cfg({})) == ""
 
 
+# ── The request line the endpoint suffix is pasted into ──────────────
+#
+# `endpoint_path` returning "" for a complete URL is only half the contract:
+# the caller then has to build a request line that still carries what the base
+# URL said. Rebuilt from the path alone, the mandatory api-version was dropped
+# and Azure rejected every request.
+
+
+def test_a_complete_azure_url_keeps_its_api_version():
+    from core.llm_providers.cli_shared import request_path
+
+    full = ("https://res.openai.azure.com/openai/deployments/d"
+            "/chat/completions?api-version=2024-10-21")
+
+    assert request_path(full, "") == (
+        "/openai/deployments/d/chat/completions?api-version=2024-10-21")
+
+
+def test_a_suffix_that_carries_its_own_version_is_not_doubled():
+    from core.llm_providers.cli_shared import request_path
+
+    suffix = openai_dialects.endpoint_path(
+        "azure-openai", "https://res.openai.azure.com", "m", _cfg({}))
+
+    line = request_path("https://res.openai.azure.com", suffix)
+    assert line.count("api-version=") == 1
+    assert line == ("/openai/deployments/m/chat/completions"
+                    "?api-version=2024-10-21")
+
+
+def test_a_plain_base_url_is_unchanged():
+    from core.llm_providers.cli_shared import request_path
+
+    assert request_path("https://api.openai.com",
+                        "/v1/chat/completions") == "/v1/chat/completions"
+    assert request_path("https://api.z.ai/api/paas/v4",
+                        "/chat/completions") == "/api/paas/v4/chat/completions"
+    # No suffix and no query: the base URL is already the whole endpoint, and
+    # it must not grow a trailing slash.
+    assert request_path(
+        "https://res.openai.azure.com/openai/deployments/d/chat/completions",
+        "") == "/openai/deployments/d/chat/completions"
+
+
 def test_azure_sends_the_key_in_its_own_header_never_as_a_bearer():
     headers = openai_dialects.auth_headers("azure-openai", "secret-key")
 

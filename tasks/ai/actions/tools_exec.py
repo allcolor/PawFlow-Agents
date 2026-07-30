@@ -9,12 +9,99 @@ from typing import Dict, Any, List, Optional
 from core import FlowFile
 from core.llm_client import LLMMessage, LLMClient
 from core.tool_registry import ToolRegistry
+from tasks.ai.actions._conv_base import _gate_conversation_action
 
 logger = logging.getLogger(__name__)
 
 
+# What each action needs on the conversation it names.
+#
+# This cluster does not read a conversation, it *drives* it: it approves the
+# tools the agent is waiting on, kills them, detaches them, and runs new ones
+# on the conversation's relay. None of that was gated. The SSE stream hands
+# approval requests to anyone with read access (agent_sse_stream requires only
+# read), so a read collaborator could answer them -- approve with
+# `always_allow`, persist the permission, then interrupt or detach whatever
+# ran next. Driving is a write.
+_ACTION_ROLES = {
+    "exec_inline": "write",        # a shell command on the conversation's relay
+    "call_tool": "write",          # runs a tool and writes both messages
+    "create_dynamic_tool": "write",
+    "tool_approval_result": "write",
+    "kill_tool": "write",
+    "background_tool": "write",
+    "cancel_bg_tool": "write",
+    "list_bg_tools": "read",
+    "list_tools": "read",
+}
+
+# Handled here but not scoped to a conversation. Listed so the completeness
+# test can tell "reviewed, needs no conversation check" from "forgotten".
+_UNSCOPED_ACTIONS = frozenset({
+    "install_tool",      # writes the requester's own user-scoped tool
+    "uninstall_tool",    # deletes the requester's own user-scoped tool
+    "tool_metrics",      # process-wide counters, no conversation content
+    "get_tool_schemas",  # static tool definitions
+})
+
+
+# Actions whose real target is a tc_id, not the conversation_id beside it.
+_TC_TARGETED_ACTIONS = frozenset({
+    "kill_tool", "background_tool", "cancel_bg_tool",
+})
+
+
+def _tc_conversation(tc_id: str, claimed_cid: str) -> str:
+    """The conversation that actually owns `tc_id`.
+
+    Both registries are global and keyed by tc_id alone, so checking the
+    conversation_id in the body would authorize the wrong thing: a caller can
+    pair a conversation they may write to with someone else's tc_id and kill
+    that. Resolve the owner and check against it.
+
+    An unknown tc_id falls back to the claimed conversation: there is nothing
+    in flight to act on, and the handler's own "not_in_flight" answer is the
+    honest one.
+    """
+    try:
+        from services.tool_relay_service import ToolRelayService
+        owner = ToolRelayService.conversation_for_request(tc_id)
+        if owner:
+            return owner
+    except Exception:
+        logger.debug("relay owner lookup failed for tc %s", tc_id[:8],
+                     exc_info=True)
+    try:
+        import core.background_tool as _bg
+        owner = _bg.conversation_for(tc_id)
+        if owner:
+            return owner
+    except Exception:
+        logger.debug("background owner lookup failed for tc %s", tc_id[:8],
+                     exc_info=True)
+    return claimed_cid
+
+
 def _handle_tools_exec(self, action, body, store, user_id, flowfile):
     """Handle tools exec actions. Returns [flowfile] or None."""
+    _gate_body = body
+    if action in _TC_TARGETED_ACTIONS:
+        _owner_cid = _tc_conversation(
+            str(body.get("tc_id", "") or ""),
+            str(body.get("conversation_id", "") or ""))
+        _gate_body = {**body, "conversation_id": _owner_cid}
+    elif action == "tool_approval_result":
+        # Same reasoning: the request_id names the conversation whose agent is
+        # blocked, and that is the one the answer has to be authorized on.
+        from core.tool_approval import ToolApprovalGate as _TAG
+        _owner_cid = (_TAG.conversation_for_request(
+            str(body.get("request_id", "") or ""))
+            or str(body.get("conversation_id", "") or ""))
+        _gate_body = {**body, "conversation_id": _owner_cid}
+    _denied = _gate_conversation_action(_ACTION_ROLES, action, _gate_body,
+                                        store, user_id, flowfile)
+    if _denied is not None:
+        return _denied
 
     if action == "exec_inline":
         # !cmd — execute shell command on relay, return output to client

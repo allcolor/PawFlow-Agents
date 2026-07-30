@@ -143,6 +143,12 @@ def test_resolve_runnable_skill_prompt_delivers_body_verbatim(monkeypatch):
     from core import skill_resolver
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         def get_any(self, rtype, name, user_id, conversation_id=""):
             assert rtype == "skill"
             assert name == "review-pr"
@@ -181,6 +187,12 @@ def test_run_skill_action_queues_rendered_prompt_for_selected_agent(monkeypatch)
             return name
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         def get_extra(self, cid, key, user_id=""):
             assert cid == "conv1"
             assert key == "active_resources"
@@ -255,6 +267,12 @@ def test_skill_add_rejects_existing_skill_and_update_requires_existing(monkeypat
         pass
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         def get_extra(self, *args, **kwargs):
             return {}
 
@@ -319,6 +337,12 @@ def test_skill_update_notifies_assigned_agents(monkeypatch):
         pass
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         def append_message(self, conv_id, msg, agent_name="", user_id=""):
             appended.append((conv_id, msg, agent_name, user_id))
 
@@ -400,6 +424,12 @@ def test_delete_skill_removes_agent_assignments(monkeypatch):
         pass
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         def append_message(self, conv_id, msg, agent_name="", user_id=""):
             appended.append((conv_id, msg, agent_name, user_id))
 
@@ -454,6 +484,12 @@ def test_unassign_skill_matches_object_entries(monkeypatch):
         pass
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         pass
 
     class ResourceStore:
@@ -493,6 +529,12 @@ def test_assign_skill_does_not_duplicate_object_entries(monkeypatch):
         pass
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         pass
 
     existing_assignment = {"name": "review-pr", "params": {"mode": "fast"}}
@@ -530,6 +572,12 @@ def test_list_resources_normalizes_object_assigned_skills(monkeypatch):
             return active
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         def get_extra(self, conv_id, key):
             return {"agent": "assistant"} if key == "active_resources" else None
 
@@ -578,6 +626,12 @@ def test_list_skills_marks_current_agent_assignments(monkeypatch):
         pass
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         def get_extra(self, conv_id, key):
             return {"agent": "assistant"} if key == "active_resources" else None
 
@@ -625,6 +679,12 @@ def test_resolve_skill_prompts_delivers_body_verbatim(monkeypatch):
     from core import skill_resolver
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         def get_any(self, rtype, name, user_id, conversation_id=""):
             return {
                 "name": "deploy",
@@ -657,6 +717,12 @@ def test_resolve_skill_prompts_inlines_and_lists_bundled_assets(tmp_path, monkey
     (skill_dir / "scripts" / "big.txt").write_text(big)
 
     class Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs, so a store standing in for ConversationStore has to answer it.
+        # alice owns conv1 in every case here.
+        def resolve_owner(self, cid):
+            return "alice"
+
         def get_any(self, rtype, name, user_id, conversation_id=""):
             return {
                 "name": "deploy",

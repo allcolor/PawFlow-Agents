@@ -105,9 +105,9 @@ class LLMOpenaiMixin:
         parsed = urlparse(base_url)
         host = parsed.hostname
         port = parsed.port
-        full_path = (
-            parsed.path.rstrip("/") + self._openai_endpoint_path(base_url, model)
-        ).replace("//", "/")
+        from core.llm_providers.cli_shared import request_path
+        full_path = request_path(
+            base_url, self._openai_endpoint_path(base_url, model))
         safe_base_url = re.sub(r"(/relay-proxy/[^/]+/)[^/]+/", r"\1<token>/", base_url or "")
 
         if parsed.scheme == "https":

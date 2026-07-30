@@ -399,12 +399,18 @@ def test_import_action_blocks_human_review_without_force(monkeypatch):
         lambda **kwargs: result_payload,
     )
 
+    class _Store:
+        # The dispatcher resolves the conversation's owner before the handler
+        # runs; alice owns conv1 here.
+        def resolve_owner(self, cid):
+            return "alice"
+
     ff = FlowFile(content=b"")
     result = _handle_agent_resource(object(), "import_skill_marketplace", {
         "conversation_id": "conv1",
         "source": "codex",
         "ref": "review-pr",
-    }, object(), "alice", ff)
+    }, _Store(), "alice", ff)
 
     assert result == [ff]
     body = json.loads(ff.get_content().decode("utf-8"))

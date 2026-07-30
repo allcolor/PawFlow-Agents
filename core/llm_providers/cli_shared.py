@@ -14,6 +14,26 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 
+def request_path(base_url: str, endpoint_path: str = "") -> str:
+    """The request line for ``base_url`` plus an endpoint suffix.
+
+    Rebuilding it from ``parsed.path`` alone dropped the base URL's query
+    string. That is fatal for Azure: an operator who pastes the complete
+    target from the portal gets
+    ``.../chat/completions?api-version=2024-10-21``, the suffix is then empty
+    because the path already names the endpoint, and the version -- which
+    Azure requires -- lived only in the query. Every request came back
+    rejected.
+
+    A suffix that carries its own query wins; there is only ever one.
+    """
+    parsed = urlparse(base_url or "")
+    suffix, _, suffix_query = (endpoint_path or "").partition("?")
+    path = (parsed.path.rstrip("/") + suffix).replace("//", "/") or "/"
+    query = suffix_query or parsed.query
+    return f"{path}?{query}" if query else path
+
+
 # ── Tool-call synopsis helpers ───────────────────────────────────
 # Shared by _serialize_messages_for_cli (CC prompt) AND the compaction
 # summarizer input (old_conversation). Without them, assistant messages
@@ -315,7 +335,8 @@ class LLMCliSharedMixin:
             # Strip control characters that some LLM APIs can't parse
             json_body = self._clean_control_chars(raw_json).encode("utf-8")
             headers["Content-Length"] = str(len(json_body))
-            full_path = (parsed.path.rstrip("/") + "/" + path.lstrip("/")).replace("//", "/")
+            full_path = request_path(
+                base_url, ("/" + path.lstrip("/")) if path else "")
             conn.request("POST", full_path, body=json_body, headers=headers)
             response = conn.getresponse()
             response_body = response.read().decode("utf-8")

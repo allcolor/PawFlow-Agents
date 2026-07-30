@@ -46,8 +46,14 @@ def test_bridge_tries_the_name_as_written_before_lowering_it():
     # The rewrite must not happen before the call: the name is only lowered
     # after the server has said it does not know it.
     assert "_lower_fallback = tool_name.lower()" in src
-    assert '"unknown tool" in result' in src
     assert "tool_name=_lower_fallback" in src
+    # And "said it does not know it" means the routing error itself, not the
+    # words appearing anywhere in a perfectly good result -- a grep hit, a log
+    # line, a doc page. Matching the bare substring threw that result away and
+    # ran the tool a second time, side effects and all.
+    assert '"unknown tool" in result' not in src
+    assert 'result.startswith("Error:")' in src
+    assert 'f"unknown tool \'{tool_name}\'" in result' in src
 
 
 def test_the_camelcase_rewrite_is_no_longer_unconditional():

@@ -551,6 +551,60 @@ class FileStore:
     # ── Share ────────────────────────────────────────────────────
 
 
+    def reassign_conversation_owner(self, conversation_id: str,
+                                    old_user_id: str,
+                                    new_user_id: str) -> int:
+        """Follow a conversation that changed hands. Returns files moved.
+
+        A file is addressed by ``<base>/<user_id>/<conversation_id>/`` and its
+        entry carries the same user_id. When a departed owner's conversation is
+        handed to a collaborator, only the conversation directory used to move:
+        every attachment stayed filed under an account that no longer exists,
+        so the conversation came up with its history intact and its files gone.
+
+        Best effort per file: one that cannot be moved keeps its old location
+        and its old owner, which is still readable, rather than losing its
+        entry.
+        """
+        conversation_id = str(conversation_id or "").strip()
+        old_user_id = str(old_user_id or "").strip()
+        new_user_id = str(new_user_id or "").strip()
+        if not conversation_id or not old_user_id or not new_user_id:
+            return 0
+        if old_user_id == new_user_id:
+            return 0
+        moved = 0
+        with self._store_lock:
+            self._ensure_loaded()
+            for fid, entry in self._entries.items():
+                if entry.get("conversation_id") != conversation_id:
+                    continue
+                if entry.get("user_id") != old_user_id:
+                    continue
+                src = Path(entry.get("path", ""))
+                try:
+                    scope_dir = self._scope_dir(new_user_id, conversation_id)
+                    bucket = src.parent.name if src.parent.name.isdigit() else "0000"
+                    dest_dir = scope_dir / bucket
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    dest = dest_dir / src.name
+                    if src.is_file() and not dest.exists():
+                        os.replace(src, dest)
+                    entry["user_id"] = new_user_id
+                    if dest.exists():
+                        entry["path"] = str(dest)
+                    moved += 1
+                except Exception:
+                    logger.warning(
+                        "FileStore: could not move %s to %s; it stays with %s",
+                        fid, new_user_id, old_user_id, exc_info=True)
+            if moved:
+                self._save_index()
+        if moved:
+            logger.info("FileStore: moved %d files of %s to %s",
+                        moved, conversation_id[:8], new_user_id)
+        return moved
+
     def count(self) -> int:
         with self._store_lock:
             self._ensure_loaded()

@@ -553,10 +553,63 @@ best-effort owner map).
    - `_livekit_sessions.py` still used owner-equality, which excluded write
      collaborators from realtime rather than leaking anything. A non-owner is
      now allowed exactly when `require_write` allows them.
+   - **And it missed two more**, found by an external review of
+     beta.45→beta.53 — the lesson recorded above was the right one and had
+     not been applied: the inventory still was not rebuilt from
+     `_ACTION_HANDLERS`. `tools_exec` (13 actions) and `agent_resource`
+     (k1–k5, ~57 actions plus the `pfp_*` family) had no table.
+     `agent_resource` is the worse of the two: conversation-scoped agents,
+     skills, prompts, MCPs and tasks are filed under the owner — which
+     `_conv_scope_user` resolves from the id, by the design three bullets up —
+     so a stranger who knew a conversation id could list, read, overwrite or
+     delete everything it runs on, and repoint it at another agent.
+     `tools_exec` is the sharper one: `agent_sse_stream` requires only *read*
+     to receive an approval request, and nothing gated the answer, so a
+     read-only collaborator could approve a tool with `always_allow`, persist
+     the permission, then kill or detach whatever ran next.
+     - Two of these actions cannot be gated on the `conversation_id` in the
+       body at all: a `tc_id` and an approval `request_id` are global and name
+       their own target, so pairing a conversation the caller may write to
+       with someone else's id would authorize the wrong thing. Both registries
+       now answer *which conversation owns this id*, and the check lands
+       there. That is the same shape as `loop_stop`, and the third time it has
+       come up — an action keyed by anything other than a conversation needs
+       the conversation resolved, not asserted.
+     - `pfp_*` is gated only when `scope` aims at the conversation. The UI
+       attaches `conversation_id` to every call it makes, and a package
+       installed at user scope is the requester's own; gating on the
+       conversation would refuse a user their own packages whenever the
+       conversation is not theirs, or is not yet saved.
+     - The completeness test had to learn two shapes the earlier ones did not
+       cover: `if action in ("a", "b")` (four skill actions were invisible to
+       a scan for `==` alone) and the `pfp_` prefix. It also has to anchor the
+       match on the left, or `pfp_action == "install"` reads as a top-level
+       action that will never be in the table.
 6. ~~**Owner reassignment**~~ — **done**. `ConversationStore.reassign_owner`
    does the check-then-rename under `_get_conv_lock`, so two collaborators
    writing at once produce exactly one move; the loser takes the
-   `src == dest` exit. `require_write` **and the message-submit gate** trigger
+   `src == dest` exit — **but only when both move it to the same place**. Two
+   *different* collaborators, each having resolved the departed owner before
+   either took the lock, moved it twice: the second took it from the first,
+   who carried on writing against an access naming a directory the
+   conversation had already left. The `src == dest` exit was never a
+   substitute for a compare-and-swap, and is not one now: `reassign_owner`
+   takes the owner the move was decided on, re-reads the current owner under
+   the lock, and refuses a move whose premise has expired. A refused move
+   re-resolves rather than returning the stale access.
+   - **A conversation is not only its directory.** The move took the
+     conversation and left everything filed *under its owner*: its own agents,
+     skills, prompts, MCPs and tasks under
+     `data/repository/<rtype>/users/<owner>/<cid>/`, and its attachments under
+     `<files>/<owner>/<cid>/`. Both are resolved through whoever owns the
+     conversation *now*, so this did not merely orphan them — it made them
+     unreachable, and the collaborator got a conversation with its history
+     intact and its agent, skills and files gone. Both follow it, after the
+     rename and outside the lock: the move that matters has already succeeded,
+     and a side directory that cannot follow is a warning rather than a
+     rollback of a rename that worked.
+
+   `require_write` **and the message-submit gate** trigger
    it for an accepted `write` collaborator of an owner that no longer
    resolves — sending a message is the most common write there is, so leaving
    it out made the recovery arrive at an arbitrary later moment. Neither a

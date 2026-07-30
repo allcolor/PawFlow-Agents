@@ -20,10 +20,56 @@ from core._conversation_store_base import (  # noqa: F401,E402
     _CTX_CACHE_MAX_MESSAGES, _CTX_CACHE_MAX_CHARS, _CTX_CACHE_MAX_CONVS, _CONV_LOCK_DIAG_MS, _GIT_RETENTION_DAYS, _GIT_RETENTION_COMMITS, _GIT_RETENTION_INTERVAL_SEC, _HOT_METADATA_FLUSH_INTERVAL_SEC, _HOT_METADATA_FLUSH_MSG_DELTA, _HOT_METADATA_KEYS, _HOT_METADATA_EXECUTOR, _GIT_RETENTION_EXECUTOR, _GIT_RETENTION_RUNNING, _GIT_RETENTION_RUNNING_LOCK, ConversationLockedError, TRANSCRIPT_GENERATION, _ConversationTimedRLock)
 
 
+def _move_conversation_resources(cid: str, old_owner: str,
+                                 new_owner: str) -> int:
+    """Move a conversation's own resources with it. Returns dirs moved.
+
+    A conversation-scoped agent, skill, prompt, MCP or task lives at
+    ``data/repository/<rtype>/users/<owner>/<cid>/``, and resolution finds it
+    by looking up the conversation's CURRENT owner. Moving only the
+    conversation directory therefore did not leave those resources behind so
+    much as make them unreachable: the conversation came back up unable to
+    find the agent it runs on.
+
+    Best effort, and deliberately after the conversation itself has moved: a
+    resource that cannot follow is logged and skipped rather than rolling back
+    a rename that has already succeeded.
+    """
+    if not cid or not old_owner or not new_owner or old_owner == new_owner:
+        return 0
+    moved = 0
+    try:
+        root = _paths.REPOSITORY_DIR
+        rtype_dirs = [d for d in root.iterdir() if d.is_dir()] if root.is_dir() else []
+    except OSError:
+        logger.debug("repository scan failed for %s", cid[:8], exc_info=True)
+        return 0
+    for rtype_dir in rtype_dirs:
+        src = rtype_dir / "users" / old_owner / cid
+        if not src.is_dir():
+            continue
+        dest = rtype_dir / "users" / new_owner / cid
+        try:
+            if dest.exists():
+                logger.warning(
+                    "[convstore] %s resources of %s already exist under %s; "
+                    "left in place", rtype_dir.name, cid[:8], new_owner)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.rename(src, dest)
+            moved += 1
+        except OSError:
+            logger.warning(
+                "[convstore] could not move %s resources of %s to %s",
+                rtype_dir.name, cid[:8], new_owner, exc_info=True)
+    return moved
+
+
 class _CsMaintMixin:
     """delete/edit/truncate/list/cleanup."""
 
-    def reassign_owner(self, cid: str, new_user_id: str) -> bool:
+    def reassign_owner(self, cid: str, new_user_id: str,
+                       expected_current_owner: Optional[str] = None) -> bool:
         """Move a conversation into ``new_user_id``'s directory.
 
         The one place conversation sharing relaxes its "storage layout never
@@ -37,6 +83,15 @@ class _CsMaintMixin:
         exit. Never overwrites: a destination that already exists means some
         other conversation owns that path, and losing it would be worse than
         refusing the move.
+
+        ``expected_current_owner`` is the compare half of a compare-and-swap,
+        and the ``src == dest`` exit is not a substitute for it: that only
+        catches two collaborators moving the conversation to the SAME place.
+        Two different ones, both having resolved the departed owner before
+        either took the lock, moved it twice -- the second took it from the
+        first, who carried on writing against an access that named a directory
+        the conversation had already left. Under the lock the current owner is
+        read again, and a move whose premise has expired is refused.
         """
         new_user_id = str(new_user_id or "").strip()
         if not cid or not new_user_id:
@@ -51,6 +106,15 @@ class _CsMaintMixin:
                     return False
                 if not src.is_dir():
                     return False
+                previous_owner = str(self.resolve_owner(cid) or "").strip()
+                if expected_current_owner is not None:
+                    expected = str(expected_current_owner or "").strip()
+                    if previous_owner != expected:
+                        logger.info(
+                            "[convstore] reassign %s: owner is now %s, not the "
+                            "%s this move was decided on; refusing",
+                            cid[:8], previous_owner or "?", expected or "?")
+                        return False
                 dest = (self._store_dir / self._safe_name(new_user_id)
                         / self._safe_name(cid))
                 if src == dest:
@@ -76,6 +140,22 @@ class _CsMaintMixin:
         with self._cache_lock:
             self._cache.pop(cid, None)
         self._reload_cache(cid)
+        # A conversation is not only its directory. Its own agents, skills,
+        # prompts, MCPs and tasks are filed under the OWNER, and so are its
+        # attachments -- both resolved through whoever owns the conversation
+        # now. Moving the directory alone handed the collaborator a
+        # conversation whose history was intact and whose agent, skills and
+        # files had all disappeared. Done after the rename and outside the
+        # lock: the move that matters has already succeeded, and a side
+        # directory that cannot follow is a warning, not a rollback.
+        _move_conversation_resources(cid, previous_owner, new_user_id)
+        try:
+            from core.file_store import FileStore
+            FileStore.instance().reassign_conversation_owner(
+                cid, previous_owner, new_user_id)
+        except Exception:
+            logger.warning("[convstore] FileStore did not follow %s to %s",
+                           cid[:8], new_user_id, exc_info=True)
         logger.info("[convstore] reassigned %s to %s", cid[:8], new_user_id)
         return True
 

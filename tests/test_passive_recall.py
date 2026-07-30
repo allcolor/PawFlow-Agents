@@ -108,7 +108,8 @@ def test_a_failing_embedder_never_breaks_the_turn(monkeypatch):
     # failure is swallowed at the source, with the in-flight slot released.
     key = pr._key("u", "c", "a")
     pr._in_flight.add(key)
-    pr._run(key, "u", "c", "a", "question", "", 5)
+    pr._generation[key] = 1
+    pr._run(key, 1, "u", "c", "a", "question", "", 5)
 
     assert pr.take("u", "c", "a") == ""
     assert pr._in_flight == set()
@@ -138,6 +139,43 @@ def test_concurrent_schedules_do_not_pile_up(monkeypatch):
     assert len(calls) == 1
 
 
+def test_a_recall_overtaken_by_a_newer_turn_is_dropped(monkeypatch):
+    """A slow recall must not surface once its question is gone.
+
+    The next turn is skipped while one is in flight -- that part is by design.
+    What was not: the slow answer still landed in _ready, and the turn after
+    it, on another subject entirely, was handed memories fetched for a
+    question nobody was asking anymore.
+    """
+    pr = _fresh()
+    release = threading.Event()
+
+    def slow(*a, **k):
+        release.wait(5)
+        return "- memories about the FIRST question"
+
+    monkeypatch.setattr(pr, "_compute", staticmethod(slow))
+
+    assert pr.schedule("u", "c", "a", "first question") is True
+    # The user moved on; this turn is skipped because one is still running.
+    assert pr.schedule("u", "c", "a", "a completely different one") is False
+    release.set()
+    time.sleep(0.2)
+
+    assert pr.take("u", "c", "a") == "", (
+        "a block computed for a question two turns old was served anyway")
+
+
+def test_a_recall_nobody_overtook_is_still_delivered(monkeypatch):
+    pr = _fresh()
+    monkeypatch.setattr(pr, "_compute",
+                        staticmethod(lambda *a, **k: "- on topic"))
+
+    assert pr.schedule("u", "c", "a", "the question") is True
+    time.sleep(0.2)
+    assert pr.take("u", "c", "a") == "- on topic"
+
+
 def test_empty_turn_and_disabled_limit_are_skipped(monkeypatch):
     pr = _fresh()
 
@@ -157,7 +195,9 @@ def test_pending_results_are_bounded(monkeypatch):
     monkeypatch.setattr(pr, "_compute", staticmethod(lambda *a, **k: "- x"))
     for i in range(passive_recall.MAX_TRACKED + 10):
         pr._ready[pr._key("u", f"c{i}", "a")] = "- x"
-    pr._run(pr._key("u", "cN", "a"), "u", "cN", "a", "q", "", 5)
+    _k = pr._key("u", "cN", "a")
+    pr._generation[_k] = 1
+    pr._run(_k, 1, "u", "cN", "a", "q", "", 5)
 
     assert len(pr._ready) <= passive_recall.MAX_TRACKED
 

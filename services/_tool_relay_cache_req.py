@@ -260,6 +260,34 @@ class _ToolRelayCacheReqMixin:
         return False
 
     @classmethod
+    def conversation_for_request(cls, request_id: str) -> str:
+        """Which conversation owns the in-flight call `request_id` targets.
+
+        Authorization for kill/background cannot trust the conversation_id in
+        the request body: the tc_id is the real target and the registry is
+        global, so a caller could pair a conversation they may write to with
+        someone else's tc_id. Resolved here, the check lands on the
+        conversation whose tool is actually about to be killed.
+
+        Empty when nothing in flight matches -- there is nothing to kill, and
+        the caller falls back to the conversation it named.
+        """
+        if not request_id:
+            return ""
+        with cls._inflight_lock:
+            info = cls._inflight.get(request_id)
+            if not isinstance(info, dict):
+                info = None
+                for _rid, _info in cls._inflight.items():
+                    if not isinstance(_info, dict):
+                        continue
+                    if (_info.get("cc_tc_id") == request_id
+                            or _info.get("bg_tc_id") == request_id):
+                        info = _info
+                        break
+            return str((info or {}).get("conv", "") or "")
+
+    @classmethod
     def background_by_tc_id(cls, tc_id: str) -> bool:
         """Flag an in-flight tool call for backgrounding by its CC tc_id.
 

@@ -263,8 +263,10 @@ class MonitorHandler(ToolHandler):
             .replace("@NOMATCH@", _NOMATCH_MARKER)
         )
 
-        # Delegate to BashHandler for the actual relay dispatch. Same
-        # security checks (dangerous-command patterns, relay routing).
+        # Delegate to BashHandler for the actual relay dispatch. This call is
+        # in-process: it never re-enters the approval gate, so `monitor` is
+        # listed in ToolApprovalGate.COMMAND_BEARING_TOOLS and its `command`
+        # is judged there, before we get here.
         from core.handlers.bash import BashHandler
         bash = BashHandler()
         # Copy context (conv/user) into the bash handler so it can

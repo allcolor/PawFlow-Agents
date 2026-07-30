@@ -85,6 +85,76 @@ def test_coordinator_reuses_epoch_claimed_by_caller():
     assert svc.session_state("sess").consumer_epoch == epoch
 
 
+# ── Eviction while already parked in get() ───────────────────────────
+#
+# The epoch was checked only on the way in. A coordinator already blocked in
+# `events.get()` when a newer consumer claimed the stream was still the one
+# queue.Queue woke, so it took the first event of the NEW owner's turn and
+# dropped it on its way out -- truncated text, or a tool call severed from
+# its arguments.
+
+
+def test_an_event_delivered_to_an_evicted_consumer_is_not_lost():
+    import threading
+
+    svc = _service()
+    svc.register_session("sess")
+    first = svc.claim_consumer("sess")
+
+    outcome = {}
+
+    def _old_consumer():
+        try:
+            outcome["event"] = svc.wait_event("sess", timeout=5, epoch=first)
+        except CCIConsumerEvicted:
+            outcome["evicted"] = True
+
+    parked = threading.Thread(target=_old_consumer, daemon=True)
+    parked.start()
+    # Let it reach the blocking get() before anything else happens.
+    deadline = time.time() + 2
+    while (svc.session_state("sess").last_wait_at == 0.0
+           and time.time() < deadline):
+        time.sleep(0.005)
+
+    second = svc.claim_consumer("sess")
+    assert second != first
+    svc.publish_event("sess", {"type": "first-of-the-new-turn"})
+    parked.join(timeout=5)
+
+    assert outcome.get("evicted"), "the old consumer must not be served"
+    assert "event" not in outcome
+    # The whole point: the new owner still gets it.
+    assert svc.wait_event("sess", timeout=2,
+                          epoch=second)["type"] == "first-of-the-new-turn"
+
+
+def test_a_handed_back_event_is_taken_before_the_queue():
+    svc = _service()
+    svc.register_session("sess")
+    state = svc.session_state("sess")
+    epoch = svc.claim_consumer("sess")
+
+    state.pushback.append({"type": "handed-back"})
+    svc.publish_event("sess", {"type": "queued-after"})
+
+    assert svc.wait_event("sess", timeout=1, epoch=epoch)["type"] == "handed-back"
+    assert svc.wait_event("sess", timeout=1, epoch=epoch)["type"] == "queued-after"
+
+
+def test_a_drain_takes_the_handed_back_event_too():
+    svc = _service()
+    svc.register_session("sess")
+    state = svc.session_state("sess")
+    epoch = svc.claim_consumer("sess")
+
+    state.pushback.append({"type": "stale"})
+    svc.publish_event("sess", {"type": "also-stale"})
+
+    assert svc.drain_session("sess") == 2
+    assert svc.wait_event("sess", timeout=0, epoch=epoch) == {}
+
+
 def test_service_without_arbitration_is_unenforced():
     # Test doubles (and any event service that does not arbitrate) keep the
     # original wait_event signature: no epoch is sent.

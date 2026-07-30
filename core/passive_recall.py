@@ -113,6 +113,13 @@ class PassiveRecall:
         self._lock = threading.Lock()
         self._ready: OrderedDict = OrderedDict()   # key -> rendered block
         self._in_flight: set = set()               # keys currently computing
+        # key -> the turn number of the most recent schedule attempt. A recall
+        # publishes only if it is still the newest one asked for. Without it, a
+        # slow recall outlived the turn that asked for it: the next turn was
+        # skipped (one in flight already), the slow answer landed in _ready
+        # anyway, and some later turn -- on another subject entirely -- was
+        # handed memories fetched for a question nobody was asking anymore.
+        self._generation: dict = {}
 
     @staticmethod
     def _key(user_id: str, conversation_id: str, agent_name: str) -> Tuple[str, str, str]:
@@ -141,19 +148,25 @@ class PassiveRecall:
 
         key = self._key(user_id, conversation_id, agent_name)
         with self._lock:
+            generation = self._generation.get(key, 0) + 1
+            self._generation[key] = generation
             if key in self._in_flight:
+                # Deliberately still bumped above: piling threads up behind a
+                # slow embedder helps nobody, but the answer in flight is now
+                # answering a stale question and must not be published.
                 return False
             self._in_flight.add(key)
 
         thread = threading.Thread(
             target=self._run, name="passive-recall", daemon=True,
-            args=(key, user_id, conversation_id, agent_name,
+            args=(key, generation, user_id, conversation_id, agent_name,
                   query_text[:MAX_QUERY_CHARS], exclude, limit))
         thread.start()
         return True
 
-    def _run(self, key, user_id: str, conversation_id: str, agent_name: str,
-             query_text: str, exclude: str, limit: int) -> None:
+    def _run(self, key, generation: int, user_id: str, conversation_id: str,
+             agent_name: str, query_text: str, exclude: str,
+             limit: int) -> None:
         try:
             block = self._compute(user_id, conversation_id, agent_name,
                                   query_text, exclude, limit)
@@ -168,6 +181,10 @@ class PassiveRecall:
         if not block:
             return
         with self._lock:
+            if self._generation.get(key, 0) != generation:
+                logger.debug("Passive recall for %s arrived stale; dropped",
+                             conversation_id[:8])
+                return
             self._ready[key] = block
             self._ready.move_to_end(key)
             while len(self._ready) > MAX_TRACKED:

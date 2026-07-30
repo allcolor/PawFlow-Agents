@@ -101,6 +101,15 @@ class ToolApprovalGate:
 
     _SEE_SCREEN_PATHS = frozenset({"screen", "screenshot"})
 
+    # Tools whose approval must be judged on the command they carry, not on
+    # their name. `monitor` belongs here because it is a bash call wearing a
+    # different label: it builds a shell script and hands it to BashHandler
+    # in-process, so the gate never sees a `bash` tool call. Without this, one
+    # approval of a harmless `monitor` persisted as `session_allow` and every
+    # later monitor command -- including a destructive one, including
+    # local=true -- rode in on it with no second prompt.
+    COMMAND_BEARING_TOOLS = frozenset({"bash", "execute_script", "monitor"})
+
     # ── Dangerous bash/exec patterns (like Claude Code) ──────────────
     # Even if bash has session_allow, these patterns force re-approval.
     _DANGEROUS_BASH_PATTERNS = frozenset({
@@ -211,7 +220,7 @@ class ToolApprovalGate:
         # Catastrophic patterns get a visible warning hint in the dialog.
         _force_ask = False
         _catastrophic_hint = False
-        if tool_name in ("bash", "execute_script") and arguments:
+        if tool_name in cls.COMMAND_BEARING_TOOLS and arguments:
             _cmd = arguments.get("command", "") or arguments.get("code", "")
             if cls._is_catastrophic_command(_cmd):
                 _force_ask = True
@@ -349,6 +358,28 @@ class ToolApprovalGate:
             return "approved"
         else:
             return "denied"
+
+    @classmethod
+    def conversation_for_request(cls, request_id: str) -> str:
+        """Which conversation is waiting on approval `request_id`.
+
+        The pending table is global and keyed by request_id alone. An answer
+        arrives as a plain action carrying that id, so authorization has to
+        resolve the conversation the agent is blocked on rather than trust the
+        conversation_id sent beside it -- otherwise a caller pairs a
+        conversation they may write to with someone else's request and
+        approves a tool there.
+
+        Empty when the id is unknown: nothing is waiting, and resolve_request
+        will say so.
+        """
+        if not request_id:
+            return ""
+        with cls._lock:
+            pending = cls._pending.get(request_id)
+        if not isinstance(pending, dict):
+            return ""
+        return str(pending.get("conversation_id", "") or "")
 
     @classmethod
     def resolve_request(cls, request_id: str, result: Dict[str, Any]) -> bool:

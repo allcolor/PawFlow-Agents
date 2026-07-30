@@ -210,7 +210,71 @@ def test_script_survives_a_deployment_that_has_nothing_to_pull():
 
     # `build: .` services have no image to pull; that must not abort the run.
     assert "--ignore-buildable" in script
-    assert script.count("|| true") >= 1
+
+
+def test_a_failed_pull_is_not_reported_as_an_update():
+    """`pull --ignore-buildable || pull || true` turned two failures into one
+    success.
+
+    An unreachable registry, an expired login, a rate limit -- all swallowed,
+    and `up` then cleanly restarted the image already on the host while the UI
+    said the update was done. The flag is probed instead, so where compose can
+    tell "nothing to pull" from "pull failed", a failure stops the update.
+    """
+    script = update_manager._updater_script(WORKDIR, pull_source=False)
+
+    assert "|| true" not in script
+    # The supported path has no tolerance at all: `set -eu` ends the run.
+    assert "  docker compose pull --ignore-buildable\n" in script + "\n"
+    # The legacy path keeps it -- there a source build and a failed pull are
+    # genuinely indistinguishable -- but it no longer does so in silence.
+    assert "WARNING docker compose pull failed" in script
+
+
+def _run_updater(tmp_path, pull_rc):
+    """Run the script for real against a `docker` that fails the pull."""
+    import os
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "$DOCKER_LOG"\n'
+        'if [[ "$2" == pull && "$3" == --help ]]; then\n'
+        "  echo '  --ignore-buildable   Ignore buildable images'; exit 0\n"
+        "fi\n"
+        'if [[ "$2" == pull ]]; then exit ' + str(pull_rc) + "; fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    proj = tmp_path / "proj"
+    proj.mkdir(exist_ok=True)
+    script = update_manager._updater_script(str(proj), pull_source=False)
+    return subprocess.run(
+        ["bash", "-c", script], text=True, capture_output=True, timeout=30,
+        env={"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+             "DOCKER_LOG": str(tmp_path / "docker.log")})
+
+
+def test_a_failing_pull_stops_before_the_server_is_recreated(tmp_path):
+    result = _run_updater(tmp_path, pull_rc=1)
+
+    assert result.returncode != 0
+    log = (tmp_path / "docker.log").read_text(encoding="utf-8")
+    assert "up -d --build" not in log, (
+        "the server was recreated on the image it already had, and the update "
+        "would have been reported as successful")
+
+
+def test_a_pull_that_works_still_recreates_the_server(tmp_path):
+    result = _run_updater(tmp_path, pull_rc=0)
+
+    assert result.returncode == 0, result.stderr
+    log = (tmp_path / "docker.log").read_text(encoding="utf-8")
+    assert "up -d --build" in log
 
 
 def test_script_quotes_the_project_directory():

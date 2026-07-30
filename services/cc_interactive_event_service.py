@@ -86,6 +86,15 @@ class CCInteractiveSessionEvents:
     # them. Claiming bumps the epoch; the previous holder is evicted on its
     # next wait_event instead of silently stealing half the turn.
     consumer_epoch: int = 0
+    # An event an evicted consumer woke up holding. Checking the epoch only
+    # before the blocking get() left one gap: a coordinator already parked in
+    # get() when the epoch is bumped is handed the next event -- the first one
+    # of the NEW owner's turn -- and used to drop it on its way out. Truncated
+    # text, or a tool call severed from its arguments. It goes here instead,
+    # and the next waiter takes it before touching the queue, so the event is
+    # neither lost nor delivered out of order.
+    pushback: list = field(default_factory=list)
+    pushback_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class CCInteractiveEventService(BaseService):
@@ -261,10 +270,23 @@ class CCInteractiveEventService(BaseService):
         if state.unreliable:
             raise RuntimeError(state.error or "CC interactive session is unreliable")
         state.last_wait_at = time.time()
+        with state.pushback_lock:
+            if state.pushback:
+                return state.pushback.pop(0)
         try:
             event = state.events.get(timeout=timeout)
         except queue.Empty:
             return {}
+        # Re-check: the epoch may have been bumped while we were parked in
+        # get(), in which case this event belongs to the new owner and we were
+        # handed it only because queue.Queue wakes whoever is waiting. Hand it
+        # back rather than return it to a consumer that no longer owns the
+        # stream -- that is how the first event of a turn went missing.
+        if epoch and epoch != state.consumer_epoch:
+            with state.pushback_lock:
+                state.pushback.append(event)
+            raise CCIConsumerEvicted(
+                "CC interactive session taken over by a newer consumer")
         if state.unreliable:
             raise RuntimeError(state.error or "CC interactive session is unreliable")
         return event
@@ -274,6 +296,11 @@ class CCInteractiveEventService(BaseService):
         if state is None:
             return 0
         drained = 0
+        # A pushed-back event is part of the stream, so a drain has to take it
+        # too -- leaving it behind would hand a stale event to the next turn.
+        with state.pushback_lock:
+            drained += len(state.pushback)
+            state.pushback.clear()
         while True:
             try:
                 state.events.get_nowait()

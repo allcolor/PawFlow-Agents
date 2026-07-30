@@ -300,6 +300,20 @@ def list_tasks(conversation_id: str = "") -> List[dict]:
         return tasks
 
 
+def conversation_for(tc_id: str) -> str:
+    """Which conversation registered `tc_id`, or "" when it is unknown here.
+
+    The registry is global and keyed by tc_id alone, so authorization has to
+    resolve the owning conversation rather than believe the one the caller
+    sends alongside the id.
+    """
+    if not tc_id:
+        return ""
+    with _lock:
+        task = _backgrounded.get(tc_id)
+        return str((task or {}).get("conversation_id", "") or "")
+
+
 def pop_completed(conversation_id: str, tc_id: str) -> Optional[str]:
     """Get and remove a completed bg result. Returns None if not ready."""
     key = f"{conversation_id}:{tc_id}"

@@ -391,13 +391,18 @@ def _reassign_if_owner_is_gone(cid: str, access: ConversationAccess,
     if not _owner_account_is_gone(access.owner_user_id):
         return access
     requester = _clean(requester_user_id)
-    if not _store(store).reassign_owner(cid, requester):
-        # The move failed: the conversation is still the old owner's, and the
-        # caller keeps the write access it already had. Storage still
-        # resolves, so this degrades rather than breaks.
-        logger.warning("owner reassignment of %s to %s failed",
+    if not _store(store).reassign_owner(cid, requester,
+                                        expected_current_owner=access.owner_user_id):
+        # The move did not happen. Either it failed outright, or another
+        # collaborator got there first and the conversation now belongs to
+        # them -- in which case the access resolved above names an owner that
+        # is no longer current, and returning it would have this caller write
+        # against a directory the conversation has left. Resolve again and
+        # answer with what is true now; storage still resolves either way, so
+        # this degrades rather than breaks.
+        logger.warning("owner reassignment of %s to %s did not happen",
                        cid[:8], requester)
-        return access
+        return resolve_conversation_access(cid, requester_user_id, store=store)
     logger.info("conversation %s reassigned to %s (previous owner %s is gone)",
                 cid[:8], requester, access.owner_user_id)
     return ConversationAccess(owner_user_id=requester, role=ROLE_OWNER,

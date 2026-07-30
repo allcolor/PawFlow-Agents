@@ -1179,3 +1179,306 @@ class TestContextAndUsageAreGatedToo:
         # Not a 404: whatever the handler answers, it is not an access denial.
         assert _call_ctx(store, "git_prune",
                          {"conversation_id": talking}, OWNER)[1] != "404"
+
+
+def _call_tools(store, action, body, requester):
+    from tasks.ai.actions.tools_exec import _handle_tools_exec
+    ff = FlowFile(content=b"")
+    ff.set_attribute("http.auth.principal", requester)
+    out = _handle_tools_exec(_Task(), action, body, store, requester, ff)
+    assert out == [ff]
+    status = ff.get_attribute("http.response.status") or "200"
+    return json.loads(ff.get_content().decode("utf-8")), status
+
+
+class TestDrivingToolsIsAWrite:
+    """The cluster that does not read a conversation but drives it.
+
+    `tools_exec` answers the approval dialogs the agent is blocked on, kills
+    running tools, detaches them, and runs new ones on the conversation's
+    relay. None of it was gated, while the SSE stream that delivers the
+    approval requests asks only for read -- so a read collaborator was handed
+    the dialog and could answer it, persist an `always_allow`, and then
+    interrupt or detach whatever ran next.
+
+    Two of these ids are global: a tc_id and an approval request_id name their
+    target on their own. Checking the conversation_id sent beside them would
+    authorize the wrong conversation, so the owner of the id is resolved and
+    the check lands there.
+    """
+
+    @pytest.fixture
+    def talking(self, store):
+        cid = store.generate_id()
+        store.save(cid, [{"role": "user", "content": "ship the release"}],
+                   user_id=OWNER)
+        return cid
+
+    def test_every_tools_action_is_classified(self):
+        import re
+        from pathlib import Path
+        from tasks.ai.actions import tools_exec as dispatcher
+
+        known = set(dispatcher._ACTION_ROLES) | set(dispatcher._UNSCOPED_ACTIONS)
+        source = Path(dispatcher.__file__).read_text(encoding="utf-8")
+        handled = set(re.findall(r'action == "([a-z_]+)"', source))
+
+        assert handled, "action scan found nothing -- the regex went stale"
+        assert handled - known == set()
+
+    def test_a_stranger_cannot_run_a_command_on_the_relay(self, store, talking):
+        assert _call_tools(store, "exec_inline",
+                           {"conversation_id": talking, "command": "id"},
+                           STRANGER)[1] == "404"
+
+    def test_a_stranger_cannot_answer_an_approval_dialog(self, store, talking):
+        assert _call_tools(store, "tool_approval_result",
+                           {"conversation_id": talking, "request_id": "r1",
+                            "result": {"choice": "always_allow"}},
+                           STRANGER)[1] == "404"
+
+    def test_a_reader_may_list_but_not_drive(self, store, talking):
+        _invite(store, talking, role=ca.ROLE_READ)
+        _accept(store, talking)
+
+        assert _call_tools(store, "list_bg_tools",
+                           {"conversation_id": talking}, COLLAB)[1] == "200"
+        for action, extra in (
+            ("tool_approval_result", {"request_id": "r1",
+                                      "result": {"choice": "always_allow"}}),
+            ("kill_tool", {"tc_id": "tc1"}),
+            ("background_tool", {"tc_id": "tc1"}),
+            ("cancel_bg_tool", {"tc_id": "tc1"}),
+            ("exec_inline", {"command": "id"}),
+            ("call_tool", {"tool_name": "read"}),
+        ):
+            body = {"conversation_id": talking, **extra}
+            assert _call_tools(store, action, body, COLLAB)[1] == "404", action
+
+    def test_a_writer_may_drive(self, store, talking):
+        _invite(store, talking, role=ca.ROLE_WRITE)
+        _accept(store, talking)
+
+        # Not a 404: whatever the handler answers, it is not an access denial.
+        assert _call_tools(store, "kill_tool",
+                           {"conversation_id": talking, "tc_id": "tc1"},
+                           COLLAB)[1] != "404"
+        assert _call_tools(store, "list_bg_tools",
+                           {"conversation_id": talking}, COLLAB)[1] == "200"
+
+    def test_a_kill_is_judged_on_the_conversation_that_owns_the_tc_id(
+            self, store, talking):
+        """The bypass a conversation_id-only check would leave open.
+
+        The attacker has a conversation of their own and full rights on it.
+        Pairing it with the victim's tc_id must not kill the victim's tool.
+        """
+        from services.tool_relay_service import ToolRelayService
+
+        mine = store.generate_id()
+        store.save(mine, [], user_id=STRANGER)
+        ToolRelayService._inflight["rid1"] = {
+            "cc_tc_id": "tc-victim", "conv": talking, "tool_name": "bash",
+        }
+        try:
+            assert _call_tools(store, "kill_tool",
+                              {"conversation_id": mine, "tc_id": "tc-victim"},
+                              STRANGER)[1] == "404"
+        finally:
+            ToolRelayService._inflight.pop("rid1", None)
+
+    def test_an_approval_is_judged_on_the_conversation_that_is_waiting(
+            self, store, talking):
+        from core.tool_approval import ToolApprovalGate
+
+        mine = store.generate_id()
+        store.save(mine, [], user_id=STRANGER)
+        ToolApprovalGate._pending["req-victim"] = {
+            "event": None, "effective_name": "bash",
+            "conversation_id": talking, "agent_name": "",
+        }
+        try:
+            assert _call_tools(store, "tool_approval_result",
+                              {"conversation_id": mine,
+                               "request_id": "req-victim",
+                               "result": {"choice": "always_allow"}},
+                              STRANGER)[1] == "404"
+        finally:
+            ToolApprovalGate._pending.pop("req-victim", None)
+
+    def test_the_owner_is_refused_nothing(self, store, talking):
+        assert _call_tools(store, "list_bg_tools",
+                           {"conversation_id": talking}, OWNER)[1] == "200"
+        assert _call_tools(store, "kill_tool",
+                           {"conversation_id": talking, "tc_id": "tc1"},
+                           OWNER)[1] != "404"
+
+
+def _call_res(store, action, body, requester):
+    from tasks.ai.actions.agent_resource import _handle_agent_resource
+    ff = FlowFile(content=b"")
+    ff.set_attribute("http.auth.principal", requester)
+    out = _handle_agent_resource(_Task(), action, body, store, requester, ff)
+    if out is None:
+        return None, "unhandled"
+    status = ff.get_attribute("http.response.status") or "200"
+    return json.loads(ff.get_content().decode("utf-8")), status
+
+
+class TestConversationResourcesAreGatedToo:
+    """The cluster that owns what a conversation runs on.
+
+    A conversation-scoped agent, skill, prompt, MCP or task is filed under the
+    conversation's OWNER: ResourceStore resolves that owner from the id alone,
+    on purpose, so a collaborator's turn finds the conversation's own
+    resources. The store answers "whose directory", never "may you" -- and
+    nothing here asked the second question. Any authenticated user who knew a
+    conversation id could list its agents, read a skill, overwrite it, delete
+    it, or point the conversation at a different agent.
+    """
+
+    @pytest.fixture
+    def talking(self, store):
+        cid = store.generate_id()
+        store.save(cid, [{"role": "user", "content": "ship the release"}],
+                   user_id=OWNER)
+        return cid
+
+    def test_every_resource_action_is_classified(self):
+        import re
+        from pathlib import Path
+        from tasks.ai.actions import agent_resource as dispatcher
+
+        known = (set(dispatcher._ACTION_ROLES)
+                 | set(dispatcher._UNSCOPED_ACTIONS))
+        root = Path(dispatcher.__file__).parent
+        handled = set()
+        for module in ("_agentres_k1", "_agentres_k2", "_agentres_k3",
+                       "_agentres_k4", "_agentres_k5"):
+            source = (root / f"{module}.py").read_text(encoding="utf-8")
+            # Anchored on the left: `pfp_action == "install"` also ends in
+            # `action == "..."`, and counting those as top-level actions would
+            # make the table look incomplete for names that are not actions.
+            handled |= set(re.findall(r'(?<![_a-z])action == "([a-z_]+)"',
+                                      source))
+            # Several actions share one branch: `if action in ("a", "b")`.
+            # Scanning only for `==` would call them reviewed when they are
+            # merely invisible.
+            for group in re.findall(r'(?<![_a-z])action in \(([^)]*)\)', source):
+                handled |= set(re.findall(r'"([a-z_]+)"', group))
+
+        assert handled, "action scan found nothing -- the regex went stale"
+        assert handled - known == set()
+
+    def test_every_pfp_operation_is_classified(self):
+        import re
+        from pathlib import Path
+        from tasks.ai.actions import agent_resource as dispatcher
+
+        source = (Path(dispatcher.__file__).parent / "_agentres_k2.py"
+                  ).read_text(encoding="utf-8")
+        handled = set(re.findall(r'pfp_action == "([a-z_]+)"', source))
+
+        assert handled, "pfp scan found nothing -- the regex went stale"
+        assert handled - set(dispatcher._PFP_ACTION_ROLES) == set()
+
+    def test_a_stranger_cannot_enumerate_the_agents(self, store, talking):
+        assert _call_res(store, "list_agents",
+                         {"conversation_id": talking}, STRANGER)[1] == "404"
+        assert _call_res(store, "list_skills",
+                         {"conversation_id": talking}, STRANGER)[1] == "404"
+
+    def test_a_stranger_cannot_read_replace_or_delete_a_resource(
+            self, store, talking):
+        for action, extra in (
+            ("get_resource_detail", {"resource_type": "skill", "name": "s"}),
+            ("create_resource", {"resource_type": "skill", "name": "s",
+                                 "scope": "conversation", "data": {}}),
+            ("update_resource", {"resource_type": "skill", "name": "s",
+                                 "scope": "conversation", "data": {}}),
+            ("delete_resource", {"resource_type": "skill", "name": "s",
+                                 "scope": "conversation"}),
+            ("copy_resource_scope", {"resource_type": "skill", "name": "s",
+                                     "target_scope": "conversation"}),
+        ):
+            body = {"conversation_id": talking, **extra}
+            assert _call_res(store, action, body, STRANGER)[1] == "404", action
+
+    def test_a_stranger_cannot_repoint_the_conversation_at_another_agent(
+            self, store, talking):
+        assert _call_res(store, "select_agent",
+                         {"conversation_id": talking, "agent_name": "evil"},
+                         STRANGER)[1] == "404"
+        assert _call_res(store, "activate_resource",
+                         {"conversation_id": talking, "resource_type": "agent",
+                          "name": "evil"}, STRANGER)[1] == "404"
+
+    def test_a_stranger_cannot_drive_the_agent(self, store, talking):
+        assert _call_res(store, "agent_msg",
+                         {"conversation_id": talking, "message": "go"},
+                         STRANGER)[1] == "404"
+        assert _call_res(store, "resume_agent",
+                         {"conversation_id": talking}, STRANGER)[1] == "404"
+
+    def test_a_reader_may_look_but_not_change_what_it_runs_on(
+            self, store, talking):
+        _invite(store, talking, role=ca.ROLE_READ)
+        _accept(store, talking)
+
+        assert _call_res(store, "list_agents",
+                         {"conversation_id": talking}, COLLAB)[1] == "200"
+        for action, extra in (
+            ("delete_resource", {"resource_type": "skill", "name": "s",
+                                 "scope": "conversation"}),
+            ("select_agent", {"agent_name": "evil"}),
+            ("update_conversation_hooks", {"bindings": []}),
+            ("apply_chat_theme", {"theme_ref": "x"}),
+            ("agent_msg", {"message": "go"}),
+            ("pfp_install", {"ref": "x", "scope": "conversation"}),
+        ):
+            body = {"conversation_id": talking, **extra}
+            assert _call_res(store, action, body, COLLAB)[1] == "404", action
+
+    def test_a_user_scoped_package_call_is_not_the_conversations_business(
+            self, store, talking):
+        """The UI attaches conversation_id to every call it makes.
+
+        A package installed at user scope goes to the requester's own
+        resources; refusing it because the conversation belongs to someone
+        else -- or does not exist yet -- would deny a user their own packages.
+        """
+        assert _call_res(store, "pfp_list_installed",
+                         {"conversation_id": talking,
+                          "scope": "user"}, STRANGER)[1] != "404"
+        # But aimed at the conversation, it is gated like everything else.
+        assert _call_res(store, "pfp_list_installed",
+                         {"conversation_id": talking,
+                          "scope": "conversation"}, STRANGER)[1] == "404"
+
+    def test_a_writer_may_change_what_it_runs_on(self, store, talking):
+        _invite(store, talking, role=ca.ROLE_WRITE)
+        _accept(store, talking)
+
+        assert _call_res(store, "list_agents",
+                         {"conversation_id": talking}, COLLAB)[1] == "200"
+        # Not a 404: whatever the handler answers, it is not an access denial.
+        assert _call_res(store, "update_conversation_hooks",
+                         {"conversation_id": talking, "bindings": []},
+                         COLLAB)[1] != "404"
+
+    def test_the_owner_is_refused_nothing(self, store, talking):
+        assert _call_res(store, "list_agents",
+                         {"conversation_id": talking}, OWNER)[1] == "200"
+        assert _call_res(store, "get_conversation_hooks",
+                         {"conversation_id": talking}, OWNER)[1] == "200"
+
+    def test_an_action_with_no_conversation_still_reaches_its_handler(
+            self, store):
+        """The gate must not turn a handler's 400 into a 404.
+
+        User-scoped work carries no conversation_id and is nobody else's
+        business; denying it here would break the requester's own resources.
+        """
+        payload, status = _call_res(store, "get_resource_detail",
+                                    {"resource_type": "", "name": ""}, STRANGER)
+        assert status != "404" and "error" in payload

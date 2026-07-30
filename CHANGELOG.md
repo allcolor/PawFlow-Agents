@@ -6,6 +6,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **A read collaborator could drive the tools of a conversation they could
+  only watch.** The SSE stream hands approval requests to anyone with read
+  access, and `tools_exec` gated nothing: the dialog could be answered —
+  including with `always_allow`, which persists — and the tools that ran next
+  killed or detached. The cluster now carries a role table like the three
+  already gated, and driving is a write. A tc_id and an approval request_id
+  name their target on their own, so the conversation that actually owns them
+  is resolved and the check lands there, rather than on the `conversation_id`
+  sent alongside.
+
+- **Any authenticated user who knew a conversation id owned its resources.**
+  A conversation-scoped agent, skill, prompt, MCP or task is filed under the
+  conversation's owner, and `ResourceStore` resolves that owner from the id
+  alone — deliberately, so a collaborator's turn finds them. Nothing asked
+  whether the requester was entitled to it: the whole `agent_resource` cluster
+  took a `conversation_id` straight from the request body and could list, read,
+  overwrite or delete them, or point the conversation at another agent. All
+  fifty-odd actions are now classified, with a completeness test that fails on
+  the next one added without a row.
+
+- **`monitor` bypassed content-sensitive approval.** It builds a shell script
+  and hands it to `BashHandler` in-process, so the gate never saw a `bash`
+  call: one approval of a harmless monitor was persisted and every later
+  command rode in on it — a destructive one, or `local=true` on the host —
+  with no second prompt. The gate now judges `monitor` on its command, as it
+  does `bash` and `execute_script`.
+
+### Fixed
+
+- **A CCI handoff could swallow the first event of the new turn.** The
+  consumer epoch was checked on the way into `wait_event` and never after the
+  blocking get, so a coordinator already parked there when a newer consumer
+  claimed the stream was still the one the queue woke — and dropped the event
+  on its way out, truncating text or severing a tool call from its arguments.
+  The event is handed back and the new owner takes it before touching the
+  queue.
+
+- **A complete Azure endpoint URL lost its `api-version`.** The request line
+  was rebuilt from the path alone, so an operator who pasted the full target
+  from the portal had the mandatory version — which lives in the query —
+  dropped from every request, streaming and not, and Azure rejected them all.
+
+- **A conversation handed to a collaborator arrived without its resources or
+  its files.** When a departed owner's conversation moves, only the
+  conversation directory used to move: its own agents, skills, prompts, MCPs
+  and tasks are filed under the owner, and so are its attachments, both
+  resolved through whoever owns it now. Both follow it now. The move is also a
+  compare-and-swap: two collaborators who had each resolved the departed owner
+  before either took the lock moved it twice, the second taking it from the
+  first, who carried on writing against a directory the conversation had left.
+
+- **A slow passive recall surfaced turns later, on another subject.** A turn
+  arriving while one was in flight was skipped — by design — but the slow
+  answer still landed and was served to some later turn asking about something
+  else. A recall now publishes only if it is still the newest one asked for.
+
+- **A valid tool result containing the words "unknown tool" re-ran the tool.**
+  The MCP bridge read the bare substring as a routing miss, threw the result
+  away and called the lowercased name — running the side effects a second
+  time. It now matches the routing error itself.
+
+- **A failed `docker compose pull` was reported as a successful update.**
+  `pull --ignore-buildable || pull || true` turned an unreachable registry, an
+  expired login or a rate limit into a success, and `up` then cleanly
+  restarted the image already on the host. The flag is probed instead, so
+  where compose can tell "nothing to pull" from "pull failed", a failure stops
+  the update; the legacy path still tolerates it but says so.
+
+- **A failed artifact refresh destroyed part of the installation it was
+  replacing.** Each artifact was deleted just before its replacement was
+  copied in, so one failed `docker cp` left that artifact simply gone. Every
+  artifact is now copied into a staging directory first and swapped in only
+  once they are all there.
+
 ## [1.0.0-beta.53] — 2026-07-30
 
 ### Fixed

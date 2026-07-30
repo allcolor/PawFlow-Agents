@@ -262,7 +262,21 @@ def test_a_failed_refresh_leaves_the_server_alone(tmp_path, dirs):
 
 
 def test_force_starts_the_server_anyway_and_says_so(tmp_path, dirs):
+    """Forced past a failed refresh, the server starts -- on ONE set of files.
+
+    It used to start on a mixture: artifacts were deleted and replaced one at a
+    time, so a failure partway left the new directory holding everything up to
+    the one that failed and nothing after it, and the server came up on that.
+    The warning says "the host-side files of the version it is replacing", and
+    now that is what it gets: nothing is swapped in until every artifact has
+    been copied, so a failed refresh leaves the previous version whole.
+    """
     old, new = dirs
+    (old / "scripts" / "run-pawflow-docker.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        'echo STARTED "$PAWFLOW_IMAGE" "$PAWFLOW_SOURCE_DIR" >> "$START_LOG"\n',
+        encoding="utf-8")
+
     script = update_manager._installer_updater_script(
         _info(app_dir=str(old)), IMAGE, False, artifact_dir=str(new),
         force_artifacts=True)
@@ -271,7 +285,46 @@ def test_force_starts_the_server_anyway_and_says_so(tmp_path, dirs):
 
     assert result.returncode == 0, result.stderr
     assert "WARNING" in result.stderr
-    assert (tmp_path / "start.log").exists()
+    started = (tmp_path / "start.log").read_text(encoding="utf-8")
+    assert IMAGE in started
+    # The whole set it starts on is the old one, not half of each.
+    assert str(old) in started
+    assert not (new / "tools" / "mcp_bridge.py").exists()
+    assert not (new / "scripts" / "run-pawflow-docker.sh").exists()
+
+
+def test_a_failed_refresh_does_not_destroy_what_it_was_replacing(tmp_path):
+    """The in-place refresh that ate the operator's installation.
+
+    Each artifact was deleted just before its replacement was copied in. One
+    failed `docker cp` -- a missing path, a full disk, a daemon that went away
+    -- and that artifact was simply gone from a directory the operator was
+    still running from.
+    """
+    target = tmp_path / "install"
+    (target / "scripts").mkdir(parents=True)
+    (target / "tools").mkdir()
+    (target / "scripts" / "run-pawflow-docker.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (target / "tools" / "mcp_bridge.py").write_text(
+        "the version that works\n", encoding="utf-8")
+
+    script = "\n".join(
+        ["set -eu"]
+        + update_manager._artifact_refresh_lines(
+            IMAGE, str(target), {}, force=False))
+
+    result = _run_script(tmp_path, script, fail_rel="core/tool_json.py")
+
+    assert result.returncode != 0
+    # Not a single one of the artifacts already there was destroyed, including
+    # the ones the loop had passed before it hit the failure.
+    assert (target / "tools" / "mcp_bridge.py").read_text(
+        encoding="utf-8") == "the version that works\n"
+    assert (target / "scripts" / "run-pawflow-docker.sh").read_text(
+        encoding="utf-8").endswith("exit 0\n")
+    # And the staging directory does not survive the failure.
+    assert not list(target.glob(".pawflow-refresh.*"))
 
 
 def test_the_chown_runs_and_the_files_stay_reachable(tmp_path, dirs):

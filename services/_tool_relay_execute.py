@@ -455,7 +455,9 @@ class _ToolRelayExecuteMixin:
             elif _perm_mode == "auto":
                 # Auto mode: approve everything EXCEPT catastrophic patterns → always ask
                 from core.tool_approval import ToolApprovalGate
-                if tool_name in ("bash", "execute_script") and isinstance(arguments, dict):
+                # Same set the gate uses -- `monitor` carries a command too,
+                # and auto mode must still stop at a catastrophic one.
+                if tool_name in ToolApprovalGate.COMMAND_BEARING_TOOLS and isinstance(arguments, dict):
                     _cmd = arguments.get("command", "") or arguments.get("code", "")
                     if ToolApprovalGate._is_catastrophic_command(_cmd):
                         action_summary = f"\u26a0\ufe0f CATASTROPHIC: {tool_name}({_cmd[:100]})"

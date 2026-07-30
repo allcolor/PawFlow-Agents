@@ -650,8 +650,16 @@ def main():
                     else:
                         _log(f"USE_TOOL {tool_name} final={json.dumps(tool_args, default=str)[:300]}")
                         result = relay_client.request("execute_tool", tool_name=tool_name, arguments=tool_args)
+                        # A ROUTING miss, not the words. The registry answers
+                        # exactly `Error: unknown tool '<name>'`; matching the
+                        # bare substring anywhere meant a perfectly good result
+                        # that happened to contain it -- a grep hit, a log line,
+                        # a doc page -- was thrown away and the tool run a
+                        # SECOND time under the lowercased name, side effects
+                        # and all.
                         if (_lower_fallback and isinstance(result, str)
-                                and "unknown tool" in result):
+                                and result.startswith("Error:")
+                                and f"unknown tool '{tool_name}'" in result):
                             _log(f"USE_TOOL lowering CC native: {tool_name} -> {_lower_fallback}")
                             result = relay_client.request(
                                 "execute_tool", tool_name=_lower_fallback,

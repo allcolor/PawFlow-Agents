@@ -22,6 +22,12 @@ class _StubStore:
     def set_extra(self, conv_id, key, value):
         pass
 
+    # The dispatcher resolves the conversation's owner before the handler runs,
+    # so a store standing in for ConversationStore has to answer it. alice owns
+    # every conversation these tests look at.
+    def resolve_owner(self, conv_id):
+        return "alice"
+
 
 class _StubSelf:
     def _ensure_active_agent(self, conv_id, active, uid):

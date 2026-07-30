@@ -315,10 +315,22 @@ class _ALCLlmTurnMixin:
                 # context it was injected into.
                 resume_checkpoint=st.ctx.get("_consumed_cancel_checkpoint"),
                 **st._rebuild_args)
-            st.ctx.update(st._cold_ctx)
-            st.client = st._cold_ctx["client"]
-            st.messages = list(st._cold_ctx["messages"] or [])
-            st.llm_context = list(st.messages)
+            # Rebind the whole loop, not four fields: the rebuild brings its
+            # own client, registry, tool list and messages, and a loop left
+            # half on the old context executes tools through a registry the
+            # new context never configured.
+            self._alc_rebind_context(st, st._cold_ctx)
+            # This restart is control flow, not work. The iteration was
+            # counted before the provider was called and no model saw
+            # anything, so give it back -- otherwise a turn with
+            # max_iterations=1 ends here, having never called the model, and
+            # CLI providers deliberately synthesize no empty answer.
+            st.iteration = max(0, st.iteration - 1)
+            st.ctx["_iteration"] = st.iteration
+            # The iteration's heartbeat belongs to the attempt that just
+            # ended; the next one starts its own.
+            if getattr(st, "_iter_hb", None) is not None:
+                st.emitter.stop_heartbeat(st._iter_hb)
             return _ALC_CONTINUE
         except Exception as llm_err:
             st.err_str = str(llm_err)

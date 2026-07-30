@@ -376,11 +376,6 @@ class _PACPhase1Mixin:
             raise ValueError(
                 f"No LLM service resolved for agent '{st._active_agent_name or '?'}'. "
                 f"Set llm_service in the conversation agent config.")
-        # This marker describes THIS turn's context, and the base client can
-        # outlive the turn (the loop clones it per call, but the instance
-        # comes from the service registry). Clear it before the phase decides,
-        # so a resume never marks the cold turn that follows it.
-        st.client._pawflow_context_is_delta = False
 
         # Re-wire memory embeddings now that the conversation id and the final
         # active agent client are known. This enables conv-scoped
@@ -422,13 +417,24 @@ class _PACPhase1Mixin:
                 st._agent_key = st._active_agent_name or st._context_agent or 'default'
                 st._store_session = _CSSession.instance()
                 if st._is_claude_code:
-                    st._session_key = f"claude_session:{st._agent_key}"
-                    st._session_val = st._store_session.get_extra(st.conversation_id, st._session_key)
-                    st._claude_has_session = bool(st._session_val)
+                    # The same question every other CLI asks: is there a LIVE
+                    # process? A persisted session id is not one. claude-code
+                    # never resumes from disk, so no live process means the
+                    # provider is going to launch one -- a cold start, which
+                    # needs the full context. Deciding on the stored id here
+                    # would announce "warm", empty the message list, and hand
+                    # a bare delta to a process that holds nothing.
+                    from core.cc_live_registry import LiveSessionRegistry
+                    st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
+                    st._live = LiveSessionRegistry.instance().find_for_agent(
+                        st._user_id_for_svc, st.conversation_id,
+                        st._agent_key, st._svc_id)
+                    st._claude_has_session = st._live is not None
                     st._cli_has_session = st._claude_has_session
                     if st._claude_has_session:
-                        logger.info("[claude-code] active session (%s) — will resume",
-                                    st._session_key)
+                        logger.info(
+                            "[claude-code] live process for %s — resuming it",
+                            st._agent_key)
                 elif st._is_claude_code_interactive:
                     try:
                         from core.claude_code_interactive_pool import InteractiveClaudeCodePool
@@ -559,36 +565,42 @@ class _PACPhase1Mixin:
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
-            # A cold CLI session is about to be handed a freshly built
-            # initial_context.md, so the provider's window starts empty. The
-            # persisted gauge still describes the session that just died:
-            # compute_context_usage returns it verbatim while no agent runs,
-            # so a server restart redisplays the old percentage against a
-            # window nothing has filled yet. Zero it here, at the one place
-            # that knows the session is gone.
-            if not st._cli_has_session:
-                try:
-                    from core.conversation_event_bus import ConversationEventBus
-                    from tasks.ai.context_usage import (
-                        persist_context_usage, reset_cli_context_usage,
-                        usage_event_payload)
-                    _cold_agent = (st._active_agent_name or st._context_agent
-                                   or "")
-                    _cold_usage = (
-                        reset_cli_context_usage(
-                            st.conversation_id, _cold_agent,
-                            user_id=st._user_id_for_svc,
-                            source="cli_session_cold_start")
-                        if _cold_agent else None)
-                    if _cold_usage is not None:
-                        persist_context_usage(
-                            st.conversation_id, _cold_agent, _cold_usage)
-                        ConversationEventBus.instance().publish_event(
-                            st.conversation_id, "message_meta",
-                            usage_event_payload(_cold_usage))
-                        logger.info(
-                            "[context:%s] cold CLI session — gauge reset for %s",
-                            st.conversation_id[:8], _cold_agent)
-                except Exception:
-                    logging.getLogger(__name__).debug(
-                        "cold CLI gauge reset failed", exc_info=True)
+        # A cold CLI session is about to be handed a freshly built
+        # initial_context.md, so the provider's window starts empty. The
+        # persisted gauge still describes the session that just died:
+        # compute_context_usage returns it verbatim while no agent runs,
+        # so a server restart redisplays the old percentage against a
+        # window nothing has filled yet. Zero it here, at the one place
+        # that knows the session is gone.
+        #
+        # Outside the probe's block on purpose: force_cold skips the probe
+        # precisely because the turn already knows it is launching a
+        # process, which is the one case where the gauge is guaranteed to
+        # describe a session that no longer exists.
+        if (st._is_cli_provider and st.conversation_id
+                and not st._cli_has_session):
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                from tasks.ai.context_usage import (
+                    persist_context_usage, reset_cli_context_usage,
+                    usage_event_payload)
+                _cold_agent = (st._active_agent_name or st._context_agent
+                               or "")
+                _cold_usage = (
+                    reset_cli_context_usage(
+                        st.conversation_id, _cold_agent,
+                        user_id=st._user_id_for_svc,
+                        source="cli_session_cold_start")
+                    if _cold_agent else None)
+                if _cold_usage is not None:
+                    persist_context_usage(
+                        st.conversation_id, _cold_agent, _cold_usage)
+                    ConversationEventBus.instance().publish_event(
+                        st.conversation_id, "message_meta",
+                        usage_event_payload(_cold_usage))
+                    logger.info(
+                        "[context:%s] cold CLI session — gauge reset for %s",
+                        st.conversation_id[:8], _cold_agent)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "cold CLI gauge reset failed", exc_info=True)

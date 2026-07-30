@@ -69,6 +69,12 @@ class _ALCSetupMixin:
         st.client._agent_service = st.ctx.get("active_llm_service", "")
         st.client._event_cid = st.ctx.get("_event_cid", st.conversation_id)
         st.client._agent_ctx = st.ctx  # for SSE event enrichment (task_iteration etc)
+        # Whether this turn's context is a resume delta belongs to the
+        # context, and is stamped on the turn's OWN clone. The resolver
+        # singleton is shared by every conversation on the service: a marker
+        # left there is read, or cleared, by whichever turn reaches it next.
+        st.client._pawflow_context_is_delta = bool(
+            st.ctx.get("_context_is_delta", False))
         # PawFlow budget. Provider-reported windows are hard caps, not a
         # reason to exceed a smaller configured context budget.
         st.client._max_context_size = int(st.ctx.get("max_context_size", 0) or 0)
@@ -93,25 +99,7 @@ class _ALCSetupMixin:
         st.max_rounds = int(st.ctx.get("max_rounds", 1)) if st.emitter.is_streaming else 1
         st._consecutive_tool: Dict[str, int] = {}
         st._max_consec = st.ctx.get("max_consecutive_tool_calls", 100)
-        # Apply per-agent model override
-        if st.use_conv_store and st.conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                from tasks.ai.agent_utils import _resolve_extra
-                st._cs = ConversationStore.instance()
-                st._agent_n = st.ctx.get("active_agent_name") or ""
-                # Fast mode: override model with fast variant
-                st._fast = _resolve_extra(st._cs, st.conversation_id, "fast_mode", st.user_id)
-                if st._fast:
-                    st.model = st._fast
-                # Per-agent model override (takes priority over fast)
-                st._mo = _resolve_extra(
-                    st._cs, st.conversation_id,
-                    f"model_override:{st._agent_n}", st.user_id)
-                if st._mo:
-                    st.model = st._mo
-            except Exception:
-                logger.debug("exception suppressed", exc_info=True)
+        self._alc_apply_model_overrides(st)
         # Client metadata
         st._client_provider = getattr(st.client, "provider", "") or ""
         if not isinstance(st._client_provider, str):
@@ -129,14 +117,6 @@ class _ALCSetupMixin:
 
         st._schedule_cc_turn_gauge_patch = lambda response, msg_id, reason: self._alc_schedule_cc_turn_gauge_patch(st, response, msg_id, reason)
 
-        # SpawnAgentsHandler source tracking
-        from core.tool_registry import SpawnAgentsHandler as _SAH
-        for st._h in st.registry.list_tools():
-            if isinstance(st._h, _SAH):
-                st._h.set_source_agent(
-                    st.ctx.get("active_agent_name", ""),
-                    st.ctx.get("active_llm_service", ""))
-                break
         # New messages tracking
         st.new_messages: List[LLMMessage] = []
         st.all_assistant_msg_ids: List[str] = []  # survives flush, for done event
@@ -144,28 +124,7 @@ class _ALCSetupMixin:
         if len(st.messages) > st.base_count:
             st.new_messages.extend(st.messages[st.base_count:])
 
-        # When an agent context does not exist, preparation builds it from
-        # PawFlow shared context. Materialize that exact start context
-        # immediately so the context editor and later turns see the same state
-        # as the provider.
-        if (st.ctx.get("_materialize_pawflow_initial_context") and st.use_conv_store
-                and st.conversation_id and st.ctx.get("active_agent_name")):
-            try:
-                from core.conversation_store import ConversationStore
-                ConversationStore.instance().save_agent_context(
-                    st.conversation_id, st.ctx.get("active_agent_name", ""),
-                    self._serialize_messages(st.messages))
-                logger.info(
-                    "[context:%s] materialized PawFlow initial %s context for %s: %d messages",
-                    st.conversation_id[:8],
-                    st.ctx.get("_pawflow_initial_context_source") or "shared",
-                    st.ctx.get("active_agent_name", ""), len(st.messages))
-                st.ctx["_materialize_pawflow_initial_context"] = False
-            except Exception:
-                logger.warning(
-                    "[context:%s] failed to materialize PawFlow initial context for %s",
-                    st.conversation_id[:8], st.ctx.get("active_agent_name", ""),
-                    exc_info=True)
+        self._alc_materialize_initial_context(st)
 
         st._auto_compact_state = {"running": False, "handoff": False}
 
@@ -214,13 +173,9 @@ class _ALCSetupMixin:
             try:
                 from core.checkpoint import CheckpointManager
                 st._cp_id = CheckpointManager.start_checkpoint(st.conversation_id)
-                # Set checkpoint_id on all BaseFsHandler instances
-                from core.handlers._fs_base import BaseFsHandler as _BFH
-                for st._h in st.registry.list_tools():
-                    if isinstance(st._h, _BFH):
-                        st._h.set_checkpoint_id(st._cp_id)
             except Exception as _cp_err:
                 logger.debug(f"[checkpoint] init failed: {_cp_err}")
+        self._alc_wire_registry(st)
 
         st.emitter.on_loop_start(st.ctx)
         st._summ = st.ctx.get("summarizer", (None, 0, ""))
@@ -229,5 +184,141 @@ class _ALCSetupMixin:
 
         # Note: post-response compact is done by auto-compact on load
         # in _prepare_agent_context. No lazy flag needed.
+
+    def _alc_apply_model_overrides(self, st):
+        """Apply fast-mode and per-agent model overrides to st.model."""
+        if not (st.use_conv_store and st.conversation_id):
+            return
+        try:
+            from core.conversation_store import ConversationStore
+            from tasks.ai.agent_utils import _resolve_extra
+            st._cs = ConversationStore.instance()
+            st._agent_n = st.ctx.get("active_agent_name") or ""
+            # Fast mode: override model with fast variant
+            st._fast = _resolve_extra(st._cs, st.conversation_id, "fast_mode", st.user_id)
+            if st._fast:
+                st.model = st._fast
+            # Per-agent model override (takes priority over fast)
+            st._mo = _resolve_extra(
+                st._cs, st.conversation_id,
+                f"model_override:{st._agent_n}", st.user_id)
+            if st._mo:
+                st.model = st._mo
+        except Exception:
+            logger.debug("exception suppressed", exc_info=True)
+
+    def _alc_wire_registry(self, st):
+        """Wire this turn's identity into the tool registry's handlers.
+
+        Handlers are per-registry, and a rebuilt context brings a new one:
+        without this, spawned sub-agents lose their source agent and file
+        tools lose the checkpoint /rewind restores from.
+        """
+        from core.tool_registry import SpawnAgentsHandler as _SAH
+        from core.handlers._fs_base import BaseFsHandler as _BFH
+        try:
+            _tools = st.registry.list_tools()
+        except Exception:
+            logger.debug("registry wiring skipped", exc_info=True)
+            return
+        for _h in _tools:
+            if isinstance(_h, _SAH):
+                _h.set_source_agent(
+                    st.ctx.get("active_agent_name", ""),
+                    st.ctx.get("active_llm_service", ""))
+                break
+        if getattr(st, "_cp_id", ""):
+            for _h in _tools:
+                if isinstance(_h, _BFH):
+                    _h.set_checkpoint_id(st._cp_id)
+
+    def _alc_materialize_initial_context(self, st):
+        """Persist the start context a cold build just produced.
+
+        When an agent context does not exist, preparation builds it from
+        PawFlow shared context. Materialize that exact start context
+        immediately so the context editor and later turns see the same state
+        as the provider.
+        """
+        if not (st.ctx.get("_materialize_pawflow_initial_context") and st.use_conv_store
+                and st.conversation_id and st.ctx.get("active_agent_name")):
+            return
+        try:
+            from core.conversation_store import ConversationStore
+            ConversationStore.instance().save_agent_context(
+                st.conversation_id, st.ctx.get("active_agent_name", ""),
+                self._serialize_messages(st.messages))
+            logger.info(
+                "[context:%s] materialized PawFlow initial %s context for %s: %d messages",
+                st.conversation_id[:8],
+                st.ctx.get("_pawflow_initial_context_source") or "shared",
+                st.ctx.get("active_agent_name", ""), len(st.messages))
+            st.ctx["_materialize_pawflow_initial_context"] = False
+        except Exception:
+            logger.warning(
+                "[context:%s] failed to materialize PawFlow initial context for %s",
+                st.conversation_id[:8], st.ctx.get("active_agent_name", ""),
+                exc_info=True)
+
+    def _alc_rebind_context(self, st, new_ctx):
+        """Point a running loop at a context that was just rebuilt.
+
+        The turn keeps its own identity -- iteration count, token totals,
+        tools already called, its /rewind checkpoint -- but everything
+        DERIVED from the context is recomputed, because a rebuild can hand
+        back a different client, a different tool registry, a different tool
+        list and a different message list. Patching a handful of fields left
+        the loop straddling two contexts: the provider read the new tool defs
+        from ctx while tools still executed through the old registry, and
+        cancel/preempt still pointed at the clone of the abandoned one.
+        """
+        st.ctx.update(new_ctx)
+
+        # Same clone boundary as the initial setup: the loop never runs on
+        # the resolver's singleton.
+        st.client = st.ctx["client"]
+        if hasattr(st.client, 'clone_for_call'):
+            st.client = st.client.clone_for_call()
+        st.client._conversation_id = st.conversation_id
+        st.client._user_id = st.user_id
+        st.client._agent_name = st.ctx.get("active_agent_name", "")
+        st.client._agent_service = st.ctx.get("active_llm_service", "")
+        st.client._event_cid = st.ctx.get("_event_cid", st.conversation_id)
+        st.client._agent_ctx = st.ctx
+        st.client._pawflow_context_is_delta = bool(
+            st.ctx.get("_context_is_delta", False))
+        st.client._max_context_size = int(st.ctx.get("max_context_size", 0) or 0)
+        # Cancel/preempt must reach the client that is actually running.
+        if st.conversation_id and (hasattr(st.client, 'send_user_message')
+                                   or hasattr(st.client, 'abort')):
+            with self._active_contexts_lock:
+                self._active_claude_client[st._agent_name_key] = st.client
+
+        st.registry = st.ctx["registry"]
+        st.tool_defs = st.ctx["tool_defs"]
+        st.model = st.ctx["model"]
+        self._alc_apply_model_overrides(st)
+        st._client_provider = getattr(st.client, "provider", "") or ""
+        if not isinstance(st._client_provider, str):
+            st._client_provider = ""
+        st._client_model = getattr(st.client, "default_model", "") or ""
+        st._client_base_url = getattr(st.client, "base_url", "") or ""
+        if not isinstance(st._client_base_url, str):
+            st._client_base_url = ""
+        self._alc_wire_registry(st)
+
+        # Replace the message list IN PLACE: ctx, the emitter and every
+        # closure built at setup hold this exact object.
+        st.messages[:] = list(st.ctx["messages"] or [])
+        st.ctx["messages"] = st.messages
+        st.base_count = len(st.messages)
+        st.ctx["_base_message_count"] = st.base_count
+        # Everything this turn produced so far is persisted, and the rebuild
+        # loaded it back: nothing is pending anymore.
+        st.new_messages.clear()
+        st.ctx.pop("_context_usage_cache", None)
+        st.ctx.pop("_auto_compact_usage_cache", None)
+        st.llm_context = list(st.messages)
+        self._alc_materialize_initial_context(st)
 
 

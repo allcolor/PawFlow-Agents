@@ -26,10 +26,16 @@ class _PACPhase2Mixin:
         context. The marker lets the provider raise ColdStartRequired instead,
         and the loop rebuilds the context as a real cold start rather than
         reassembling one by hand.
+
+        It is recorded on the STATE, and travels to the provider in this
+        turn's context dict. It cannot be left on ``st.client``: that client
+        comes from the service registry and is shared by every conversation
+        using the service, so between here and the moment the loop clones it
+        (_alc_setup) another turn preparing a cold context on the same
+        service would clear it, and this turn would launch with a delta after
+        all.
         """
-        client = getattr(st, "client", None)
-        if client is not None:
-            client._pawflow_context_is_delta = True
+        st._context_is_delta = True
 
     def _load_cold_cli_context(self, st):
         """Load the full PawFlow context a cold CLI process must receive.

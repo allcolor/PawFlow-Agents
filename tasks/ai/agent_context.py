@@ -153,6 +153,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
             "_nicknames": st._nicknames if st.conversation_id else {},
             "_is_cli_provider": st._is_cli_provider,
             "_cli_has_session": st._cli_has_session,
+            # Whether this context is a resume delta rather than a launch's
+            # full context. A property of the context, so it rides with it:
+            # _alc_setup stamps it on this turn's own client clone.
+            "_context_is_delta": bool(getattr(st, "_context_is_delta", False)),
             "_is_claude_code": st._is_claude_code or st._is_claude_code_interactive,
             "_claude_has_session": st._claude_has_session,
             "_agent_md_content": st._agent_md_content,

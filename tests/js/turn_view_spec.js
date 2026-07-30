@@ -371,6 +371,77 @@ test('a runtime turn stops protecting itself once it has ended', () => {
      'the ended turn owes the reader its last message');
 });
 
+// The browser-level copy of this lives in
+// tests/test_webchat_durable_state_behavior.py, which skips wherever headless
+// Chromium cannot render. This is the copy that always runs.
+test('the runtime snapshot rehydrates a live turn, and a done still closes the open one', () => {
+  const e = env('simplified');
+  const now = e.ctx.Date.now();
+  e.ctx.turnViewSetRuntimeTurns([
+    { turn_id: 'turn-A', started_at: (now / 1000) - 12, duration: 12,
+      status: 'thinking', agent_name: 'alpha', message_preview: 'still working' },
+    { turn_id: 'turn-B', started_at: (now / 1000) - 4, duration: 4,
+      status: 'running', agent_name: 'beta' },
+  ]);
+
+  const rowFor = (turnId, msgId, text) => {
+    const user = e.row(turnId);
+    e.ctx.turnViewRegisterUser(
+      { msg_id: turnId, turn_id: turnId, _history: true }, user);
+    const row = e.row(msgId);
+    row.dataset.messageRole = 'assistant';
+    row.dataset.rawText = text;
+    e.ctx.turnViewIngest('assistant',
+      { msg_id: msgId, turn_id: turnId, content: text, _history: true }, row);
+    return row;
+  };
+  const partialA = rowFor('turn-A', 'partial-A', 'partial A');
+  const partialB = rowFor('turn-B', 'partial-B', 'partial B');
+  e.ctx.turnViewReconcile();
+  e.ctx.turnViewHydrateRuntimeTurns();
+
+  // Asserted on the DOM rather than on module state: the reader's view is the
+  // contract, and a vm context cannot see a top-level `const` anyway.
+  const blocks = e.messages.querySelectorAll('.simple-turn-block');
+  eq(blocks.length, 2, 'one block per turn');
+  const [blockA, blockB] = blocks;
+  eq(topLevelIds(e).join(','), 'turn-A,BLOCK,turn-B,BLOCK',
+     'neither live turn is given an answer of its own');
+  assert(blockA.classList.contains('turn-working'),
+         'a turn the server still runs stays open');
+  eq(blockA.querySelector('.simple-turn-status').className,
+     'simple-turn-status working');
+  // 12s of runtime, not 0s from the moment the page was built.
+  const elapsed = blockA.querySelector('.simple-turn-elapsed').textContent;
+  assert(/1[1-9]s|[2-9]\ds/.test(elapsed), 'elapsed shows runtime age: ' + elapsed);
+  assert(blockA.querySelectorAll('.simple-turn-cue').length > 0,
+         'the runtime preview is offered as a cue');
+  assert(!!blockB.querySelector('.simple-turn-idle'),
+         'a live turn with nothing to say shows its idle pulse');
+  const inside = (el, block) => {
+    for (let p = el.parentNode; p; p = p.parentNode) if (p === block) return true;
+    return false;
+  };
+  assert(inside(partialA, blockA), 'partial A filed in A');
+  assert(inside(partialB, blockB), 'partial B filed in B');
+
+  // The done carries turn-A's id while turn-B is the turn on screen. An id
+  // names a turn, it never selects one: the open block closes.
+  const finalB = e.row('final-B');
+  finalB.dataset.messageRole = 'assistant';
+  finalB.dataset.rawText = 'final B';
+  e.ctx.turnViewIngest('assistant',
+    { msg_id: 'final-B', turn_id: 'turn-A', content: 'final B' }, finalB);
+  e.ctx.turnViewFinalize({ turn_id: 'turn-A', final_msg_id: 'final-B' });
+
+  eq(blockB.querySelector('.simple-turn-status').className,
+     'simple-turn-status completed', 'the open turn is the one that closed');
+  eq(topLevelIds(e).join(','), 'turn-A,BLOCK,turn-B,BLOCK,final-B',
+     'the answer sits under the block that closed');
+  assert(blockA.classList.contains('turn-working'),
+         'the turn the done NAMED was not touched');
+});
+
 test('a reloaded turn files every intermediate row into its tab', () => {
   const e = env('simplified');
   replayHistory(e, HISTORY_ROWS);

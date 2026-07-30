@@ -4,6 +4,72 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.60] — 2026-07-30
+
+### Fixed
+
+- Every CLI now answers the same question the same way: no process running ->
+  we launch -> cold start -> full context; a process is running -> delta.
+  beta.59 gave codex and gemini the refusal that enforces it and left the
+  others out, so claude-code interactive and antigravity could still hand a
+  bare delta to a process that knew nothing. The rule is asked at each
+  provider's own launch site, because that is where "we are about to start a
+  process" is known, and the pools take a `before_launch` callback rather
+  than deciding themselves: they manage containers, not context policy, and
+  they call it only when they are really going to launch, never on a reuse.
+
+- claude-code (`-p`) had a third path, and it was the last provider that did:
+  no live process but a persisted session id, so it launched with `--resume`
+  and a delta and let CC replay its own jsonl. Whether that file still meant
+  anything was decided by re-deriving CC's project-key algorithm and trusting
+  a transcript only CC can validate; when CC declined it and opened a fresh
+  session instead, the `SESSION MISMATCH` check merely logged it while the
+  agent lost its history, and the new empty session id was then persisted as
+  though it were sound, so every later turn resumed a session holding
+  nothing. There is no resume-from-disk path any more, and the context phase
+  asks its live registry instead of the stored id -- the same alignment codex
+  and gemini got in beta.58.
+
+- Refusing a launch no longer strands the live session's turn lock. Both
+  stream providers hold it when they ask, and their own try/finally starts
+  later, so the lock was acquired and never released. It is an RLock and the
+  retry runs on the same thread, which hid it: the second acquisition
+  succeeded, one finally released one level, and the next turn on that
+  session -- on another thread -- waited forever. The refusal now takes a
+  `release` callback, and codex asks before minting its MCP token rather than
+  after.
+
+- The "this context is a delta" marker no longer lives on the shared service
+  client. That client comes from the service registry and the loop only
+  clones it later, so a second conversation preparing a cold context on the
+  same service cleared the marker before the first one's clone was made --
+  and the refusal became a no-op exactly when two conversations shared a
+  service. It travels in the turn's context and is stamped on the turn's own
+  clone.
+
+- A rebuilt context is now adopted whole. The restart replaced the client,
+  the messages and the ctx, but left the loop's tool registry, tool
+  definitions, model and cancel registration pointing at the context it had
+  just abandoned -- so a turn could execute tools through a registry the new
+  context never configured, and force-stop reached the wrong clone. The
+  message list is replaced in place, since ctx, the emitter and every closure
+  built at setup hold that exact object.
+
+- The cold restart no longer spends an iteration. It was counted before the
+  provider was called and never given back, so a turn with
+  `max_iterations=1` ended having never called the model -- and CLI providers
+  deliberately synthesize no empty answer.
+
+- The context gauge is reset on the pass that launches. The reset sat inside
+  the block gated on `not force_cold`, which is exactly the pass that knows
+  the old session is gone, so the dead session's percentage survived the
+  restart.
+
+- An ephemeral call (compact, memory extraction) is exempt from the refusal
+  everywhere. It builds its own full text, but it clones a client that may
+  carry the marker, and bouncing it would restart a compaction as if it were
+  the agent's own turn.
+
 ## [1.0.0-beta.59] — 2026-07-30
 
 ### Fixed

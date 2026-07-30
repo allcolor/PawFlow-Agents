@@ -147,6 +147,11 @@ class LiveSessionRegistry:
 
         A dead proc is auto-evicted as a side effect — callers never see
         a zombie entry.
+
+        Handing a session out is a use, so it refreshes the idle clock:
+        ``last_used`` is the sweeper's only evidence, and a lookup that
+        left it stale let the sweeper evict a session a turn had already
+        claimed. Same rule as the per-turn ``touch`` below.
         """
         with self._lock:
             session = self._sessions.get(key)
@@ -157,6 +162,7 @@ class LiveSessionRegistry:
                             _fmt_key(key))
                 self._sessions.pop(key, None)
                 return None
+            session.last_used = time.monotonic()
             return session
 
     def find_for_agent(self, user_id: str, conversation_id: str,
@@ -184,6 +190,7 @@ class LiveSessionRegistry:
             candidates.sort(key=lambda s: s.last_used, reverse=True)
             for s in candidates:
                 if s.is_alive():
+                    s.last_used = time.monotonic()
                     return s
         return None
 

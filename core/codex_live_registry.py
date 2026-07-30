@@ -132,7 +132,15 @@ class CodexLiveRegistry:
 
     def get(self, key: CodexLiveKey) -> Optional[CodexLiveContainer]:
         with self._lock:
-            return self._containers.get(key)
+            entry = self._containers.get(key)
+            if entry is not None:
+                # Handing a container out IS a use. The idle TTL reaps what
+                # nobody asks for, and last_used is the sweeper's only
+                # evidence: a lookup that left it stale let the sweeper
+                # evict a container between the moment the context phase
+                # found it and the moment the provider claimed it.
+                entry.last_used = time.monotonic()
+            return entry
 
     def get_compatible(self, user_id: str, conv_id: str, agent_name: str,
                        service_id: str) -> Optional[Tuple[CodexLiveKey, CodexLiveContainer]]:
@@ -156,7 +164,12 @@ class CodexLiveRegistry:
         if not candidates:
             return None
         candidates.sort(key=lambda item: item[1].last_used, reverse=True)
-        return candidates[0]
+        chosen = candidates[0]
+        with self._lock:
+            # Same rule as get(): this lookup hands the container to a
+            # caller that is about to use it.
+            chosen[1].last_used = time.monotonic()
+        return chosen
 
     def register(self, key: CodexLiveKey,  # nosec B107
                  container_name: str, workdir: str,

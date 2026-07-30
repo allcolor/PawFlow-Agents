@@ -102,7 +102,14 @@ class GeminiLiveRegistry:
 
     def get(self, key: GeminiLiveKey) -> Optional[GeminiLiveContainer]:
         with self._lock:
-            return self._containers.get(key)
+            entry = self._containers.get(key)
+            if entry is not None:
+                # Handing a container out IS a use -- see the same rule in
+                # CodexLiveRegistry.get(). last_used is the sweeper's only
+                # evidence, so a lookup must refresh it or the sweeper can
+                # evict a container that a turn has already claimed.
+                entry.last_used = time.monotonic()
+            return entry
 
     def get_compatible(self, user_id: str, conv_id: str, agent_name: str,
                        service_id: str) -> Optional[Tuple[GeminiLiveKey, GeminiLiveContainer]]:
@@ -125,7 +132,10 @@ class GeminiLiveRegistry:
         if not candidates:
             return None
         candidates.sort(key=lambda item: item[1].last_used, reverse=True)
-        return candidates[0]
+        chosen = candidates[0]
+        with self._lock:
+            chosen[1].last_used = time.monotonic()
+        return chosen
 
     def register(self, key: GeminiLiveKey,  # nosec B107
                  container_name: str, workdir: str,

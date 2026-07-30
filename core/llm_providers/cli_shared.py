@@ -168,9 +168,15 @@ class LLMCliSharedMixin:
         conversation -- no transcript, no persona, no skills, no tool config.
 
         When that happens the context phase left a one-shot callback here.
-        Calling it reloads the real cold context. On an ordinary cold start --
-        where the context phase never saw a session -- there is no callback and
-        this returns ``messages`` untouched.
+        Calling it reloads the real cold context -- the stored transcript with
+        the provider system prompt a resumed turn deliberately omits. What
+        ``messages`` still holds is this turn's delta, above all the user's
+        actual question, so the two are CONCATENATED: rebuilding by replacement
+        would answer a question nobody asked.
+
+        On an ordinary cold start -- where the context phase never saw a
+        session -- there is no callback and this returns ``messages``
+        unchanged, and by identity, which callers use to tell the two apart.
 
         Consumed on use: a turn rebuilds at most once, and a stale callback
         must not fire on a later turn whose context is already correct.
@@ -187,9 +193,11 @@ class LLMCliSharedMixin:
             return messages
         if not rebuilt:
             return messages
-        logger.info("cold context rebuilt: %d message(s) recovered for a turn "
-                    "whose CLI session disappeared", len(rebuilt))
-        return rebuilt
+        out = list(rebuilt) + list(messages or [])
+        logger.info("cold context rebuilt: %d message(s) recovered plus %d "
+                    "carried over, for a turn whose CLI session disappeared",
+                    len(rebuilt), len(messages or []))
+        return out
 
     @staticmethod
     def _cli_escape_text(text: str, *, quote: bool = False) -> str:

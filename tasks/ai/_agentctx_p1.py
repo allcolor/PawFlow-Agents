@@ -443,89 +443,88 @@ class _PACPhase1Mixin:
                     st._session_ver_key = f"gemini_acp_session_version:{st._agent_key}"
                     st._session_val = st._store_session.get_extra(st.conversation_id, st._session_key)
                     st._session_ver = st._store_session.get_extra(st.conversation_id, st._session_ver_key)
-                    st._cli_has_session = bool(st._session_val) and st._session_ver == "2"
-                    if st._cli_has_session:
-                        # A persisted id is not a live window. Same rule as
-                        # every other CLI: a new instance ingests the initial
-                        # context file from zero, so only a live process can
-                        # claim the provider still holds this context.
-                        st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
-                        st._live = None
+                    # A persisted id is not a live window -- and its absence is
+                    # not proof there is no window. The provider's lookup is
+                    # keyed on the live registry alone, so it reuses a live
+                    # process whose id we no longer hold; gating on the stored
+                    # id here made us load the whole transcript for a turn the
+                    # provider then resumed. Same rule as every other CLI: only
+                    # a live process can claim to still hold this context.
+                    st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
+                    st._live = None
+                    try:
+                        from core.cli_live_sessions import find_live_cli_session
+                        from core.gemini_live_registry import GeminiLiveRegistry
+                        st._pool_key = f"gemini_acp_pool_idx:{st._agent_key}"
                         try:
-                            from core.gemini_live_registry import GeminiLiveRegistry
-                            st._pool_key = f"gemini_acp_pool_idx:{st._agent_key}"
-                            try:
-                                st._pool_idx = int(st._store_session.get_extra(
-                                    st.conversation_id, st._pool_key) or -1)
-                            except Exception:
-                                st._pool_idx = -1
-                            st._live_reg = GeminiLiveRegistry.instance()
-                            st._live = st._live_reg.get((
-                                st._user_id_for_svc, st.conversation_id,
-                                st._agent_key, st._svc_id, st._pool_idx))
-                            if st._live is None:
-                                st._compat = st._live_reg.get_compatible(
-                                    st._user_id_for_svc, st.conversation_id,
-                                    st._agent_key, st._svc_id)
-                                st._live = st._compat[1] if st._compat else None
+                            st._pool_idx = int(st._store_session.get_extra(
+                                st.conversation_id, st._pool_key) or -1)
                         except Exception:
-                            logging.getLogger(__name__).debug(
-                                "Ignored gemini live-session validation exception",
-                                exc_info=True)
-                        if not (st._live and st._live.is_process_alive()):
-                            st._store_session.set_extra(
-                                st.conversation_id, st._session_key, "")
-                            st._cli_has_session = False
-                            logger.warning(
-                                "[context:%s] no live gemini instance for %s — "
-                                "loading PawFlow context",
-                                st.conversation_id[:8], st._agent_key)
+                            st._pool_idx = -1
+                        st._live = find_live_cli_session(
+                            GeminiLiveRegistry.instance(), st._user_id_for_svc,
+                            st.conversation_id, st._agent_key, st._svc_id,
+                            st._pool_idx)
+                    except Exception:
+                        logging.getLogger(__name__).debug(
+                            "Ignored gemini live-session validation exception",
+                            exc_info=True)
+                    st._cli_has_session = st._live is not None
+                    if not st._cli_has_session and st._session_val:
+                        st._store_session.set_extra(
+                            st.conversation_id, st._session_key, "")
+                        logger.warning(
+                            "[context:%s] no live gemini instance for %s — "
+                            "loading PawFlow context",
+                            st.conversation_id[:8], st._agent_key)
                 elif st._is_codex_app_server:
                     st._session_key = f"codex_app_server_thread:{st._agent_key}"
                     st._session_val = st._store_session.get_extra(st.conversation_id, st._session_key)
-                    st._cli_has_session = bool(st._session_val)
-                    if st._cli_has_session:
-                        st._session_valid = False
-                        st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
+                    # The persisted thread id is a HINT (it seeds the pool
+                    # index), never the question. The provider decides on the
+                    # live registry alone -- its lookup is not gated on the id
+                    # at all -- and happily reuses a live process whose id we
+                    # no longer have stored. Gating on the id here made the two
+                    # disagree: we announced a cold start and loaded and
+                    # compacted the whole transcript, then the provider resumed
+                    # and threw it away, every turn, because nothing on the
+                    # reuse path ever wrote the id back. Ask what it asks.
+                    # A live app-server process already owns the thread state.
+                    # Nothing else does: a rollout jsonl on disk proves only
+                    # that the thread COULD be replayed, and replaying it costs
+                    # as much as -- or more than -- our own (possibly compacted)
+                    # context. Starting an instance is a cold start, like every
+                    # other CLI.
+                    st._session_valid = False
+                    st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
+                    try:
+                        from core.cli_live_sessions import find_live_cli_session
+                        from core.codex_live_registry import CodexLiveRegistry
+                        st._pool_key = f"codex_app_pool_idx:{st._agent_key}"
                         try:
-                            from core.codex_live_registry import CodexLiveRegistry
-                            st._pool_key = f"codex_app_pool_idx:{st._agent_key}"
-                            try:
-                                st._pool_idx = int(st._store_session.get_extra(
-                                    st.conversation_id, st._pool_key) or -1)
-                            except Exception:
-                                st._pool_idx = -1
-                            st._live_reg = CodexLiveRegistry.instance()
-                            st._live = st._live_reg.get((
-                                st._user_id_for_svc, st.conversation_id, st._agent_key,
-                                st._svc_id, st._pool_idx))
-                            if st._live is None:
-                                st._compat = st._live_reg.get_compatible(
-                                    st._user_id_for_svc, st.conversation_id,
-                                    st._agent_key, st._svc_id)
-                                st._live = st._compat[1] if st._compat else None
-                            # A live app-server process already owns the thread
-                            # state. Nothing else does: a rollout jsonl on disk
-                            # proves only that the thread COULD be replayed, and
-                            # replaying it costs as much as -- or more than --
-                            # our own (possibly compacted) context. Starting an
-                            # instance is a cold start, like every other CLI.
-                            st._session_valid = bool(
-                                st._live and st._live.is_process_alive())
+                            st._pool_idx = int(st._store_session.get_extra(
+                                st.conversation_id, st._pool_key) or -1)
                         except Exception:
-                            logging.getLogger(__name__).debug(
-                                "Ignored codex live-session validation exception",
-                                exc_info=True)
-                        if not st._session_valid:
-                            st._store_session.set_extra(st.conversation_id, st._session_key, "")
-                            st._store_session.set_extra(
-                                st.conversation_id,
-                                f"codex_app_pool_idx:{st._agent_key}", "")
-                            st._cli_has_session = False
-                            logger.warning(
-                                "[context:%s] no live codex app-server for thread %s (%s) — loading PawFlow context",
-                                st.conversation_id[:8], str(st._session_val)[:12],
-                                st._agent_key)
+                            st._pool_idx = -1
+                        st._live = find_live_cli_session(
+                            CodexLiveRegistry.instance(), st._user_id_for_svc,
+                            st.conversation_id, st._agent_key, st._svc_id,
+                            st._pool_idx)
+                        st._session_valid = st._live is not None
+                    except Exception:
+                        logging.getLogger(__name__).debug(
+                            "Ignored codex live-session validation exception",
+                            exc_info=True)
+                    st._cli_has_session = st._session_valid
+                    if not st._session_valid and st._session_val:
+                        st._store_session.set_extra(st.conversation_id, st._session_key, "")
+                        st._store_session.set_extra(
+                            st.conversation_id,
+                            f"codex_app_pool_idx:{st._agent_key}", "")
+                        logger.warning(
+                            "[context:%s] no live codex app-server for thread %s (%s) — loading PawFlow context",
+                            st.conversation_id[:8], str(st._session_val)[:12],
+                            st._agent_key)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 

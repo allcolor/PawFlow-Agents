@@ -41,7 +41,22 @@ class _PACPhase2Mixin:
             st._context_diverged = False
             st._uses_pawflow_initial = False
             self._load_cold_cli_context(st)
-            return list(st.messages or [])
+            rebuilt = list(st.messages or [])
+            # A resumed turn deliberately ships no system prompt: the live
+            # process already had it, so _alc_with_provider_system_prompt
+            # skips it while _cli_has_session is true. A cold start does need
+            # it, and that decision was made long before we got here.
+            prompt = str(getattr(st, "_provider_system_prompt", "") or "")
+            if prompt:
+                sys_msg = LLMMessage(
+                    role="system", content=prompt,
+                    source={"type": "provider_prompt"},
+                    conversation_id=st.conversation_id)
+                if rebuilt and getattr(rebuilt[0], "role", "") == "system":
+                    rebuilt[0] = sys_msg
+                else:
+                    rebuilt.insert(0, sys_msg)
+            return rebuilt
 
         client._pawflow_cold_context_rebuild = _rebuild
 

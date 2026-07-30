@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The context phase and the CLI providers now answer "does this conversation
+  still have a live session?" the same way. The providers ask their live
+  registry; the context phase asked whether a session id was still persisted.
+  Once anything cleared that id — a stale-thread reset, a compaction
+  invalidation, a pool index that no longer matched — the two disagreed
+  permanently, because nothing on the codex reuse path wrote the id back: every
+  turn announced a cold start, loaded and compacted the whole transcript, then
+  watched the provider find the very same process alive, resume it and discard
+  all of it. Both branches now go through one helper
+  (`core.cli_live_sessions.find_live_cli_session`), and codex re-persists a
+  thread id recovered from a live session.
+
 - A CLI turn no longer loses its context when the session it was told to reuse
   disappears first. The context phase empties the message list whenever it
   finds a live codex or gemini session, because a resume only needs the delta —
@@ -20,6 +32,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   session in that case, since replaying it on top of a rebuilt context would
   send the transcript twice and leave the gauge on the dead session's numbers.
   Nothing changes on the happy path, where the session really is still there.
+  The callback is carried across `clone_for_call`: the agent loop clones the
+  client after the context phase arms it, so without that the recovery was a
+  no-op in production while every same-instance test still passed. The rebuilt
+  context also carries the provider system prompt a resumed turn deliberately
+  omits, and is concatenated with the turn's delta instead of replacing it —
+  replacing it dropped the user's actual question.
 
 - The Gemini and Antigravity VNC logins start their container again. The
   beta.56 label work added the `pawflow_container_labels` call to that
@@ -48,6 +66,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the bucket directory with it. A per-conversation wipe counter, read before
   the reservation and rechecked under the lock, now discards such a write and
   its bytes; `store`/`store_file` return `""` in that case.
+  The wipe is announced in the same locked block that takes its snapshot and
+  stays announced until it finishes, so a write cannot slip between the two —
+  reserving after the snapshot and registering before the counter moved — and
+  come back with a valid id for a conversation that no longer exists.
 
 - The interactive proxies no longer grow their capture log without bound. The
   shell that starts each one appends its stderr to a file, and for

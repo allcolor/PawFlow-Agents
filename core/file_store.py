@@ -62,6 +62,13 @@ class FileStore:
         # delete already walked the entries it could see. Comparing the count
         # across the unlocked write is what tells the two apart.
         self._conversation_wipes: Dict[str, int] = {}
+        # Conversations whose wipe is IN PROGRESS. The counter above only
+        # moves once the wipe finishes, which left a second window: a write
+        # that reserved after the snapshot and registered before the counter
+        # moved saw no change and survived. Held from the snapshot to the end
+        # of the wipe, so a concurrent registration is refused for its whole
+        # duration. Counted, because two wipes can overlap.
+        self._conversation_wiping: Dict[str, int] = {}
         self._store_lock = threading.RLock()
         self._loaded = False
         self._last_cleanup: float = 0.0
@@ -128,8 +135,13 @@ class FileStore:
         Caller must hold ``_store_lock``. Registering it would resurrect a
         conversation the user deleted: ``delete_by`` snapshots the entries it
         can see, and this one did not exist yet.
+
+        Two windows, both closed here: the wipe finished while we wrote (the
+        counter moved), or it is still running right now (the conversation is
+        marked wiping, and its snapshot cannot contain us either way).
         """
-        if self._conversation_wipes.get(conversation_id, 0) == seen:
+        if (self._conversation_wipes.get(conversation_id, 0) == seen
+                and not self._conversation_wiping.get(conversation_id)):
             return False
         try:
             file_path.unlink(missing_ok=True)
@@ -540,8 +552,17 @@ class FileStore:
                   agent_name: str = "") -> int:
         """Delete all files matching filters (AND logic). Returns count."""
         to_delete = []
+        # A whole-conversation wipe, as opposed to a category or agent sweep,
+        # is the only one that ends the conversation. Announce it in the SAME
+        # locked block that takes the snapshot: anything registering after this
+        # point is refused, and anything that reserved before it will find the
+        # counter moved when it comes back. Between the two there is no gap.
+        wiping = bool(conversation_id and not category and not agent_name)
         with self._store_lock:
             self._ensure_loaded()
+            if wiping:
+                self._conversation_wiping[conversation_id] = (
+                    self._conversation_wiping.get(conversation_id, 0) + 1)
             for fid, entry in self._entries.items():
                 if category and entry.get("category") != category:
                     continue
@@ -550,16 +571,24 @@ class FileStore:
                 if agent_name and entry.get("agent_name") != agent_name:
                     continue
                 to_delete.append(fid)
-        for fid in to_delete:
-            self._delete_entry(fid)
-        if conversation_id and not category and not agent_name:
-            with self._store_lock:
-                self._conversation_owners.pop(conversation_id, None)
-                # Announce the wipe to any store() whose bytes are in flight:
-                # it reserved its path before this ran, so its entry is not in
-                # the snapshot above and would land after the delete finished.
-                self._conversation_wipes[conversation_id] = (
-                    self._conversation_wipes.get(conversation_id, 0) + 1)
+        try:
+            for fid in to_delete:
+                self._delete_entry(fid)
+        finally:
+            if wiping:
+                with self._store_lock:
+                    self._conversation_owners.pop(conversation_id, None)
+                    # The counter is what a write that reserved BEFORE the
+                    # snapshot compares against; the wiping mark above is what
+                    # refuses one that arrives DURING. Release the mark only
+                    # after the counter moves, so no write slips between them.
+                    self._conversation_wipes[conversation_id] = (
+                        self._conversation_wipes.get(conversation_id, 0) + 1)
+                    _left = self._conversation_wiping.get(conversation_id, 1) - 1
+                    if _left > 0:
+                        self._conversation_wiping[conversation_id] = _left
+                    else:
+                        self._conversation_wiping.pop(conversation_id, None)
         return len(to_delete)
 
     def _delete_entry(self, file_id: str):

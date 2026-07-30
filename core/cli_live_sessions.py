@@ -22,6 +22,48 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def find_live_cli_session(registry, user_id: str, conversation_id: str,
+                          agent_key: str, service_id: str,
+                          pool_idx: int = -1):
+    """The live session for this (user, conversation, agent, service), or None.
+
+    Exact key first, then the compatible lookup that ignores the pool index:
+    the stored index can be missing or stale while the process is very much
+    alive. Only a process that answers counts as a session.
+
+    This is THE question the context phase and every CLI provider must answer
+    the same way, and they did not: the providers asked their live registry,
+    while the context phase asked whether a session id was persisted. Once
+    anything cleared that id -- a stale-thread reset, a compaction
+    invalidation, a pool index we could not match -- the context phase declared
+    a cold start and loaded and compacted the entire transcript, and the
+    provider then found the live process, resumed, and threw all of it away.
+    Every turn, because nothing on the reuse path wrote the id back.
+
+    Never raises: a registry that cannot answer means no session, which is the
+    safe verdict -- it costs a context load, not a lost conversation.
+    """
+    session = None
+    try:
+        session = registry.get(
+            (user_id, conversation_id, agent_key, service_id, pool_idx))
+        if session is None:
+            compatible = registry.get_compatible(
+                user_id, conversation_id, agent_key, service_id)
+            session = compatible[1] if compatible else None
+    except Exception:
+        logger.debug("live CLI session lookup failed for %s/%s",
+                     str(conversation_id)[:8], agent_key, exc_info=True)
+        return None
+    try:
+        return session if (session is not None
+                           and session.is_process_alive()) else None
+    except Exception:
+        logger.debug("liveness check failed for %s/%s",
+                     str(conversation_id)[:8], agent_key, exc_info=True)
+        return None
+
+
 def _live_registries():
     '''Yield (label, registry) for every CLI provider that holds containers.
 

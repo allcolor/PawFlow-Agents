@@ -75,6 +75,7 @@ class _CodexAppStreamMixin:
                     conv_id, f"codex_app_server_thread:{agent_name or 'default'}") or ""
             except Exception:
                 logger.debug("[codex-app] failed to restore thread id", exc_info=True)
+        _stored_thread_id = thread_id
 
         workdir = self._codex_get_session_workdir(conv_id, agent_name, user_id)
         os.makedirs(workdir, exist_ok=True)
@@ -170,6 +171,32 @@ class _CodexAppStreamMixin:
                 logger.debug("[codex-app-live] lookup failed", exc_info=True)
                 live_reg = None
                 live_key = None
+
+        # The live session is the authority on its own thread id, and the reuse
+        # path above may have recovered one the store never held -- a stale
+        # clear, a compaction invalidation, a pool index we could not match.
+        # The context phase reads that store to decide whether this
+        # conversation still has a session, so leaving the two divergent made
+        # it announce a cold start and load the whole transcript for a turn
+        # that then resumed and discarded it. Put them back in agreement.
+        if (is_reuse and thread_id and conv_id and store is not None
+                and not is_ephemeral and thread_id != _stored_thread_id):
+            try:
+                store.set_extra(
+                    conv_id,
+                    f"codex_app_server_thread:{agent_name or 'default'}",
+                    thread_id)
+                _idx = int(getattr(self, "_current_pool_index", resume_pool_idx))
+                if _idx >= 0:
+                    store.set_extra(
+                        conv_id,
+                        f"codex_app_pool_idx:{agent_name or 'default'}", _idx)
+                logger.info(
+                    "[codex-app] re-persisted live thread id for conv=%s agent=%s",
+                    conv_id[:8] or "?", agent_name or "default")
+            except Exception:
+                logger.debug("[codex-app] failed to re-persist thread id",
+                             exc_info=True)
 
         if not is_reuse:
             self._codex_setup_credentials(

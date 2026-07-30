@@ -17,6 +17,9 @@ _AGENT_CONTEXT = _re.sub(r"\bst\.", "", "".join(
     for _f in ("agent_context.py", "_agentctx_base.py", "_agentctx_p1.py",
                "_agentctx_p2.py", "_agentctx_p3.py")))
 _AGENT_EMITTER = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
+# The one place the "is there a live CLI session" question is answered, for
+# the context phase and, in spirit, for every provider.
+_CLI_LIVE_SESSIONS = Path("core/cli_live_sessions.py").read_text(encoding="utf-8")
 _AGENT_ACTIONS = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_POLLER = (Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
                 + Path("tasks/ai/_agent_poll_checkin.py").read_text(encoding="utf-8"))
@@ -294,15 +297,25 @@ def test_codex_context_session_skip_requires_a_live_instance():
     sweeper had reaped the app-server. The context was then never reloaded and
     the gauge never passed through zero -- while replaying the thread cost as
     much as, or more than, sending our own compacted context.
+
+    The liveness probe itself now lives in
+    `core.cli_live_sessions.find_live_cli_session`, shared with the gemini
+    branch, because keeping two copies of this question is what let the
+    context phase and the provider drift apart.
     """
     block = _AGENT_CONTEXT[
         _AGENT_CONTEXT.index('elif _is_codex_app_server:'):
         _AGENT_CONTEXT.index('# Resolve max_context early')]
     assert "CodexLiveRegistry" in block
-    assert "is_process_alive()" in block
+    assert "find_live_cli_session(" in block
     assert "_codex_app_rollout_path" not in block
     assert 'no live codex app-server' in block
-    assert '_cli_has_session = False' in block
+    assert '_cli_has_session = _session_valid' in block
+    # And the verdict must not be gated on a persisted id: the provider's own
+    # lookup never is, so gating here made the two disagree on every turn
+    # after anything cleared it.
+    assert '_cli_has_session = bool(_session_val)' not in block
+    assert "is_process_alive()" in _CLI_LIVE_SESSIONS
 
 
 def test_gemini_context_session_skip_requires_a_live_instance():
@@ -315,9 +328,11 @@ def test_gemini_context_session_skip_requires_a_live_instance():
         _AGENT_CONTEXT.index('elif _is_gemini_acp:'):
         _AGENT_CONTEXT.index('elif _is_codex_app_server:')]
     assert "GeminiLiveRegistry" in block
-    assert "is_process_alive()" in block
+    assert "find_live_cli_session(" in block
     assert 'no live gemini instance' in block
-    assert '_cli_has_session = False' in block
+    assert '_cli_has_session = _live is not None' in block
+    assert '_cli_has_session = bool(_session_val) and _session_ver == "2"' not in block
+    assert "is_process_alive()" in _CLI_LIVE_SESSIONS
 
 
 def test_codex_context_compaction_clears_thread_before_pawflow_compact():

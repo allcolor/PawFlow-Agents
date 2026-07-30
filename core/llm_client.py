@@ -177,6 +177,14 @@ class LLMClient(
         _max_ctx = getattr(self, '_max_context_size', 0)
         if _max_ctx:
             clone._max_context_size = _max_ctx
+        # Per-TURN state that must follow the call: the context phase leaves
+        # this here when it emptied the message list for a session it believed
+        # live, and only the provider -- running on this clone -- can discover
+        # the session is gone and ask for the real context back. Dropping it
+        # here silently turned that recovery into a no-op.
+        _rebuild = getattr(self, '_pawflow_cold_context_rebuild', None)
+        if _rebuild is not None:
+            clone._pawflow_cold_context_rebuild = _rebuild
         return clone
 
     def _cfg(self, key: str, default: Any = "") -> Any:

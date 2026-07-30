@@ -28,7 +28,9 @@ def test_an_ordinary_cold_start_is_left_alone():
 def test_a_vanished_session_gets_the_full_context_back():
     client = _Client()
     client._pawflow_cold_context_rebuild = lambda: ["system", "history", "user"]
-    assert client._cli_cold_context(["delta"]) == ["system", "history", "user"]
+    # The delta is CARRIED, not replaced: it holds the question being asked.
+    assert client._cli_cold_context(["delta"]) == [
+        "system", "history", "user", "delta"]
 
 
 def test_the_callback_fires_at_most_once():
@@ -41,7 +43,7 @@ def test_the_callback_fires_at_most_once():
         return ["rebuilt"]
 
     client._pawflow_cold_context_rebuild = _rebuild
-    assert client._cli_cold_context(["delta"]) == ["rebuilt"]
+    assert client._cli_cold_context(["delta"]) == ["rebuilt", "delta"]
     second = ["delta2"]
     assert client._cli_cold_context(second) is second
     assert calls == [1]
@@ -98,8 +100,47 @@ def test_arming_installs_a_callback_that_reloads_the_cold_context():
     phase._arm_cold_context_rebuild(st)
 
     rebuilt = st.client._cli_cold_context(["delta"])
-    assert rebuilt == ["system", "history"]
+    assert rebuilt == ["system", "history", "delta"]
     assert phase.loaded == 1
+
+
+# ── It has to survive the clone the agent loop makes ───────────────────────
+
+def test_the_callback_survives_clone_for_call():
+    """The loop clones the client after the context phase armed it
+    (`_alc_setup`), and `clone_for_call` copies an explicit whitelist. A
+    callback left off that list makes the whole recovery a no-op in
+    production while every same-instance unit test still passes -- which is
+    exactly what happened.
+    """
+    from core.llm_client import LLMClient
+
+    client = LLMClient(provider="codex-app-server", config={})
+    client._pawflow_cold_context_rebuild = lambda: ["system", "history"]
+
+    clone = client.clone_for_call()
+    assert getattr(clone, "_pawflow_cold_context_rebuild", None) is not None
+    assert clone._cli_cold_context(["delta"]) == ["system", "history", "delta"]
+
+
+def test_a_clone_of_a_client_with_no_callback_stays_clean():
+    from core.llm_client import LLMClient
+
+    clone = LLMClient(provider="codex-app-server", config={}).clone_for_call()
+    messages = ["delta"]
+    assert clone._cli_cold_context(messages) is messages
+
+
+def test_the_rebuild_carries_the_provider_system_prompt():
+    """A resumed turn ships no system prompt on purpose; a cold one needs it."""
+    phase, st = _phase(), _St()
+    st._provider_system_prompt = "you are a cat"
+    phase._arm_cold_context_rebuild(st)
+
+    rebuilt = st.client._cli_cold_context(["delta"])
+    assert getattr(rebuilt[0], "role", "") == "system"
+    assert rebuilt[0].content == "you are a cat"
+    assert rebuilt[1:] == ["system", "history", "delta"]
 
 
 def test_arming_alone_loads_nothing():

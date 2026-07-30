@@ -163,3 +163,63 @@ def test_a_category_scoped_delete_is_not_a_wipe(tmp_path):
     before = store._wipe_count("conv")
     store.delete_by(conversation_id="conv", category="tool_result")
     assert store._wipe_count("conv") == before
+
+
+def test_a_write_that_lands_mid_wipe_is_discarded_too(tmp_path):
+    """The second window: reserved AFTER the snapshot, registered BEFORE the
+    wipe finished. Both sides saw the same counter, so nothing caught it --
+    the file came back with a valid id for a conversation being deleted.
+    """
+    store = _store(tmp_path)
+    store.store("seed.txt", b"x", conversation_id="conv", user_id="u")
+
+    inside = threading.Event()
+    written = threading.Event()
+    original = store._delete_entry
+
+    def _slow_delete(fid):
+        # We are now past the snapshot and before the wipe is announced --
+        # exactly the interleaving the counter alone could not see.
+        inside.set()
+        written.wait(5)
+        return original(fid)
+
+    store._delete_entry = _slow_delete
+
+    result = {}
+
+    def _writer():
+        result["id"] = store.store(
+            "late.txt", b"y", conversation_id="conv", user_id="u")
+        written.set()
+
+    thread = threading.Thread(target=_writer)
+    deleter = threading.Thread(
+        target=lambda: store.delete_by(conversation_id="conv"))
+    deleter.start()
+    assert inside.wait(5)
+    thread.start()
+    thread.join(10)
+    deleter.join(10)
+
+    assert result["id"] == "", "a write survived the wipe it ran inside"
+    survivors = [(fid, e) for fid, e in store._entries.items()
+                 if e.get("conversation_id") == "conv"]
+    assert survivors == [], f"conversation survived its deletion: {survivors}"
+
+
+def test_the_wiping_mark_is_released_even_if_a_delete_raises(tmp_path):
+    """A mark left behind would refuse every future write to that id."""
+    store = _store(tmp_path)
+    store.store("a.txt", b"x", conversation_id="conv", user_id="u")
+
+    def _boom(_fid):
+        raise OSError("disk gone")
+
+    store._delete_entry = _boom
+    try:
+        store.delete_by(conversation_id="conv")
+    except OSError:
+        pass
+    assert not store._conversation_wiping.get("conv")
+    assert store.store("after.txt", b"z", conversation_id="conv", user_id="u")

@@ -4,6 +4,51 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.59] — 2026-07-30
+
+### Fixed
+
+- Looking a live CLI session up now restarts its idle clock. The idle TTL
+  exists to reap containers nobody asks for, and `last_used` is the only
+  evidence the sweeper has — but the lookups that hand a container to a caller
+  never refreshed it. A session sitting at the end of its TTL could therefore
+  be found alive by the context phase and swept moments later, before the
+  provider claimed it. The CCI and Antigravity pools already refreshed on
+  lookup; `CodexLiveRegistry`, `GeminiLiveRegistry` and `LiveSessionRegistry`
+  now do too. The TTL itself is unchanged: a session nobody asks for is still
+  reaped on schedule.
+
+- Launching a CLI process is a cold start, and a cold start now always gets the
+  full context. There are two cases and no third one: no process running, so we
+  launch and send everything; or a process is running, so we send the delta.
+  The context phase decides which applies, but the provider is what actually
+  launches, and only it can find the process gone — crashed, or its container
+  stopped — after the context was already built as a delta. It used to launch
+  anyway, handing a bare question to a process that knew nothing: no
+  transcript, no persona, no skills, no tool configuration. It now refuses
+  (`ColdStartRequired`), and the turn is rebuilt through the ordinary cold path
+  and run again. Nothing has reached the model at that point, so the restart
+  costs no tokens.
+
+- The context phase now asks the live-session question with each provider's own
+  inputs. The shared helper's pool fallback was unconditional, but the two
+  providers disagree on it: codex takes any compatible session, gemini only
+  when the stored slot is missing — a concrete index that misses means the slot
+  changed on purpose, and the old-slot container would resurrect the previous
+  account's session. The policy is now the caller's. Both providers also read
+  the stored pool index only while they still hold a session id, so the context
+  phase does the same; reading it unconditionally would have passed a concrete
+  index where the provider passes -1, and the two would have parted company
+  again on the fallback.
+
+### Removed
+
+- The partial cold-context reconstruction (`_arm_cold_context_rebuild`,
+  `_cli_cold_context`) and its clone whitelist entry. It recovered the
+  transcript only, while its docstring promised persona, skills and tool
+  configuration as well. Rebuilding the context through the path that already
+  knows how to build it removes both the half-measure and the promise.
+
 ## [1.0.0-beta.58] — 2026-07-30
 
 ### Fixed

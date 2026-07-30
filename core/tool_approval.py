@@ -110,6 +110,15 @@ class ToolApprovalGate:
     # local=true -- rode in on it with no second prompt.
     COMMAND_BEARING_TOOLS = frozenset({"bash", "execute_script", "monitor"})
 
+    @staticmethod
+    def normalize_tool_name(tool_name: str) -> str:
+        """Return the case-insensitive spelling used by policy tables."""
+        return str(tool_name or "").strip().casefold()
+
+    @classmethod
+    def is_command_bearing_tool(cls, tool_name: str) -> bool:
+        return cls.normalize_tool_name(tool_name) in cls.COMMAND_BEARING_TOOLS
+
     # ── Dangerous bash/exec patterns (like Claude Code) ──────────────
     # Even if bash has session_allow, these patterns force re-approval.
     _DANGEROUS_BASH_PATTERNS = frozenset({
@@ -176,13 +185,14 @@ class ToolApprovalGate:
         Users can always override with "always_allow" — even for dangerous tools.
         """
         # Determine effective approval level
+        policy_name = cls.normalize_tool_name(tool_name)
         effective_name = tool_name
-        is_always_ask = tool_name in cls.ALWAYS_ASK
-        is_exempt = tool_name in cls.EXEMPT_TOOLS
+        is_always_ask = policy_name in cls.ALWAYS_ASK
+        is_exempt = policy_name in cls.EXEMPT_TOOLS
         needs_ask = not is_exempt  # all non-exempt tools need approval
 
         # Filesystem: action-aware approval
-        if tool_name == "filesystem" and arguments:
+        if policy_name == "filesystem" and arguments:
             fs_action = arguments.get("action", "")
             effective_name = f"filesystem.{fs_action}"
             if fs_action in cls._FS_EXEMPT:
@@ -197,7 +207,7 @@ class ToolApprovalGate:
                 is_exempt = False
 
         # See: file read is exempt, screenshot needs approval
-        if tool_name == "see" and arguments:
+        if policy_name == "see" and arguments:
             _path = (arguments.get("path", "") or "").lower().strip()
             if _path in cls._SEE_SCREEN_PATHS:
                 effective_name = "see.screenshot"
@@ -208,7 +218,7 @@ class ToolApprovalGate:
                 needs_ask = False
 
         # Memory write: not dangerous but has side effects — ask once
-        if tool_name in ("remember", "forget"):
+        if policy_name in ("remember", "forget"):
             is_exempt = False
             needs_ask = True
 
@@ -220,7 +230,7 @@ class ToolApprovalGate:
         # Catastrophic patterns get a visible warning hint in the dialog.
         _force_ask = False
         _catastrophic_hint = False
-        if tool_name in cls.COMMAND_BEARING_TOOLS and arguments:
+        if cls.is_command_bearing_tool(tool_name) and arguments:
             _cmd = arguments.get("command", "") or arguments.get("code", "")
             if cls._is_catastrophic_command(_cmd):
                 _force_ask = True
@@ -235,14 +245,14 @@ class ToolApprovalGate:
 
         # ── Protected path check ─────────────────────────────────────
         # Write/delete to protected paths always ask, even with session_allow.
-        if tool_name in ("write", "edit", "delete", "batch_edit", "apply_patch",
+        if policy_name in ("write", "edit", "delete", "batch_edit", "apply_patch",
                          "find_replace") and arguments:
             _path = arguments.get("path", "") or arguments.get("file_path", "")
             if cls._is_protected_path(_path):
                 _force_ask = True
                 is_always_ask = True
                 effective_name = f"{tool_name}:protected"
-        if tool_name == "filesystem" and arguments:
+        if policy_name == "filesystem" and arguments:
             _fs_action = arguments.get("action", "")
             if _fs_action in ("write_file", "edit", "delete_file", "find_replace",
                               "batch_edit", "apply_patch"):
@@ -256,7 +266,7 @@ class ToolApprovalGate:
         perms = cls._get_permissions(conversation_id, agent_name)
         # Check allow-all scopes (e.g. _allow_all:filesystem, _allow_all:screen)
         if not _force_ask:
-            if tool_name == "filesystem" and arguments:
+            if policy_name == "filesystem" and arguments:
                 svc_name = arguments.get("service", "")
                 if svc_name and perms.get(f"_allow_all:filesystem.{svc_name}") == "always_allow":
                     return "approved"
@@ -326,7 +336,7 @@ class ToolApprovalGate:
             import os
             if os.environ.get("PAWFLOW_APPROVAL_FAIL_OPEN", "").lower() in (
                     "1", "true", "yes"):
-                if tool_name not in cls.ALWAYS_ASK:
+                if policy_name not in cls.ALWAYS_ASK:
                     return "approved"
             return "denied"
 
@@ -459,16 +469,17 @@ class ToolApprovalGate:
         so a brand-new tool added later is automatically denied until
         an explicit entry classifies it.
         """
-        if not tool_name:
+        policy_name = cls.normalize_tool_name(tool_name)
+        if not policy_name:
             return False
-        if tool_name in cls.READ_ONLY_ALLOWED:
+        if policy_name in cls.READ_ONLY_ALLOWED:
             return True
         # filesystem.<action> dispatches against _FS_EXEMPT — same set the
         # default mode treats as approval-exempt.
-        if tool_name == "filesystem" and isinstance(arguments, dict):
+        if policy_name == "filesystem" and isinstance(arguments, dict):
             return arguments.get("action", "") in cls._FS_EXEMPT
         # `see` is read-only iff the path isn't a screen/screenshot path.
-        if tool_name == "see" and isinstance(arguments, dict):
+        if policy_name == "see" and isinstance(arguments, dict):
             _path = (arguments.get("path", "") or "").lower().strip()
             return _path not in cls._SEE_SCREEN_PATHS
         return False
@@ -478,7 +489,7 @@ class ToolApprovalGate:
             cls, tool_name: str,
             arguments: Optional[dict] = None) -> bool:
         """Read-only policy for silent internal planning advisors."""
-        if tool_name in {"notify_user", "ask_user"}:
+        if cls.normalize_tool_name(tool_name) in {"notify_user", "ask_user"}:
             return False
         return cls.is_read_only_allowed(tool_name, arguments)
 

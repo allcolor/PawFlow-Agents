@@ -712,9 +712,71 @@ def test_run_docker_recreates_existing_container_for_updates(tmp_path):
 
     log = docker_log.read_text(encoding="utf-8")
     assert result.returncode == 0, result.stderr
-    assert "rm -f pawflow-server" in log
+    assert "stop pawflow-server" in log
+    assert "rename pawflow-server pawflow-server-pawflow-rollback-" in log
     assert "run -d --name pawflow-server" in log
+    assert "exec -i pawflow-server python - 19990" in log
     assert "ghcr.io/allcolor/pawflow:1.0.0.prealpha.2" in log
+
+
+def _run_docker_replacement_case(tmp_path, *, final_run_rc=0, health_rc=0):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = bin_dir / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+        "if [[ \"$1\" == ps ]]; then printf 'pawflow-server\\n'; exit 0; fi\n"
+        "if [[ \"$1\" == run ]]; then\n"
+        "  args=\"$*\"\n"
+        "  if [[ \"$args\" == *\"command -v docker && docker --version\"* ]]; then\n"
+        "    printf '/usr/bin/docker\\nDocker version 27.0.0\\n'; exit 0\n"
+        "  fi\n"
+        "  if [[ \"$args\" == *\"docker version >/dev/null\"* ]]; then exit 0; fi\n"
+        f"  if [[ \"$2\" == -d ]]; then exit {final_run_rc}; fi\n"
+        "  exit 0\n"
+        "fi\n"
+        f"if [[ \"$1\" == exec ]]; then exit {health_rc}; fi\n"
+        "exit 0\n",
+        encoding="utf-8")
+    fake_docker.chmod(0o755)
+    env = {
+        "DOCKER_LOG": str(docker_log),
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "PAWFLOW_HOME": str(tmp_path / "pawflow-home"),
+        "PAWFLOW_IMAGE": "ghcr.io/allcolor/pawflow:new",
+        "PAWFLOW_PORT": "19990",
+        "PAWFLOW_STARTUP_HEALTH_RETRIES": "1",
+        "PAWFLOW_STARTUP_HEALTH_INTERVAL": "0",
+    }
+    result = subprocess.run(
+        ["bash", "scripts/run-pawflow-docker.sh"], cwd=Path.cwd(),
+        env=env, text=True, capture_output=True, timeout=10)
+    return result, docker_log.read_text(encoding="utf-8")
+
+
+def test_final_docker_run_failure_restores_the_previous_server(tmp_path):
+    result, log = _run_docker_replacement_case(tmp_path, final_run_rc=125)
+
+    assert result.returncode == 125
+    assert "restoring the previous container configuration" in result.stderr
+    assert "rm -f pawflow-server" in log
+    assert "rename pawflow-server-pawflow-rollback-" in log
+    assert " pawflow-server" in log
+    assert "start pawflow-server" in log
+
+
+def test_failed_post_start_health_check_restores_previous_server(tmp_path):
+    result, log = _run_docker_replacement_case(tmp_path, health_rc=1)
+
+    assert result.returncode == 1
+    assert "post-start health check" in result.stderr
+    assert "exec -i pawflow-server python - 19990" in log
+    assert "rm -f pawflow-server" in log
+    assert "rename pawflow-server-pawflow-rollback-" in log
+    assert "start pawflow-server" in log
 
 
 def test_run_docker_keeps_the_old_server_when_the_new_image_is_unusable(tmp_path):

@@ -29,6 +29,7 @@ _lock = threading.Lock()
 _backgrounded: Dict[str, dict] = {}  # tc_id → task info
 _completed: Dict[str, str] = {}  # "conv_id:tc_id" → result (pending agent pickup)
 _pending_bg: set = set()  # tc_ids flagged for backgrounding (before registered)
+_pending_owners: Dict[str, str] = {}  # direct-provider tc_id → authoritative conv
 
 
 # ── Claude-code tc_id → MCP request_id bridge ───────────────────────────
@@ -189,11 +190,26 @@ def is_backgrounded(tc_id: str) -> bool:
         return tc_id in _pending_bg
 
 
+def reserve_owner(tc_id: str, conversation_id: str) -> None:
+    """Publish direct-provider ownership before its worker can start."""
+    if not tc_id or not conversation_id:
+        return
+    with _lock:
+        _pending_owners[tc_id] = conversation_id
+
+
+def release_owner(tc_id: str) -> None:
+    """Drop a direct-provider ownership reservation after completion."""
+    with _lock:
+        _pending_owners.pop(tc_id, None)
+
+
 def register(tc_id: str, future, conversation_id: str,
              agent_name: str = "", tool_name: str = "",
              is_claude_code: bool = False, user_id: str = ""):
     """Register a backgrounded tool with its running future."""
     with _lock:
+        _pending_owners.pop(tc_id, None)
         _pending_bg.discard(tc_id)
         _backgrounded[tc_id] = {
             "future": future,
@@ -311,7 +327,8 @@ def conversation_for(tc_id: str) -> str:
         return ""
     with _lock:
         task = _backgrounded.get(tc_id)
-        return str((task or {}).get("conversation_id", "") or "")
+        return str((task or {}).get("conversation_id", "")
+                   or _pending_owners.get(tc_id, "") or "")
 
 
 def pop_completed(conversation_id: str, tc_id: str) -> Optional[str]:

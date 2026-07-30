@@ -161,6 +161,9 @@ function _clearConvState() {
   if (typeof _liveCountedMsgIds !== 'undefined' && _liveCountedMsgIds.clear) _liveCountedMsgIds.clear();
   if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
   serverMsgCount = 0;
+  currentOffset = 0;
+  historyCursor = { offset: 0, before_msg_id: '' };
+  hasMoreMessages = false;
   _histTaskBlocks = {};
   clearAllStreams();
   sending = false;
@@ -473,6 +476,9 @@ function _renderHistoryRow(m) {
     content = content.replace(/^\[[^\]]+\]:\s*/, '');
   }
   const el = addMsg(m.type || m.role, content, m);
+  if (el && el.dataset) {
+    el.dataset.historyUnits = String((Number(el.dataset.historyUnits) || 0) + 1);
+  }
   if (el && typeof turnViewIsSimplified === 'function' && turnViewIsSimplified()) {
     const role = m.type || m.role;
     const turnData = Object.assign({}, m, { _history: true });
@@ -515,6 +521,10 @@ function reconcileMissedMessages() {
       if (!data || data.error || data.encrypted_locked) return;
       if (cid !== conversationId) return;
       if (data.conversation_id && data.conversation_id !== conversationId) return;
+      // This tail page is now the durable pagination head. If more than one
+      // display window was missed, load-more continues immediately before it
+      // and makes the rest of the gap reachable.
+      _adoptHistoryPage(data);
       let recovered = 0;
       if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
       try {
@@ -523,7 +533,6 @@ function reconcileMissedMessages() {
           if (!msgId || _seenMsgIds.has(msgId)) continue;
           if (_renderHistoryRow(m)) {
             recovered++;
-            _noteLiveHistoryAppend(data.message_count, 1, msgId);
           }
         }
       } finally {
@@ -535,6 +544,7 @@ function reconcileMissedMessages() {
         if (typeof turnViewReconcile === 'function') turnViewReconcile();
         scrollBottom();
       }
+      _updateLoadMoreBanner();
     });
 }
 
@@ -578,22 +588,16 @@ function _renderHistory(data) {
     if (viewMode === 'simplified') setTechnicalMessageGrouping(false);
   }
   if (typeof setTaskMessageGrouping === 'function') setTaskMessageGrouping(viewMode === 'classic' && groupTaskMessages);
-  // Delegate grouping is not a classic-only option like the two above: it is
-  // the only thing that draws a sub-agent at all. Forcing it off in simplified
-  // meant a delegate ran, returned, and left nothing on screen but the result
-  // message -- no box, and a stored trace rendered as an empty row. The box is
-  // activity, so the turn view files it in the block like everything else.
   if (typeof setDelegateMessageGrouping === 'function') {
-    // The delegate box is the simplified view's renderer for sub-agent
-    // activity, not an optional classic grouping. A persisted classic-mode
-    // choice of false would otherwise leave an empty stored trace and no live
-    // box, while the toggle itself is hidden in simplified mode.
-    setDelegateMessageGrouping(viewMode === 'simplified' ? true : groupDelegateMessages);
+    setDelegateMessageGrouping(groupDelegateMessages);
   }
   updateViewMenuVisibility();
   updateViewMenuItem('technical', groupTechnicalMessages);
   updateViewMenuItem('task', groupTaskMessages);
   updateViewMenuItem('delegate', groupDelegateMessages);
+  if (typeof turnViewSetRuntimeTurns === 'function') {
+    turnViewSetRuntimeTurns(data.active_turns || []);
+  }
   _histTaskBlocks = {};  // reset on full render
   nicknameMap = data.nicknames || {};
   if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
@@ -606,9 +610,8 @@ function _renderHistory(data) {
   }
   if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
   if (typeof turnViewReconcile === 'function') turnViewReconcile();
-  serverMsgCount = data.message_count || 0;
-  currentOffset = data.raw_count || (data.messages || []).length;
-  hasMoreMessages = data.has_more || false;
+  if (typeof turnViewHydrateRuntimeTurns === 'function') turnViewHydrateRuntimeTurns();
+  _adoptHistoryPage(data);
   _updateLoadMoreBanner();
   if (!data.active_agent) {
     console.error('BUG: server returned empty active_agent — conversation must always have an agent');
@@ -648,6 +651,28 @@ function _noteLiveHistoryAppend(messageCount, rawDelta, msgId) {
     if (serverMsgCount) serverMsgCount += delta;
   }
   if (hasMoreMessages) _updateLoadMoreBanner();
+  if (!historyCursor.before_msg_id) historyCursor.offset = currentOffset;
+}
+
+function _adoptHistoryPage(data) {
+  const rawCount = Number(data && data.raw_count) || ((data && data.messages) || []).length;
+  const fallbackOffset = (Number(data && data.offset) || 0) + rawCount;
+  const cursor = (data && data.history_cursor) || {};
+  historyCursor = {
+    offset: Number(cursor.offset) || fallbackOffset,
+    before_msg_id: String(cursor.before_msg_id || ''),
+  };
+  currentOffset = historyCursor.offset;
+  serverMsgCount = Number(data && data.message_count) || 0;
+  hasMoreMessages = !!(data && data.has_more);
+}
+
+function _rewindHistoryCursor(rawCount) {
+  const count = Math.max(0, Number(rawCount) || 0);
+  if (!count) return;
+  currentOffset = Math.max(0, currentOffset - count);
+  historyCursor = { offset: currentOffset, before_msg_id: '' };
+  hasMoreMessages = currentOffset < serverMsgCount;
 }
 
 function _placeLoadMoreBanner(banner) {
@@ -656,13 +681,6 @@ function _placeLoadMoreBanner(banner) {
   if (container.firstChild !== banner) {
     container.insertBefore(banner, container.firstChild);
   }
-}
-
-function _oldestRenderedMessageId() {
-  const container = document.getElementById('messages');
-  if (!container) return '';
-  const oldest = container.querySelector('[data-msgid]');
-  return oldest && oldest.dataset ? (oldest.dataset.msgid || '') : '';
 }
 
 function _updateLoadMoreBanner() {
@@ -675,14 +693,10 @@ function _updateLoadMoreBanner() {
       banner.onclick = loadMoreMessages;
     }
     _placeLoadMoreBanner(banner);
-    // Simplified mode reparents rows into the turn block, so top-level `.msg`
-    // undercounts. Classic keeps the top-level count: descending into every
-    // nested [data-msgid] there would also count tool results inside technical
-    // and task groups, inflating the banner.
-    const shown = (typeof turnViewIsSimplified === 'function' && turnViewIsSimplified())
-      ? new Set(Array.from(document.querySelectorAll('#messages [data-msgid]'))
-        .map(el => el.dataset.msgid).filter(Boolean)).size
-      : document.querySelectorAll('#messages > .msg').length;
+    // message_count is a raw transcript-row count, so the progress number must
+    // use the backend cursor's raw unit too. DOM rows are presentation: they may
+    // be id-less, classified away, or reparented/grouped many-to-one.
+    const shown = Math.min(currentOffset, serverMsgCount || currentOffset);
     const total = serverMsgCount || '?';
     banner.innerHTML = '&#x25B2; Load more messages (showing ' + shown + ' of ' + total + ')';
   } else if (banner) {
@@ -698,23 +712,21 @@ function loadMoreMessages() {
   const banner = document.getElementById('loadMoreBanner');
   if (banner) banner.innerHTML = 'Loading...';
   const prevHeight = container.scrollHeight;
-  const nextOffset = currentOffset;
+  const nextOffset = Number(historyCursor && historyCursor.offset) || currentOffset;
   const requestConversationId = conversationId;
   const historyRequest = {
     conversation_id: requestConversationId,
     limit: displayWindow,
     offset: nextOffset,
   };
-  const beforeMsgId = _oldestRenderedMessageId();
+  const beforeMsgId = String((historyCursor && historyCursor.before_msg_id) || '');
   if (beforeMsgId) historyRequest.before_msg_id = beforeMsgId;
 
   action$('load_history', historyRequest)
     .subscribe(data => {
       if (requestConversationId !== conversationId) { loadingMore = false; return; }
       if (data.error) { loadingMore = false; _updateLoadMoreBanner(); return; }
-      hasMoreMessages = data.has_more || false;
-      const rawCount = data.raw_count || (data.messages || []).length;
-      currentOffset = (Number(data.offset) || 0) + rawCount;
+      _adoptHistoryPage(data);
       const insertPoint = banner && banner.parentNode === container ? banner.nextSibling : container.firstChild;
       if (typeof turnViewIsSimplified === 'function' && turnViewIsSimplified()) {
         if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();

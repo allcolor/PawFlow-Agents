@@ -242,13 +242,20 @@ The index (`core/conversation_index.py`) is one SQLite FTS5 database per user
 under `data/runtime/conversation_index/`, and it is derived data — deleting a
 file costs the next search one rebuild and nothing else.
 
-Three properties worth knowing before relying on it:
+Four properties worth knowing before relying on it:
 
 - **Encrypted conversations are never indexed.** An FTS index is plaintext by
   construction, so indexing one would copy its content back out of the
   encrypted store. A conversation encrypted after being indexed is purged on
   the next refresh, and an unreadable encryption state counts as encrypted —
   the check fails closed. Results say how many conversations were skipped.
+- **Unreadable source data purges derived plaintext.** If the conversation list
+  cannot be read, the user's derived index is cleared; if one transcript cannot
+  be read, that conversation is purged. Refresh never serves old text merely
+  because it could not prove whether the source was deleted or redacted. Every
+  transcript rewrite increments `transcript_generation` inside the same
+  conversation lock, forcing purge-and-reindex even when ids and timestamps stay
+  stable.
 - **The index refreshes when you search, not when a message is appended.** The
   refresh is incremental twice over — a conversation whose `updated_at` has not
   moved since it was indexed is never opened, and one that has moved is read

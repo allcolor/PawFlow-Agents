@@ -506,6 +506,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             self._active_turns[_active_turn_key] = {
                 "conversation_id": conversation_id,
                 "agent_name": _active_agent_guess,
+                "turn_id": flowfile.get_attribute("agent.request_msg_id") or "",
                 "started_at": _active_turn_started,
                 "status": "preparing",
                 "message_preview": _user_text[:160],

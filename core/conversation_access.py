@@ -565,16 +565,17 @@ def rebuild_shared_index(user_id: str, *, store=None) -> List[str]:
     user_id = _clean(user_id)
     if not user_id:
         return []
-    found = []
-    for conv in _store(store).list_conversations():
-        cid = _clean(conv.get("conversation_id"))
-        if not cid or _clean(conv.get("user_id")) == user_id:
-            continue
-        row = get_collaborator(cid, user_id, store=store)
-        if row is not None and row["status"] in _INDEXED_STATUSES:
-            found.append(cid)
-    # Under the same lock as the incremental updates: a rebuild racing one of
-    # them would otherwise publish a sweep taken before that update landed.
     with _shared_index_lock(user_id):
+        # Hold the lock for the sweep too. If an invite has already updated its
+        # ACL, this scan sees it; if it lands later, its incremental sync runs
+        # after this publication. There is no stale-snapshot overwrite window.
+        found = []
+        for conv in _store(store).list_conversations():
+            cid = _clean(conv.get("conversation_id"))
+            if not cid or _clean(conv.get("user_id")) == user_id:
+                continue
+            row = get_collaborator(cid, user_id, store=store)
+            if row is not None and row["status"] in _INDEXED_STATUSES:
+                found.append(cid)
         _write_shared_index(user_id, found, store=store)
     return found

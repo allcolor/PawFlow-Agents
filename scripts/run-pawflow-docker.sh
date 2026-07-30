@@ -42,6 +42,8 @@ SOURCE_DIR="$(printenv PAWFLOW_SOURCE_DIR || true)"
 SERVER_RELAY_IMAGE="$(printenv PAWFLOW_SERVER_RELAY_IMAGE || true)"
 SERVER_RELAY_MINIMAL_IMAGE="$(printenv PAWFLOW_SERVER_RELAY_MINIMAL_IMAGE || true)"
 RECREATE_CONTAINER="$(printenv PAWFLOW_RECREATE_CONTAINER || true)"
+STARTUP_HEALTH_RETRIES="$(printenv PAWFLOW_STARTUP_HEALTH_RETRIES || true)"
+STARTUP_HEALTH_INTERVAL="$(printenv PAWFLOW_STARTUP_HEALTH_INTERVAL || true)"
 if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
 if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
 if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
@@ -73,6 +75,8 @@ if [[ -z "$SOURCE_DIR" ]]; then SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")
 if [[ -z "$SERVER_RELAY_IMAGE" ]]; then SERVER_RELAY_IMAGE="pawflow-relay-dev:latest"; fi
 if [[ -z "$SERVER_RELAY_MINIMAL_IMAGE" ]]; then SERVER_RELAY_MINIMAL_IMAGE="pawflow-relay-minimal:latest"; fi
 if [[ -z "$RECREATE_CONTAINER" ]]; then RECREATE_CONTAINER="1"; fi
+if [[ -z "$STARTUP_HEALTH_RETRIES" ]]; then STARTUP_HEALTH_RETRIES="30"; fi
+if [[ -z "$STARTUP_HEALTH_INTERVAL" ]]; then STARTUP_HEALTH_INTERVAL="2"; fi
 DOCKER_ARGS=()
 if [[ "$NETWORK_MODE" == "host" ]]; then
   # Host networking: no -p (the app binds host interfaces directly). Every
@@ -106,6 +110,55 @@ remove_managed_relay_containers() {
     fi
   done
   return 0
+}
+
+OLD_CONTAINER_BACKUP=""
+
+restore_previous_server() {
+  local reason="$1"
+  echo "ERROR replacement server failed $reason; restoring the previous container configuration." >&2
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  if [[ -n "$OLD_CONTAINER_BACKUP" ]]; then
+    if docker rename "$OLD_CONTAINER_BACKUP" "$CONTAINER" \n+        && docker start "$CONTAINER" >/dev/null; then
+      echo "Previous PawFlow server restarted as '$CONTAINER'." >&2
+    else
+      echo "CRITICAL could not restart previous PawFlow server '$OLD_CONTAINER_BACKUP'." >&2
+      return 1
+    fi
+  fi
+}
+
+replacement_is_healthy() {
+  local attempt=1
+  while [[ "$attempt" -le "$STARTUP_HEALTH_RETRIES" ]]; do
+    if docker exec -i "$CONTAINER" python - "$PORT" <<'PY'
+import ssl
+import sys
+import urllib.request
+
+port = sys.argv[1]
+checks = (
+    (f"https://127.0.0.1:{port}/health", ssl._create_unverified_context()),
+    (f"http://127.0.0.1:{port}/health", None),
+)
+for url, context in checks:
+    try:
+        with urllib.request.urlopen(url, timeout=2, context=context) as response:
+            if response.status == 200:
+                raise SystemExit(0)
+    except Exception:
+        pass
+raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    if [[ "$attempt" -le "$STARTUP_HEALTH_RETRIES" ]]; then
+      sleep "$STARTUP_HEALTH_INTERVAL"
+    fi
+  done
+  return 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -187,8 +240,13 @@ fi
 if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
   if [[ "$RECREATE_CONTAINER" == "1" || "$RECREATE_CONTAINER" == "true" || "$RECREATE_CONTAINER" == "yes" ]]; then
     echo "Container '$CONTAINER' already exists; recreating it with image $IMAGE while keeping persistent volumes."
-    remove_managed_relay_containers
-    docker rm -f "$CONTAINER" >/dev/null
+    OLD_CONTAINER_BACKUP="${CONTAINER}-pawflow-rollback-$$"
+    docker stop "$CONTAINER" >/dev/null
+    if ! docker rename "$CONTAINER" "$OLD_CONTAINER_BACKUP"; then
+      docker start "$CONTAINER" >/dev/null 2>&1 || true
+      echo "ERROR could not preserve the existing container for rollback." >&2
+      exit 1
+    fi
   else
     echo "Container '$CONTAINER' already exists."
     echo "Start it with: docker start $CONTAINER"
@@ -203,7 +261,7 @@ echo "Starting $CONTAINER from $IMAGE"
 # without these the server cannot tell how it was started. core/installer_
 # deployment.py falls back to PAWFLOW_HOST_APP_DIR and `docker inspect` for
 # containers created before these labels existed.
-docker run -d \
+if docker run -d \
   --name "$CONTAINER" \
   --restart unless-stopped \
   --label org.pawflow.deployment=installer \
@@ -228,6 +286,27 @@ docker run -d \
   -e PAWFLOW_BOOTSTRAP_RESET="$BOOTSTRAP_RESET" \
   "$IMAGE" \
   python cli.py start --host "$CONTAINER_HOST" --port "$PORT" $EXTRA_ARGS
+then
+  :
+else
+  RUN_RC=$?
+  restore_previous_server "during docker run" || true
+  exit "$RUN_RC"
+fi
+
+if ! replacement_is_healthy; then
+  restore_previous_server "its post-start health check" || true
+  exit 1
+fi
+
+# The replacement has answered /health. Only now is the old configuration
+# discarded and accessory relays recycled onto the new runtime.
+if [[ -n "$OLD_CONTAINER_BACKUP" ]]; then
+  if ! docker rm -f "$OLD_CONTAINER_BACKUP" >/dev/null 2>&1; then
+    echo "WARNING could not remove rollback container '$OLD_CONTAINER_BACKUP'." >&2
+  fi
+fi
+remove_managed_relay_containers
 
 cat <<MSG
 

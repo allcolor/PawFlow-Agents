@@ -108,6 +108,11 @@ class LLMClient(
     def __init__(self, provider: str = "openai", config: Dict[str, Any] = None):
         self.provider = provider
         self._config_ref = config or {}
+        # Bootstrap text is written to the session file and discarded, but its
+        # token count must outlive whichever call clone created that file.
+        # Active-context gauge reads use the resolver client, so all descendants
+        # share this small authoritative per-stream state by reference.
+        self._cli_bootstrap_tokens_by_stream = {}
         # Token tracking callback — set by LLMConnectionService
         self._on_tokens = None
         # Abort signal — set from another thread to cancel the current LLM call
@@ -140,6 +145,8 @@ class LLMClient(
 
         State propagated to the clone:
           * config (by reference — LazyResolveDict semantics).
+          * CLI bootstrap token counts (by reference) so a provider call clone
+            and the resolver client expose one authoritative gauge state.
           * `_on_tokens` callback so the owning service still receives
             usage updates from the clone's calls.
           * `_active_api_key` — required by api_keys_pool (LLMConnection
@@ -162,6 +169,8 @@ class LLMClient(
         clone = self.__class__(provider=self.provider,
                                 config=self._config_ref)
         clone._on_tokens = self._on_tokens
+        clone._cli_bootstrap_tokens_by_stream = (
+            self._cli_bootstrap_tokens_by_stream)
         _active_key = getattr(self, '_active_api_key', None)
         if _active_key:
             clone._active_api_key = _active_key

@@ -129,6 +129,44 @@ def test_an_event_delivered_to_an_evicted_consumer_is_not_lost():
                           epoch=second)["type"] == "first-of-the-new-turn"
 
 
+def test_claim_wakes_old_waiter_and_replacement_keeps_event_order():
+    import threading
+
+    svc = _service()
+    svc.register_session("sess")
+    first = svc.claim_consumer("sess")
+    old_evicted = threading.Event()
+
+    def _old_consumer():
+        with pytest.raises(CCIConsumerEvicted):
+            svc.wait_event("sess", timeout=5, epoch=first)
+        old_evicted.set()
+
+    old = threading.Thread(target=_old_consumer, daemon=True)
+    old.start()
+    deadline = time.time() + 2
+    while (svc.session_state("sess").last_wait_at == 0.0
+           and time.time() < deadline):
+        time.sleep(0.005)
+
+    second = svc.claim_consumer("sess")
+    assert old_evicted.wait(1), "the claim itself must wake the evicted waiter"
+
+    received = []
+
+    def _replacement():
+        received.append(svc.wait_event("sess", timeout=2, epoch=second)["seq"])
+        received.append(svc.wait_event("sess", timeout=2, epoch=second)["seq"])
+
+    replacement = threading.Thread(target=_replacement, daemon=True)
+    replacement.start()
+    svc.publish_event("sess", {"seq": 1})
+    svc.publish_event("sess", {"seq": 2})
+    replacement.join(timeout=3)
+
+    assert received == [1, 2]
+
+
 def test_a_handed_back_event_is_taken_before_the_queue():
     svc = _service()
     svc.register_session("sess")

@@ -37,11 +37,12 @@ service calls `ensure_managed_relay_alive()`:
 
 - **Unmanaged relays are never touched.** An operator-run relay is theirs to
   restart; PawFlow owns no container for it.
-- **A live container is left strictly alone.** The ordinary disconnect is the
-  relay client reconnecting over a container that never died — respawning then
-  would turn a few seconds of retry into a cold start and kill whatever the
-  relay was running. `ServerRelayManager.service_relay_running()` answers that
-  question from the container name, which is derived, not stored.
+- **A live WebSocket is the health signal.** A connected relay is left strictly
+  alone. A container that is still running but has no relay WebSocket is wedged
+  from the service's perspective (for example, failed authentication or a stuck
+  client) and is replaced. The managed spawn path removes the derived container
+  name before `docker run`, so a live-but-disconnected container cannot block
+  recovery. Container inspection remains diagnostic; it is not health.
 - **One respawn per cooldown window** (60 s), so a burst of failing tool calls
   asks for one container start rather than one per call.
 - **A failed respawn is logged, not raised.** The caller is a transport retry

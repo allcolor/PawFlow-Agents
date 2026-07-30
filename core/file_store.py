@@ -54,6 +54,7 @@ class FileStore:
         self._base_dir = Path(base_dir or str(_paths.FILES_DIR))
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._entries: Dict[str, Dict[str, Any]] = {}
+        self._conversation_owners: Dict[str, str] = {}
         self._store_lock = threading.RLock()
         self._loaded = False
         self._last_cleanup: float = 0.0
@@ -90,20 +91,18 @@ class FileStore:
             raise ValueError(f"FileStore.store: user_id is required (filename={filename!r})")
         if not conversation_id:
             raise ValueError(f"FileStore.store: conversation_id is required (filename={filename!r})")
-        file_id = uuid.uuid4().hex[:12]
-        safe_name = Path(filename).name or "file"
-        disk_name = f"{file_id}_{safe_name}"
-
-        scope_dir = self._scope_dir(user_id, conversation_id)
-        bucket = self._pick_bucket(scope_dir)
-        bucket_dir = scope_dir / bucket
-        bucket_dir.mkdir(parents=True, exist_ok=True)
-
-        file_path = bucket_dir / disk_name
-        file_path.write_bytes(content)
-
         with self._store_lock:
             self._ensure_loaded()
+            user_id = self._conversation_owners.get(conversation_id, user_id)
+            file_id = uuid.uuid4().hex[:12]
+            safe_name = Path(filename).name or "file"
+            disk_name = f"{file_id}_{safe_name}"
+            scope_dir = self._scope_dir(user_id, conversation_id)
+            bucket = self._pick_bucket(scope_dir)
+            bucket_dir = scope_dir / bucket
+            bucket_dir.mkdir(parents=True, exist_ok=True)
+            file_path = bucket_dir / disk_name
+            file_path.write_bytes(content)
             self._entries[file_id] = {
                 "filename": safe_name,
                 "path": str(file_path),
@@ -118,8 +117,7 @@ class FileStore:
                 "agent_name": agent_name,
                 "category": category,
             }
-
-        self._save_index()
+            self._save_index()
         return file_id
 
     def store_file(self, filename: str, source_path: str,
@@ -137,22 +135,20 @@ class FileStore:
         src = Path(source_path).expanduser().resolve()
         if not src.is_file():
             raise FileNotFoundError(f"FileStore.store_file: source file not found: {source_path}")
-        file_id = uuid.uuid4().hex[:12]
-        safe_name = Path(filename).name or src.name or "file"
-        disk_name = f"{file_id}_{safe_name}"
-
-        scope_dir = self._scope_dir(user_id, conversation_id)
-        bucket = self._pick_bucket(scope_dir)
-        bucket_dir = scope_dir / bucket
-        bucket_dir.mkdir(parents=True, exist_ok=True)
-
-        file_path = bucket_dir / disk_name
-        with src.open("rb") as inp, file_path.open("wb") as out:
-            shutil.copyfileobj(inp, out, length=1024 * 1024)
-        size = file_path.stat().st_size
-
         with self._store_lock:
             self._ensure_loaded()
+            user_id = self._conversation_owners.get(conversation_id, user_id)
+            file_id = uuid.uuid4().hex[:12]
+            safe_name = Path(filename).name or src.name or "file"
+            disk_name = f"{file_id}_{safe_name}"
+            scope_dir = self._scope_dir(user_id, conversation_id)
+            bucket = self._pick_bucket(scope_dir)
+            bucket_dir = scope_dir / bucket
+            bucket_dir.mkdir(parents=True, exist_ok=True)
+            file_path = bucket_dir / disk_name
+            with src.open("rb") as inp, file_path.open("wb") as out:
+                shutil.copyfileobj(inp, out, length=1024 * 1024)
+            size = file_path.stat().st_size
             self._entries[file_id] = {
                 "filename": safe_name,
                 "path": str(file_path),
@@ -167,8 +163,7 @@ class FileStore:
                 "agent_name": agent_name,
                 "category": category,
             }
-
-        self._save_index()
+            self._save_index()
         return file_id
 
     # ── Retrieve ─────────────────────────────────────────────────
@@ -467,6 +462,9 @@ class FileStore:
                 to_delete.append(fid)
         for fid in to_delete:
             self._delete_entry(fid)
+        if conversation_id and not category and not agent_name:
+            with self._store_lock:
+                self._conversation_owners.pop(conversation_id, None)
         return len(to_delete)
 
     def _delete_entry(self, file_id: str):
@@ -547,64 +545,66 @@ class FileStore:
                     continue
                 result.append({"id": fid, **entry})
         return result
-
     # ── Share ────────────────────────────────────────────────────
-
-
     def reassign_conversation_owner(self, conversation_id: str,
                                     old_user_id: str,
                                     new_user_id: str) -> int:
-        """Follow a conversation that changed hands. Returns files moved.
-
-        A file is addressed by ``<base>/<user_id>/<conversation_id>/`` and its
-        entry carries the same user_id. When a departed owner's conversation is
-        handed to a collaborator, only the conversation directory used to move:
-        every attachment stayed filed under an account that no longer exists,
-        so the conversation came up with its history intact and its files gone.
-
-        Best effort per file: one that cannot be moved keeps its old location
-        and its old owner, which is still readable, rather than losing its
-        entry.
-        """
-        conversation_id = str(conversation_id or "").strip()
-        old_user_id = str(old_user_id or "").strip()
-        new_user_id = str(new_user_id or "").strip()
-        if not conversation_id or not old_user_id or not new_user_id:
+        """Move sidecars transactionally before publishing owner handoff."""
+        conversation_id, old_user_id, new_user_id = (
+            str(value or "").strip()
+            for value in (conversation_id, old_user_id, new_user_id))
+        if (not conversation_id or not old_user_id or not new_user_id
+                or old_user_id == new_user_id):
             return 0
-        if old_user_id == new_user_id:
-            return 0
-        moved = 0
         with self._store_lock:
             self._ensure_loaded()
-            for fid, entry in self._entries.items():
-                if entry.get("conversation_id") != conversation_id:
-                    continue
-                if entry.get("user_id") != old_user_id:
-                    continue
+            targets = [(fid, entry) for fid, entry in self._entries.items()
+                       if entry.get("conversation_id") == conversation_id
+                       and entry.get("user_id") == old_user_id]
+            planned = []
+            for fid, entry in targets:
                 src = Path(entry.get("path", ""))
-                try:
-                    scope_dir = self._scope_dir(new_user_id, conversation_id)
-                    bucket = src.parent.name if src.parent.name.isdigit() else "0000"
-                    dest_dir = scope_dir / bucket
-                    dest_dir.mkdir(parents=True, exist_ok=True)
-                    dest = dest_dir / src.name
-                    if src.is_file() and not dest.exists():
-                        os.replace(src, dest)
+                bucket = src.parent.name if src.parent.name.isdigit() else "0000"
+                dest = self._scope_dir(new_user_id, conversation_id) / bucket / src.name
+                if not src.is_file():
+                    raise FileNotFoundError(f"FileStore bytes missing for {fid}")
+                if dest.exists():
+                    raise FileExistsError(f"FileStore destination exists for {fid}")
+                planned.append((fid, entry, src, dest))
+            moved_paths = []
+            previous_override = self._conversation_owners.get(conversation_id)
+            try:
+                for _fid, _entry, src, dest in planned:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(src, dest)
+                    moved_paths.append((src, dest))
+                for _fid, entry, _src, dest in planned:
                     entry["user_id"] = new_user_id
-                    if dest.exists():
-                        entry["path"] = str(dest)
-                    moved += 1
-                except Exception:
-                    logger.warning(
-                        "FileStore: could not move %s to %s; it stays with %s",
-                        fid, new_user_id, old_user_id, exc_info=True)
-            if moved:
+                    entry["path"] = str(dest)
+                self._conversation_owners[conversation_id] = new_user_id
+                if not self._save_index():
+                    raise OSError("FileStore index publication failed")
+            except Exception:
+                for _fid, entry, src, _dest in planned:
+                    entry["user_id"] = old_user_id
+                    entry["path"] = str(src)
+                self._conversation_owners.pop(conversation_id, None)
+                if previous_override is not None:
+                    self._conversation_owners[conversation_id] = previous_override
+                for src, dest in reversed(moved_paths):
+                    try:
+                        src.parent.mkdir(parents=True, exist_ok=True)
+                        os.replace(dest, src)
+                    except OSError:
+                        logger.error("FileStore rollback failed: %s -> %s",
+                                     dest, src, exc_info=True)
                 self._save_index()
+                raise
+        moved = len(planned)
         if moved:
-            logger.info("FileStore: moved %d files of %s to %s",
-                        moved, conversation_id[:8], new_user_id)
+            logger.info("FileStore: moved %d files of %s to %s", moved,
+                        conversation_id[:8], new_user_id)
         return moved
-
     def count(self) -> int:
         with self._store_lock:
             self._ensure_loaded()
@@ -678,7 +678,7 @@ class FileStore:
     def _index_path(self) -> Path:
         return self._base_dir / "_index.json"
 
-    def _save_index(self):
+    def _save_index(self) -> bool:
         # Hold `_store_lock` across the entire write+replace sequence. End-of-turn
         # cleanup can delete many tool-result files in quick succession, and each
         # deletion saves the shared index.
@@ -708,8 +708,10 @@ class FileStore:
                     f"{uuid.uuid4().hex}.tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
                 self._replace_index_tmp(tmp, path)
+                return True
             except Exception as e:
                 logger.error("FileStore: failed to save index: %s", e)
+                return False
 
     @staticmethod
     def _replace_index_tmp(tmp: Path, path: Path):

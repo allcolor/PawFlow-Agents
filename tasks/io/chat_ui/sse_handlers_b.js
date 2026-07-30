@@ -211,6 +211,7 @@ function _sseWireB() {
         used: data.context_used,
         max: data.context_max,
         pct: data.context_pct,
+        cli_context_state: data.cli_context_state,
         updated_at: data.updated_at || data.ts,
       });
     }

@@ -4,6 +4,21 @@
 
 const LIVE_DISPLAY_WINDOW_MULTIPLIER = 4;
 
+function _tagGroupedMessageId(element, msgId) {
+  if (!element || !msgId) return;
+  if (!element.dataset.msgid) {
+    element.dataset.msgid = msgId;
+    return;
+  }
+  if (element.dataset.msgid === msgId
+      || element.querySelector('[data-msgid="' + CSS.escape(msgId) + '"]')) return;
+  const marker = document.createElement('span');
+  marker.hidden = true;
+  marker.dataset.msgid = msgId;
+  marker.dataset.groupedMessageMarker = '1';
+  element.appendChild(marker);
+}
+
 function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
   if (!wasAutoscroll) return;
   const container = document.getElementById('messages');
@@ -34,18 +49,24 @@ function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
     });
     if (selected) continue;
     const evicted = [];
+    let evictedUnits = 0;
     for (const node of group) {
+      evictedUnits += Number(node.dataset && node.dataset.historyUnits) || 0;
       const mid = node.dataset && node.dataset.msgid;
       if (mid) evicted.push(mid);
       if (node.querySelectorAll) {
         for (const child of node.querySelectorAll('[data-msgid]')) {
           if (child.dataset && child.dataset.msgid) evicted.push(child.dataset.msgid);
         }
+        for (const child of node.querySelectorAll('[data-history-units]')) {
+          evictedUnits += Number(child.dataset && child.dataset.historyUnits) || 0;
+        }
       }
     }
     if (typeof _seenMsgIds !== 'undefined') {
       for (const msgId of evicted) _seenMsgIds.delete(msgId);
     }
+    evictedUnits = Math.max(evictedUnits, new Set(evicted).size, 1);
     if (typeof turnViewForgetElement === 'function') turnViewForgetElement(el);
     if (group.length === 1 && group[0] === el) {
       removed.add(el);
@@ -54,6 +75,7 @@ function trimLiveDisplayWindowIfAutoscrolling(wasAutoscroll) {
       for (const node of group) { removed.add(node); node.remove(); }
     }
     excess -= group.filter(node => rows.includes(node)).length || 1;
+    if (typeof _rewindHistoryCursor === 'function') _rewindHistoryCursor(evictedUnits);
   }
   hasMoreMessages = true;
   if (typeof _updateLoadMoreBanner === 'function') _updateLoadMoreBanner();
@@ -214,6 +236,7 @@ function addMsg(role, text, extra) {
     let _existing = document.querySelector('[data-delegate-key="' + CSS.escape(_key) + '"]');
     const _inner = document.createElement('div');
     _inner.className = 'delegate-message msg-inner-' + role;
+    if (msgId) _inner.dataset.msgid = msgId;
     if (role === 'tool_call' || role === 'tool') {
       let toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
       // Prefer `arguments` (full dict) over `tool_args` (500-char JSON
@@ -253,7 +276,12 @@ function addMsg(role, text, extra) {
       if (tcId) _inner.dataset.tcId = tcId;
       if (tcId) {
         const tcEl = findToolCallElement(tcId, _existing || document);
-        if (tcEl) { _attachToolResult(tcEl, text || ''); el.style.display = 'none'; return el; }
+        if (tcEl) {
+          _attachToolResult(tcEl, text || '');
+          _tagGroupedMessageId(tcEl, msgId);
+          el.style.display = 'none';
+          return tcEl;
+        }
       }
       _inner.innerHTML = timeHtml + '<pre class="tool-result">' + escapeHtml((text || '').substring(0, 2000)) + '</pre>';
     } else {
@@ -333,8 +361,9 @@ function addMsg(role, text, extra) {
       const tcEl = findToolCallElement(tcId);
       if (tcEl) {
         _attachToolResult(tcEl, resultText);
+        _tagGroupedMessageId(tcEl, msgId);
         el.style.display = 'none';  // hide this standalone element
-        return el;
+        return tcEl;
       }
     }
     // Fallback: standalone tool_result (no matching tool_call found)
@@ -369,18 +398,20 @@ function addMsg(role, text, extra) {
   } else if (role === 'sub_agent_trace') {
     if (window.PAWFLOW_GROUP_DELEGATE_MESSAGES === false) {
       el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
-      return el;
-    }
-    const dtcId = (extra && extra.source && extra.source.delegate_tc_id) || '';
-    const taskId = (extra && extra.source && extra.source.task_id) || '';
-    // Dedupe: if the live SSE already rendered a sub-block for this
-    // sub-agent task, skip — we'd otherwise render a stale duplicate
-    // (e.g. the "running" snapshot side-by-side with the "done" one).
-    if (taskId && document.querySelector('[data-delegate-task-id="' + taskId + '"]')) {
-      return null;
-    }
-    const existingGroup = dtcId ? document.querySelector('[data-delegate-group="' + dtcId + '"]') : null;
-    if (existingGroup) {
+    } else {
+      const dtcId = (extra && extra.source && extra.source.delegate_tc_id) || '';
+      const taskId = (extra && extra.source && extra.source.task_id) || '';
+      // Dedupe: if the live SSE already rendered a sub-block for this
+      // sub-agent task, skip — we'd otherwise render a stale duplicate
+      // (e.g. the "running" snapshot side-by-side with the "done" one).
+      const existingTask = taskId
+        ? document.querySelector('[data-delegate-task-id="' + CSS.escape(taskId) + '"]') : null;
+      if (existingTask) {
+        _tagGroupedMessageId(existingTask, msgId);
+        return existingTask;
+      }
+      const existingGroup = dtcId ? document.querySelector('[data-delegate-group="' + dtcId + '"]') : null;
+      if (existingGroup) {
       const groupBody = existingGroup.querySelector('.delegate-body');
       // On second trace, convert the inline content of the first trace into a sub-block
       if (groupBody && !existingGroup.querySelector('.delegate-sub-block')) {
@@ -408,6 +439,7 @@ function addMsg(role, text, extra) {
       const subHtml = renderDelegateSubBlock(text, extra);
       const subEl = document.createElement('details');
       subEl.className = 'delegate-sub-block';
+      if (msgId) subEl.dataset.msgid = msgId;
       subEl.innerHTML = subHtml;
       if (groupBody) groupBody.appendChild(subEl);
       const countSpan = existingGroup.querySelector('.delegate-group-count');
@@ -415,17 +447,18 @@ function addMsg(role, text, extra) {
         const n = existingGroup.querySelectorAll('.delegate-sub-block').length;
         countSpan.textContent = n + ' agents';
       }
-      return existingGroup;
+        return existingGroup;
+      }
+      // First trace for this delegate_tc_id — create group
+      el.className = 'msg delegate-block delegate-group';
+      if (dtcId) el.dataset.delegateGroup = dtcId;
+      if (taskId) el.dataset.delegateTaskId = taskId;
+      const src = (extra && extra.source) || {};
+      el.dataset.firstAgent = src.name || 'sub-agent';
+      el.dataset.firstSvc = src.llm_service || '';
+      el.dataset.parentAgent = src.parent_agent || '';
+      el.innerHTML = renderDelegateBlock(text, extra);
     }
-    // First trace for this delegate_tc_id — create group
-    el.className = 'msg delegate-block delegate-group';
-    if (dtcId) el.dataset.delegateGroup = dtcId;
-    if (taskId) el.dataset.delegateTaskId = taskId;
-    const src = (extra && extra.source) || {};
-    el.dataset.firstAgent = src.name || 'sub-agent';
-    el.dataset.firstSvc = src.llm_service || '';
-    el.dataset.parentAgent = src.parent_agent || '';
-    el.innerHTML = renderDelegateBlock(text, extra);
   } else if (role === 'error') {
     el.innerHTML = timeHtml + badge + renderMarkdown(text);
   } else if (role === 'agent-result') {

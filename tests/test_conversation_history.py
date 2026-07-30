@@ -423,8 +423,12 @@ class TestAgentLoopActions(unittest.TestCase):
         })
 
         assert [m["content"] for m in visible["messages"]] == ["m4", "m5"]
+        assert visible["history_cursor"] == {
+            "offset": 2, "before_msg_id": "cursor-m4"}
         assert [m["content"] for m in older["messages"]] == ["m2", "m3"]
         assert older["offset"] == 2
+        assert older["history_cursor"] == {
+            "offset": 4, "before_msg_id": "cursor-m2"}
 
     def test_load_history_does_not_prewarm_append_targets(self):
         """load_history must stay read-only and not pre-open writer paths."""

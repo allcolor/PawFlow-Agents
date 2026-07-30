@@ -228,19 +228,20 @@ class _CsPathsMixin:
         """
         if not cid:
             return ""
-        if not self.exists(cid):
-            return ""
-        try:
-            uid = str((self._load_cache(cid) or {}).get("user_id") or "").strip()
-        except Exception:
-            logger.debug("owner metadata read failed for %s", cid[:8], exc_info=True)
-            uid = ""
-        if uid:
-            return uid
-        try:
-            return self._conv_dir(cid).parent.name
-        except (ValueError, OSError):
-            return ""
+        with self._get_conv_lock(cid):
+            if not self.exists(cid):
+                return ""
+            try:
+                uid = str((self._load_cache(cid) or {}).get("user_id") or "").strip()
+            except Exception:
+                logger.debug("owner metadata read failed for %s", cid[:8], exc_info=True)
+                uid = ""
+            if uid:
+                return uid
+            try:
+                return self._conv_dir(cid).parent.name
+            except (ValueError, OSError):
+                return ""
 
     def shared_index_path(self, user_id: str) -> Path:
         """Per-user reverse index of conversations shared *with* that user.

@@ -327,6 +327,42 @@ def test_a_failed_refresh_does_not_destroy_what_it_was_replacing(tmp_path):
     assert not list(target.glob(".pawflow-refresh.*"))
 
 
+def test_refresh_rejects_an_intermediate_symlink_inside_target(tmp_path):
+    target = tmp_path / "install"
+    outside = tmp_path / "outside"
+    target.mkdir()
+    outside.mkdir()
+    (target / "scripts").symlink_to(outside, target_is_directory=True)
+    sentinel = outside / "run-pawflow-docker.sh"
+    sentinel.write_text("outside must survive\n", encoding="utf-8")
+    script = "\n".join(
+        ["set -eu"] + update_manager._artifact_refresh_lines(
+            IMAGE, str(target), {}, force=False))
+
+    result = _run_script(tmp_path, script)
+
+    assert result.returncode != 0
+    assert "symlink parent" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "outside must survive\n"
+
+
+def test_refresh_rejects_a_symlink_in_the_target_path_itself(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_parent = tmp_path / "runtime"
+    linked_parent.symlink_to(outside, target_is_directory=True)
+    target = linked_parent / "new-version"
+    script = "\n".join(
+        ["set -eu"] + update_manager._artifact_refresh_lines(
+            IMAGE, str(target), {}, force=False))
+
+    result = _run_script(tmp_path, script)
+
+    assert result.returncode != 0
+    assert "symlink parent" in result.stderr
+    assert not (outside / "new-version").exists()
+
+
 def test_the_chown_runs_and_the_files_stay_reachable(tmp_path, dirs):
     """The chown is executed, not merely emitted, and it names a real owner.
 

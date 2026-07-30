@@ -220,9 +220,10 @@ Example stored message:
 `turn_id` is a top-level correlation field. `source` continues to describe the
 producer and must not become the turn identity store.
 
-#### Boundaries are positional; `turn_id` is a refinement
+#### Legacy boundaries are positional; durable turns are correlated
 
-The view groups on **boundaries in the rendered stream, not on correlation**:
+The fallback for historical rows without durable correlation groups on
+**boundaries in the rendered stream**:
 
 ```text
 user message          <- opens a turn and its block
@@ -231,9 +232,18 @@ terminal answer       <- lifted out, placed after the block
 next user message     <- closes the turn, opens the next one
 ```
 
-Every row belongs to the turn currently open. **`turn_id` is never consulted for
-placement**, and when the two could disagree, position wins. The case that
-decides it is a user message arriving before the answer:
+For that legacy path every row belongs to the turn currently open, and a new
+user message closes the previous block. This keeps old transcripts and callers
+that never stamped a turn usable.
+
+Once an activity row carries a durable `turn_id`, correlation becomes
+authoritative. Multiple turns may be live concurrently; late activity and the
+terminal answer route back to the matching block even after another user message
+has opened a different turn. A stamped user row alone does not prove durable
+correlation: the block becomes correlation-capable only after a correlated
+activity event arrives or the backend runtime snapshot identifies it as active.
+
+The legacy case remains positional:
 
 ```text
 user message
@@ -243,19 +253,18 @@ turn activity block
 terminal answer       <- under the LAST block
 ```
 
-The `done` event still carries the first turn's id, so correlating on it would
-lift the answer back under the first block — above content the reader saw
-arrive after it. The answer belongs where the reader is looking: at the bottom.
-`turn_id` names a turn; it does not route rows. A turn nobody stamped groups
-identically.
+With no correlated activity, the terminal answer stays under the last positional
+block. With durable correlation, `done`, `error_event`, and message rows finalize
+the named turn instead. This distinction preserves legacy rendering without
+collapsing genuinely concurrent work into whichever block opened last.
 
 This matters because correlation fails silently. The first implementation made
 `turn_id` load-bearing: `turnViewIngest` rejected every row without one, so a
 submitting path that did not set `agent.request_msg_id` produced no block, no
 reparenting, no tabs and no animation, while the View menu still reported
 Simplified. There was no error anywhere — just a feature doing nothing. Nothing
-in the grouping path may depend on metadata that one missing assignment can
-empty.
+in the fallback grouping path may depend on metadata that one missing assignment
+can empty.
 
 Durable `turn_id`/`turn_final` still earn their place: they mark the terminal
 answer so a reloaded turn puts it outside the block, and they correlate turns
@@ -288,6 +297,20 @@ one from the user boundary.
 - `error_event`
 - cancellation/interruption/active-release terminal events when scoped to one
   turn
+
+### History cursors and active runtime hydration
+
+Pagination is transcript state, not DOM state. `resume_conversation` returns a
+backend `history_cursor`, and every successful page advances that cursor even
+when message-id deduplication renders no new node. The tab controller may reparent
+rows freely; it must never be asked to identify the oldest transcript row.
+
+The same response carries `active_turns` before `noReplay` suppresses historical
+SSE. The browser hydrates those turns as working, restores their start time and
+status, and only then reconciles history. Conversation switching and pagination
+must not call a terminal finalizer for those blocks. Grouped rows retain every
+`msg_id` and unit, so deduplication and cursor advancement remain independent of
+the presentation tree.
 
 `AgentEmitter._emit()` should set `turn_id` and `request_msg_id` from the current
 context when absent. Message-level events created directly in

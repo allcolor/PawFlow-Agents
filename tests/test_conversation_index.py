@@ -12,6 +12,8 @@ What the tests pin, beyond "search finds the message":
   failing the call.
 """
 
+import time
+
 import pytest
 
 import core.paths as _paths
@@ -444,12 +446,9 @@ class TestTheRightToBeForgotten:
         index.refresh(store)
         assert index.refresh(store)["unchanged"] == 1
 
-        store.save(cid, [
-            {"role": "user", "content": "alpha line", "msg_id": "m1",
-             "ts": 100.0},
-            {"role": "assistant", "content": "beta line", "msg_id": "m2",
-             "ts": 200.0},
-        ], user_id=USER)
+        store.append_message(
+            cid, {"role": "assistant", "content": "beta line",
+                  "msg_id": "m2", "ts": time.time() + 1}, user_id=USER)
 
         stats = index.refresh(store)
         # One row read, not two: the watermark still applies.
@@ -500,6 +499,103 @@ class TestTheRightToBeForgotten:
 
         assert index.search("secret") == []
         assert len(index.search("current text")) == 1
+
+    def test_listing_failure_purges_text_that_may_have_been_deleted(
+            self, store, index, monkeypatch):
+        _conv(store, [{"role": "user", "content": "erase this secret"}])
+        index.refresh(store)
+        assert index.search("secret")
+
+        def fail_listing(*args, **kwargs):
+            raise OSError("directory unreadable")
+
+        monkeypatch.setattr(store, "list_conversations", fail_listing)
+        index.refresh(store)
+
+        assert index.search("secret") == []
+
+    def test_transcript_read_failure_purges_that_conversation(
+            self, store, index, monkeypatch):
+        cid = _conv(store, [
+            {"role": "user", "content": "erase this secret",
+             "msg_id": "m1", "ts": 1.0},
+        ])
+        index.refresh(store)
+        assert index.search("secret")
+        store.patch_message(cid, "m1", content="REDACTED")
+        real_load = store.load
+
+        def fail_target(target, **kwargs):
+            if target == cid:
+                raise OSError("transcript unreadable")
+            return real_load(target, **kwargs)
+
+        monkeypatch.setattr(store, "load", fail_target)
+        index.refresh(store)
+
+        assert index.search("secret") == []
+
+    def test_truncate_and_patch_each_bump_generation_inside_the_rewrite(
+            self, store):
+        from core._conversation_store_base import TRANSCRIPT_GENERATION
+
+        cid = _conv(store, [
+            {"role": "user", "content": "one", "msg_id": "m1",
+             "ts": 1.0},
+            {"role": "assistant", "content": "two", "msg_id": "m2",
+             "ts": 2.0},
+        ])
+        before = int(store.get_extra(cid, TRANSCRIPT_GENERATION, 0) or 0)
+
+        assert store.truncate_after_msg_id(cid, "m1")["found"]
+        assert store.get_extra(cid, TRANSCRIPT_GENERATION) == before + 1
+        store.patch_message(cid, "m1", content="changed")
+        assert store.get_extra(cid, TRANSCRIPT_GENERATION) == before + 2
+
+    def test_saving_over_an_existing_transcript_bumps_generation(self, store):
+        from core._conversation_store_base import TRANSCRIPT_GENERATION
+
+        cid = _conv(store, [
+            {"role": "user", "content": "old", "msg_id": "m1",
+             "ts": 1.0},
+        ])
+        store.save(cid, [
+            {"role": "user", "content": "new", "msg_id": "m2",
+             "ts": 2.0},
+        ], user_id=USER)
+
+        assert store.get_extra(cid, TRANSCRIPT_GENERATION) == 1
+
+    def test_concurrent_patch_rewrites_do_not_lose_generation_increments(
+            self, store):
+        import threading
+        from core._conversation_store_base import TRANSCRIPT_GENERATION
+
+        cid = _conv(store, [
+            {"role": "user", "content": "one", "msg_id": "m1",
+             "ts": 1.0},
+        ])
+        count = 16
+        start = threading.Barrier(count)
+        errors = []
+
+        def rewrite(i):
+            try:
+                start.wait(timeout=10)
+                store.patch_message(cid, "m1", **{f"marker_{i}": True})
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=rewrite, args=(i,))
+                   for i in range(count)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+
+        assert errors == []
+        assert all(not thread.is_alive() for thread in threads)
+        assert store.get_extra(cid, TRANSCRIPT_GENERATION) == count
 
 
 class TestToolWiring:

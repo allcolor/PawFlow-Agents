@@ -1272,6 +1272,54 @@ def test_cold_cli_gauge_counts_only_injected_bootstrap_prompt():
     assert usage["cli_context_state"] == "bootstrap"
 
 
+def test_cli_bootstrap_tokens_survive_actual_agent_setup_clone(tmp_path):
+    """The provider clone writes bootstrap accounting that the active
+    context's original resolver client can read immediately."""
+    from core.llm_client import LLMClient, LLMMessage
+    from tasks.ai._alc_setup import _ALCSetupMixin
+    from tasks.ai.context_usage import _cli_bootstrap_tokens
+
+    original = LLMClient(
+        provider="claude-code", config={"max_context_size": 1000})
+    messages = [LLMMessage(
+        role="user", content="real cold start", conversation_id="c")]
+    ctx = {
+        "client": original,
+        "registry": SimpleNamespace(list_tools=lambda: []),
+        "tool_defs": [],
+        "messages": messages,
+        "model": "claude",
+        "conversation_id": "c",
+        "user_id": "u",
+        "active_agent_name": "assistant",
+        "active_llm_service": "svc",
+        "max_context_size": 1000,
+        "use_conv_store": False,
+        "summarizer": (None, 0, ""),
+    }
+    st = SimpleNamespace(
+        ctx=ctx,
+        emitter=SimpleNamespace(
+            is_streaming=False, on_loop_start=lambda _ctx: None),
+    )
+    owner = SimpleNamespace(
+        _active_contexts_lock=threading.RLock(), _active_claude_client={})
+
+    _ALCSetupMixin._alc_setup(owner, st)
+    assert st.client is not original
+
+    st.client._build_cli_initial_context_prompt(
+        messages, system_prompt="", user_text="real cold start",
+        workdir=str(tmp_path), provider_workdir="/provider",
+        conversation_id="c", agent_name="assistant")
+
+    assert (st.client._cli_bootstrap_tokens_by_stream
+            is original._cli_bootstrap_tokens_by_stream)
+    assert _cli_bootstrap_tokens(ctx, "c", "assistant") > 0
+    assert all(isinstance(value, int) for value in
+               original._cli_bootstrap_tokens_by_stream.values())
+
+
 def test_cli_context_reset_clears_prompt_and_installs_cold_cache():
     from tasks.ai.context_usage import reset_cli_context_usage
 

@@ -109,12 +109,14 @@ MCP wrapper un-unwrapped and rendered as a bare `use_tool`.
 
 Ownership is arbitrated by epoch. `claim_consumer()` bumps the epoch and every
 `wait_event()` presents the epoch it was granted; a stale holder raises
-`CCIConsumerEvicted` on its next poll instead of stealing events. A `request`
-claim always wins — it is the reader for the turn the user is waiting on — and
-the provider claims *before* draining, so anything a stale reader grabs belongs
-to the discarded pre-drain backlog. A `capture` claim (the orphan-turn safety
-net) refuses while a request coordinator is polling, and when evicted mid-turn
-it discards its partial text rather than publishing a truncated message.
+`CCIConsumerEvicted` instead of stealing events. Claim changes, queue reads,
+pushback, overflow state, and wakeups share one condition. A waiter already
+blocked when ownership changes is woken before it can take the replacement's
+first event; if an evicted reader ever holds an event, it is pushed back ahead of
+the queue so order is preserved. A `request` claim always wins because it serves
+the turn the user is waiting on. A `capture` claim (the orphan-turn safety net)
+refuses while a request coordinator is polling, and when evicted mid-turn it
+discards only its partial local text, never a queue event.
 
 ### Captured turns and the active-agent marker
 

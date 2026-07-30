@@ -226,9 +226,10 @@ def test_a_failed_pull_is_not_reported_as_an_update():
     assert "|| true" not in script
     # The supported path has no tolerance at all: `set -eu` ends the run.
     assert "  docker compose pull --ignore-buildable\n" in script + "\n"
-    # The legacy path keeps it -- there a source build and a failed pull are
-    # genuinely indistinguishable -- but it no longer does so in silence.
-    assert "WARNING docker compose pull failed" in script
+    # Legacy Compose classifies each service from normalized config instead of
+    # swallowing every pull error.
+    assert "for _pf_service in $(docker compose config --services)" in script
+    assert "ERROR docker compose pull failed for image-only service" in script
 
 
 def _run_updater(tmp_path, pull_rc):
@@ -274,6 +275,58 @@ def test_a_pull_that_works_still_recreates_the_server(tmp_path):
 
     assert result.returncode == 0, result.stderr
     log = (tmp_path / "docker.log").read_text(encoding="utf-8")
+    assert "up -d --build" in log
+
+
+def _run_legacy_updater(tmp_path, compose_config, services, failing):
+    import os
+    import subprocess
+
+    bin_dir = tmp_path / "legacy-bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "$DOCKER_LOG"\n'
+        'if [[ "$2" == pull && "$3" == --help ]]; then exit 0; fi\n'
+        'if [[ "$2" == config && "$3" == --services ]]; then printf "%s\\n" $SERVICES; exit 0; fi\n'
+        'if [[ "$2" == config ]]; then printf "%s" "$COMPOSE_CONFIG"; exit 0; fi\n'
+        'if [[ "$2" == pull && " $FAILING " == *" $3 "* ]]; then exit 1; fi\n'
+        "exit 0\n",
+        encoding="utf-8")
+    docker.chmod(0o755)
+    proj = tmp_path / "legacy-proj"
+    proj.mkdir()
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "DOCKER_LOG": str(tmp_path / "legacy-docker.log"),
+        "COMPOSE_CONFIG": compose_config,
+        "SERVICES": " ".join(services),
+        "FAILING": " ".join(failing),
+    }
+    result = subprocess.run(
+        ["sh", "-c", update_manager._updater_script(str(proj), False)],
+        text=True, capture_output=True, timeout=30, env=env)
+    return result, (tmp_path / "legacy-docker.log").read_text(encoding="utf-8")
+
+
+def test_legacy_compose_propagates_image_only_pull_failure(tmp_path):
+    result, log = _run_legacy_updater(
+        tmp_path, "services:\n  web:\n    image: example/web:latest\n",
+        ["web"], ["web"])
+
+    assert result.returncode != 0
+    assert "image-only service web" in result.stderr
+    assert "up -d --build" not in log
+
+
+def test_legacy_compose_tolerates_only_a_service_with_build_config(tmp_path):
+    result, log = _run_legacy_updater(
+        tmp_path, "services:\n  web:\n    build:\n      context: .\n",
+        ["web"], ["web"])
+
+    assert result.returncode == 0, result.stderr
+    assert "buildable service web" in result.stderr
     assert "up -d --build" in log
 
 

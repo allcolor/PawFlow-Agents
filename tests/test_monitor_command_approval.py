@@ -34,6 +34,15 @@ def _check(tool, command, perms, **extra):
 
 def test_monitor_is_judged_on_its_command():
     assert "monitor" in ToolApprovalGate.COMMAND_BEARING_TOOLS
+    assert ToolApprovalGate.is_command_bearing_tool("Monitor")
+
+
+def test_registered_monitor_spelling_is_classified_in_normal_mode():
+    with mock.patch.object(
+            ToolApprovalGate, "_is_catastrophic_command",
+            wraps=ToolApprovalGate._is_catastrophic_command) as classified:
+        assert _check("Monitor", DESTRUCTIVE, {}) == "needs_approval"
+    classified.assert_called_once_with(DESTRUCTIVE)
 
 
 def test_a_granted_monitor_still_runs_a_harmless_command():
@@ -43,6 +52,11 @@ def test_a_granted_monitor_still_runs_a_harmless_command():
 def test_a_granted_monitor_does_not_cover_a_destructive_command():
     assert _check("monitor", DESTRUCTIVE,
                   {"monitor": "session_allow"}) == "needs_approval"
+
+
+def test_registered_monitor_spelling_does_not_bypass_session_allow():
+    assert _check("Monitor", DESTRUCTIVE,
+                  {"Monitor": "session_allow"}) == "needs_approval"
 
 
 def test_always_allow_on_monitor_does_not_cover_a_destructive_command():
@@ -62,3 +76,30 @@ def test_bash_keeps_the_behavior_monitor_now_shares():
     assert _check("bash", BENIGN, {"bash": "session_allow"}) == "approved"
     assert _check("bash", DESTRUCTIVE,
                   {"bash": "session_allow"}) == "needs_approval"
+
+
+def test_registered_monitor_spelling_is_stopped_in_auto_mode(monkeypatch):
+    from services.tool_relay_service import ToolRelayService
+
+    class _Registry:
+        def execute(self, *_args):
+            raise AssertionError("catastrophic command reached the handler")
+
+        def get(self, _name):
+            return None
+
+    svc = ToolRelayService({"_service_id": "tools", "file_base_url": ""})
+    monkeypatch.setattr(svc, "_get_registry", lambda *_args: _Registry())
+    monkeypatch.setattr(svc, "_conversation_has_hooks", lambda *_args: False)
+    monkeypatch.setattr(
+        svc, "_conversation_extra_fast",
+        lambda _cid, key, default=None: "auto" if key == "permission_mode" else default)
+    monkeypatch.setattr(
+        ToolApprovalGate, "check",
+        classmethod(lambda cls, *_args, **_kwargs: "denied"))
+
+    result = svc._do_execute(
+        "req", "Monitor", {"command": "rm -rf /"},
+        "alice", "conv", "assistant")
+
+    assert "Command rejected by user" in result["data"]

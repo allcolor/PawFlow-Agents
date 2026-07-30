@@ -215,7 +215,7 @@ test('a block that ended badly keeps saying so', () => {
          'closing the turn must not overwrite how it ended');
 });
 
-test('a user message before the answer gives user / block / user / block / answer', () => {
+test('a correlated late answer stays with its own turn', () => {
   const e = env('simplified');
   const user1 = e.row('u1');
   e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, user1);
@@ -226,15 +226,17 @@ test('a user message before the answer gives user / block / user / block / answe
   e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, user2);
   e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a2' }, e.row('a2'));
 
-  // The done event still carries the FIRST turn's id -- position must win.
+  // The done event still carries the FIRST turn's id. Durable correlation wins
+  // even though another user row has since opened a different turn.
   const answer = e.row('a3');
   e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a3' }, answer);
   e.ctx.turnViewFinalize({ turn_id: 'u1', final_msg_id: 'a3' });
 
-  // Each turn keeps its own last message where the reader can read it: a1 for
-  // the interrupted first turn, a3 for the second. a2 went back into the second
-  // block when a3 replaced it.
-  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1,u2,BLOCK,a3');
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a3,u2');
+
+  const answer2 = e.row('b1');
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u2', msg_id: 'b1' }, answer2);
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a3,u2,BLOCK,b1');
 });
 
 test('a user message nothing followed gets no empty block', () => {

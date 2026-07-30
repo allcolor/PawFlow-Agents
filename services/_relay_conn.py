@@ -81,49 +81,58 @@ class _RelayConnMixin:
             raise
 
     def ensure_managed_relay_alive(self) -> bool:
-        """Re-create this service's managed relay container if it is gone.
+        """Re-create this service's managed relay when it is disconnected.
 
         Only for `server_managed` services: an operator-run relay has no
         container PawFlow owns, and restarting it is the operator's call.
 
-        The container is checked *first*, and a live one is left strictly
-        alone. The ordinary disconnect is the relay client reconnecting over a
-        container that never died; respawning then would turn a few seconds of
-        retry into a cold start and kill whatever the relay was running.
+        A connected WebSocket is healthy and is left strictly alone. Container
+        state is diagnostic only: a process that is still running but has no
+        relay connection is wedged from the service's perspective and is
+        replaced through the same managed spawn path as a missing container.
 
         Returns True when a respawn was launched.
         """
         if not self.config.get("server_managed"):
             return False
-        now = time.monotonic()
+        # A live relay WebSocket is the health signal. A container can remain
+        # running while its client is wedged or can no longer authenticate; in
+        # that state it must be replaced, not mistaken for a healthy relay.
+        if self.is_connected():
+            return False
         with self._managed_respawn_lock:
+            # A concurrent reconnect or respawn may have repaired it while this
+            # caller waited for the lock.
+            if self.is_connected():
+                return False
+            now = time.monotonic()
             since = now - self._managed_respawn_at
             if self._managed_respawn_at and since < _MANAGED_RESPAWN_COOLDOWN_SECONDS:
                 return False
-            self._managed_respawn_at = now
-        try:
-            from core.server_relay_manager import ServerRelayManager
-            alive = ServerRelayManager.get_instance().service_relay_running(
-                self._service_id,
-                kind=str(self.config.get("server_kind") or "workspace"),
-            )
-        except Exception:
-            logger.debug("RelayService %s: could not inspect the managed container",
-                         self._service_id, exc_info=True)
-            return False
-        if alive:
-            return False
-        logger.warning(
-            "RelayService %s: managed relay container is gone — respawning it",
-            self._service_id)
-        try:
-            self._start_managed_server_relay()
-        except Exception:
-            # Already logged with a traceback by _start_managed_server_relay.
-            # Reported, never fatal: the caller is a transport retry that has
-            # its own error to raise if this does not bring the relay back.
-            return False
-        return True
+            try:
+                from core.server_relay_manager import ServerRelayManager
+                running = ServerRelayManager.get_instance().service_relay_running(
+                    self._service_id,
+                    kind=str(self.config.get("server_kind") or "workspace"),
+                )
+            except Exception:
+                logger.debug("RelayService %s: could not inspect the managed container",
+                             self._service_id, exc_info=True)
+                return False
+            logger.warning(
+                "RelayService %s: managed relay is %s but disconnected — respawning it",
+                self._service_id, "running" if running else "gone")
+            # Charge the cooldown only when an actual spawn is attempted. An
+            # inspection failure or healthy reconnect must not delay recovery.
+            self._managed_respawn_at = time.monotonic()
+            try:
+                self._start_managed_server_relay()
+            except Exception:
+                # Already logged with a traceback by _start_managed_server_relay.
+                # Reported, never fatal: the caller is a transport retry that has
+                # its own error to raise if this does not bring the relay back.
+                return False
+            return True
 
     def is_connected(self) -> bool:
         with self._relay_pool_lock:

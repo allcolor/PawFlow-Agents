@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 
 from core.llm_client import LLMMessage
 from tasks.ai.actions._conv_base import (
@@ -106,9 +107,35 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
 
+        active_turns = []
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            inst = AgentLoopTask._live_instance
+            if inst:
+                now = time.time()
+                with inst._active_contexts_lock:
+                    turns = [dict(turn) for turn in inst._active_turns.values()
+                             if turn.get("conversation_id") == conv_id]
+                for turn in turns:
+                    started_at = float(turn.get("started_at") or now)
+                    active_turns.append({
+                        "turn_id": str(turn.get("turn_id") or ""),
+                        "agent_name": str(turn.get("agent_name") or ""),
+                        "started_at": started_at,
+                        "duration": max(0.0, now - started_at),
+                        "status": str(turn.get("status") or "running"),
+                        "message_preview": str(turn.get("message_preview") or ""),
+                    })
+        except Exception:
+            logger.debug("active turn snapshot failed", exc_info=True)
+
         raw_messages = page["messages"]
         raw_count = len(raw_messages)
-        history = self._classify_messages_for_display(raw_messages)
+        active_turn_ids = {turn["turn_id"] for turn in active_turns
+                           if turn.get("turn_id")}
+        history = (self._classify_messages_for_display(
+            raw_messages, active_turn_ids=active_turn_ids)
+            if active_turn_ids else self._classify_messages_for_display(raw_messages))
         extras = store.get_extras_snapshot(conv_id)
         nicknames = extras.get("agent_nicknames") or {}
         active_res = extras.get("active_resources") or {}
@@ -155,6 +182,13 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             "has_more": page["has_more"],
             "offset": page["offset"],
             "raw_count": raw_count,
+            "history_cursor": {
+                "offset": int(page["offset"]) + raw_count,
+                "before_msg_id": str(
+                    raw_messages[0].get("msg_id") or "")
+                    if raw_messages else "",
+            },
+            "active_turns": active_turns,
             "nicknames": nicknames,
             "active_agent": active_agent,
             "custom_css": custom_css,

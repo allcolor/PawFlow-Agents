@@ -233,6 +233,7 @@ class AgentSerializationMixin:
     @staticmethod
     def _classify_messages_for_display(
         raw_messages: List[Dict[str, Any]],
+        active_turn_ids=None,
     ) -> List[Dict[str, Any]]:
         """Classify stored messages for chat UI display.
 
@@ -511,7 +512,15 @@ class AgentSerializationMixin:
             _item_turn_id = str(_item.get("turn_id") or "")
             if _item_turn_id:
                 _rows_by_turn.setdefault(_item_turn_id, []).append(_item)
-        for _turn_rows in _rows_by_turn.values():
+        _active_turn_ids = {str(_id) for _id in (active_turn_ids or []) if _id}
+        for _turn_id, _turn_rows in _rows_by_turn.items():
+            # The runtime marker is authoritative. Its latest assistant row is
+            # partial output, not a final answer, even though this history page
+            # happens to end there. SSE is connected with noReplay after this
+            # snapshot, so deriving a terminal marker here would permanently
+            # close the live turn on reload/switch.
+            if _turn_id in _active_turn_ids:
+                continue
             if any(_row.get("turn_final") for _row in _turn_rows):
                 continue
             for _row in reversed(_turn_rows):

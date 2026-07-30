@@ -131,6 +131,7 @@ let sseHealthTimer = null; // SSE health reconnect interval
 let resourcesTimer = null; // 10s resources panel refresh
 let displayWindow = 50;          // messages per page
 let currentOffset = 0;           // how many older messages already loaded
+let historyCursor = { offset: 0, before_msg_id: '' }; // backend-issued transcript cursor
 let hasMoreMessages = false;     // server says there are older messages
 let loadingMore = false;         // prevent concurrent load-more
 

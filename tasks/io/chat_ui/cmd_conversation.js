@@ -211,6 +211,7 @@ function cmdClear() {
   _histTaskBlocks = {};
   clearAllStreams();
   currentOffset = 0;
+  historyCursor = { offset: 0, before_msg_id: '' };
   serverMsgCount = knownTotal;
   hasMoreMessages = knownTotal > 0;
   _updateLoadMoreBanner();

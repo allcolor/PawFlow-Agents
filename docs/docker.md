@@ -675,6 +675,18 @@ at all and a message about how to rebuild one. The probes are read-only, so
 they now run first: the destruction is the last thing that happens before
 `docker run`.
 
+**Update inputs are fail-fast and confined to the deployment.** A requested git
+pull must succeed; its exit status is not hidden behind a later Compose command.
+Artifact refresh resolves and validates every destination beneath the deployment
+root without following a destination symlink outside it. A failed validation or
+copy stops before server replacement.
+
+**Server replacement rolls back on failed health.** The script records the old
+image before removal, starts the requested image, and waits for its health check.
+If startup or health fails, it removes the failed container and recreates the
+old image with the same runtime arguments. The update still exits non-zero and
+keeps its logs; rollback restores service, it does not report success.
+
 **Managed relays are removed, best-effort.** Before recreating the server, the
 start script drops the `pawflow-relay-srv-*` / `pawflow-relay-min-*` containers
 so they come back with the current runtime code; their home volumes and

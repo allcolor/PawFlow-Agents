@@ -131,6 +131,7 @@ def _handle_ctxops_k4(self, action, body, store, user_id, flowfile, _helpers):
                     store._transcript_log(conv_id).replace_dicts([
                         store._stamp_line(conv_id, meta),
                     ])
+                    store.bump_transcript_generation(conv_id)
                 with store._cache_lock:
                     store._cache.pop(conv_id, None)
                 store._invalidate_ctx_cache(conv_id)

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # ConversationStore (invariant 2: MRO/shared state on the host).
 
 from core._conversation_store_base import (  # noqa: F401,E402
-    _CTX_CACHE_MAX_MESSAGES, _CTX_CACHE_MAX_CHARS, _CTX_CACHE_MAX_CONVS, _CONV_LOCK_DIAG_MS, _GIT_RETENTION_DAYS, _GIT_RETENTION_COMMITS, _GIT_RETENTION_INTERVAL_SEC, _HOT_METADATA_FLUSH_INTERVAL_SEC, _HOT_METADATA_FLUSH_MSG_DELTA, _HOT_METADATA_KEYS, _HOT_METADATA_EXECUTOR, _GIT_RETENTION_EXECUTOR, _GIT_RETENTION_RUNNING, _GIT_RETENTION_RUNNING_LOCK, ConversationLockedError, _ConversationTimedRLock)
+    _CTX_CACHE_MAX_MESSAGES, _CTX_CACHE_MAX_CHARS, _CTX_CACHE_MAX_CONVS, _CONV_LOCK_DIAG_MS, _GIT_RETENTION_DAYS, _GIT_RETENTION_COMMITS, _GIT_RETENTION_INTERVAL_SEC, _HOT_METADATA_FLUSH_INTERVAL_SEC, _HOT_METADATA_FLUSH_MSG_DELTA, _HOT_METADATA_KEYS, _HOT_METADATA_EXECUTOR, _GIT_RETENTION_EXECUTOR, _GIT_RETENTION_RUNNING, _GIT_RETENTION_RUNNING_LOCK, ConversationLockedError, TRANSCRIPT_GENERATION, _ConversationTimedRLock)
 import core._conversation_store_base as _csb  # noqa: E402
 
 
@@ -59,35 +59,46 @@ class _CsAppendMixin:
         _now = time.time()
         if not user_id:
             raise ValueError("user_id is required to create a conversation")
-        self._conv_dir(cid, user_id=user_id).mkdir(parents=True, exist_ok=True)
+        lock = self._get_conv_lock(cid)
+        extras_lock = self._get_extras_lock(cid)
+        with lock:
+            existed = self.exists(cid)
+            previous_extras = self._read_extras(cid) if existed else {}
+            previous_generation = int(
+                previous_extras.get(TRANSCRIPT_GENERATION, 0) or 0)
+            self._conv_dir(cid, user_id=user_id).mkdir(parents=True, exist_ok=True)
 
-        # Write transcript messages only. Metadata lives in extras.json.
-        rows = []
-        tool_call_parents: Dict[str, str] = {}
-        for m in messages:
-            self._validate_message(m)
-            for row in self._canonical_message_rows(cid, m, tool_call_parents):
-                rows.append(self._stamp_line(cid, row))
-        self._transcript_log(cid).replace_dicts(rows)
+            # Write transcript messages only. Metadata lives in extras.json.
+            rows = []
+            tool_call_parents: Dict[str, str] = {}
+            for m in messages:
+                self._validate_message(m)
+                for row in self._canonical_message_rows(cid, m, tool_call_parents):
+                    rows.append(self._stamp_line(cid, row))
+            self._transcript_log(cid).replace_dicts(rows)
 
-        # Write extras with metadata
-        extras = {
-            "_meta_user_id": user_id,
-            "_meta_created_at": _now,
-            "_meta_expires_at": _now + ttl if ttl > 0 else 0,
-            "_meta_status": status or "idle",
-            "_meta_updated_at": _now,
-            "_meta_msg_count": len(rows),
-            "_meta_max_seq": max((int(r.get("seq") or 0) for r in rows), default=0),
-            "conv_agents": {},
-        }
-        for row in rows:
-            if row.get("role") == "user":
-                content = row.get("content", "")
-                if isinstance(content, str) and content.strip():
-                    extras["_meta_preview"] = content[:80]
-                    break
-        self._write_extras(cid, extras)
+            # Publish the matching generation in the same conversation lock as
+            # the rewrite. Re-saving an existing id is a rewrite, not a create.
+            extras = {
+                "_meta_user_id": user_id,
+                "_meta_created_at": _now,
+                "_meta_expires_at": _now + ttl if ttl > 0 else 0,
+                "_meta_status": status or "idle",
+                "_meta_updated_at": _now,
+                "_meta_msg_count": len(rows),
+                "_meta_max_seq": max((int(r.get("seq") or 0) for r in rows), default=0),
+                "conv_agents": {},
+            }
+            if existed:
+                extras[TRANSCRIPT_GENERATION] = previous_generation + 1
+            for row in rows:
+                if row.get("role") == "user":
+                    content = row.get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        extras["_meta_preview"] = content[:80]
+                        break
+            with extras_lock:
+                self._write_extras(cid, extras)
 
         # Pre-open the always-written logs so the first user append does not
         # pay Windows/WSL UNC first-open latency for transcript/shared.

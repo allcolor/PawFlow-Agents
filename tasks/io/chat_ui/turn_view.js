@@ -26,11 +26,11 @@ let _turnRainTimer = null;
 
 let PAWFLOW_CHAT_VIEW_MODE = 'classic';
 const simplifiedTurns = new Map();
-// Turn boundaries are positional, not correlated: a user message opens a turn,
-// the terminal answer and the next user message close it. Everything rendered
-// in between belongs to the open turn's detail block. A turn id, when the
-// server provides one, only names a turn that is already open -- it is never
-// required, so a row nobody stamped still lands where it belongs.
+const _turnUsers = new Map();
+const _turnRuntime = new Map();
+// Durable turn ids are authoritative when present and allow overlapping turns
+// to keep receiving their own rows. Legacy/id-less traffic still uses the
+// positional open turn and the next user message closes that positional turn.
 let _turnOpen = null;
 let _turnSeq = 0;
 
@@ -64,7 +64,17 @@ function turnViewSetMode(mode) {
 function turnViewReset() {
   for (const state of simplifiedTurns.values()) { _turnStopTransient(state); _turnStopElapsed(state); }
   simplifiedTurns.clear();
+  _turnUsers.clear();
+  _turnRuntime.clear();
   _turnOpen = null;
+}
+
+function turnViewSetRuntimeTurns(turns) {
+  _turnRuntime.clear();
+  for (const turn of (turns || [])) {
+    const id = _turnId(turn);
+    if (id) _turnRuntime.set(id, turn);
+  }
 }
 
 // A user message is a boundary: it closes whatever turn was open and opens the
@@ -83,17 +93,26 @@ function turnViewRegisterUser(extra, element) {
   // screen. The DOM reconciliation below rebuilds positional boundaries once
   // the page is inserted; only a genuinely new live user message closes the
   // current state here.
+  const suppliedId = _turnId(extra)
+    || String((extra && extra.msg_id) || (element.dataset && element.dataset.msgid) || '').trim();
   if (_turnOpen && _turnOpen.state && !(extra && extra._history)) {
     const previous = _turnOpen.state;
-    _turnStopTransient(previous);
-    if (previous.status === 'working') _turnUpdateStatus(previous, 'completed');
-    _turnStopElapsed(previous);
+    const canOverlap = previous.hasDurableTurnId || _turnRuntime.has(previous.turnId);
+    if (!canOverlap) {
+      _turnStopTransient(previous);
+      if (previous.status === 'working') _turnUpdateStatus(previous, 'completed');
+      _turnStopElapsed(previous);
+    }
   }
-  const id = _turnId(extra)
-    || String((extra && extra.msg_id) || (element.dataset && element.dataset.msgid) || '').trim()
-    || ('turn-' + (++_turnSeq));
+  const id = suppliedId || ('turn-' + (++_turnSeq));
   element.dataset.turnId = id;
-  _turnOpen = { turnId: id, userEl: element, data: extra || {}, state: null };
+  const existing = _turnUsers.get(id);
+  const record = {
+    turnId: id, userEl: element, data: extra || {},
+    state: existing ? existing.state : null,
+  };
+  _turnUsers.set(id, record);
+  _turnOpen = record;
 }
 
 function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
@@ -147,8 +166,17 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
   details.appendChild(tablist); details.appendChild(panels); block.appendChild(details);
   state.blockEl = block; state.headerEl = header; state.ephemeralEl = ephemeral;
   state.elapsedEl = header.querySelector('.simple-turn-elapsed');
-  state.startedAt = Date.now(); state.elapsedTimer = null;
+  const runtime = _turnRuntime.get(turnId) || {};
+  const runtimeStarted = Number(runtime.started_at || 0) * 1000;
+  const runtimeDuration = Number(runtime.duration || 0) * 1000;
+  state.startedAt = runtimeStarted || (runtimeDuration ? Date.now() - runtimeDuration : Date.now());
+  state.runtimeStatus = runtime.status || ''; state.elapsedTimer = null;
+  // A stamped user row names the block, but only a correlated activity event
+  // proves that late rows can be routed back here after another user boundary.
+  state.hasDurableTurnId = false;
   simplifiedTurns.set(turnId, state);
+  const record = _turnUsers.get(turnId);
+  if (record) record.state = state;
   _turnUpdateIdentity(state, data || {}); _turnUpdateStatus(state, 'working');
   // A turn opened by the agent itself has no user row to sit under: its block
   // takes the place of the first row it is about to swallow.
@@ -164,14 +192,14 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
 // A stretch of activity with no user row above it -- a history window that
 // opens mid-turn, work resumed after a turn the server already closed. The
 // reader is owed a block for it exactly like any other turn.
-function _turnOpenOrphanTurn(element) {
+function _turnOpenOrphanTurn(element, suppliedId, data) {
   if (!element || !element.parentNode) return null;
   const container = document.getElementById('messages');
   if (container && element.parentNode !== container) return null;
-  const id = 'turn-' + (++_turnSeq);
-  const state = _turnCreateState(id, null, {}, element);
+  const id = suppliedId || ('turn-' + (++_turnSeq));
+  const state = _turnCreateState(id, null, data || {}, element);
   if (!state) return null;
-  _turnOpen = { turnId: id, userEl: null, data: {}, state };
+  _turnOpen = { turnId: id, userEl: null, data: data || {}, state };
   return state;
 }
 
@@ -307,6 +335,26 @@ function _turnCurrentState(create) {
   return _turnOpen.state;
 }
 
+function _turnStateForData(data, element, create) {
+  const id = _turnId(data);
+  if (!id) return _turnCurrentState(create) || (create ? _turnOpenOrphanTurn(element) : null);
+  let state = simplifiedTurns.get(id) || null;
+  if (state && state.blockEl && state.blockEl.isConnected) {
+    state.hasDurableTurnId = true;
+    return state;
+  }
+  const record = _turnUsers.get(id);
+  if (record) {
+    if (!record.state && create) {
+      record.state = _turnCreateState(id, record.userEl, record.data || data || {});
+    }
+    if (record.state) record.state.hasDurableTurnId = true;
+    return record.state;
+  }
+  if (!create) return null;
+  return _turnOpenOrphanTurn(element, id, data);
+}
+
 function turnViewIngest(kind, data, element) {
   if (!turnViewIsSimplified()) return false;
   // No open turn means the agent is working without a user row above it: a
@@ -314,7 +362,7 @@ function turnViewIngest(kind, data, element) {
   // back to work, a delegate returning. That is still a turn, and its rows
   // still belong in a block -- top level holds user rows, blocks, and the last
   // message of a block, never activity.
-  const state = _turnCurrentState(true) || _turnOpenOrphanTurn(element);
+  const state = _turnStateForData(data, element, true);
   if (!state || !state.blockEl.isConnected) return false;
   _turnUpdateIdentity(state, data || {});
   if (kind === 'tool_result' && turnViewHandleToolResult(data, element)) return true;
@@ -760,7 +808,7 @@ function _turnStopTransient(state) {
 
 function turnViewFinalize(data) {
   if (!turnViewIsSimplified()) return false;
-  const state = _turnCurrentState(false); if (!state) return false;
+  const state = _turnStateForData(data, null, false); if (!state) return false;
   const finalId = String((data && (data.final_msg_id || data.msg_id)) || '');
   // A derived marker is a reconstruction guess, not an authority: pagination
   // classifies each page on its own, so an older page can derive a second
@@ -784,7 +832,9 @@ function turnViewFail(turnId, status, message) {
   if (!turnViewIsSimplified()) return false;
   // Never build a block here: a turn that failed before producing a single row
   // has nothing to show, and an empty block is worse than none.
-  const state = _turnCurrentState(false); if (!state) return false;
+  const state = turnId ? (simplifiedTurns.get(String(turnId)) || null)
+    : _turnCurrentState(false);
+  if (!state) return false;
   if (state.status === 'completed') return false;
   _turnStopTransient(state); _turnUpdateStatus(state, ['stopped', 'cancelled', 'error'].includes(status) ? status : 'error');
   if (message) _turnOfferTransient(state, 'messages', message);
@@ -845,7 +895,7 @@ function turnViewReconcile() {
       // A user boundary seen in the final chronological DOM closes the turn
       // before it. This also settles a historical page that ended mid-turn,
       // without touching the newest live turn (nothing follows that one).
-      if (state && state.status === 'working') {
+      if (state && state.status === 'working' && !_turnRuntime.has(state.turnId)) {
         _turnStopTransient(state);
         _turnUpdateStatus(state, 'completed');
       }
@@ -862,6 +912,7 @@ function turnViewReconcile() {
         state = null;
         open = { turnId: id, userEl: el, data: {}, state: null };
       }
+      _turnUsers.set(id, open);
       _turnOpen = open;
       continue;
     }
@@ -883,9 +934,33 @@ function turnViewReconcile() {
     // Every block owes the reader its last message, under it. A live row takes
     // that spot as it arrives; a replayed turn has to be given it here, or a
     // reload shows a block with the answer buried inside it.
-    if (!s.finalEl || !s.finalEl.isConnected) _turnPromoteRecordedLast(s);
+    if (!_turnRuntime.has(s.turnId) && (!s.finalEl || !s.finalEl.isConnected)) {
+      _turnPromoteRecordedLast(s);
+    }
     _turnPlaceBlock(s);
     if (s.finalEl && s.blockEl.parentNode) s.blockEl.parentNode.insertBefore(s.finalEl, s.blockEl.nextSibling);
+  }
+}
+
+function turnViewHydrateRuntimeTurns() {
+  if (!turnViewIsSimplified()) return;
+  for (const [turnId, runtime] of _turnRuntime.entries()) {
+    const state = simplifiedTurns.get(turnId);
+    if (!state || !state.blockEl.isConnected) continue;
+    const startedAt = Number(runtime.started_at || 0) * 1000;
+    const duration = Number(runtime.duration || 0) * 1000;
+    state.startedAt = startedAt || (duration ? Date.now() - duration : state.startedAt);
+    state.runtimeStatus = runtime.status || 'running';
+    state.blockEl.dataset.runtimeStatus = state.runtimeStatus;
+    _turnUpdateIdentity(state, runtime);
+    _turnUpdateStatus(state, 'working');
+    _turnStartRain(state);
+    _turnSyncIdle(state);
+    const preview = String(runtime.message_preview || '').trim();
+    if (preview && !state.transient.cues.length) {
+      _turnOfferTransient(state, 'messages', preview);
+      _turnFlushTransient(state);
+    }
   }
 }
 

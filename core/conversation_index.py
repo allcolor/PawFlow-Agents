@@ -182,6 +182,9 @@ class ConversationIndex:
         except Exception:
             logger.warning("conversation listing failed for index refresh",
                            exc_info=True)
+            # A failed listing cannot distinguish "temporarily unreadable"
+            # from "deleted". Derived plaintext must not outlive its source.
+            self._purge_all()
             return stats
 
         seen = set()
@@ -280,6 +283,10 @@ class ConversationIndex:
             messages = store.load(cid, user_id=self._user_id) or []
         except Exception:
             logger.debug("transcript unreadable for %s", cid[:8], exc_info=True)
+            # Do this even on an incremental refresh: the existing rows may be
+            # exactly the text that was deleted or redacted before the read
+            # failed. Keeping them would turn an I/O failure into disclosure.
+            self.purge(cid)
             return 0
         total = len(messages)
         if stale or total < watermark:
@@ -352,6 +359,13 @@ class ConversationIndex:
             self._conn.execute(
                 "DELETE FROM indexed_conversations WHERE conversation_id = ?",
                 (cid,))
+            self._conn.commit()
+
+    def _purge_all(self) -> None:
+        """Fail-closed reset used when the source listing is unreadable."""
+        with self._db_lock:
+            self._conn.execute("DELETE FROM messages")
+            self._conn.execute("DELETE FROM indexed_conversations")
             self._conn.commit()
 
     # -- Searching -----------------------------------------------------

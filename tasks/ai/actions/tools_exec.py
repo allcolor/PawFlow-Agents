@@ -9,7 +9,8 @@ from typing import Dict, Any, List, Optional
 from core import FlowFile
 from core.llm_client import LLMMessage, LLMClient
 from core.tool_registry import ToolRegistry
-from tasks.ai.actions._conv_base import _gate_conversation_action
+from tasks.ai.actions._conv_base import (_deny_conversation,
+                                         _gate_conversation_action)
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ _TC_TARGETED_ACTIONS = frozenset({
 })
 
 
-def _tc_conversation(tc_id: str, claimed_cid: str) -> str:
+def _tc_conversation(tc_id: str, claimed_cid: str = "") -> str:
     """The conversation that actually owns `tc_id`.
 
     Both registries are global and keyed by tc_id alone, so checking the
@@ -59,9 +60,8 @@ def _tc_conversation(tc_id: str, claimed_cid: str) -> str:
     pair a conversation they may write to with someone else's tc_id and kill
     that. Resolve the owner and check against it.
 
-    An unknown tc_id falls back to the claimed conversation: there is nothing
-    in flight to act on, and the handler's own "not_in_flight" answer is the
-    honest one.
+    An unknown tc_id resolves to nothing. The conversation beside it is only a
+    caller claim and must never authorize a process-control action.
     """
     try:
         from services.tool_relay_service import ToolRelayService
@@ -79,16 +79,17 @@ def _tc_conversation(tc_id: str, claimed_cid: str) -> str:
     except Exception:
         logger.debug("background owner lookup failed for tc %s", tc_id[:8],
                      exc_info=True)
-    return claimed_cid
+    return ""
 
 
 def _handle_tools_exec(self, action, body, store, user_id, flowfile):
     """Handle tools exec actions. Returns [flowfile] or None."""
     _gate_body = body
     if action in _TC_TARGETED_ACTIONS:
-        _owner_cid = _tc_conversation(
-            str(body.get("tc_id", "") or ""),
-            str(body.get("conversation_id", "") or ""))
+        _tc_id = str(body.get("tc_id", "") or "")
+        _owner_cid = _tc_conversation(_tc_id)
+        if _tc_id and not _owner_cid:
+            return _deny_conversation(flowfile)
         _gate_body = {**body, "conversation_id": _owner_cid}
     elif action == "tool_approval_result":
         # Same reasoning: the request_id names the conversation whose agent is

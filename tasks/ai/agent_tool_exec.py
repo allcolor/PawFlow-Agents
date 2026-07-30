@@ -323,6 +323,7 @@ class AgentToolExecMixin:
                 logger.error("Tool '%s' failed: %s", tc.name, e)
                 return tc, f"Error: {e}"
             finally:
+                _bg.release_owner(tc.id)
                 if _tool_relay_bound:
                     try:
                         _set_current_cancel_event(None)
@@ -338,7 +339,15 @@ class AgentToolExecMixin:
 
         # Always use thread pool (even for single tool) so user can background it
         pool = ThreadPoolExecutor(max_workers=max(len(tool_calls), 1))
-        futures = {pool.submit(_exec_one, tc): tc for tc in tool_calls}
+        for tc in tool_calls:
+            _bg.reserve_owner(tc.id, conversation_id)
+        try:
+            futures = {pool.submit(_exec_one, tc): tc for tc in tool_calls}
+        except Exception:
+            for tc in tool_calls:
+                _bg.release_owner(tc.id)
+            pool.shutdown(wait=False)
+            raise
         results_map = {}
         pending = set(futures.keys())
         _started_at = {tc.id: _time_mod.time() for tc in tool_calls}

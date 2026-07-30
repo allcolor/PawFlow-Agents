@@ -214,6 +214,16 @@ def test_derivation_marks_itself_so_a_missed_patch_stays_diagnosable():
     assert by_id["a-1"]["turn_final_derived"] is True
 
 
+def test_authoritative_active_turn_never_derives_a_final_from_partial_output():
+    rows = AgentLoopTask._classify_messages_for_display([
+        {"role": "user", "content": "go", "msg_id": "user-live"},
+        {"role": "assistant", "content": "partial", "msg_id": "a-live",
+         "turn_id": "user-live"},
+    ], active_turn_ids={"user-live"})
+
+    assert not rows[-1].get("turn_final")
+
+
 def test_turn_without_a_visible_answer_never_manufactures_one():
     rows = AgentLoopTask._classify_messages_for_display([
         {"role": "user", "content": "go", "msg_id": "user-1"},
@@ -302,15 +312,6 @@ def test_simplified_view_owns_accessible_tabs_and_terminal_handoff():
         "s.blockEl.parentNode.insertBefore(s.finalEl, s.blockEl.nextSibling)",
     ):
         assert contract in source
-
-
-def test_simplified_view_forces_delegate_boxes_when_classic_grouping_is_off():
-    source = (CHAT_UI / "conversations.js").read_text(encoding="utf-8")
-    contract = (
-        "setDelegateMessageGrouping(viewMode === 'simplified' ? true : "
-        "groupDelegateMessages)"
-    )
-    assert contract in source
 
 
 def test_show_file_artifact_parser_is_strict_and_dedupes_by_file_id():

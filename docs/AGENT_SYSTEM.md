@@ -273,6 +273,11 @@ Independent contexts, such as task and isolated delegate sub-conversations, do n
 `tasks.ai.context_usage.compute_context_usage(conversation_id, agent_name, user_id=...)` is the single server-side calculation point for the gauge. It resolves the agent's LLM service, computes the effective context window, and returns `used / max / pct`. Direct API providers count the PawFlow messages sent in the request. Stateful CLI providers count their provider-side phase instead: zero after session invalidation, only the short injected bootstrap prompt before `initial_context.md` is read, then the observed native read result and subsequent deltas. The serialized file body is never counted before the CLI actually reads it.
 
 Gauge updates are emitted as `message_meta` SSE events carrying `conversation_id` and `agent_name`, so the chat UI updates only the matching conversation and agent surfaces. `compact_progress`, `list_active`, and `list_resources` do not compute alternate live gauge values.
+The bootstrap token count is stored as an integer-only map shared by reference
+across all `LLMClient` call clones for a stream; the clone that writes the cold
+session file and the resolver clone that renders the gauge therefore observe the
+same baseline. Both `message_meta` and `done` preserve `cli_context_state` through
+their SSE handlers, including authoritative `cold` zero after compaction.
 
 The latest value is persisted under the conversation `context_usage` extra as a dict keyed by agent instance name: `{"<agent>": {"used": int, "max": int, "pct": float, "updated_at": float}}`. Persistence is per-agent and keyed on the instance name (not the definition), which means each Resource Panel agent card shows its own gauge and the header badge shows the gauge for `selectedAgent`.
 

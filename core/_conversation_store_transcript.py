@@ -238,14 +238,18 @@ class _CsTranscriptMixin:
 
         lock = self._get_conv_lock(cid)
         patched_streams = 0
+        transcript_patched = 0
         with lock:
-            patched_streams += _patch_stream(self._transcript_path(cid))
+            transcript_patched = _patch_stream(self._transcript_path(cid))
+            patched_streams += transcript_patched
             patched_streams += _patch_stream(self._shared_ctx_path(cid))
             conv_dir = self._conv_dir(cid)
             if conv_dir.is_dir():
                 for entry in conv_dir.iterdir():
                     if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
                         patched_streams += _patch_stream(entry / "context.jsonl")
+            if transcript_patched:
+                self.bump_transcript_generation(cid)
         if not patched_streams:
             # Callers patch durable markers (turn_final, gauges) that later
             # reconstruction depends on. Matching no row is a silent data loss,

@@ -152,7 +152,10 @@ def _authorize_action(action, body, store, user_id, flowfile):
         # attached by the UI to every call it makes. Gating those on the
         # conversation would refuse a user their own packages whenever the
         # conversation is not theirs, or not yet saved.
-        if str(body.get("scope", "") or "").strip() not in ("conversation", "conv"):
+        scope = str(body.get("scope", "") or "").strip()
+        if not scope and action in {"pfp_dev_load", "pfp_dev_unload"}:
+            scope = "conversation"
+        if scope not in ("conversation", "conv"):
             return None
         role = _PFP_ACTION_ROLES.get(action[4:])
     else:

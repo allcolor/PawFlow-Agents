@@ -198,3 +198,77 @@ def test_a_refused_move_leaves_the_conversation_readable(store, conv, users):
 
     assert after.can_write
     assert store.load(conv, user_id=after.storage_user_id)
+
+
+def test_owner_publication_waits_for_resources_and_filestore_under_concurrency(
+        store, conv, repository, files, monkeypatch):
+    import threading
+
+    resource = _conv_agent(repository, OWNER, conv)
+    files.store("before.txt", b"before", user_id=OWNER,
+                conversation_id=conv)
+    real_reassign = files.reassign_conversation_owner
+    sidecars_locked = threading.Event()
+    release_sidecars = threading.Event()
+
+    def blocked_reassign(*args):
+        with files._store_lock:
+            sidecars_locked.set()
+            assert release_sidecars.wait(timeout=10)
+            return real_reassign(*args)
+
+    monkeypatch.setattr(files, "reassign_conversation_owner", blocked_reassign)
+    outcome = []
+    transfer = threading.Thread(
+        target=lambda: outcome.append(store.reassign_owner(conv, COLLAB,
+                                                            OWNER)))
+    transfer.start()
+    assert sidecars_locked.wait(timeout=10)
+
+    observed_owner = []
+    reader = threading.Thread(
+        target=lambda: observed_owner.append(store.resolve_owner(conv)))
+    reader.start()
+    late_file = []
+    writer = threading.Thread(
+        target=lambda: late_file.append(files.store(
+            "during.txt", b"during", user_id=OWNER,
+            conversation_id=conv)))
+    writer.start()
+    assert reader.is_alive(), "owner became observable before sidecars arrived"
+    assert writer.is_alive(), "FileStore write escaped the handoff transaction"
+
+    release_sidecars.set()
+    transfer.join(timeout=10)
+    reader.join(timeout=10)
+    writer.join(timeout=10)
+
+    assert outcome == [True]
+    assert observed_owner == [COLLAB]
+    assert not resource.exists()
+    assert (repository / "agents" / "users" / COLLAB / conv
+            / "house-agent.json").is_file()
+    assert files.get_metadata(late_file[0])["user_id"] == COLLAB
+
+
+def test_publication_failure_rolls_back_conversation_resources_and_files(
+        store, conv, repository, files, monkeypatch):
+    resource = _conv_agent(repository, OWNER, conv)
+    fid = files.store("contract.pdf", b"contract", user_id=OWNER,
+                      conversation_id=conv)
+    real_write = store._write_extras
+
+    def fail_new_owner(cid, data, *args, **kwargs):
+        if data.get("_meta_user_id") == COLLAB:
+            raise OSError("metadata publication failed")
+        return real_write(cid, data, *args, **kwargs)
+
+    monkeypatch.setattr(store, "_write_extras", fail_new_owner)
+
+    assert store.reassign_owner(conv, COLLAB, OWNER) is False
+    assert store.resolve_owner(conv) == OWNER
+    assert resource.is_dir()
+    assert not (repository / "agents" / "users" / COLLAB / conv).exists()
+    assert files.get_metadata(fid)["user_id"] == OWNER
+    assert files.get(fid, user_id=OWNER)[1] == b"contract"
+    assert store.load(conv, user_id=OWNER)

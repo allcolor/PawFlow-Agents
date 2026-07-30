@@ -94,7 +94,10 @@ class CCInteractiveSessionEvents:
     # and the next waiter takes it before touching the queue, so the event is
     # neither lost nor delivered out of order.
     pushback: list = field(default_factory=list)
-    pushback_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Claim changes, pushback and queue delivery share one condition. This lets
+    # a new claim wake an old waiter before either can take the replacement's
+    # first event, and makes choosing pushback-vs-queue one ordered operation.
+    stream_condition: threading.Condition = field(default_factory=threading.Condition)
 
 
 class CCInteractiveEventService(BaseService):
@@ -256,40 +259,40 @@ class CCInteractiveEventService(BaseService):
             if kind != "request" and (
                     time.time() - state.last_wait_at < self._LISTENER_FRESH_SECONDS):
                 return 0
-            state.consumer_epoch += 1
-            return state.consumer_epoch
+            with state.stream_condition:
+                state.consumer_epoch += 1
+                state.stream_condition.notify_all()
+                return state.consumer_epoch
 
     def wait_event(self, session_token: str, timeout: Optional[float] = None,
                    epoch: int = 0) -> dict:
         state = self.session_state(session_token)
         if state is None:
             raise RuntimeError("Unknown CC interactive session")
-        if epoch and epoch != state.consumer_epoch:
-            raise CCIConsumerEvicted(
-                "CC interactive session taken over by a newer consumer")
-        if state.unreliable:
-            raise RuntimeError(state.error or "CC interactive session is unreliable")
-        state.last_wait_at = time.time()
-        with state.pushback_lock:
-            if state.pushback:
-                return state.pushback.pop(0)
-        try:
-            event = state.events.get(timeout=timeout)
-        except queue.Empty:
-            return {}
-        # Re-check: the epoch may have been bumped while we were parked in
-        # get(), in which case this event belongs to the new owner and we were
-        # handed it only because queue.Queue wakes whoever is waiting. Hand it
-        # back rather than return it to a consumer that no longer owns the
-        # stream -- that is how the first event of a turn went missing.
-        if epoch and epoch != state.consumer_epoch:
-            with state.pushback_lock:
-                state.pushback.append(event)
-            raise CCIConsumerEvicted(
-                "CC interactive session taken over by a newer consumer")
-        if state.unreliable:
-            raise RuntimeError(state.error or "CC interactive session is unreliable")
-        return event
+        deadline = (None if timeout is None else
+                    time.monotonic() + max(0.0, timeout))
+        with state.stream_condition:
+            state.last_wait_at = time.time()
+            while True:
+                if epoch and epoch != state.consumer_epoch:
+                    raise CCIConsumerEvicted(
+                        "CC interactive session taken over by a newer consumer")
+                if state.unreliable:
+                    raise RuntimeError(
+                        state.error or "CC interactive session is unreliable")
+                if state.pushback:
+                    return state.pushback.pop(0)
+                try:
+                    return state.events.get_nowait()
+                except queue.Empty:
+                    pass
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return {}
+                else:
+                    remaining = None
+                state.stream_condition.wait(remaining)
 
     def drain_session(self, session_token: str) -> int:
         state = self.session_state(session_token)
@@ -298,15 +301,15 @@ class CCInteractiveEventService(BaseService):
         drained = 0
         # A pushed-back event is part of the stream, so a drain has to take it
         # too -- leaving it behind would hand a stale event to the next turn.
-        with state.pushback_lock:
+        with state.stream_condition:
             drained += len(state.pushback)
             state.pushback.clear()
-        while True:
-            try:
-                state.events.get_nowait()
-                drained += 1
-            except queue.Empty:
-                return drained
+            while True:
+                try:
+                    state.events.get_nowait()
+                    drained += 1
+                except queue.Empty:
+                    return drained
 
     def publish_event(self, session_token: str, event: dict, *, block: bool = True) -> None:
         state = self.session_state(session_token)
@@ -323,11 +326,17 @@ class CCInteractiveEventService(BaseService):
         self._maybe_ingest_manual_prompt(state, event)
         self._maybe_adopt_orphan_turn(state, event)
         try:
+            # Do not hold stream_condition while a bounded queue put blocks:
+            # the consumer needs that condition to drain the queue.
             state.events.put(event, block=block, timeout=5 if block else 0)
         except queue.Full as exc:
-            state.unreliable = True
-            state.error = "CC interactive event queue overflow"
+            with state.stream_condition:
+                state.unreliable = True
+                state.error = "CC interactive event queue overflow"
+                state.stream_condition.notify_all()
             raise RuntimeError(state.error) from exc
+        with state.stream_condition:
+            state.stream_condition.notify_all()
 
     @staticmethod
     def _log_event_summary(session_token: str, event: dict) -> None:

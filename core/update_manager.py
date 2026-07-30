@@ -682,10 +682,9 @@ def _updater_script(working_dir: str, pull_source: bool) -> str:
     success: a registry that was unreachable, a login that had expired, a rate
     limit -- all of it swallowed, and ``up`` then cleanly restarted the image
     already on the host while the UI reported the update as done. With the
-    probe, a real pull failure stops the update on a compose that supports the
-    flag, and only the legacy fallback -- where a source-built deployment and a
-    failed pull are genuinely indistinguishable -- is still tolerated, and says
-    so.
+    probe, a real pull failure stops the update. On legacy Compose each service
+    is pulled separately; a failure is tolerated only when the normalized
+    Compose config proves that exact service has a ``build`` definition.
     """
     lines = [
         "set -eu",
@@ -702,12 +701,32 @@ def _updater_script(working_dir: str, pull_source: bool) -> str:
         # fails to pull is a real failure and must stop the update.
         "  docker compose pull --ignore-buildable",
         "else",
-        # Legacy compose: this pull also tries the services built from source,
-        # so a failure here does not tell us which of the two happened.
-        "  docker compose pull ||",
-        "    echo 'WARNING docker compose pull failed; if this deployment does"
-        " not build from source, the server is about to restart on the image"
-        " it already has' >&2",
+        # Legacy compose has no --ignore-buildable. Pull one service at a time
+        # and consult normalized config before tolerating that service's failure;
+        # this preserves source builds without hiding a registry failure for an
+        # image-only (or mixed) deployment.
+        "  _pf_config=\"$(mktemp)\"",
+        "  trap 'rm -f \"$_pf_config\"' EXIT",
+        "  docker compose config > \"$_pf_config\"",
+        "  for _pf_service in $(docker compose config --services); do",
+        "    if docker compose pull \"$_pf_service\"; then",
+        "      :",
+        "    elif awk -v wanted=\"$_pf_service\" '",
+        "      /^services:[[:space:]]*$/ { in_services=1; next }",
+        "      in_services && /^[^[:space:]]/ { in_services=0; in_wanted=0 }",
+        "      in_services && /^  [^[:space:]][^:]*:[[:space:]]*$/ {",
+        "        name=$0; sub(/^  /, \"\", name); sub(/:[[:space:]]*$/, \"\", name)",
+        "        in_wanted=(name == wanted); next",
+        "      }",
+        "      in_wanted && /^    build:/ { found=1; exit }",
+        "      END { exit(found ? 0 : 1) }",
+        "    ' \"$_pf_config\"; then",
+        "      echo \"WARNING docker compose pull failed for buildable service $_pf_service; it will be built locally\" >&2",
+        "    else",
+        "      echo \"ERROR docker compose pull failed for image-only service $_pf_service\" >&2",
+        "      exit 1",
+        "    fi",
+        "  done",
         "fi",
         "docker compose up -d --build",
     ])
@@ -780,6 +799,34 @@ def _artifact_refresh_lines(image: str, target_dir: str,
         # warning about them.
         "_pf_refresh_artifacts() (",
         "  set -eu",
+        # Refuse every existing symlink component, including components above
+        # the target. A trusted-looking target such as /srv/pawflow/runtime can
+        # otherwise traverse /srv/pawflow -> /outside before staging begins.
+        "  _pf_no_symlink_path() {",
+        "    _pf_check=$1",
+        "    case $_pf_check in",
+        "      /*) _pf_walk=/; _pf_rest=${_pf_check#/} ;;",
+        "      *) _pf_walk=.; _pf_rest=$_pf_check ;;",
+        "    esac",
+        "    while [ -n \"$_pf_rest\" ]; do",
+        "      case $_pf_rest in",
+        "        */*) _pf_part=${_pf_rest%%/*}; _pf_rest=${_pf_rest#*/} ;;",
+        "        *) _pf_part=$_pf_rest; _pf_rest= ;;",
+        "      esac",
+        "      [ -n \"$_pf_part\" ] || continue",
+        "      [ \"$_pf_part\" != . ] && [ \"$_pf_part\" != .. ] || return 1",
+        "      if [ \"$_pf_walk\" = / ]; then",
+        "        _pf_walk=/$_pf_part",
+        "      else",
+        "        _pf_walk=$_pf_walk/$_pf_part",
+        "      fi",
+        "      if [ -L \"$_pf_walk\" ]; then",
+        "        echo \"ERROR refusing artifact path with symlink parent: $_pf_walk\" >&2",
+        "        return 1",
+        "      fi",
+        "    done",
+        "  }",
+        f"  _pf_no_symlink_path {quoted} || exit 1",
         f"  mkdir -p {quoted} || exit 1",
         # Copy everything out of the image FIRST, into a staging directory
         # beside the target, and only swap once every required artifact is
@@ -809,7 +856,11 @@ def _artifact_refresh_lines(image: str, target_dir: str,
         # delete immediately followed by a rename on the same filesystem.
         f"  for _rel in {required} {optional}; do",
         '    [ -e "$_stage/$_rel" ] || continue',
-        f'    mkdir -p {quoted}/"$(dirname "$_rel")" || exit 1',
+        '    _rel_dir="$(dirname "$_rel")"',
+        f'    if [ "$_rel_dir" = . ]; then _parent={quoted};',
+        f'    else _parent={quoted}/"$_rel_dir"; fi',
+        '    _pf_no_symlink_path "$_parent" || exit 1',
+        '    mkdir -p "$_parent" || exit 1',
         f'    rm -rf {quoted}/"$_rel" || exit 1',
         f'    mv "$_stage/$_rel" {quoted}/"$_rel" || exit 1',
         "  done",

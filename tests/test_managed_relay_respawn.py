@@ -78,18 +78,25 @@ def test_gone_container_is_respawned_with_the_services_own_identity(manager):
     }]
 
 
-def test_a_live_container_is_left_alone(manager):
-    """The ordinary disconnect is the relay client reconnecting.
+def test_a_connected_relay_is_left_alone_without_spending_cooldown(manager):
+    mgr = manager(running=True)
+    svc = _managed_service()
+    with svc._relay_pool_lock:
+        svc._relay_pool.append({"writer": object()})
 
-    The container never died; recreating it would turn a few seconds of retry
-    into a cold start and kill whatever the relay was running.
-    """
+    assert svc.ensure_managed_relay_alive() is False
+    assert mgr.asked == []
+    assert mgr.spawned == []
+    assert svc._managed_respawn_at == 0.0
+
+
+def test_a_running_but_disconnected_relay_is_replaced(manager):
     mgr = manager(running=True)
     svc = _managed_service()
 
-    assert svc.ensure_managed_relay_alive() is False
+    assert svc.ensure_managed_relay_alive() is True
     assert mgr.asked == [("MyWorkspace", "workspace")]
-    assert mgr.spawned == []
+    assert len(mgr.spawned) == 1
 
 
 def test_an_operator_run_relay_is_never_touched(manager):
@@ -130,6 +137,18 @@ def test_a_failing_respawn_is_reported_not_raised(manager, monkeypatch):
     monkeypatch.setattr(svc, "_start_managed_server_relay", _boom)
     assert svc.ensure_managed_relay_alive() is False
     assert mgr.spawned == []
+
+
+def test_an_inspection_failure_does_not_consume_respawn_cooldown(
+        manager, monkeypatch):
+    mgr = manager(running=False)
+    svc = _managed_service()
+    monkeypatch.setattr(
+        mgr, "service_relay_running",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("daemon down")))
+
+    assert svc.ensure_managed_relay_alive() is False
+    assert svc._managed_respawn_at == 0.0
 
 
 def test_the_retry_loop_respawns_before_it_gives_up(manager, monkeypatch):

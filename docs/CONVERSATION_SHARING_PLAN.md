@@ -258,6 +258,20 @@ inaccessible. This is the only place the "no storage-schema change" invariant
 is intentionally relaxed, and only as a rare recovery path, not the common
 case.
 
+The new owner is published last, while the per-conversation lock is still held.
+Conversation-scoped resources and FileStore bytes/index entries move first; any
+failure rolls every moved sidecar back and leaves the old owner authoritative.
+FileStore serializes stores against the transfer and keeps a temporary
+conversation-owner override, so a file created during handoff lands directly in
+the new owner's directory instead of escaping into the old layout.
+
+The new owner is published last, while the per-conversation lock is still held.
+Conversation-scoped resources and FileStore bytes/index entries move first; any
+failure rolls every moved sidecar back and leaves the old owner authoritative.
+FileStore serializes stores against the transfer and keeps a temporary
+conversation-owner override, so a file created during handoff lands directly in
+the new owner's directory instead of escaping into the old layout.
+
 ### Kick semantics
 
 `kick_collaborator` (owner-only action) sets `status="kicked"`. No
@@ -292,6 +306,14 @@ Maintain a lightweight per-user side index,
 (remove). Read-mostly, rebuilt from a full ACL sweep if ever found
 inconsistent (same defensive posture as `admin_scope.py`'s
 best-effort owner map).
+The rebuild holds the same per-user index lock for its full ACL sweep and final
+publication. Incremental invite/accept/kick updates therefore run entirely before
+or after the rebuild; a stale snapshot cannot overwrite an update that landed
+during the sweep.
+The rebuild holds the same per-user index lock for its full ACL sweep and final
+publication. Incremental invite/accept/kick updates therefore run entirely before
+or after the rebuild; a stale snapshot cannot overwrite an update that landed
+during the sweep.
 
 ### Modified call sites (owner-equality → `resolve_conversation_access`)
 
@@ -344,6 +366,22 @@ best-effort owner map).
 - **Owner reassignment directory move** must happen under the same
   `_get_conv_lock(cid)` used elsewhere in `ConversationStore` to avoid a
   concurrent writer mid-`os.rename`.
+- **Tool-control authorization follows the effective target.** Approval answers
+  resolve the pending request's conversation; kill/background/cancel actions
+  resolve the authoritative `tc_id` owner, including the reservation published
+  before a direct-provider worker starts. Unknown ids fail as not-found and a
+  caller-supplied conversation never authorizes them.
+- **Package dev actions keep their runtime default.** Omitted scope on
+  `pfp_dev_load`/`pfp_dev_unload` means conversation scope for authorization too;
+  it cannot bypass the conversation ACL by being interpreted as a user action.
+- **Tool-control authorization follows the effective target.** Approval answers
+  resolve the pending request's conversation; kill/background/cancel actions
+  resolve the authoritative `tc_id` owner, including the reservation published
+  before a direct-provider worker starts. Unknown ids fail as not-found and a
+  caller-supplied conversation never authorizes them.
+- **Package dev actions keep their runtime default.** Omitted scope on
+  `pfp_dev_load`/`pfp_dev_unload` means conversation scope for authorization too;
+  it cannot bypass the conversation ACL by being interpreted as a user action.
 - **Audit trail**: keep `kicked`/superseded collaborator rows (never hard
   delete) so "who had access when" is reconstructable.
 

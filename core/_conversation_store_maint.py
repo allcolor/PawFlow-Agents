@@ -21,8 +21,8 @@ from core._conversation_store_base import (  # noqa: F401,E402
 
 
 def _move_conversation_resources(cid: str, old_owner: str,
-                                 new_owner: str) -> int:
-    """Move a conversation's own resources with it. Returns dirs moved.
+                                 new_owner: str) -> List[tuple]:
+    """Move a conversation's own resources as one rollbackable unit.
 
     A conversation-scoped agent, skill, prompt, MCP or task lives at
     ``data/repository/<rtype>/users/<owner>/<cid>/``, and resolution finds it
@@ -31,38 +31,44 @@ def _move_conversation_resources(cid: str, old_owner: str,
     much as make them unreachable: the conversation came back up unable to
     find the agent it runs on.
 
-    Best effort, and deliberately after the conversation itself has moved: a
-    resource that cannot follow is logged and skipped rather than rolling back
-    a rename that has already succeeded.
+    Owner publication is blocked on every directory arriving. A partial move
+    would make the old owner incomplete before the new owner is visible, so any
+    failure rolls back the directories already moved and is raised.
     """
     if not cid or not old_owner or not new_owner or old_owner == new_owner:
-        return 0
-    moved = 0
-    try:
-        root = _paths.REPOSITORY_DIR
-        rtype_dirs = [d for d in root.iterdir() if d.is_dir()] if root.is_dir() else []
-    except OSError:
-        logger.debug("repository scan failed for %s", cid[:8], exc_info=True)
-        return 0
+        return []
+    root = _paths.REPOSITORY_DIR
+    rtype_dirs = [d for d in root.iterdir() if d.is_dir()] if root.is_dir() else []
+    planned = []
     for rtype_dir in rtype_dirs:
         src = rtype_dir / "users" / old_owner / cid
         if not src.is_dir():
             continue
         dest = rtype_dir / "users" / new_owner / cid
-        try:
-            if dest.exists():
-                logger.warning(
-                    "[convstore] %s resources of %s already exist under %s; "
-                    "left in place", rtype_dir.name, cid[:8], new_owner)
-                continue
+        if dest.exists():
+            raise FileExistsError(
+                f"{rtype_dir.name} resources already exist under {new_owner}")
+        planned.append((src, dest))
+    moved = []
+    try:
+        for src, dest in planned:
             dest.parent.mkdir(parents=True, exist_ok=True)
             os.rename(src, dest)
-            moved += 1
-        except OSError:
-            logger.warning(
-                "[convstore] could not move %s resources of %s to %s",
-                rtype_dir.name, cid[:8], new_owner, exc_info=True)
+            moved.append((src, dest))
+    except Exception:
+        _rollback_conversation_resources(moved)
+        raise
     return moved
+
+
+def _rollback_conversation_resources(moved: List[tuple]) -> None:
+    for src, dest in reversed(moved):
+        try:
+            src.parent.mkdir(parents=True, exist_ok=True)
+            os.rename(dest, src)
+        except OSError:
+            logger.error("[convstore] resource rollback failed: %s -> %s",
+                         dest, src, exc_info=True)
 
 
 class _CsMaintMixin:
@@ -124,6 +130,8 @@ class _CsMaintMixin:
                         "[convstore] reassign %s: destination exists, refusing",
                         cid[:8])
                     return False
+                extras = self._read_extras(cid)
+                previous_extras = dict(extras)
                 # Append handles hold file descriptors into the old path;
                 # a writer resuming after the rename would keep appending to
                 # a directory nobody reads any more.
@@ -131,31 +139,58 @@ class _CsMaintMixin:
                     SegmentedJsonl.close_append_handles(src)
                 except Exception:
                     logger.debug("append handle close failed", exc_info=True)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                os.rename(src, dest)
-                self._cid_user[cid] = new_user_id
-                extras = self._read_extras(cid)
-                extras["_meta_user_id"] = new_user_id
-                self._write_extras(cid, extras)
-        with self._cache_lock:
-            self._cache.pop(cid, None)
-        self._reload_cache(cid)
-        # A conversation is not only its directory. Its own agents, skills,
-        # prompts, MCPs and tasks are filed under the OWNER, and so are its
-        # attachments -- both resolved through whoever owns the conversation
-        # now. Moving the directory alone handed the collaborator a
-        # conversation whose history was intact and whose agent, skills and
-        # files had all disappeared. Done after the rename and outside the
-        # lock: the move that matters has already succeeded, and a side
-        # directory that cannot follow is a warning, not a rollback.
-        _move_conversation_resources(cid, previous_owner, new_user_id)
-        try:
-            from core.file_store import FileStore
-            FileStore.instance().reassign_conversation_owner(
-                cid, previous_owner, new_user_id)
-        except Exception:
-            logger.warning("[convstore] FileStore did not follow %s to %s",
-                           cid[:8], new_user_id, exc_info=True)
+                moved_resources = []
+                files_moved = False
+                conversation_moved = False
+                from core.file_store import FileStore
+                file_store = FileStore.instance()
+                try:
+                    moved_resources = _move_conversation_resources(
+                        cid, previous_owner, new_user_id)
+                    file_store.reassign_conversation_owner(
+                        cid, previous_owner, new_user_id)
+                    files_moved = True
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    os.rename(src, dest)
+                    conversation_moved = True
+                    # Publish owner last. resolve_owner takes this same lock, so
+                    # observers see either the complete old layout or the
+                    # complete new one, never a new owner with old sidecars.
+                    self._cid_user[cid] = new_user_id
+                    extras["_meta_user_id"] = new_user_id
+                    self._write_extras(cid, extras)
+                    with self._cache_lock:
+                        self._cache.pop(cid, None)
+                    self._reload_cache(cid)
+                except Exception:
+                    logger.warning("[convstore] reassign %s failed; rolling back",
+                                   cid[:8], exc_info=True)
+                    self._cid_user[cid] = previous_owner
+                    conversation_restored = not conversation_moved
+                    if conversation_moved:
+                        try:
+                            os.rename(dest, src)
+                            conversation_restored = True
+                        except OSError:
+                            logger.error("[convstore] conversation rollback failed",
+                                         exc_info=True)
+                    if files_moved:
+                        try:
+                            file_store.reassign_conversation_owner(
+                                cid, new_user_id, previous_owner)
+                        except Exception:
+                            logger.error("[convstore] FileStore rollback failed",
+                                         exc_info=True)
+                    _rollback_conversation_resources(moved_resources)
+                    if conversation_restored:
+                        try:
+                            self._write_extras(cid, previous_extras)
+                        except Exception:
+                            logger.error("[convstore] metadata rollback failed",
+                                         exc_info=True)
+                    with self._cache_lock:
+                        self._cache.pop(cid, None)
+                    return False
         logger.info("[convstore] reassigned %s to %s", cid[:8], new_user_id)
         return True
 
@@ -238,9 +273,20 @@ class _CsMaintMixin:
         A counter, bumped by every rewrite, says what timestamps cannot: these
         rows are not the rows you indexed.
         """
-        current = int(self.get_extra(cid, TRANSCRIPT_GENERATION, 0) or 0)
-        self.set_extra(cid, TRANSCRIPT_GENERATION, current + 1)
-        return current + 1
+        lock = self._get_conv_lock(cid)
+        extras_lock = self._get_extras_lock(cid)
+        with lock:
+            with extras_lock:
+                extras = self._read_extras(cid)
+                current = int(extras.get(TRANSCRIPT_GENERATION, 0) or 0)
+                extras[TRANSCRIPT_GENERATION] = current + 1
+                self._write_extras(cid, extras)
+                with self._cache_lock:
+                    cached = self._cache.get(cid)
+                    if cached is not None:
+                        cached.setdefault("extras", {})[
+                            TRANSCRIPT_GENERATION] = current + 1
+                return current + 1
 
     def edit_message(self, cid: str, msg_id: str, content: Any,
                      role: str = "", user_id: str = "") -> int:
@@ -279,6 +325,8 @@ class _CsMaintMixin:
                 for entry in conv_dir.iterdir():
                     if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
                         _rewrite_jsonl(entry / "context.jsonl")
+            if updated:
+                self.bump_transcript_generation(cid)
 
         if updated:
             with self._cache_lock:
@@ -286,9 +334,6 @@ class _CsMaintMixin:
             self._invalidate_ctx_cache(cid)
             self._load_cache(cid)
             self.invalidate_claude_sessions(cid)
-            # Rows changed under stable ids and timestamps: nothing else would
-            # tell a derived index that what it holds is now wrong.
-            self.bump_transcript_generation(cid)
         return updated
 
     def delete_message(self, cid: str, msg_id: str = "", index: int = -1,
@@ -383,6 +428,7 @@ class _CsMaintMixin:
                         ctx_res = SegmentedJsonl(ctx_path).truncate_after_msg_id(msg_id)
                         if ctx_res.get("found"):
                             contexts_truncated += 1
+            self.bump_transcript_generation(cid)
 
         with self._cache_lock:
             self._cache.pop(cid, None)
@@ -436,6 +482,8 @@ class _CsMaintMixin:
                 for entry in conv_dir.iterdir():
                     if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
                         _rewrite_jsonl(entry / "context.jsonl")
+            if removed:
+                self.bump_transcript_generation(cid)
 
         with self._cache_lock:
             self._cache.pop(cid, None)
@@ -444,10 +492,6 @@ class _CsMaintMixin:
             cached = self._reload_cache(cid)
             self._persist_recomputed_hot_metadata(cid, cached)
             self.invalidate_claude_sessions(cid)
-            # Deleting the newest message moves `updated_at` *backwards*, so a
-            # derived index would read it as "older than what I hold" and never
-            # look again. The counter is the only signal that survives that.
-            self.bump_transcript_generation(cid)
         return removed
 
     def list_conversations(self, user_id: str = "") -> List[Dict]:

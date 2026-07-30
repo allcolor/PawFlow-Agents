@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.55] — 2026-07-30
+
+### Security
+
+- Conversation-scoped PFP dev load/unload now applies its runtime default scope
+  during authorization too, so omitting `scope` cannot turn a conversation
+  operation into an ungated user-scoped one.
+- Tool process-control actions now fail closed on unknown ids and authorize the
+  conversation resolved from the effective approval request or tool call. Direct
+  providers reserve ownership before worker submission, closing the interval
+  before background registration, and command-bearing tool names are normalized
+  case-insensitively before dangerous-command policy is evaluated.
+- Conversation FTS now purges derived plaintext when the source listing or a
+  transcript is unreadable. Every transcript rewrite bumps its generation under
+  the conversation lock, so deleted or redacted text cannot survive behind stable
+  ids/timestamps or a transient read failure.
+
+### Fixed
+
+- Simplified webchat pagination now advances a backend transcript cursor instead
+  of deriving one from DOM nodes that tabs may reparent. Active-turn snapshots
+  hydrate before replay suppression, conversation switches preserve live
+  animation/state, durable `turn_id` routes concurrent turns, and legacy
+  unstamped transcripts retain positional boundaries.
+- Conversation owner handoff now publishes the new owner only after the
+  conversation directory, scoped resources, and FileStore bytes/index have all
+  moved. Stores serialize with the transfer, failures roll back, and reverse-index
+  rebuilds cannot overwrite an invite or role update that lands during a sweep.
+- Server updates now reject out-of-root symlink destinations, propagate requested
+  git/Compose pull failures, and restore the previous container image when the new
+  server fails startup or health checks.
+- Managed relay recovery uses the live relay WebSocket as health, replacing a
+  container that is running but disconnected instead of waiting forever for a
+  wedged client.
+- CCI consumer takeover now orders epoch changes, queue delivery, pushback,
+  overflow, and wakeups under one condition, preserving the replacement turn's
+  first event and stream order.
+- CLI context gauges keep their integer bootstrap baseline across `LLMClient`
+  clones and preserve `cli_context_state` through both `message_meta` and `done`,
+  including authoritative cold zero after compaction.
+
 ## [1.0.0-beta.54] — 2026-07-30
 
 ### Security

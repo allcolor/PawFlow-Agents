@@ -1350,6 +1350,9 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
         store.save_agent_context("cx5", "assistant", [
             {"role": "user", "content": "a", "msg_id": "a1"},
         ])
+        from core._conversation_store_base import TRANSCRIPT_GENERATION
+        before_zero = int(store.get_extra(
+            "cx5", TRANSCRIPT_GENERATION, 0) or 0)
 
         ff_zero = FlowFile(content=json.dumps({
             "action": "restart_from",
@@ -1363,6 +1366,7 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
                 store, "testuser", ff_zero)
         assert json.loads(result[0].get_content())["status"] == "accepted"
         assert store.load("cx5", user_id="testuser") == []
+        assert store.get_extra("cx5", TRANSCRIPT_GENERATION) == before_zero + 1
         assert store.load_context("cx5") in (None, [])
         assert store.load_agent_context("cx5", "assistant") is None
 

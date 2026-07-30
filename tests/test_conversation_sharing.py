@@ -1013,6 +1013,54 @@ class TestSharedIndexConcurrency:
         assert '.with_suffix(".json.tmp")' not in src
         assert "uuid" in src
 
+    def test_rebuild_cannot_overwrite_an_invite_that_lands_during_its_sweep(
+            self, store, monkeypatch):
+        import threading
+
+        old = store.generate_id()
+        new = store.generate_id()
+        store.save(old, [], user_id=OWNER)
+        store.save(new, [], user_id=OWNER)
+        ca.set_collaborator(old, COLLAB, role=ca.ROLE_READ,
+                            status=ca.STATUS_PENDING, invited_by=OWNER,
+                            store=store)
+
+        real_list = store.list_conversations
+        sweep_has_snapshot = threading.Event()
+        release_sweep = threading.Event()
+
+        def blocked_list(*args, **kwargs):
+            snapshot = real_list(*args, **kwargs)
+            sweep_has_snapshot.set()
+            assert release_sweep.wait(timeout=10)
+            return snapshot
+
+        monkeypatch.setattr(store, "list_conversations", blocked_list)
+        rebuilt = threading.Thread(
+            target=ca.rebuild_shared_index,
+            kwargs={"user_id": COLLAB, "store": store})
+        rebuilt.start()
+        assert sweep_has_snapshot.wait(timeout=10)
+
+        invited = threading.Thread(
+            target=ca.set_collaborator,
+            args=(new, COLLAB),
+            kwargs={"role": ca.ROLE_READ, "status": ca.STATUS_PENDING,
+                    "invited_by": OWNER, "store": store})
+        invited.start()
+        # The ACL write finishes before its index sync waits on the rebuild's
+        # per-user lock. Releasing the sweep then orders the sync after rebuild.
+        for _ in range(100):
+            if ca.get_collaborator(new, COLLAB, store=store) is not None:
+                break
+            threading.Event().wait(0.01)
+        release_sweep.set()
+        rebuilt.join(timeout=10)
+        invited.join(timeout=10)
+
+        assert not rebuilt.is_alive() and not invited.is_alive()
+        assert set(ca.shared_conversation_ids(COLLAB, store=store)) == {old, new}
+
 
 class _CtxTask(_Task):
     """The extra surface the context handlers touch past authorization.
@@ -1256,13 +1304,18 @@ class TestDrivingToolsIsAWrite:
             assert _call_tools(store, action, body, COLLAB)[1] == "404", action
 
     def test_a_writer_may_drive(self, store, talking):
+        import core.background_tool as bg
         _invite(store, talking, role=ca.ROLE_WRITE)
         _accept(store, talking)
 
-        # Not a 404: whatever the handler answers, it is not an access denial.
-        assert _call_tools(store, "kill_tool",
-                           {"conversation_id": talking, "tc_id": "tc1"},
-                           COLLAB)[1] != "404"
+        bg.reserve_owner("tc1", talking)
+        try:
+            # Not a 404: whatever the handler answers, it is not an access denial.
+            assert _call_tools(store, "kill_tool",
+                               {"conversation_id": talking, "tc_id": "tc1"},
+                               COLLAB)[1] != "404"
+        finally:
+            bg.release_owner("tc1")
         assert _call_tools(store, "list_bg_tools",
                            {"conversation_id": talking}, COLLAB)[1] == "200"
 
@@ -1306,12 +1359,42 @@ class TestDrivingToolsIsAWrite:
         finally:
             ToolApprovalGate._pending.pop("req-victim", None)
 
+    def test_an_unknown_tc_id_never_trusts_the_claimed_conversation(
+            self, store):
+        mine = store.generate_id()
+        store.save(mine, [], user_id=STRANGER)
+
+        for action in ("kill_tool", "background_tool", "cancel_bg_tool"):
+            assert _call_tools(
+                store, action, {"conversation_id": mine, "tc_id": "unknown"},
+                STRANGER)[1] == "404"
+
+    def test_direct_provider_reservation_closes_the_registration_race(
+            self, store, talking):
+        import core.background_tool as bg
+
+        mine = store.generate_id()
+        store.save(mine, [], user_id=STRANGER)
+        bg.reserve_owner("tc-starting", talking)
+        try:
+            assert _call_tools(
+                store, "background_tool",
+                {"conversation_id": mine, "tc_id": "tc-starting"},
+                STRANGER)[1] == "404"
+        finally:
+            bg.release_owner("tc-starting")
+
     def test_the_owner_is_refused_nothing(self, store, talking):
+        import core.background_tool as bg
         assert _call_tools(store, "list_bg_tools",
                            {"conversation_id": talking}, OWNER)[1] == "200"
-        assert _call_tools(store, "kill_tool",
-                           {"conversation_id": talking, "tc_id": "tc1"},
-                           OWNER)[1] != "404"
+        bg.reserve_owner("tc1", talking)
+        try:
+            assert _call_tools(store, "kill_tool",
+                               {"conversation_id": talking, "tc_id": "tc1"},
+                               OWNER)[1] != "404"
+        finally:
+            bg.release_owner("tc1")
 
 
 def _call_res(store, action, body, requester):
@@ -1454,6 +1537,13 @@ class TestConversationResourcesAreGatedToo:
         assert _call_res(store, "pfp_list_installed",
                          {"conversation_id": talking,
                           "scope": "conversation"}, STRANGER)[1] == "404"
+
+    def test_dev_package_omitted_scope_uses_its_conversation_default(
+            self, store, talking):
+        for action in ("pfp_dev_load", "pfp_dev_unload"):
+            assert _call_res(store, action,
+                             {"conversation_id": talking},
+                             STRANGER)[1] == "404"
 
     def test_a_writer_may_change_what_it_runs_on(self, store, talking):
         _invite(store, talking, role=ca.ROLE_WRITE)

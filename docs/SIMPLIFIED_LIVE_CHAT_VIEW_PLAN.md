@@ -1095,6 +1095,33 @@ it covers today:
 When changing this controller, neutralize each guard and confirm the suite
 fails. A test that passes against the broken code is worse than no test.
 
+#### Conversation load path harness
+
+`tests/js/conversations_spec.js` is the same harness pointed at
+`conversations.js`, and `tests/test_conversations_js.py` puts it on the gate.
+It exists because those invariants used to live only in the browser tests of
+`tests/test_webchat_durable_state_behavior.py`, which skip wherever headless
+Chromium renders nothing -- the GitHub runners among them -- and a skipped
+gate is no gate. The stub gained a document fragment, a `scrollHeight`, and
+document-level listeners, which is all `conversations.js` asks of a page
+beyond what the controller already used.
+
+What it covers today:
+
+- Resume, gap recovery and load-more page in the backend's cursor units. The
+  offsets come from `history_cursor`, the tie-breaker id is the backend's, and
+  a DOM row never becomes a cursor -- rows are presentation and may be id-less,
+  classified away, or grouped many-to-one. A delegate box worth two transcript
+  rows advances the cursor by two, and the banner counts raw rows.
+- Switching A -> B -> A publishes each conversation's own active turns,
+  hydrates them, and only then opens the stream. B carries none, so it must
+  show none rather than inherit A's.
+- Live-window trimming forgets every id it removed, grouped children included,
+  so an evicted delegate box can be rendered again instead of being deduped
+  against ids nothing on screen carries.
+
+The same rule applies here: neutralize the guard, confirm the test fails.
+
 ### Browser integration matrix
 
 1. Text-only streamed answer.

@@ -83,6 +83,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   pool reads that one back for the `proxy_start` event to decide a session is
   still alive.
 
+- The three webchat invariants that only a browser covered now run without one.
+  When beta.57 made the browser tests skip on a runner where headless Chromium
+  renders nothing, the turn controller kept its Node twin but the
+  `conversations.js` integrations kept nothing: pagination in backend cursor
+  units, per-conversation runtime turns across an A/B/A switch, and eviction
+  forgetting every id it removed were unguarded wherever the browser was
+  unusable — which includes CI. `tests/js/conversations_spec.js` drives the
+  real sources against the DOM stub with the same fixtures and assertions, and
+  `tests/test_conversations_js.py` puts it on the gate. Each of the three was
+  confirmed to fail against a deliberately broken guard. The browser tests stay
+  as the real-browser run, and their skip message no longer claims a hole that
+  is now closed.
+
 ## [1.0.0-beta.57] — 2026-07-30
 
 ### Fixed

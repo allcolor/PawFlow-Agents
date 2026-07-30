@@ -1,7 +1,7 @@
-// Minimal DOM, good enough to run tasks/io/chat_ui/turn_view.js and the
-// live-window trim from messages_render.js under plain Node. No npm
+// Minimal DOM, good enough to run tasks/io/chat_ui/turn_view.js,
+// messages_render.js and conversations.js under plain Node. No npm
 // dependency is available, so this stub stands in for jsdom. It implements
-// only what those two files actually touch.
+// only what those files actually touch.
 
 function kebab(k) { return k.replace(/[A-Z]/g, m => '-' + m.toLowerCase()); }
 function camel(k) { return k.replace(/-([a-z])/g, (_m, c) => c.toUpperCase()); }
@@ -54,6 +54,9 @@ class Element {
     this.style = {};
     this.hidden = false;
     this.offsetWidth = 0;
+    // Read by the load-more path to keep the scroll anchored; the value only
+    // has to exist and stay stable, nothing here lays anything out.
+    this.scrollHeight = 0;
     this._listeners = new Map();
     this.dataset = makeDataset(this);
     this.focusCount = 0;
@@ -86,6 +89,12 @@ class Element {
   }
 
   appendChild(node) {
+    // A fragment is a carrier: what gets inserted is its children, and the
+    // fragment itself is left empty. The load-more path builds one per page.
+    if (node.nodeType === 11) {
+      for (const child of [...node.childNodes]) this.appendChild(child);
+      return node;
+    }
     if (node.parentNode) node.parentNode.removeChild(node);
     this.childNodes.push(node);
     node.parentNode = this;
@@ -93,6 +102,10 @@ class Element {
   }
 
   insertBefore(node, ref) {
+    if (node.nodeType === 11) {
+      for (const child of [...node.childNodes]) this.insertBefore(child, ref);
+      return node;
+    }
     // Matches the spec quirk the production code relies on: inserting a node
     // before itself resolves to its own next sibling, i.e. a net no-op move.
     if (ref === node) ref = node.nextSibling;
@@ -169,6 +182,12 @@ class Element {
 function walk(root, fn) {
   fn(root);
   for (const child of root.childNodes) if (child.nodeType === 1) walk(child, fn);
+}
+
+// A fragment is an Element that never joins the tree: appendChild and
+// insertBefore unwrap it, so it only ever holds nodes in transit.
+class DocumentFragment extends Element {
+  constructor() { super('#document-fragment'); this.nodeType = 11; }
 }
 
 function matchesCompound(node, compound) {
@@ -289,6 +308,14 @@ const document = {
   documentElement,
   activeElement: null,
   createElement: tag => new Element(tag),
+  createDocumentFragment: () => new DocumentFragment(),
+  // The view menu registers and unregisters an outside-click listener; the
+  // tests never dispatch on the document, so recording the pair is enough.
+  _listeners: [],
+  addEventListener(type, fn) { document._listeners.push([type, fn]); },
+  removeEventListener(type, fn) {
+    document._listeners = document._listeners.filter(([t, f]) => t !== type || f !== fn);
+  },
   getElementById(id) {
     let found = null;
     walk(documentElement, n => { if (!found && n.id === id) found = n; });
@@ -337,5 +364,5 @@ clock.tick = function (ms) {
 // they are meant to measure.
 const Date_ = { now: () => clock.now };
 
-module.exports = { document, documentElement, Element, TextNode, clock, setTimeout,
-                   clearTimeout, setInterval, clearInterval, Date: Date_ };
+module.exports = { document, documentElement, Element, TextNode, DocumentFragment, clock,
+                   setTimeout, clearTimeout, setInterval, clearInterval, Date: Date_ };

@@ -7,8 +7,11 @@ longer timeout bought was a redder build two minutes later.
 
 So the line is drawn at the DOM: no DOM at all is an environment verdict and
 skips; a DOM carrying an error is a behaviour verdict and fails. The invariants
-themselves are also covered by tests/js/turn_view_spec.js, which runs under
-Node with a DOM stub and needs no browser -- that is the copy CI relies on.
+themselves are also covered under Node with a DOM stub, which needs no browser
+-- tests/js/turn_view_spec.js for the turn controller and
+tests/js/conversations_spec.js for the three conversations.js integrations.
+Those are the copies CI relies on; what runs here is the same behaviour
+against a real browser, which is worth having but cannot be a gate.
 """
 
 import html
@@ -35,17 +38,17 @@ def _unusable(reason: str):
     The verdict is remembered so the remaining tests in this file skip at once
     instead of each paying the timeout again.
 
-    Only `test_turn_controller_keeps_positional_boundaries_and_rehydrates_live`
-    has a browser-free twin (`tests/js/turn_view_spec.js`). The other three
-    drive `conversations.js` -- backend cursor units, A/B/A runtime hydration,
-    trim eviction -- and nothing else covers them, so a skip here is a real
-    hole, not an equivalent path. Say so rather than imply parity.
+    Every test in this file now has a browser-free twin, so a skip costs the
+    real browser rather than the invariant: `tests/js/turn_view_spec.js` for
+    the turn controller, `tests/js/conversations_spec.js` for the three
+    `conversations.js` integrations -- backend cursor units, A/B/A runtime
+    hydration, trim eviction. Name them, so a reader of the skip can check.
     """
     global _BROWSER_VERDICT
     _BROWSER_VERDICT = (
-        f"{reason}; the turn-controller invariants still run under Node in "
-        f"tests/js/turn_view_spec.js, but the conversations.js integrations "
-        f"in this file are NOT covered anywhere else while it is skipped")
+        f"{reason}; the same invariants still run under Node in "
+        f"tests/js/turn_view_spec.js and tests/js/conversations_spec.js -- "
+        f"what is lost here is the real-browser run, not the coverage")
     pytest.skip(_BROWSER_VERDICT)
 
 

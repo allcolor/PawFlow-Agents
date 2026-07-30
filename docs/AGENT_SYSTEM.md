@@ -302,9 +302,37 @@ The context phase decides which case applies (`_agentctx_p1`, gated on the live 
 
 So it does not launch. `_cli_require_cold_context` raises `ColdStartRequired`, `_alc_llm_turn` catches it and rebuilds the turn with `_prepare_agent_context(..., force_cold=True)` — case 1 through the ordinary cold path, nothing reassembled by hand — then runs the turn again. Nothing has reached the model at that point, so the restart costs no tokens. It happens at most once per turn: twice would mean the process dies as fast as we start it, and that must surface rather than spin.
 
+**This is one rule, and every CLI obeys it — there is no per-provider variation.** Each provider asks at its own launch site, because that is where "we are about to start a process" is known, but the question and the answer are the same everywhere:
+
+| provider | where it asks | what it gives back on refusal |
+|---|---|---|
+| codex app-server | before minting its MCP token, on the not-reuse path | the live session's `turn_lock` |
+| gemini ACP | on the not-reuse path | the live session's `turn_lock` |
+| claude-code interactive | `InteractiveClaudeCodePool.ensure_started(before_launch=…)`, before a credential slot is claimed | nothing is taken yet |
+| antigravity interactive | `AntigravityObserverPool.ensure_started(before_launch=…)`, before the stale session is killed | nothing is taken yet |
+| claude-code (`-p`) | on the not-reuse path, before spawning | nothing is taken yet |
+
+claude-code (`-p`) used to have a *third* path, and it was the last provider that did: no live process, but a persisted session id, so it launched with `--resume` and a delta and let CC replay its own jsonl. That path is gone. Whether the jsonl still meant anything was decided by re-deriving CC's project-key algorithm and trusting a file only CC can validate; when CC declined it and started a fresh session instead, the `SESSION MISMATCH` check downstream merely logged it while the agent silently lost its history — and the stored id was then persisted as though it were sound, so every later turn resumed an empty session. There are two cases, and replaying a transcript from disk is not one of them: no live process means launch, and launch means the full PawFlow context, which is compacted, is ours, and does not depend on a file we cannot validate. `_cc_project_key` survives only to LOCATE a live session's jsonl for the preempt check.
+
+The pools take a `before_launch` callback rather than asking themselves: they manage containers, not context policy, and they call it only when they are really going to launch — never on the reuse path, because a reused session's delta is correct and restarting that turn would be gratuitous.
+
+An ephemeral call (compact, memory extraction) is exempt everywhere: it builds its own full text, but it clones a client that may carry the marker.
+
 `force_cold` is a third *caller*, not a third state: the turn already knows it is going to launch, so probing again could only answer "warm" and strip the context that launch needs.
 
-Two invariants keep this honest. The delta marker lives on the client, which outlives the turn, so `_agentctx_p1` clears it on every build — a resume must never mark the cold turn that follows it. And the cancel checkpoint is consumed on injection and is *not* cold-gated, so the rebuild is handed back what the first pass ate; otherwise a rebuilt turn silently loses its "continue where you left off" instruction.
+Five invariants keep this honest.
+
+**The delta marker belongs to the context, not to the service.** The client the context phase holds comes from the service registry and is shared by every conversation using that service, so a marker written there is read — or cleared — by whichever turn reaches it next, and the isolated clone is only made later, in `_alc_setup`. `_mark_context_as_delta` therefore records it on the build's state, `_prepare_agent_context` returns it as `_context_is_delta`, and `_alc_setup` stamps it on this turn's own clone. Nothing writes it on the shared client, so nothing has to remember to clear it either.
+
+**The refusal gives back what the turn already took.** Both providers hold the live session's `turn_lock` when they ask, and their own `try`/`finally` has not started yet, so `_cli_require_cold_context` takes a `release` callback and calls it just before raising. The lock is an `RLock` and the retry runs on the same thread, which is what makes a leak invisible: the second acquisition succeeds, one `finally` releases one level, and the next turn on that session — on another thread — waits for a turn that ended long ago. Codex asks *before* minting its MCP token for the same reason. An ephemeral call is exempt: it builds its own full text, but it clones a client that may carry the marker, and bouncing it would restart a compact or a memory extraction as if it were the agent's own turn.
+
+**The rebuild is adopted whole.** A rebuilt context brings its own client, tool registry, tool definitions and message list, so `_alc_rebind_context` rebinds all of them — including the clone boundary and the cancel/preempt registration — rather than patching a few fields. A loop left half on the old context executes tools through a registry the new context never configured, and force-stop reaches the clone of the context that was abandoned. The message list is replaced *in place*: `ctx`, the emitter and every closure built at setup hold that exact object. The turn keeps its own identity through the restart — iteration count, token totals, tools already called, its `/rewind` checkpoint.
+
+**The restart is control flow, not work.** The iteration is counted before the provider is called, so the restart gives it back. Otherwise a turn with `max_iterations=1` ends there, having never called the model — and CLI providers deliberately synthesize no empty answer.
+
+**The cancel checkpoint survives.** It is consumed on injection and is *not* cold-gated, so the rebuild is handed back what the first pass ate; otherwise a rebuilt turn silently loses its "continue where you left off" instruction.
+
+The gauge reset sits *outside* the live-probe block for the same reason `force_cold` skips that probe: the pass that knows it is launching is exactly the pass whose stored gauge describes a session that no longer exists.
 
 **A lookup is a use.** The idle sweeper reaps containers nobody asks for, and `last_used` is its only evidence, so every registry lookup that hands a container to a caller refreshes it (`CodexLiveRegistry`/`GeminiLiveRegistry.get`/`get_compatible`, `LiveSessionRegistry.get`/`find_for_agent`, and the CCI and Antigravity pools' `find_session`). Without that, a session at the end of its TTL could be found alive by the context phase and swept a tick later, before the provider claimed it. The TTL is unchanged: a session nobody asks for is still reaped on schedule, and an active turn is never reaped at all.
 

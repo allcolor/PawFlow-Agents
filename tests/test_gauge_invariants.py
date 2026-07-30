@@ -1302,10 +1302,16 @@ def test_cli_bootstrap_tokens_survive_actual_agent_setup_clone(tmp_path):
         emitter=SimpleNamespace(
             is_streaming=False, on_loop_start=lambda _ctx: None),
     )
-    owner = SimpleNamespace(
-        _active_contexts_lock=threading.RLock(), _active_claude_client={})
+    # A real host: setup delegates to sibling methods of the mixin, so an
+    # unbound call with a bare namespace as `self` no longer reaches them.
+    class _Owner(_ALCSetupMixin):
+        def __init__(self):
+            self._active_contexts_lock = threading.RLock()
+            self._active_claude_client = {}
 
-    _ALCSetupMixin._alc_setup(owner, st)
+    owner = _Owner()
+
+    owner._alc_setup(st)
     assert st.client is not original
 
     st.client._build_cli_initial_context_prompt(
@@ -2466,8 +2472,11 @@ def test_cold_cli_session_resets_the_persisted_gauge():
     assert marker in src, "the cold-start gauge reset is gone"
     block = src[src.index(marker):]
 
-    assert "if not st._cli_has_session:" in block
+    assert "not st._cli_has_session" in block
     assert "reset_cli_context_usage(" in block
+    # That it is not gated on force_cold is pinned structurally, on the AST,
+    # in test_the_gauge_is_zeroed_on_the_pass_that_launches -- a substring
+    # check here would match the probe's own comment.
     # Resetting in memory is not enough: the stale value lives in the store,
     # and the UI needs the event to drop the gauge without waiting for a turn.
     assert "persist_context_usage(" in block

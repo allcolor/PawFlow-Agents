@@ -155,7 +155,9 @@ def test_codex_writes_back_a_thread_id_recovered_from_a_live_session():
     assert "_stored_thread_id = thread_id" in src
     assert "thread_id != _stored_thread_id" in src
     write = src.index("thread_id != _stored_thread_id")
-    cold = src.index("if not is_reuse:\n            self._codex_setup_credentials")
+    # Anchored on the cold branch's first real action, not on two adjacent
+    # lines: the branch legitimately gained a guard above it.
+    cold = src.index("self._codex_setup_credentials(")
     assert write < cold, "the write-back must happen on the reuse path"
 
 

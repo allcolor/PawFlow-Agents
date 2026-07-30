@@ -15,6 +15,7 @@ from typing import List, Optional
 from core.token_counter import count_messages_tokens
 from core._llm_types import (
     CCCompactDetected,
+    ColdStartRequired,
     LLMClientError,
     LLMMessage,
     LLMResponse,
@@ -474,9 +475,11 @@ class _LLMClientDriverMixin:
             try:
                 return _do_stream(model)
             except Exception as e:
-                # Don't retry on cancellation or CC compact detection
+                # Don't retry on cancellation, CC compact detection, or a
+                # cold start the caller must rebuild the context for: this
+                # loop would re-send the same delta to the same launch.
                 from tasks.ai.agent_exceptions import AgentCancelled as _AC
-                if isinstance(e, (_AC, CCCompactDetected)):
+                if isinstance(e, (_AC, CCCompactDetected, ColdStartRequired)):
                     raise
                 last_error = e
                 err_str = str(e)

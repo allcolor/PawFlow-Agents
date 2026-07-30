@@ -4,6 +4,7 @@ import time
 
 from core.llm_client import (
     CCCompactDetected,
+    ColdStartRequired,
 )
 from tasks.ai.agent_exceptions import AgentCancelled
 from tasks.ai.agent_compaction import COMPACT_TAIL_MESSAGES
@@ -286,6 +287,38 @@ class _ALCLlmTurnMixin:
             # thread re-adopt the newer generation: that resurrects
             # an old provider loop and creates ghost agents.
             st.emitter.check_cancelled()
+            return _ALC_CONTINUE
+        except ColdStartRequired:
+            # The provider had to LAUNCH a process, which makes this turn a
+            # cold start, and a cold start needs the full context. This one
+            # was built as a resume delta because a process was running when
+            # the context phase looked. Rebuild it as the cold start it is --
+            # the same call with force_cold=True, so the full context comes
+            # from the ordinary cold path and not from anything reassembled
+            # here -- then run the turn again. Nothing reached the model, so
+            # the restart costs no tokens.
+            st._rebuild_args = dict(st.ctx.get("_context_rebuild_args") or {})
+            st._rebuild_ff = st._rebuild_args.pop("flowfile", None)
+            if getattr(st, "_cold_restart_done", False) or st._rebuild_ff is None:
+                # Twice means the process dies as fast as we start it, and a
+                # third attempt would only spin. Let it surface.
+                raise
+            st._cold_restart_done = True
+            logger.warning(
+                "[agent:%s] provider has to launch a process — rebuilding "
+                "this turn as a cold start with the full context",
+                st.conversation_id[:8])
+            st._cold_ctx = self._prepare_agent_context(
+                st._rebuild_ff, force_cold=True,
+                # The first build consumed the cancel checkpoint; hand it
+                # back so the resume instruction is not lost with the
+                # context it was injected into.
+                resume_checkpoint=st.ctx.get("_consumed_cancel_checkpoint"),
+                **st._rebuild_args)
+            st.ctx.update(st._cold_ctx)
+            st.client = st._cold_ctx["client"]
+            st.messages = list(st._cold_ctx["messages"] or [])
+            st.llm_context = list(st.messages)
             return _ALC_CONTINUE
         except Exception as llm_err:
             st.err_str = str(llm_err)

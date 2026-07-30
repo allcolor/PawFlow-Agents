@@ -27,6 +27,7 @@ from core.llm_providers import (
 )
 from core._llm_types import (  # noqa: F401 -- re-exported for back-compat (invariant 1)
     CCCompactDetected,
+    ColdStartRequired,
     LLMClientError,
     LLMMessage,
     LLMResponse,
@@ -178,13 +179,13 @@ class LLMClient(
         if _max_ctx:
             clone._max_context_size = _max_ctx
         # Per-TURN state that must follow the call: the context phase leaves
-        # this here when it emptied the message list for a session it believed
-        # live, and only the provider -- running on this clone -- can discover
-        # the session is gone and ask for the real context back. Dropping it
-        # here silently turned that recovery into a no-op.
-        _rebuild = getattr(self, '_pawflow_cold_context_rebuild', None)
-        if _rebuild is not None:
-            clone._pawflow_cold_context_rebuild = _rebuild
+        # this here when it emptied the message list for a live session, and
+        # only the provider -- running on this clone -- can discover the
+        # process is gone and refuse to launch with a delta. Dropping it here
+        # silently turned that refusal into a no-op.
+        _is_delta = getattr(self, '_pawflow_context_is_delta', False)
+        if _is_delta:
+            clone._pawflow_context_is_delta = True
         return clone
 
     def _cfg(self, key: str, default: Any = "") -> Any:

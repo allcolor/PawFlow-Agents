@@ -376,6 +376,11 @@ class _PACPhase1Mixin:
             raise ValueError(
                 f"No LLM service resolved for agent '{st._active_agent_name or '?'}'. "
                 f"Set llm_service in the conversation agent config.")
+        # This marker describes THIS turn's context, and the base client can
+        # outlive the turn (the loop clones it per call, but the instance
+        # comes from the service registry). Clear it before the phase decides,
+        # so a resume never marks the cold turn that follows it.
+        st.client._pawflow_context_is_delta = False
 
         # Re-wire memory embeddings now that the conversation id and the final
         # active agent client are known. This enables conv-scoped
@@ -403,9 +408,15 @@ class _PACPhase1Mixin:
         # CLI session detection (2 states):
         #   True  -> provider has prior CLI state; resume can send only delta
         #   False -> provider needs the full PawFlow initial context
+        #
+        # force_cold is the third caller, not a third state: the turn already
+        # knows it is going to LAUNCH a process, which by definition makes
+        # this a cold start. Asking again could only answer "warm" and strip
+        # the context the launch needs.
         st._claude_has_session = False
         st._cli_has_session = False
-        if st._is_cli_provider and st.conversation_id:
+        if (st._is_cli_provider and st.conversation_id
+                and not getattr(st, "force_cold", False)):
             try:
                 from core.conversation_store import ConversationStore as _CSSession
                 st._agent_key = st._active_agent_name or st._context_agent or 'default'
@@ -456,15 +467,28 @@ class _PACPhase1Mixin:
                         from core.cli_live_sessions import find_live_cli_session
                         from core.gemini_live_registry import GeminiLiveRegistry
                         st._pool_key = f"gemini_acp_pool_idx:{st._agent_key}"
-                        try:
-                            st._pool_idx = int(st._store_session.get_extra(
-                                st.conversation_id, st._pool_key) or -1)
-                        except Exception:
-                            st._pool_idx = -1
+                        # Ask with the provider's inputs, not ours. It reads
+                        # the pool index only while it still holds a session
+                        # id, and a legacy-version id is no id at all -- it
+                        # clears one before looking. Reading the index anyway
+                        # would hand a concrete slot to a lookup the provider
+                        # performs with -1, and the fallback below would then
+                        # answer a different question.
+                        st._pool_idx = -1
+                        if st._session_val and st._session_ver == "2":
+                            try:
+                                st._pool_idx = int(st._store_session.get_extra(
+                                    st.conversation_id, st._pool_key) or -1)
+                            except Exception:
+                                st._pool_idx = -1
                         st._live = find_live_cli_session(
                             GeminiLiveRegistry.instance(), st._user_id_for_svc,
                             st.conversation_id, st._agent_key, st._svc_id,
-                            st._pool_idx)
+                            st._pool_idx,
+                            # Gemini's own rule: a concrete slot that misses
+                            # changed on purpose, and the old-slot container
+                            # holds the previous account's session.
+                            allow_pool_fallback=st._pool_idx < 0)
                     except Exception:
                         logging.getLogger(__name__).debug(
                             "Ignored gemini live-session validation exception",
@@ -501,15 +525,22 @@ class _PACPhase1Mixin:
                         from core.cli_live_sessions import find_live_cli_session
                         from core.codex_live_registry import CodexLiveRegistry
                         st._pool_key = f"codex_app_pool_idx:{st._agent_key}"
-                        try:
-                            st._pool_idx = int(st._store_session.get_extra(
-                                st.conversation_id, st._pool_key) or -1)
-                        except Exception:
-                            st._pool_idx = -1
+                        # Same inputs as the provider: it reads the pool index
+                        # only while it still holds a thread id (see the gemini
+                        # branch above). Codex takes any compatible session, so
+                        # the fallback stays unconditional -- that policy is the
+                        # caller's, and the two callers do not agree.
+                        st._pool_idx = -1
+                        if st._session_val:
+                            try:
+                                st._pool_idx = int(st._store_session.get_extra(
+                                    st.conversation_id, st._pool_key) or -1)
+                            except Exception:
+                                st._pool_idx = -1
                         st._live = find_live_cli_session(
                             CodexLiveRegistry.instance(), st._user_id_for_svc,
                             st.conversation_id, st._agent_key, st._svc_id,
-                            st._pool_idx)
+                            st._pool_idx, allow_pool_fallback=True)
                         st._session_valid = st._live is not None
                     except Exception:
                         logging.getLogger(__name__).debug(

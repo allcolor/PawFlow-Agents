@@ -293,6 +293,21 @@ Both `_should_proactive_compact` and the `_compact` call it guards read this fra
 
 When the gauge and the compaction threshold appear to disagree, measure rather than reason: `python3 tools/gauge_probe.py <conversation_dir> [agent]` runs both counters over a stored agent context and reports how much of the difference the boundary accounts for. `UNEXPLAINED` must be 0; anything else means the gauge is losing messages. It also lists every *structural* bootstrap marker — a plain grep for the marker string is unusable, because it matches any message that merely quotes it, including tool output from reading this repository's own source. The probe is read-only, needs no network, and falls back to approximate counting when `tiktoken` is absent (the ratio between the two counters stays valid either way). A bare `.jsonl` path is accepted, which is how a version recovered from the conversation's git history is inspected.
 
+### Cold start or delta — two cases, no third one
+
+1. **No process running** → we launch one → that is a cold start → it receives the FULL context.
+2. **A process is running** → it already holds the conversation → it receives the delta.
+
+The context phase decides which case applies (`_agentctx_p1`, gated on the live registry), but the *provider* is what actually launches. Only the provider can find the process gone — it crashed, or its container was stopped — after the context was already built as a delta. Launching then would be case 1 carrying case 2's context: a fresh process handed a bare question, with no transcript, persona, skills or tool configuration.
+
+So it does not launch. `_cli_require_cold_context` raises `ColdStartRequired`, `_alc_llm_turn` catches it and rebuilds the turn with `_prepare_agent_context(..., force_cold=True)` — case 1 through the ordinary cold path, nothing reassembled by hand — then runs the turn again. Nothing has reached the model at that point, so the restart costs no tokens. It happens at most once per turn: twice would mean the process dies as fast as we start it, and that must surface rather than spin.
+
+`force_cold` is a third *caller*, not a third state: the turn already knows it is going to launch, so probing again could only answer "warm" and strip the context that launch needs.
+
+Two invariants keep this honest. The delta marker lives on the client, which outlives the turn, so `_agentctx_p1` clears it on every build — a resume must never mark the cold turn that follows it. And the cancel checkpoint is consumed on injection and is *not* cold-gated, so the rebuild is handed back what the first pass ate; otherwise a rebuilt turn silently loses its "continue where you left off" instruction.
+
+**A lookup is a use.** The idle sweeper reaps containers nobody asks for, and `last_used` is its only evidence, so every registry lookup that hands a container to a caller refreshes it (`CodexLiveRegistry`/`GeminiLiveRegistry.get`/`get_compatible`, `LiveSessionRegistry.get`/`find_for_agent`, and the CCI and Antigravity pools' `find_session`). Without that, a session at the end of its TTL could be found alive by the context phase and swept a tick later, before the provider claimed it. The TTL is unchanged: a session nobody asks for is still reaped on schedule, and an active turn is never reaped at all.
+
 ---
 
 ## 5. Multi-Agent

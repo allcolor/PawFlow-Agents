@@ -195,17 +195,11 @@ class _GeminiStreamMixin:
                 live_key = None
 
         if not is_reuse:
-            # A session the context phase believed live may have vanished
-            # since. Recovering the context also makes this turn genuinely
-            # cold: loading the stored session on top of a rebuilt context
-            # would send the transcript twice, and the gauge would never pass
-            # through zero the way a real cold start makes it.
-            _recovered = self._cli_cold_context(messages)
-            if _recovered is not messages:
-                messages = _recovered
-                session_id = ""
-                prompt_mode = "cold-session-vanished"
-                initial_text = _prompt_text_for_mode(prompt_mode)
+            # We are about to launch a process, so this turn is a cold start
+            # and needs the full context. If what we hold is a resume delta --
+            # the context phase found a live process that has since gone --
+            # this raises and the turn is rebuilt as the cold start it is.
+            self._cli_require_cold_context("gemini-acp")
             if session_id:
                 logger.info(
                     "[gemini-acp-live] stored session %s has no live process; loading in fresh ACP process",

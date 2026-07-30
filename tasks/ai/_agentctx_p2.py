@@ -13,52 +13,23 @@ logger = logging.getLogger(__name__)
 
 
 class _PACPhase2Mixin:
-    def _arm_cold_context_rebuild(self, st):
-        """Give the provider a way back to the full context.
+    def _mark_context_as_delta(self, st):
+        """Tell the provider this context describes a RESUME, not a launch.
 
-        The liveness check that decided this conversation has a warm CLI
-        session RESERVES NOTHING: between it and the moment the provider
-        acquires the session's turn lock, the idle sweeper, a cleanup, a
-        crashed process or a stopped container can take it away. The provider
-        then correctly goes cold -- but the context phase has already emptied
-        the message list on the strength of that session, so a cold start would
-        send a bare delta and the turn would lose its transcript, persona,
-        skills and tool configuration.
+        Two cases, no third one: no process -> we launch -> cold start -> full
+        context; a process is running -> delta. This context was built for the
+        second case, on the strength of a live process.
 
-        Rather than hold a lock across the whole context phase, the provider
-        gets a one-shot callback it invokes only on the cold path. Nothing
-        changes on the happy path, where the session really is still there.
+        The provider is what actually launches, so it is the only place that
+        can find the process gone anyway -- it crashed, or its container was
+        stopped. Launching with this list would be case 1 carrying case 2's
+        context. The marker lets the provider raise ColdStartRequired instead,
+        and the loop rebuilds the context as a real cold start rather than
+        reassembling one by hand.
         """
         client = getattr(st, "client", None)
-        if client is None:
-            return
-
-        def _rebuild():
-            logger.warning(
-                "[context:%s] CLI session vanished between the liveness check "
-                "and the turn — rebuilding the cold context",
-                (st.conversation_id or "?")[:8])
-            st._context_diverged = False
-            st._uses_pawflow_initial = False
-            self._load_cold_cli_context(st)
-            rebuilt = list(st.messages or [])
-            # A resumed turn deliberately ships no system prompt: the live
-            # process already had it, so _alc_with_provider_system_prompt
-            # skips it while _cli_has_session is true. A cold start does need
-            # it, and that decision was made long before we got here.
-            prompt = str(getattr(st, "_provider_system_prompt", "") or "")
-            if prompt:
-                sys_msg = LLMMessage(
-                    role="system", content=prompt,
-                    source={"type": "provider_prompt"},
-                    conversation_id=st.conversation_id)
-                if rebuilt and getattr(rebuilt[0], "role", "") == "system":
-                    rebuilt[0] = sys_msg
-                else:
-                    rebuilt.insert(0, sys_msg)
-            return rebuilt
-
-        client._pawflow_cold_context_rebuild = _rebuild
+        if client is not None:
+            client._pawflow_context_is_delta = True
 
     def _load_cold_cli_context(self, st):
         """Load the full PawFlow context a cold CLI process must receive.
@@ -177,9 +148,9 @@ class _PACPhase2Mixin:
                 st.base_message_count = 0
                 st._context_diverged = True  # skip compact
                 # The session can still die before the provider acquires it;
-                # this is how the provider asks for the real context if it
-                # has to go cold after all. See _arm_cold_context_rebuild.
-                self._arm_cold_context_rebuild(st)
+                # this is how the provider says so instead of launching with
+                # a delta. See _mark_context_as_delta.
+                self._mark_context_as_delta(st)
                 logger.info(
                     f"[context:{st.conversation_id[:8]}] CLI session active — skipping context load")
             else:
@@ -511,8 +482,17 @@ class _PACPhase2Mixin:
                 from core.conversation_store import ConversationStore
                 st._cp_store = ConversationStore.instance()
                 st._cp_key = f"cancel_checkpoint:{st._early_agent or 'assistant'}"
-                st._checkpoint = st._cp_store.get_extra(st.conversation_id, st._cp_key)
+                # A checkpoint is consumed on injection, so a turn that gets
+                # rebuilt as a cold start would find nothing left and drop the
+                # "continue where you left off" instruction. The rebuild hands
+                # back what the first pass consumed.
+                st._checkpoint = getattr(st, "resume_checkpoint", None)
+                st._cp_carried = st._checkpoint is not None
+                if not st._cp_carried:
+                    st._checkpoint = st._cp_store.get_extra(
+                        st.conversation_id, st._cp_key)
                 if st._checkpoint and isinstance(st._checkpoint, dict):
+                    st._consumed_cancel_checkpoint = st._checkpoint
                     st._cp_tools = st._checkpoint.get("tools_called", [])
                     st._cp_partial = st._checkpoint.get("partial_response", "")
                     st._resume_parts = ["[System: Resuming after cancellation."]
@@ -529,7 +509,8 @@ class _PACPhase2Mixin:
                         role="user", content=" ".join(st._resume_parts),
                         conversation_id=st.conversation_id))
                     # Clear checkpoint after injection
-                    st._cp_store.set_extra(st.conversation_id, st._cp_key, None)
+                    if not st._cp_carried:
+                        st._cp_store.set_extra(st.conversation_id, st._cp_key, None)
                     logger.info(f"[context:{st.conversation_id[:8]}] injected resume from cancel checkpoint")
             except Exception as _cp_err:
                 logger.warning(f"[context] cancel checkpoint check failed: {_cp_err}")

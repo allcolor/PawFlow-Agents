@@ -325,3 +325,25 @@ class CCCompactDetected(Exception):
     """
     pass
 
+
+class ColdStartRequired(Exception):
+    """Raised when a CLI provider must LAUNCH a process on a delta context.
+
+    There are exactly two cases, and no third one:
+
+    1. no process running -> we launch -> cold start -> FULL context
+    2. a process is running -> delta
+
+    The context phase decides which one applies, but the provider is what
+    actually launches, and only it can find the process gone (a crash, a
+    stopped container) after the context was already built as a delta.
+    Sending that delta to a fresh process would be case 1 with case 2's
+    context -- the bastard state this exception exists to make impossible.
+
+    The agent loop intercepts it, rebuilds the context with force_cold=True
+    (which is case 1, by the normal path, with nothing reconstructed by hand)
+    and runs the turn again. Nothing has been sent to the model at that
+    point, so the restart costs no tokens.
+    """
+    pass
+

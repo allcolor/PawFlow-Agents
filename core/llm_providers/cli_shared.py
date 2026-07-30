@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from core._llm_types import ColdStartRequired
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,47 +159,34 @@ def textualize_message(
 class LLMCliSharedMixin:
     """Methods shared across CLI and HTTP providers."""
 
-    def _cli_cold_context(self, messages: List[Any]) -> List[Any]:
-        """The messages a cold CLI start should actually send.
+    def _cli_require_cold_context(self, provider: str) -> None:
+        """Refuse to launch a process holding a resume's context.
 
-        The context phase empties the message list whenever it finds a live
-        session for this conversation, because a resume only needs the delta.
-        That check reserves nothing, though: the session can be swept, killed
-        or crash before this provider acquires its turn lock, and then we are
-        starting a fresh process with a list that no longer describes the
-        conversation -- no transcript, no persona, no skills, no tool config.
+        Two cases, no third one: no process -> we launch -> cold start -> full
+        context; a process is running -> delta. The context phase built this
+        turn for the second case because a process WAS running, and we are now
+        on the first: it crashed, or its container was stopped.
 
-        When that happens the context phase left a one-shot callback here.
-        Calling it reloads the real cold context -- the stored transcript with
-        the provider system prompt a resumed turn deliberately omits. What
-        ``messages`` still holds is this turn's delta, above all the user's
-        actual question, so the two are CONCATENATED: rebuilding by replacement
-        would answer a question nobody asked.
+        Launching anyway would send a bare delta to a process that knows
+        nothing -- no transcript, no persona, no skills, no tool config. So we
+        do not launch. ColdStartRequired sends the turn back to the context
+        phase, which rebuilds it as the cold start it now is, through the same
+        code every ordinary cold start uses. Nothing has reached the model
+        yet, so the restart costs no tokens.
 
-        On an ordinary cold start -- where the context phase never saw a
-        session -- there is no callback and this returns ``messages``
-        unchanged, and by identity, which callers use to tell the two apart.
-
-        Consumed on use: a turn rebuilds at most once, and a stale callback
-        must not fire on a later turn whose context is already correct.
+        An ordinary cold start carries no marker and this returns at once.
         """
-        rebuild = getattr(self, "_pawflow_cold_context_rebuild", None)
-        self._pawflow_cold_context_rebuild = None
-        if not callable(rebuild):
-            return messages
-        try:
-            rebuilt = rebuild()
-        except Exception:
-            logger.error("cold context rebuild failed; keeping the delta",
-                         exc_info=True)
-            return messages
-        if not rebuilt:
-            return messages
-        out = list(rebuilt) + list(messages or [])
-        logger.info("cold context rebuilt: %d message(s) recovered plus %d "
-                    "carried over, for a turn whose CLI session disappeared",
-                    len(rebuilt), len(messages or []))
-        return out
+        if not getattr(self, "_pawflow_context_is_delta", False):
+            return
+        # One shot: the rebuilt context is a real cold context, and a stale
+        # marker must never bounce a turn that is already correct.
+        self._pawflow_context_is_delta = False
+        logger.warning(
+            "[%s] the live process is gone; this turn has to launch one, so "
+            "it needs the full context and not a resume delta — restarting "
+            "the turn as a cold start", provider)
+        raise ColdStartRequired(
+            f"{provider}: cold start required, context was built as a delta")
 
     @staticmethod
     def _cli_escape_text(text: str, *, quote: bool = False) -> str:

@@ -82,7 +82,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
     def _prepare_agent_context(self, flowfile: FlowFile, *,
                                preloaded_messages: Optional[List[Dict]] = None,
                                preloaded_conversation_id: str = "",
-                               independent_context: bool = False):
+                               independent_context: bool = False,
+                               force_cold: bool = False,
+                               resume_checkpoint=None):
         """Extract common context from flowfile and config for both sync and streaming modes.
 
         Args:
@@ -90,12 +92,22 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
             preloaded_messages: If set, use these raw message dicts instead of
                 loading from ConversationStore. Used by the poller for task
                 sub-conversations that have their own isolated message store.
+            force_cold: Skip the CLI live-session probe and build the full
+                cold context. Set by the turn that has to launch a process:
+                launching IS a cold start, so it needs the complete context,
+                and the probe's answer -- whatever it was -- is now moot.
+            resume_checkpoint: A cancel checkpoint the previous build already
+                consumed. Only a rebuild passes it, so the resume instruction
+                survives the restart instead of being lost with the context it
+                was injected into.
         """
         st = _PACState()
         st.flowfile = flowfile
         st.preloaded_messages = preloaded_messages
         st.preloaded_conversation_id = preloaded_conversation_id
         st.independent_context = independent_context
+        st.force_cold = bool(force_cold)
+        st.resume_checkpoint = resume_checkpoint
         self._pac_p1(st)
         self._pac_p2(st)
         self._pac_p3(st)
@@ -149,6 +161,19 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
             # Volatile blocks (memory/diary/KG/project digests) merged into
             # the last user message so the cached prefix stays byte-stable.
             "_dynamic_blocks": getattr(st, "_dynamic_blocks", []),
+            # The turn that discovers it must LAUNCH a process rebuilds this
+            # context with force_cold=True, and needs the flowfile it was
+            # built from to do it.
+            # Kept as the original call's arguments so the rebuild is the
+            # same call with one flag flipped, not an approximation of it.
+            "_context_rebuild_args": {
+                "flowfile": flowfile,
+                "preloaded_messages": preloaded_messages,
+                "preloaded_conversation_id": preloaded_conversation_id,
+                "independent_context": independent_context,
+            },
+            "_consumed_cancel_checkpoint": getattr(
+                st, "_consumed_cancel_checkpoint", None),
         }
 
     def _auto_compact_messages(self, messages: List[LLMMessage],

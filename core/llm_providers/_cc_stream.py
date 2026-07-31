@@ -104,46 +104,6 @@ class _CCStreamMixin:
         _session_dir = f"/cc_sessions/{_rel}"
         st._provider_workdir = self._cc_namespace_workdir(st.workdir)
 
-        # Session-aware serialization:
-        # - New session (no session_id): feed the full PawFlow ctx ONCE.
-        # - Resume (session_id set): CC already has the history; send only
-        #   the new user message. The catch-up mechanism below injects
-        #   anything that arrived from other agents since last turn.
-        if st.session_id:
-            system_prompt = ""
-            for _m in messages:
-                if _m.role == "system":
-                    _c = _m.content
-                    system_prompt = _m.text_content if isinstance(_c, list) else (_c or "")
-                    break
-            system_prompt = append_cli_mcp_system_prompt(system_prompt)
-            last_user = ""
-            for _m in reversed(messages):
-                if _m.role == "user":
-                    _c = _m.content
-                    if isinstance(_c, list):
-                        last_user = _m.text_content
-                    else:
-                        last_user = _c or ""
-                    break
-            user_text = last_user
-            initial_text = self._build_stdin_with_system(system_prompt, user_text)
-        else:
-            system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
-            system_prompt = append_cli_mcp_system_prompt(system_prompt)
-            initial_text = self._build_cli_initial_context_prompt(
-                messages,
-                system_prompt=system_prompt,
-                user_text=user_text,
-                workdir=st.workdir,
-                provider_workdir=st._provider_workdir,
-                conversation_id=st.conv_id,
-                agent_name=st.agent_name,
-            )
-        logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d session=%s",
-                     len(system_prompt), len(user_text), len(image_blocks), len(messages),
-                     "resume" if st.session_id else "new")
-
         logger.info("claude-code stream: conv_id='%s' user='%s' agent='%s' session='%s'",
                      st.conv_id, st.user_id, st.agent_name, st.session_id[:12] if st.session_id else "new")
         # Resume with same credential that created the session (approach 3)
@@ -191,6 +151,34 @@ class _CCStreamMixin:
             st._live_key = (st.user_id, st.conv_id, st.agent_name or 'default',
                          st._svc_id, st._svc_pool_idx)
             st._live_session = st._live_reg.get(st._live_key)
+            if st._live_session is None:
+                # The exact slot missed. Ask the question the context phase
+                # asked -- "is there a live process for this (conv, agent)?"
+                # -- and adopt the answer WITH its own key, so touch/evict/
+                # register all address the entry that really exists. The
+                # stored slot can be missing or stale (cleared extras, pool
+                # rotation) while the process is very much alive; treating
+                # that as "no session" launched a second CC and orphaned the
+                # first.
+                _compat = st._live_reg.get_compatible(
+                    st.user_id, st.conv_id, st.agent_name or 'default',
+                    st._svc_id)
+                if _compat is not None:
+                    st._live_key, st._live_session = _compat
+                    st._svc_pool_idx = st._live_key[4]
+                    logger.info(
+                        "[cc-live] adopting live session on slot #%d "
+                        "(this turn set up slot #%d)",
+                        st._svc_pool_idx, int(getattr(
+                            self, '_current_pool_index', -1)))
+                    if st.conv_id:
+                        try:
+                            ConversationStore.instance().set_extra(
+                                st.conv_id,
+                                f"claude_pool_idx:{st.agent_name or 'default'}",
+                                st._svc_pool_idx)
+                        except Exception:
+                            logger.debug("exception suppressed", exc_info=True)
             if st._live_session is not None:
                 # Bump reuse_count for the new stream call. The idle
                 # invariant is handled by the stdout reader daemon
@@ -287,6 +275,50 @@ class _CCStreamMixin:
                 self._spawn_cc_stream(st.workdir, st.user_id, st.conv_id, st.agent_name,
                                       st.model,
                                       ephemeral_stream=st._is_ephemeral))
+
+        # Session-aware serialization -- decided HERE, after the live lookup,
+        # and on `st._is_reuse` alone. The persisted `claude_session:*` id is
+        # not the question: it survives a server restart that took the CC
+        # process with it, so deciding on it sent a delta -- system prompt
+        # plus the last user message -- to a process that had just been
+        # launched and held nothing. Same rule as every other CLI:
+        # - reuse: CC already has the history, send only the new user
+        #   message; the catch-up below injects what other agents said since.
+        # - launch: cold start, feed the full PawFlow context ONCE.
+        if st._is_reuse:
+            system_prompt = ""
+            for _m in messages:
+                if _m.role == "system":
+                    _c = _m.content
+                    system_prompt = _m.text_content if isinstance(_c, list) else (_c or "")
+                    break
+            system_prompt = append_cli_mcp_system_prompt(system_prompt)
+            last_user = ""
+            for _m in reversed(messages):
+                if _m.role == "user":
+                    _c = _m.content
+                    if isinstance(_c, list):
+                        last_user = _m.text_content
+                    else:
+                        last_user = _c or ""
+                    break
+            user_text = last_user
+            initial_text = self._build_stdin_with_system(system_prompt, user_text)
+        else:
+            system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
+            system_prompt = append_cli_mcp_system_prompt(system_prompt)
+            initial_text = self._build_cli_initial_context_prompt(
+                messages,
+                system_prompt=system_prompt,
+                user_text=user_text,
+                workdir=st.workdir,
+                provider_workdir=st._provider_workdir,
+                conversation_id=st.conv_id,
+                agent_name=st.agent_name,
+            )
+        logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d mode=%s",
+                     len(system_prompt), len(user_text), len(image_blocks), len(messages),
+                     "reuse" if st._is_reuse else "launch")
 
         # Multi-agent catch-up: when resuming a session, inject messages
         # from other agents that CC hasn't seen (arrived after CC's last turn)

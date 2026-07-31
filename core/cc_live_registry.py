@@ -178,20 +178,42 @@ class LiveSessionRegistry:
         so pool_idx is not needed to disambiguate. Returns None if no live
         session matches.
         """
+        found = self.get_compatible(
+            user_id, conversation_id, agent_name, service_id)
+        return found[1] if found else None
+
+    def get_compatible(self, user_id: str, conversation_id: str,
+                       agent_name: str, service_id: str = ""
+                       ) -> Optional[Tuple[LiveKey, CCLiveSession]]:
+        """Same lookup as ``find_for_agent``, but hands back the key too.
+
+        The key matters to the provider: it registers, touches and evicts by
+        key, so a session adopted through this pool-agnostic lookup must be
+        adopted with the key it actually lives under, or the turn would evict
+        an entry that does not exist and leave the real one behind.
+
+        This is what keeps the context phase and the provider asking the SAME
+        question. The context phase cannot know which credential slot
+        ``_setup_credentials`` will pick, so it asks without one; a provider
+        that only ever asked for an exact slot answered "cold" where the
+        context phase had answered "warm", left the live process orphaned and
+        paid a full cold retry. Mirrors ``get_compatible`` on the codex and
+        gemini registries.
+        """
         agent = agent_name or "default"
         with self._lock:
             candidates = [
-                s for key, s in self._sessions.items()
+                (key, s) for key, s in self._sessions.items()
                 if key[1] == conversation_id
                 and key[2] == agent
                 and (not user_id or key[0] == user_id)
                 and (not service_id or key[3] == service_id)
             ]
-            candidates.sort(key=lambda s: s.last_used, reverse=True)
-            for s in candidates:
+            candidates.sort(key=lambda ks: ks[1].last_used, reverse=True)
+            for key, s in candidates:
                 if s.is_alive():
                     s.last_used = time.monotonic()
-                    return s
+                    return (key, s)
         return None
 
     def touch(self, key: LiveKey, bump_reuse: bool = True) -> None:

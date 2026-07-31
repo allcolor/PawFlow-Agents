@@ -271,7 +271,8 @@ class OAuthRedirectTask(BaseTask):
             flowfile.set_content(b'User created but not found')
             flowfile.set_attribute("http.response.status", "500")
             return [flowfile]
-        session = sm._create_session(user, oauth_provider=result.provider)
+        session = sm._create_session(user, oauth_provider=result.provider,
+                                     groups=list(getattr(result, "groups", None) or []))
         cookie_name = self.config.get("cookie_name", "pawflow_token")
         cookie_max_age = int(self.config.get("cookie_max_age", 86400))
         flowfile.set_content(b"")

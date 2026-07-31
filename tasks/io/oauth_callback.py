@@ -175,7 +175,6 @@ class OAuthCallbackTask(BaseTask):
                 # GitHub: need separate call for email if not public
                 oauth_id = str(userinfo.get("id", ""))
                 email = userinfo.get("email", "")
-                display_name = userinfo.get("name", "") or userinfo.get("login", "")
                 if not email:
                     try:
                         emails = _http_get(
@@ -191,7 +190,6 @@ class OAuthCallbackTask(BaseTask):
                 userinfo = _http_get(service.userinfo_url, access_token)
                 oauth_id = userinfo.get("sub", "") or str(userinfo.get("id", ""))
                 email = userinfo.get("email", "")
-                display_name = userinfo.get("name", "") or userinfo.get("displayName", "")
         except Exception as e:
             logger.error(f"OAuth userinfo fetch failed: {e}")
             return [self._error_response(flowfile, 502, f"UserInfo fetch failed: {e}")]
@@ -277,6 +275,9 @@ class OAuthCallbackTask(BaseTask):
         flowfile.set_attribute("http.auth.valid", "true")
         flowfile.set_attribute("http.auth.principal", session.username)
         flowfile.set_attribute("http.auth.roles", session.role.value)
+        # Groups travel apart from roles on purpose -- see core.auth_groups.
+        flowfile.set_attribute(
+            "http.auth.groups", ",".join(getattr(session, "groups", None) or []))
 
         return [flowfile]
 
@@ -390,7 +391,8 @@ class OAuthCallbackTask(BaseTask):
         user = sm.get_user(result.username)
         if not user:
             return [self._error_response(flowfile, 500, "User created but not found")]
-        session = sm._create_session(user, oauth_provider=provider_name)
+        session = sm._create_session(user, oauth_provider=provider_name,
+                                     groups=list(getattr(result, "groups", None) or []))
         token = session.session_id
 
         # Store refresh token in session metadata (per-provider)

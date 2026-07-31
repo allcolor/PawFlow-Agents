@@ -9,6 +9,10 @@ from typing import Any, Dict
 from services.auth_providers.base import AuthResult
 from services.auth_providers.oauth_base import OAuthBaseProvider
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 _PRESETS = {
     "keycloak": {
@@ -128,6 +132,31 @@ class GenericOAuthProvider(OAuthBaseProvider):
                            "description": "UserInfo field for display name"},
             "field_username": {"type": "string", "required": False, "default": "preferred_username",
                                "description": "UserInfo field for username"},
+            "field_groups": {
+                "type": "string", "required": False, "default": "",
+                "description": (
+                    "UserInfo claim holding the user's groups. Dotted paths "
+                    "are supported — Keycloak realm roles live at "
+                    "'realm_access.roles'. Note that Keycloak does NOT emit "
+                    "roles in userinfo until a group/roles mapper is added to "
+                    "the client scope. Empty = groups are ignored."),
+            },
+            "group_mappings": {
+                "type": "json", "required": False, "default": {},
+                "description": (
+                    "IdP group name -> PawFlow role ('admin' or 'user'), e.g. "
+                    "{\"pawflow-admins\": \"admin\"}. A group with no entry "
+                    "here grants nothing: authority comes from this table, "
+                    "never from the group's name."),
+            },
+            "auto_provision": {
+                "type": "boolean", "required": False, "default": False,
+                "description": (
+                    "Create a PawFlow user on first login when the identity "
+                    "carries at least one MAPPED group. Off by default: with "
+                    "it off, an unknown identity still needs an admin-issued "
+                    "onboarding token."),
+            },
         }
 
     def _build_result(self, userinfo: dict, access_token: str,
@@ -136,6 +165,10 @@ class GenericOAuthProvider(OAuthBaseProvider):
         field_email = self.config.get("field_email", "email")
         field_name = self.config.get("field_name", "name")
         field_username = self.config.get("field_username", "preferred_username")
+        # Dotted, because the interesting claim usually is: Keycloak puts realm
+        # roles in `realm_access.roles`. Empty by default -- no claim
+        # configured means groups play no part, exactly as before.
+        field_groups = self.config.get("field_groups", "")
         provider_name = self.name
 
         uid = str(userinfo.get(field_user_id, ""))
@@ -145,12 +178,25 @@ class GenericOAuthProvider(OAuthBaseProvider):
         if not username:
             username = email.split("@")[0] if email else uid
 
+        from core.auth_groups import claim_groups
+        groups = claim_groups(userinfo, field_groups)
+        if field_groups and not groups:
+            # Keycloak does NOT put roles in userinfo unless a group/roles
+            # mapper is added to the client scope. Saying so here turns the
+            # commonest misconfiguration from "it silently does nothing" into
+            # one line in the log.
+            logger.warning(
+                "[auth:%s] no groups at claim %r in userinfo — is the group "
+                "mapper configured on the IdP client scope?",
+                provider_name, field_groups)
+
         return AuthResult(
             success=True,
             user_id=f"{provider_name}:{uid}",
             username=username,
             email=email,
             display_name=display,
+            groups=groups,
             provider=provider_name,
             access_token=access_token,
             refresh_token=refresh_token,

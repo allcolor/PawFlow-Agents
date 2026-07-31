@@ -28,12 +28,20 @@ logger = logging.getLogger(__name__)
 
 
 def is_admin(flowfile) -> bool:
-    """True when the authenticated session carries the admin role."""
+    """True when the authenticated session carries the admin role.
+
+    Exact membership, not a substring. ``http.auth.roles`` holds resolved
+    PawFlow roles only -- never IdP group names, which is the invariant that
+    keeps the ``\"admin\" in roles`` checks elsewhere safe (see
+    core.auth_groups). Matching exactly here means this gate stays correct even
+    if that invariant is ever broken upstream: a role list containing
+    `admin-readonly` or `non-admin` no longer reads as admin.
+    """
     try:
         roles = flowfile.get_attribute("http.auth.roles") or ""
     except Exception:
         return False
-    return "admin" in roles
+    return "admin" in {part.strip() for part in str(roles).split(",")}
 
 
 def wants_view_all(body, flowfile) -> bool:

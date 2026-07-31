@@ -22,9 +22,8 @@ import time
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Set
-from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +105,12 @@ class Session:
     expires_at: float = 0.0
     ip_address: str = ""
     oauth_provider: str = ""  # Which OAuth provider created this session
+    #: IdP group names carried by the login, verbatim and for display/audit
+    #: only. Authorisation reads ``role``, which is what the group mapping
+    #: already resolved to -- see core.auth_groups. Keeping the raw names out
+    #: of the authorisation path is what stops a group called `admin-readonly`
+    #: from satisfying the ``"admin" in roles`` checks across the codebase.
+    groups: List[str] = field(default_factory=list)
 
     @property
     def is_expired(self) -> bool:
@@ -275,7 +280,8 @@ class SecurityManager:
         return session
 
     def _create_session(self, user: User, ip_address: str = "",
-                        oauth_provider: str = "") -> Session:
+                        oauth_provider: str = "",
+                        groups: Optional[List[str]] = None) -> Session:
         session = Session(
             session_id=secrets.token_urlsafe(32),
             username=user.username,
@@ -283,6 +289,9 @@ class SecurityManager:
             expires_at=time.time() + self._session_ttl,
             ip_address=ip_address,
             oauth_provider=oauth_provider,
+            # Recorded, never consulted for authorisation: the group mapping
+            # already resolved into `role`. See core.auth_groups.
+            groups=list(groups or []),
         )
         self._sessions[session.session_id] = session
         self._save_sessions()
@@ -457,6 +466,8 @@ class SecurityManager:
                     expires_at=expires_at,
                     ip_address=s.get("ip_address", ""),
                     oauth_provider=s.get("oauth_provider", ""),
+                    # Sessions written before groups existed have no key.
+                    groups=list(s.get("groups") or []),
                 )
                 self._sessions[session.session_id] = session
             if self._sessions or skipped:
@@ -483,6 +494,7 @@ class SecurityManager:
                 "expires_at": s.expires_at,
                 "ip_address": s.ip_address,
                 "oauth_provider": s.oauth_provider,
+                "groups": list(s.groups or []),
             }
             for s in self._sessions.values()
             # Keep expired sessions for silent refresh; only drop hard-expired

@@ -16,7 +16,12 @@ Config:
 FlowFile attributes set on success:
     http.auth.valid       — "true"
     http.auth.principal   — username
-    http.auth.roles       — role name (admin/user)
+    http.auth.roles       — resolved PawFlow role (admin/user). NEVER an IdP
+                            group name: ~29 call sites test this with
+                            `"admin" in roles`, a SUBSTRING test that a group
+                            called `admin-readonly` would satisfy.
+    http.auth.groups      — IdP group names, comma-separated, for display and
+                            audit only. Authorisation reads roles.
     http.auth.session_id  — session ID
 
 FlowFile attributes set on failure:
@@ -164,6 +169,8 @@ class ValidateSessionAuthTask(BaseTask):
         flowfile.set_attribute("http.auth.valid", "true")
         flowfile.set_attribute("http.auth.principal", session.username)
         flowfile.set_attribute("http.auth.roles", session.role.value)
+        flowfile.set_attribute(
+            "http.auth.groups", ",".join(getattr(session, "groups", None) or []))
         flowfile.set_attribute("http.auth.session_id", session.session_id)
         flowfile.set_attribute("route.relationship", "success")
 
@@ -268,7 +275,6 @@ class ValidateSessionAuthTask(BaseTask):
             return  # already has the info
 
         try:
-            from services.auth_gateway_service import AuthGatewayService
             from core.service_registry import ServiceRegistry
             greg = ServiceRegistry.get_instance()
             for sid, sdef in greg.get_all("global", "").items():

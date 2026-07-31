@@ -16,13 +16,12 @@ import json
 import pytest
 import time
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core import FlowFile, TaskFactory
 import core.paths as _paths
 from core.tool_registry import (
-    ToolRegistry, ToolHandler, create_default_registry,
+    ToolRegistry, ToolHandler,
 )
 
 
@@ -473,7 +472,7 @@ class TestOAuthRedirectTask(unittest.TestCase):
         params = urllib.parse.parse_qs(parsed.query)
         state = params.get("state", [""])[0]
         # Build inline service to validate
-        svc = OAuthProviderService({
+        OAuthProviderService({
             "provider": "google",
             "client_id": "test-id",
             "client_secret": "test-secret",
@@ -800,9 +799,12 @@ class TestOAuthRedirectTask(unittest.TestCase):
             def get_user(self, username):
                 return SimpleNamespace(username=username, role=SimpleNamespace(value="user"))
 
-            def _create_session(self, user, oauth_provider=""):
+            def _create_session(self, user, oauth_provider="", groups=()):
                 assert user.username == "tg_user"
                 assert oauth_provider == "telegram"
+                # Telegram carries no IdP group claims; the session gets none
+                # rather than inheriting anything by default.
+                assert list(groups) == []
                 return SimpleNamespace(session_id="session-tg")
 
         auth = AuthGateway()
@@ -840,7 +842,9 @@ class TestOAuthRedirectTask(unittest.TestCase):
             def get_user(self, username):
                 return SimpleNamespace(username=username)
 
-            def _create_session(self, user):
+            def _create_session(self, user, oauth_provider="", groups=()):
+                # Local password login: no identity provider, so no groups.
+                assert list(groups) == []
                 return SimpleNamespace(session_id="session-123")
 
         task = OAuthRedirectTask({})
@@ -875,7 +879,7 @@ class TestOAuthRedirectTask(unittest.TestCase):
             def get_user(self, username):
                 return SimpleNamespace(username=username)
 
-            def _create_session(self, user, oauth_provider=""):
+            def _create_session(self, user, oauth_provider="", groups=()):
                 assert user.username == "linked-user"
                 assert oauth_provider == "github"
                 return SimpleNamespace(session_id="session-linked")
@@ -1456,7 +1460,6 @@ class TestToolFilteringByRole(unittest.TestCase):
     def test_no_role_no_filtering(self):
         """When no user role is set, all tools should be available."""
         from tasks.ai.agent_loop import AgentLoopTask
-        from core.llm_client import LLMResponse
         task = AgentLoopTask({
             "api_key": "test",
             "conversation_store": False,

@@ -49,7 +49,9 @@ class XTwitterAuthProvider(OAuthBaseProvider):
 
     def _customize_authorize_params(self, params: dict):
         """X requires PKCE (code_challenge)."""
-        import hashlib, base64, secrets
+        import hashlib
+        import base64
+        import secrets
         verifier = secrets.token_urlsafe(64)
         self._code_verifier = verifier
         state = str(params.get("state") or "")

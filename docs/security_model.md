@@ -44,6 +44,54 @@ agents run against production systems or untrusted input, set the conversation
 back to `default` or `read_only` before giving it work — `auto` approves every
 tool the mode allows, without asking.
 
+## Identity, Groups and Roles
+
+Authentication is delegated to the identity provider. PawFlow speaks generic
+OAuth2/OIDC with presets for Keycloak, Okta, Auth0 and GitLab
+(`services/auth_providers/generic_oauth.py`) -- there is no LDAP client and no
+directory sync, on purpose: that is the IdP's job.
+
+Groups from the IdP map to PawFlow roles under three rules, and each exists
+because its opposite hands out admin by accident.
+
+**1. An unmapped group grants nothing.** Authority is the mapping table an
+operator wrote in PawFlow, never the group's name. Without this, creating a
+group called `admin` in the IdP would be a privilege escalation.
+
+```json
+{ "field_groups": "realm_access.roles",
+  "group_mappings": { "pawflow-admins": "admin" },
+  "auto_provision": true }
+```
+
+`field_groups` supports dotted paths because the interesting claim usually is
+one: Keycloak puts realm roles in `realm_access.roles`.
+
+**2. Local wins by default.** `auth.role_precedence` in
+`global_parameters.json` is `local` (default) or `remote`. Making the IdP
+authoritative is a deliberate choice. In `remote` mode, an identity that
+returns *no* mapped group keeps its stored role rather than being demoted --
+otherwise one forgotten scope demotes every user at once. A demotion that would
+leave no enabled admin is refused outright and logged: once the last admin is
+gone there is no route left in the UI to undo it.
+
+**3. Group names never reach `http.auth.roles`.** That attribute carries
+resolved PawFlow roles only (`admin` / `user`). Around 29 call sites test it
+with `"admin" in roles` -- a SUBSTRING test, which a group named
+`admin-readonly` or `non-admin` would satisfy. IdP group names travel in
+`http.auth.groups`, for display and audit, and are never consulted for
+authorisation. `core.admin_scope.is_admin` matches exact membership so the gate
+stays correct even if that separation is ever broken upstream.
+
+**Auto-provisioning** requires BOTH an explicit `auto_provision` on the
+provider AND at least one mapped group. Otherwise an unknown identity still
+needs an admin-issued onboarding token.
+
+**Operator note.** Keycloak does NOT emit roles in `userinfo` until a
+group/roles mapper is added to the client scope. Without it the feature is
+correct and appears to do nothing; PawFlow logs a warning naming the claim it
+looked for.
+
 ## Desktop and VNC Risk
 
 `/desktop local` and `screen(local=true)` can act on the user's real desktop. This is equivalent to allowing an agent to see the screen and operate mouse/keyboard. Prefer Docker desktop unless local control is specifically required.

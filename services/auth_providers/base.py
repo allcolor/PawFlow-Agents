@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 import time
 
 
@@ -16,6 +16,11 @@ class AuthResult:
     email: str = ""
     display_name: str = ""
     roles: List[str] = field(default_factory=list)
+    #: IdP group names, verbatim. Kept apart from ``roles`` on purpose: roles
+    #: are resolved PawFlow roles, groups are operator-chosen strings from
+    #: outside, and mixing them would make the substring checks on
+    #: ``http.auth.roles`` satisfiable by a group called `admin-readonly`.
+    groups: List[str] = field(default_factory=list)
     provider: str = ""
     error: str = ""
     # OAuth tokens (for refresh)

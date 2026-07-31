@@ -621,6 +621,78 @@ test('an authoritative final displaces a derived one and reclaims it', () => {
   assert(guess.parentNode !== e.messages, 'the superseded row returns into the block');
 });
 
+// ── A reconstruction may not end a turn that is still running ───────────
+//
+// The page classifier names the last assistant row of every turn it believes
+// is over, and only the server's active-turn set keeps it away from a live
+// one. When that set is momentarily empty -- a capture owning the marker, a
+// tail re-read through gap recovery -- the guess reaches a turn still at work
+// and the block said "completed", clock frozen, cues gone, over an agent
+// visibly still working.
+
+const statusOf = block =>
+  block.querySelector('.simple-turn-status').className.replace('simple-turn-status ', '');
+
+test('a replayed guess cannot close a turn the live channel is feeding', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const narration = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a1' }, narration);
+  const call = e.row('c1');
+  e.ctx.turnViewIngest('tool_call', { turn_id: 'u1', msg_id: 'c1', tc_id: 'tc-1' }, call);
+  const block = e.block();
+  eq(statusOf(block), 'working', 'the turn is running');
+
+  // Gap recovery re-reads the tail mid-turn and replays it.
+  eq(e.ctx.turnViewIngest('assistant',
+    { turn_id: 'u1', msg_id: 'a1', turn_final: true, turn_final_derived: true,
+      _history: true }, narration), true);
+
+  eq(statusOf(block), 'working', 'a guess does not end a live turn');
+  assert(block.classList.contains('turn-working'), 'the live surface stays up');
+});
+
+test('the runtime snapshot alone also refuses the guess', () => {
+  const e = env('simplified');
+  e.ctx.turnViewSetRuntimeTurns([
+    { turn_id: 'u1', started_at: 1000, duration: 3, status: 'running' },
+  ]);
+  const user = e.row('u1');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1', turn_id: 'u1', _history: true }, user);
+  const answer = e.row('a1');
+  e.ctx.turnViewIngest('assistant',
+    { msg_id: 'a1', turn_id: 'u1', turn_final: true, turn_final_derived: true,
+      _history: true }, answer);
+  eq(statusOf(e.block()), 'working',
+     'a turn the server says is running is not closed by a reconstruction');
+});
+
+test('a guessed ending is undone by the turn itself, a real one never is', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  // A page rendered before anything live: nothing yet contradicts the guess,
+  // so it stands and the answer is placed.
+  const guess = e.row('a1');
+  e.ctx.turnViewIngest('assistant',
+    { turn_id: 'u1', msg_id: 'a1', turn_final: true, turn_final_derived: true,
+      _history: true }, guess);
+  const block = e.block();
+  eq(statusOf(block), 'completed', 'the guess stands while nothing refutes it');
+
+  // Then the turn keeps talking: it was never over.
+  const live = e.row('a2');
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a2' }, live);
+  eq(statusOf(block), 'working', 'the turn refutes the guess by talking');
+  assert(block.classList.contains('turn-working'), 'its surface comes back');
+
+  // A done is the server speaking, and nothing after it reopens the turn.
+  e.ctx.turnViewFinalize({ turn_id: 'u1', final_msg_id: 'a2' });
+  eq(statusOf(block), 'completed');
+  const after = e.row('a3');
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a3' }, after);
+  eq(statusOf(block), 'completed', 'a closed turn stays closed');
+});
+
 // ── Streaming: one cue per coalescing window, not one per token ─────────
 
 test('streamed tokens coalesce into a single cue', () => {

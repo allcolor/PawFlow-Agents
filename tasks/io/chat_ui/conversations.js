@@ -523,6 +523,13 @@ function reconcileMissedMessages() {
       if (!data || data.error || data.encrypted_locked) return;
       if (cid !== conversationId) return;
       if (data.conversation_id && data.conversation_id !== conversationId) return;
+      // The page carries what is running right now. Rendering its rows without
+      // adopting that snapshot leaves the view judging liveness on a picture
+      // taken at the last full load -- and this path runs precisely when a
+      // turn is in flight.
+      if (typeof turnViewSetRuntimeTurns === 'function') {
+        turnViewSetRuntimeTurns(data.active_turns || []);
+      }
       // This tail page is now the durable pagination head. If more than one
       // display window was missed, load-more continues immediately before it
       // and makes the rest of the gap reachable.

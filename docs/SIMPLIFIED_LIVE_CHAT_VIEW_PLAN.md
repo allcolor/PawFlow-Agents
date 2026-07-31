@@ -379,6 +379,32 @@ no final row: cancellation and force stop still never manufacture one.
 The invariant to test is per-turn, not per-row: **every turn that contains a
 visible assistant answer exposes exactly one `turn_final` row.**
 
+### A derived final may never end a running turn
+
+`turn_final_derived` is a reconstruction, and the client treats it as one. The
+server keeps the guess away from a live turn through `active_turn_ids`, but that
+set is not always populated when a page is built — a tmux capture owns the
+`_active_turns` key without carrying a turn id, and the gap-recovery path
+re-reads the transcript tail while a turn is in flight. When the guess got
+through, the block said `Completed` with a frozen clock and no cues over an
+agent that was visibly still working: the one thing the elapsed and the rain
+exist to deny.
+
+The view therefore holds the invariant itself, on two pieces of evidence it
+owns:
+
+- a turn the runtime snapshot names, or one the live channel is feeding — a row
+  that arrived outside a replayed page and does not itself claim to end the
+  turn — refuses a derived final outright;
+- a derived final that did close a turn is remembered as a guess, and the next
+  live row of that turn reopens it. A `done` is the server stating the turn
+  ended: it never carries the flag, and nothing after it reopens the block.
+
+Gap recovery adopts the `active_turns` snapshot of the page it renders, like a
+full load does: it is the path that runs precisely while a turn is in flight,
+and judging liveness on a picture taken at the last full load is what let the
+guess through.
+
 For pre-feature rows without `turn_id`, history loading may derive a display-only
 turn id from the nearest preceding visible user message. This compatibility path
 must be deterministic and limited to display classification; it must never

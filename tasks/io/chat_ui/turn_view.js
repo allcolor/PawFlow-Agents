@@ -141,6 +141,10 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
     status: 'working', expanded: false, activeTab: 'messages', finalMsgId: '',
     finalEl: null, finalDetailEl: null,
     identityRendered: false,
+    // Whether the live channel has ever fed this turn, and whether the only
+    // thing that closed it was a reconstruction. Together they decide if a
+    // guessed ending may stand -- see turnViewFinalize.
+    liveFed: false, closedByGuess: false,
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
     artifactElementsByFileId: new Map(), artifactFileIdByCallId: new Map(),
     transient: { cues: [], coalesceTimer: null, pendingText: '', pendingKind: '' },
@@ -362,6 +366,21 @@ function turnViewIngest(kind, data, element) {
   const state = _turnCurrentState(true) || _turnOpenOrphanTurn(element);
   if (!state || !state.blockEl.isConnected) return false;
   _turnUpdateIdentity(state, data || {});
+  // A row that did not come from a replayed page, and does not itself claim to
+  // end the turn, is the turn talking -- now. That is the one thing a
+  // reconstruction cannot argue with: if a guessed ending closed this block,
+  // the turn just refuted it, so reopen it. Only a guess is undone -- a `done`
+  // is the server stating the turn is over, and no later row may contradict
+  // that. A row carrying a final marker is excluded on purpose: what claims
+  // the turn is finished is not evidence that it is running.
+  if (!(data && (data._history || data.turn_final))) {
+    state.liveFed = true;
+    if (state.closedByGuess && state.status === 'completed') {
+      state.closedByGuess = false;
+      _turnUpdateStatus(state, 'working');
+      _turnStartRain(state); _turnSyncIdle(state);
+    }
+  }
   if (kind === 'tool_result' && turnViewHandleToolResult(data, element)) return true;
   const tabKey = _turnTabForKind(kind); const tab = state.tabs[tabKey];
   if (element) {
@@ -862,6 +881,20 @@ function turnViewFinalize(data) {
   // at. THE RULE at the top of this file.
   const state = _turnCurrentState(false); if (!state) return false;
   const finalId = String((data && (data.final_msg_id || data.msg_id)) || '');
+  // A derived marker is a reconstruction, and a reconstruction may not end a
+  // turn that is still running. The page classifier names the last assistant
+  // row of every turn it believes is finished; the server's active-turn set is
+  // the only thing that keeps it away from a live one, and that set is not
+  // always populated when the page is built (a capture owns the marker, the
+  // gap-recovery path re-reads the tail mid-turn). The block then said
+  // "completed" with a frozen clock and no cues over an agent visibly still
+  // working -- exactly what the rain and the elapsed exist to deny.
+  //
+  // What the live channel feeds, and what the runtime snapshot names, are not
+  // guesses. Either one refuses the guess here. A `done` never carries this
+  // flag, so nothing real is blocked.
+  if (data && data.turn_final_derived
+      && (state.liveFed || _turnRuntime.has(state.turnId))) return false;
   // A derived marker is a reconstruction guess, not an authority: pagination
   // classifies each page on its own, so an older page can derive a second
   // final for a turn whose real answer is already placed. Never let a guess
@@ -876,6 +909,9 @@ function turnViewFinalize(data) {
   // header stays on "working" over a turn that is visibly finished.
   if (element) { element.classList.remove('streaming'); _turnPromoteLast(state, element); }
   if (finalId) state.finalMsgId = finalId;
+  // Remember that nothing authoritative closed this turn: a live row arriving
+  // afterwards reopens it (turnViewIngest), which a `done` must never allow.
+  state.closedByGuess = !!(data && data.turn_final_derived);
   _turnRetireRuntime(state);
   _turnStopTransient(state); _turnUpdateStatus(state, 'completed'); _turnPlaceBlock(state);
   return true;

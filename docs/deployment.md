@@ -42,6 +42,40 @@ single hot append target does not grow into a large file on Windows/WSL mounts.
 | `PAWFLOW_JSONL_SEGMENT_ROWS` | `5000` | Maximum rows per JSONL segment. |
 | `PAWFLOW_JSONL_SEGMENT_BYTES` | `8388608` | Maximum bytes per JSONL segment before rollover. |
 
+### Reading a transcript
+
+A transcript is read a bounded window at a time, never as a whole. Both the UI
+pagination (`load_page`) and the `read_history` tool answer from
+`iter_display_windows` / `load_window_by_index` / `find_display_index`, which
+stream rows and keep only the page they return. `ConversationStore.load()`
+loads everything and exists for the callers that genuinely need the full
+conversation; a request handler is not one of them. Conversations reach
+hundreds of thousands of messages and `read_history` is called in chains, so a
+reader whose cost tracks the conversation instead of the answer will take the
+server down under a handful of calls -- which is exactly what it did.
+
+## Updating
+
+An update launched from the UI does what the installer does, in the same order:
+pull, refresh host artifacts, restart, then **remove the PawFlow image tags
+this install no longer uses**. That last step (`core/update_manager.py`,
+`_image_cleanup_lines`) used to be missing from the UI path only, so an
+instance that never updated from the command line accumulated every version it
+had ever run, at a couple of gigabytes each.
+
+What is never removed:
+
+- any image referenced by a container, running or stopped -- read from the
+  daemon, not assumed;
+- the server image being installed;
+- the configured relay images, which are normally referenced by no container
+  between agent turns;
+- anything outside the repositories PawFlow publishes (`PRUNABLE_REPOSITORIES`)
+  -- a locally built or third-party image is never a candidate.
+
+The cleanup runs last and tolerates its own failures: it costs disk space, and
+must never turn a successful update into a failed one.
+
 ## Auto-detection logic
 
 ```

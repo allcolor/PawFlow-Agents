@@ -116,6 +116,15 @@ RELAY_BUILD_TARGETS = (
 
 RELAY_IMAGE_GENERATOR = "scripts/generate-relay-image.py"
 
+#: Repositories the updater may prune tags from. Only images this project
+#: publishes: a locally built or third-party image is never a candidate, so a
+#: bug here cannot cost anything that is not re-pullable.
+PRUNABLE_REPOSITORIES = (
+    "ghcr.io/allcolor/pawflow",
+    "ghcr.io/allcolor/pawflow-relay-dev",
+    "ghcr.io/allcolor/pawflow-relay-minimal",
+)
+
 #: Name of the throwaway container that restarts the stack. Kept (not --rm) so
 #: `docker logs pawflow-updater` still explains a failed update afterwards.
 UPDATER_CONTAINER = "pawflow-updater"
@@ -666,7 +675,8 @@ def updater_image() -> str:
     return configured or DEFAULT_UPDATER_IMAGE
 
 
-def _updater_script(working_dir: str, pull_source: bool) -> str:
+def _updater_script(working_dir: str, pull_source: bool,
+                    keep_images: Optional[List[str]] = None) -> str:
     """Shell run by the updater, in the project directory, on the host socket.
 
     Ordering is the safety property: everything that can fail without
@@ -730,7 +740,71 @@ def _updater_script(working_dir: str, pull_source: bool) -> str:
         "fi",
         "docker compose up -d --build",
     ])
+    lines.extend(_image_cleanup_lines(keep_images or []))
     return "\n".join(lines)
+
+
+#: Shell appended to every updater script, after the restart. Two holes:
+#: %(keep)s = space-separated refs to spare, %(repos)s = case patterns for the
+#: repositories that may be pruned at all.
+_IMAGE_CLEANUP_SH = """echo 'Cleaning older PawFlow image tags not used by this install.'
+_pf_keep=" %(keep)s "
+for _pf_used in $(docker ps -a --format '{{.Image}}' 2>/dev/null || true); do
+  _pf_keep="$_pf_keep$_pf_used "
+done
+docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | while read -r _pf_ref; do
+  case "$_pf_ref" in %(repos)s) ;; *) continue ;; esac
+  case "$_pf_ref" in *:"<none>") continue ;; esac
+  case "$_pf_keep" in *" $_pf_ref "*) continue ;; esac
+  echo "Removing old image tag: $_pf_ref"
+  docker rmi "$_pf_ref" >/dev/null 2>&1 || echo "Warning: could not remove $_pf_ref" >&2
+done
+docker image prune -f --filter dangling=true >/dev/null 2>&1 || true"""
+
+
+def images_to_keep(target_image: str = "") -> List[str]:
+    """Image refs the cleanup must never remove.
+
+    The relay images are named from live settings rather than assumed: a relay
+    is spawned on demand, so its image is usually referenced by no container at
+    the moment an update finishes, and pruning it would cost the operator a
+    multi-gigabyte pull the next time an agent touches a file.
+    """
+    keep = [target_image] if target_image else []
+    for key in ("relay-dev", "relay-minimal"):
+        try:
+            name = relay_image_name(key)
+        except Exception:
+            logger.debug("Could not resolve the %s image name", key, exc_info=True)
+            continue
+        if name:
+            keep.append(name)
+    return keep
+
+
+def _image_cleanup_lines(keep: List[str]) -> List[str]:
+    """Shell that drops superseded PawFlow image tags, after the restart.
+
+    The installer has always done this (``cleanup_old_pawflow_images``). The
+    update launched from the UI never did, so an instance that only ever
+    updated from the UI accumulated every version it had ever run -- beta.49,
+    .50, .53, .57, .59, .61 -- at a couple of gigabytes each, until a
+    command-line reinstall removed them all at once.
+
+    Same rule as the installer, with one difference that matters: what to keep
+    is read from the daemon, not reconstructed from this process's idea of the
+    configuration. An image some container references is in use whatever this
+    code believes about it.
+
+    Runs last, once the new server is up, and every step tolerates its own
+    failure: a cleanup that fails costs disk space, and must never turn a
+    successful update into a failed one.
+    """
+    values = {
+        "keep": " ".join(shlex.quote(ref) for ref in sorted(set(keep)) if ref),
+        "repos": "|".join(f"{repo}:*" for repo in PRUNABLE_REPOSITORIES),
+    }
+    return (_IMAGE_CLEANUP_SH % values).split("\n")
 
 
 def published_server_image(current_image: str) -> str:
@@ -988,6 +1062,10 @@ def _installer_updater_script(info: Dict[str, Any], image: str,
     else:
         lines.append(f"cd {shlex.quote(work_dir)}")
         lines.append(f"{assignments} bash scripts/run-pawflow-docker.sh")
+    # Last, and only once the server is back: the tags this install no longer
+    # uses. The image just pulled is spared explicitly -- it is the one thing
+    # here that would be catastrophic to remove.
+    lines.extend(_image_cleanup_lines(images_to_keep(image)))
     return "\n".join(lines)
 
 
@@ -1213,7 +1291,9 @@ def update_server(pull_source: bool = False,
                                         pull_source, artifact_dir=artifact_dir,
                                         force_artifacts=force_artifacts)
               if deployment == "installer"
-              else _updater_script(working_dir, pull_source))
+              else _updater_script(working_dir, pull_source,
+                                   keep_images=images_to_keep(
+                                       check.get("target_image", ""))))
 
     # Drop the previous updater so its name is free; its logs have served
     # their purpose by now.

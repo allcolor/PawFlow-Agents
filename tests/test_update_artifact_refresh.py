@@ -129,8 +129,10 @@ def test_the_refresh_aborts_by_default_and_only_warns_when_forced():
     # Forced: the same status only warns, and the start script still runs.
     assert '[ "$_pf_rc" -eq 0 ] || exit' not in forced
     assert "WARNING host artifacts were not refreshed" in forced
-    assert forced.rstrip().splitlines()[-1].endswith(
-        "bash scripts/run-pawflow-docker.sh")
+    # The point is that the restart still happens under force. It is no longer
+    # the final line: the image cleanup runs after it, once the server is up.
+    assert any(line.endswith("bash scripts/run-pawflow-docker.sh")
+               for line in forced.splitlines())
 
 
 def test_extracted_files_are_chowned_to_the_uid_the_server_runs_as():

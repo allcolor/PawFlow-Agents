@@ -191,7 +191,12 @@ def test_script_checks_compose_before_touching_anything():
     # server: a missing compose must abort while the server is still alive.
     assert lines[0] == "set -eu"
     assert lines.index("docker compose version") < len(lines) - 1
-    assert lines[-1] == "docker compose up -d --build"
+    # Bringing the stack up is the last step that can affect the server. The
+    # only thing after it is the image cleanup, which reclaims disk once the
+    # new version is already running and tolerates its own failures.
+    restart = lines.index("docker compose up -d --build")
+    assert lines[restart + 1].startswith(
+        "echo 'Cleaning older PawFlow image tags"), lines[restart + 1:]
     assert "git pull" not in script
 
 
@@ -223,7 +228,11 @@ def test_a_failed_pull_is_not_reported_as_an_update():
     """
     script = update_manager._updater_script(WORKDIR, pull_source=False)
 
-    assert "|| true" not in script
+    # Scoped to the part that decides whether the update succeeded. The image
+    # cleanup that runs afterwards uses `|| true` on purpose: it costs disk,
+    # never correctness, and must not fail an update that already worked.
+    update_part = script.split("docker compose up -d --build")[0]
+    assert "|| true" not in update_part
     # The supported path has no tolerance at all: `set -eu` ends the run.
     assert "  docker compose pull --ignore-buildable\n" in script + "\n"
     # Legacy Compose classifies each service from normalized config instead of
@@ -630,7 +639,12 @@ def test_the_installer_script_pulls_before_it_touches_the_server(monkeypatch):
     assert "apk add --no-cache bash" in script
     # A failed pull must leave the server running, so it comes first.
     assert script.index("docker pull") < script.index("run-pawflow-docker.sh")
-    assert lines[-1].endswith("bash scripts/run-pawflow-docker.sh")
+    # Restarting the server is the last step that touches it; the image
+    # cleanup that follows only reclaims disk, once the new version is up.
+    restart = max(i for i, line in enumerate(lines)
+                  if line.endswith("bash scripts/run-pawflow-docker.sh"))
+    assert lines[restart + 1].startswith(
+        "echo 'Cleaning older PawFlow image tags"), lines[restart + 1:]
     assert f"cd {APP_DIR}" in script
     # The deployment's identity rides along, quoted.
     assert "PAWFLOW_BOOTSTRAP_GATEWAY_KEY=not-roy-batty" in script

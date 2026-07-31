@@ -114,17 +114,6 @@ class _CCStreamMixin:
                     st.conv_id, f"claude_pool_idx:{st.agent_name or 'default'}") or -1)
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
-        self._setup_credentials(
-            st.workdir, pool_index=st._resume_pool_idx,
-            user_id=st.user_id, conversation_id=st.conv_id)
-        # Store pool index for this session
-        if st.conv_id and hasattr(self, '_current_pool_index'):
-            try:
-                ConversationStore.instance().set_extra(
-                    st.conv_id, f"claude_pool_idx:{st.agent_name or 'default'}",
-                    self._current_pool_index)
-            except Exception:
-                logger.debug("exception suppressed", exc_info=True)
         st._auth_retried = _is_auth_retry
 
         # Live-session reuse: look up a warm CC process pinned by
@@ -136,12 +125,18 @@ class _CCStreamMixin:
         # / btw) never reuse: they're short-lived by design and must
         # not inherit nor leak another stream's proc.
         st._svc_id = getattr(self, '_agent_service', '') or 'default'
-        # Intentionally NOT `getattr(...) or -1`: `or` coerces 0 to -1,
-        # silently mapping OAuth pool slot 0 onto the api-key sentinel.
-        # The getattr default handles the "attr never set" case (api-key
-        # mode: _setup_credentials early-returns before assigning the
-        # attr).
-        st._svc_pool_idx = int(getattr(self, '_current_pool_index', -1))
+        # The slot the lookup asks about is the PERSISTED one, and setting a
+        # slot up is not a question but a write: _setup_credentials stamps
+        # .credentials.json, self._current_pool_index and the stored extra.
+        # Asking it first meant that when the exact key missed and
+        # get_compatible adopted a session on ANOTHER slot, only the key, the
+        # local index and the extra were realigned -- the client and the
+        # credentials file stayed on the slot this turn had just written. Token
+        # recovery, refresh-on-auth-error and slot exclusion then all addressed
+        # a different account than the one the live process is running on. So
+        # credentials are a LAUNCH concern, taken in the else branch below,
+        # which is what every other CLI provider already does.
+        st._svc_pool_idx = st._resume_pool_idx
         # _is_ephemeral resolved earlier at function entry from
         # call_ephemeral_stream (with self._ephemeral_stream fallback).
         st._live_reg = LiveSessionRegistry.instance()
@@ -168,9 +163,8 @@ class _CCStreamMixin:
                     st._svc_pool_idx = st._live_key[4]
                     logger.info(
                         "[cc-live] adopting live session on slot #%d "
-                        "(this turn set up slot #%d)",
-                        st._svc_pool_idx, int(getattr(
-                            self, '_current_pool_index', -1)))
+                        "(stored slot was #%d)",
+                        st._svc_pool_idx, st._resume_pool_idx)
                     if st.conv_id:
                         try:
                             ConversationStore.instance().set_extra(
@@ -190,6 +184,14 @@ class _CCStreamMixin:
         st._is_reuse = st._live_session is not None
 
         if st._is_reuse:
+            # The live session owns the slot -- it authenticated at spawn time
+            # and is still running on that account. The client adopts the index
+            # so everything keyed on it (recovery, refresh, exclusion, the
+            # sweeper's view of this workdir) addresses that account, and
+            # nothing rewrites the workdir underneath a running process.
+            # Negative means api-key mode, which has no slot to adopt.
+            if st._svc_pool_idx >= 0:
+                self._current_pool_index = st._svc_pool_idx
             # Serialise concurrent _stream_claude_code calls targeting the
             # same live session. Without this, bg_bucket_builder's
             # auto_extract_memories (or any other background caller that
@@ -270,6 +272,30 @@ class _CCStreamMixin:
             # re-derive and whose validity only CC can judge.
             if not st._is_ephemeral:
                 self._cli_require_cold_context("claude-code")
+            # Launch: this is where a slot is chosen and written. The index the
+            # pool hands back is the one the key, the extra and the process all
+            # have to agree on.
+            self._setup_credentials(
+                st.workdir, pool_index=st._resume_pool_idx,
+                user_id=st.user_id, conversation_id=st.conv_id)
+            # Intentionally NOT `getattr(...) or -1`: `or` coerces 0 to -1,
+            # silently mapping OAuth pool slot 0 onto the api-key sentinel.
+            # The getattr default handles the "attr never set" case (api-key
+            # mode: _setup_credentials early-returns before assigning the
+            # attr).
+            st._svc_pool_idx = int(getattr(self, '_current_pool_index', -1))
+            if st._live_key is not None:
+                st._live_key = (st.user_id, st.conv_id,
+                                st.agent_name or 'default', st._svc_id,
+                                st._svc_pool_idx)
+            if st.conv_id and hasattr(self, '_current_pool_index'):
+                try:
+                    ConversationStore.instance().set_extra(
+                        st.conv_id,
+                        f"claude_pool_idx:{st.agent_name or 'default'}",
+                        self._current_pool_index)
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
             st.session_id = ""
             st.proc, self._pool_container_name, st._mcp_internal_token = (
                 self._spawn_cc_stream(st.workdir, st.user_id, st.conv_id, st.agent_name,

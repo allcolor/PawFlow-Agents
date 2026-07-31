@@ -685,6 +685,41 @@ def test_the_provider_takes_the_live_session_whatever_slot_it_is_on():
         "an adopted session must be adopted with its own key")
 
 
+def test_credentials_are_taken_at_launch_never_before_the_live_lookup():
+    """Same order, third consequence: the credential slot.
+
+    _setup_credentials is a WRITE -- it stamps .credentials.json in the
+    workdir, sets self._current_pool_index and persists the slot. Running it
+    before the lookup meant that when the exact key missed and get_compatible
+    adopted a session on another slot, only the key, the local index and the
+    extra were realigned: the client and the file stayed on the slot this turn
+    had just written. _recover_tokens then wrote the tokens of one account into
+    another account's slot, an auth error refreshed or excluded the wrong
+    credential, and the sweeper attributed the workdir to a third. A
+    multi-account pool could disconnect accounts that were never used.
+
+    So: ask first, and only the launch branch takes a slot -- which is what
+    codex and gemini already do.
+    """
+    src = Path("core/llm_providers/_cc_stream.py").read_text(encoding="utf-8")
+
+    lookup = src.index("st._is_reuse = st._live_session is not None")
+    assert "self._setup_credentials(" not in src[:lookup], (
+        "credentials are written before the provider knows whether a live "
+        "process exists -- an adoption on another slot then leaves the client "
+        "and the workdir pointing at the slot this turn wrote")
+
+    # The question is asked on the slot this conversation last ran on, not on
+    # one chosen by a write that has not happened yet.
+    assert "st._svc_pool_idx = st._resume_pool_idx" in src[:lookup]
+
+    # Reuse adopts the live session's slot, so everything keyed on the index
+    # addresses the account the running process authenticated with.
+    reuse = src[lookup:src.index("self._setup_credentials(")]
+    assert "self._current_pool_index = st._svc_pool_idx" in reuse, (
+        "the reuse path does not adopt the live session's slot")
+
+
 # -- a refusal must not leave a container nobody tracks ----------------------
 
 def test_a_refused_antigravity_launch_still_kills_the_stale_session():

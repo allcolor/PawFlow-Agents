@@ -305,61 +305,29 @@ def pawflow_container_labels(kind: str = "") -> list:
     return labels
 
 
-LEGACY_REAP_FORMAT = '{{.ID}} {{.Label "' + PAWFLOW_SERVER_LABEL + '"}}'
-
-
-def legacy_reap_ids(ps_output: str, own_server_id: str) -> list:
-    """Ids the name-prefix shutdown pass may reap, from `docker ps` output.
-
-    The shutdown reaper's first pass filters on this server's label and is
-    exact. The second pass exists only for containers started by a build older
-    than the label, and it matches NAMES -- most prefixes (`pf-cc-pool-`,
-    `pawflow-relay-srv-`, the logins) carry no server id at all, so on a shared
-    Docker daemon they also name another PawFlow server's containers. Those
-    survived pass 1 precisely because their label is not ours; reaping them by
-    name would kill a running instance's agents, relays and logins.
-
-    So a container that carries somebody else's server id is left alone. Only
-    an unlabelled one -- which can only predate the label -- or one already
-    ours is reaped. Expects rows of ``<id> [<server-id>]``
-    (``LEGACY_REAP_FORMAT``); a row with no label prints the id alone.
-    """
-    out = []
-    for line in (ps_output or "").splitlines():
-        parts = line.split()
-        if not parts:
-            continue
-        owner = parts[1] if len(parts) > 1 else ""
-        # Docker prints this for a missing label under some format versions.
-        if owner == "<no":
-            owner = ""
-        if owner and owner != own_server_id:
-            continue
-        out.append(parts[0])
-    return out
-
-
 def docker_exec(container: str, cmd_args: list, **kwargs) -> subprocess.CompletedProcess:
     """Run 'docker exec' with correct prefix."""
     cmd = docker_cmd() + ["exec"] + cmd_args
     return subprocess.run(cmd, **kwargs)  # nosec B603
 
 
-#: Container name prefixes from builds older than the label. Only reachable
-#: through the ownership check in :func:`legacy_reap_ids`.
-LEGACY_REAP_PREFIXES = (
-    "pf-cc-pool-",
-    "pf-codex-pool-",
-    "pf-gemini-pool-",
-    "pf-{own}-cci-",
-    "pf-{own}-agyobs-",
-    "pawflow-relay-srv-",
-    "pawflow-relay-min-",
-    "pawflow-claude-login-",
-    "pawflow-codex-login-",
-    "pawflow-gemini-login-",
-    "pawflow-agy-login-",
-)
+def _confirmed_removals(requested: list, result) -> list:
+    """The subset of ``requested`` that ``docker rm`` actually removed.
+
+    A refusal is a non-zero exit and a line on stderr, NOT an exception, so
+    the caller cannot learn anything from the absence of a raise. Counting the
+    request as the result is worse than a miscount: the reaper then reports a
+    clean sweep while the container is still up, still holding a credential
+    slot and still writing to a workdir the new process believes it owns.
+
+    ``docker rm`` echoes what it removed, one identifier per line, so the
+    output is the receipt. It echoes back whatever form it was given, and a
+    partial failure still removes the others -- hence a set intersection
+    rather than a returncode test.
+    """
+    echoed = {line.strip() for line in (getattr(result, "stdout", "") or "").splitlines()
+             if line.strip()}
+    return [cid for cid in requested if cid in echoed]
 
 
 def reap_spawned_containers(log=None) -> int:
@@ -374,55 +342,41 @@ def reap_spawned_containers(log=None) -> int:
     sweep it or reap it, while it holds a credential slot and keeps writing
     to a session workdir the new process believes it owns.
 
-    Boot used to reap by NAME (`pf-<server-id>-*`), which is the mistake the
-    label was introduced to end: the pool families are named `pf-cc-pool-*`
-    and the relays and logins `pawflow-*`, so none of them start with this
-    server's prefix and none of them were ever cleaned up at startup.
-
-    Scoped to this server id on purpose: several PawFlow servers can share
-    one Docker host, and each may only reap its own.
+    The label is the ONLY thing that decides, and it is stamped at the single
+    place that can know -- the spawn, via `pawflow_container_labels`. Matching
+    names instead was tried and removed: most families are named `pf-cc-pool-*`
+    or `pawflow-relay-srv-*`, carrying no server id at all, so on a shared
+    Docker daemon a name match also selects ANOTHER live PawFlow server's
+    pools, relays and logins. An unlabelled container is not evidence of an
+    older build to clean up -- it is evidence of something this server did not
+    start, and killing it breaks the one invariant that matters here: a server
+    reaps its own containers and nobody else's.
     """
     _log = log or logger.info
-    reaped = 0
     own = get_server_id()
-    # Pass 1 -- the label. One filter, every family, now and later.
     try:
         result = subprocess.run(  # nosec B603
             docker_cmd() + ["ps", "-a", "-q", "--filter",
                             f"label={PAWFLOW_SERVER_LABEL}={own}"],
             capture_output=True, text=True, timeout=5)
         ids = [i for i in (result.stdout or "").split() if i]
-        if ids:
-            subprocess.run(docker_cmd() + ["rm", "-f"] + ids,  # nosec B603
-                           capture_output=True, timeout=20)
-            reaped += len(ids)
-            _log("Reaped %d container(s) spawned by this server", len(ids))
+        if not ids:
+            return 0
+        rm = subprocess.run(docker_cmd() + ["rm", "-f"] + ids,  # nosec B603
+                            capture_output=True, text=True, timeout=20)
+        removed = _confirmed_removals(ids, rm)
+        if len(removed) != len(ids):
+            logger.warning(
+                "Reaper could not remove %d of %d container(s): %s",
+                len(ids) - len(removed), len(ids),
+                (rm.stderr or "").strip() or "docker gave no reason")
+        if removed:
+            _log("Reaped %d container(s) spawned by this server", len(removed))
+        return len(removed)
     except Exception:
-        logger.debug("label reap failed", exc_info=True)
-    # Pass 2 -- legacy names, for containers started before the label
-    # existed. Most of these prefixes carry no server id at all, so the name
-    # match alone is host-wide: on a shared Docker daemon it also names
-    # another PawFlow server's pools, relays and logins, which survived pass
-    # 1 precisely because their label is not ours. Reaping those would kill a
-    # running instance's agents. So the label decides here too, in the other
-    # direction -- see legacy_reap_ids.
-    for prefix in LEGACY_REAP_PREFIXES:
-        prefix = prefix.format(own=own[:12])
-        try:
-            result = subprocess.run(  # nosec B603
-                docker_cmd() + ["ps", "-a", "--filter", f"name={prefix}",
-                                "--format", LEGACY_REAP_FORMAT],
-                capture_output=True, text=True, timeout=5)
-            ids = legacy_reap_ids(result.stdout or "", own)
-            if ids:
-                subprocess.run(docker_cmd() + ["rm", "-f"] + ids,  # nosec B603
-                               capture_output=True, timeout=10)
-                reaped += len(ids)
-                _log("Reaped %d orphan container(s) matching %s*",
-                     len(ids), prefix)
-        except Exception:
-            logger.debug("legacy reap failed for %s", prefix, exc_info=True)
-    return reaped
+        # Docker unreachable must never stop a boot.
+        logger.debug("container reap failed", exc_info=True)
+        return 0
 
 
 def docker_rm(container: str, force: bool = True, **kwargs) -> subprocess.CompletedProcess:

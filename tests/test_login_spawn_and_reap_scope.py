@@ -12,9 +12,6 @@ import types
 
 import pytest
 
-from core.docker_utils import LEGACY_REAP_FORMAT, legacy_reap_ids
-
-
 # ── The Gemini / Antigravity login container ────────────────────────────────
 
 def _run_gemini_login(monkeypatch, action):
@@ -108,100 +105,99 @@ def test_the_login_thread_reaches_docker_run_instead_of_a_name_error(
     ("gemini_server_login", "pawflow-gemini-login-"),
     ("agy_server_login", "pawflow-agy-login-"),
 ])
-def test_the_login_container_name_is_the_one_shutdown_looks_for(
+def test_the_login_container_is_labelled_so_the_reaper_can_find_it(
         monkeypatch, action, expected):
-    """The reaper's legacy list must actually name these containers."""
+    """The label is the only thing that makes a container reapable.
+
+    The name is checked too, but only because operators grep for it -- the
+    reaper never reads it. A login spawned without the label would outlive
+    every shutdown and every boot with nothing to notice.
+    """
+    from core.docker_utils import PAWFLOW_SERVER_LABEL
+
     captured, _flowfile = _run_gemini_login(monkeypatch, action)
     docker_run = [a for a in (captured.get("argv") or [])
                   if "run" in a and "--detach" in a][0]
     name = docker_run[docker_run.index("--name") + 1]
     assert name.startswith(expected)
 
-    from core.docker_utils import LEGACY_REAP_PREFIXES
-    assert expected in LEGACY_REAP_PREFIXES, (
-        f"{expected} is spawned but the reaper never looks for it")
-
-
-# ── The shutdown reaper's second pass ───────────────────────────────────────
-
-def test_another_servers_containers_are_never_reaped_by_name():
-    """The prefixes carry no server id, so the name match is host-wide.
-
-    A second PawFlow instance on the same Docker daemon owns containers with
-    exactly these names. They survive pass 1 because their label is not ours --
-    and must survive pass 2 too, or stopping one server kills another's agents.
-    """
-    ours = "server-aaaa"
-    ps_output = "\n".join([
-        "c1 server-bbbb",   # another live server
-        "c2 server-aaaa",   # ours
-        "c3",               # unlabelled: predates the label, safe to reap
-    ])
-    assert legacy_reap_ids(ps_output, ours) == ["c2", "c3"]
-
-
-def test_an_unlabelled_legacy_container_is_still_reaped():
-    assert legacy_reap_ids("abc123\n", "server-aaaa") == ["abc123"]
-
-
-def test_docker_missing_label_placeholder_counts_as_unlabelled():
-    assert legacy_reap_ids("abc123 <no value>\n", "server-aaaa") == ["abc123"]
-
-
-def test_blank_and_ragged_output_is_survivable():
-    assert legacy_reap_ids("", "s") == []
-    assert legacy_reap_ids("\n\n  \n", "s") == []
-
-
-def test_the_reaper_asks_docker_for_the_label_column():
-    """Without the label in the output there is nothing to discriminate on."""
-    from pathlib import Path
-    src = Path("core/docker_utils.py").read_text(encoding="utf-8")
-    assert "LEGACY_REAP_FORMAT" in src
-    assert "legacy_reap_ids(" in src
-    # The old blanket "every id matching this name" collection is gone.
-    assert '"ps", "-a", "-q",\n' not in src
-    assert "org.pawflow.server-id" in LEGACY_REAP_FORMAT
+    labels = [docker_run[i + 1] for i, a in enumerate(docker_run)
+              if a == "--label"]
+    assert any(lbl.startswith(f"{PAWFLOW_SERVER_LABEL}=") for lbl in labels), (
+        f"{expected}* is spawned without the server-id label, so no reaper "
+        f"at either end of the process can ever remove it")
 
 
 # ── The reaper itself, at both ends of the process ──────────────────────────
 
-def test_the_reaper_removes_by_label_and_leaves_another_server_alone(
-        monkeypatch):
-    """One call, used by boot and by shutdown alike.
+class _Rm:
+    """A `docker rm` result: it echoes what it removed, errors go to stderr."""
 
-    Pass 1 asks Docker for this server's label and removes what it names.
-    Pass 2 walks the legacy name prefixes and may only remove a container
-    that is unlabelled or already ours -- a second PawFlow instance on the
-    same daemon owns containers with exactly those names.
-    """
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+def _reaper_with(monkeypatch, ps_ids, rm_result):
     import core.docker_utils as du
 
     monkeypatch.setattr(du, "get_server_id", lambda: "server-aaaa")
     monkeypatch.setattr(du, "docker_cmd", lambda: ["docker"])
-    removed = []
-
-    class _R:
-        def __init__(self, stdout=""):
-            self.stdout = stdout
-            self.returncode = 0
+    seen = {"rm": [], "filters": []}
 
     def fake_run(cmd, **kwargs):
         if "rm" in cmd:
-            removed.extend(cmd[cmd.index("-f") + 1:])
-            return _R()
-        if "-q" in cmd:                      # pass 1: the label filter
-            assert "label=org.pawflow.server-id=server-aaaa" in cmd
-            return _R("labelled-1 labelled-2\n")
-        if any(str(a).startswith("name=pf-cc-pool-") for a in cmd):
-            return _R("mine server-aaaa\nnot-mine server-bbbb\nold\n")
-        return _R("")
+            seen["rm"].extend(cmd[cmd.index("-f") + 1:])
+            return rm_result
+        seen["filters"].extend(a for a in cmd if str(a).startswith(("label=", "name=")))
+        return _Rm(stdout=ps_ids)
 
     monkeypatch.setattr(du.subprocess, "run", fake_run)
+    return du, seen
 
-    assert du.reap_spawned_containers() == 4
-    assert removed == ["labelled-1", "labelled-2", "mine", "old"]
-    assert "not-mine" not in removed, "reaped another server's container"
+
+def test_the_reaper_selects_on_the_label_and_nothing_else(monkeypatch):
+    """One call, used by boot and by shutdown alike.
+
+    Selecting on NAME was tried and removed. Most families are named
+    `pf-cc-pool-*` or `pawflow-relay-srv-*` and carry no server id, so on a
+    shared Docker daemon the name match also selects another LIVE PawFlow
+    server's containers -- and an unlabelled container is not an old build of
+    ours, it is somebody else's. The label is stamped at the spawn and is the
+    only evidence of ownership there is.
+    """
+    du, seen = _reaper_with(
+        monkeypatch, "labelled-1 labelled-2\n",
+        _Rm(stdout="labelled-1\nlabelled-2\n"))
+
+    assert du.reap_spawned_containers() == 2
+    assert seen["rm"] == ["labelled-1", "labelled-2"]
+    assert seen["filters"] == ["label=org.pawflow.server-id=server-aaaa"], (
+        "the reaper asked Docker for something other than its own label")
+    assert not any(f.startswith("name=") for f in seen["filters"])
+
+
+def test_a_refused_removal_is_not_counted_as_one(monkeypatch):
+    """Docker refuses with a non-zero exit and stderr, never an exception.
+
+    Counting the request instead of the receipt is worse than a miscount: the
+    reaper reports a clean sweep while the zombie is still up, still holding
+    the credential slot the new process is about to hand out again.
+    """
+    du, seen = _reaper_with(
+        monkeypatch, "gone stuck\n",
+        _Rm(stdout="gone\n", stderr="Error response from daemon: stuck\n",
+            returncode=1))
+
+    assert du.reap_spawned_containers() == 1, "a refusal was counted as a kill"
+    assert seen["rm"] == ["gone", "stuck"], "both were still attempted"
+
+
+def test_nothing_to_reap_runs_no_removal(monkeypatch):
+    du, seen = _reaper_with(monkeypatch, "\n", _Rm())
+    assert du.reap_spawned_containers() == 0
+    assert seen["rm"] == []
 
 
 def test_the_reaper_survives_a_docker_that_is_not_there(monkeypatch):

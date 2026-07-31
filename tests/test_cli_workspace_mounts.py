@@ -197,10 +197,15 @@ def test_cli_provider_pools_run_as_configured_pawflow_uid_gid():
         assert '--reuid={self.run_uid} --regid={self.run_gid}' in src
 
 
-def test_server_stop_reaps_managed_relay_containers():
-    from core.docker_utils import LEGACY_REAP_PREFIXES
-    assert "pawflow-relay-srv-" in LEGACY_REAP_PREFIXES
-    assert "pawflow-relay-min-" in LEGACY_REAP_PREFIXES
+def test_server_relay_containers_are_labelled_so_the_reaper_finds_them():
+    """The relay is spawned by the server, so it must die with it.
+
+    The reaper selects on the label alone -- a relay spawned without it is
+    unreachable by every cleanup at both ends of the process.
+    """
+    src = Path("core/server_relay_manager.py").read_text(encoding="utf-8")
+    assert src.count("pawflow_container_labels(") >= 2, (
+        "a relay spawn path stopped stamping the server-id label")
 
 
 def test_server_stop_reaps_every_container_it_spawned():
@@ -236,6 +241,9 @@ def test_boot_reaps_zombies_with_the_same_code_as_shutdown():
     mistake the label was introduced to end: the batch pools are named
     `pf-cc-pool-*` and the relays and logins `pawflow-*`, so none of them
     start with this server's prefix and none were ever cleaned up at startup.
+
+    Matching those generic prefixes instead is not the fix either -- see
+    test_the_reaper_selects_on_the_label_and_nothing_else.
     """
     src = Path("cli.py").read_text(encoding="utf-8")
     assert "kill_containers" not in src, (

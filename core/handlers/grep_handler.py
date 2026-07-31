@@ -202,8 +202,8 @@ class GrepHandler(BaseFsHandler):
                     show_line_numbers: bool = True, file_type: str = "",
                     multiline: bool = False, recursive: bool = True) -> str:
         """Execute ripgrep (rg) in workdir. Falls back to Python regex if rg not available."""
-        import subprocess
-        import shutil  # nosec B404
+        import subprocess  # nosec B404
+        import shutil
 
         full = self._sandbox_path(path, self._workdir)
         rg_path = shutil.which("rg")

@@ -160,11 +160,11 @@ class ExecuteScriptTask(BaseTask):
         API / live FlowFile (Option A: the service stays on the host, the
         container holds no secrets).
         """
-        import subprocess
+        import subprocess  # nosec B404
         import json
         import tempfile
         import os
-        import threading  # nosec B404
+        import threading
 
         content = flowfile.get_content().decode('utf-8', errors='replace')
         attributes = dict(flowfile.get_attributes())

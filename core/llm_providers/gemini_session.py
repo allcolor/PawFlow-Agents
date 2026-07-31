@@ -17,6 +17,9 @@ import logging
 import os
 import time
 
+from core.llm_providers.cli_shared import (
+    note_token_recovered, token_recovery_is_stale)
+
 logger = logging.getLogger(__name__)
 
 
@@ -287,7 +290,9 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
     """Copy any gemini-CLI-rotated OAuth token from
     <workdir>/.gemini/oauth_creds.json back to the exact pool slot.
 
-    Called from live-session teardown (idle sweep / shutdown / evict).
+    Called from live-session teardown (idle sweep / shutdown / evict) and
+    from the sweeper tick for sessions still running -- teardown is not a
+    moment one can rely on, a server killed hard never reaches it.
     Google does NOT rotate the refresh_token by default, so for gemini
     this is defense-in-depth rather than a logout fix (unlike CC /
     Anthropic). Targets the slot via the SESSION's own service_id /
@@ -304,10 +309,14 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
         new_expiry = int(blob.get("expiry_date", 0) or 0)
         if not new_access:
             return False
+        _signature = f"{new_access}\x1f{new_refresh}\x1f{new_expiry}"
+        if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
+            return False
         _persist_tokens_to_service(
             new_access, new_refresh, new_expiry,
             service_id=service_id, pool_index=pool_index,
             user_id=user_id, conv_id=conv_id)
+        note_token_recovered(workdir, service_id, pool_index, _signature)
         logger.info(
             "[gemini] recovered teardown tokens [pool:%s] for '%s'",
             pool_index, service_id)

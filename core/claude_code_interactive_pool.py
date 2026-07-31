@@ -774,6 +774,18 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             logger.info("[cci-live] evict %s (%s)", state.name, reason)
             self._recover_container_tokens(state)
             self._kill_container(state.name)
+        # The sessions that survive this tick are exactly the ones whose
+        # tokens nothing else will rescue: teardown is the only other moment
+        # recovery runs, and a server killed hard -- an update whose stop
+        # grace expires -- never reaches it. The CLI rotates its own
+        # single-use refresh_token in-container, so a copy that never happens
+        # leaves the pool holding a token the next launch cannot refresh.
+        # recover_tokens_from_workdir skips a token it has already copied,
+        # so a tick where nothing rotated writes nothing.
+        with self._lock:
+            survivors = list(self._sessions.values())
+        for state in survivors:
+            self._recover_container_tokens(state)
         return len(to_kill)
 
     def shutdown_all(self) -> None:
@@ -781,8 +793,15 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         with self._lock:
             states = list(self._sessions.values())
             self._sessions.clear()
+        # Every token first, then every kill. Interleaving them meant a
+        # shutdown that ran out of time -- `docker rm -f` is up to 15s per
+        # container inside Docker's 10s SIGTERM grace -- was SIGKILLed
+        # part-way through, and every session after the cut point lost the
+        # token its container had rotated. Recovery is a couple of file
+        # operations; it costs nothing to finish it before the slow part.
         for state in states:
             self._recover_container_tokens(state)
+        for state in states:
             self._kill_container(state.name)
 
     @staticmethod

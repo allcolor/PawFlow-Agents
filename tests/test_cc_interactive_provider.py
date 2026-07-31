@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import json
 import threading
+import time
 from queue import Queue
 
 import pytest
@@ -2393,6 +2394,107 @@ def test_cci_teardown_recovers_rotated_token_to_pool_slot(monkeypatch):
     args, _kwargs = recovered[0]
     # recover_tokens_from_workdir(workdir, service_id, pool_index, ...)
     assert args[0] == "/w" and args[1] == "svc" and args[2] == 2
+
+
+def _cci_live_state(name="n", workdir="/w", pool_idx=2):
+    from core.claude_code_interactive_pool import InteractiveContainer
+    return InteractiveContainer(
+        key=("u", "c", name, "svc"), name=name, workdir=workdir,
+        container_workdir="/c", session_token="s", event_service_id="e",
+        internal_token="i", service_id="svc", svc_pool_idx=pool_idx,
+        user_id="u", conv_id="c")
+
+
+def test_cci_sweeper_recovers_tokens_of_sessions_that_stay_alive(monkeypatch):
+    """Teardown is not a moment one can rely on.
+
+    The CLI rotates its own single-use refresh_token inside a container that
+    can live for hours. If the only copy back to the pool happens when that
+    container is torn down, a server killed hard -- an update whose stop grace
+    expires -- loses it, and the next launch inherits a token it cannot
+    refresh. So the sweeper also copies back for the sessions it is NOT
+    evicting.
+    """
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    pool = InteractiveClaudeCodePool()
+    recovered = []
+    monkeypatch.setattr(
+        "core.llm_providers._cc_credentials.recover_tokens_from_workdir",
+        lambda *a, **k: recovered.append(a) or True)
+    monkeypatch.setattr(pool, "_kill_container", lambda name: None)
+    monkeypatch.setattr(InteractiveClaudeCodePool, "_is_alive",
+                        lambda self, name: True)
+
+    alive = _cci_live_state(name="alive", pool_idx=3)
+    alive.last_used = time.time()
+    pool._sessions[alive.key] = alive
+
+    assert pool.sweep_idle() == 0, "the session is neither idle nor dead"
+    assert [a[2] for a in recovered] == [3], (
+        "a live container's rotated token is never copied back until it dies")
+
+
+def test_cci_shutdown_takes_every_token_before_killing_anything(monkeypatch):
+    """`docker rm -f` is up to 15s per container inside Docker's 10s SIGTERM
+    grace. Interleaving recover and kill meant a shutdown cut short lost the
+    token of every session past the cut point. Recovery is a couple of file
+    operations -- it finishes before the slow part starts."""
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    pool = InteractiveClaudeCodePool()
+    order = []
+    monkeypatch.setattr(
+        "core.llm_providers._cc_credentials.recover_tokens_from_workdir",
+        lambda *a, **k: order.append(("recover", a[2])) or True)
+    monkeypatch.setattr(pool, "_kill_container",
+                        lambda name: order.append(("kill", name)))
+
+    for idx, name in enumerate(("one", "two", "three")):
+        state = _cci_live_state(name=name, pool_idx=idx)
+        pool._sessions[state.key] = state
+
+    pool.shutdown_all()
+
+    kinds = [step[0] for step in order]
+    assert kinds == ["recover"] * 3 + ["kill"] * 3, (
+        "a kill ran before every token had been taken")
+
+
+def test_recovering_the_same_token_twice_does_not_rewrite_the_pool(
+        monkeypatch, tmp_path):
+    """The periodic copy must be free when nothing rotated.
+
+    Without this the sweeper rewrites the credential pool file once per live
+    session per tick, forever, for tokens it has already saved.
+    """
+    from core.llm_providers import _cc_credentials
+
+    persisted = []
+    monkeypatch.setattr(_cc_credentials, "_persist_tokens_to_service",
+                        lambda *a, **k: persisted.append(a))
+
+    workdir = tmp_path / "session"
+    workdir.mkdir()
+    creds = workdir / ".credentials.json"
+
+    def write(access):
+        creds.write_text(json.dumps({"claudeAiOauth": {
+            "accessToken": access, "refreshToken": "r",
+            "expiresAt": 4102444800000}}), encoding="utf-8")
+
+    write("access-1")
+    assert _cc_credentials.recover_tokens_from_workdir(
+        str(workdir), "svc", 0) is True
+    assert _cc_credentials.recover_tokens_from_workdir(
+        str(workdir), "svc", 0) is False, "the same token was copied twice"
+    assert len(persisted) == 1
+
+    # A genuine rotation is still picked up.
+    write("access-2")
+    assert _cc_credentials.recover_tokens_from_workdir(
+        str(workdir), "svc", 0) is True
+    assert len(persisted) == 2
 
 
 def test_cc_interactive_timing_env_is_documented():

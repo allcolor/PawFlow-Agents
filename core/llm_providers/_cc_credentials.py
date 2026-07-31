@@ -22,6 +22,9 @@ import logging
 import os
 from typing import Optional
 
+from core.llm_providers.cli_shared import (
+    note_token_recovered, token_recovery_is_stale)
+
 logger = logging.getLogger(__name__)
 
 
@@ -238,12 +241,15 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
     """Read CC-refreshed OAuth tokens back from <workdir>/.credentials.json
     and persist them to the exact pool slot.
 
-    Called from live-session teardown (idle sweep / shutdown / evict),
-    where the claude CLI inside the long-lived container may have rotated
-    the OAuth token on its own. Anthropic's refresh_token is single-use:
+    Called from live-session teardown (idle sweep / shutdown / evict) AND
+    from the sweeper tick for sessions that are still running, where the
+    claude CLI inside the long-lived container may have rotated the OAuth
+    token on its own. Anthropic's refresh_token is single-use:
     issuing a new one invalidates the old, so if teardown drops the
     container without copying the renewed credential back, the pool keeps
     a dead refresh_token and the user is logged out on the next turn.
+    Teardown is not a reliable moment to be the only one: a server killed
+    hard (an update whose stop grace expires) never reaches it at all.
 
     Unlike the instance method ``_recover_tokens`` (which reads
     ``self._current_pool_index`` / ``self._agent_service``), this targets
@@ -251,7 +257,9 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
     sweeper tears down arbitrary sessions, so instance state is not a
     reliable source for which credential to update.
 
-    Returns True if a token was recovered and persisted, else False.
+    Returns True if a token was recovered and persisted, else False --
+    including when this exact token was already copied back, which is the
+    ordinary case on a periodic call.
     """
     creds_path = os.path.join(workdir, ".credentials.json")
     if not os.path.exists(creds_path):
@@ -265,12 +273,16 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
         new_expires = oauth.get("expiresAt", 0)
         if not new_access:
             return False
+        _signature = f"{new_access}\x1f{new_refresh}\x1f{new_expires}"
+        if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
+            return False
         # _persist_tokens_to_service refuses invalid tokens (empty /
         # already-expired) and addresses pool_index directly when >= 0.
         _persist_tokens_to_service(
             new_access, new_refresh, new_expires,
             service_id=service_id, pool_index=pool_index,
             user_id=user_id, conv_id=conv_id)
+        note_token_recovered(workdir, service_id, pool_index, _signature)
         logger.info(
             "[claude-code] recovered teardown tokens [pool:%s] for '%s'",
             pool_index, service_id)

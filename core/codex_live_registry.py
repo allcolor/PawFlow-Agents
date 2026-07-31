@@ -263,13 +263,14 @@ class CodexLiveRegistry:
                         _fmt_key(key), reason, entry.container_name)
         return entry
 
-    def kill_and_evict(self, key: CodexLiveKey, reason: str) -> None:
+    def kill_and_evict(self, key: CodexLiveKey, reason: str,
+                       recover: bool = True) -> None:
         entry = self.evict(key, reason)
         if entry is None:
             return
         # Rescue any OAuth token the CLI rotated into the workdir before the
         # container dies (defense-in-depth; see CodexLiveSession docstring).
-        if self._recover is not None and getattr(entry, "workdir", ""):
+        if recover and self._recover is not None and getattr(entry, "workdir", ""):
             try:
                 self._recover(entry.workdir, entry.service_id,
                               entry.svc_pool_idx, entry.user_id, entry.conv_id)
@@ -333,8 +334,15 @@ class CodexLiveRegistry:
     def shutdown_all(self):
         with self._lock:
             keys = list(self._containers.keys())
+        # Every token first, then every kill: a shutdown that runs out of time
+        # -- an update whose stop grace expires -- must not cost the sessions
+        # it had not reached yet. The per-entry recover inside kill_and_evict
+        # stays as the fallback and is a no-op for what this already copied.
+        self._recover_live_tokens()
         for k in keys:
-            self.kill_and_evict(k, "shutdown")
+            # Already recovered above; asking again would only make the count
+            # of copies depend on the hook deduplicating itself.
+            self.kill_and_evict(k, "shutdown", recover=False)
 
     def sweep_idle(self, ttl: Optional[float] = None) -> int:
         """Evict inactive containers idle longer than ttl. Returns count."""
@@ -348,7 +356,26 @@ class CodexLiveRegistry:
             ]
         for k in victims:
             self.kill_and_evict(k, f"idle>{int(ttl)}s")
+        # Same rescue for the containers that stay. Teardown is the only other
+        # moment it runs, and a server killed hard never reaches teardown.
+        self._recover_live_tokens()
         return len(victims)
+
+    def _recover_live_tokens(self) -> None:
+        """Copy back any OAuth token the running CLIs rotated in-container."""
+        if self._recover is None:
+            return
+        with self._lock:
+            entries = list(self._containers.values())
+        for entry in entries:
+            if not getattr(entry, "workdir", ""):
+                continue
+            try:
+                self._recover(entry.workdir, entry.service_id,
+                              entry.svc_pool_idx, entry.user_id, entry.conv_id)
+            except Exception:
+                logger.debug("[codex-live] live token recover failed",
+                             exc_info=True)
 
     def ensure_sweeper(self, tick_seconds: int = 60,
                        idle_ttl_seconds: Optional[int] = None,

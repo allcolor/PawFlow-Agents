@@ -18,6 +18,9 @@ import logging
 import os
 import time
 
+from core.llm_providers.cli_shared import (
+    note_token_recovered, token_recovery_is_stale)
+
 logger = logging.getLogger(__name__)
 
 
@@ -209,7 +212,9 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
     """Copy any codex-CLI-rotated OAuth token from
     <workdir>/.codex/auth.json back to the exact pool slot.
 
-    Called from live-session teardown (idle sweep / shutdown / evict).
+    Called from live-session teardown (idle sweep / shutdown / evict) and
+    from the sweeper tick for sessions still running -- teardown is not a
+    moment one can rely on, a server killed hard never reaches it.
     OpenAI does NOT invalidate the old refresh_token on rotation, so for
     codex this is defense-in-depth rather than a logout fix (unlike CC /
     Anthropic). Targets the slot via the SESSION's own service_id /
@@ -228,11 +233,18 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
         new_id = tokens.get("id_token", "")
         if not new_access:
             return False
+        # The three values the file actually carries. The expiry below is
+        # stamped fresh on every call, so it cannot be part of the signature
+        # or a periodic copy would never look unchanged.
+        _signature = f"{new_access}\x1f{new_refresh}\x1f{new_id}"
+        if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
+            return False
         expires_at = int((time.time() + 3600) * 1000)
         _persist_tokens_to_service(
             new_access, new_refresh, expires_at,
             service_id=service_id, pool_index=pool_index,
             id_token=new_id, user_id=user_id, conv_id=conv_id)
+        note_token_recovered(workdir, service_id, pool_index, _signature)
         logger.info(
             "[codex] recovered teardown tokens [pool:%s] for '%s'",
             pool_index, service_id)

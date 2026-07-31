@@ -9,6 +9,7 @@ import http.client
 import logging
 import os
 import re
+import threading
 from html import escape
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
@@ -17,6 +18,43 @@ from urllib.parse import urlparse
 from core._llm_types import ColdStartRequired
 
 logger = logging.getLogger(__name__)
+
+
+# ── Token recovery memo ────────────────────────────────────────────────────
+#
+# Every CLI provider copies the OAuth token its container rotated back into
+# the pool slot the session owns. That used to happen only at teardown, where
+# one redundant write cost nothing. It now also happens on every sweeper tick,
+# for sessions that are still running -- because teardown is not a moment one
+# can rely on: a server killed hard, an update whose stop grace expires, never
+# reaches it, and the token the container rotated is then lost with it.
+#
+# A periodic call must therefore be free when nothing rotated. The memo holds
+# what each session workdir last handed over; the file is the only thing that
+# says whether the CLI rotated anything, so an identical signature means there
+# is nothing to copy, whoever is asking.
+_RECOVERED_SIGNATURES: dict = {}
+_RECOVERED_LOCK = threading.Lock()
+#: Enough for any plausible number of concurrent session workdirs. Cleared
+#: wholesale rather than aged: a dropped entry costs one redundant write.
+_RECOVERED_MAX = 512
+
+
+def token_recovery_is_stale(workdir: str, service_id: str, pool_index: int,
+                            signature: str) -> bool:
+    """True when this exact token was already copied back to that slot."""
+    with _RECOVERED_LOCK:
+        return _RECOVERED_SIGNATURES.get(
+            (workdir, service_id, int(pool_index))) == signature
+
+
+def note_token_recovered(workdir: str, service_id: str, pool_index: int,
+                         signature: str) -> None:
+    """Record a copy that succeeded, so the next tick can skip it."""
+    with _RECOVERED_LOCK:
+        if len(_RECOVERED_SIGNATURES) >= _RECOVERED_MAX:
+            _RECOVERED_SIGNATURES.clear()
+        _RECOVERED_SIGNATURES[(workdir, service_id, int(pool_index))] = signature
 
 
 def request_path(base_url: str, endpoint_path: str = "") -> str:

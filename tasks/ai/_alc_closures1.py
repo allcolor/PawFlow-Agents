@@ -536,15 +536,8 @@ class _ALCClosures1Mixin:
                 # Assistant tool_calls → one tool_call SSE per tc.
                 if msg.role == "assistant" and msg.tool_calls:
                     from core.llm_client import unwrap_mcp_tool
-                    _hidden_schema_tools = {
-                        "get_tool_schema",
-                        "mcp_pawflow_get_tool_schema",
-                        "mcp__pawflow__get_tool_schema",
-                    }
                     for tc in msg.tool_calls:
                         _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
-                        if _tc_name in _hidden_schema_tools:
-                            continue
                         _tc_data = {
                             "tool": _tc_name, "arguments": _tc_args,
                             "tc_id": tc.id,
@@ -562,6 +555,7 @@ class _ALCClosures1Mixin:
                 # `tool_call_id` is enough for the UI to attach the output
                 # to the already-rendered tool_call.
                 if msg.role == "tool":
+                    from core.llm_client import unwrap_mcp_tool
                     _raw_tool_name = getattr(msg, '_tool_name', '')
                     _raw_tool_origin = getattr(msg, '_tool_origin', '')
                     if not _raw_tool_name and getattr(msg, 'tool_call_id', ''):
@@ -571,17 +565,17 @@ class _ALCClosures1Mixin:
                                 continue
                             for _tc in (getattr(_prev, 'tool_calls', None) or []):
                                 if getattr(_tc, 'id', '') == _tcid:
-                                    _raw_tool_name = getattr(_tc, 'name', '') or ""
+                                    # Name the tool that ran, never the wrapper
+                                    # it was dispatched through: this fallback
+                                    # reads the provider's raw call, where an
+                                    # MCP call is still `use_tool`.
+                                    _raw_tool_name = unwrap_mcp_tool(
+                                        getattr(_tc, 'name', '') or "",
+                                        getattr(_tc, 'arguments', {}) or {})[0]
                                     _raw_tool_origin = getattr(_tc, 'tool_origin', '') or ""
                                     break
                             if _raw_tool_name:
                                 break
-                    if _raw_tool_name in {
-                        "get_tool_schema",
-                        "mcp_pawflow_get_tool_schema",
-                        "mcp__pawflow__get_tool_schema",
-                    }:
-                        _raw_tool_name = ""
                     if getattr(msg, 'tool_call_id', ''):
                         _preview = (msg.content if isinstance(msg.content, str)
                                     else str(msg.content))

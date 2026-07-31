@@ -4,6 +4,52 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [1.0.0-beta.69] — 2026-07-31
+
+### Fixed
+
+- Codex interactive renders the tools a code-mode body runs, one row each,
+  like every other provider. The GPT-5.x "sol" harness calls nothing directly:
+  it runs one freeform `exec` item and drives every tool from inside its
+  JavaScript, so the whole turn showed as `exec(<javascript>)` rows under a
+  native badge — which tool ran, on what, and whether it was PawFlow or the
+  container's own shell were all unreadable. Reading the names back out of the
+  script was tried and does not hold: property shorthand (`{tool_name}`), a
+  table of calls driven by a loop, `Promise.all(names.map(...))` and
+  `.filter()` over the tool list are how code-mode is written, not corner
+  cases, and each one fell back to the raw body. PawFlow executes those calls
+  itself, so they now come from the tool relay, which knows each one's name,
+  arguments and result exactly. They are published into the session's event
+  queue as ordinary observed calls, so they become rows through the one path
+  all providers share — MCP badge, background and kill buttons included. The
+  relay only reports a call no provider row was waiting for, and only while
+  the turn is in code mode, so a tool the model called directly still renders
+  once. The JS literal parser and the `<call_id>#<index>` row splitting it
+  needed are gone.
+- A finished tool call no longer ends the turn marked `[Stopped]` in the
+  simplified live view. Its ephemeral cue carries a copy of the rendered row,
+  and the copy kept the row's `data-tc-id`. The cue surface sits above the tabs,
+  so a lookup by call id found the copy first: the result attached to a node
+  seconds from fading, the canonical row stayed pending, and the end of the turn
+  stamped it `[Stopped]` right beside a cue showing the output it never got —
+  which also read as the row being rendered twice. A cue copy is decoration: it
+  now carries no `id`, `data-msgid` or `data-tc-id`, on the copy itself and
+  everything nested in it, and the turn-end finalizer skips pending bullets
+  inside one.
+- No tool call is hidden from the chat any more. `get_tool_schema` was
+  filtered out of both display paths: the live SSE path skipped the call and
+  blanked its result's name — an unnamed result row attached to nothing — and
+  the reload path dropped the pair again, so a reloaded turn had fewer rows
+  than the transcript held. Both paths keep unwrapping the MCP wrapper, so the
+  name shown is still the real tool and never `use_tool`.
+- `PROJECT_SUMMARY.md` states the version that actually ships. It had been
+  hand-written at `1.0.0b58` while the package and the tags were ten betas
+  ahead, and its repository figures still described the tree as it stood in
+  April. Both are refreshed, and a test now checks the stated version against
+  `pyproject.toml` so the summary cannot silently fall behind again.
+
 ## [1.0.0-beta.68] — 2026-07-31
 
 ### Fixed

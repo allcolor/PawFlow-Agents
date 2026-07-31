@@ -52,6 +52,16 @@ a brain/neural symbol for Thinking, a small set of tool silhouettes for Tool
 calls, and a document/paperclip symbol for Artifacts. The icon pop and text
 animation start as one synchronized cue, not as independent queues.
 
+A tool cue carries a **copy** of the rendered call rather than a label, and that
+copy is decoration only: `_turnStripCueIdentity` removes `id`, `data-msgid` and
+`data-tc-id` from it and from everything nested inside it, and
+`_finalizeLiveToolCalls` skips any pending bullet inside a
+`.simple-turn-cue-copy`. Both are load-bearing. The cue surface sits above the
+tabs, so an addressable copy is what a lookup by call id finds first: the
+tool_result attaches to a node that is about to fade, the canonical row never
+receives its output, and the end of the turn stamps that row `[Stopped]` beside
+a cue showing the very result it never got.
+
 ### Expanded while live
 
 ```text

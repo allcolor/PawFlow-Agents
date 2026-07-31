@@ -11,10 +11,12 @@ from urllib.parse import urlsplit
 
 try:
     from cc_interactive_filters import (
-        normalize_observed_tool, observed_tool_origin)
+        normalize_observed_tool, observed_call_ids, observed_call_item,
+        observed_call_output, observed_tool_origin)
 except ImportError:  # Unit tests import this file as tools.cc_interactive_proxy.
     from tools.cc_interactive_filters import (
-        normalize_observed_tool, observed_tool_origin)
+        normalize_observed_tool, observed_call_ids, observed_call_item,
+        observed_call_output, observed_tool_origin)
 
 try:  # standalone (/opt/pawflow on path) vs package (tools.cc_interactive_common)
     from cc_interactive_common import (  # noqa: F401
@@ -97,35 +99,9 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            item_type = item.get("type")
-            if item_type == "function_call":
-                call_id = item.get("call_id") or item.get("id") or ""
-                if not call_id:
-                    continue
-                raw_args = item.get("arguments") or "{}"
-                try:
-                    args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                except Exception:
-                    args = {}
-                tool_name = item.get("name", "")
-                display_name, display_args = normalize_observed_tool(
-                    tool_name, args if isinstance(args, dict) else {})
-                EVENTS.emit({
-                    "type": "tool_use",
-                    "request_id": request_id,
-                    "path": path,
-                    "tool_use_id": call_id,
-                    "name": display_name,
-                    "arguments": display_args,
-                    "tool_origin": observed_tool_origin(tool_name),
-                })
-            elif item_type == "function_call_output":
-                call_id = item.get("call_id") or item.get("id") or ""
-                if not call_id:
-                    continue
-                output = item.get("output", "")
-                result = output if isinstance(output, str) else json.dumps(
-                    output, ensure_ascii=False)
+            output = observed_call_output(item)
+            if output:
+                call_id, result = output
                 EVENTS.emit({
                     "type": "tool_result",
                     "request_id": request_id,
@@ -133,6 +109,22 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
                     "tool_use_id": call_id,
                     "content": result,
                     "is_error": False,
+                })
+                continue
+            call = observed_call_item(item)
+            if call:
+                call_id, tool_name, args = call
+                display_name, display_args = normalize_observed_tool(
+                    tool_name, args if isinstance(args, dict) else {})
+                EVENTS.emit({
+                    "type": "tool_use",
+                    "request_id": request_id,
+                    "path": path,
+                    "tool_use_id": call_id,
+                    "alias_ids": list(observed_call_ids(item)),
+                    "name": display_name,
+                    "arguments": display_args,
+                    "tool_origin": observed_tool_origin(tool_name),
                 })
         return
     if not path.startswith("/v1/messages"):
@@ -270,6 +262,15 @@ class _ServerWebSocketReader:
             _log(
                 f"emit ws request={request_id} type={ptype} "
                 f"text_len={len(delta)} preview={_preview(delta)!r}")
+        elif ptype == "response.output_item.done":
+            # Name the item: which of the Responses call types Codex uses for
+            # a given tool is what decides whether the turn shows it.
+            item = payload.get("item") or {}
+            item = item if isinstance(item, dict) else {}
+            _log(
+                f"emit ws request={request_id} type={ptype} "
+                f"item_type={item.get('type', '')} item_name={item.get('name', '')} "
+                f"call_id={item.get('call_id', '')} item_id={item.get('id', '')}")
         else:
             _log(
                 f"emit ws request={request_id} type={ptype} "

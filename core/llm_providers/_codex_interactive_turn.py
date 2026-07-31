@@ -7,8 +7,10 @@ import time
 from urllib.parse import urlsplit
 
 from core.llm_providers._cci_turn import (
-    _CCITurnCoordinator, _NO_PROXY_EVENT_TIMEOUT_SECONDS,
+    _CCITurnCoordinator, _event_tool_args, _NO_PROXY_EVENT_TIMEOUT_SECONDS,
     _POST_STOP_IDLE_DRAIN_SECONDS)
+from tools.cc_interactive_filters import (
+    code_mode_body, observed_call_ids, observed_call_item)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,22 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                 value = 0
             if value:
                 self.usage[key] = int(self.usage.get(key, 0) or 0) + value
+
+    def _emit_observed_tool_use(self, event: dict) -> None:
+        """Render observed calls, except the code bodies that make them.
+
+        A code-mode harness calls nothing directly: it runs one script in a
+        freeform tool and drives everything from inside it. That item is not a
+        tool call to show — rendered as one it puts a single ``exec(...)`` row
+        with a native badge where every tool it ran should be. The rows for
+        those tools come from the relay that executes them, with the name,
+        arguments and result it really used, exactly as they do for a provider
+        that calls each tool itself.
+        """
+        if code_mode_body(_event_tool_args(event)):
+            self.event_service.mark_code_mode(self.session_token)
+            return
+        super()._emit_observed_tool_use(event)
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
@@ -133,14 +151,25 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                 continue
             if ptype == "response.output_item.done":
                 item = payload.get("item") or {}
-                if item.get("type") == "function_call":
-                    call_id = item.get("call_id") or item.get("id") or ""
-                    if call_id:
-                        self._emit_observed_tool_use({
-                            "tool_use_id": call_id,
-                            "name": item.get("name", ""),
-                            "arguments": item.get("arguments", "{}"),
-                        })
+                # Every `*_call` item is a tool call, not only `function_call`:
+                # Codex runs its own shell as a `local_shell_call` and its
+                # freeform tools as a `custom_tool_call`. Matching one literal
+                # showed the user a turn with no tools while the model was
+                # visibly running them.
+                call = observed_call_item(item)
+                if call:
+                    call_id, name, args = call
+                    self._emit_observed_tool_use({
+                        "tool_use_id": call_id,
+                        "alias_ids": list(observed_call_ids(item)),
+                        "name": name,
+                        "arguments": args,
+                    })
+                elif str(item.get("type") or "").endswith("_call"):
+                    logger.warning(
+                        "[codex-interactive] tool call item without an id: "
+                        "type=%s keys=%s", item.get("type"),
+                        sorted(item.keys())[:8])
                 continue
             if ptype in {"response.completed", "response.incomplete",
                          "response.failed"}:

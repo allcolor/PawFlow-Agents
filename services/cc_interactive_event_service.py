@@ -95,6 +95,11 @@ class CCInteractiveSessionEvents:
     # two chained captures of the same session still dedup against each other.
     emitted_tool_use_ids: set = field(default_factory=set)
     emitted_tool_result_ids: set = field(default_factory=set)
+    # Set when the turn's model runs its tools from inside a code body. Those
+    # calls never appear in the stream as calls, so the relay executing them
+    # is what reports them -- and it must only do so for a session that is
+    # actually in code mode, or it would double every ordinary tool row.
+    code_mode_open: bool = False
     # Exactly one consumer may read `events`: queue.Queue hands each item to
     # a single getter, so two live coordinators SPLIT the SSE stream between
     # them. Claiming bumps the epoch; the previous holder is evicted on its
@@ -211,6 +216,49 @@ class CCInteractiveEventService(BaseService):
         with self._sessions_lock:
             self._sessions.pop(session_token, None)
 
+    def mark_code_mode(self, session_token: str) -> None:
+        """Record that this session runs its tools from inside a code body."""
+        state = self.session_state(session_token)
+        if state is not None and not state.code_mode_open:
+            state.code_mode_open = True
+            logger.info(
+                "[cci-events] session=%s entered code mode; tool rows now come "
+                "from the relay", session_token[:8])
+
+    @classmethod
+    def publish_agent_event(cls, conversation_id: str, agent_name: str,
+                            event: dict) -> bool:
+        """Feed one observed-tool event into an agent's code-mode session.
+
+        The relay is the only place that knows what a code body ran: the model
+        emitted one opaque item and every call happened inside it. Publishing
+        them here puts them on the same queue as the MITM's observations, so
+        they become rows through the one path all providers share instead of a
+        second rendering scheme nobody else uses.
+
+        Returns True when the event reached a session.
+        """
+        if not conversation_id or not agent_name:
+            return False
+        with cls._instances_lock:
+            services = list(cls._instances.values())
+        for service in services:
+            with service._sessions_lock:
+                tokens = [
+                    token for token, state in service._sessions.items()
+                    if state.code_mode_open
+                    and state.conversation_id == conversation_id
+                    and state.agent_name == agent_name]
+            for token in tokens:
+                try:
+                    service.publish_event(token, dict(event))
+                    return True
+                except RuntimeError as exc:
+                    logger.debug(
+                        "[cci-events] code-mode publish refused for %s: %s",
+                        token[:8], exc)
+        return False
+
     def remember_injected_prompt(self, session_token: str, prompt: str) -> None:
         if not session_token or not prompt:
             return
@@ -281,6 +329,10 @@ class CCInteractiveEventService(BaseService):
                 state.consumer_epoch += 1
                 if kind == "request":
                     state.last_request_claim_at = time.time()
+                    # Code mode is a property of the turn, not of the session:
+                    # the next turn may call its tools directly, and a stale
+                    # flag would have the relay add a row beside the provider's.
+                    state.code_mode_open = False
                 state.stream_condition.notify_all()
                 return state.consumer_epoch
 

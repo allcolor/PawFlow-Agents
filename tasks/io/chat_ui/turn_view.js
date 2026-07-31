@@ -588,6 +588,28 @@ function _turnFlushTransient(state) {
   _turnEnqueueTransient(state, { kind, text });
 }
 
+// Every attribute a cue copy must not keep. A copy is decoration: it shows
+// the call exactly as the row draws it, and that is all it is allowed to be.
+// Left addressable it answers the same lookups as the row it copies -- and it
+// is the one they find first, because the cue surface sits above the tabs. A
+// tool_result then attaches to a node that is seconds from fading, the
+// canonical row never receives its output, and the end of the turn stamps that
+// row "[Stopped]" while the copy shows the real result. Root and descendants
+// alike: grouped-message markers, delegate inner rows and artifact links carry
+// ids of their own.
+const TURN_CUE_IDENTITY_ATTRS = ['id', 'data-msgid', 'data-tc-id'];
+
+function _turnStripCueIdentity(node) {
+  if (!node || !node.removeAttribute) return;
+  for (const attr of TURN_CUE_IDENTITY_ATTRS) node.removeAttribute(attr);
+  const nested = node.querySelectorAll
+    ? node.querySelectorAll('[id], [data-msgid], [data-tc-id]') : [];
+  for (const child of nested) {
+    if (!child.removeAttribute) continue;
+    for (const attr of TURN_CUE_IDENTITY_ATTRS) child.removeAttribute(attr);
+  }
+}
+
 // The cues share one spot and stack in depth, not in a column. The newest
 // zooms in at the front; every cue behind it is pushed back a step -- smaller,
 // dimmer, blurrier -- until it falls off the back of the stack. Depth is a
@@ -608,7 +630,7 @@ function _turnEnqueueTransient(state, item) {
     // and moving it here would take it out of the record the reader opens.
     body.className = 'simple-turn-ephemeral-node';
     const clone = item.node.cloneNode(true);
-    if (clone.removeAttribute) { clone.removeAttribute('id'); clone.removeAttribute('data-msgid'); }
+    _turnStripCueIdentity(clone);
     if (clone.classList) clone.classList.add('simple-turn-cue-copy');
     body.appendChild(clone);
     _turnScrambleNode(clone, entry);

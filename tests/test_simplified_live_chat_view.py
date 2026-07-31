@@ -248,6 +248,28 @@ def test_error_row_is_not_promoted_to_the_turn_answer():
     assert _final_ids(rows) == ["a-1"]
 
 
+def test_no_tool_is_hidden_from_the_transcript():
+    """A tool the model ran always has a row, `get_tool_schema` included.
+
+    It used to be filtered out of the display along with its result, so a
+    reload showed a turn with fewer tools than the model had actually run.
+    The result keeps its name too — a nameless output attached to no call is
+    exactly what the user saw before.
+    """
+    rows = AgentLoopTask._classify_messages_for_display([
+        {"role": "user", "content": "go", "msg_id": "user-1"},
+        {"role": "tool_call", "content": "", "msg_id": "call-1",
+         "tool_call_id": "tc-1", "tool_name": "get_tool_schema",
+         "arguments": {}},
+        {"role": "tool", "content": "schema", "msg_id": "result-1",
+         "tool_call_id": "tc-1"},
+    ])
+
+    named = [(r.get("type"), r.get("tool_name")) for r in rows]
+    assert ("tool_call", "get_tool_schema") in named
+    assert ("tool_result", "get_tool_schema") in named
+
+
 def test_every_turn_with_an_answer_gets_exactly_one_final_across_a_mixed_history():
     rows = AgentLoopTask._classify_messages_for_display([
         # legacy turn: nothing stored

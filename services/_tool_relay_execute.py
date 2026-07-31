@@ -16,6 +16,60 @@ from services._tool_relay_base import _RELAY_TRANSPORT_RETRY_ATTEMPTS, _RELAY_TR
 class _ToolRelayExecuteMixin:
     """tool execute / do_execute / secrets env."""
 
+    @staticmethod
+    def _publish_code_mode_call(conversation_id: str, agent_name: str,
+                                request_id: str, tool_name: str,
+                                arguments) -> str:
+        """Announce a call no provider row can exist for, and return its id.
+
+        A code-mode harness runs its tools from inside a script: the model's
+        stream carries one opaque item, and the calls it makes surface only
+        here. Reading them out of the script's source never held -- shorthand
+        properties, variables and loops are ordinary code -- while this side
+        knows the tool, its arguments and its result exactly. Returns "" when
+        no code-mode session wanted it, which is every ordinary call: those
+        already have a row from their provider.
+
+        The row is keyed on ``request_id``, which is also this call's
+        background id when no provider id bound to it -- so the row's Background
+        and Kill buttons act on the call they are drawn beside.
+        """
+        try:
+            from core.llm_client import unwrap_mcp_tool
+            from services.cc_interactive_event_service import (
+                CCInteractiveEventService)
+        except ImportError:
+            return ""
+        display_name, display_args = unwrap_mcp_tool(tool_name, arguments)
+        published = CCInteractiveEventService.publish_agent_event(
+            conversation_id, agent_name, {
+                "type": "tool_use",
+                "tool_use_id": request_id,
+                "name": display_name,
+                "arguments": display_args if isinstance(display_args, dict) else {},
+                "tool_origin": "mcp",
+            })
+        return request_id if published else ""
+
+    @staticmethod
+    def _publish_code_mode_result(conversation_id: str, agent_name: str,
+                                  row_id: str, result) -> None:
+        """Attach the real result to a row announced by the call above."""
+        if not row_id:
+            return
+        from services.cc_interactive_event_service import (
+            CCInteractiveEventService)
+        data = result.get("data") if isinstance(result, dict) else result
+        if not isinstance(data, str):
+            data = json.dumps(data, default=str, ensure_ascii=False)
+        CCInteractiveEventService.publish_agent_event(
+            conversation_id, agent_name, {
+                "type": "tool_result",
+                "tool_use_id": row_id,
+                "content": data,
+                "is_error": False,
+            })
+
     def _handle_execute(self, request_id: str, tool_name: str,
                         arguments, user_id: str,
                         conversation_id: str, agent_name: str,
@@ -132,6 +186,14 @@ class _ToolRelayExecuteMixin:
                     if info:
                         info["cc_tc_id"] = cc_tc_id
                         info["bg_tc_id"] = cc_tc_id
+
+        # No provider row was waiting for this call. In a code-mode session
+        # that is not a race, it is the norm: the call lives inside a script
+        # the provider only sees as one opaque item.
+        code_mode_row = ""
+        if not cc_tc_id and not _is_sentinel:
+            code_mode_row = self._publish_code_mode_call(
+                conversation_id, agent_name, request_id, tool_name, arguments)
 
         # Execute in a daemon thread so cancel/background can let it run on.
         _result_holder = [None]
@@ -274,6 +336,8 @@ class _ToolRelayExecuteMixin:
                     (handle_started - relay_received_at) * 1000,
                     (time.perf_counter() - handle_started) * 1000,
                     cc_tc_id or "")
+                self._publish_code_mode_result(
+                    conversation_id, agent_name, code_mode_row, result)
                 return result
 
             if cancel_event.is_set():
@@ -296,6 +360,8 @@ class _ToolRelayExecuteMixin:
                     (handle_started - relay_received_at) * 1000,
                     (time.perf_counter() - handle_started) * 1000,
                     cc_tc_id or "")
+                self._publish_code_mode_result(
+                    conversation_id, agent_name, code_mode_row, result)
                 return result
 
             wake_event.wait()
@@ -337,6 +403,8 @@ class _ToolRelayExecuteMixin:
             (handle_started - relay_received_at) * 1000,
             (time.perf_counter() - handle_started) * 1000,
             result_len, cc_tc_id or "")
+        self._publish_code_mode_result(
+            conversation_id, agent_name, code_mode_row, result)
         return result
 
     def _do_execute(self, request_id, tool_name, arguments,

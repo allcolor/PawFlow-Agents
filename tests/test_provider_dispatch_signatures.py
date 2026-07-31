@@ -606,14 +606,23 @@ def test_gemini_acp_recovers_replayed_tool_args_from_history(tmp_path):
     }
 
 
-def test_agent_core_hides_schema_tool_events_on_purpose():
+def test_agent_core_hides_no_tool_event_and_never_names_the_wrapper():
+    """Every tool the model ran gets a row, under the tool's own name.
+
+    `get_tool_schema` used to be dropped from both SSE paths: the call row
+    never reached the chat and its result row was stripped of its name, so the
+    user saw an anonymous output attached to nothing. Nothing is hidden now.
+    What must never appear is the wrapper: both paths unwrap, so a call
+    dispatched through `use_tool` renders as the tool it actually ran.
+    """
     src = agent_core_src()
     tool_call_sse = src[src.index("# Assistant tool_calls"):src.index("# role=tool")]
     tool_result_sse = src[src.index("# role=tool"):src.index("_agent_for_route")]
-    assert "get_tool_schema" in tool_call_sse
-    assert "continue" in tool_call_sse
-    assert "mcp__pawflow__get_tool_schema" in tool_result_sse
-    assert '_raw_tool_name = ""' in tool_result_sse
+    assert "get_tool_schema" not in tool_call_sse
+    assert "get_tool_schema" not in tool_result_sse
+    assert '_raw_tool_name = ""' not in tool_result_sse
+    assert "unwrap_mcp_tool(tc.name, tc.arguments)" in tool_call_sse
+    assert "_raw_tool_name = unwrap_mcp_tool(" in tool_result_sse
 
 
 

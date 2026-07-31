@@ -131,6 +131,10 @@ function _finalizeLiveToolCalls(agentName, resultText) {
   const targetAgent = (agentName || '').toLowerCase();
   let changed = false;
   document.querySelectorAll('#messages .tc-bullet.pending').forEach(bullet => {
+    // A turn-view cue copy is decoration, not a row: it holds a snapshot of a
+    // call taken while it was still running and it fades on its own. Stamping
+    // it leaves "[Stopped]" under a call that finished.
+    if (bullet.closest && bullet.closest('.simple-turn-cue-copy')) return;
     const tcEl = bullet.closest('[data-message-role="tool_call"]')
       || bullet.closest('[data-tc-id]')
       || bullet.closest('.msg');

@@ -439,6 +439,93 @@ app-server passes images natively and never hit this.
 Steering the agent toward PawFlow tools for user work stays a prompt concern,
 exactly as it already is for app-server.
 
+### Every `*_call` item is a tool call
+
+The Responses taxonomy does not put every tool call under `function_call`. Codex
+runs its own shell as a `local_shell_call` whose arguments are an `action`
+object, its freeform tools (`apply_patch`) as a `custom_tool_call` whose
+argument is a raw `input` string, and hosted tools as `web_search_call` and
+friends; only MCP tools arrive as `function_call`. Matching that one literal —
+which is all the observers and the turn coordinator did — showed a turn with no
+tool at all while the model was visibly running them, because restoring the
+builtins is exactly what made the non-`function_call` types appear.
+
+`observed_call_item` / `observed_call_output` in `tools/cc_interactive_filters.py`
+match the `_call` and `_call_output` suffixes instead, and read the arguments
+from whichever of `arguments` / `action` / `input` the item carries. A type
+nobody has seen yet renders under its own name rather than disappearing. The
+proxy logs `item_type=` on each `response.output_item.done`, so what a given
+Codex build actually emits is readable from `/tmp/cci_proxy.log`.
+
+### A code-mode body is not a tool call
+
+The GPT-5.x "sol" harness does not call tools directly: it runs JavaScript in
+a freeform `exec` tool and calls everything from inside it —
+`tools.exec_command({cmd: ...})` for its own shell, and
+`tools.mcp__pawflow__use_tool({tool_name: "read", ...})` for PawFlow. Rendered
+literally every row reads `exec(const r=await tools...)` under one name and
+one native badge: neither which tool ran nor on what is readable, and a
+PawFlow call is indistinguishable from a shell command.
+
+Reading the tool names back out of the script does not hold. A first version
+parsed the body with a small JS literal reader; real bodies defeat it on the
+first try — property shorthand (`{tool_name}`), a table of calls driven by a
+loop, `Promise.all(names.map(...))`, a `.filter()` over the tool list. None of
+those are corner cases, they are how code-mode is written, and each one left
+the row as raw `exec(<javascript>)`.
+
+PawFlow does not have to read the script, because it *runs* those calls: they
+arrive at the tool relay one by one, each with its tool name, its arguments
+and its result. So the rows come from there.
+
+- `code_mode_body` (`tools/cc_interactive_filters.py`) only recognises such a
+  body — a call whose source invokes `tools.<something>(`.
+- `_CodexInteractiveTurnCoordinator._emit_observed_tool_use` drops that item
+  instead of rendering it, and flags the session with `mark_code_mode`.
+- `ToolRelayService._handle_execute` publishes each call it executes for a
+  flagged session through `CCInteractiveEventService.publish_agent_event`, as
+  an ordinary `tool_use` / `tool_result` pair.
+
+Those events enter by the same door as the MITM's own observations, so they
+become rows through the one path every provider shares — real name, real
+arguments, MCP badge, real result, background and kill buttons included.
+
+The flag is per turn, not per session: `claim_consumer` clears it when the
+next turn takes the stream. And the relay only publishes a call no provider
+row was waiting for (`pop_cc_tc` found nothing) — a tool the model called
+directly already has its row, and publishing it again would show it twice.
+
+`codex app-server` never sees any of this: it reads codex's own JSON-RPC items
+(`mcpToolCall`, `commandExecution`, `fileChange`, `dynamicToolCall`), already
+decomposed and typed. The wire's single `custom_tool_call` is a MITM-only
+problem, and sourcing the rows from the relay is what restores parity.
+
+What this does not cover: a call the script makes to one of Codex's own tools
+from inside a code body. PawFlow does not execute it, so it has no row. The
+model's direct native calls — the `exec_command` items it emits itself — are
+unaffected and render as before.
+
+### One call, two ids, one row
+
+A call item carries both `call_id` — the id its `*_call_output` quotes — and
+`id`, the item's own. A call is observed twice: streamed on
+`response.output_item.done` as the model makes it, then replayed in the next
+request's `input` alongside its output. Nothing guarantees the two
+observations quote the same id, and when they differ the same call renders
+twice: the first row never receives the result and the turn ends stamping it
+`[Stopped]`, the second carries the output.
+
+`observed_call_ids` returns both, the observers ship them as `alias_ids`, and
+`_emit_observed_tool_use` keys the block on every id it has seen — so the
+second observation finds the first one's block, and a result quoting either id
+is reported under the id the row was rendered with. Where both observations
+already agree this changes nothing.
+
+Outputs are not always strings either: Codex returns its own tools' output as a
+list of content parts (`[{"type": "input_text", "text": ...}, ...]`).
+`call_output_text` flattens them, otherwise the user reads the JSON envelope
+instead of what the command printed.
+
 ### The turn is a WebSocket, not an SSE body
 
 Since Codex 0.146 a turn is not a POST with a streamed body. The CLI opens

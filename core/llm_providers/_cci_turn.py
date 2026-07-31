@@ -577,7 +577,24 @@ class _CCITurnCoordinator:
         tc_id = event.get("tool_use_id", "") or event.get("id", "") or ""
         if not tc_id:
             return
+        # A Responses call item is observed twice — streamed as it is made,
+        # then replayed in the next request's input with its output. The two
+        # observations do not have to quote the same one of the item's two
+        # ids: keyed on different ids the same call renders twice, and the
+        # result attaches to only one of the rows.
+        observed_ids = [tc_id]
+        for alias in event.get("alias_ids") or []:
+            alias = str(alias or "")
+            if alias and alias not in observed_ids:
+                observed_ids.append(alias)
         block = self.tool_by_id.get(tc_id)
+        if block is None:
+            for alias in observed_ids:
+                known = self.tool_by_id.get(alias)
+                if known is not None:
+                    block = known
+                    tc_id = str(known.get("id") or tc_id)
+                    break
         if block is None:
             args = _event_tool_args(event)
             block = {
@@ -587,13 +604,20 @@ class _CCITurnCoordinator:
                 "emitted": False,
             }
             self.tool_by_id[tc_id] = block
+        alias_ids = [alias for alias in observed_ids if alias != tc_id]
+        for alias in alias_ids:
+            self.tool_by_id.setdefault(alias, block)
         if block.get("emitted") or tc_id in self.emitted_tool_use_ids:
             block["emitted"] = True
+            self.emitted_tool_use_ids.update(alias_ids)
             self._supersede_unwrappable_emit(tc_id, block, event)
             self._emit_pending_tool_results(tc_id)
+            for alias in alias_ids:
+                self._emit_pending_tool_results(alias)
             return
         block["emitted"] = True
         self.emitted_tool_use_ids.add(tc_id)
+        self.emitted_tool_use_ids.update(alias_ids)
         args = _loads_tolerant(block.get("json", "") or "{}")
         display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
         block["display_name"] = display_name
@@ -620,6 +644,8 @@ class _CCITurnCoordinator:
             })
         self._remember_turn_tool_call(tc_id, display_name, display_args)
         self._emit_pending_tool_results(tc_id)
+        for alias in alias_ids:
+            self._emit_pending_tool_results(alias)
 
     def _supersede_unwrappable_emit(self, tc_id: str, block: dict,
                                     event: dict) -> None:
@@ -692,10 +718,18 @@ class _CCITurnCoordinator:
             self._emit_tool_result_now(event, block)
 
     def _emit_tool_result_now(self, event: dict, block: dict) -> None:
-        tc_id = event.get("tool_use_id", "") or ""
-        if not tc_id or tc_id in self.emitted_tool_result_ids:
+        event_id = event.get("tool_use_id", "") or ""
+        # Report the result under the id the row was rendered with: an alias
+        # the observers keyed the output on matches no row in the UI.
+        tc_id = str(block.get("id") or event_id)
+        if not tc_id:
+            return
+        if tc_id in self.emitted_tool_result_ids or (
+                event_id and event_id in self.emitted_tool_result_ids):
             return
         self.emitted_tool_result_ids.add(tc_id)
+        if event_id:
+            self.emitted_tool_result_ids.add(event_id)
         result = event.get("content", "") or "(no output)"
         for tc in self.turn_tool_calls:
             if tc.get("id") == tc_id:

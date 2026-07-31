@@ -42,6 +42,15 @@ def test_every_terminal_path_finalizes_tool_calls():
         assert "_finalizeLiveToolCalls(" in _listener_body(SSE_HANDLERS_B, event), event
 
 
+def test_finalization_leaves_turn_view_cue_copies_alone():
+    """A cue copy carries a snapshot of a call taken while it was running, so it
+    still looks pending forever. Stamping it printed '[Stopped]' next to a call
+    that had finished, in the copy the reader was watching."""
+    start = SSE_STATE.index("function _finalizeLiveToolCalls")
+    body = SSE_STATE[start:SSE_STATE.index("\n// Expose a reset hook", start)]
+    assert "bullet.closest('.simple-turn-cue-copy')" in body
+
+
 def test_placeholder_results_are_marked_as_such():
     """Placeholders must be distinguishable from real results so a late result
     can replace them."""

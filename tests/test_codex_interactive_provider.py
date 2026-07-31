@@ -15,6 +15,7 @@ from services.cc_interactive_event_service import CCInteractiveEventService
 class _Events:
     def __init__(self, events):
         self.queue = Queue()
+        self.code_mode_sessions = []
         for event in events:
             self.queue.put(event)
 
@@ -23,6 +24,9 @@ class _Events:
             return self.queue.get(timeout=timeout or 0.01)
         except Empty:
             return {}
+
+    def mark_code_mode(self, session_token):
+        self.code_mode_sessions.append(session_token)
 
 
 def _state(key, index=-1):
@@ -272,6 +276,147 @@ def test_responses_coordinator_streams_blocks_until_codex_stop(monkeypatch):
         "tool_use", "tool_result", "text", "thinking_content"]
     assert blocks[0][1]["name"] == "read"
     assert blocks[0][1]["arguments"] == {"path": "/workspace/a.py"}
+
+
+def test_responses_coordinator_shows_the_native_calls_too(monkeypatch):
+    # Codex's own tools are not `function_call` items: the shell is a
+    # `local_shell_call` carrying an `action`, apply_patch a `custom_tool_call`
+    # carrying a freeform `input`. Reading only `function_call` rendered a turn
+    # with no tool at all while the model was visibly running them.
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    blocks = []
+    events = _Events([
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "local_shell_call", "call_id": "call-1",
+                     "action": {"type": "exec",
+                                "command": ["bash", "-lc", "git status"]}}}},
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "custom_tool_call", "call_id": "call-2",
+                     "name": "apply_patch",
+                     "input": "*** Begin Patch\n*** End Patch"}}},
+        {"type": "tool_result", "tool_use_id": "call-1",
+         "content": "clean"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(
+        events, "session",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)))
+
+    coordinator.run()
+
+    assert [(kind, payload.get("name") or payload.get("tool"))
+            for kind, payload in blocks] == [
+        ("tool_use", "local_shell"),
+        ("tool_use", "apply_patch"),
+        ("tool_result", "local_shell"),
+    ]
+    assert blocks[0][1]["arguments"] == {
+        "type": "exec", "command": ["bash", "-lc", "git status"]}
+    assert blocks[1][1]["arguments"] == {
+        "input": "*** Begin Patch\n*** End Patch"}
+
+
+def test_a_code_mode_body_draws_no_row_and_arms_the_relay(monkeypatch):
+    # Rendered as it arrives, this item is one `exec(<javascript>)` row with a
+    # native badge standing in for every tool the script runs. Which tools
+    # those are is not readable from the source -- shorthand, variables and
+    # loops are ordinary code-mode -- so the item draws nothing and the
+    # session is flagged: the relay that executes those calls reports them.
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    blocks = []
+    events = _Events([
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "custom_tool_call", "call_id": "call-1",
+                     "name": "exec",
+                     "input": "const rs=await Promise.all(names.map("
+                              "tool_name=>tools.mcp__pawflow__get_tool_schema("
+                              "{tool_name})));text(rs)"}}},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(
+        events, "session",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)))
+
+    coordinator.run()
+
+    assert blocks == []
+    assert events.code_mode_sessions == ["session"]
+
+
+def test_relay_reported_calls_render_like_any_other_tool(monkeypatch):
+    # What the relay publishes for a code-mode body enters by the same door as
+    # the MITM's own observations, so those calls become rows through the one
+    # path every provider shares: real name, real arguments, MCP badge, and
+    # the result the tool actually returned.
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    blocks = []
+    events = _Events([
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "custom_tool_call", "call_id": "call-1",
+                     "name": "exec",
+                     "input": 'await tools.mcp__pawflow__use_tool({tool_name})'}}},
+        {"type": "tool_use", "tool_use_id": "req-1",
+         "name": "read", "arguments": {"path": "/workspace/a.py"},
+         "tool_origin": "mcp"},
+        {"type": "tool_result", "tool_use_id": "req-1",
+         "content": "line one"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(
+        events, "session",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)))
+
+    coordinator.run()
+
+    assert [kind for kind, _ in blocks] == ["tool_use", "tool_result"]
+    assert blocks[0][1]["name"] == "read"
+    assert blocks[0][1]["arguments"] == {"path": "/workspace/a.py"}
+    assert blocks[0][1]["tool_origin"] == "mcp"
+    assert blocks[1][1]["tc_id"] == "req-1"
+    assert blocks[1][1]["tool"] == "read"
+    assert blocks[1][1]["result"] == "line one"
+
+
+def test_a_call_seen_under_each_of_its_two_ids_stays_one_row(monkeypatch):
+    # A call item carries `call_id` AND `id`. The stream can quote one and
+    # the replayed input the other: keyed on the raw id that is two rows for
+    # one call, and the result lands on the second, leaving the first pending
+    # until the turn ends and stamps it stopped.
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    blocks = []
+    events = _Events([
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "custom_tool_call", "id": "ctc_1",
+                     "name": "exec", "input": "ls"}}},
+        {"type": "tool_use", "tool_use_id": "call_1",
+         "alias_ids": ["call_1", "ctc_1"], "name": "exec",
+         "arguments": {"input": "ls"}},
+        {"type": "tool_result", "tool_use_id": "call_1", "content": "a.py"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(
+        events, "session",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)))
+
+    coordinator.run()
+
+    assert [kind for kind, _ in blocks] == ["tool_use", "tool_result"]
+    assert blocks[0][1]["id"] == "ctc_1"
+    assert blocks[1][1]["tc_id"] == "ctc_1"
+    assert blocks[1][1]["result"] == "a.py"
 
 
 def test_codex_event_session_adopts_prefixed_responses_request_with_query(

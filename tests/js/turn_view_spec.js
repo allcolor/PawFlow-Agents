@@ -833,6 +833,32 @@ test('a tool cue shows the call itself, copied, not a label', () => {
   eq(copy[0].getAttribute('data-msgid'), null, 'the copy carries no identity of its own');
 });
 
+// The copy sits above the tabs, so a lookup by tc_id reaches it first. Keeping
+// the id on it gave the tool_result to a node about to fade: the canonical row
+// stayed pending and the end of the turn stamped it "[Stopped]", next to a cue
+// showing the very output it never got.
+test('a cue copy answers to no tc_id, so the result reaches the real row', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const call = e.row('c1');
+  call.dataset.tcId = 'tc-1';
+  call.dataset.messageRole = 'tool_call';
+  const nested = call.appendChild(e.dom.document.createElement('div'));
+  nested.dataset.tcId = 'tc-1';
+  nested.dataset.msgid = 'c1';
+  e.ctx.turnViewIngest('tool_call', { turn_id: 'u1', msg_id: 'c1', tc_id: 'tc-1' }, call);
+
+  const found = e.messages.querySelectorAll('[data-tc-id="tc-1"]');
+  for (const el of found) {
+    assert(!el.classList.contains('simple-turn-cue-copy'), 'no copy answers to the id');
+    assert(el === call || el === nested, 'only the canonical row and its own children do');
+  }
+  const copy = e.messages.querySelectorAll('.simple-turn-cue-copy')[0];
+  eq(copy.getAttribute('data-tc-id'), null, 'the copy is not addressable by call id');
+  eq(copy.querySelectorAll('[data-tc-id], [data-msgid]').length, 0,
+     'nor is anything nested inside it');
+});
+
 test('identity is not re-rendered on every token', () => {
   const e = env('simplified');
   startTurn(e, 'u1');

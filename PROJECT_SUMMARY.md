@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
-**Last updated**: 2026-07-30
-**Package version**: `1.0.0b58` (beta.58)
+**Last updated**: 2026-07-31
+**Package version**: `1.0.0b69` (beta.69)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
@@ -20,7 +20,10 @@ The current core value is twofold:
 
 - `core/`: agent runtime and main primitives.
   - agent execution and tool-use loops;
-  - LLM providers (`Claude Code`, `Codex CLI`, `Gemini CLI`, Anthropic API, OpenAI API, OpenAI-compatible endpoints);
+  - LLM providers: Anthropic API, OpenAI API (chat completions and Responses),
+    OpenAI-compatible endpoints, Gemini, and the CLI-backed subscription
+    providers `claude-code`, `claude-code-interactive`, `codex-app-server`,
+    `codex-interactive`, and `antigravity-interactive`;
   - memory, knowledge graph, diary, project graph;
   - conversation, plan, token, file, relay, and tool-handler management;
   - storage backends and security/context helpers.
@@ -87,16 +90,16 @@ The `README.md` is now a better reflection of the vision and current state than 
 
 ## Repository figures
 
-These numbers describe the repository state as of 2026-04-27 without deeper functional interpretation:
+These numbers describe the repository state as of 2026-07-31 without deeper functional interpretation:
 
 | Area | Observed volume |
 |---|---:|
-| Python files in `core/` | 159 |
+| Python files in `core/` | 318 |
 | Python files in `engine/` | 20 |
-| Python files in `tasks/` | 131 |
-| Python files in `services/` | 63 |
-| Test files `tests/test_*.py` | 128 |
-| Documents in `docs/` | 19 |
+| Python files in `tasks/` | 199 |
+| Python files in `services/` | 117 |
+| Test files `tests/test_*.py` | 361 |
+| Documents in `docs/` | 68 |
 
 The README also advertises:
 
@@ -104,7 +107,7 @@ The README also advertises:
 - 90+ built-in tools;
 - 60+ slash commands in the web chat;
 - 9 OAuth providers;
-- 4000+ tests.
+- 7000+ tests.
 
 ## Key implemented or present features
 
@@ -187,6 +190,6 @@ Per `ROADMAP.md`, the next major directions are:
 
 ## Conclusion
 
-PawFlow has moved from a base architecture to a complete agentic platform in alpha. The project summary therefore must present it as an integrated system: **server + agents + flow engine + relay + clients + documentation + tests**.
+PawFlow has moved from a base architecture to a complete agentic platform in beta. The project summary therefore must present it as an integrated system: **server + agents + flow engine + relay + clients + documentation + tests**.
 
 The old "4 implemented tasks / 0 service / 1 test script" framing is obsolete. The current accurate reading is: an already substantial product with a rich architecture and many modules in place, but one that still has to stabilize its contracts, clarify what is production-ready, and keep its documentation in sync with the code.

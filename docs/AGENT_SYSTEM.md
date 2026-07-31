@@ -587,6 +587,17 @@ Instead of sending all tool schemas to the LLM (which can consume thousands of t
 
 This reduces the constant token overhead from ~7000 tokens to ~200 tokens, making it practical for smaller context LLMs.
 
+#### What the user sees
+
+The meta-tools are a transport, not a display: every tool call the model makes
+gets its own row, under the name of the tool that actually ran. `use_tool` and
+`get_tool_schema` wrappers are unwrapped on both the live SSE path
+(`tasks/ai/_alc_closures1.py`) and the reload path
+(`tasks/ai/agent_serialization.py`), so the wrapper name never reaches the
+chat — and no call is hidden. `get_tool_schema` used to be filtered out of
+both: the call row vanished and its result row lost its name, leaving an
+anonymous output attached to nothing.
+
 ### Tool Metrics
 
 `ToolRegistry` records process-local metrics for every dispatch, including unknown

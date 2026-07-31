@@ -244,7 +244,6 @@ class AgentSerializationMixin:
         _tc_id_to_name = {}  # tool_call_id → display name (for tool_result matching)
         _tc_id_to_origin = {}  # tool_call_id → mcp/native origin
         _delegate_tc_ids = set()  # tc_ids for delegate calls (hidden, replaced by delegate blocks)
-        _META_TOOLS = {"get_tool_schema"}
         for raw_idx, m in enumerate(raw_messages):
             role = m.get("role", "")
             _display_ts = m.get("timestamp") or m.get("ts")
@@ -281,9 +280,6 @@ class AgentSerializationMixin:
 
             tool_call_id = m.get("tool_call_id")
             if role == "tool" and tool_call_id:
-                # Skip results for hidden meta tools
-                if _tc_id_to_name.get(tool_call_id) in _META_TOOLS:
-                    continue
                 # Skip delegate tool results — shown inside delegate blocks
                 if tool_call_id in _delegate_tc_ids:
                     continue
@@ -359,8 +355,6 @@ class AgentSerializationMixin:
                         if tcid:
                             _delegate_tc_ids.add(tcid)
                         continue
-                    if tool_name in _META_TOOLS:
-                        continue
                     tool_args_str = json.dumps(tool_args, ensure_ascii=False)[:500] if tool_args else ""
                     args_preview = ""
                     if isinstance(tool_args, dict) and tool_args:
@@ -399,9 +393,6 @@ class AgentSerializationMixin:
                     if _display_ts:
                         entry["timestamp"] = _display_ts
                     result.append(entry)
-                    continue
-                # Skip meta tools from display
-                if role in ("tool_call", "tool_result") and m.get("tool_name") in _META_TOOLS:
                     continue
                 if role == "thinking" and not str(content).strip():
                     continue

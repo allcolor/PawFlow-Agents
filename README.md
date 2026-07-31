@@ -232,7 +232,7 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 | **Claude Code** | CLI subprocess/container + MCP | Non-interactive coding turns, session persistence, thinking |
 | **Claude Code interactive** | Interactive CLI container + observed stream | Claude subscription sessions, live control, provider-observed usage |
 | **Codex app-server** | App-server protocol in pooled container | Codex subscription or OpenAI API-key coding agents, threads, steering |
-| **Codex interactive** | Interactive Codex TUI in tmux + observed stream | Long-lived Codex sessions, live control, shares the Codex OAuth pool |
+| **Codex interactive** | Interactive Codex TUI in tmux + observed stream | Long-lived Codex sessions, live control, shares the Codex OAuth pool, one row per tool even for code-mode harnesses |
 | **Antigravity / Agy** | Interactive CLI container + observed stream | Default Gemini subscription provider, Gemini OAuth pool, MCP tools |
 | **Gemini CLI** | CLI subprocess/container | Secondary Gemini CLI path for Pro/CLI-specific workflows |
 | **Anthropic API** | Direct HTTP | Streaming, tool use, vision, extended thinking |
@@ -402,7 +402,7 @@ See `.env.example` for environment variables.
 ## Tests
 
 ```bash
-pytest tests/ -v    # 6600+ tests across 330+ test files
+pytest tests/ -v    # 7000+ tests across 360+ test files
 ```
 
 ## Documentation

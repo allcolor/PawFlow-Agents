@@ -32,6 +32,90 @@ def test_proxy_observes_responses_function_calls_and_outputs(monkeypatch):
     assert events[1]["content"] == "file contents"
 
 
+def test_proxy_observes_the_native_call_items_too(monkeypatch):
+    # The turn input replays Codex's own calls under their own item types.
+    # Reading only `function_call` lost the shell and apply_patch results.
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "input": [
+            {"type": "local_shell_call", "call_id": "call-1",
+             "action": {"type": "exec", "command": ["bash", "-lc", "ls"]}},
+            {"type": "local_shell_call_output", "call_id": "call-1",
+             "output": "a.py"},
+        ]
+    }).encode()
+
+    proxy._emit_observed_tool_blocks(
+        "request-1", "/backend-api/codex/responses", body)
+
+    assert [event["type"] for event in events] == ["tool_use", "tool_result"]
+    assert events[0]["name"] == "local_shell"
+    assert events[0]["arguments"] == {
+        "type": "exec", "command": ["bash", "-lc", "ls"]}
+    assert events[1]["content"] == "a.py"
+
+
+def test_proxy_reports_a_code_mode_body_as_the_one_item_it_is(monkeypatch):
+    # The observer describes the wire, and on the wire a code-mode body IS one
+    # item: one call, one output. It does not read the script to guess what ran
+    # inside it -- that is the relay's to report, and the provider drops this
+    # item rather than render `exec(<javascript>)` in place of those tools.
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "input": [
+            {"type": "custom_tool_call", "call_id": "call-1", "name": "exec",
+             "input": 'const r=await tools.mcp__pawflow__use_tool('
+                      '{tool_name:"read",arguments_json:'
+                      '"{\\"path\\":\\"/workspace/a.py\\"}"});'
+                      'await tools.exec_command({cmd:"ls"})'},
+            {"type": "custom_tool_call_output", "call_id": "call-1",
+             "output": "a.py"},
+        ]
+    }).encode()
+
+    proxy._emit_observed_tool_blocks(
+        "request-1", "/backend-api/codex/responses", body)
+
+    assert [(event["type"], event["tool_use_id"]) for event in events] == [
+        ("tool_use", "call-1"), ("tool_result", "call-1")]
+    assert events[0]["name"] == "exec"
+    assert events[1]["content"] == "a.py"
+
+
+def test_proxy_reads_a_content_part_output_as_its_text(monkeypatch):
+    # Codex returns its own tools' output as a list of content parts, not a
+    # string. Serialised verbatim the user reads the JSON envelope instead of
+    # what the command printed.
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "input": [
+            {"type": "custom_tool_call", "call_id": "call-1", "id": "ctc-1",
+             "name": "exec", "input": "const r = await tools.exec_command({})"},
+            {"type": "custom_tool_call_output", "call_id": "call-1",
+             "output": [{"type": "input_text", "text": "Script completed\n"},
+                        {"type": "input_text", "text": "a.py\n"}]},
+        ]
+    }).encode()
+
+    proxy._emit_observed_tool_blocks(
+        "request-1", "/backend-api/codex/responses", body)
+
+    assert [event["type"] for event in events] == ["tool_use", "tool_result"]
+    # Both ids travel so the streamed observation of the same call, which may
+    # quote either one, matches this row instead of opening a second.
+    assert events[0]["alias_ids"] == ["call-1", "ctc-1"]
+    assert events[1]["content"] == "Script completed\na.py\n"
+
+
 class _RecvSocket:
     def __init__(self, chunks):
         self.chunks = list(chunks)

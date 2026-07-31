@@ -2817,9 +2817,13 @@ def test_cc_interactive_event_service_publishes_manual_tmux_response(monkeypatch
     assert msg["role"] == "assistant"
     assert msg["content"] == "final from cci"
     assert msg["channel"] == "tmux"
+    # `provider` is what the meta line under the message is built from: with
+    # none of model / provider / tokens the client renders no meta line at
+    # all, which is how a captured turn ended up showing none.
     assert msg["source"] == {
         "type": "agent",
         "name": "assistant",
+        "provider": "claude-code-interactive",
         "input": "cc_interactive_tmux",
     }
     assert writes[0]["sse_events"] == [{"type": "new_message", "data": {

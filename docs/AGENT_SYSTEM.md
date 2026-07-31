@@ -650,6 +650,37 @@ therefore refuses an untagged `token`. The cost of a refusal is the live
 preview only; the message itself still reaches the client through the
 persisted `new_message` event.
 
+#### Who emits `token`
+
+`StreamEmitter.get_token_callback` — the callback every provider already
+feeds, so the answer appears while it is written whatever is behind it. The
+granularity is the provider's, not a setting: the API providers (anthropic,
+openai, openai-responses, gemini, codex-app-server) deliver real deltas, while
+the CLI ones deliver whole blocks (Claude Code 1.0+ sends complete `assistant`
+events, with no `content_block_delta` to forward). Progressive either way,
+word-by-word only for the first group.
+
+The id it publishes is `_current_msg_id` — the same one `_alc_append` stamps
+on the durable message, which is what lets the client replace its preview
+instead of showing the answer twice. `_alc_append` rotates that id at every
+persisted block, so one turn can carry several: the client starts a new bubble
+when the id changes, or the blocks would merge live and split apart again on
+reload.
+
+A silent poll (`poll_silent`) publishes nothing. Its text may end in
+`NO_PENDING_WORK` and never be persisted, and a preview of that is an answer
+on screen belonging to nothing.
+
+#### `message_meta` is an update, not an announcement
+
+The client looks the message up by `msg_id` and **replaces** its meta line.
+That matters for turns whose numbers are not known when the text is written —
+a captured tmux turn (see `CLAUDE_CODE_INTERACTIVE.md`) persists its answer as
+it arrives and only learns the model and the token counts when the coordinator
+returns, so it sends `message_meta` then to complete what it already wrote.
+A meta line left half-empty is worse than absent: it reads as a turn that cost
+nothing.
+
 ### Queue Behavior
 
 If a user sends a message while the agent is already running:

@@ -256,3 +256,98 @@ class TestCaptureSharesTheSessionToolDedup:
         src = inspect.getsource(CCInteractiveEventService._run_manual_capture)
         assert "emitted_tool_use_ids=_use_ids" in src
         assert "emitted_tool_result_ids=_result_ids" in src
+
+
+class _Resp:
+    def __init__(self, model="opus", tokens_in=12, tokens_out=34):
+        self.content = "hi"
+        self.model = model
+        self.tokens_in = tokens_in
+        self.tokens_out = tokens_out
+
+
+class TestTheMetaLineUnderACapturedTurn:
+    """A captured message must end up carrying the same facts as any other.
+
+    The turn is persisted while it is written, so the model and the token
+    counts do not exist yet at that moment. They arrive when the coordinator
+    returns, and the message has to be updated then -- a meta line that stays
+    half-empty reads as a turn that cost nothing.
+    """
+
+    def test_the_source_carries_the_provider(self, captured):
+        """With no provider the client renders no meta line at all."""
+        svc, state, written, _published = captured
+        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+
+        block_cb("text", {"text": "Hello"})
+
+        assert written[0][0]["source"]["provider"] == state.provider
+
+    def test_the_real_numbers_update_the_message_that_was_written(
+            self, captured):
+        svc, state, written, published = captured
+        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+        block_cb("text", {"text": "Hello"})
+        written_id = written[0][0]["msg_id"]
+
+        svc._publish_capture_meta(state, _Resp())
+
+        metas = [d for _c, kind, d in published if kind == "message_meta"]
+        assert len(metas) == 1
+        assert metas[0]["msg_id"] == written_id
+        assert metas[0]["model"] == "opus"
+        assert (metas[0]["tokens_in"], metas[0]["tokens_out"]) == (12, 34)
+
+    def test_the_last_block_is_the_one_labelled(self, captured):
+        """The numbers describe the turn, and the answer ends it."""
+        svc, state, written, published = captured
+        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+        block_cb("text", {"text": "one"})
+        block_cb("text", {"text": "two"})
+
+        svc._publish_capture_meta(state, _Resp())
+
+        metas = [d for _c, kind, d in published if kind == "message_meta"]
+        assert metas[0]["msg_id"] == written[1][0]["msg_id"]
+
+    def test_nothing_measured_means_nothing_claimed(self, captured):
+        """Better no meta line than one asserting zeroes nobody measured."""
+        svc, state, written, published = captured
+        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+        block_cb("text", {"text": "Hello"})
+
+        svc._publish_capture_meta(state, _Resp(model="", tokens_in=0,
+                                               tokens_out=0))
+
+        assert not [d for _c, kind, d in published if kind == "message_meta"]
+
+    def test_a_capture_that_wrote_nothing_publishes_nothing(self, captured):
+        svc, state, _written, published = captured
+
+        svc._publish_capture_meta(state, _Resp())
+
+        assert not [d for _c, kind, d in published if kind == "message_meta"]
+
+    def test_a_broken_bus_never_fails_the_captured_turn(self, captured,
+                                                        monkeypatch):
+        """This closes a display gap; it must not cost the answer itself."""
+        svc, state, _written, _published = captured
+        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+        block_cb("text", {"text": "Hello"})
+
+        class _Broken:
+            @staticmethod
+            def instance():
+                raise RuntimeError("bus down")
+
+        import core.conversation_event_bus as bus
+        monkeypatch.setattr(bus, "ConversationEventBus", _Broken)
+
+        svc._publish_capture_meta(state, _Resp())
+
+    def test_a_new_capture_does_not_label_the_previous_turns_message(self):
+        """The id list is reset when a capture starts, not left to accumulate."""
+        import inspect
+        src = inspect.getsource(CCInteractiveEventService._run_manual_capture)
+        assert src.index("captured_msg_ids = []") < src.index("coord.run()")

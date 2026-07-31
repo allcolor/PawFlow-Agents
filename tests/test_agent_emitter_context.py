@@ -115,5 +115,78 @@ class TestOnDoneContextFields(unittest.TestCase):
         bus.publish_event.assert_not_called()
 
 
+class TestTokenPreview(unittest.TestCase):
+    """The answer appears while it is written, for every provider.
+
+    Each provider feeds the token callback -- the API ones with real deltas,
+    the CLI ones with whole blocks. The callback used to drop all of it, so a
+    turn landed sealed at the end and only a captured tmux turn ever streamed.
+    """
+
+    def _emitter(self, provider="anthropic"):
+        bus = MagicMock()
+        client = MagicMock(provider=provider, base_url="", default_model="x",
+                          _cc_context_window_by_stream={})
+        ctx = {"active_agent_name": "test", "active_llm_service": "svc",
+               "user_id": "u", "max_context_size": 1000, "_event_cid": "cid1",
+               "client": client}
+        em = StreamEmitter(conversation_id="cid1", bus=bus, ctx=ctx,
+                           agent=MagicMock(), gen_key="k", generation=1)
+        em._current_msg_id = "m1"
+        return em, bus
+
+    def _tokens(self, bus):
+        return [c.args[2] for c in bus.publish_event.call_args_list
+                if c.args[1] == "token"]
+
+    def test_a_token_is_published_under_the_id_the_message_will_carry(self):
+        """Same id, or the live bubble and the stored line are two messages."""
+        em, bus = self._emitter()
+
+        em.get_token_callback(False)("Hel")
+
+        self.assertEqual(self._tokens(bus)[0]["msg_id"], "m1")
+        self.assertEqual(self._tokens(bus)[0]["text"], "Hel")
+
+    def test_every_provider_streams_not_just_the_interactive_ones(self):
+        for provider in ("anthropic", "openai", "gemini", "claude-code",
+                         "claude-code-interactive"):
+            em, bus = self._emitter(provider)
+            em.get_token_callback(False)("x")
+            self.assertEqual(len(self._tokens(bus)), 1, provider)
+
+    def test_a_silent_poll_previews_nothing(self):
+        """Its text may end in NO_PENDING_WORK and never be persisted."""
+        em, bus = self._emitter()
+
+        em.get_token_callback(True)("quiet")
+
+        self.assertEqual(self._tokens(bus), [])
+
+    def test_no_id_means_no_preview(self):
+        """The bus refuses an unpaired token; asking would raise mid-turn."""
+        em, bus = self._emitter()
+        em._current_msg_id = ""
+
+        em.get_token_callback(False)("orphan")
+
+        self.assertEqual(self._tokens(bus), [])
+
+    def test_a_broken_bus_never_breaks_the_turn_it_previews(self):
+        em, bus = self._emitter()
+        bus.publish_event.side_effect = RuntimeError("bus down")
+
+        em.get_token_callback(False)("still fine")
+
+    def test_a_cancelled_generation_still_stops_the_turn(self):
+        """The preview must not swallow the cancellation the callback raises."""
+        from tasks.ai.agent_emitter import AgentCancelled
+        em, _bus = self._emitter()
+        em.agent._is_current_generation.return_value = False
+
+        with self.assertRaises(AgentCancelled):
+            em.get_token_callback(False)("gone")
+
+
 if __name__ == "__main__":
     unittest.main()

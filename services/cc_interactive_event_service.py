@@ -68,6 +68,11 @@ class CCInteractiveSessionEvents:
     error: str = ""
     manual_capture_active: bool = False
     manual_capture_pending: int = 0
+    #: Assistant messages persisted by the capture in progress. A captured
+    #: turn writes its text before the coordinator returns, so the model and
+    #: token counts are only known once it does -- these ids are what the
+    #: closing meta update is addressed to.
+    captured_msg_ids: list = field(default_factory=list)
     injected_prompts: dict[str, float] = field(default_factory=dict)
     pending_injected_prompt_ignores: list[float] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
@@ -694,7 +699,17 @@ class CCInteractiveEventService(BaseService):
         live = {"msg_id": "", "ts": 0.0}
 
         def _source():
+            # `provider` is what the meta line under a message is built from
+            # (buildMetaLine reads model / provider / tokens and renders
+            # nothing when it has none of them). A captured turn runs outside
+            # the streaming worker, so it never gets the richer source the
+            # agent loop builds -- without this it arrived bare and the
+            # message showed no meta line at all.
+            # Model and token counts stay absent on purpose: this observer
+            # sees tmux activity, not the provider's usage, and a meta line
+            # is worth less than nothing if it states numbers nobody measured.
             return {"type": "agent", "name": state.agent_name,
+                    "provider": state.provider,
                     "input": ("codex_interactive_tmux"
                               if state.provider == "codex-interactive"
                               else "cc_interactive_tmux")}
@@ -740,6 +755,7 @@ class CCInteractiveEventService(BaseService):
                         "msg_id": live["msg_id"] or None,
                     }, cid)
                     live["msg_id"] = ""
+                    state.captured_msg_ids.append(msg.get("msg_id", ""))
                     _writer().enqueue_message(
                         msg, agent_name=state.agent_name,
                         user_id=state.user_id,
@@ -877,12 +893,55 @@ class CCInteractiveEventService(BaseService):
             state.session_token[:8])
         return state.emitted_tool_use_ids, state.emitted_tool_result_ids
 
+    def _publish_capture_meta(self, state, response) -> None:
+        """Fill in the meta line once the turn's real numbers are known.
+
+        A captured turn persists its text as it is written, long before the
+        coordinator returns -- so at write time the model and the token
+        counts do not exist yet and the message goes out with a source that
+        carries only the provider. The client renders that as a meta line
+        with one item, or none at all.
+
+        ``message_meta`` is the update channel: the client looks the message
+        up by id and REPLACES its meta line, so sending the real values here
+        completes what was written earlier instead of leaving a stub. A meta
+        line that stays half-empty is worse than absent -- it looks like the
+        turn cost nothing.
+
+        Best-effort by construction: this closes a display gap, and must
+        never be able to fail the capture that produced the answer.
+        """
+        try:
+            msg_id = next(
+                (m for m in reversed(state.captured_msg_ids or []) if m), "")
+            if not msg_id:
+                return
+            tokens_in = int(getattr(response, "tokens_in", 0) or 0)
+            tokens_out = int(getattr(response, "tokens_out", 0) or 0)
+            model = str(getattr(response, "model", "") or "")
+            if not (model or tokens_in or tokens_out):
+                return
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                state.conversation_id, "message_meta", {
+                    "msg_id": msg_id,
+                    "agent_name": state.agent_name,
+                    "provider": state.provider,
+                    "model": model,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                })
+        except Exception:
+            logger.debug("CC interactive capture meta publish failed",
+                         exc_info=True)
+
     def _run_manual_capture(self, session_token: str) -> None:
         state = self.session_state(session_token)
         try:
             if not state:
                 return
             self._publish_capture_active(state, active=True)
+            state.captured_msg_ids = []
             if state.provider == "codex-interactive":
                 from core.llm_providers._codex_interactive_turn import (
                     _CodexInteractiveTurnCoordinator as _TurnCoordinator)
@@ -909,6 +968,7 @@ class CCInteractiveEventService(BaseService):
                 emitted_tool_result_ids=_result_ids,
                 consumer_kind="capture")
             response = coord.run()
+            self._publish_capture_meta(state, response)
             logger.info(
                 "CC interactive captured turn streamed: conv=%s agent=%s chars=%d",
                 state.conversation_id[:8], state.agent_name,

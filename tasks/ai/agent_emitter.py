@@ -492,7 +492,38 @@ class StreamEmitter(AgentEmitter):
             if not agent._is_current_generation(gen_key, generation):
                 raise AgentCancelled()
             _emitter._last_token_time = time.time()
+            _emitter._publish_token_preview(text, poll_silent)
         return on_token
+
+    def _publish_token_preview(self, text: str, poll_silent: bool) -> None:
+        """Live preview of the answer as it is written.
+
+        Every provider feeds the token callback -- the API ones with real
+        deltas, the CLI ones with whole blocks -- so the answer appears
+        progressively everywhere instead of landing sealed at the end.
+
+        The id is the one the durable message will carry (``_alc_append``
+        stamps it from ``_current_msg_id``). That pairing is the whole point:
+        without it the streaming bubble and the persisted line are two
+        different messages and the reader sees the same answer twice, which
+        is why the bus refuses a token event with no id.
+
+        A silent poll stays silent on purpose: a check-in ending in
+        NO_PENDING_WORK never persists its text, and previewing it would put
+        an answer on screen that belongs to nothing.
+        """
+        if poll_silent or not text or not self._current_msg_id:
+            return
+        try:
+            self._emit("token", {
+                "text": text,
+                "msg_id": self._current_msg_id,
+                "agent_name": self._agent_name or "",
+                "source": self._agent_source(),
+            })
+        except Exception:
+            # A preview must never break the turn it previews.
+            logger.debug("token preview publish failed", exc_info=True)
 
     def get_thinking_callback(self, poll_silent: bool) -> Optional[Callable]:
         gen_key = self.gen_key

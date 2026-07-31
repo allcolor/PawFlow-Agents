@@ -118,6 +118,18 @@ function _sseWireA() {
     // Finalize thinking block when first text token arrives
     finalizeThinking(agent, 'token');
     const s = getStream(agent);
+    // One bubble per durable message. The agent loop rotates msg_id at every
+    // persisted block, so a single turn can carry several of them. Without
+    // this the blocks pile into one bubble while streaming and split back
+    // apart on reload -- the live view and the reloaded view disagreeing
+    // about the same turn.
+    if (s.el && s.msg_id && data.msg_id && data.msg_id !== s.msg_id) {
+      s.el.classList.remove('streaming');
+      s.el.classList.add('finalized');
+      s.el = null;
+      s.text = '';
+      s.chunks = [];
+    }
     s.text += data.text;
     s.msg_id = data.msg_id || s.msg_id || '';  // track msg_id from tokens
     // Always have a source — every response comes from an agent

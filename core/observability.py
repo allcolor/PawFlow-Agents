@@ -157,6 +157,55 @@ def span(name: str, **attributes):
             raise
 
 
+def current_context() -> Optional[Any]:
+    """An opaque handle to the active trace context, or None when tracing is off.
+
+    Only useful together with ``attached``: a context captured here in one
+    thread and re-attached there in another is what keeps a span made in a
+    worker under the span that submitted the work.
+    """
+    if _TRACER is None:
+        return None
+    try:
+        from opentelemetry import context as otel_context
+        return otel_context.get_current()
+    except Exception:
+        logger.debug("otel: context capture failed", exc_info=True)
+        return None
+
+
+@contextmanager
+def attached(ctx: Optional[Any]):
+    """Re-attach a context captured by ``current_context`` in another thread.
+
+    OpenTelemetry keeps the active span in a ContextVar, and a ContextVar does
+    not cross a ThreadPoolExecutor boundary: work submitted to a pool starts
+    with an empty context. Without this, a span opened inside a worker is a
+    root span rather than a child, and a trace shows the tools as unrelated
+    top-level rows instead of the turn that ran them.
+
+    A no-op when tracing is off or nothing was captured.
+    """
+    if _TRACER is None or ctx is None:
+        yield
+        return
+    try:
+        from opentelemetry import context as otel_context
+        token = otel_context.attach(ctx)
+    except Exception:
+        # Failing to attach costs a correct parent, never the work itself.
+        logger.debug("otel: context attach failed", exc_info=True)
+        yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            otel_context.detach(token)
+        except Exception:
+            logger.debug("otel: context detach failed", exc_info=True)
+
+
 def current_trace_id() -> str:
     """The active trace id as hex, or "" when there is no span.
 

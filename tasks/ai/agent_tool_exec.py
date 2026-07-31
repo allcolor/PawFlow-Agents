@@ -337,8 +337,25 @@ class AgentToolExecMixin:
         pool = ThreadPoolExecutor(max_workers=max(len(tool_calls), 1))
         for tc in tool_calls:
             _bg.reserve_owner(tc.id, conversation_id)
+
+        # The tool boundary: the other half of a slow turn, and the only one
+        # that can be slow per-tool while the rest of the turn is fine.
+        # The context is captured HERE, in the submitting thread, because the
+        # pool below starts each worker with an empty one -- see
+        # core.observability.attached.
+        from core.observability import attached, current_context, span
+        _trace_ctx = current_context()
+
+        def _traced_exec_one(tc):
+            with attached(_trace_ctx), span(
+                    "agent.tool",
+                    **{"pawflow.tool": getattr(tc, "name", "") or "",
+                       "pawflow.conversation_id": conversation_id or "",
+                       "pawflow.agent": agent_name or ""}):
+                return _exec_one(tc)
+
         try:
-            futures = {pool.submit(_exec_one, tc): tc for tc in tool_calls}
+            futures = {pool.submit(_traced_exec_one, tc): tc for tc in tool_calls}
         except Exception:
             for tc in tool_calls:
                 _bg.release_owner(tc.id)

@@ -717,6 +717,7 @@ class _ALCClosures2Mixin:
             st._append(msg)
 
     def _alc_llm_call(self, st, msgs, ps):
+        from core.observability import span
         _call_kwargs = {
             "call_user_id": st.user_id,
             "call_conversation_id": st.conversation_id,
@@ -725,6 +726,25 @@ class _ALCClosures2Mixin:
             "call_ephemeral_stream": False,
         }
         msgs = self._alc_apply_vision_fallback(st, msgs, _call_kwargs)
+        # The provider boundary: the only step of a turn that leaves the
+        # process, and the one whose wall-clock the logs cannot attribute on
+        # their own -- a slow turn is either this or the tools, and nothing
+        # else distinguishes them after the fact.
+        # Every attribute is read defensively, for the same reason as the
+        # iteration span: a span describes the call, it must never be the
+        # reason the call fails.
+        with span("agent.llm_call",
+                  **{"pawflow.provider": getattr(
+                         st, "_client_provider", "") or "",
+                     "pawflow.model": str(getattr(st, "model", "") or ""),
+                     "pawflow.streaming": bool(getattr(
+                         st.emitter, "is_streaming", False)),
+                     "pawflow.conversation_id": getattr(
+                         st, "conversation_id", "") or "",
+                     "pawflow.tools": len(getattr(st, "tool_defs", None) or [])}):
+            return self._alc_llm_call_dispatch(st, msgs, ps, _call_kwargs)
+
+    def _alc_llm_call_dispatch(self, st, msgs, ps, _call_kwargs):
         if st.emitter.is_streaming:
             return st.client.complete_stream(
                 messages=msgs, model=st.model or None,

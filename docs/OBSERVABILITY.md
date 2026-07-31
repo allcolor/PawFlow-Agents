@@ -85,8 +85,18 @@ observability.
 
 ### What is instrumented
 
-`agent.iteration` -- the outermost boundary. Provider call, tools and restarts
-all hang under it.
+Three boundaries, and they answer one question between them: a turn was slow,
+where did the wall-clock go?
+
+| Span | Boundary | Attributes |
+|---|---|---|
+| `agent.iteration` | the outermost one -- everything below hangs under it | `conversation_id`, `agent`, `iteration` |
+| `agent.llm_call` | the only step of a turn that leaves the process | `provider`, `model`, `streaming`, `conversation_id`, `tools` |
+| `agent.tool` | one per tool call, siblings when they run in parallel | `tool`, `conversation_id`, `agent` |
+
+All attributes are prefixed `pawflow.`. A slow turn is either the provider or
+the tools, and nothing else distinguishes them after the fact -- which is why
+those two are split out and nothing else is.
 
 Instrument few things. A trace where everything is a span costs money to store
 and hides the four rows that mattered. Add one only for a boundary that can be
@@ -98,6 +108,32 @@ from core.observability import span
 with span("thing.that.can.be.slow", **{"pawflow.conversation_id": cid}):
     ...
 ```
+
+#### Spans made in another thread
+
+OpenTelemetry keeps the active span in a `ContextVar`, and a `ContextVar` does
+not cross a `ThreadPoolExecutor`: work submitted to a pool starts with an empty
+context. A span opened in a worker is then a *root* span, and the trace shows
+those rows as unrelated top-level entries instead of the turn that ran them --
+which is exactly the tool case, since tools run in a pool so a user can
+background them.
+
+Capture the context in the submitting thread, re-attach it in the worker:
+
+```python
+from core.observability import attached, current_context, span
+
+trace_ctx = current_context()          # in the submitting thread
+
+def _work(item):
+    with attached(trace_ctx), span("thing.in.a.worker"):
+        ...
+
+pool.submit(_work, item)
+```
+
+Both helpers are no-ops when tracing is off, and a failure to attach costs the
+parent link, never the work.
 
 ### The join
 

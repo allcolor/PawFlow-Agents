@@ -9,6 +9,7 @@ something when tracing is off.
 
 import io
 import logging
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -136,6 +137,92 @@ class TheJoinWithTheLogs(unittest.TestCase):
             self.assertIn(f"[{NO_SESSION}]", self._line())
 
 
+class _FakeOtelContext:
+    """Enough of ``opentelemetry.context`` to observe attach/detach."""
+
+    def __init__(self):
+        self.current = object()
+        self.attached = []
+        self.detached = []
+
+    def get_current(self):
+        return self.current
+
+    def attach(self, ctx):
+        self.attached.append(ctx)
+        return f"token-{len(self.attached)}"
+
+    def detach(self, token):
+        self.detached.append(token)
+
+
+class CrossingTheThreadBoundary(unittest.TestCase):
+    """Tools run in a pool, and a ContextVar does not follow them there.
+
+    Without an explicit re-attach every tool span is a root span: the trace
+    shows the tools as unrelated top-level rows instead of the turn that ran
+    them. These tests are that re-attach.
+    """
+
+    def setUp(self):
+        self.fake = _FakeOtelContext()
+        module = types.ModuleType("opentelemetry")
+        module.context = self.fake
+        self._modules = patch.dict(
+            "sys.modules",
+            {"opentelemetry": module, "opentelemetry.context": self.fake})
+        self._modules.start()
+        observability._TRACER = object()
+
+    def tearDown(self):
+        self._modules.stop()
+        observability._TRACER = None
+        observability._CONFIGURED = False
+
+    def test_a_captured_context_is_attached_then_detached(self):
+        ctx = observability.current_context()
+        self.assertIs(ctx, self.fake.current)
+        with observability.attached(ctx):
+            self.assertEqual(self.fake.attached, [ctx])
+            self.assertEqual(self.fake.detached, [])
+        self.assertEqual(self.fake.detached, ["token-1"])
+
+    def test_the_context_is_detached_even_when_the_body_raises(self):
+        """A leaked token would make every later span a child of a dead one."""
+        with self.assertRaises(ValueError):
+            with observability.attached(observability.current_context()):
+                raise ValueError("from the tool")
+        self.assertEqual(self.fake.detached, ["token-1"])
+
+    def test_nothing_captured_means_nothing_attached(self):
+        with observability.attached(None):
+            pass
+        self.assertEqual(self.fake.attached, [])
+
+    def test_a_broken_attach_costs_the_parent_and_not_the_work(self):
+        ran = []
+        with patch.object(self.fake, "attach",
+                          side_effect=RuntimeError("otel exploded")):
+            with observability.attached(observability.current_context()):
+                ran.append(1)
+        self.assertEqual(ran, [1])
+
+
+class TheHelpersAreFreeWhenOff(unittest.TestCase):
+
+    def setUp(self):
+        observability._TRACER = None
+
+    def test_nothing_is_captured_when_tracing_is_off(self):
+        self.assertIsNone(observability.current_context())
+
+    def test_attaching_when_off_still_runs_the_body(self):
+        ran = []
+        with observability.attached(object()):
+            ran.append(1)
+        self.assertEqual(ran, [1])
+
+
 class WhatIsInstrumented(unittest.TestCase):
 
     def test_the_server_turns_tracing_on_at_startup(self):
@@ -146,6 +233,23 @@ class WhatIsInstrumented(unittest.TestCase):
         """The one boundary everything else hangs under."""
         src = Path("tasks/ai/_alc_iteration.py").read_text(encoding="utf-8")
         self.assertIn('span("agent.iteration"', src)
+
+    def test_the_provider_call_carries_a_span(self):
+        """The only step of a turn that leaves the process."""
+        src = Path("tasks/ai/_alc_closures2.py").read_text(encoding="utf-8")
+        self.assertIn('span("agent.llm_call"', src)
+
+    def test_the_tool_execution_carries_a_span(self):
+        src = Path("tasks/ai/agent_tool_exec.py").read_text(encoding="utf-8")
+        self.assertIn('"agent.tool"', src)
+
+    def test_the_tool_context_is_captured_before_the_pool_not_inside_it(self):
+        """Captured in the worker it would be empty, and the span an orphan."""
+        src = Path("tasks/ai/agent_tool_exec.py").read_text(encoding="utf-8")
+        self.assertLess(src.index("current_context()"),
+                        src.index("pool.submit("),
+                        "the trace context must be captured in the submitting "
+                        "thread")
 
     def test_the_sdk_is_not_a_hard_dependency(self):
         """Imported inside the functions, never at module scope."""

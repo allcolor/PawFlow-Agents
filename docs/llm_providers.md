@@ -7,6 +7,7 @@ PawFlow can run agents through direct HTTP APIs and through CLI-backed coding ag
 | Provider | Mode | Typical use | Notes |
 |---|---|---|---|
 | `openai` | Direct API | OpenAI and OpenAI-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. This is the generic OpenAI-compatible API surface. |
+| `openai-responses` | Direct API | Endpoints speaking OpenAI's **Responses API** | Same fields as `openai`, different wire format and a different endpoint (`/responses`). See [Responses API](#responses-api). |
 | `anthropic` | Direct API | Claude API and Anthropic-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
 | `claude-code` | CLI container or subprocess | Non-interactive Claude Code style coding turns | Uses Claude Code credentials or API-key mode, session resume, and the PawFlow MCP bridge. |
 | `claude-code-interactive` | Interactive CLI container with observed provider stream | Claude subscription accounts and long-lived Claude Code sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
@@ -23,6 +24,7 @@ Use the credential source to choose the provider surface:
 | Credential source | Preferred provider(s) | Why |
 |---|---|---|
 | Generic API key for an OpenAI-compatible endpoint | `openai` | Direct HTTP, tool calling, vision when `supports_vision=true`, `base_url` support, and `/v1/embeddings` support when the endpoint exposes it. |
+| An endpoint you want to drive through the Responses API | `openai-responses` | Reasoning items, server-side built-in tools, and the event stream those need. Prefer plain `openai` unless you specifically want the Responses surface. |
 | Anthropic API key | `anthropic`, or `claude-code` / `claude-code-interactive` with `api_key` | Use `anthropic` for direct API agents. Use Claude Code providers when you want the provider CLI/session behavior and PawFlow MCP bridge. |
 | Claude subscription login | `claude-code-interactive` | Long-lived interactive Claude Code session with OAuth credentials from the `claude-code` credential pool. |
 | OpenAI API key | `openai`, or `codex-app-server` with `api_key` | Use `openai` for direct API agents. Use `codex-app-server` when you want Codex app-server threads and coding-agent behavior. |
@@ -244,6 +246,44 @@ Protected request keys such as `model`, `messages`, `tools`, `stream`, token lim
 ## Anthropic-Compatible Vision
 
 The Anthropic provider accepts direct Anthropic services and compatible endpoints such as DeepSeek. The `supports_vision` setting on OpenAI and Anthropic API services is the user-controlled capability flag: when enabled, PawFlow resolves `image_ref` attachments and multimodal `see` tool results into native image blocks; when disabled, PawFlow sends only a text note and never transmits image bytes to that provider. For Anthropic payloads, PawFlow logs the number of image blocks included.
+
+## Responses API
+
+`openai-responses` speaks OpenAI's Responses API, the successor to
+chat/completions. It is a separate provider rather than a flag on `openai`
+because the format differs at every level:
+
+| chat/completions | Responses |
+|---|---|
+| `messages[]` | `input[]` of typed items |
+| system message | `instructions` |
+| assistant `tool_calls` field | a `function_call` item of its own |
+| `role: tool` message | a `function_call_output` item, addressed by `call_id` |
+| `{"type":"function","function":{…}}` | flat `{"type":"function","name":…}` |
+| `choices[].delta`, ends on `data: [DONE]` | typed semantic events, ends on `response.completed` / `.incomplete` / `.failed` — **there is no `[DONE]`** |
+| `prompt_tokens` / `completion_tokens` | `input_tokens` / `output_tokens`, with `cached_tokens` and `reasoning_tokens` as details |
+
+Configure it exactly like `openai`: `api_key`, optional `base_url`,
+`default_model`. The endpoint suffix follows the same rule as
+chat/completions — a `base_url` already carrying a version segment gets
+`/responses`, one without gets `/v1/responses`.
+
+`reasoning_effort` is sent as `reasoning.effort`, and `max_tokens` as
+`max_output_tokens` (one name, unlike chat/completions where it depends on the
+model generation). Unsupported top-level parameters are specified to be
+ignored rather than rejected, so the same payload shape is safe to send to any
+endpoint implementing the format.
+
+Known implementations: OpenAI, and DeepSeek at `https://api.deepseek.com`.
+DeepSeek's implementation is stateless — `previous_response_id`,
+`conversation`, `store`, `background` and image input are not supported —
+which PawFlow does not depend on: it sends the full input list every turn.
+
+**Choosing between `openai` and `openai-responses`.** For an endpoint that
+offers both, plain `openai` remains the default. The Responses surface is what
+you want when you need reasoning items or the server-side built-in tools;
+for ordinary text and function calling the two are equivalent, and
+chat/completions is the more widely implemented of the pair.
 
 ## Claude Code Providers
 

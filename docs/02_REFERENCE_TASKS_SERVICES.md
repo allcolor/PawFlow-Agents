@@ -636,7 +636,7 @@ val = cache.get("key")
 **Parameters**:
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `provider` | string | Yes | openai | Provider (openai, azure-openai, copilot, anthropic, plus the CLI providers) |
+| `provider` | string | Yes | openai | Provider (openai, openai-responses, azure-openai, copilot, anthropic, plus the CLI providers) |
 | `api_key` | secret | Yes | - | API key |
 | `model` | string | No | gpt-4 | Model to use |
 | `base_url` | string | No | - | Custom base URL |
@@ -648,6 +648,15 @@ val = cache.get("key")
 **OpenAI-dialect providers** (`core/llm_providers/openai_dialects.py`): Azure
 OpenAI and GitHub Copilot send OpenAI chat-completions bodies, so they reuse
 the whole OpenAI path. Only the envelope differs.
+
+*OpenAI Responses* (`openai-responses`, `core/llm_providers/openai_responses.py`)
+is NOT a dialect: it is a different wire format on a different endpoint
+(`/responses`), with typed `input` items instead of `messages`, `instructions`
+instead of a system message, flat tool declarations, a semantic SSE stream with
+no `data: [DONE]` sentinel, and `input_tokens`/`output_tokens` usage. It has
+its own mixin and its own dispatch branch (`RESPONSES_WIRE_PROVIDERS`) rather
+than joining `OPENAI_WIRE_PROVIDERS`. Configured like `openai`: `api_key`,
+optional `base_url`, `default_model`. See `docs/llm_providers.md`.
 
 *Azure OpenAI* needs three things a plain OpenAI-compatible `base_url` cannot
 express: the key travels in an `api-key` header rather than `Authorization`,

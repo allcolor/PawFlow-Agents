@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 #: decided in core.llm_providers.openai_dialects.
 OPENAI_WIRE_PROVIDERS = ("openai", "azure-openai", "copilot")
 
+#: Endpoints speaking OpenAI's Responses API. A different wire format from
+#: chat/completions -- typed input items, `instructions`, flat tools, and a
+#: semantic SSE stream with no [DONE] sentinel -- so it dispatches separately
+#: rather than joining OPENAI_WIRE_PROVIDERS.
+RESPONSES_WIRE_PROVIDERS = ("openai-responses",)
+
 
 class _LLMClientDriverMixin:
     """complete / complete_stream / embed + abort control for LLMClient."""
@@ -129,6 +135,13 @@ class _LLMClientDriverMixin:
                 result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools,
                                                 call_user_id=call_user_id or "",
                                                 call_conversation_id=call_conversation_id or "")
+            elif self.provider in RESPONSES_WIRE_PROVIDERS:
+                # The Responses API has one parser, and it is the streaming
+                # one; complete() is the same call without callbacks.
+                result = self._stream_openai_responses(
+                    messages, mdl, temperature, max_tokens, tools, None,
+                    call_user_id=call_user_id or "",
+                    call_conversation_id=call_conversation_id or "")
             elif self.provider == "claude-code":
                 # CC only has stream-json mode — complete() and stream()
                 # share the same path; complete() simply doesn't pass a
@@ -401,6 +414,12 @@ class _LLMClientDriverMixin:
                         "OpenAI relay non-streaming fallback succeeded model=%s base_url=%s tokens_out=%s",
                         result.model or mdl, self._redact_relay_proxy_url(base_url), result.tokens_out,
                     )
+            elif self.provider in RESPONSES_WIRE_PROVIDERS:
+                result = self._stream_openai_responses(
+                    messages, mdl, temperature, max_tokens, tools, callback,
+                    thinking_callback=thinking_callback,
+                    call_user_id=call_user_id or "",
+                    call_conversation_id=call_conversation_id or "")
             elif self.provider == "claude-code":
                 result = self._stream_claude_code(messages, mdl, temperature, max_tokens, tools, callback,
                                                   turn_callback=turn_callback,

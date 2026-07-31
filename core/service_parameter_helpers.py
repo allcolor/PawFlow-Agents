@@ -47,6 +47,18 @@ COPILOT_BASE_URLS = [
      "Copilot chat endpoint. Leave empty to use it by default."),
 ]
 
+#: Endpoints that speak OpenAI's Responses API. Same hosts as their
+#: chat/completions -- it is another endpoint on the base URL, not another
+#: service -- so only the ones known to implement it are listed.
+RESPONSES_BASE_URLS = [
+    ("OpenAI", "https://api.openai.com/v1", "Native OpenAI Responses API."),
+    ("DeepSeek", "https://api.deepseek.com",
+     "DeepSeek Responses-compatible endpoint. Stateless: previous_response_id, "
+     "store and image input are not supported."),
+    ("Local relay", _conv_relay_url("localhost:1234/v1"),
+     "Relay-routed local Responses-compatible server."),
+]
+
 ANTHROPIC_BASE_URLS = [
     ("Anthropic", "https://api.anthropic.com", "Native Anthropic Messages API."),
     ("DeepSeek Anthropic", "https://api.deepseek.com/anthropic", "DeepSeek Anthropic-compatible endpoint."),
@@ -290,6 +302,10 @@ def _provider_family(config: Dict[str, Any]) -> str:
         return "xai"
     if "dashscope" in base_url or "aliyuncs" in base_url:
         return "dashscope"
+    if provider == "openai-responses":
+        # A wire format, not a vendor: the model catalogue still comes from
+        # /models on the same host, so it resolves like plain openai.
+        return "openai"
     return provider or "openai"
 
 
@@ -528,6 +544,8 @@ def _base_url_values(service_type: str, config: Dict[str, Any]) -> List[Dict[str
             return _values(AZURE_BASE_URLS)
         if provider == "copilot":
             return _values(COPILOT_BASE_URLS)
+        if provider == "openai-responses":
+            return _values(RESPONSES_BASE_URLS)
     if service_type in {"supertonicTTS", "pocketTTS", "voicebox", "voxcpmTTS", "httpClientService"}:
         return _values(LOCAL_BASE_URLS + OPENAI_BASE_URLS[:2])
     return _values(OPENAI_BASE_URLS)

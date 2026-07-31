@@ -659,7 +659,8 @@ class LLMConnectionService(BaseService):
             {
                 # Every provider except the two Azure-only fields, which the
                 # azure-openai rule below turns back on.
-                "when": {"provider": ["openai", "azure-openai", "copilot", "anthropic",
+                "when": {"provider": ["openai", "openai-responses", "azure-openai",
+                                     "copilot", "anthropic",
                                      "claude-code", "claude-code-interactive",
                                      "antigravity-interactive", "codex-app-server",
                                      "gemini"]},
@@ -669,7 +670,8 @@ class LLMConnectionService(BaseService):
                 }
             },
             {
-                "when": {"provider": ["openai", "azure-openai", "copilot", "anthropic"]},
+                "when": {"provider": ["openai", "openai-responses", "azure-openai",
+                                     "copilot", "anthropic"]},
                 "set": {
                     "api_key":       {"visible": True, "required": True},
                     "credential_service_id": {"visible": False},
@@ -690,7 +692,8 @@ class LLMConnectionService(BaseService):
                 }
             },
             {
-                "when": {"provider": ["openai", "azure-openai", "copilot"]},
+                "when": {"provider": ["openai", "openai-responses", "azure-openai",
+                                     "copilot"]},
                 "set": {
                     "extra_body":    {"visible": True},
                 }

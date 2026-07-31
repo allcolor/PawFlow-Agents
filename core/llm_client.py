@@ -18,6 +18,7 @@ from core.token_counter import count_messages_tokens
 from core.llm_providers import (
     LLMCliSharedMixin,
     LLMOpenaiMixin,
+    LLMOpenaiResponsesMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
     LLMClaudeCodeInteractiveMixin,
@@ -63,6 +64,7 @@ class LLMClient(
     _LLMClientDriverMixin,
     LLMCliSharedMixin,
     LLMOpenaiMixin,
+    LLMOpenaiResponsesMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
     LLMClaudeCodeInteractiveMixin,
@@ -83,10 +85,13 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "azure-openai", "copilot", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
+    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
+        # Same host as chat/completions -- the Responses API is a different
+        # endpoint on it, not a different service.
+        "openai-responses": "https://api.openai.com",
         "anthropic": "https://api.anthropic.com",
         # Azure has no shared host: every resource has its own, so base_url is
         # required rather than defaulted.

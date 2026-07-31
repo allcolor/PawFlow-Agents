@@ -4,6 +4,29 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.66] — 2026-07-31
+
+### Fixed
+
+- A guess about the end of a turn no longer ends a turn that is running. The
+  block said `Completed`, elapsed frozen at 1s, animations gone, over an agent
+  four tools in and still working. No `done` had been published — the
+  conversation writer logs every publication and there was none for the whole
+  turn. A history page carries `turn_final` on the last assistant row of every
+  turn its classifier believes is over, flagged `turn_final_derived` because it
+  is a reconstruction rather than a statement by the server, and the only thing
+  keeping that guess away from a live turn was `active_turn_ids` server side —
+  which the client obeyed without asking whether the turn was still speaking.
+  The view now holds the invariant on evidence it owns: a turn the runtime
+  snapshot names, or one the live channel is feeding, refuses a derived final
+  outright, and a derived final that did close a turn is remembered as a guess
+  that the next live row of that turn undoes. A `done` never carries the flag,
+  so nothing real is blocked and nothing reopens a turn the server declared
+  finished.
+- Gap recovery adopts the `active_turns` snapshot of the page it renders, like a
+  full load does. It is the path that runs precisely while a turn is in flight,
+  and it was judging liveness on a picture taken at the last full load.
+
 ## [1.0.0-beta.65] — 2026-07-31
 
 ### Added

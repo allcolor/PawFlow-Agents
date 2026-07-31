@@ -138,9 +138,11 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
 
         ``before_launch`` is called at the instant this becomes a LAUNCH and
         not a reuse, and may refuse it by raising -- see
-        ``_cli_require_cold_context``. It is never called on the reuse path,
-        and it runs before the stale session is killed, so a refusal changes
-        nothing.
+        ``_cli_require_cold_context``. It is never called on the reuse path.
+        A refusal still destroys the unusable session: it has already left the
+        registry by then, and a container nobody tracks is a container nobody
+        kills -- the cold retry would launch a second one beside it. The kill
+        is in a ``finally`` for that reason.
         """
         service_id = getattr(client, "_agent_service", "") or ""
         key = (user_id, conversation_id, agent_name, service_id)
@@ -153,11 +155,13 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             if existing:
                 self._sessions.pop(key, None)
                 stale = existing
-        if before_launch is not None:
-            before_launch()
-        if stale:
-            logger.info("Restarting stale Antigravity interactive session %s", stale.name)
-            self.kill(stale)
+        try:
+            if before_launch is not None:
+                before_launch()
+        finally:
+            if stale:
+                logger.info("Restarting stale Antigravity interactive session %s", stale.name)
+                self.kill(stale)
         state = self._start_new(
             user_id, conversation_id, agent_name, service_id, model or "",
             client=client)

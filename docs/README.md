@@ -48,6 +48,7 @@
 | [Relay Client](relay_client.md) | Standalone client relay CLI/Desktop contract |
 | [Relay Image Profiles](relay_images.md) | Server full relay image and configurable client relay image profiles |
 | [Security Model](security_model.md) | Trust boundaries, relay risk, desktop/VNC, provider egress, production checklist |
+| [Observability](OBSERVABILITY.md) | Session correlation in logs (always on) and optional OpenTelemetry tracing |
 | [Development](development.md) | Creating custom tasks and services |
 | [Relay Server Filesystem](relay_server_fs.md) | Relay filesystem server details |
 | [Example: Agent-Created Flow](examples/first_agent_flow.md) | Minimal daily digest flow pattern |

@@ -254,6 +254,11 @@ def cmd_start(args):
     configure_server_logging(logging.INFO)
     logger = logging.getLogger("pawflow")
 
+    # Tracing is opt-in: no endpoint configured, or no SDK installed, and this
+    # is a no-op. It cannot fail the boot -- configure_tracing never raises.
+    from core.observability import configure_tracing
+    configure_tracing()
+
     try:
         from core.cli_workspace_mounts import set_workspace_mount_mode
         _mount_arg = getattr(args, "workspace_mount", None)

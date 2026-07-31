@@ -41,8 +41,21 @@ class _ALCIterationMixin:
         overflow retry or a cancellation each left a live thread behind, one
         per attempt, all publishing for the same conversation.
         """
+        from core.observability import span
         try:
-            return self._alc_iteration_body(st)
+            # The outermost boundary worth a span: everything the turn does --
+            # provider call, tools, restarts -- hangs under it, so a slow turn
+            # is one row to open rather than a log to reconstruct.
+            # Every attribute is read defensively. A span describes the turn;
+            # it must never be able to break it, and an attribute the state
+            # happens not to carry is a missing label, not a failed iteration.
+            with span("agent.iteration",
+                      **{"pawflow.conversation_id": getattr(
+                             st, "conversation_id", "") or "",
+                         "pawflow.agent": getattr(st, "agent_name", "") or "",
+                         "pawflow.iteration": int(
+                             getattr(st, "iteration", 0) or 0) + 1}):
+                return self._alc_iteration_body(st)
         finally:
             self._alc_stop_iteration_heartbeat(st)
 
@@ -302,7 +315,8 @@ class _ALCIterationMixin:
         # the concatenation of pieces already on disk.
         st._is_claude_code = st._client_provider in (
             "claude-code", "claude-code-interactive",
-            "antigravity-interactive", "codex-app-server", "gemini")
+            "antigravity-interactive", "codex-app-server",
+            "codex-interactive", "gemini")
 
         st._cc_turn_count = [0]
 

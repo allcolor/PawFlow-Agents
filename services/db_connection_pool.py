@@ -86,7 +86,17 @@ class DBConnectionPoolService(BaseService):
         if self.db_type == "sqlite":
             # A pooled connection may be reused by whichever worker thread checks
             # it out next, so it must not be pinned to its creating thread.
-            return sqlite3.connect(self.database, check_same_thread=False)
+            #
+            # SQLite serializes writers: a second one waits for the busy timeout
+            # and then raises "database is locked". The 5s default gives up long
+            # before the caller asked it to -- _acquire already blocks up to
+            # _acquire_timeout for a free connection, so a caller has agreed to
+            # wait that long. Waiting the same budget for the write lock costs
+            # nothing extra and is the difference between a slow insert and a
+            # failed one under concurrent flow tasks.
+            return sqlite3.connect(
+                self.database, check_same_thread=False,
+                timeout=self._acquire_timeout)
         elif self.db_type == "postgresql":
             if psycopg2 is None:
                 raise ServiceError("psycopg2 non installé. pip install psycopg2-binary")

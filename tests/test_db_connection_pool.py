@@ -62,3 +62,25 @@ def test_concurrent_pool_access(tmp_path):
     assert not errors, errors
     cnt = s.execute_query("SELECT count(*) AS c FROM t")[0]["c"]
     assert cnt == 8 * 20
+
+
+def test_write_lock_wait_matches_the_pool_acquire_budget(tmp_path):
+    """A pooled connection waits as long for the lock as for the connection.
+
+    SQLite serializes writers: the loser waits for its busy timeout and then
+    raises "database is locked". sqlite3's 5s default is unrelated to anything
+    this pool promises -- `_acquire` already blocks up to `_acquire_timeout` for
+    a free connection, so a caller has already agreed to wait that long. Leaving
+    the write lock on the shorter budget is what made
+    ``test_concurrent_pool_access`` fail under CI load while passing locally:
+    the failure is a timeout, not a deadlock, so it only shows up when the
+    machine is slow enough.
+    """
+    s = _svc(str(tmp_path / "pool.db"))
+    conn = s._acquire()
+    try:
+        busy_timeout_ms = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    finally:
+        s._release(conn)
+
+    assert busy_timeout_ms == s._acquire_timeout * 1000

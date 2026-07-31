@@ -4,6 +4,37 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.64] — 2026-07-31
+
+### Fixed
+
+- A cold CLI start no longer nests the previous one inside itself. The agent
+  reads its serialized context from `initial_context.md`; that read and its
+  result are persisted on purpose, so the transcript shows what the agent did
+  rather than hiding a call that cannot be told apart from a lost one. They were
+  also being serialized back into the *next* context file — and since the result
+  body is the bootstrap file, each cold start embedded a verbatim copy of the
+  one before it. A 671 KB context file was 16% copies of itself, two echoes of
+  52 KB and 53.5 KB quoting content already present in clear a few hundred lines
+  above. Transcript and agent context are two surfaces with two rules: the pair
+  stays in the first and is dropped from the second, in every serialization path
+  of all five CLI providers. The gauge still charges for that body — it is
+  literally what fills the provider's window — and the serializer reuses the
+  gauge's own predicate so the two cannot drift apart.
+- `# nosec B404` markers point at the line Bandit flags again. The beta.63 ruff
+  pass split `import subprocess, os, shutil  # nosec B404` into one import per
+  line and the comment stayed on the last of them, leaving the `subprocess`
+  import bare and the security scan red on two findings that had already been
+  reviewed and accepted.
+- A pooled SQLite connection waits for the write lock as long as it waits for a
+  connection. SQLite serializes writers and the loser gives up after its busy
+  timeout; sqlite3's 5s default was never chosen, while the pool already blocks
+  up to 30s to hand out a connection. Concurrent flow tasks on one database
+  could raise `database is locked` instead of simply taking their turn. The
+  journal mode was measured and makes no difference here — the timeout is the
+  whole effect — so no WAL pragma was added and user databases keep their
+  on-disk format.
+
 ## [1.0.0-beta.63] — 2026-07-31
 
 ### Fixed

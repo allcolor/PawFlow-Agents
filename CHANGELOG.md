@@ -4,6 +4,44 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.65] — 2026-07-31
+
+### Added
+
+- The answer now appears while it is written, whatever provider is behind it.
+  Only one path ever streamed before — the orphan-turn capture that adopts a
+  tmux turn nobody is listening to — so an answer arrived progressively when a
+  background tool woke the agent and landed sealed in one piece the rest of the
+  time. `StreamEmitter.get_token_callback` was receiving the text from every
+  provider and dropping it. Granularity stays the provider's and is not a
+  setting: the API providers deliver real deltas, the CLI ones whole blocks
+  (Claude Code 1.0+ sends complete `assistant` events, with no
+  `content_block_delta` to forward), so those are progressive block by block
+  rather than word by word.
+- `agent.llm_call` and `agent.tool` spans. Tracing was wired end to end and
+  instrumented a single boundary, so a trace said a turn took four minutes and
+  nothing about where they went. These two are the ones that can be slow, and
+  the only ones that tell each other apart afterwards. Tools run in a thread
+  pool and OpenTelemetry keeps the active span in a `ContextVar`, which a pool
+  worker does not inherit — the trace context is captured in the submitting
+  thread and re-attached in the worker, or every tool span would be a root span
+  and the trace would show the tools as unrelated top-level rows.
+
+### Fixed
+
+- A captured tmux turn shows its meta line again. The capture persists its text
+  as it is written, which is before the coordinator returns, so the model and
+  the token counts do not exist yet and the message went out with a source
+  carrying neither — and the client renders no meta line from that.
+  `message_meta` is an update channel, so the capture now remembers the ids it
+  wrote and sends the real numbers once it has them. Nothing measured means
+  nothing published: a meta line asserting zeroes nobody counted reads as a turn
+  that cost nothing.
+- Assistant blocks no longer merge into one bubble while streaming. The durable
+  message id rotates at every persisted block, so one turn carries several; the
+  client starts a new bubble when it changes, instead of piling the blocks
+  together live and splitting them apart again on reload.
+
 ## [1.0.0-beta.64] — 2026-07-31
 
 ### Fixed

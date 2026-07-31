@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import threading
 import zlib
 from urllib.parse import urlsplit
 
@@ -21,6 +22,13 @@ try:  # standalone (/opt/pawflow on path) vs package (tools.cc_interactive_commo
 except ImportError:
     from tools.cc_interactive_common import (  # noqa: F401
         EVENTS, _log, _preview, _content_text, _content_length, _header_map, _is_chunked, _is_quota_probe, HTTPExchangeTracker)
+
+try:  # standalone (/opt/pawflow on path) vs package (tools.cc_interactive_ws)
+    from cc_interactive_ws import (  # noqa: F401
+        MAX_PENDING_BYTES, WebSocketExchange, WebSocketMessageDecoder, is_websocket_upgrade, negotiated_extensions)
+except ImportError:
+    from tools.cc_interactive_ws import (  # noqa: F401
+        MAX_PENDING_BYTES, WebSocketExchange, WebSocketMessageDecoder, is_websocket_upgrade, negotiated_extensions)
 
 
 class SSEObserver:
@@ -180,12 +188,110 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
                     "is_error": bool(block.get("is_error")),
                 })
 
+class _ClientWebSocketReader:
+    """Client -> upstream frames: the turn input, read for its tool blocks.
+
+    Codex sends one ``response.create`` message whose ``input`` array carries
+    the same ``function_call`` / ``function_call_output`` items the HTTP body
+    used to carry, so the existing extraction applies unchanged.
+    """
+
+    def __init__(self, exchange):
+        self.exchange = exchange
+        self.decoder = None
+        self.pending = b""
+        # The handshake settles on the response thread, and it flushes what
+        # this half buffered meanwhile, so two threads can reach feed().
+        self.lock = threading.Lock()
+        exchange.on_ready = self.flush
+
+    def flush(self):
+        self.feed(b"")
+
+    def feed(self, data: bytes):
+        with self.lock:
+            self._feed(data)
+
+    def _feed(self, data: bytes):
+        if self.decoder is None:
+            if not self.exchange.ready.is_set():
+                self.pending += data
+                if len(self.pending) > MAX_PENDING_BYTES:
+                    _log(
+                        "websocket_client_buffer_dropped request="
+                        f"{self.exchange.request_id} bytes={len(self.pending)}")
+                    self.pending = b""
+                return
+            if self.exchange.error:
+                self.pending = b""
+                return
+            self.decoder = WebSocketMessageDecoder(
+                self.exchange.inflater(peer="client"))
+            data, self.pending = self.pending + data, b""
+        for message in self.decoder.feed(data):
+            _log(
+                f"websocket_client_message request={self.exchange.request_id} "
+                f"bytes={len(message)}")
+            _emit_observed_tool_blocks(
+                self.exchange.request_id, self.exchange.path, message)
+
+
+class _ServerWebSocketReader:
+    """Upstream -> client frames: the Responses events the coordinator reads.
+
+    Each message is one event with the same shape SSE delivered, so it is
+    republished under the same ``sse`` envelope and no consumer has to know
+    which transport carried it.
+    """
+
+    def __init__(self, exchange):
+        self.exchange = exchange
+        self.decoder = WebSocketMessageDecoder(
+            exchange.inflater(peer="server"))
+
+    def feed(self, data: bytes):
+        for message in self.decoder.feed(data):
+            self._emit(message)
+
+    def _emit(self, message: bytes):
+        request_id = self.exchange.request_id
+        try:
+            payload = json.loads(message.decode("utf-8"))
+        except Exception:
+            _log(
+                f"websocket_message_not_json request={request_id} "
+                f"bytes={len(message)}")
+            return
+        if not isinstance(payload, dict):
+            return
+        ptype = payload.get("type", "")
+        if ptype == "response.output_text.delta":
+            delta = payload.get("delta", "") or ""
+            _log(
+                f"emit ws request={request_id} type={ptype} "
+                f"text_len={len(delta)} preview={_preview(delta)!r}")
+        else:
+            _log(
+                f"emit ws request={request_id} type={ptype} "
+                f"keys={sorted(payload.keys())[:8]}")
+        EVENTS.emit({
+            "type": "sse",
+            "request_id": request_id,
+            "event": ptype,
+            "payload": payload,
+        })
+
+
 class HTTPRequestObserver:
     def __init__(self, tracker: HTTPExchangeTracker):
         self.tracker = tracker
         self.buf = b""
+        self.websocket = None
 
     def feed(self, data: bytes):
+        if self.websocket is not None:
+            self.websocket.feed(data)
+            return
         self.buf += data
         while True:
             if b"\r\n\r\n" not in self.buf:
@@ -225,6 +331,19 @@ class HTTPRequestObserver:
                 "ignore_reason": reason,
             })
             _emit_observed_tool_blocks(request_id, path, body)
+            if is_websocket_upgrade(headers):
+                # Everything after an upgrade request is frames, not HTTP.
+                # The exchange is published on the tracker so the response
+                # half can hand back the negotiated extension parameters.
+                exchange = WebSocketExchange(request_id, path)
+                self.tracker.websocket = exchange
+                self.websocket = _ClientWebSocketReader(exchange)
+                _log(
+                    f"websocket_upgrade_requested request={request_id} "
+                    f"path={path}")
+                rest, self.buf = self.buf, b""
+                self.websocket.feed(rest)
+                return
 
 class ChunkedBodyObserver:
     def __init__(self, observer: SSEObserver):
@@ -323,10 +442,15 @@ class HTTPResponseObserver:
         self.tracker = tracker
         self.buf = b""
         self.body_observer = None
+        self.websocket = None
 
     def feed(self, data: bytes):
         self.buf += data
         while True:
+            if self.websocket is not None:
+                self.websocket.feed(self.buf)
+                self.buf = b""
+                return
             if self.body_observer:
                 leftover = self.body_observer.feed(self.buf)
                 if leftover is None:
@@ -339,6 +463,16 @@ class HTTPResponseObserver:
                 return
             header, rest = self.buf.split(b"\r\n\r\n", 1)
             start, headers = _header_map(header + b"\r\n\r\n")
+            if (self._status(start) == "101"
+                    and is_websocket_upgrade(headers)):
+                # A 101 has neither Content-Length nor chunking: left to the
+                # HTTP path the frames that follow would be parsed as the
+                # next response header and the whole stream would desync.
+                # Only 101 switches -- a 426 also names the upgrade it wants,
+                # and its body is ordinary HTTP.
+                self.buf = rest
+                self._start_websocket(start, headers)
+                continue
             is_chunked = _is_chunked(headers)
             if is_chunked:
                 self.buf = rest
@@ -360,6 +494,50 @@ class HTTPResponseObserver:
                 finish()
         if self.buf:
             _log(f"response observer discarded incomplete trailing bytes={len(self.buf)}")
+
+    def _start_websocket(self, start: str, headers) -> None:
+        ctx = self.tracker.pop()
+        request_id = ctx.get("request_id", self.tracker.connection_id)
+        _, _, status = self._response_meta(start, headers)
+        _log(
+            f"response_start request={request_id} path={ctx.get('path', '')} "
+            f"status={status} ctype=- body_bytes=0 encoding=- chunked=False")
+        EVENTS.emit({
+            "type": "response_start",
+            "request_id": request_id,
+            "path": ctx.get("path", ""),
+            "status": status,
+            "content_type": "",
+            "content_length": 0,
+            "content_encoding": "",
+            "chunked": False,
+        })
+        exchange = getattr(self.tracker, "websocket", None)
+        if exchange is None:
+            # An upgrade we never saw requested: nothing tells us how the
+            # frames are framed, so read none of them.
+            _log(f"websocket_without_observed_request request={request_id}")
+            self.websocket = _NullObserver()
+            return
+        exchange.accept(negotiated_extensions(headers))
+        if exchange.error:
+            # Fail the turn now. Left silent, the coordinator would keep
+            # waiting on a stream it can never read until its no-event
+            # timeout, and report nothing about why.
+            _log(
+                f"websocket_undecodable request={request_id} "
+                f"reason={exchange.error}")
+            EVENTS.emit({
+                "type": "request_error",
+                "request_id": request_id,
+                "error": exchange.error,
+            })
+            self.websocket = _NullObserver()
+            return
+        _log(
+            f"websocket_open request={request_id} path={exchange.path} "
+            f"permessage_deflate={bool(exchange.params.get('enabled'))}")
+        self.websocket = _ServerWebSocketReader(exchange)
 
     def _start_chunked_response(self, start: str, headers) -> None:
         ctx = self.tracker.pop()
@@ -401,6 +579,11 @@ class HTTPResponseObserver:
             ))
         else:
             self.body_observer = ChunkedBodyObserver(_NullObserver())
+
+    @staticmethod
+    def _status(start: str) -> str:
+        parts = start.split(" ", 2)
+        return parts[1] if len(parts) > 1 else ""
 
     def _response_meta(self, start: str, headers):
         ctype = "\n".join(v for k, v in headers if k.lower() == "content-type").lower()

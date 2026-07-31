@@ -314,6 +314,10 @@ class HTTPExchangeTracker:
         self.connection_id = connection_id
         self._next = 0
         self._pending = queue.Queue()
+        # Set by the request half when it sees an Upgrade, read by the
+        # response half to hand back the extensions the 101 negotiated. The
+        # two halves run in different threads and share nothing else.
+        self.websocket = None
 
     def new_request_id(self) -> str:
         self._next += 1

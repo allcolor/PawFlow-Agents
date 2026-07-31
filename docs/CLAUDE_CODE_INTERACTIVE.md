@@ -417,6 +417,65 @@ PawFlow-managed section so a regeneration replaces it instead of appending a
 second table for the same path. `codex exec` never asks the question, so the
 headless provider does not emit the table.
 
+### The tool set matches `codex app-server`
+
+Both codex providers run the same binary, in a container whose cwd is the same
+session workdir, and both bootstrap from the same
+`.pawflow_cci/initial_context.md`. Only the transport differs — JSON-RPC over
+stdio for app-server, a tmux TUI here — so the tool set must not differ either.
+`codex app-server` is launched with no blocklist, and this provider now does the
+same.
+
+The blocklist `codex exec` carries (`--disable shell_tool`, `unified_exec`,
+`view_image`, ...) exists to push the agent through the MCP bridge rather than
+the container's own filesystem. Applied to the TUI it removed the only way
+codex had to read the cold-start context PawFlow hands it: the file is local to
+the session workdir, and the MCP `read` resolves against the relay, whose
+server-fs is rooted at `CLAUDE_SESSIONS_DIR` and therefore cannot see a codex
+session at all. The same blocklist removed `view_image`, so the attachments
+`_cci_materialize_images` writes into `.pawflow_vision/` could never be opened —
+app-server passes images natively and never hit this.
+
+Steering the agent toward PawFlow tools for user work stays a prompt concern,
+exactly as it already is for app-server.
+
+### The turn is a WebSocket, not an SSE body
+
+Since Codex 0.146 a turn is not a POST with a streamed body. The CLI opens
+
+```
+GET /backend-api/codex/responses
+Upgrade: websocket
+openai-beta: responses_websockets=2026-02-06
+```
+
+and exchanges the *same* Responses events as WebSocket messages, compressed with
+`permessage-deflate`. ChatGPT answers the offer with a bare `permessage-deflate`:
+no `no_context_takeover`, no window-bits limit, so both peers keep their
+compression window across messages. One decompressor per direction per
+connection, fed the `00 00 FF FF` trailer RFC 7692 strips from each message —
+a per-message reader decodes the first message and then fails.
+
+The proxy forwards bytes untouched either way, so the CLI never noticed the
+change. The observers did: a 101 carries neither `Content-Length` nor chunking,
+so left on the HTTP path the frames that follow are read as the next response
+header and every event of the turn is lost. The coordinator still saw the
+`request_start`, so its no-observed-event guard never fired and the turn simply
+returned empty — no text, no tool calls, no error. `tools/cc_interactive_ws.py`
+decodes the frames; both directions carry plain JSON:
+
+- upstream → client: one Responses event per message, republished under the same
+  `sse` envelope SSE used, so no consumer knows which transport carried it.
+  Codex adds `codex.rate_limits`, `codex.response.metadata` and
+  `responsesapi.websocket_timing`, which the coordinator ignores;
+- client → upstream: one `response.create` whose `input` array holds the
+  `function_call` and `function_call_output` items the HTTP body used to hold,
+  read by the same `_emit_observed_tool_blocks`.
+
+An upgrade negotiating an extension this decoder cannot undo emits
+`request_error` rather than nothing: an unreadable stream must fail the turn
+where it breaks, not time out five minutes later with no reason.
+
 The Responses observer handles output text, reasoning text, reasoning summary,
 function calls, function-call outputs, model identity, and usage. A single Codex
 turn may contain several `/responses` exchanges around MCP calls. Therefore

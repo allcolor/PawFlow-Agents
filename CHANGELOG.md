@@ -4,6 +4,41 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.68] — 2026-07-31
+
+### Fixed
+
+- A Codex interactive turn reaches the chat again. Codex 0.146 stopped POSTing
+  a Responses body: it opens `GET /backend-api/codex/responses` with
+  `Upgrade: websocket` (`openai-beta: responses_websockets=2026-02-06`) and
+  exchanges the same Responses events as `permessage-deflate` WebSocket
+  messages. The MITM forwarded the bytes untouched, so the CLI never noticed —
+  the tmux worked perfectly — but a 101 carries neither `Content-Length` nor
+  chunking, so on the HTTP path the frames that followed were read as the next
+  response header and every event of the turn was lost. The coordinator had
+  seen the `request_start`, so its no-observed-event guard never fired: the
+  turn returned empty, with no text, no tool calls and no error, until the user
+  stopped it. The proxy now decodes the frames (RFC 6455 framing, RFC 7692
+  `permessage-deflate` with the context takeover ChatGPT negotiates — one
+  decompressor per direction per connection). Both directions carry plain JSON:
+  server events are republished under the same `sse` envelope SSE used, and the
+  client's `response.create` yields its `function_call` and
+  `function_call_output` items to the existing extraction. An upgrade
+  negotiating an extension the decoder cannot undo now fails the turn where it
+  breaks instead of timing out five minutes later with no reason.
+- The Codex TUI keeps the same builtin tools as `codex app-server`. Both
+  providers run the same binary, in a container whose cwd is the same session
+  workdir, and both bootstrap from the same `.pawflow_cci/initial_context.md`;
+  only the transport differs, so the tool set must not. The blocklist
+  `codex exec` carries was being applied to the TUI as well, which removed the
+  only way codex had to read the cold-start context PawFlow hands it — the file
+  is local to the session workdir, and the MCP `read` resolves against the
+  relay, whose server-fs is rooted at `CLAUDE_SESSIONS_DIR` and cannot see a
+  codex session. The same blocklist removed `view_image`, so the attachments
+  `_cci_materialize_images` writes into `.pawflow_vision/` could never be
+  opened. Steering toward PawFlow tools for user work stays a prompt concern,
+  as it already is for app-server.
+
 ## [1.0.0-beta.67] — 2026-07-31
 
 ### Fixed

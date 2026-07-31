@@ -214,13 +214,17 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
                               effort.strip().lower(), effort.strip().lower())
             args.extend(["-c", f'model_reasoning_effort="{normalized}"'])
             args.extend(["-c", 'model_reasoning_summary="auto"'])
-        for builtin in (
-                "shell_tool", "shell_snapshot", "unified_exec",
-                "apps", "browser_use", "in_app_browser",
-                "computer_use", "image_generation"):
-            args.extend(["--disable", builtin])
-        args.extend(["-c", "tools.web_search=false",
-                     "-c", "tools.view_image=false"])
+        # No `--disable`, exactly like `codex app-server` (see
+        # `_codex_app_stream`, which launches codex with no tool blocklist at
+        # all). The blocklist `codex exec` carries forces the agent through
+        # the MCP bridge, but this provider hands codex a bootstrap it can
+        # only reach locally -- `.pawflow_cci/initial_context.md` lives in the
+        # session workdir, and the MCP `read` resolves against the relay,
+        # which does not serve this root. Blocking every builtin left codex
+        # with no way to read its own cold-start context, and no way to open
+        # the attachments `_cci_materialize_images` writes next to it.
+        # Steering toward PawFlow tools for user work stays a prompt
+        # concern, as it already is for app-server.
         quoted = " ".join(shlex.quote(arg) for arg in args)
         drop_privs = (f"setpriv --reuid={self.run_uid} --regid={self.run_gid} "
                       "--clear-groups --")

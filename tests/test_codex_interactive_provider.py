@@ -120,6 +120,38 @@ def test_codex_tmux_injects_custom_base_url_only_when_configured(monkeypatch):
     assert "OPENAI_BASE_URL=" not in commands[0][-1]
 
 
+def test_codex_tmux_keeps_the_same_builtins_as_app_server(monkeypatch):
+    # Same binary, same session workdir, same bootstrap file. The only
+    # difference between the two codex providers is the transport, so the
+    # tool set cannot differ either: `codex app-server` is launched with no
+    # blocklist, and blocking the builtins here left the TUI unable to read
+    # the `initial_context.md` we hand it, or to open the attachments we
+    # write beside it.
+    import core.codex_interactive_pool as pool_mod
+
+    commands = []
+    monkeypatch.setattr(
+        pool_mod.subprocess, "run",
+        lambda command, **_kw: commands.append(command) or SimpleNamespace(
+            returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(pool_mod, "docker_cmd", lambda: ["docker"])
+    spawn = _CodexInteractiveSpawnMixin()
+    spawn.run_uid = 1000
+    spawn.run_gid = 1000
+    spawn._user_spec = lambda: "1000:1000"
+
+    spawn._start_codex_tmux(
+        name="codex", container_workdir="/cc_sessions_host/user/conv/agent",
+        model="gpt-test", effort="", session_token="session",
+        event_url="ws://events", event_token="event",
+        internal_token="internal")
+
+    shell = commands[0][-1]
+    assert "--disable" not in shell
+    assert "tools.view_image=false" not in shell
+    assert "tools.web_search=false" not in shell
+
+
 # ── The trust modal must never be reachable ──────────────────────────
 #
 # A cold TUI in an untrusted directory opens "Do you trust the contents of

@@ -59,6 +59,9 @@
 | [Technical Reference](01_DOCUMENTATION_TECHNIQUE.md) | Detailed technical reference |
 | [Tasks & Services Reference](02_REFERENCE_TASKS_SERVICES.md) | Task/service schema reference |
 | [Roadmap Gaps](ROADMAP_GAPS.md) | Release-readiness gaps and planned improvements |
+| [Eval Harness Plan](EVAL_HARNESS_PLAN.md) | Scored agent evaluation: case format, scorers, suites, scorecard, phasing |
+| [Model Harness Profiles Plan](MODEL_HARNESS_PROFILES_PLAN.md) | Per-model prompt/tool/limit tuning behind one resolution point |
+| [Threat Models Plan](THREAT_MODELS_PLAN.md) | Per-surface attacker models with mandatory residual risk |
 
 ## Quick Links
 

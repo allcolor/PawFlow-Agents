@@ -4,6 +4,41 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.61] — 2026-07-31
+
+### Fixed
+
+- claude-code (`-p`) could still launch a fresh process holding nothing but
+  the last user message. beta.60 moved the context phase onto the live
+  registry, but the provider still branched on the persisted
+  `claude_session:*` id — which outlives the process it describes — and built
+  the delta two blocks BEFORE looking the live session up. After a server
+  restart the context phase correctly loaded the whole transcript, the
+  provider cut it down to the system prompt plus the last question, found no
+  live process, launched one, and handed it that delta. The serialization is
+  now decided after the lookup and on `st._is_reuse` alone; the stored id only
+  picks the credential slot to resume on.
+- The two phases now ask with the same inputs. The context phase cannot know
+  which credential slot `_setup_credentials` will pick, so it asks without
+  one; the provider asked for one exact slot and answered "cold" where the
+  context phase had answered "warm", orphaning the live process and paying a
+  cold retry. `LiveSessionRegistry.get_compatible()` (mirroring codex and
+  gemini) hands back the key as well, and the provider adopts a session with
+  the key it actually lives under.
+- An Antigravity launch refusal no longer leaves a container nobody tracks.
+  `ensure_started` dropped the unusable session from the registry, then asked
+  `before_launch`, then killed — so a `ColdStartRequired` never reached the
+  kill and the cold retry started a second container beside the first. The
+  kill is in a `finally`. This is an ordinary state, not a corner case:
+  `find_session` calls a session warm on the container alone while
+  `ensure_started` also wants the proxy journal ready.
+- The per-iteration heartbeat is stopped on every exit. `_alc_iteration` left
+  by five returns and by any exception, and only two of them stopped the
+  thread, so a compact restart, an overflow retry, a plain tool turn or a
+  cancellation each leaked one heartbeat publishing to the same conversation.
+  The function that starts it now owns its lifetime (`try` body / `finally`
+  stop), and the stop clears the handle so it can never run twice.
+
 ## [1.0.0-beta.60] — 2026-07-30
 
 ### Fixed

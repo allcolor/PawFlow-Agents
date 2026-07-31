@@ -126,6 +126,7 @@ _run_agent_loop()              -- The core loop
 4. **Generation tracking**: Each conversation+agent pair has a generation counter. If a new message arrives (bumping the generation), the current loop detects staleness and can yield.
 5. **Queue-based messaging**: New user messages do not cancel the running agent. They are queued and processed after the current turn completes. For Claude Code providers, messages can be injected directly into the active session (preemption).
 6. **Multi-round**: `max_rounds` allows the agent to run multiple consecutive turns before yielding (useful for autonomous tasks).
+7. **One iteration owns one heartbeat**: the heartbeat is a thread started per iteration, covering the LLM call and the tools. `_alc_iteration` starts it and stops it in a `finally`, because the body leaves by five different returns — a compact restart, a cold restart, an overflow retry, a break, the normal end — and by any exception the turn raises. Stopping it at each return is how threads were left behind, one per attempt, all publishing for the same conversation. The body still stops it early on purpose before the end-of-iteration bookkeeping; the handle is cleared on stop, so the `finally` then finds nothing to do and it is never stopped twice.
 
 ### Message persistence
 
@@ -335,6 +336,12 @@ Five invariants keep this honest.
 The gauge reset sits *outside* the live-probe block for the same reason `force_cold` skips that probe: the pass that knows it is launching is exactly the pass whose stored gauge describes a session that no longer exists.
 
 **A lookup is a use.** The idle sweeper reaps containers nobody asks for, and `last_used` is its only evidence, so every registry lookup that hands a container to a caller refreshes it (`CodexLiveRegistry`/`GeminiLiveRegistry.get`/`get_compatible`, `LiveSessionRegistry.get`/`find_for_agent`, and the CCI and Antigravity pools' `find_session`). Without that, a session at the end of its TTL could be found alive by the context phase and swept a tick later, before the provider claimed it. The TTL is unchanged: a session nobody asks for is still reaped on schedule, and an active turn is never reaped at all.
+
+**The serialization is decided by the lookup, never by a stored id.** In `_cc_stream`, the full-context / delta branch runs *after* the live lookup and reads `st._is_reuse` only. `claude_session:<agent>` outlives the process it describes — a server restart leaves the extras behind — so a branch taken on that id built a delta, and the launch two blocks later handed it to a process holding nothing. The stored id still picks the credential slot to resume on; it decides nothing about what is sent.
+
+**Both phases ask with the same inputs.** The context phase cannot know which credential slot `_setup_credentials` will pick, so it asks without one (`find_for_agent`). The provider therefore falls back to the same pool-agnostic lookup (`LiveSessionRegistry.get_compatible`) when its exact slot misses, and adopts the session *with the key it lives under* so `touch`/`evict`/`register` address the entry that exists. A provider that only ever asked for its own slot answered "cold" where the context phase had answered "warm", orphaned the live process and paid a cold retry every turn.
+
+**A refusal still destroys what it refused to reuse.** `AntigravityObserverPool.ensure_started` drops an unusable session from the registry before it calls `before_launch`, so a refusal that skipped the kill left a live container nobody tracked and the cold retry started a second one beside it. `find_session` calls a session warm on the container alone while `ensure_started` also wants the proxy journal ready, so "unusable but alive" is an ordinary state, not a corner case. The kill is in a `finally`.
 
 ---
 

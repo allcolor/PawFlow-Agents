@@ -540,3 +540,182 @@ def test_the_gauge_is_zeroed_on_the_pass_that_launches():
         assert "reset_cli_context_usage" not in ast.dump(block), (
             "the gauge reset is skipped exactly when the turn is launching")
     assert "reset_cli_context_usage" in ast.dump(tree)
+
+
+# -- the LAUNCH decides the serialisation, not a persisted id ----------------
+
+class _StoreWithAStaleSession:
+    """A conversation store that still holds yesterday's claude_session id.
+
+    This is the ordinary state after a server restart: the process is gone,
+    the extras are not.
+    """
+
+    def __init__(self):
+        self.written = {}
+
+    def get_extra(self, _conv_id, key, *_a, **_kw):
+        if key.startswith("claude_session:"):
+            return "11111111-2222-3333-4444-555555555555"
+        return None
+
+    def set_extra(self, _conv_id, key, value, *_a, **_kw):
+        self.written[key] = value
+
+
+def test_a_launch_ignores_the_stored_session_id_and_sends_everything():
+    """The high one. The context phase asks the live registry and correctly
+    loads the whole transcript; the provider then read the persisted id,
+    decided "resume", cut the messages down to the system prompt and the last
+    user line -- and only afterwards discovered there was no process, launched
+    a fresh one, and handed it that delta. The new CC held nothing.
+
+    Nothing here mocks the decision: a real turn runs against a mocked popen
+    and we look at what the process actually receives."""
+    from unittest.mock import MagicMock, patch
+    import json as _json
+
+    from core.cc_live_registry import LiveSessionRegistry
+    from core.llm_client import LLMClient
+
+    LiveSessionRegistry.instance()._sessions.clear()
+    client = LLMClient(provider="claude-code",
+                       config={"api_key": "k", "default_model": "sonnet"})
+    client._conversation_id = "conv-stale"
+    client._agent_name = "agent"
+    client._user_id = "user"
+
+    ctx_file = (Path(client._get_session_workdir("conv-stale", "agent", "user"))
+                / ".pawflow_cli" / "initial_context.md")
+    if ctx_file.exists():
+        ctx_file.unlink()
+
+    events = [
+        _json.dumps({"type": "assistant",
+                     "message": {"content": [{"type": "text", "text": "ok"}]}}),
+        _json.dumps({"type": "result", "result": "", "model": "sonnet",
+                     "usage": {"input_tokens": 1, "output_tokens": 1}}),
+    ]
+    stdout = MagicMock()
+    stdout.__iter__ = MagicMock(return_value=iter([e + "\n" for e in events]))
+    proc = MagicMock()
+    proc.stdout = stdout
+    proc.returncode = 0
+
+    cid = "conv-stale"
+    messages = [
+        LLMMessage(role="system", content="PERSONA-MARKER", conversation_id=cid),
+        LLMMessage(role="user", content="ANCIENT-HISTORY", conversation_id=cid),
+        LLMMessage(role="assistant", content="earlier answer", conversation_id=cid),
+        LLMMessage(role="user", content="the newest question", conversation_id=cid),
+    ]
+
+    try:
+        with patch.object(client, "_setup_credentials"), \
+                patch.object(client, "_pool_popen", return_value=(proc, None)), \
+                patch("core.conversation_store.ConversationStore.instance",
+                      return_value=_StoreWithAStaleSession()):
+            client.complete_stream(messages, callback=lambda _t: None)
+
+        sent = "".join(str(c.args[0]) for c in proc.stdin.write.call_args_list)
+        assert "cold-session bootstrap" in sent, (
+            "a launched process was handed a delta, not a cold start")
+        assert ctx_file.exists(), "the cold context file was never written"
+        body = ctx_file.read_text(encoding="utf-8")
+        assert "ANCIENT-HISTORY" in body, "the launched process lost the transcript"
+        assert "PERSONA-MARKER" in body, "the launched process lost its persona"
+    finally:
+        if ctx_file.exists():
+            ctx_file.unlink()
+        LiveSessionRegistry.instance()._sessions.clear()
+
+
+def test_the_serialisation_is_decided_after_the_live_lookup():
+    """Order is the whole bug: whatever is built before the registry is asked
+    is built on a guess."""
+    src = Path("core/llm_providers/_cc_stream.py").read_text(encoding="utf-8")
+
+    lookup = src.index("st._is_reuse = st._live_session is not None")
+    build = src.index("_build_cli_initial_context_prompt(")
+    assert lookup < build, (
+        "the prompt is built before the provider knows whether a process is "
+        "alive -- which is how a launch got a delta")
+
+    decision = src[lookup:build]
+    assert "if st._is_reuse:" in decision.split("# Session-aware")[-1], (
+        "the serialisation branches on something other than the live lookup")
+
+
+def test_the_provider_takes_the_live_session_whatever_slot_it_is_on():
+    """Second divergence, same order. The context phase asks without a
+    credential slot -- it cannot know which one _setup_credentials will pick
+    -- while the provider asked for one exact slot. A stored slot that is
+    missing or stale then answered "cold" against the context phase's "warm",
+    orphaned the live process and paid a full cold retry."""
+    from unittest.mock import MagicMock
+
+    from core.cc_live_registry import CCLiveSession, LiveSessionRegistry
+
+    reg = LiveSessionRegistry.instance()
+    reg._sessions.clear()
+    try:
+        proc = MagicMock()
+        proc.poll.return_value = None
+        live = CCLiveSession(
+            proc=proc, event_q=MagicMock(), reader_thread=MagicMock(),
+            stop_event=MagicMock(), pool_container=None, workdir="/w",
+            service_id="svc", svc_pool_idx=7, user_id="u", conv_id="c",
+            session_id="sess")
+        reg._sessions[("u", "c", "a", "svc", 7)] = live
+
+        assert reg.get(("u", "c", "a", "svc", 0)) is None
+        found = reg.get_compatible("u", "c", "a", "svc")
+        assert found is not None, "the live process is invisible to the provider"
+        key, session = found
+        assert session is live
+        assert key == ("u", "c", "a", "svc", 7), (
+            "the key must come back too -- touch/evict/register address it")
+    finally:
+        reg._sessions.clear()
+
+    src = Path("core/llm_providers/_cc_stream.py").read_text(encoding="utf-8")
+    assert "get_compatible(" in src, (
+        "the provider still asks a different question than the context phase")
+    assert "st._live_key, st._live_session = _compat" in src, (
+        "an adopted session must be adopted with its own key")
+
+
+# -- a refusal must not leave a container nobody tracks ----------------------
+
+def test_a_refused_antigravity_launch_still_kills_the_stale_session():
+    """find_session() calls a session warm on the container alone;
+    ensure_started() also wants the proxy journal ready. So a session can be
+    unusable here while its container is very much alive -- and it has already
+    left the registry by the time the callback speaks. A refusal that skipped
+    the kill left that container orphaned, and the cold retry started a second
+    one beside it."""
+    import threading as _threading
+
+    from core.antigravity_observer_pool import AntigravityObserverPool
+
+    pool = AntigravityObserverPool.__new__(AntigravityObserverPool)
+    pool._lock = _threading.RLock()
+    pool._sessions = {}
+    pool._is_usable = lambda _s: False
+    killed = []
+    pool.kill = lambda s: killed.append(s)
+    pool._start_new = lambda *a, **k: pytest.fail("launched after refusing")
+
+    stale = SimpleNamespace(name="antigravity-stale", last_used=0.0)
+    pool._sessions[("u", "c", "a", "svc")] = stale
+    client = SimpleNamespace(_agent_service="svc")
+
+    def _refuse():
+        raise ColdStartRequired("antigravity-interactive: cold start required")
+
+    with pytest.raises(ColdStartRequired):
+        pool.ensure_started(client, "m", "u", "c", "a", before_launch=_refuse)
+
+    assert killed == [stale], (
+        "the stale container survived a refusal with nothing tracking it")
+    assert pool._sessions == {}

@@ -327,10 +327,6 @@ class _ALCLlmTurnMixin:
             # CLI providers deliberately synthesize no empty answer.
             st.iteration = max(0, st.iteration - 1)
             st.ctx["_iteration"] = st.iteration
-            # The iteration's heartbeat belongs to the attempt that just
-            # ended; the next one starts its own.
-            if getattr(st, "_iter_hb", None) is not None:
-                st.emitter.stop_heartbeat(st._iter_hb)
             return _ALC_CONTINUE
         except Exception as llm_err:
             st.err_str = str(llm_err)

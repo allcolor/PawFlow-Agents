@@ -15,7 +15,38 @@ logger = logging.getLogger(__name__)
 
 
 class _ALCIterationMixin:
+    def _alc_stop_iteration_heartbeat(self, st):
+        """Stop this iteration's heartbeat, once.
+
+        Clearing the handle is what makes it once: the body stops it early on
+        purpose -- the heartbeat covers the LLM call and the tools, not the
+        end-of-iteration bookkeeping -- and the wrapper's finally then has
+        nothing left to do.
+        """
+        handle = getattr(st, "_iter_hb", None)
+        if handle is None:
+            return
+        st._iter_hb = None
+        try:
+            st.emitter.stop_heartbeat(handle)
+        except Exception:
+            logger.debug("iteration heartbeat stop failed", exc_info=True)
+
     def _alc_iteration(self, st):
+        """Run one iteration, and own its heartbeat for the whole of it.
+
+        The heartbeat is a thread, started per iteration. The body leaves by
+        five different returns and by any exception the turn raises, and only
+        two of those returns stopped it: a compact restart, a cold restart, an
+        overflow retry or a cancellation each left a live thread behind, one
+        per attempt, all publishing for the same conversation.
+        """
+        try:
+            return self._alc_iteration_body(st)
+        finally:
+            self._alc_stop_iteration_heartbeat(st)
+
+    def _alc_iteration_body(self, st):
         st.emitter.check_cancelled()
         st.emitter.drain_pending(st.messages, st._append, st.iteration)
         st.iteration += 1
@@ -387,7 +418,7 @@ class _ALCIterationMixin:
                         if st.all_assistant_msg_ids else "")
                 )
                 st._release_active_after_terminal_visible_answer(force=True)
-                st.emitter.stop_heartbeat(st._iter_hb)
+                self._alc_stop_iteration_heartbeat(st)
                 return _ALC_BREAK
             st._has_thinking = bool(getattr(st.response, 'thinking', ''))
             # Empty response with thinking = surface the thinking
@@ -439,7 +470,7 @@ class _ALCIterationMixin:
                         st.final_msg_id = st._final_message.msg_id or ""
                         break
                 st._release_active_after_terminal_visible_answer(force=True)
-                st.emitter.stop_heartbeat(st._iter_hb)
+                self._alc_stop_iteration_heartbeat(st)
                 return _ALC_BREAK
             return _ALC_CONTINUE
 
@@ -563,7 +594,9 @@ class _ALCIterationMixin:
             logger.info("[agent:%s] aggregate cap: persisted large tool results to FileStore",
                         st.conversation_id[:8])
 
-        st.emitter.stop_heartbeat(st._iter_hb)  # stop iteration heartbeat
+        # Stopped here on purpose: the heartbeat covers the LLM call and
+        # the tools, not the end-of-iteration bookkeeping below.
+        self._alc_stop_iteration_heartbeat(st)
         st.emitter.on_iteration_end(
             st.iteration, st.current_round, st.ctx["max_iterations"],
             st.max_rounds, st.tools_called)

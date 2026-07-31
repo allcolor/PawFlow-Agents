@@ -399,8 +399,16 @@ function turnViewIngest(kind, data, element) {
 // The one place the outside spot changes hands. The row that held it goes back
 // into the Messages tab -- appended, because it is the newest thing the tab has
 // seen -- and the newcomer takes its place directly under the block.
+//
+// Whatever reaches here is MOVED. That is fine for a row of this turn and it is
+// destructive for anything else: a `final_msg_id` is resolved with a lookup that
+// can reach ANY row on screen, so a done naming a message from an earlier turn
+// tears that message out of the order the reader already read it in and drops it
+// at the bottom, under a block that never produced it. THE RULE at the top of
+// this file, applied to the only mover: an id NAMES a row, it never selects one.
 function _turnPromoteLast(state, element) {
   if (!element) return;
+  if (!_turnRowBelongsHere(state, element)) return;
   if (state.finalEl && state.finalEl !== element && state.tabs.messages) {
     state.tabs.messages.bodyEl.appendChild(state.finalEl);
   }
@@ -409,6 +417,29 @@ function _turnPromoteLast(state, element) {
   const parent = state.blockEl.parentNode;
   if (parent && element.parentNode !== parent) parent.insertBefore(element, state.blockEl.nextSibling);
   else if (parent && state.blockEl.nextSibling !== element) parent.insertBefore(element, state.blockEl.nextSibling);
+}
+
+// Is this row part of the turn, judged the only way the view ever judges --
+// by where it sits? A row of this turn is either already filed inside the block
+// or somewhere after it at top level. Anything before the block is a turn the
+// reader has finished reading.
+//
+// `contains` is deliberately not used: the walk up to the container's own child
+// answers both cases at once, and it is what the DOM stub the tests run on
+// provides.
+function _turnRowBelongsHere(state, element) {
+  if (!element || !element.isConnected) return false;
+  const anchor = (state.blockEl && state.blockEl.parentNode) ? state.blockEl : state.userEl;
+  if (!anchor || !anchor.parentNode) return false;
+  const parent = anchor.parentNode;
+  let top = element;
+  while (top && top.parentNode !== parent) top = top.parentNode;
+  if (!top) return false;
+  if (top === anchor) return true;  // filed inside this turn's own block
+  for (let node = anchor.nextSibling; node; node = node.nextSibling) {
+    if (node === top) return true;
+  }
+  return false;
 }
 
 function _turnResolvedToolName(data, element, state) {

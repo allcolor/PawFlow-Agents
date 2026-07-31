@@ -1201,6 +1201,16 @@ outside the block, and hands that place back when a newer one arrives. Replayed
 history is exempt, because an older page arrives after rows that precede it and
 "last ingested" is not "last of the turn" there.
 
+**A named final is a name, and a promotion is a move.** `final_msg_id` is
+resolved with a lookup that can reach any row on screen, and `_turnPromoteLast`
+*moves* what it is given. A `done` for a turn that produced nothing of its own
+can still carry an id from an earlier turn; obeying it tore that message out of
+the order the reader had already read it in and dropped it at the bottom, under
+a fresh block that never produced it -- reported from a real session after a
+server restart, where the turn died on an auth error. The promotion is now
+refused unless the row is already filed inside this turn's block or sits after
+it at top level. Position decides here as everywhere else.
+
 **A turn ends when the turn ends.** Closing the block required `is_final` and
 `final_msg_id` together; it now happens on any done that is not `continuing`,
 and on the next user message for a turn nobody closed. What the server names

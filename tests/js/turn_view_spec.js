@@ -250,6 +250,53 @@ test('a user message nothing followed gets no empty block', () => {
   eq(e.block(), null);
 });
 
+// Reported from a real session: after a server restart the reader sent a
+// message, the turn died on an auth error, and the answer of a turn from half
+// an hour earlier reappeared at the bottom of the page under a fresh, empty,
+// "Completed in 0s" block. Nothing re-rendered it -- the done named it, the
+// name was resolved with a document-wide lookup, and the row was MOVED.
+//
+// An id names a row, it never selects one. A named final that sits above this
+// turn is not this turn's answer, and the page must not move it.
+test('a final naming a row from an earlier turn moves nothing', () => {
+  const e = env('simplified');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, e.row('u1'));
+  const oldAnswer = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, oldAnswer);
+  e.ctx.turnViewFinalize({ final_msg_id: 'a1' });
+  const firstBlock = e.block();
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1');
+
+  // The reader sends again; this turn produces nothing of its own.
+  e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, e.row('u2'));
+  // The done carries the only assistant id the server still had: a1.
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1', turn_final: true }, oldAnswer);
+  e.ctx.turnViewFinalize({ final_msg_id: 'a1' });
+
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1,u2,BLOCK',
+     'the earlier answer stays where it was read');
+  eq(firstBlock.nextSibling, oldAnswer, 'and it still belongs to its own block');
+});
+
+// Same rule, the other mover: reconcile hands a stray row to the open turn by
+// position, so a row that is positionally before the block can never be it.
+test('the outside spot only ever goes to a row of this turn', () => {
+  const e = env('simplified');
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, e.row('u1'));
+  const answer = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, answer);
+  const block = e.block();
+  // A row inserted ABOVE the block -- an older page arriving late.
+  const older = e.dom.document.createElement('div');
+  older.className = 'msg'; older.dataset.msgid = 'a0';
+  older.dataset.messageRole = 'assistant'; older.dataset.rawText = 'older';
+  e.messages.insertBefore(older, e.messages.children[0]);
+
+  e.ctx.turnViewFinalize({ final_msg_id: 'a0' });
+  assert(e.messages.children[0] === older, 'the older row keeps its place');
+  assert(block.nextSibling === answer, 'and the turn keeps its own answer');
+});
+
 // Activity with no user row above it is still a turn. Leaving those rows at
 // top level is what made the view collapse to a flat transcript on a long
 // conversation: the history window opens in the middle of a turn, the user

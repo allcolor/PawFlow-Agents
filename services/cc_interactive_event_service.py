@@ -83,6 +83,13 @@ class CCInteractiveSessionEvents:
     # detect that and capture the orphan turn like a manual tmux one.
     last_wait_at: float = 0.0
     injected_intent_at: float = 0.0
+    # A request coordinator claims the stream BEFORE it sends anything: the
+    # send blocks on TUI readiness, paste, submit and verification, and only
+    # then does run() start polling. Until that first poll neither timestamp
+    # above exists, so the orphan-turn net saw an unowned stream and evicted
+    # the coordinator that was about to read it. The claim is the ownership
+    # fact; these two are its consequences.
+    last_request_claim_at: float = 0.0
     # Tool-id dedup fallback, used only when the pool no longer knows the
     # container behind this session (see _capture_dedup_sets). Lives here so
     # two chained captures of the same session still dedup against each other.
@@ -272,6 +279,8 @@ class CCInteractiveEventService(BaseService):
                 return 0
             with state.stream_condition:
                 state.consumer_epoch += 1
+                if kind == "request":
+                    state.last_request_claim_at = time.time()
                 state.stream_condition.notify_all()
                 return state.consumer_epoch
 
@@ -463,12 +472,21 @@ class CCInteractiveEventService(BaseService):
     # coordinator's first wait_event poll — the send blocks through paste,
     # settle, double-Enter and submit verification before run() starts.
     _INJECT_INTENT_GRACE_SECONDS = 60.0
+    # Ceiling on claim -> first wait_event. The send it covers is bounded by
+    # the TUI readiness wait (PAWFLOW_CCI_PROMPT_READY_TIMEOUT_SECONDS, 45s)
+    # plus paste, settle, double Enter and submit verification. A coordinator
+    # that claims and then dies inside that window has already failed its
+    # turn with an error, so there is no invisible response left to capture --
+    # suppressing the net here costs nothing and stops it killing a live turn.
+    _REQUEST_CLAIM_GRACE_SECONDS = 120.0
 
     def _request_listener_recent(self, state: CCInteractiveSessionEvents) -> bool:
         now = time.time()
         return (state.manual_capture_active
                 or now - state.last_wait_at < self._LISTENER_FRESH_SECONDS
-                or now - state.injected_intent_at < self._INJECT_INTENT_GRACE_SECONDS)
+                or now - state.injected_intent_at < self._INJECT_INTENT_GRACE_SECONDS
+                or now - state.last_request_claim_at
+                < self._REQUEST_CLAIM_GRACE_SECONDS)
 
     def _capture_orphan_injected_turn(self, state: CCInteractiveSessionEvents) -> None:
         """Safety net for injected prompts submitted with no listener.

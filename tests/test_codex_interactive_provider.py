@@ -120,6 +120,60 @@ def test_codex_tmux_injects_custom_base_url_only_when_configured(monkeypatch):
     assert "OPENAI_BASE_URL=" not in commands[0][-1]
 
 
+# ── The trust modal must never be reachable ──────────────────────────
+#
+# A cold TUI in an untrusted directory opens "Do you trust the contents of
+# this directory?" and waits. No readiness marker is ever drawn, so the
+# 45s readiness wait times out, the injected prompt is pasted into the
+# modal, and only a human at the tmux can unblock the launch.
+
+
+class _StopSpawn(Exception):
+    pass
+
+
+def test_start_new_declares_the_session_workdir_trusted(monkeypatch, tmp_path):
+    recorded = {}
+
+    class _Client:
+        api_key = ""
+
+        @staticmethod
+        def _codex_get_session_workdir(*_a, **_kw):
+            return str(tmp_path)
+
+        @staticmethod
+        def _codex_setup_credentials(*_a, **_kw):
+            return None
+
+        @staticmethod
+        def _codex_setup_mcp_config(*args, **kwargs):
+            recorded["trusted_project"] = kwargs.get("trusted_project")
+            # Nothing past this point can run without Docker.
+            raise _StopSpawn()
+
+    pool = CodexInteractivePool()
+    try:
+        pool._start_new(_Client(), "gpt-test", "user", "conv", "agent",
+                        ("user", "conv", "agent", "svc"))
+    except _StopSpawn:
+        pass
+
+    assert recorded["trusted_project"] == "/cc_sessions/conv/agent"
+
+
+def test_trusted_project_is_the_directory_codex_actually_runs_in():
+    # _start_codex_tmux cds into the namespaced path derived from the
+    # physical workdir. Trusting any other string trusts nothing.
+    physical = CodexInteractivePool._physical_container_workdir(
+        "user", "conv", "agent")
+    parts = physical.lstrip("/").split("/")
+    ns_workdir = "/cc_sessions/" + "/".join(parts[2:])
+
+    assert CodexInteractivePool._container_workdir(
+        "user", "conv", "agent") == ns_workdir
+
+
 def test_codex_hooks_use_documented_hooks_json_shape(tmp_path):
     _CodexInteractiveSpawnMixin._write_codex_hooks(str(tmp_path))
 

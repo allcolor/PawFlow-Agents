@@ -50,6 +50,74 @@ def test_capture_claim_granted_without_listener():
     assert svc.claim_consumer("sess", kind="capture") > 0
 
 
+# ── A claim that has not polled yet still owns the stream ────────────
+#
+# The provider claims BEFORE it sends: the send blocks on TUI readiness (up
+# to 45s on a cold TUI), paste, double Enter and submit verification, and
+# run() only starts polling afterwards. A request_start arriving inside that
+# window looked like a turn nobody was reading -- the orphan net captured it,
+# the capture claim bumped the epoch, and the real coordinator died with
+# CCIConsumerEvicted on its very first wait. That is how a cold Codex TUI
+# launch failed: claim at T, orphan capture at T+13s, evicted at T+22s.
+
+
+def _codex_session(svc):
+    return svc.register_session(
+        "sess", user_id="u1", conversation_id="c1", agent_name="assistant",
+        provider="codex-interactive")
+
+
+_CODEX_REQUEST_START = {
+    "type": "request_start", "request_id": "r1",
+    "path": "/backend-api/codex/responses",
+}
+
+
+def test_orphan_capture_refused_while_a_claim_has_not_polled_yet(monkeypatch):
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    epoch = svc.claim_consumer("sess")
+    assert state.last_wait_at == 0.0  # the coordinator is still in send_text
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+
+    assert captured == []
+    # And the coordinator that owns the turn still owns it.
+    assert svc.wait_event("sess", timeout=0, epoch=epoch)["request_id"] == "r1"
+
+
+def test_orphan_capture_granted_once_the_claim_grace_expired(monkeypatch):
+    # The grace is a ceiling, not an amnesty: a coordinator that claimed and
+    # never came back must not disable the safety net for good.
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    svc.claim_consumer("sess")
+    state.last_request_claim_at = (
+        time.time() - CCInteractiveEventService._REQUEST_CLAIM_GRACE_SECONDS - 1)
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+
+    assert captured == ["sess"]
+
+
+def test_capture_claim_does_not_stamp_the_request_claim_clock():
+    # Only a request claim marks the stream as owned by a turn; a capture
+    # claim recording it would make the net immune to its own adoption.
+    svc = _service()
+    state = svc.register_session("sess")
+    state.last_wait_at = time.time() - 3600
+    assert svc.claim_consumer("sess", kind="capture") > 0
+    assert state.last_request_claim_at == 0.0
+
+
 def test_coordinator_yields_when_claim_refused():
     class _Refusing:
         def claim_consumer(self, session_token, kind="request"):

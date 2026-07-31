@@ -118,6 +118,17 @@ the turn the user is waiting on. A `capture` claim (the orphan-turn safety net)
 refuses while a request coordinator is polling, and when evicted mid-turn it
 discards only its partial local text, never a queue event.
 
+A claim owns the stream from the moment it is granted, not from the first poll.
+The provider claims before it sends anything, and the send blocks on TUI
+readiness, paste, submit and verification — up to a minute on a cold TUI —
+before `run()` starts polling. Judging liveness on the last `wait_event()` alone
+made that whole window look unowned: a `request_start` arriving inside it was
+adopted as an orphan turn, and the capture's claim evicted the coordinator that
+was about to read the stream. The claim timestamp closes the window, bounded by
+a ceiling so a coordinator that claimed and died cannot disable the net for
+good. A coordinator that dies inside the window has already failed its turn with
+an error, so there is no invisible response left for the net to rescue.
+
 ### Captured turns and the active-agent marker
 
 Claude Code can start a turn that PawFlow did not send: a human typing in the
@@ -388,6 +399,23 @@ key mode. When `base_url` is set, Codex receives that URL, its host resolves to
 the local MITM, and the proxy forwards to the configured host, port, scheme, and
 path prefix. The CLI-facing leg remains TLS even when the configured upstream
 uses plain HTTP.
+
+The session slot is declared trusted in the generated `config.toml`, mirroring
+the Claude Code settings that trust the CC session workdir:
+
+```toml
+[projects."/cc_sessions/<conversation>/<agent>"]
+trust_level = "trusted"
+```
+
+Without it the TUI opens `Do you trust the contents of this directory?` on a
+cold start and waits. That dialog draws no readiness marker, so the launch
+burns the full prompt-ready timeout, the injected prompt is pasted into the
+modal, and only a human at the tmux can unblock it. The trusted path is the
+directory the tmux actually `cd`s into, and the table is written inside the
+PawFlow-managed section so a regeneration replaces it instead of appending a
+second table for the same path. `codex exec` never asks the question, so the
+headless provider does not emit the table.
 
 The Responses observer handles output text, reasoning text, reasoning summary,
 function calls, function-call outputs, model identity, and usage. A single Codex

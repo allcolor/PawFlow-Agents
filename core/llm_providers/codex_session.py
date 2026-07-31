@@ -622,12 +622,20 @@ class CodexSessionMixin:
 
     def _codex_setup_mcp_config(self, workdir: str, user_id: str = "",
                            conversation_id: str = "",
-                           agent_name: str = "") -> tuple:
+                           agent_name: str = "",
+                           trusted_project: str = "") -> tuple:
         """Write MCP config to <workdir>/.codex/config.toml.
 
         Returns (mcp_path, internal_token). The caller owns the
         internal_token lifecycle and MUST call core.internal_auth.revoke_token
         once the codex invocation ends.
+
+        ``trusted_project`` is the directory codex will run in, declared
+        trusted so the TUI never opens its "Do you trust the contents of this
+        directory?" modal. Only the interactive provider needs it: `codex
+        exec` never asks, while the TUI blocks on that dialog before drawing
+        its input box -- no readiness marker, prompt pasted into a modal, and
+        a launch that only a human can unblock.
 
         Mirror of CC's _codex_setup_mcp_config; only the file format differs
         (codex uses TOML for config.toml, CC uses JSON for .mcp.json).
@@ -695,6 +703,18 @@ class CodexSessionMixin:
             f'PAWFLOW_CONVERSATION_ID = "{_toml_escape(conversation_id or "")}"\n'
             f'PAWFLOW_AGENT_NAME = "{_toml_escape(agent_name or "")}"\n'
         )
+        # Trust the session slot up front. The TUI otherwise opens its
+        # "Do you trust the contents of this directory?" modal on a cold
+        # start and waits: no readiness marker is ever drawn, the injected
+        # prompt lands in the dialog, and only a human at the tmux can
+        # unblock the launch. `trust_level` is codex's own key
+        # (ProjectConfig, TrustLevel = trusted | untrusted).
+        if trusted_project:
+            toml += (
+                "\n"
+                f'[projects."{_toml_escape(trusted_project)}"]\n'
+                'trust_level = "trusted"\n'
+            )
         # Native Codex plugins (Linear, GitHub, Gmail, Calendar, ... from the
         # openai-curated marketplace). `codex_plugins` on the llmConnection is
         # a comma-separated list of plugin names, optionally qualified as

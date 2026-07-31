@@ -111,7 +111,9 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
         if getattr(client, "api_key", ""):
             selected_pool_index = -1
         _mcp_path, internal_token = client._codex_setup_mcp_config(
-            workdir, user_id, conversation_id, agent_name)
+            workdir, user_id, conversation_id, agent_name,
+            trusted_project=self._container_workdir(
+                user_id, conversation_id, agent_name))
 
         (upstream_host, upstream_port, upstream_scheme, codex_base_url,
          listen_port) = self._codex_endpoint(client)

@@ -110,6 +110,25 @@ class TestConfigToml:
         _, content = _write_config(tmp_path, {"codex_plugins": ""})
         assert "[plugins." not in content
 
+    def test_trusted_project_table_emitted_inside_managed_section(self, tmp_path):
+        host = _Host()
+        path, _token = host._codex_setup_mcp_config(
+            str(tmp_path), user_id="u1", conversation_id="c1",
+            agent_name="a1", trusted_project="/cc_sessions/c1/a1")
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert '[projects."/cc_sessions/c1/a1"]\ntrust_level = "trusted"' in content
+        # Managed, so a later regeneration replaces it instead of appending a
+        # second table for the same path (duplicate TOML key = codex refuses
+        # the whole config).
+        assert (content.index('[projects."/cc_sessions/c1/a1"]')
+                < content.index(CodexSessionMixin._CODEX_MANAGED_END))
+
+    def test_no_trusted_project_no_projects_table(self, tmp_path):
+        # `codex exec` never asks the trust question; only the TUI does.
+        _, content = _write_config(tmp_path)
+        assert "[projects." not in content
+
     def test_file_permissions(self, tmp_path):
         path, _ = _write_config(tmp_path)
         assert oct(os.stat(path).st_mode & 0o777) == "0o600"

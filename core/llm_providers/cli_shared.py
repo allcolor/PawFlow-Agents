@@ -4,6 +4,7 @@ Contains methods used by multiple providers: HTTP POST and CLI message
 serialization.
 """
 
+import copy
 import json
 import http.client
 import logging
@@ -12,7 +13,7 @@ import re
 import threading
 from html import escape
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from core._llm_types import ColdStartRequired, DeltaContextRequired
@@ -231,6 +232,63 @@ def textualize_message(
     return None
 
 
+def bootstrap_read_call_ids(messages: List[Any]) -> Set[str]:
+    """IDs of the native calls that read our own cold-start bootstrap file.
+
+    A cold CLI start writes the serialized history to ``initial_context.md``
+    and the agent opens it. That call and its result are persisted like any
+    other -- the transcript and the UI must show what the agent did, and a
+    suppressed call is indistinguishable from a lost one.
+
+    They must not come back as *context*, though. The result body IS the
+    previous bootstrap file, so serializing it into the next one embeds a
+    verbatim copy of a file the agent is already reading, one layer deeper on
+    every cold start. Two surfaces, two rules: the transcript keeps the pair,
+    the agent context drops it.
+
+    The gauge already draws this line -- see ``_is_cli_bootstrap_read``, whose
+    reason for existing is that counting this body charges the same context
+    twice. Same predicate here, so the two never disagree.
+    """
+    from tasks.ai.context_usage_cache import _is_cli_bootstrap_read
+
+    call_ids: Set[str] = set()
+    for msg in messages or []:
+        for tool_call in (getattr(msg, "tool_calls", None) or []):
+            if not _is_cli_bootstrap_read(tool_call):
+                continue
+            call_id = str(getattr(tool_call, "id", "") or "")
+            if call_id:
+                call_ids.add(call_id)
+    return call_ids
+
+
+def drop_bootstrap_calls(msg: Any, call_ids: Set[str]) -> Any:
+    """Return ``msg`` without its bootstrap-read calls (unchanged if none).
+
+    Free text on the same message survives: only the call synopsis goes. A
+    message left with no text and no other call textualizes to None, and the
+    caller skips it.
+    """
+    tool_calls = getattr(msg, "tool_calls", None) or []
+    if not tool_calls or not call_ids:
+        return msg
+    kept = [tc for tc in tool_calls
+            if str(getattr(tc, "id", "") or "") not in call_ids]
+    if len(kept) == len(tool_calls):
+        return msg
+    trimmed = copy.copy(msg)
+    trimmed.tool_calls = kept
+    return trimmed
+
+
+def is_bootstrap_read_result(msg: Any, call_ids: Set[str]) -> bool:
+    """Whether ``msg`` is the result of one of ``call_ids``."""
+    if not call_ids or str(getattr(msg, "role", "") or "") != "tool":
+        return False
+    return str(getattr(msg, "tool_call_id", "") or "") in call_ids
+
+
 class LLMCliSharedMixin:
     """Methods shared across CLI and HTTP providers."""
 
@@ -357,10 +415,14 @@ class LLMCliSharedMixin:
                 break
         start = last_user_idx if last_user_idx >= 0 else max(0, len(messages) - 3)
         lines = []
+        bootstrap_ids = bootstrap_read_call_ids(messages)
         for msg in messages[start:]:
             role = getattr(msg, "role", "") or "message"
             if role == "system":
                 continue
+            if is_bootstrap_read_result(msg, bootstrap_ids):
+                continue
+            msg = drop_bootstrap_calls(msg, bootstrap_ids)
             rendered = textualize_message(msg, tool_result_trunc=None)
             if rendered:
                 lines.append(self._cli_message_block(role, rendered))
@@ -378,10 +440,14 @@ class LLMCliSharedMixin:
                 break
         end = last_user_idx if last_user_idx >= 0 else len(messages)
         lines = []
+        bootstrap_ids = bootstrap_read_call_ids(messages)
         for msg in messages[:end]:
             role = getattr(msg, "role", "") or "message"
             if role == "system":
                 continue
+            if is_bootstrap_read_result(msg, bootstrap_ids):
+                continue
+            msg = drop_bootstrap_calls(msg, bootstrap_ids)
             rendered = textualize_message(msg, tool_result_trunc=None)
             if not rendered:
                 continue
@@ -540,6 +606,8 @@ class LLMCliSharedMixin:
         import re as _re
         _b64_pattern = _re.compile(r'data:[^;]+;base64,[A-Za-z0-9+/=]{100,}')
 
+        bootstrap_ids = bootstrap_read_call_ids(messages)
+
         for m in messages:
             text = m.text_content if isinstance(m.content, list) else (m.content or "")
             if m.role == "system":
@@ -579,7 +647,8 @@ class LLMCliSharedMixin:
                 # full trail of work (commits, tests, edits) after compaction
                 # — dropping them erased the evidence between two free-text
                 # turns and made CC rediscover its own work on every resume.
-                rendered = textualize_message(m)
+                rendered = textualize_message(
+                    drop_bootstrap_calls(m, bootstrap_ids))
                 if not rendered:
                     continue
                 source = getattr(m, "source", None) or {}
@@ -590,6 +659,8 @@ class LLMCliSharedMixin:
                 # Truncated tool result — providers dispatch tools live, but
                 # on resume/compact the historical results are needed to
                 # understand what happened.
+                if is_bootstrap_read_result(m, bootstrap_ids):
+                    continue
                 rendered = textualize_message(m)
                 if not rendered:
                     continue

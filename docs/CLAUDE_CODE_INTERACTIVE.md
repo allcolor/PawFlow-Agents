@@ -231,6 +231,14 @@ The provider assembles responses from those events:
   distinguished a deliberately hidden call from a lost one — which is exactly
   the question the transcript exists to answer. What the agent did is what the
   transcript shows.
+- **Not filtered is not the same as re-serialized.** The bootstrap `Read` and
+  its result stay in the transcript, and stay on the gauge. They are dropped
+  from the *agent context*: that result body is the previous
+  `initial_context.md`, so writing it into the next one nests a copy of the file
+  the agent is already reading, and the nesting deepens on every cold start.
+  `core/llm_providers/cli_shared.py` drops the pair in every CLI serializer.
+  Transcript and context are two surfaces with two rules — the earlier fix made
+  the call visible, and visible must not mean fed back in.
 - Outgoing `/v1/messages` request bodies are observed for both assistant
   `tool_use` blocks and user `tool_result` blocks. This preserves live ordering
   even when a response-side tool block is delayed or missed; provider events are

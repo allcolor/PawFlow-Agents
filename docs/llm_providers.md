@@ -61,6 +61,18 @@ the same serialized PawFlow messages are not counted a second time. This lifecyc
 applies to Claude Code, Claude Code interactive, Codex app-server, Antigravity, and
 Gemini CLI. Direct API-provider gauges continue to count their request messages.
 
+That read is kept out of the *next* cold start's context, and the two rules are
+not the same rule. The call and its result stay in the transcript and stay on the
+gauge — the body is literally what fills the provider's window, so it is charged
+for, and the serialized PawFlow messages preceding it are zeroed instead. But
+serializing that same body into the next `initial_context.md` would embed a
+verbatim copy of the file the agent is already reading, one layer deeper on every
+cold start; a 671 KB bootstrap file was found to be 16% copies of itself. So every
+CLI serializer drops the pair (`bootstrap_read_call_ids` in
+`core/llm_providers/cli_shared.py`), using the same predicate the gauge uses
+(`_is_cli_bootstrap_read`) so the two can never disagree. Deduplicating the
+context must never turn into not counting it.
+
 ## Agent Configuration
 
 Agents reference a service id:

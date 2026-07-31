@@ -198,9 +198,9 @@ def test_cli_provider_pools_run_as_configured_pawflow_uid_gid():
 
 
 def test_server_stop_reaps_managed_relay_containers():
-    src = Path("cli.py").read_text(encoding="utf-8")
-    assert '"pawflow-relay-srv-"' in src
-    assert '"pawflow-relay-min-"' in src
+    from core.docker_utils import LEGACY_REAP_PREFIXES
+    assert "pawflow-relay-srv-" in LEGACY_REAP_PREFIXES
+    assert "pawflow-relay-min-" in LEGACY_REAP_PREFIXES
 
 
 def test_server_stop_reaps_every_container_it_spawned():
@@ -215,12 +215,38 @@ def test_server_stop_reaps_every_container_it_spawned():
       SIGKILL after 10s by default and a reap queued behind a 20s drain never
       runs at all.
     """
+    reaper = Path("core/docker_utils.py").read_text(encoding="utf-8")
+    assert "PAWFLOW_SERVER_LABEL" in reaper
+    assert 'f"label={PAWFLOW_SERVER_LABEL}={own}"' in reaper
     src = Path("cli.py").read_text(encoding="utf-8")
-    assert "PAWFLOW_SERVER_LABEL" in src
-    assert 'f"label={_sel}"' in src
     reap = src.index("_kill_spawned_docker_containers()\n        # Drain")
     drain = src.index("ConversationWriter.shutdown_all")
     assert reap < drain, "the reap must not sit behind the writer drain"
+
+
+def test_boot_reaps_zombies_with_the_same_code_as_shutdown():
+    """A container still up at boot is a zombie, and boot is its only chance.
+
+    Nothing adopts a surviving container: the pools track sessions in memory
+    only, so after a restart it is invisible -- never swept, never reaped,
+    never recovered from -- while it holds a credential slot and keeps writing
+    into a session workdir the new process believes it owns.
+
+    Boot used to reap by NAME (`pf-<server-id>-*`), which is exactly the
+    mistake the label was introduced to end: the batch pools are named
+    `pf-cc-pool-*` and the relays and logins `pawflow-*`, so none of them
+    start with this server's prefix and none were ever cleaned up at startup.
+    """
+    src = Path("cli.py").read_text(encoding="utf-8")
+    assert "kill_containers" not in src, (
+        "boot is back on the name-prefix cleanup that misses whole families")
+    # Ordering is only meaningful inside the startup path itself.
+    start = src[src.index("def cmd_start("):]
+    boot = start.index("reap_spawned_containers(log=logger.info)")
+    # Before anything that can spawn a container or claim a credential slot.
+    assert boot < start.index("register_all_tasks()")
+    assert boot < start.index("restore_from_disk()")
+    assert boot < start.index("[boot-recovery]")
 
 
 def test_every_spawned_container_carries_the_server_label():

@@ -16,6 +16,8 @@ import logging
 import os
 import subprocess  # nosec B404
 
+logger = logging.getLogger(__name__)
+
 
 def is_windows() -> bool:
     return os.name == "nt"
@@ -341,6 +343,86 @@ def docker_exec(container: str, cmd_args: list, **kwargs) -> subprocess.Complete
     """Run 'docker exec' with correct prefix."""
     cmd = docker_cmd() + ["exec"] + cmd_args
     return subprocess.run(cmd, **kwargs)  # nosec B603
+
+
+#: Container name prefixes from builds older than the label. Only reachable
+#: through the ownership check in :func:`legacy_reap_ids`.
+LEGACY_REAP_PREFIXES = (
+    "pf-cc-pool-",
+    "pf-codex-pool-",
+    "pf-gemini-pool-",
+    "pf-{own}-cci-",
+    "pf-{own}-agyobs-",
+    "pawflow-relay-srv-",
+    "pawflow-relay-min-",
+    "pawflow-claude-login-",
+    "pawflow-codex-login-",
+    "pawflow-gemini-login-",
+    "pawflow-agy-login-",
+)
+
+
+def reap_spawned_containers(log=None) -> int:
+    """Remove every container this server spawned. Returns the count.
+
+    Called at BOTH ends of the process, and it has to be the same code at
+    both. On shutdown it is what keeps the promise that nothing PawFlow
+    starts outlives it. On startup it is what makes that promise true even
+    when the shutdown never ran -- a SIGKILL, a crash, an update whose stop
+    grace expired. A container still up at boot is a zombie by definition:
+    the pools track sessions in memory only, so nothing will ever adopt it,
+    sweep it or reap it, while it holds a credential slot and keeps writing
+    to a session workdir the new process believes it owns.
+
+    Boot used to reap by NAME (`pf-<server-id>-*`), which is the mistake the
+    label was introduced to end: the pool families are named `pf-cc-pool-*`
+    and the relays and logins `pawflow-*`, so none of them start with this
+    server's prefix and none of them were ever cleaned up at startup.
+
+    Scoped to this server id on purpose: several PawFlow servers can share
+    one Docker host, and each may only reap its own.
+    """
+    _log = log or logger.info
+    reaped = 0
+    own = get_server_id()
+    # Pass 1 -- the label. One filter, every family, now and later.
+    try:
+        result = subprocess.run(  # nosec B603
+            docker_cmd() + ["ps", "-a", "-q", "--filter",
+                            f"label={PAWFLOW_SERVER_LABEL}={own}"],
+            capture_output=True, text=True, timeout=5)
+        ids = [i for i in (result.stdout or "").split() if i]
+        if ids:
+            subprocess.run(docker_cmd() + ["rm", "-f"] + ids,  # nosec B603
+                           capture_output=True, timeout=20)
+            reaped += len(ids)
+            _log("Reaped %d container(s) spawned by this server", len(ids))
+    except Exception:
+        logger.debug("label reap failed", exc_info=True)
+    # Pass 2 -- legacy names, for containers started before the label
+    # existed. Most of these prefixes carry no server id at all, so the name
+    # match alone is host-wide: on a shared Docker daemon it also names
+    # another PawFlow server's pools, relays and logins, which survived pass
+    # 1 precisely because their label is not ours. Reaping those would kill a
+    # running instance's agents. So the label decides here too, in the other
+    # direction -- see legacy_reap_ids.
+    for prefix in LEGACY_REAP_PREFIXES:
+        prefix = prefix.format(own=own[:12])
+        try:
+            result = subprocess.run(  # nosec B603
+                docker_cmd() + ["ps", "-a", "--filter", f"name={prefix}",
+                                "--format", LEGACY_REAP_FORMAT],
+                capture_output=True, text=True, timeout=5)
+            ids = legacy_reap_ids(result.stdout or "", own)
+            if ids:
+                subprocess.run(docker_cmd() + ["rm", "-f"] + ids,  # nosec B603
+                               capture_output=True, timeout=10)
+                reaped += len(ids)
+                _log("Reaped %d orphan container(s) matching %s*",
+                     len(ids), prefix)
+        except Exception:
+            logger.debug("legacy reap failed for %s", prefix, exc_info=True)
+    return reaped
 
 
 def docker_rm(container: str, force: bool = True, **kwargs) -> subprocess.CompletedProcess:

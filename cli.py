@@ -264,10 +264,17 @@ def cmd_start(args):
         logger.warning("CLI workspace mount mode setup failed: %s", _wm_err)
 
     # 1. Register tasks and restore flows in the main process
-    # Cleanup orphan Docker containers from previous server run
-    from core.docker_utils import get_server_id, kill_containers
-    _srv_id = get_server_id()
-    _killed = kill_containers(_srv_id)
+    # Reap whatever the previous run left behind, BEFORE anything can spawn
+    # or claim a credential slot. A container still up here is a zombie: the
+    # pools track sessions in memory only, so nothing would ever adopt it,
+    # sweep it or reap it -- it would just sit there holding a slot and
+    # writing into a session workdir this process believes it owns. Same
+    # function as the shutdown reap, because it is the same promise: nothing
+    # PawFlow starts outlives it, and a shutdown that never ran (SIGKILL, a
+    # crash, an update whose stop grace expired) is exactly when boot has to
+    # keep it instead.
+    from core.docker_utils import reap_spawned_containers
+    _killed = reap_spawned_containers(log=logger.info)
     if _killed:
         logger.info("Cleaned up %d orphan Docker container(s) from previous run", _killed)
 
@@ -385,17 +392,11 @@ def cmd_start(args):
     def _kill_spawned_docker_containers():
         """Hard-kill all containers this PawFlow server spawned.
 
-        Authoritative pass: every container carries this server's
-        `org.pawflow.server-id` label, stamped at spawn (see
-        `core.docker_utils.pawflow_container_labels`). The name-prefix pass
-        that follows only catches containers started by an OLDER build, from
-        before the label existed -- a name list has to be updated by hand for
-        each new family, and two of them (interactive Claude Code, the
-        Antigravity observer) were never added, which is why they survived
-        `docker stop` and had to be removed by hand.
-
-        Scoped to this server id on purpose: several PawFlow servers can share
-        one Docker host, and each may only reap its own.
+        The pools get a chance to shut down cleanly first -- they release
+        slots and stop their sweepers -- then `reap_spawned_containers`
+        removes whatever is left, by label. That is the same call boot makes,
+        on purpose: a shutdown that never ran is exactly what boot has to
+        clean up after.
         """
         for _pool_mod, _pool_cls in (
             ("core.claude_code_pool", "ClaudeCodePool"),
@@ -408,66 +409,8 @@ def cmd_start(args):
             except Exception:
                 pass  # nosec B110
         try:
-            import subprocess as _sp  # nosec B404
-            from core.docker_utils import docker_cmd
-            from core.docker_utils import (LEGACY_REAP_FORMAT,
-                                           PAWFLOW_SERVER_LABEL,
-                                           get_server_id, legacy_reap_ids)
-            # Pass 1 — the label. One filter, every family, now and later.
-            try:
-                _sel = f"{PAWFLOW_SERVER_LABEL}={get_server_id()}"
-                _r = _sp.run(  # nosec B603
-                    docker_cmd() + ["ps", "-a", "-q", "--filter",
-                                     f"label={_sel}"],
-                    capture_output=True, text=True, timeout=5)
-                _ids = [i for i in (_r.stdout or "").split() if i]
-                if _ids:
-                    _sp.run(docker_cmd() + ["rm", "-f"] + _ids,  # nosec B603
-                            capture_output=True, timeout=20)
-                    logger.info("Reaped %d container(s) spawned by this server",
-                                len(_ids))
-            except Exception:
-                pass  # nosec B110
-            # Pass 2 — legacy names, for containers started before the label
-            # existed. Most of these prefixes carry no server id at all, so the
-            # name match alone is host-wide: on a shared Docker daemon it also
-            # names another PawFlow server's pools, relays and logins, which
-            # survived pass 1 precisely because their label is not ours.
-            # Reaping those would kill a running instance's agents.
-            #
-            # So the label decides here too, in the other direction: a
-            # container that carries SOMEBODY ELSE's server id is left alone,
-            # and only an unlabelled one -- which can only come from a build
-            # older than the label -- is reaped by name.
-            _own = get_server_id()[:12]
-            _own_full = get_server_id()
-            for _prefix in (
-                "pf-cc-pool-",
-                "pf-codex-pool-",
-                "pf-gemini-pool-",
-                f"pf-{_own}-cci-",
-                f"pf-{_own}-agyobs-",
-                "pawflow-relay-srv-",
-                "pawflow-relay-min-",
-                "pawflow-claude-login-",
-                "pawflow-codex-login-",
-                "pawflow-gemini-login-",
-                "pawflow-agy-login-",
-            ):
-                try:
-                    _r = _sp.run(  # nosec B603
-                        docker_cmd() + ["ps", "-a",
-                                         "--filter", f"name={_prefix}",
-                                         "--format", LEGACY_REAP_FORMAT],
-                        capture_output=True, text=True, timeout=5)
-                    _ids = legacy_reap_ids(_r.stdout or "", _own_full)
-                    if _ids:
-                        _sp.run(docker_cmd() + ["rm", "-f"] + _ids,  # nosec B603
-                                capture_output=True, timeout=10)
-                        logger.info("Reaped %d orphan container(s) matching %s*",
-                                    len(_ids), _prefix)
-                except Exception:
-                    pass  # nosec B110
+            from core.docker_utils import reap_spawned_containers
+            reap_spawned_containers(log=logger.info)
         except Exception:
             pass  # nosec B110
 

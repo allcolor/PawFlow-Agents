@@ -1050,6 +1050,54 @@ def test_antigravity_kill_sends_sigkill_before_remove(monkeypatch, tmp_path):
     assert state.manual_ingest_stop.is_set()
 
 
+def test_antigravity_kill_never_evicts_a_replacement_under_the_same_key(
+        monkeypatch, tmp_path):
+    """Killing an already-evicted session must not touch the registry.
+
+    ensure_started pops the stale entry, releases the lock, then runs
+    before_launch and the relaunch -- seconds during which the cold retry (or
+    another thread) can register a replacement under the same key. The trailing
+    pop used to be unconditional, so the kill of the *old* session dropped the
+    *new* one: a container still running, no longer tracked, and therefore never
+    reaped -- the orphan the cleanup exists to prevent.
+    """
+    from core.antigravity_observer_pool import (
+        AntigravityObserverPool, AntigravityObserverSession)
+
+    class _Run:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    monkeypatch.setattr("core.antigravity_observer_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run",
+                        lambda cmd, **kwargs: _Run())
+    monkeypatch.setattr("core.antigravity_observer_pool.time.sleep", lambda _s: None)
+    monkeypatch.setattr(AntigravityObserverPool, "_is_alive", lambda self, name: False)
+
+    key = ("u", "c", "a", "svc")
+
+    def session(name):
+        return AntigravityObserverSession(
+            key=key, name=name, workdir=str(tmp_path),
+            container_workdir="/cc_sessions/c/a",
+            log_path=str(tmp_path / f"{name}.jsonl"))
+
+    pool = AntigravityObserverPool()
+    stale = session("stale")
+    replacement = session("replacement")
+    # The stale one is already out of the registry; the replacement took its key.
+    pool._sessions[key] = replacement
+
+    pool.kill(stale)
+
+    assert pool._sessions.get(key) is replacement
+
+    # And the ordinary case still clears the entry it owns.
+    pool.kill(replacement)
+    assert key not in pool._sessions
+
+
 def test_chat_ui_exposes_single_agent_tmux_action_for_antigravity():
     # Command handlers (cmdAgentTmux + antigravity tmux) moved from terminal.js
     # into terminal_commands.js (<=800 split); engine stays in terminal.js.

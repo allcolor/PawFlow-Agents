@@ -694,4 +694,13 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
                 "[antigravity-interactive] container still alive after kill: %s",
                 state.name)
         with self._lock:
-            self._sessions.pop(state.key, None)
+            # Only if the registry still holds THIS session. A caller that
+            # evicted it first (start / ensure_started pop the stale entry,
+            # release the lock, then run before_launch and the relaunch) leaves
+            # the key free for seconds: the cold retry, or another thread, can
+            # register a replacement under it before this kill returns. An
+            # unconditional pop would drop that replacement from the registry
+            # while its container keeps running -- untracked, unkillable, the
+            # very orphan this cleanup exists to prevent.
+            if self._sessions.get(state.key) is state:
+                self._sessions.pop(state.key, None)

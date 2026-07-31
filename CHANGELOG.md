@@ -4,6 +4,70 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.62] — 2026-07-31
+
+### Fixed
+
+- The simplified chat view could tear an answer out of an earlier turn and
+  drop it at the bottom of the page. `final_msg_id` is resolved with a lookup
+  that reaches any row on screen, and promoting a row *moves* it — so a `done`
+  for a turn that produced nothing of its own, naming a message from half an
+  hour earlier, relocated that message under a fresh, empty block reading
+  "Completed in 0s". The promotion is now refused unless the row is already
+  filed inside this turn's block or sits after it at top level. An id names a
+  row; it never selects one.
+- A Claude Code credential slot is taken by a launch, never by a lookup.
+  `_setup_credentials` writes `.credentials.json`, `self._current_pool_index`
+  and the stored slot, and it ran BEFORE the live-session lookup. When the
+  exact key missed and `get_compatible()` adopted a session on another slot,
+  only the key, the local index and the extra were realigned: the client and
+  the workdir stayed on the slot this turn had just written. `_recover_tokens`
+  then wrote one account's rotated tokens into another account's slot, an auth
+  error refreshed or excluded the wrong credential, and the registry sweeper
+  attributed the workdir to a third — a multi-account pool could disconnect
+  accounts the turn never touched. The lookup now runs first, a reuse adopts
+  the live session's slot without writing anything, and only the launch branch
+  takes a slot. This is what codex and gemini already did.
+- Killing an Antigravity session no longer evicts its replacement.
+  `ensure_started` pops the stale entry, releases the lock, then runs
+  `before_launch` and the relaunch — seconds during which the cold retry can
+  register a new session under the same key. The trailing `pop` was
+  unconditional, so the kill of the old session dropped the new one from the
+  registry while its container kept running: untracked, never reaped, the very
+  orphan the cleanup exists to prevent. The pop now requires the current entry
+  to still be that session.
+- An OAuth token rotated inside a CLI container is rescued on a clock, not on
+  a teardown. Anthropic's `refresh_token` is single-use, and the copy back to
+  the pool slot only ran when a session was torn down — which made it depend
+  on the server being alive to perform it. A hard kill, or an update whose
+  Docker stop grace (10s by default) expires while `docker rm -f` works
+  through the containers at up to 15s each, and the token died with the
+  container while the pool kept one that could no longer be refreshed. Every
+  live pool now also copies back on each sweeper tick, for the sessions it is
+  *not* evicting, and `shutdown_all` takes every token before it kills
+  anything. `recover_tokens_from_workdir` is idempotent per (workdir, slot)
+  through a shared memo, so a tick where nothing rotated writes nothing.
+- A container still up at boot is reaped. The shutdown reaper is driven by the
+  `org.pawflow.server-id` label precisely so that no hand-maintained name list
+  can fall behind, but the boot cleanup still matched names
+  (`pf-<server-id>-*`): the batch pools are named `pf-cc-pool-*` and the
+  relays and logins `pawflow-*`, so none of them carried this server's prefix
+  and none were ever cleaned up at startup. Both ends now call the same
+  `docker_utils.reap_spawned_containers`, and boot runs it before task
+  registration, flow restore and boot-recovery — before anything can spawn a
+  container or claim a credential slot. Nothing is adopted back: the pools
+  track sessions in memory only, so a survivor would hold a slot and write
+  into a session workdir the new process believes it owns. The legacy name
+  pass still refuses any container carrying another server's id.
+
+### Added
+
+- Three implementation plans in `docs/`: `EVAL_HARNESS_PLAN.md` (scored agent
+  evaluation — case format, scorers, five suites, scorecard, phasing),
+  `MODEL_HARNESS_PROFILES_PLAN.md` (per-model prompt/tool/limit tuning behind
+  one resolution point) and `THREAT_MODELS_PLAN.md` (per-surface attacker
+  models with a mandatory, never-empty residual-risk section).
+
 ## [1.0.0-beta.61] — 2026-07-31
 
 ### Fixed

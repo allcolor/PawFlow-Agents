@@ -253,6 +253,11 @@ class _CCStreamMixin:
                     st._svc_id, st._svc_pool_idx, st._live_session.reuse_count,
                     time.monotonic() - st._live_session.spawn_at,
                     st.session_id[:12])
+                # Case 2 confirmed by the process. A turn built as a cold
+                # start is rebuilt as the delta it is. The except below gives
+                # the turn lock back for any BaseException, this one included.
+                if not st._is_ephemeral:
+                    self._cli_require_delta_context("claude-code")
             except BaseException:
                 if st._owns_turn_lock:
                     try:

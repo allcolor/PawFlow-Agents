@@ -235,7 +235,7 @@ class _ALCClosures2Mixin:
             st.conversation_id[:8], _adopt_agent, len(st.messages), reason)
 
     def _alc_run_interrupt_turn(self, st):
-        if st._client_provider in ("claude-code-interactive", "antigravity-interactive"):
+        if st._client_provider in ("claude-code-interactive", "antigravity-interactive", "codex-interactive"):
             logger.info(
                 "[agent:%s] interrupted — sending %s STOP via tmux only",
                 st.conversation_id[:8], st._client_provider)
@@ -249,6 +249,8 @@ class _ALCClosures2Mixin:
                 _block_cb = None
             if st._client_provider == "antigravity-interactive":
                 _interrupt_fn = st.client.interrupt_antigravity_interactive
+            elif st._client_provider == "codex-interactive":
+                _interrupt_fn = st.client.interrupt_codex_interactive
             else:
                 _interrupt_fn = st.client.interrupt_claude_code_interactive
             _irpt_resp = _interrupt_fn(
@@ -731,8 +733,8 @@ class _ALCClosures2Mixin:
                 callback=st.emitter.get_token_callback(ps),
                 thinking_budget=st._tb,
                 thinking_callback=st.emitter.get_thinking_callback(ps) if st._tb > 0 else None,
-                turn_callback=st._claude_code_turn_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None,
-                block_callback=st._cli_block_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None,
+                turn_callback=st._claude_code_turn_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini") else None,
+                block_callback=st._cli_block_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini") else None,
                 **_call_kwargs)
         return st.client.complete(
             messages=msgs, model=st.model or None,

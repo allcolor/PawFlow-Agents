@@ -153,6 +153,19 @@ class _CodexAppStreamMixin:
                             "[codex-app-live] REUSE conv=%s agent=%s session=%s reuse=%d",
                             conv_id[:8] or "?", agent_name, thread_id[:12],
                             live_session.reuse_count)
+                        # Case 2 confirmed by the process itself. If the turn
+                        # was built as a cold start, the context phase's probe
+                        # was wrong and this raises so the turn is rebuilt as
+                        # the delta it is -- giving the turn lock back first,
+                        # because the finally that would release it belongs to
+                        # a try this raise never enters.
+                        if not is_ephemeral:
+                            def _give_back_live_lock_reuse():
+                                if owns_live_lock and live_session is not None:
+                                    live_session.turn_lock.release()
+
+                            self._cli_require_delta_context(
+                                "codex-app", release=_give_back_live_lock_reuse)
                     else:
                         reuse_container = live_session.container_name or ""
                         container = reuse_container

@@ -91,7 +91,6 @@ class LLMAnthropicMixin:
                 _tool_list[-1]["cache_control"] = _cc
             body["tools"] = _tool_list
 
-        from core.llm_client import LLMClientError
         _base = self.base_url or "https://api.anthropic.com"
         parsed = urlparse(_base)
         host = parsed.hostname

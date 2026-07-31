@@ -125,4 +125,5 @@ class TestServiceSchema:
             LLMConnectionService.__new__(LLMConnectionService))
         visible_for = [r["when"]["provider"] for r in rules
                        if r["set"].get("codex_plugins", {}).get("visible")]
-        assert visible_for == [["codex-app-server"]]
+        # Both Codex CLI providers take native plugins; nothing else does.
+        assert visible_for == [["codex-app-server"], ["codex-interactive"]]

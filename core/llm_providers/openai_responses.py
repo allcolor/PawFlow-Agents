@@ -157,6 +157,7 @@ class _StreamState:
         self.model = ""
         self.status = ""
         self.error = ""
+        self.terminal_event = ""
 
     def _slot(self, key: str) -> Dict[str, Any]:
         if key not in self.calls:
@@ -164,7 +165,7 @@ class _StreamState:
             self.order.append(key)
         return self.calls[key]
 
-    def feed(self, ev: Dict[str, Any]) -> None:
+    def feed(self, ev: Dict[str, Any]) -> bool:
         """Apply one decoded SSE event.
 
         Keyed on ``item_id`` and not on ``output_index``: parallel tool calling
@@ -175,7 +176,8 @@ class _StreamState:
         if etype == "response.output_text.delta":
             if ev.get("delta"):
                 self.text.append(ev["delta"])
-        elif etype == "response.reasoning_text.delta":
+        elif etype in ("response.reasoning_text.delta",
+                       "response.reasoning_summary_text.delta"):
             if ev.get("delta"):
                 self.reasoning.append(ev["delta"])
         elif etype == "response.function_call_arguments.delta":
@@ -184,7 +186,7 @@ class _StreamState:
         elif etype in ("response.output_item.added", "response.output_item.done"):
             item = ev.get("item") or {}
             if item.get("type") != "function_call":
-                return
+                return False
             key = item.get("id") or ev.get("item_id") or str(ev.get("output_index", 0))
             slot = self._slot(key)
             slot["call_id"] = item.get("call_id") or slot["call_id"]
@@ -194,6 +196,7 @@ class _StreamState:
             if etype == "response.output_item.done" and item.get("arguments"):
                 slot["arguments"] = item["arguments"]
         elif etype in _TERMINAL_EVENTS:
+            self.terminal_event = etype
             resp = ev.get("response") or {}
             self.usage = resp.get("usage") or {}
             self.model = resp.get("model") or self.model
@@ -201,6 +204,7 @@ class _StreamState:
             err = resp.get("error") or {}
             if isinstance(err, dict) and err.get("message"):
                 self.error = str(err["message"])
+        return bool(self.terminal_event)
 
 
 class LLMOpenaiResponsesMixin:
@@ -301,6 +305,7 @@ class LLMOpenaiResponsesMixin:
             state = _StreamState()
             state.model = model
             buffer = ""
+            terminal = False
             while True:
                 if getattr(self, "_abort", None) and self._abort.is_set():
                     raise AgentCancelled()
@@ -317,9 +322,17 @@ class LLMOpenaiResponsesMixin:
                     if not line.startswith("data: "):
                         continue
                     try:
-                        state.feed(json.loads(line[6:]))
+                        terminal = state.feed(json.loads(line[6:]))
                     except json.JSONDecodeError:
                         logger.debug("undecodable Responses event", exc_info=True)
+                    if terminal:
+                        break
+                if terminal:
+                    break
+
+            if not state.terminal_event:
+                raise LLMClientError(
+                    "Responses API stream ended before a terminal event")
 
             if state.status == "failed":
                 raise LLMClientError(

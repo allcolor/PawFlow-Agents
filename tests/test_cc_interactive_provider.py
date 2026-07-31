@@ -1178,15 +1178,17 @@ def test_interactive_provider_is_treated_as_stateful_cli():
 
 
 def test_cc_interactive_interrupt_turn_sends_only_stop_transport():
-    from pathlib import Path
 
     agent_core = agent_core_src()
-    cci_start = agent_core.index('if _client_provider in ("claude-code-interactive", "antigravity-interactive")')
+    cci_start = agent_core.index(
+        'if _client_provider in ("claude-code-interactive", '
+        '"antigravity-interactive", "codex-interactive")')
     cci_end = agent_core.index('logger.info(f"[agent:{conversation_id[:8]}] interrupted', cci_start)
     cci_branch = agent_core[cci_start:cci_end]
 
     assert "interrupt_claude_code_interactive" in cci_branch
     assert "interrupt_antigravity_interactive" in cci_branch
+    assert "interrupt_codex_interactive" in cci_branch
     assert "SOFT_INTERRUPT_USER_COMMAND" in cci_branch
     assert "_compact(" not in cci_branch
     assert "_with_provider_system_prompt" not in cci_branch
@@ -3096,6 +3098,7 @@ def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
     # SIGWINCH corrupted in-flight CCI captures). See the pool's window-size
     # manual pinning.
     assert "user_spec = pool._user_spec()" in block
+    assert "CodexInteractivePool.instance()" in block
     assert block.count('"--user", user_spec') == 1
     # The viewer must NOT resize the shared pawflow window.
     assert 'resize-window", "-t", "pawflow"' not in block

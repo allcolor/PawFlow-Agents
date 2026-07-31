@@ -59,6 +59,12 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 lambda: self._cli_require_cold_context(
                     "claude-code-interactive")))
         pool.touch(state)
+        # Case 2, told by the pool: the live process already holds the PawFlow
+        # initial context, so this turn is a delta. A turn built as a cold
+        # start is rebuilt as the delta it is -- before_launch above covers
+        # the opposite direction, and only one of the two can fire.
+        if not _ephemeral and getattr(state, "initial_context_loaded", False):
+            self._cli_require_delta_context("claude-code-interactive")
         self._cci_active_user_id = user_id
         self._cci_active_conversation_id = conversation_id
         self._cci_active_agent_name = agent_name

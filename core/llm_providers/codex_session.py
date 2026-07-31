@@ -179,11 +179,10 @@ class CodexSessionMixin:
     _pool_counter = 0
     _pool_lock = __import__('threading').Lock()
 
-    # Per-slot refresh locks — serialize concurrent refreshes of the SAME
-    # pool slot so two sessions sharing a credential can't both POST the
-    # same single-use refresh_token (the loser would error and drop a slot
-    # the winner just rotated). Mirror of ClaudeCodeSessionMixin; keyed by
-    # (service_id, pool_index), private to the codex pool.
+    # Per-slot refresh locks serialize only the short refresh transaction.
+    # Any number of live agents may share the credential itself; after taking
+    # this lock a waiter reuses the fresh access token persisted by its peer.
+    # Keyed by (service_id, pool_index), private to the Codex pool.
     _codex_refresh_locks_guard = __import__('threading').Lock()
     _codex_refresh_locks = {}
 
@@ -306,21 +305,23 @@ class CodexSessionMixin:
     def _codex_refresh_oauth_token_coordinated(self, refresh_token: str, *,
                                                service_id: str, pool_index: int,
                                                user_id: str, conv_id: str) -> dict:
-        """Serialized, idempotent refresh of one pool slot's single-use token.
+        """Serialized, idempotent refresh of one shared pool slot.
 
-        Holds the per-slot lock so two sessions sharing the slot can't both
-        POST the same refresh_token (the loser would error and drop a slot
-        the winner just rotated). After taking the lock we re-read the pool:
-        if a peer already rotated this slot, the freshly-persisted token
-        (incl. id_token/account) is returned with NO network call. Mirror of
-        ClaudeCodeSessionMixin._refresh_oauth_token_coordinated.
+        The lock covers only refresh, never a model turn or live session. After
+        taking it we re-read the pool: if a peer already produced a fresh access
+        token, that token is returned without another network call.
         """
         lock = self._codex_slot_refresh_lock(service_id, pool_index)
         with lock:
             pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
             if 0 <= pool_index < len(pool):
                 slot = pool[pool_index]
-                if slot.get("access_token") and slot.get("refresh_token") != refresh_token:
+                now_ms = int(time.time() * 1000)
+                expires_at = int(slot.get("expires_at", 0) or 0)
+                peer_refreshed = (
+                    slot.get("refresh_token") != refresh_token
+                    or expires_at > now_ms + self._OAUTH_REFRESH_MIN_TTL_SEC * 1000)
+                if slot.get("access_token") and peer_refreshed:
                     logger.info(
                         "[codex] OAuth token [pool:%d] already refreshed by a "
                         "peer session; reusing rotated credential (no network call)",
@@ -675,6 +676,7 @@ class CodexSessionMixin:
             "\n"
             "[features]\n"
             "enable_fanout = true\n"
+            "hooks = true\n"
             "\n"
             "[mcp_servers.pawflow]\n"
             f'command = "{_toml_escape(python_bin)}"\n'

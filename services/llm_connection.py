@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 
 from core.base_service import BaseService
 from core import ServiceFactory, ServiceError
-from core.llm_client import LLMClient, LLMMessage, LLMResponse, LLMClientError, LLMToolDefinition, LLMToolCall, LLMToolResult
+from core.llm_client import LLMClient, LLMMessage, LLMResponse, LLMClientError, LLMToolDefinition
 from core.token_counter import count_messages_tokens
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
-        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
+        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
             # CLI providers — binary auto-detected at runtime, OAuth pool is
             # the default credential source, api_key is an optional fallback.
             pass
@@ -417,6 +417,7 @@ class LLMConnectionService(BaseService):
                 "provider_aliases": {
                     "claude-code-interactive": "claude-code",
                     "antigravity-interactive": "gemini",
+                    "codex-interactive": "codex-app-server",
                 },
                 "default": "",
                 "description": "OAuth credential provider service used when api_key is empty",
@@ -547,10 +548,6 @@ class LLMConnectionService(BaseService):
                 "type": "integer", "default": 0,
                 "description": "Max conversation rounds (0 = default 1)",
             },
-            "tool_result_max_chars": {
-                "type": "integer", "default": 0,
-                "description": "Max chars per tool result (0 = default 50000)",
-            },
             "token_multiplier": {
                 "type": "float", "default": 0,
                 "description": (
@@ -643,7 +640,7 @@ class LLMConnectionService(BaseService):
             },
             "codex_plugins": {
                 "type": "string", "required": False, "default": "",
-                "description": "codex-app-server only: comma-separated native "
+                "description": "Codex providers: comma-separated native "
                                "Codex plugin names to enable in sessions "
                                "(e.g. github,linear,gmail). Optionally "
                                "qualified as name@marketplace; default "
@@ -663,6 +660,7 @@ class LLMConnectionService(BaseService):
                                      "copilot", "anthropic",
                                      "claude-code", "claude-code-interactive",
                                      "antigravity-interactive", "codex-app-server",
+                                     "codex-interactive",
                                      "gemini"]},
                 "set": {
                     "azure_deployment":  {"visible": False},
@@ -804,6 +802,34 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True, "description": "Codex app-server reasoning effort (low/medium/high/xhigh/max)"},
+                    "codex_plugins": {"visible": True},
+                    "claude_plugins": {"visible": False},
+                    "claude_marketplaces": {"visible": False},
+                    "extra_body":    {"visible": False},
+                }
+            },
+            {
+                "when": {"provider": ["codex-interactive"]},
+                "set": {
+                    "api_key":       {"visible": True, "description": "OpenAI API key (empty = shared Codex OAuth credential service)"},
+                    "credential_service_id": {"visible": True},
+                    "base_url":      {
+                        "visible": True, "required": False,
+                        "description": (
+                            "Optional Responses-compatible upstream for the "
+                            "transparent MITM; empty keeps Codex's official "
+                            "OAuth/API-key endpoint")},
+                    "relay_local":   {"visible": True},
+                    "max_retries":   {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "supports_vision": {"visible": True},
+                    "vision_llm_service": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "timeout":       {"default": 0},
+                    "docker_image":  {"visible": True},
+                    "docker_cpu_limit": {"visible": True},
+                    "docker_memory_limit": {"visible": True},
+                    "effort":        {"visible": True, "description": "Codex TUI reasoning effort (low/medium/high/xhigh/max)"},
                     "codex_plugins": {"visible": True},
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},

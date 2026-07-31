@@ -208,7 +208,6 @@ class TestCreateConversation:
 
     def test_append_coalesces_hot_metadata_writes(self, conv, monkeypatch):
         store, cid, uid = conv
-        import core.conversation_store as cs_mod
 
         monkeypatch.setattr("core._conversation_store_base._HOT_METADATA_FLUSH_INTERVAL_SEC", 3600.0)
         monkeypatch.setattr("core._conversation_store_base._HOT_METADATA_FLUSH_MSG_DELTA", 1000)
@@ -243,7 +242,6 @@ class TestCreateConversation:
 
     def test_append_schedules_hot_metadata_write_off_hot_path(self, conv, monkeypatch):
         store, cid, uid = conv
-        import core.conversation_store as cs_mod
 
         scheduled = []
 
@@ -310,7 +308,6 @@ class TestCreateConversation:
                 if target == notify:
                     target(*args)
 
-        import core.conversation_store as cs_mod
 
         monkeypatch.setattr("core._conversation_store_base._HOT_METADATA_EXECUTOR", FakeExecutor())
         monkeypatch.setattr(store, "_notify_bg_transcript_chars", notify)
@@ -343,7 +340,6 @@ class TestCreateConversation:
                            capture_output=True, text=True, timeout=5)
         except Exception:
             pytest.skip("git unavailable")
-        import core.conversation_store as cs_mod
 
         monkeypatch.setattr("core._conversation_store_base._GIT_RETENTION_DAYS", 0)
         monkeypatch.setattr("core._conversation_store_base._GIT_RETENTION_COMMITS", 2)
@@ -1850,6 +1846,37 @@ class TestCleanupOrphanClaudeSessions:
 
         assert calls == [(
             cid, "gemini", "invalidate_claude_session_for_agent")]
+
+    def test_invalidation_kills_codex_interactive_sessions(
+            self, store, tmp_path, monkeypatch):
+        """Context invalidation must not leave a stale Codex TUI alive."""
+        self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        calls = []
+
+        class _Pool:
+            def kill_and_evict_by_conv_agent(self, conv_id, agent_name, reason):
+                calls.append(("agent", conv_id, agent_name, reason))
+                return 1
+
+            def kill_and_evict_by_conv(self, conv_id, reason):
+                calls.append(("conversation", conv_id, reason))
+                return 1
+
+        from core.codex_interactive_pool import CodexInteractivePool
+
+        monkeypatch.setattr(
+            CodexInteractivePool, "instance", staticmethod(lambda: _Pool()))
+
+        store.invalidate_claude_session_for_agent(cid, "assistant")
+        store.invalidate_claude_sessions(cid)
+
+        assert calls == [
+            ("agent", cid, "assistant",
+             "invalidate_claude_session_for_agent"),
+            ("conversation", cid, "invalidate_claude_sessions"),
+        ]
 
     def test_invalidate_per_agent_prunes_companion_dir(
             self, store, tmp_path, monkeypatch):

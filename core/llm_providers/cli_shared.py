@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from core._llm_types import ColdStartRequired
+from core._llm_types import ColdStartRequired, DeltaContextRequired
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +277,52 @@ class LLMCliSharedMixin:
                              exc_info=True)
         raise ColdStartRequired(
             f"{provider}: cold start required, context was built as a delta")
+
+    def _cli_require_delta_context(self, provider: str, *,
+                                   release=None) -> None:
+        """Refuse to hand a cold start's full context to a live process.
+
+        The other half of the same rule, and it applies to every CLI. Two
+        cases, no third one: no process -> we launch -> cold start -> full
+        context; a process is running -> delta. The context phase built this
+        turn for the first case because it found no live process, and we are
+        now on the second: the process answers.
+
+        Continuing would run the turn in neither case. The full transcript was
+        loaded and compacted for nothing, the gauge was zeroed against a
+        session that never restarted, and the delta actually sent came from a
+        context assembled for a process that does not need it.
+
+        DeltaContextRequired sends the turn back to the context phase, which
+        rebuilds it as the delta it is, through the same code every ordinary
+        delta uses. Nothing has reached the model yet, so the restart costs no
+        tokens.
+
+        A turn already built as a delta carries the marker and this returns at
+        once -- which is the ordinary case-2 path.
+
+        ``release`` has the same contract as in _cli_require_cold_context: a
+        caller holding the live session's turn lock must give it back here,
+        because the ``finally`` that would release it belongs to a ``try``
+        this raise never enters.
+        """
+        if getattr(self, "_pawflow_context_is_delta", False):
+            return
+        # One shot, same reason as the cold guard: the rebuilt context is a
+        # real delta, and a stale marker must not bounce a correct turn.
+        self._pawflow_context_is_delta = True
+        logger.warning(
+            "[%s] the process is alive; this turn was built as a cold start "
+            "with the full context, so it needs a delta instead — restarting "
+            "the turn as a delta", provider)
+        if release is not None:
+            try:
+                release()
+            except Exception:
+                logger.debug("[%s] delta release hook failed", provider,
+                             exc_info=True)
+        raise DeltaContextRequired(
+            f"{provider}: delta required, context was built as a cold start")
 
     @staticmethod
     def _cli_escape_text(text: str, *, quote: bool = False) -> str:

@@ -315,8 +315,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             # turn_callback again returns empty.)
             st._is_cli_provider = (
                 st.ctx.get("_is_claude_code")
-                or st.ctx.get("active_llm_provider") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
-                or getattr(st.client, "provider", "") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
+                or st.ctx.get("active_llm_provider") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
+                or getattr(st.client, "provider", "") in ("claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
             )
             if not st.response_content and not st._fatal_error and not st._is_cli_provider:
                 logger.warning(f"[agent:{st.conversation_id[:8]}] empty response — forcing synthesis")

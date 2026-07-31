@@ -16,6 +16,7 @@ from core.token_counter import count_messages_tokens
 from core._llm_types import (
     CCCompactDetected,
     ColdStartRequired,
+    DeltaContextRequired,
     LLMClientError,
     LLMMessage,
     LLMResponse,
@@ -113,7 +114,7 @@ class _LLMClientDriverMixin:
         Returns:
             LLMResponse with content and/or tool_calls populated.
         """
-        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
             raise LLMClientError("api_key is required")
         if self.provider not in self.PROVIDERS:
             raise LLMClientError(
@@ -175,6 +176,16 @@ class _LLMClientDriverMixin:
                 )
             elif self.provider == "codex-app-server":
                 result = self._stream_codex_app_server(
+                    messages, mdl, temperature, max_tokens, tools,
+                    thinking_budget=thinking_budget,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream,
+                )
+            elif self.provider == "codex-interactive":
+                result = self._stream_codex_interactive(
                     messages, mdl, temperature, max_tokens, tools,
                     thinking_budget=thinking_budget,
                     call_user_id=call_user_id,
@@ -322,6 +333,11 @@ class _LLMClientDriverMixin:
                 self.cancel_claude_code_interactive(force=True)
             except Exception:
                 logger.debug("Claude Code interactive abort failed", exc_info=True)
+        if getattr(self, "provider", "") == "codex-interactive":
+            try:
+                self.cancel_codex_interactive(force=True)
+            except Exception:
+                logger.debug("Codex interactive abort failed", exc_info=True)
         if getattr(self, "provider", "") == "antigravity-interactive":
             try:
                 self.cancel_antigravity_interactive(force=True)
@@ -369,7 +385,7 @@ class _LLMClientDriverMixin:
 
         Supports both OpenAI and Anthropic streaming.
         """
-        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
             raise LLMClientError("api_key is required")
 
         self._apply_call_identity(
@@ -462,6 +478,18 @@ class _LLMClientDriverMixin:
                                                        call_agent_name=call_agent_name,
                                                        call_event_cid=call_event_cid,
                                                        call_ephemeral_stream=call_ephemeral_stream)
+            elif self.provider == "codex-interactive":
+                result = self._stream_codex_interactive(
+                    messages, mdl, temperature, max_tokens, tools, callback,
+                    thinking_budget=thinking_budget,
+                    thinking_callback=thinking_callback,
+                    turn_callback=turn_callback,
+                    block_callback=block_callback,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "gemini":
                 result = self._stream_gemini(messages, mdl, temperature, max_tokens, tools, callback,
                                                thinking_budget=thinking_budget,
@@ -498,7 +526,8 @@ class _LLMClientDriverMixin:
                 # cold start the caller must rebuild the context for: this
                 # loop would re-send the same delta to the same launch.
                 from tasks.ai.agent_exceptions import AgentCancelled as _AC
-                if isinstance(e, (_AC, CCCompactDetected, ColdStartRequired)):
+                if isinstance(e, (_AC, CCCompactDetected, ColdStartRequired,
+                                  DeltaContextRequired)):
                     raise
                 last_error = e
                 err_str = str(e)

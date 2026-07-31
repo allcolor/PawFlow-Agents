@@ -107,14 +107,15 @@ def test_a_cold_context_is_not_marked():
 
 # -- the refusal must not be swallowed by the retry driver ------------------
 
-def test_the_stream_driver_does_not_retry_a_cold_start():
-    """The driver retries almost everything. Retrying here would re-send the
-    same delta to the same launch, max_retries times, and then wrap it in an
+def test_the_stream_driver_does_not_retry_a_context_transition():
+    """The driver retries almost everything. Retrying either transition would
+    re-send the wrongly shaped context, then wrap the signal in an
     LLMClientError the loop cannot recognise."""
     from pathlib import Path
 
     src = Path("core/_llm_client_driver.py").read_text(encoding="utf-8")
-    assert "isinstance(e, (_AC, CCCompactDetected, ColdStartRequired))" in src
+    assert "isinstance(e, (_AC, CCCompactDetected, ColdStartRequired," in src
+    assert "DeltaContextRequired))" in src
 
 
 # -- both launch sites ask ---------------------------------------------------
@@ -127,6 +128,7 @@ CLI_LAUNCH_SITES = [
     "core/llm_providers/_gemini_stream.py",
     "core/llm_providers/claude_code_interactive.py",
     "core/llm_providers/antigravity_interactive.py",
+    "core/llm_providers/codex_interactive.py",
     "core/llm_providers/_cc_stream.py",
 ]
 

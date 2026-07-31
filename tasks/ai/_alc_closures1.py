@@ -286,7 +286,8 @@ class _ALCClosures1Mixin:
                 reason, used, trigger_tokens, trigger_fraction * 100)
             if st._client_provider in (
                 "claude-code", "claude-code-interactive",
-                "antigravity-interactive", "codex-app-server", "gemini"):
+                "antigravity-interactive", "codex-app-server",
+                "codex-interactive", "gemini"):
                 # Stateful CLI/live providers must not be killed from a
                 # streaming callback. Propagate the threshold crossing to
                 # the normal provider-compact path: it tears down the old

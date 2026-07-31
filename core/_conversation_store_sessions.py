@@ -244,7 +244,8 @@ class _CsSessionsMixin:
         except Exception as _e:
             logger.debug("invalidate_claude_sessions disk prune failed for %s: %s",
                          cid[:8], _e)
-        # Kill any warm CC / CCI / codex / gemini / antigravity session running
+        # Kill any warm CC / CCI / codex-interactive / codex / gemini /
+        # antigravity session running
         # in this conv — its view of history is now stale
         # (edit/compact/branch-switch).
         try:
@@ -271,6 +272,18 @@ class _CsSessionsMixin:
             logger.debug(
                 "invalidate_claude_sessions cci-evict failed for %s: %s",
                 cid[:8], _e)
+        try:
+            from core.codex_interactive_pool import CodexInteractivePool
+            n = CodexInteractivePool.instance().kill_and_evict_by_conv(
+                cid, reason="invalidate_claude_sessions")
+            if n:
+                logger.info(
+                    "Invalidated %d live Codex interactive container(s) for "
+                    "conv %s", n, cid[:8])
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_sessions codex-interactive-evict failed "
+                "for %s: %s", cid[:8], _e)
         try:
             from core.codex_live_registry import CodexLiveRegistry
             n = CodexLiveRegistry.instance().kill_and_evict_by_conv(
@@ -413,7 +426,8 @@ class _CsSessionsMixin:
             logger.debug(
                 "invalidate_claude_session_for_agent cli disk prune failed "
                 "for %s/%s: %s", cid[:8], agent_name, _e)
-        # Kill any warm CC / CCI / codex / gemini / antigravity session for this
+        # Kill any warm CC / CCI / codex-interactive / codex / gemini /
+        # antigravity session for this
         # (conv, agent) pair so the next turn spawns fresh.
         try:
             from core.cc_live_registry import LiveSessionRegistry
@@ -441,6 +455,20 @@ class _CsSessionsMixin:
             logger.debug(
                 "invalidate_claude_session_for_agent cci-evict failed "
                 "for %s/%s: %s", cid[:8], agent_name, _e)
+        try:
+            from core.codex_interactive_pool import CodexInteractivePool
+            n = CodexInteractivePool.instance().kill_and_evict_by_conv_agent(
+                cid, agent_name,
+                reason="invalidate_claude_session_for_agent")
+            if n:
+                logger.info(
+                    "Invalidated %d live Codex interactive container(s) for "
+                    "%s/%s", n, cid[:8], agent_name)
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_session_for_agent "
+                "codex-interactive-evict failed for %s/%s: %s",
+                cid[:8], agent_name, _e)
         try:
             from core.codex_live_registry import CodexLiveRegistry
             n = CodexLiveRegistry.instance().kill_and_evict_by_conv_agent(

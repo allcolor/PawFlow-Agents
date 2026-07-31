@@ -353,3 +353,44 @@ The first implementation covers MITM event assembly, persistent tmux input, MCP
 tool calls, image materialization, and lifecycle hooks. It still requires a live
 Claude subscription session and has not been exercised here against a real
 Claude Code Docker session.
+
+## Codex Interactive Provider
+
+`codex-interactive` reuses the persistent tmux and transparent TLS observation
+architecture above, but runs the Codex TUI and observes OpenAI Responses API
+events. PawFlow never reads terminal output or Codex rollout files to assemble a
+response. The tmux is input and lifecycle transport; the MITM side channel is
+the output source.
+
+Each live session remains scoped by `(user, conversation, agent, LLM service)`.
+The provider shares the OAuth credential pool used by `codex-app-server`:
+
+- one OAuth credential may back any number of concurrent agents and containers;
+- no credential slot is reserved for the lifetime of a Codex interactive
+  session;
+- only the short refresh transaction is serialized per `(service, pool index)`;
+- after entering the refresh lock, a waiter reloads the pool and reuses a fresh
+  access token written by another agent, even if OpenAI kept the same refresh
+  token.
+
+Endpoint selection is symmetric with Claude Code interactive. When
+`llmConnection.base_url` is empty, PawFlow does not inject `OPENAI_BASE_URL`: the
+Codex CLI uses `chatgpt.com` for subscription OAuth and `api.openai.com` for API
+key mode. When `base_url` is set, Codex receives that URL, its host resolves to
+the local MITM, and the proxy forwards to the configured host, port, scheme, and
+path prefix. The CLI-facing leg remains TLS even when the configured upstream
+uses plain HTTP.
+
+The Responses observer handles output text, reasoning text, reasoning summary,
+function calls, function-call outputs, model identity, and usage. A single Codex
+turn may contain several `/responses` exchanges around MCP calls. Therefore
+`response.completed`, `response.incomplete`, and `response.failed` terminate only
+one upstream exchange; the documented Codex `Stop` hook terminates the visible
+PawFlow turn. `UserPromptSubmit` also mirrors manual tmux prompts into the
+conversation and activates the same orphan-turn capture used by Claude Code.
+
+Cold and warm context follow the same binary rule as every CLI provider. A live
+container receives only the delta. If no matching live container exists, the
+new TUI must receive the complete PawFlow initial context. Context edits and
+compaction evict both individual and conversation-wide Codex interactive
+sessions so a stale TUI can never receive a delta after its history changed.

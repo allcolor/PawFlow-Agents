@@ -404,23 +404,32 @@ class _PACPhase1Mixin:
         st._is_antigravity_interactive = (st._provider_name == "antigravity-interactive")
         st._is_gemini_acp = (st._provider_name == "gemini")
         st._is_codex_app_server = (st._provider_name == "codex-app-server")
+        st._is_codex_interactive = (st._provider_name == "codex-interactive")
         st._is_cli_provider = (
             st._is_claude_code or st._is_claude_code_interactive
             or st._is_antigravity_interactive or st._is_gemini_acp
-            or st._is_codex_app_server)
+            or st._is_codex_app_server or st._is_codex_interactive)
 
         # CLI session detection (2 states):
         #   True  -> provider has prior CLI state; resume can send only delta
         #   False -> provider needs the full PawFlow initial context
         #
-        # force_cold is the third caller, not a third state: the turn already
-        # knows it is going to LAUNCH a process, which by definition makes
-        # this a cold start. Asking again could only answer "warm" and strip
-        # the context the launch needs.
+        # force_cold / force_delta are callers, not extra states. Each is a
+        # turn that already KNOWS which of the two cases it is in, because the
+        # provider just told it: force_cold means a process is about to be
+        # launched (case 1), force_delta means the process answered (case 2).
+        # Asking the probe again could only contradict what the provider
+        # observed at launch time, which is the authoritative moment.
         st._claude_has_session = False
         st._cli_has_session = False
+        if getattr(st, "force_delta", False):
+            # Case 2, asserted by the provider. Skip the probe entirely: it is
+            # precisely the probe's answer that was wrong.
+            st._cli_has_session = True
+            st._claude_has_session = True
         if (st._is_cli_provider and st.conversation_id
-                and not getattr(st, "force_cold", False)):
+                and not getattr(st, "force_cold", False)
+                and not getattr(st, "force_delta", False)):
             try:
                 from core.conversation_store import ConversationStore as _CSSession
                 st._agent_key = st._active_agent_name or st._context_agent or 'default'
@@ -463,6 +472,15 @@ class _PACPhase1Mixin:
                         from core.antigravity_observer_pool import AntigravityObserverPool
                         st._state = AntigravityObserverPool.instance().find_session(
                             st._user_id_for_svc, st.conversation_id, st._agent_key, st._svc_id)
+                        st._cli_has_session = bool(st._state)
+                    except Exception:
+                        st._cli_has_session = False
+                elif st._is_codex_interactive:
+                    try:
+                        from core.codex_interactive_pool import CodexInteractivePool
+                        st._state = CodexInteractivePool.instance().find_session(
+                            st._user_id_for_svc, st.conversation_id,
+                            st._agent_key, st._svc_id)
                         st._cli_has_session = bool(st._state)
                     except Exception:
                         st._cli_has_session = False

@@ -84,6 +84,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                                preloaded_conversation_id: str = "",
                                independent_context: bool = False,
                                force_cold: bool = False,
+                               force_delta: bool = False,
                                resume_checkpoint=None):
         """Extract common context from flowfile and config for both sync and streaming modes.
 
@@ -96,6 +97,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                 cold context. Set by the turn that has to launch a process:
                 launching IS a cold start, so it needs the complete context,
                 and the probe's answer -- whatever it was -- is now moot.
+            force_delta: The mirror. Skip the probe and build the resume
+                delta. Set by the turn whose provider found the process ALIVE
+                after the probe said otherwise. Same reasoning in the other
+                direction: the provider observed the process at launch time,
+                which outranks anything the probe concluded a second earlier.
             resume_checkpoint: A cancel checkpoint the previous build already
                 consumed. Only a rebuild passes it, so the resume instruction
                 survives the restart instead of being lost with the context it
@@ -107,6 +113,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
         st.preloaded_conversation_id = preloaded_conversation_id
         st.independent_context = independent_context
         st.force_cold = bool(force_cold)
+        st.force_delta = bool(force_delta)
         st.resume_checkpoint = resume_checkpoint
         self._pac_p1(st)
         self._pac_p2(st)

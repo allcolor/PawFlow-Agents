@@ -25,6 +25,7 @@ _BUILTIN_MODEL_DEFAULTS = {
     "claude-code-interactive": "best",
     "antigravity-interactive": "gemini-3.5-flash",
     "codex-app-server": "gpt-5.5",
+    "codex-interactive": "gpt-5.5",
     "gemini": "gemini-3.1-pro",
 }
 
@@ -344,6 +345,33 @@ class ColdStartRequired(Exception):
     (which is case 1, by the normal path, with nothing reconstructed by hand)
     and runs the turn again. Nothing has been sent to the model at that
     point, so the restart costs no tokens.
+    """
+    pass
+
+
+class DeltaContextRequired(Exception):
+    """Raised when a CLI provider finds a LIVE process on a cold context.
+
+    The mirror image of ColdStartRequired, and the other half of the same
+    rule. There are exactly two cases:
+
+    1. no process running -> we launch -> cold start -> FULL context
+    2. a process IS running -> delta
+
+    ColdStartRequired covers a turn built for case 2 that turns out to be
+    case 1. This covers a turn built for case 1 that turns out to be case 2:
+    the context phase found no live process, so it rebuilt and compacted the
+    whole transcript, and the provider then found the process alive.
+
+    Without this, that turn ran in a state that is neither case: a cold
+    context assembled at full cost, then silently discarded so a delta could
+    be sent to the live process. Every message paid for a context nothing
+    read, the gauge was zeroed against a session that never restarted, and
+    the persisted session pointers were cleared and rewritten each turn.
+
+    The agent loop intercepts it, rebuilds with force_delta=True -- case 2 by
+    the normal path -- and runs the turn again. Nothing has reached the model,
+    so the restart costs no tokens.
     """
     pass
 

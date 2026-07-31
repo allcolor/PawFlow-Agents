@@ -452,6 +452,9 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
                 lambda: self._cli_require_cold_context(
                     "antigravity-interactive")))
         pool.touch(state)
+        # Case 2, told by the pool -- see the CCI provider for the reasoning.
+        if not _ephemeral and getattr(state, "initial_context_loaded", False):
+            self._cli_require_delta_context("antigravity-interactive")
         self._agi_active_user_id = user_id
         self._agi_active_conversation_id = conversation_id
         self._agi_active_agent_name = agent_name

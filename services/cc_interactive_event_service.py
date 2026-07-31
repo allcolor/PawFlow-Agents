@@ -19,6 +19,7 @@ import re
 import threading
 import time
 import uuid
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -61,6 +62,7 @@ class CCInteractiveSessionEvents:
     user_id: str = ""
     conversation_id: str = ""
     agent_name: str = ""
+    provider: str = "claude-code-interactive"
     connected: bool = False
     unreliable: bool = False
     error: str = ""
@@ -103,8 +105,9 @@ class CCInteractiveSessionEvents:
 class CCInteractiveEventService(BaseService):
     TYPE = "ccInteractiveEvents"
     VERSION = "1.0.0"
-    NAME = "Claude Code Interactive Events"
-    DESCRIPTION = "Receives MITM-observed Claude Code SSE events over WebSocket"
+    NAME = "Interactive CLI Events"
+    DESCRIPTION = (
+        "Receives MITM-observed Claude Code and Codex SSE events over WebSocket")
 
     _instances_lock = threading.Lock()
     _instances: Dict[str, "CCInteractiveEventService"] = {}
@@ -170,7 +173,8 @@ class CCInteractiveEventService(BaseService):
 
     def register_session(self, session_token: str, *, user_id: str = "",
                          conversation_id: str = "",
-                         agent_name: str = "") -> CCInteractiveSessionEvents:
+                         agent_name: str = "",
+                         provider: str = "") -> CCInteractiveSessionEvents:
         if not session_token:
             raise ValueError("session_token is required")
         with self._sessions_lock:
@@ -187,6 +191,8 @@ class CCInteractiveEventService(BaseService):
                 state.conversation_id = conversation_id
             if agent_name:
                 state.agent_name = agent_name
+            if provider:
+                state.provider = provider
             return state
 
     def unregister_session(self, session_token: str) -> None:
@@ -419,7 +425,9 @@ class CCInteractiveEventService(BaseService):
                     "type": "user",
                     "name": state.user_id,
                     "target_agent": state.agent_name,
-                    "input": "cc_interactive_tmux",
+                    "input": ("codex_interactive_tmux"
+                              if state.provider == "codex-interactive"
+                              else "cc_interactive_tmux"),
                 },
                 "channel": "tmux",
             }, state.conversation_id)
@@ -488,7 +496,11 @@ class CCInteractiveEventService(BaseService):
         if event.get("type") != "request_start":
             return
         path = event.get("path", "") or ""
-        if not path.startswith("/v1/messages") or event.get("ignore_reason"):
+        is_provider_request = (
+            urlsplit(path).path.rstrip("/").endswith("/responses")
+            if state.provider == "codex-interactive"
+            else path.startswith("/v1/messages"))
+        if not is_provider_request or event.get("ignore_reason"):
             return
         self._adopt_orphan_turn(state, "request in flight")
 
@@ -683,7 +695,9 @@ class CCInteractiveEventService(BaseService):
 
         def _source():
             return {"type": "agent", "name": state.agent_name,
-                    "input": "cc_interactive_tmux"}
+                    "input": ("codex_interactive_tmux"
+                              if state.provider == "codex-interactive"
+                              else "cc_interactive_tmux")}
 
         def _writer():
             from core.conversation_writer import ConversationWriter
@@ -843,9 +857,13 @@ class CCInteractiveEventService(BaseService):
         chained captures of the same session.
         """
         try:
-            from core.claude_code_interactive_pool import InteractiveClaudeCodePool
-            container = InteractiveClaudeCodePool.instance().find_by_session_token(
-                state.session_token)
+            if state.provider == "codex-interactive":
+                from core.codex_interactive_pool import CodexInteractivePool
+                pool = CodexInteractivePool.instance()
+            else:
+                from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+                pool = InteractiveClaudeCodePool.instance()
+            container = pool.find_by_session_token(state.session_token)
         except Exception:
             logger.debug("CC interactive pool lookup failed for capture",
                          exc_info=True)
@@ -865,7 +883,12 @@ class CCInteractiveEventService(BaseService):
             if not state:
                 return
             self._publish_capture_active(state, active=True)
-            from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
+            if state.provider == "codex-interactive":
+                from core.llm_providers._codex_interactive_turn import (
+                    _CodexInteractiveTurnCoordinator as _TurnCoordinator)
+            else:
+                from core.llm_providers.claude_code_interactive import (
+                    _CCITurnCoordinator as _TurnCoordinator)
             # Same callbacks a PawFlow-driven turn passes: every observed
             # block is persisted and published as it arrives. Without them
             # the coordinator ran the whole turn silently and the webchat saw
@@ -880,12 +903,11 @@ class CCInteractiveEventService(BaseService):
             # bridge does not, so Telegram received the whole history of the
             # previous turn in one burst.
             _use_ids, _result_ids = self._capture_dedup_sets(state)
-            coord = _CCITurnCoordinator(self, session_token,
-                                        callback=_text_cb,
-                                        block_callback=_block_cb,
-                                        emitted_tool_use_ids=_use_ids,
-                                        emitted_tool_result_ids=_result_ids,
-                                        consumer_kind="capture")
+            coord = _TurnCoordinator(
+                self, session_token, callback=_text_cb,
+                block_callback=_block_cb, emitted_tool_use_ids=_use_ids,
+                emitted_tool_result_ids=_result_ids,
+                consumer_kind="capture")
             response = coord.run()
             logger.info(
                 "CC interactive captured turn streamed: conv=%s agent=%s chars=%d",

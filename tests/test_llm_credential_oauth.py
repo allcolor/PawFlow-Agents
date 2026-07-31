@@ -27,6 +27,7 @@ def test_llm_service_references_external_credential_provider():
     assert schema["credential_service_id"]["provider_aliases"] == {
         "claude-code-interactive": "claude-code",
         "antigravity-interactive": "gemini",
+        "codex-interactive": "codex-app-server",
     }
     # CLI providers own no login action here — they reference a credential
     # pool. Copilot is not a pool: its device flow just fills api_key.

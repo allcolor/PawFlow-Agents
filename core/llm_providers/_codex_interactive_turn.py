@@ -1,0 +1,177 @@
+"""Turn coordinator for MITM-observed Codex Responses API streams."""
+
+from __future__ import annotations
+
+import logging
+import time
+from urllib.parse import urlsplit
+
+from core.llm_providers._cci_turn import (
+    _CCITurnCoordinator, _NO_PROXY_EVENT_TIMEOUT_SECONDS,
+    _POST_STOP_IDLE_DRAIN_SECONDS)
+
+logger = logging.getLogger(__name__)
+
+
+class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
+    """Assemble one Codex TUI turn from proxy and lifecycle events.
+
+    A single TUI turn can contain several ``/responses`` exchanges around MCP
+    calls. A Responses terminal event closes one exchange; the Codex ``Stop``
+    hook closes the user-visible turn.
+    """
+
+    def _merge_usage(self, usage: dict) -> None:
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            try:
+                value = int((usage or {}).get(key, 0) or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value:
+                self.usage[key] = int(self.usage.get(key, 0) or 0) + value
+
+    def run(self, abort_event=None):
+        from core.llm_client import LLMResponse
+
+        if self._consumer_refused:
+            logger.info(
+                "[codex-interactive] session=%s already has an event consumer",
+                self.session_token[:8])
+            return LLMResponse(content="", tool_calls=[])
+
+        started_at = time.time()
+        while True:
+            if abort_event is not None and abort_event.is_set():
+                raise RuntimeError("codex-interactive aborted")
+            timeout = 0.05 if self._stop_seen else 0.25
+            event = self._wait_event(timeout)
+            if not event:
+                if not self._saw_proxy_event:
+                    if time.time() - started_at >= _NO_PROXY_EVENT_TIMEOUT_SECONDS:
+                        raise RuntimeError(
+                            "Codex interactive produced no observed proxy events "
+                            "after tmux prompt submit")
+                elif (self._stop_seen and
+                      time.time() - self._post_stop_last_event_at >=
+                      _POST_STOP_IDLE_DRAIN_SECONDS):
+                    self._finish_turn_if_ready()
+                    break
+                continue
+
+            if self.touch_callback:
+                self.touch_callback()
+            now = time.time()
+            self._last_event_at = now
+            if not self._first_event_at:
+                self._first_event_at = now
+            if self._stop_seen:
+                self._post_stop_last_event_at = now
+
+            etype = event.get("type", "")
+            if etype == "request_error":
+                self._saw_proxy_event = True
+                raise RuntimeError(event.get(
+                    "error", "Codex interactive proxy request failed"))
+            if etype == "request_start":
+                self._saw_proxy_event = True
+                path = event.get("path", "") or ""
+                if (urlsplit(path).path.rstrip("/").endswith("/responses")
+                        and not event.get("ignore_reason")
+                        and self._stop_seen):
+                    logger.info(
+                        "[codex-interactive] new Responses request after Stop; "
+                        "turn continues (session=%s)",
+                        self.session_token[:8])
+                    self._stop_seen = False
+                continue
+            if etype in {"request_stop", "response_start",
+                         "response_ignored"}:
+                self._saw_proxy_event = True
+                continue
+            if etype == "tool_use":
+                self._saw_proxy_event = True
+                self._emit_observed_tool_use(event)
+                continue
+            if etype == "tool_result":
+                self._saw_proxy_event = True
+                self._emit_tool_result(event)
+                continue
+            if etype == "hook":
+                self.lifecycle_events.append(event)
+                if event.get("hook_event_name") == "Stop":
+                    self._stop_seen = True
+                    self._post_stop_last_event_at = time.time()
+                continue
+            if etype != "sse":
+                continue
+
+            self._saw_proxy_event = True
+            payload = event.get("payload") or {}
+            ptype = payload.get("type") or event.get("event", "")
+            try:
+                output_index = int(payload.get("output_index", 0) or 0)
+            except (TypeError, ValueError):
+                output_index = 0
+
+            if ptype in {"response.created", "response.in_progress"}:
+                if ptype == "response.created":
+                    self._finalize_message_text()
+                response = payload.get("response") or {}
+                if response.get("model"):
+                    self.effective_model = str(response["model"])
+                continue
+            if ptype == "response.output_text.delta":
+                delta = payload.get("delta", "") or ""
+                if delta and not self._first_model_content_at:
+                    self._first_model_content_at = time.time()
+                self._append_text(delta, output_index)
+                continue
+            if ptype in {"response.reasoning_text.delta",
+                         "response.reasoning_summary_text.delta"}:
+                self._append_thinking(
+                    payload.get("delta", "") or "", output_index)
+                continue
+            if ptype == "response.output_item.done":
+                item = payload.get("item") or {}
+                if item.get("type") == "function_call":
+                    call_id = item.get("call_id") or item.get("id") or ""
+                    if call_id:
+                        self._emit_observed_tool_use({
+                            "tool_use_id": call_id,
+                            "name": item.get("name", ""),
+                            "arguments": item.get("arguments", "{}"),
+                        })
+                continue
+            if ptype in {"response.completed", "response.incomplete",
+                         "response.failed"}:
+                response = payload.get("response") or {}
+                self._merge_usage(response.get("usage") or {})
+                if response.get("model"):
+                    self.effective_model = str(response["model"])
+                self._flush_all_text_blocks()
+                self._flush_all_thinking_blocks()
+                self._finalize_message_text()
+                if ptype == "response.failed":
+                    error = response.get("error") or {}
+                    detail = (error.get("message") if isinstance(error, dict)
+                              else str(error or ""))
+                    raise RuntimeError(
+                        detail or "Codex Responses request failed")
+
+        self._finalize_message_text()
+        text = self._last_message_text
+        total = int(self.usage.get("total_tokens", 0) or 0)
+        tokens_in = int(self.usage.get("input_tokens", 0) or 0)
+        tokens_out = int(self.usage.get("output_tokens", 0) or 0)
+        return LLMResponse(
+            content=text, tool_calls=[], tokens_in=tokens_in,
+            tokens_out=tokens_out, total_tokens=total or tokens_in + tokens_out,
+            thinking="".join(self.thinking_parts),
+            model=self.effective_model,
+            raw={
+                "provider": "codex-interactive",
+                "usage": self.usage,
+                "effective_model": self.effective_model,
+                "lifecycle_events": self.lifecycle_events,
+            })
+

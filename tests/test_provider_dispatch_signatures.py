@@ -485,8 +485,34 @@ def test_agent_core_passes_live_block_callback_to_acp_providers():
     # claude-code (-p) is now in the block_callback gate too, so its
     # tool_use/tool_result blocks stream live instead of bundling at the
     # end-of-turn flush (cc-p live-tool SSE fix). Must match turn_callback.
-    assert 'block_callback=_cli_block_callback if _client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None' in src
-    assert 'turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini") else None' in src
+    gate = ('("claude-code", "claude-code-interactive", '
+            '"antigravity-interactive", "codex-app-server", '
+            '"codex-interactive", "gemini")')
+    assert ('block_callback=_cli_block_callback if _client_provider in '
+            f'{gate} else None') in src
+    assert ('turn_callback=_claude_code_turn_callback if _client_provider in '
+            f'{gate} else None') in src
+
+
+def test_the_block_gate_and_the_turn_gate_list_the_same_providers():
+    """The two gates are one decision, written twice.
+
+    A provider in one and not the other streams half its turn live and
+    bundles the other half at the flush -- the exact display bug that is
+    invisible until someone watches a real turn. Adding a CLI provider must
+    mean adding it to both, so compare them rather than trusting that whoever
+    edits one remembers the other.
+    """
+    src = agent_core_src()
+    gates = []
+    for marker in ("block_callback=_cli_block_callback if _client_provider in ",
+                   "turn_callback=_claude_code_turn_callback "
+                   "if _client_provider in "):
+        assert marker in src, marker
+        tail = src.split(marker, 1)[1]
+        gates.append(tail[:tail.index(")") + 1])
+    assert gates[0] == gates[1], (
+        f"block gate {gates[0]} != turn gate {gates[1]}")
 
 
 

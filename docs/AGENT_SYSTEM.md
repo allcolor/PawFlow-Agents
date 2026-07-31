@@ -78,8 +78,9 @@ Agents can be created through:
 
 The `llm_service` field points to an LLM-capable service: either a direct
 `llmConnection` or a composite `llmAggregator`. Built-in direct providers are
-`openai`, `anthropic`, `claude-code`, `claude-code-interactive`,
-`antigravity-interactive`, `codex-app-server`, and `gemini`; OpenAI-compatible
+`openai`, `openai-responses`, `anthropic`, `claude-code`,
+`claude-code-interactive`, `antigravity-interactive`, `codex-app-server`,
+`codex-interactive`, and `gemini`; OpenAI-compatible
 and Anthropic-compatible endpoints use `base_url` on the corresponding direct
 API provider. An `llmAggregator` consults its configured advisor connections in
 parallel and passes their internal plans to its final connection. Expression
@@ -302,6 +303,12 @@ When the gauge and the compaction threshold appear to disagree, measure rather t
 The context phase decides which case applies (`_agentctx_p1`, gated on the live registry), but the *provider* is what actually launches. Only the provider can find the process gone — it crashed, or its container was stopped — after the context was already built as a delta. Launching then would be case 1 carrying case 2's context: a fresh process handed a bare question, with no transcript, persona, skills or tool configuration.
 
 So it does not launch. `_cli_require_cold_context` raises `ColdStartRequired`, `_alc_llm_turn` catches it and rebuilds the turn with `_prepare_agent_context(..., force_cold=True)` — case 1 through the ordinary cold path, nothing reassembled by hand — then runs the turn again. Nothing has reached the model at that point, so the restart costs no tokens. It happens at most once per turn: twice would mean the process dies as fast as we start it, and that must surface rather than spin.
+
+**The rule has two directions, and both are guarded.** The paragraph above is one of them. The mirror is a turn built as a *cold start* whose provider then finds the process ALIVE, and it went unguarded for a long time: the provider simply sent a delta carved out of a context assembled for a launch that never happened. Nothing crashed, so nothing was noticed — but every message paid for the whole transcript being loaded and compacted for nothing, the gauge was zeroed against a session that never restarted, and the persisted session pointers were cleared and rewritten each turn. That turn was in neither case: cold start by its context, reuse by its execution.
+
+`_cli_require_delta_context` raises `DeltaContextRequired` at every provider's reuse site, `_alc_llm_turn` rebuilds with `_prepare_agent_context(..., force_delta=True)` — case 2 through the ordinary path — and runs the turn again. Same shape as its mirror: the marker is flipped so the rebuilt turn is not bounced straight back, the caller's `release` hook gives back the live turn lock before the raise, and it fires at most once per turn.
+
+`force_cold` and `force_delta` are callers, not extra states. Each is a turn that already knows which case it is in *because the provider observed it at launch time*, which outranks anything the context phase's probe concluded a second earlier. That is also why neither one re-runs the probe: it is precisely the probe's answer that was wrong.
 
 **This is one rule, and every CLI obeys it — there is no per-provider variation.** Each provider asks at its own launch site, because that is where "we are about to start a process" is known, but the question and the answer are the same everywhere:
 

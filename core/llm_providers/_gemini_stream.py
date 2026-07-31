@@ -177,6 +177,17 @@ class _GeminiStreamMixin:
                             "[gemini-acp-live] REUSE conv=%s agent=%s session=%s reuse=%d",
                             conv_id[:8] or "?", agent_name, session_id[:12],
                             live_session.reuse_count)
+                        # Case 2 confirmed by the process. A turn built as a
+                        # cold start is rebuilt as the delta it is; the turn
+                        # lock is handed back first, for the same reason as
+                        # the cold guard below.
+                        if not is_ephemeral:
+                            def _give_back_live_lock_reuse():
+                                if owns_live_lock and live_session is not None:
+                                    live_session.turn_lock.release()
+
+                            self._cli_require_delta_context(
+                                "gemini-acp", release=_give_back_live_lock_reuse)
                     else:
                         reuse_container = live_session.container_name
                         container = reuse_container

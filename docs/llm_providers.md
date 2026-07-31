@@ -13,6 +13,7 @@ PawFlow can run agents through direct HTTP APIs and through CLI-backed coding ag
 | `claude-code-interactive` | Interactive CLI container with observed provider stream | Claude subscription accounts and long-lived Claude Code sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
 | `antigravity-interactive` | Interactive `agy` CLI in tmux with observed provider stream | Default Gemini subscription provider | Uses the Gemini OAuth credential pool, starts the real `agy` CLI, and routes tools through PawFlow MCP. |
 | `codex-app-server` | Codex `app-server` in a pooled container | Codex subscription accounts or OpenAI API-key coding agents | Uses Codex/OpenAI credentials, Codex app-server threads, a Codex pool, and the PawFlow MCP bridge. |
+| `codex-interactive` | Interactive Codex TUI in tmux with observed provider stream | Long-lived Codex sessions, when you want the real Codex TUI rather than app-server threads | Reuses the `codex-app-server` OAuth pool. The turn is read from a local MITM of the Responses stream. See [Codex Interactive](#codex-interactive). |
 | `gemini` | Gemini CLI one-shot stream provider | Secondary Gemini CLI path, mainly when a Gemini Pro account/CLI workflow is required | Uses Gemini credentials, stream-json output, and Gemini session files. Prefer `antigravity-interactive` for normal Gemini subscription use. |
 
 Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge.
@@ -28,11 +29,11 @@ Use the credential source to choose the provider surface:
 | Anthropic API key | `anthropic`, or `claude-code` / `claude-code-interactive` with `api_key` | Use `anthropic` for direct API agents. Use Claude Code providers when you want the provider CLI/session behavior and PawFlow MCP bridge. |
 | Claude subscription login | `claude-code-interactive` | Long-lived interactive Claude Code session with OAuth credentials from the `claude-code` credential pool. |
 | OpenAI API key | `openai`, or `codex-app-server` with `api_key` | Use `openai` for direct API agents. Use `codex-app-server` when you want Codex app-server threads and coding-agent behavior. |
-| Codex subscription login | `codex-app-server` | Uses Codex OAuth credentials and the app-server protocol; this is PawFlow's Codex agent provider. |
+| Codex subscription login | `codex-app-server`, or `codex-interactive` | Both use Codex OAuth credentials from the same pool. `codex-app-server` drives app-server threads and is the default Codex agent provider; `codex-interactive` keeps a real Codex TUI alive and observes its Responses stream, the way `claude-code-interactive` does for Claude. |
 | Gemini subscription login | `antigravity-interactive` | Default Gemini subscription path. It uses the `agy`/Antigravity CLI with the Gemini OAuth pool. |
 | Gemini Pro / Gemini CLI account | `gemini` | Use when the account/workflow specifically needs Gemini CLI stream-json behavior. |
 
-`llmCredentialOAuthProvider` services own OAuth pools for three canonical CLI credential providers: `claude-code`, `codex-app-server`, and `gemini`. `claude-code-interactive` reuses the `claude-code` pool. `antigravity-interactive` reuses the `gemini` pool. API-key mode skips the OAuth pool.
+`llmCredentialOAuthProvider` services own OAuth pools for three canonical CLI credential providers: `claude-code`, `codex-app-server`, and `gemini`. `claude-code-interactive` reuses the `claude-code` pool. `codex-interactive` reuses the `codex-app-server` pool. `antigravity-interactive` reuses the `gemini` pool. API-key mode skips the OAuth pool.
 
 Advanced endpoint routing is supported where the underlying CLI honors it. `claude-code` and `claude-code-interactive` can be used against non-Anthropic compatible endpoints by setting `api_key` plus `base_url`; in that mode PawFlow passes `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` instead of writing OAuth credentials. `codex-app-server` can use an OpenAI API key and passes it as `CODEX_API_KEY`/`OPENAI_API_KEY`; direct OpenAI-compatible endpoints should normally use the `openai` provider.
 
@@ -91,7 +92,7 @@ Common fields:
 
 | Field | Required | Description |
 |---|---:|---|
-| `provider` | yes | Provider name: `openai`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, or `gemini`. |
+| `provider` | yes | Provider name: `openai`, `openai-responses`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, `codex-interactive`, or `gemini`. |
 | `default_model` / `model` | yes | Model used when the agent does not override it. |
 | `api_key` | provider-dependent | Required for direct API providers. Optional for CLI providers: when present, it bypasses OAuth credentials and configures key-based CLI auth. |
 | `credential_service_id` | CLI OAuth mode | References an `llmCredentialOAuthProvider` service. Used when `api_key` is empty for CLI-backed providers. |
@@ -357,6 +358,67 @@ codex_plugins: github,linear,gmail
 ```
 
 PawFlow emits a `[plugins."<name>@<marketplace>"]` entry per plugin in the session's generated `~/.codex/config.toml`. Plugins are authorized at the ChatGPT account level, so this only applies to OAuth credential mode (API-key mode has no account plugins). The generated `config.toml` is now a managed section between markers: anything codex itself or the user writes outside the markers (for example plugin state from `codex plugin install` run inside the session slot, which is persistent per conversation/agent) is preserved across session restarts.
+
+## Codex Interactive
+
+`codex-interactive` runs the real Codex TUI in tmux inside a pooled container
+and keeps it alive across turns, exactly as `claude-code-interactive` does for
+Claude. Where `codex-app-server` speaks a protocol, this provider watches a
+program: PawFlow reads the turn from a local MITM that observes Codex's own
+`/responses` stream, and drives the session by pasting into tmux.
+
+Use it when you want Codex's interactive behavior and session state. Use
+`codex-app-server` when you want app-server threads, which remain the default
+Codex agent surface.
+
+Credentials come from the **same pool as `codex-app-server`** — there is no
+separate Codex credential provider. Point `credential_service_id` at an
+`llmCredentialOAuthProvider` whose provider is `codex-app-server`, or set
+`api_key` for key-based auth.
+
+Endpoint selection:
+
+- No `base_url`: OAuth/subscription traffic goes to ChatGPT's Codex backend,
+  API-key traffic to the public OpenAI API. Neither path mutates
+  `OPENAI_BASE_URL`.
+- With `base_url`: it must be `http(s)` and carry a hostname, or the session
+  refuses to start. Codex always talks TLS to the local MITM, which then uses
+  the configured upstream scheme — so an `http://` upstream is supported
+  without weakening the CLI-facing connection.
+
+Operational notes:
+
+- The container image is `PAWFLOW_CODEX_IMAGE` (default
+  `pawflow-claude-code:latest`); pool containers are tagged `codexi`.
+- One user-visible turn can contain several `/responses` exchanges — around MCP
+  calls, for instance. A Responses terminal event closes one exchange; the
+  Codex `Stop` hook closes the turn. Token usage is summed across the
+  exchanges, which is what each of them is actually billed.
+- Native Codex plugins work here as they do for `codex-app-server`: `codex_plugins`
+  is offered on the service for both Codex providers. See
+  [Native Codex plugins](#native-codex-plugins).
+- Default model `gpt-5.5`, same as `codex-app-server` (`config/default_models.json`).
+- The session is persistent per (user, conversation, agent, service slot) and
+  survives across turns; the first turn on a fresh process carries the full
+  initial context, later turns are deltas.
+- Preemption sends the new message into the live turn (`send_interrupt`), and a
+  force stop kills the session outright — a non-forced cancel does nothing, by
+  design.
+- Set `max_context_size` on the service and use `compact_threshold_pct` for
+  proactive compaction, exactly as for `codex-app-server`.
+- Like every CLI provider, it obeys the cold/delta rule in both directions:
+  launching a process means a cold start and a full context, finding one alive
+  means a delta. See [Agent System](AGENT_SYSTEM.md).
+
+Known limitations:
+
+- The turn ends on the Codex `Stop` hook, an abort, or a stream error. Once the
+  first proxy event has been observed there is no inactivity ceiling inside the
+  coordinator, so a session that wedges without emitting `Stop` is ended by the
+  agent turn timeout rather than by the provider. `claude-code-interactive`
+  behaves the same way.
+- Native Codex plugins require OAuth credential mode; API-key mode has no
+  account plugins.
 
 ## Compaction Summarizer
 

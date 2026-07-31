@@ -8,7 +8,7 @@ and Gemini CLI providers. LLM services reference it through
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from core import ServiceFactory, ServiceError
 from core.base_service import BaseService
@@ -25,6 +25,7 @@ _SHORT_PROVIDER = {
     "claude": "cc",
     "cc": "cc",
     "codex-app-server": "codex",
+    "codex-interactive": "codex",
     "codex": "codex",
     "gemini": "gemini",
     "antigravity-interactive": "gemini",

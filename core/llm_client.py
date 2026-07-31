@@ -24,11 +24,13 @@ from core.llm_providers import (
     LLMClaudeCodeInteractiveMixin,
     LLMAntigravityInteractiveMixin,
     LLMCodexAppServerMixin,
+    LLMCodexInteractiveMixin,
     LLMGeminiMixin,
 )
 from core._llm_types import (  # noqa: F401 -- re-exported for back-compat (invariant 1)
     CCCompactDetected,
     ColdStartRequired,
+    DeltaContextRequired,
     LLMClientError,
     LLMMessage,
     LLMResponse,
@@ -70,6 +72,7 @@ class LLMClient(
     LLMClaudeCodeInteractiveMixin,
     LLMAntigravityInteractiveMixin,
     LLMCodexAppServerMixin,
+    LLMCodexInteractiveMixin,
     LLMGeminiMixin,
 ):
     """Standalone LLM HTTP client (no BaseService dependency).
@@ -85,7 +88,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini")
+    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -105,6 +108,7 @@ class LLMClient(
         "claude-code-interactive": True,
         "antigravity-interactive": True,
         "codex-app-server": True,
+        "codex-interactive": True,
         "gemini": True,
     }
 
@@ -253,7 +257,7 @@ class LLMClient(
         configured = self._cfg("default_model", "")
         if configured:
             return configured
-        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "gemini"):
+        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
             return ""
         return self.DEFAULT_MODELS.get(self.provider, "")
 
@@ -546,13 +550,15 @@ class LLMClient(
             fn = getattr(self, "_agi_send_user_message", None)
         elif self.provider == "codex-app-server":
             fn = getattr(self, "_codex_app_send_user_message", None)
+        elif self.provider == "codex-interactive":
+            fn = getattr(self, "_codex_interactive_send_user_message", None)
         elif self.provider == "gemini":
             fn = getattr(self, "_gemini_send_user_message", None)
         else:
             return False
         if fn is None:
             return False
-        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server"):
+        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive"):
             return fn(text, attachments, **kwargs)
         return fn(text, attachments)
 

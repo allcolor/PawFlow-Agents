@@ -5,6 +5,7 @@ import time
 from core.llm_client import (
     CCCompactDetected,
     ColdStartRequired,
+    DeltaContextRequired,
 )
 from tasks.ai.agent_exceptions import AgentCancelled
 from tasks.ai.agent_compaction import COMPACT_TAIL_MESSAGES
@@ -325,6 +326,37 @@ class _ALCLlmTurnMixin:
             # anything, so give it back -- otherwise a turn with
             # max_iterations=1 ends here, having never called the model, and
             # CLI providers deliberately synthesize no empty answer.
+            st.iteration = max(0, st.iteration - 1)
+            st.ctx["_iteration"] = st.iteration
+            return _ALC_CONTINUE
+        except DeltaContextRequired:
+            # The mirror of the branch above, and the other half of the rule.
+            # The provider found the process ALIVE, so this turn is case 2 --
+            # but the context phase built it as a cold start because its probe
+            # answered otherwise. Running on would send a delta carved out of a
+            # context assembled for a launch that never happened: the whole
+            # transcript loaded and compacted for nothing, and the gauge zeroed
+            # against a session that never restarted.
+            #
+            # Rebuild as the delta it is, by the ordinary path with
+            # force_delta=True, then run the turn again. Nothing reached the
+            # model, so the restart costs no tokens.
+            st._rebuild_args = dict(st.ctx.get("_context_rebuild_args") or {})
+            st._rebuild_ff = st._rebuild_args.pop("flowfile", None)
+            if getattr(st, "_delta_restart_done", False) or st._rebuild_ff is None:
+                # Twice means the two sides disagree persistently; a third
+                # attempt would only spin. Let it surface.
+                raise
+            st._delta_restart_done = True
+            logger.warning(
+                "[agent:%s] the process is alive — rebuilding this turn as a "
+                "delta instead of a cold start",
+                st.conversation_id[:8])
+            st._delta_ctx = self._prepare_agent_context(
+                st._rebuild_ff, force_delta=True,
+                resume_checkpoint=st.ctx.get("_consumed_cancel_checkpoint"),
+                **st._rebuild_args)
+            self._alc_rebind_context(st, st._delta_ctx)
             st.iteration = max(0, st.iteration - 1)
             st.ctx["_iteration"] = st.iteration
             return _ALC_CONTINUE

@@ -103,6 +103,11 @@ def _live_registries():
     except Exception:
         logger.debug('codex live registry unavailable', exc_info=True)
     try:
+        from core.codex_interactive_pool import CodexInteractivePool
+        out.append(('codex-interactive', CodexInteractivePool.instance()))
+    except Exception:
+        logger.debug('codex interactive pool unavailable', exc_info=True)
+    try:
         from core.gemini_live_registry import GeminiLiveRegistry
         out.append(('gemini', GeminiLiveRegistry.instance()))
     except Exception:

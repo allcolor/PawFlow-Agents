@@ -87,6 +87,23 @@ class _InteractiveContainerSpawnMixin:
     """Container build/start machinery for InteractiveClaudeCodePool."""
 
     @staticmethod
+    def _session_root():
+        return _paths.CLAUDE_SESSIONS_DIR
+
+    @staticmethod
+    def _container_kind() -> str:
+        return "cci"
+
+    @staticmethod
+    def _container_name_tag() -> str:
+        return "cci"
+
+    @staticmethod
+    def _container_image() -> str:
+        return os.environ.get(
+            "PAWFLOW_CLAUDE_CODE_IMAGE", "pawflow-claude-code:latest")
+
+    @staticmethod
     def _anthropic_base_url(client) -> str:
         base_url = getattr(client, "base_url", "")
         if callable(base_url):
@@ -208,9 +225,10 @@ class _InteractiveContainerSpawnMixin:
 
     def _spawn_container(self, *, user_id: str = "", conversation_id: str = "",
                          agent_name: str = "", upstream_host: str = "api.anthropic.com") -> str:
-        _paths.CLAUDE_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        session_root = self._session_root()
+        session_root.mkdir(parents=True, exist_ok=True)
         project_root = Path(__file__).resolve().parents[1]
-        sessions_host = translate_path(to_host_path(str(_paths.CLAUDE_SESSIONS_DIR.resolve())))
+        sessions_host = translate_path(to_host_path(str(session_root.resolve())))
         mounts = ["-v", f"{sessions_host}:/cc_sessions_host"]
         runtime_files = [
             (project_root / "tools" / "mcp_bridge.py", "/opt/pawflow/mcp_bridge.py"),
@@ -236,11 +254,12 @@ class _InteractiveContainerSpawnMixin:
             raise RuntimeError("Refusing to mount CC interactive CA private key")
 
         owner = get_server_id()
-        name = f"pf-{owner[:12]}-cci-{uuid.uuid4().hex[:8]}"
-        image = os.environ.get("PAWFLOW_CLAUDE_CODE_IMAGE", "pawflow-claude-code:latest")
+        name = (f"pf-{owner[:12]}-{self._container_name_tag()}-"
+                f"{uuid.uuid4().hex[:8]}")
+        image = self._container_image()
         run_args = [
             "-d", "--rm", "--name", name, "--init",
-            *pawflow_container_labels("cci"),
+            *pawflow_container_labels(self._container_kind()),
             *mounts,
             "--add-host", f"{upstream_host or 'api.anthropic.com'}:127.0.0.1",
             "--add-host", "host.docker.internal:host-gateway",

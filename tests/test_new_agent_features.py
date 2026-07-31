@@ -6,10 +6,8 @@ Covers the handlers added in the agent extensibility sprint.
 """
 
 import json
-import os
 import shutil
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -69,7 +67,9 @@ class TestPlanHandlers(unittest.TestCase):
         # Ensure clean plan state
         from core.plan_store import PlanStore
         PlanStore._instance = None
-        import core.paths as _p; shutil.rmtree(str(_p.PLANS_DIR), ignore_errors=True); _p.PLANS_DIR.mkdir(parents=True, exist_ok=True)
+        import core.paths as _p
+        shutil.rmtree(str(_p.PLANS_DIR), ignore_errors=True)
+        _p.PLANS_DIR.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
         ConversationStore.reset()
@@ -77,7 +77,9 @@ class TestPlanHandlers(unittest.TestCase):
         # Clean up plans created during test
         from core.plan_store import PlanStore
         PlanStore._instance = None
-        import core.paths as _p; shutil.rmtree(str(_p.PLANS_DIR), ignore_errors=True); _p.PLANS_DIR.mkdir(parents=True, exist_ok=True)
+        import core.paths as _p
+        shutil.rmtree(str(_p.PLANS_DIR), ignore_errors=True)
+        _p.PLANS_DIR.mkdir(parents=True, exist_ok=True)
 
     def test_create_plan(self):
         h = CreatePlanHandler()
@@ -459,7 +461,7 @@ class TestFlowManagerHandler(unittest.TestCase):
     def test_start_flow(self):
         h = self._make_handler()
         h.execute({"action": "create", "definition": self._sample_definition()})
-        result = h.execute({"action": "start", "flow_id": "flow1"})
+        h.execute({"action": "start", "flow_id": "flow1"})
         # Start may fail (no real template parse in test) but instance should exist
         from core.deployment_registry import DeploymentRegistry
         inst = DeploymentRegistry.get_instance().get("flow1")
@@ -807,7 +809,8 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
 
         # Redirect deployments to temp dir
-        import core.paths as _p; _p.DEPLOYMENTS_DIR.mkdir(parents=True, exist_ok=True)
+        import core.paths as _p
+        _p.DEPLOYMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
         # Create test flow templates in the repository (may already exist from conftest)
         from core.repository import ScopedRepository
@@ -832,7 +835,6 @@ class TestFlowCatalogDeploy(unittest.TestCase):
                 pass
 
     def tearDown(self):
-        import core.deployment_registry as dep_mod
         from core.deployment_registry import DeploymentRegistry
         DeploymentRegistry.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -1076,12 +1078,11 @@ class TestConversationScoping(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         from core.deployment_registry import DeploymentRegistry
-        import core.deployment_registry as dep_mod
         DeploymentRegistry.reset()
-        import core.paths as _p; _p.DEPLOYMENTS_DIR.mkdir(parents=True, exist_ok=True)
+        import core.paths as _p
+        _p.DEPLOYMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
-        import core.deployment_registry as dep_mod
         from core.deployment_registry import DeploymentRegistry
         DeploymentRegistry.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -1188,7 +1189,8 @@ class TestConversationScoping(unittest.TestCase):
         handler.execute({"key": "k1", "value": "v1"})
         # Cleanup should not remove user secrets
         StoreSecretHandler.cleanup_conversation("conv-del")
-        from core.paths import user_secrets_path; secrets_path = user_secrets_path("user1")
+        from core.paths import user_secrets_path
+        secrets_path = user_secrets_path("user1")
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
         self.assertIn("k1", data)
 
@@ -1197,7 +1199,8 @@ class TestConversationScoping(unittest.TestCase):
         handler = StoreSecretHandler()
         handler.set_user_id("user1")
         handler.execute({"key": "mykey", "value": "myval"})
-        from core.paths import user_secrets_path; secrets_path = user_secrets_path("user1")
+        from core.paths import user_secrets_path
+        secrets_path = user_secrets_path("user1")
         self.assertTrue(secrets_path.exists())
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
         self.assertIn("mykey", data)

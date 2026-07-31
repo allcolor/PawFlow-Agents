@@ -1,7 +1,6 @@
 """Tests for HTTP Listener Service, httpReceiver, handleHTTPResponse, validateHTTPAuth."""
 
 import json
-import queue
 import socket
 import threading
 import time
@@ -11,7 +10,7 @@ import pytest
 
 from services.http_listener_service import (
     HTTPListenerService, PendingRequest, RouteRegistry,
-    RouteConflictError, RouteEntry, _HTTPServerWithRegistry,
+    RouteConflictError, _HTTPServerWithRegistry,
     _RequestHandler, _emit_timing_summary, _request_action_label, _SECURITY_HEADERS,
     _GlobalRateLimiter, _rate_limit_policy,
 )
@@ -364,7 +363,8 @@ class TestRouteRegistry:
 
     def test_register_and_match(self):
         reg = RouteRegistry()
-        cb = lambda req: None
+        def cb(req):
+            return None
         reg.register("GET", "/api/hello", "flow1", cb)
         result = reg.match("GET", "/api/hello")
         assert result is not None
@@ -403,8 +403,10 @@ class TestRouteRegistry:
 
     def test_idempotent_same_owner(self):
         reg = RouteRegistry()
-        cb1 = lambda r: None
-        cb2 = lambda r: None
+        def cb1(r):
+            return None
+        def cb2(r):
+            return None
         reg.register("GET", "/api/x", "flow1", cb1)
         reg.register("GET", "/api/x", "flow1", cb2)
         assert len(reg.get_routes()) == 1
@@ -839,7 +841,7 @@ class TestHandleHTTPResponseTask:
         assert task.config["status_code"] == 201
 
     def test_headers_override_from_attributes(self):
-        task = HandleHTTPResponseTask({
+        HandleHTTPResponseTask({
             "service_id": "svc1",
             "content_type": "text/html",
         })
@@ -1598,7 +1600,6 @@ class TestBaseTaskPendingInput:
     def test_default_false(self):
         """BaseTask.has_pending_input() returns False by default."""
         from core.base_task import BaseTask
-        from core import FlowFile
 
         class DummyTask(BaseTask):
             TYPE = "dummy"

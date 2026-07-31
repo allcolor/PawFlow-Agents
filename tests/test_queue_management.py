@@ -1,9 +1,8 @@
 """Tests for queue management features: peek_all, get_connection, clear."""
 
-import pytest
 from core import FlowFile
 from core.connection import Connection, ConnectionManager
-from core.prioritizer import PrioritizedQueue, PrioritizerType
+from core.prioritizer import PrioritizedQueue
 
 
 # --- PrioritizedQueue.peek_all ---

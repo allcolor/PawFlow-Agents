@@ -14,9 +14,9 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from core import FlowFile, TaskFactory
+from core import FlowFile
 from core.conversation_store import ConversationStore
 
 
@@ -240,7 +240,6 @@ class TestConversationPersistence(unittest.TestCase):
         store2 = self._make_store()
         # Expired conversations are excluded from listings
         convs = store2.list_conversations(user_id="test")
-        active_ids = [c["conversation_id"] for c in convs if c.get("conversation_id") != "c1" or store2.load("c1") is None]
         # At minimum, c2 should be listed
         assert any(c["conversation_id"] == "c2" for c in convs)
 
@@ -652,7 +651,8 @@ class TestConversationStoreContext(unittest.TestCase):
 
     def test_context_independent_of_messages(self):
         """Modifying messages (append) doesn't affect diverged context."""
-        import uuid, time as _t
+        import uuid
+        import time as _t
         store = ConversationStore.instance()
         store.save("c1", [{"role": "user", "content": "hi"}], user_id="test")
         ctx = [{"role": "system", "content": "compacted"}]

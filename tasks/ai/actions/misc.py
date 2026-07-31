@@ -2,10 +2,7 @@
 
 import json
 import logging
-import time
-from typing import Dict, Any, List, Optional
 
-from core import FlowFile
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +101,8 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             if not display or display == fast_val and fast_val.startswith("$"):
                 flowfile.set_content(json.dumps({
                     "ok": True,
-                    "message": f"Fast mode enabled but no fast_model configured. "
-                               f"Set it with: /add-variable fast_model <model_name>",
+                    "message": "Fast mode enabled but no fast_model configured. "
+                               "Set it with: /add-variable fast_model <model_name>",
                 }).encode())
             else:
                 flowfile.set_content(json.dumps({
@@ -195,7 +192,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
                 if getattr(sdef, "service_type", "") in ("llm", "openai_llm"):
                     svc = greg.get_live_instance("global", "", sid)
                     if svc and hasattr(svc, "get_client"):
-                        client = svc.get_client()
+                        svc.get_client()
                         checks.append({
                             "component": f"LLM: {sid}",
                             "status": "ok",

@@ -117,7 +117,9 @@ def test_export_pawflow_creates_valid_zip(conv):
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         names = zf.namelist()
         assert "transcript.jsonl" in names
-        transcript = [json.loads(l) for l in zf.read("transcript.jsonl").decode().splitlines() if l.strip()]
+        transcript = [json.loads(line)
+                      for line in zf.read("transcript.jsonl").decode().splitlines()
+                      if line.strip()]
         assert [m.get("content") for m in transcript if m.get("role") in ("user", "assistant")] == ["Hello", "Hi there"]
 
 
@@ -409,7 +411,7 @@ def test_cc_to_pawflow_transcript_conversion():
             transcript_lines.append(json.dumps({"role": "tool", "content": str(content), "msg_id": mid, "ts": ts}))
 
     assert len(transcript_lines) == 3
-    parsed = [json.loads(l) for l in transcript_lines]
+    parsed = [json.loads(line) for line in transcript_lines]
     assert parsed[0]["role"] == "user"
     assert parsed[0]["content"] == "Write a function"
     assert parsed[1]["role"] == "assistant"
@@ -456,7 +458,7 @@ def test_pawflow_import_roundtrip(store):
         zf.extractall(conv_dir)
 
     transcript = (conv_dir / "transcript.jsonl").read_text(encoding="utf-8")
-    lines = [l for l in transcript.splitlines() if l.strip()]
+    lines = [line for line in transcript.splitlines() if line.strip()]
     assert len(lines) == 2
 
     extras = json.loads((conv_dir / "extras.json").read_text(encoding="utf-8"))
@@ -478,7 +480,8 @@ def _cc_execute(store, cc_text, agent_mapping=None):
 
     # Mock self object — _handle_conversation only uses `store` on self for
     # this action path.
-    class _Self: pass
+    class _Self:
+        pass
     ff = FlowFile(content=b"")
     # Analyze first to obtain a temp_id
     body = {"file_id": fid, "format": "claude_code"}

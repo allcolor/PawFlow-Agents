@@ -44,7 +44,7 @@ def test_ext_runtime_exposes_pawflow_namespace(ext_runtime_src):
 
 def test_ext_runtime_declares_ui_api_version(ext_runtime_src):
     assert f"UI_API_VERSION = '{UI_API_VERSION}'" in ext_runtime_src
-    assert f"version: UI_API_VERSION" in ext_runtime_src
+    assert "version: UI_API_VERSION" in ext_runtime_src
 
 
 def test_ext_runtime_exposes_register_listpackages_listcommands_getcommand(ext_runtime_src):

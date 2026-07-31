@@ -4,12 +4,10 @@ ResourceStore is now a facade over ScopedRepository, which stores
 1 JSON file per resource under data/repository/{type}/{scope}/{name}.json.
 """
 
-import json
 import pytest
-from pathlib import Path
 from unittest.mock import patch
 
-from core.resource_store import ResourceStore, VALID_TYPES
+from core.resource_store import ResourceStore
 
 
 @pytest.fixture(autouse=True)

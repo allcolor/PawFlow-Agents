@@ -13,7 +13,9 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
-LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+#: The `session` field is filled by SessionFormatter, never by a Filter, so a
+#: record from a library that never heard of it still formats (as `-`).
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s [%(session)s]: %(message)s"
 DATE_FORMAT = "%H:%M:%S"
 DEFAULT_MAX_BYTES = 25 * 1024 * 1024
 DEFAULT_BACKUP_COUNT = 10
@@ -67,13 +69,23 @@ def configure_server_logging(level: int = logging.INFO) -> None:
 
     Files are rotated by size. `backupCount` is the retention window for old
     segments: `server.log`, `server.log.1`, ... and `server.error.log.*`.
+
+    Every handler gets a SessionFormatter: the console included, because a
+    correlation field that only reaches the files is the one missing when
+    somebody is watching `docker logs`.
     """
-    formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
+    from core.log_context import SessionFormatter
+    formatter = SessionFormatter(LOG_FORMAT, datefmt=DATE_FORMAT)
 
     logging.basicConfig(level=level, format=LOG_FORMAT, datefmt=DATE_FORMAT)
     root = logging.getLogger()
     if root.level > level:
         root.setLevel(level)
+
+    # basicConfig built its console handler with a plain Formatter, which would
+    # raise on `%(session)s` for any record that did not pass through us.
+    for handler in root.handlers:
+        handler.setFormatter(formatter)
 
     _remove_existing_file_handlers(root)
 

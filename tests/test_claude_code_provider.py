@@ -267,7 +267,7 @@ class TestStreamClaude(unittest.TestCase):
                           return_value=(mock_proc, None)):
             tokens = []
             turns = []
-            resp = self.client.complete_stream(
+            self.client.complete_stream(
                 [LLMMessage(role="user", content="Hi", conversation_id="test_conv")],
                 callback=lambda t: tokens.append(t),
                 turn_callback=lambda text, tc: turns.append(text),
@@ -975,7 +975,8 @@ class TestKillCcHardByPid(unittest.TestCase):
         client = self._client()
         # Tags pinned per-stream on proc — immune to concurrent-stream
         # clobber of self.* attrs. _kill_cc_hard reads from proc only.
-        proc = MagicMock(); proc.kill = MagicMock()
+        proc = MagicMock()
+        proc.kill = MagicMock()
         proc._pf_container = "pool-1"
         proc._pf_pid = 4242
         with patch("subprocess.run") as mock_run, \
@@ -1026,7 +1027,8 @@ class TestKillCcHardByPid(unittest.TestCase):
         the in-flight stream's _kill_cc_hard must still succeed because
         it reads per-stream tags from proc, not self."""
         client = self._client()
-        proc = MagicMock(); proc.kill = MagicMock()
+        proc = MagicMock()
+        proc.kill = MagicMock()
         proc._pf_container = "pool-compacter"
         proc._pf_pid = 2814383
         # Simulate clobber: another concurrent stream has reset self.*

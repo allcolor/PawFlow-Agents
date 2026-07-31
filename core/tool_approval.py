@@ -187,7 +187,6 @@ class ToolApprovalGate:
         # Determine effective approval level
         policy_name = cls.normalize_tool_name(tool_name)
         effective_name = tool_name
-        is_always_ask = policy_name in cls.ALWAYS_ASK
         is_exempt = policy_name in cls.EXEMPT_TOOLS
         needs_ask = not is_exempt  # all non-exempt tools need approval
 
@@ -235,12 +234,10 @@ class ToolApprovalGate:
             if cls._is_catastrophic_command(_cmd):
                 _force_ask = True
                 _catastrophic_hint = True
-                is_always_ask = True
                 effective_name = f"{tool_name}:catastrophic"
                 action_summary = f"\u26a0\ufe0f CATASTROPHIC: {action_summary}"
             elif cls._is_dangerous_command(_cmd):
                 _force_ask = True
-                is_always_ask = True
                 effective_name = f"{tool_name}:dangerous"
 
         # ── Protected path check ─────────────────────────────────────
@@ -250,7 +247,6 @@ class ToolApprovalGate:
             _path = arguments.get("path", "") or arguments.get("file_path", "")
             if cls._is_protected_path(_path):
                 _force_ask = True
-                is_always_ask = True
                 effective_name = f"{tool_name}:protected"
         if policy_name == "filesystem" and arguments:
             _fs_action = arguments.get("action", "")
@@ -259,7 +255,6 @@ class ToolApprovalGate:
                 _path = arguments.get("path", "")
                 if cls._is_protected_path(_path):
                     _force_ask = True
-                    is_always_ask = True
                     effective_name = f"filesystem.{_fs_action}:protected"
 
         # Check conversation+agent scoped permissions

@@ -319,7 +319,11 @@ class BashHandler(BaseFsHandler):
 
     def _run_background(self, command: str, arguments: dict) -> str:
         """Run command in background thread, store output to temp file."""
-        import threading, tempfile, os, time, uuid
+        import threading
+        import tempfile
+        import os
+        import time
+        import uuid
         bg_id = f"bg_{uuid.uuid4().hex[:8]}"
         relay = (arguments.get("relay", "") or arguments.get("source", "")
                  or arguments.get("filesystem", "") or arguments.get("service", ""))

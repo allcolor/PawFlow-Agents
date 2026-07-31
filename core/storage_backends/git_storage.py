@@ -8,7 +8,6 @@ Each save creates an automatic commit.
 
 import json
 import logging
-import os
 import subprocess  # nosec B404
 from pathlib import Path
 from typing import Dict, Any, Optional, List

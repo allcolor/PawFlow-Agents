@@ -6,7 +6,6 @@ resource type. Skipped for builtins (already in registry).
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

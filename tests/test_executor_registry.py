@@ -70,17 +70,6 @@ class TestExecutorRegistry(unittest.TestCase):
         assert self.registry.count() == 1
         assert self.registry.get("alive") is alive
 
-    def test_register_and_get(self):
-        mock_ex = MagicMock()
-        self.registry.register("test_flow", mock_ex)
-        assert self.registry.get("test_flow") is mock_ex
-
-    def test_unregister(self):
-        mock_ex = MagicMock()
-        self.registry.register("test_flow", mock_ex)
-        self.registry.unregister("test_flow")
-        assert self.registry.get("test_flow") is None
-
     def test_restore_skips_if_already_restored(self):
         self.registry._restored = True
         self.registry.restore_from_disk()  # Should be a no-op

@@ -91,23 +91,24 @@ async function cmdAgentTmux(agentName) {
   if (provider === 'antigravity-interactive') {
     return _openAntigravityAgentTmux(targetAgent, serviceId);
   }
-  if (provider !== 'claude-code-interactive') {
+  if (provider !== 'claude-code-interactive' && provider !== 'codex-interactive') {
     addMsg('system', t('ccInteractiveTerminalNoLive'));
     return true;
   }
-  return _openCCInteractiveAgentTmux(targetAgent, serviceId);
+  return _openCCInteractiveAgentTmux(targetAgent, serviceId, provider);
 }
 
 async function cmdCCInteractiveTerminal(agentName) {
   return cmdAgentTmux(agentName);
 }
 
-async function _openCCInteractiveAgentTmux(targetAgent, serviceId) {
+async function _openCCInteractiveAgentTmux(targetAgent, serviceId, provider) {
   const termSize = _estimateTerminalSize();
   addMsg('system', t('openingCCInteractiveTerminal', { agent: targetAgent }));
   action$('open_cc_interactive_terminal', {
     agent_name: targetAgent,
     service_id: serviceId || '',
+    provider: provider || '',
     cols: termSize.cols,
     rows: termSize.rows,
   }).subscribe({

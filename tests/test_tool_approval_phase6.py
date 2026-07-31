@@ -7,8 +7,6 @@ Locks down the contract that:
     shown, opt-in fail-open via PAWFLOW_APPROVAL_FAIL_OPEN.
 """
 
-import os
-import unittest.mock as mock
 
 from core.tool_approval import ToolApprovalGate
 

@@ -1,7 +1,6 @@
 """Sub-flow execution via executeFlow + ProcessGroup.flow_ref."""
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,6 @@ register_all_tasks()
 
 from core import TaskFactory, TaskError  # noqa: E402
 from engine import FlowParser
-from engine.continuous_executor import ContinuousFlowExecutor
 from core import FlowFile
 
 

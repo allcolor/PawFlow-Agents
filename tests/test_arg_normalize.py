@@ -4,7 +4,6 @@ Covers the shapes LLMs actually send when they don't strictly follow
 the JSON schema — so handlers accept the call on the first attempt
 instead of erroring and forcing a retry.
 """
-import pytest
 
 from core.handlers._arg_normalize import (
     normalize_string_list,

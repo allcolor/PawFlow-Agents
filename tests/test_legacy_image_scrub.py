@@ -31,7 +31,9 @@ def _write_jsonl(path, entries):
 
 
 def _read_jsonl(path):
-    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return [json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()]
 
 
 def test_scrubs_string_content_user(session_file):

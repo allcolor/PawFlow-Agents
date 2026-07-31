@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.conversation_store import ConversationLockedError
 from core.key_vault import (
-    KeyUnwrapError, create_passphrase_protected, get_key_vault,
+    create_passphrase_protected, get_key_vault,
     unwrap_with_passphrase,
 )
 

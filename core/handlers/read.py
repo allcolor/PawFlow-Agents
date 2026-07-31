@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any, Dict
 
-from core.handlers._fs_base import BaseFsHandler, cap_binary_output
+from core.handlers._fs_base import BaseFsHandler
 
 logger = logging.getLogger(__name__)
 

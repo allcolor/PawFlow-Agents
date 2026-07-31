@@ -23,6 +23,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
+from core.log_context import bind_session
+
 logger = logging.getLogger(__name__)
 
 # Composite key: every dimension that would invalidate reuse if it drifts.
@@ -265,23 +267,27 @@ class CodexLiveRegistry:
 
     def kill_and_evict(self, key: CodexLiveKey, reason: str,
                        recover: bool = True) -> None:
-        entry = self.evict(key, reason)
-        if entry is None:
-            return
-        # Rescue any OAuth token the CLI rotated into the workdir before the
-        # container dies (defense-in-depth; see CodexLiveSession docstring).
-        if recover and self._recover is not None and getattr(entry, "workdir", ""):
+        # The one place every kill passes through -- sweeper, shutdown and
+        # explicit eviction alike -- so binding here correlates the token
+        # copy-back and the pool release with the container they belong to.
+        with bind_session(_fmt_key(key)):
+            entry = self.evict(key, reason)
+            if entry is None:
+                return
+            # Rescue any OAuth token the CLI rotated into the workdir before
+            # the container dies (defense-in-depth; see the class docstring).
+            if recover and self._recover is not None and getattr(entry, "workdir", ""):
+                try:
+                    self._recover(entry.workdir, entry.service_id,
+                                  entry.svc_pool_idx, entry.user_id, entry.conv_id)
+                except Exception:
+                    logger.debug("[codex-live] token recover failed (%s)",
+                                 reason, exc_info=True)
             try:
-                self._recover(entry.workdir, entry.service_id,
-                              entry.svc_pool_idx, entry.user_id, entry.conv_id)
-            except Exception:
-                logger.debug("[codex-live] token recover failed (%s)",
-                             reason, exc_info=True)
-        try:
-            from core.codex_pool import CodexPool
-            CodexPool.instance().release(entry.container_name)
-        except Exception as e:
-            logger.warning("[codex-live] release after evict failed: %s", e)
+                from core.codex_pool import CodexPool
+                CodexPool.instance().release(entry.container_name)
+            except Exception as e:
+                logger.warning("[codex-live] release after evict failed: %s", e)
 
     def kill_and_evict_by_conv(self, conv_id: str, reason: str) -> int:
         with self._lock:
@@ -366,16 +372,17 @@ class CodexLiveRegistry:
         if self._recover is None:
             return
         with self._lock:
-            entries = list(self._containers.values())
-        for entry in entries:
+            entries = list(self._containers.items())
+        for key, entry in entries:
             if not getattr(entry, "workdir", ""):
                 continue
-            try:
-                self._recover(entry.workdir, entry.service_id,
-                              entry.svc_pool_idx, entry.user_id, entry.conv_id)
-            except Exception:
-                logger.debug("[codex-live] live token recover failed",
-                             exc_info=True)
+            with bind_session(_fmt_key(key)):
+                try:
+                    self._recover(entry.workdir, entry.service_id,
+                                  entry.svc_pool_idx, entry.user_id, entry.conv_id)
+                except Exception:
+                    logger.debug("[codex-live] live token recover failed",
+                                 exc_info=True)
 
     def ensure_sweeper(self, tick_seconds: int = 60,
                        idle_ttl_seconds: Optional[int] = None,

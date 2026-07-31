@@ -13,7 +13,7 @@ import time
 import uuid
 import pytest
 
-from core.plan_store import PlanStore; import core.paths as _paths
+from core.plan_store import PlanStore 
 
 
 @pytest.fixture(autouse=True)

@@ -13,6 +13,7 @@ _CLI_CONTEXT_PROVIDERS = (
     "claude-code-interactive",
     "antigravity-interactive",
     "codex-app-server",
+    "codex-interactive",
     "gemini",
 )
 _USAGE_CACHE_LOCK = threading.RLock()

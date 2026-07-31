@@ -11,7 +11,6 @@ from core.llm_client import LLMMessage, LLMToolCall
 from core.llm_providers.cli_shared import (
     summarize_tool_call,
     textualize_message,
-    _TOOL_ARG_TRUNC,
     _TOOL_RESULT_TRUNC,
 )
 

@@ -15,7 +15,6 @@ from core import relay_key_store as ks
 from core import relay_key_sync as sync
 from core.conversation_store import ConversationStore
 import core.key_vault as key_vault
-from core.key_vault import get_key_vault
 from core.relay_key_service import RelayKeyService
 
 UID = "alice"

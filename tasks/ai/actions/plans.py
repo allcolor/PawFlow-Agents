@@ -9,7 +9,6 @@ import json
 import logging
 import time
 
-from core import FlowFile
 from core.plan_store import PlanStore
 
 logger = logging.getLogger(__name__)

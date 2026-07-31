@@ -1,7 +1,7 @@
 """Sample plugin task: converts FlowFile content to uppercase."""
 
 from core import Task, FlowFile
-from typing import Dict, Any, List
+from typing import List
 
 
 class UppercaseTask(Task):

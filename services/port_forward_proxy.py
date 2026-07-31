@@ -11,7 +11,7 @@ import json
 import logging
 import threading
 import uuid
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 

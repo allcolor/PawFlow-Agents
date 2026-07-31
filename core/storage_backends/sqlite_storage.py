@@ -7,7 +7,6 @@ SQLite storage implementation.
 import sqlite3
 import json
 from typing import Dict, Any, Optional, List
-from datetime import datetime
 
 
 class SqliteStorage:

@@ -4,7 +4,7 @@
 Shared HTTP client service with a persistent session.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from core.base_service import BaseService
 from core import ServiceFactory, ServiceError
 from core.relay_proxy_url import CONV_RELAY_EXPR, is_relay_proxy_url, resolve_relay_aware_url

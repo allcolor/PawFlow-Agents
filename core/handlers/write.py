@@ -1,6 +1,5 @@
 """write — Write content to a file."""
 
-import json
 import logging
 import re
 from typing import Any, Dict

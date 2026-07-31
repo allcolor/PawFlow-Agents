@@ -1,6 +1,5 @@
 """SSE event dispatcher — extracted from PawCode._dispatch_event."""
 
-import sys
 
 
 def _flatten_multipart(content) -> str:

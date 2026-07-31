@@ -71,7 +71,8 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
     backend_sock.settimeout(None)
 
     # Perform WS handshake with the backend (websockify expects a WS client)
-    import base64, hashlib, os
+    import base64
+    import os
     ws_key = base64.b64encode(os.urandom(16)).decode()
     handshake = (
         f"GET /websockify HTTP/1.1\r\n"

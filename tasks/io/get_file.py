@@ -4,8 +4,6 @@
 Task GetFile - Read a file from the filesystem.
 """
 
-import os
-import glob
 from typing import Dict, Any, List
 from core import FlowFile, TaskFactory, TaskError
 from core.base_task import BaseTask

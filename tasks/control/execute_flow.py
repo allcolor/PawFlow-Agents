@@ -166,7 +166,6 @@ class ExecuteFlowTask(BaseTask):
             return
 
         # Build port_name -> relationship lookup by reading the subflow JSON
-        import os
         port_name_to_rel: Dict[str, str] = {}
         try:
             import json as _json

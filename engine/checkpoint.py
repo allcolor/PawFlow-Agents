@@ -33,7 +33,6 @@ Checkpoint format (JSON):
 import base64
 import json
 import logging
-import os
 import threading
 import time
 from pathlib import Path

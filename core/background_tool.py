@@ -21,7 +21,7 @@ Usage:
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -432,7 +432,6 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
     # 1. Write tool_result to transcript (always — visible at reload)
     try:
         from core.conversation_writer import ConversationWriter
-        import uuid as _bg_uuid
         from core.llm_client import stamp_message
         tool_msg = stamp_message({
             "role": "tool",

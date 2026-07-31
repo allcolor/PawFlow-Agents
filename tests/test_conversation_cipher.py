@@ -13,8 +13,6 @@ clear'):
   * encrypt_log / decrypt_log migration primitives (resumable / reversible)
 """
 
-import json
-import os
 
 import pytest
 

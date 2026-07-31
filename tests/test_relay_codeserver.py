@@ -124,7 +124,6 @@ def test_cs_ws_open_streams_backend_frames(backend):
             return any(f.get("type") == "cs_ws_data"
                        and base64.b64decode(f["data"]) == b"hello-from-backend"
                        for f in frames)
-    import base64
     assert _wait(_got), "backend frame was not forwarded via send_frame"
 
 
@@ -134,7 +133,6 @@ def test_cs_ws_send_writes_masked_frame_to_backend(backend):
     assert res == {"ok": True}
     backend.wait_connected()
 
-    import base64
     ok = cs.cs_ws_send(st, {"session_id": "s1", "data": base64.b64encode(b"ping").decode(), "opcode": 1})
     assert ok == {"ok": True}
     # zero-masked client frame -> payload bytes are unchanged on the wire

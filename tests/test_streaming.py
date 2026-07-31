@@ -1,10 +1,9 @@
 """Tests for FlowFile streaming / disk-spill support."""
 
 import io
-import os
 import pytest
 
-from core.stream import ContentReference, set_spill_threshold, SPILL_THRESHOLD, _get_spill_dir
+from core.stream import ContentReference, set_spill_threshold, SPILL_THRESHOLD
 from core import FlowFile
 
 

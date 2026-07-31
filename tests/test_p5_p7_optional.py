@@ -2,7 +2,6 @@
 
 import json
 import threading
-import time
 import pytest
 
 from core import TaskFactory
@@ -26,19 +25,16 @@ def _tf_make(task_type, config=None):
 class TestMQTTTasks:
 
     def test_publish_mqtt_registered(self):
-        from core import TaskFactory
         cls = _tf_make('publishMQTT')
         assert cls is not None
         assert cls.TYPE == 'publishMQTT'
 
     def test_consume_mqtt_registered(self):
-        from core import TaskFactory
         cls = _tf_make('consumeMQTT')
         assert cls is not None
         assert cls.TYPE == 'consumeMQTT'
 
     def test_publish_mqtt_schema(self):
-        from core import TaskFactory
         task = _tf_make('publishMQTT', {'topic': 'test/topic'})
         schema = task.get_parameter_schema()
         assert 'broker_uri' in schema
@@ -46,7 +42,6 @@ class TestMQTTTasks:
         assert 'qos' in schema
 
     def test_consume_mqtt_schema(self):
-        from core import TaskFactory
         task = _tf_make('consumeMQTT', {'topic': 'test/#'})
         schema = task.get_parameter_schema()
         assert 'broker_uri' in schema
@@ -55,7 +50,7 @@ class TestMQTTTasks:
 
     def test_publish_mqtt_requires_paho(self):
         """Without paho-mqtt, should raise TaskError."""
-        from core import TaskFactory, FlowFile, TaskError
+        from core import FlowFile, TaskError
         task = _tf_make('publishMQTT', {'topic': 'test'})
         ff = FlowFile(content=b'hello')
         # This will either fail with "paho-mqtt required" or succeed if paho is installed
@@ -67,7 +62,7 @@ class TestMQTTTasks:
             pass  # paho is installed but no broker — that's fine too
 
     def test_consume_mqtt_requires_paho(self):
-        from core import TaskFactory, FlowFile, TaskError
+        from core import FlowFile, TaskError
         task = _tf_make('consumeMQTT', {'topic': 'test'})
         ff = FlowFile(content=b'')
         try:
@@ -79,7 +74,7 @@ class TestMQTTTasks:
 
     def test_publish_mqtt_topic_required(self):
         """Empty topic should raise."""
-        from core import TaskFactory, FlowFile, TaskError
+        from core import FlowFile, TaskError
         task = _tf_make('publishMQTT', {'topic': ''})
         ff = FlowFile(content=b'hello')
         try:
@@ -97,53 +92,45 @@ class TestMQTTTasks:
 class TestAvroParquetTasks:
 
     def test_avro_to_json_registered(self):
-        from core import TaskFactory
         cls = _tf_make('convertAvroToJSON')
         assert cls is not None
 
     def test_json_to_avro_registered(self):
-        from core import TaskFactory
         cls = _tf_make('convertJSONToAvro')
         assert cls is not None
 
     def test_parquet_to_json_registered(self):
-        from core import TaskFactory
         cls = _tf_make('convertParquetToJSON')
         assert cls is not None
 
     def test_json_to_parquet_registered(self):
-        from core import TaskFactory
         cls = _tf_make('convertJSONToParquet')
         assert cls is not None
 
     def test_avro_to_json_schema(self):
-        from core import TaskFactory
         task = _tf_make('convertAvroToJSON', {})
         schema = task.get_parameter_schema()
         assert 'pretty' in schema
 
     def test_json_to_avro_schema(self):
-        from core import TaskFactory
         task = _tf_make('convertJSONToAvro', {})
         schema = task.get_parameter_schema()
         assert 'avro_schema' in schema
 
     def test_parquet_to_json_schema(self):
-        from core import TaskFactory
         task = _tf_make('convertParquetToJSON', {})
         schema = task.get_parameter_schema()
         assert 'columns' in schema
         assert 'pretty' in schema
 
     def test_json_to_parquet_schema(self):
-        from core import TaskFactory
         task = _tf_make('convertJSONToParquet', {})
         schema = task.get_parameter_schema()
         assert 'compression' in schema
 
     def test_avro_roundtrip(self):
         """JSON → Avro → JSON roundtrip."""
-        from core import TaskFactory, FlowFile
+        from core import FlowFile
         data = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
         ff = FlowFile(content=json.dumps(data).encode('utf-8'))
 
@@ -163,7 +150,7 @@ class TestAvroParquetTasks:
 
     def test_parquet_roundtrip(self):
         """JSON → Parquet → JSON roundtrip."""
-        from core import TaskFactory, FlowFile
+        from core import FlowFile
         data = [{"city": "Paris", "pop": 2100000}, {"city": "Lyon", "pop": 500000}]
         ff = FlowFile(content=json.dumps(data).encode('utf-8'))
 
@@ -181,7 +168,7 @@ class TestAvroParquetTasks:
 
     def test_avro_invalid_data(self):
         """Invalid data should raise TaskError."""
-        from core import TaskFactory, FlowFile, TaskError
+        from core import FlowFile, TaskError
         task = _tf_make('convertAvroToJSON', {})
         ff = FlowFile(content=b'not avro data')
         try:
@@ -192,7 +179,7 @@ class TestAvroParquetTasks:
 
     def test_parquet_invalid_data(self):
         """Invalid data should raise TaskError."""
-        from core import TaskFactory, FlowFile, TaskError
+        from core import FlowFile, TaskError
         task = _tf_make('convertParquetToJSON', {})
         ff = FlowFile(content=b'not parquet data')
         try:

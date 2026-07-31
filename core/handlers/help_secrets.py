@@ -1,8 +1,7 @@
 """Auto-extracted from core/tool_registry.py — see core/handlers/__init__.py"""
 
-import json
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from core.tool_handler import ToolHandler
 
@@ -678,11 +677,11 @@ class StoreSecretHandler(ToolHandler):
         user_id = self._user_id
 
         try:
-            from pathlib import Path
             from core.config_store import ConfigStore
             from core.config_value import ConfigValue
 
-            from core.paths import user_secrets_path; secrets_path = user_secrets_path(user_id)
+            from core.paths import user_secrets_path
+            secrets_path = user_secrets_path(user_id)
             secrets = ConfigStore.load_secrets(secrets_path)
             secrets[key] = ConfigValue(value=value)
             ConfigStore.save_secrets(secrets_path, secrets)
@@ -722,11 +721,11 @@ class ListSecretsHandler(ToolHandler):
         self._user_id = uid
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        from pathlib import Path
         from core.config_store import ConfigStore
 
         user_id = self._user_id
-        from core.paths import user_secrets_path; secrets_path = user_secrets_path(user_id)
+        from core.paths import user_secrets_path
+        secrets_path = user_secrets_path(user_id)
         secrets = ConfigStore.load_secrets(secrets_path)
 
         if not secrets:

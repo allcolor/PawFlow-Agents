@@ -11,7 +11,6 @@ import threading
 import types
 from pathlib import Path
 
-import pytest
 
 # tools/ on path for the lazy `from fs_common import ...` / `import fs_actions`
 # the Docker path performs, mirroring the relay container layout.

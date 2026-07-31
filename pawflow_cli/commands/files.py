@@ -112,7 +112,7 @@ def handle_files_commands(app, cmd, arg, text):
         app.renderer.print_system("Multiline mode: type your message. Press Alt+Enter or Escape then Enter to send.")
         try:
             try:
-                from prompt_toolkit import PromptSession as _PS
+                from prompt_toolkit import PromptSession as _PS  # noqa: F401 -- the import IS the probe
                 HAS_PT = True
             except ImportError:
                 HAS_PT = False

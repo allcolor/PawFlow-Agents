@@ -11,7 +11,6 @@ Tests cover:
 import shutil
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from core.memory_store import MemoryEntry, MemoryStore

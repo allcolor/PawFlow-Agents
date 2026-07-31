@@ -4,10 +4,8 @@ Prompts are .md files with YAML frontmatter stored in data/repository/prompts/.
 They support ${param} placeholders resolved at use time.
 """
 
-import json
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from core.resource_store import ResourceStore
 

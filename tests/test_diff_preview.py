@@ -1,8 +1,7 @@
 """Tests for FlowDiff and DataPreviewManager."""
 
-import pytest
-from engine.flow_diff import FlowDiff, DiffEntry
-from engine.data_preview import DataPreviewManager, DataSample
+from engine.flow_diff import FlowDiff
+from engine.data_preview import DataPreviewManager
 
 
 # ---------------------------------------------------------------------------

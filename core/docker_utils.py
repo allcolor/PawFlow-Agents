@@ -398,9 +398,10 @@ def get_server_id() -> str:
     global _server_id_cache
     if _server_id_cache:
         return _server_id_cache
-    import hashlib, uuid
-    from pathlib import Path
-    from core.paths import SERVER_ID_FILE; path = SERVER_ID_FILE
+    import hashlib
+    import uuid
+    from core.paths import SERVER_ID_FILE
+    path = SERVER_ID_FILE
     if path.exists():
         _server_id_cache = path.read_text().strip()
     else:

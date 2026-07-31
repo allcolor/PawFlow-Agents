@@ -4,7 +4,6 @@
 Task PutFile - Write a FlowFile to the filesystem.
 """
 
-import os
 from typing import Dict, Any, List
 from core import FlowFile, TaskFactory, TaskError
 from core.base_task import BaseTask

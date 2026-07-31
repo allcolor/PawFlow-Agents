@@ -10,7 +10,6 @@ Covers:
 import threading
 import time
 import inspect
-from pathlib import Path
 from unittest.mock import patch
 
 import core.background_tool as bg

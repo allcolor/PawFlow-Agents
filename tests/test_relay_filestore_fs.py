@@ -16,7 +16,6 @@ Coverage:
 """
 
 import base64
-import errno
 import os
 import stat as _stat
 import tempfile

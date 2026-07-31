@@ -10,7 +10,6 @@ Supports two authentication modes:
   L'access token est obtenu automatiquement via le refresh token.
 """
 
-import base64
 import json
 import logging
 import smtplib
@@ -18,7 +17,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 

@@ -11,7 +11,7 @@ from core import FlowFile
 from core.signals import SignalRegistry
 from tasks.control.wait_notify import WaitTask, NotifyTask
 from tasks.data.dist_cache_tasks import FetchDistributedMapCacheTask, PutDistributedMapCacheTask
-from services.distributed_cache import DistributedMapCacheService, get_default_cache
+from services.distributed_cache import DistributedMapCacheService
 
 
 class TestSignalRegistry:

@@ -2,7 +2,6 @@
 
 import threading
 import time
-import pytest
 
 from engine.debugger import FlowDebugger, Breakpoint, DebugAction, DebugSnapshot
 from core import FlowFile

@@ -8,7 +8,6 @@ Historical images (older user messages, not re-injected into vision on
 resume) DO get a text placeholder so the model still knows an image was
 there — but it's only a marker, not a second copy.
 """
-import pytest
 
 from core.llm_client import LLMMessage
 from core.llm_providers.claude_code import LLMClaudeCodeMixin
@@ -66,8 +65,10 @@ def test_last_user_image_ref_no_placeholder(tmp_path, monkeypatch):
         assert any(f"fs://filestore/{_fid}/foo.png" in t for t in _texts)
         assert not any("[image:" in t for t in _texts)
     finally:
-        try: fs.delete(_fid)
-        except Exception: pass
+        try:
+            fs.delete(_fid)
+        except Exception:
+            pass
 
 
 def test_older_user_image_keeps_placeholder():

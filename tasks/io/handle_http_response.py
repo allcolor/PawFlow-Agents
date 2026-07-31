@@ -16,10 +16,9 @@ FlowFile attributes that override defaults:
     http.request.id           — correlation ID (REQUIRED, set by httpReceiver)
 """
 
-import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 from core import FlowFile
 from core.base_task import BaseTask

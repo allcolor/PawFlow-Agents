@@ -7,7 +7,7 @@ Zero required dependencies — graceful import with clear errors.
 import logging
 import math
 import threading
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

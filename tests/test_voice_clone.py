@@ -7,14 +7,11 @@ Covers:
   - CloneVoiceHandler + SpeakHandler (end-to-end, cache hit/miss)
 """
 
-import io
 import json
-from types import SimpleNamespace
 
 import pytest
 
 from core import voice_clone_cache as _cache
-from core.file_store import FileStore
 from services.base_voice_clone import BaseVoiceCloneService
 from services.fish_audio_voice_clone_service import FishAudioVoiceCloneService
 

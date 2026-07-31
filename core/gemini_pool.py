@@ -90,7 +90,9 @@ class GeminiPool:
         boot-time _cleanup_orphans reaper, no container can survive the
         parent process.
         """
-        import atexit, signal, sys
+        import atexit
+        import signal
+        import sys
         def _kill_all(*_args, **_kwargs):
             if getattr(self, "_shutdown_once", False):
                 return

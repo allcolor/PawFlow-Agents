@@ -2,13 +2,8 @@
 
 import json
 import logging
-import time
-import threading
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
-from core import FlowFile
-from core.llm_client import LLMMessage, LLMClient
-from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -138,11 +133,11 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         uid = user_id
-        from pathlib import Path
         from core.secrets import get_secrets_manager
         sm = get_secrets_manager()
         encrypted = sm.encrypt(value)
-        from core.paths import user_secrets_path; secrets_path = user_secrets_path(uid)
+        from core.paths import user_secrets_path
+        secrets_path = user_secrets_path(uid)
         secrets_path.parent.mkdir(parents=True, exist_ok=True)
         secrets = {}
         if secrets_path.exists():
@@ -166,8 +161,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         uid = user_id
-        from pathlib import Path
-        from core.paths import user_params_path; params_path = user_params_path(uid)
+        from core.paths import user_params_path
+        params_path = user_params_path(uid)
         params_path.parent.mkdir(parents=True, exist_ok=True)
         params = {}
         if params_path.exists():
@@ -185,8 +180,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
 
     if action == "list_secrets":
         uid = user_id
-        from pathlib import Path
-        from core.paths import user_secrets_path; secrets_path = user_secrets_path(uid)
+        from core.paths import user_secrets_path
+        secrets_path = user_secrets_path(uid)
         if not secrets_path.exists():
             flowfile.set_content(json.dumps({"result": "No secrets stored."}).encode())
             return [flowfile]
@@ -206,8 +201,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
 
     if action == "list_variables":
         uid = user_id
-        from pathlib import Path
-        from core.paths import user_params_path; params_path = user_params_path(uid)
+        from core.paths import user_params_path
+        params_path = user_params_path(uid)
         if not params_path.exists():
             flowfile.set_content(json.dumps({"result": "No parameters stored."}).encode())
             return [flowfile]

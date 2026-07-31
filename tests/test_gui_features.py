@@ -1,13 +1,8 @@
 """Tests for GUI-related features: auth helpers, secrets, parameter contexts."""
 
-import json
-import os
-import tempfile
 import pytest
-from pathlib import Path
 
-from core.security import SecurityManager, Role, User, Session
-from core.secrets import SecretsManager, get_secrets_manager
+from core.secrets import SecretsManager
 from core.parameter_context import ParameterContext
 
 

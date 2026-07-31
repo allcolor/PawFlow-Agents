@@ -7,11 +7,9 @@ variables, and FlowFile attributes through a unified cascade.
 """
 
 import base64
-import json
 import logging
 import os
 import re
-from pathlib import Path
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)

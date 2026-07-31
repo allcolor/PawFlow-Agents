@@ -330,8 +330,8 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
                 new_parts.append({
                     "type": "text",
                     "text": (
-                        f"[Image: skipped — too many images in this pass; "
-                        f"image not described.]"
+                        "[Image: skipped — too many images in this pass; "
+                        "image not described.]"
                     ),
                 })
                 continue
@@ -345,8 +345,8 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
                 new_parts.append({
                     "type": "text",
                     "text": (
-                        f"[Image: could not be loaded from tool result; "
-                        f"image data unavailable.]"
+                        "[Image: could not be loaded from tool result; "
+                        "image data unavailable.]"
                     ),
                 })
                 continue

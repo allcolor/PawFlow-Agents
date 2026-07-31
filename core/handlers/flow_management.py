@@ -3,10 +3,7 @@
 import json
 import logging
 import os
-import re
-import threading
-import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from core.tool_handler import ToolHandler
 
@@ -473,11 +470,11 @@ class FlowManagerHandler(ToolHandler):
             return validation_error
 
         flow_id = definition["id"]
-        flow_name = definition.get("name", flow_id)
+        definition.get("name", flow_id)
 
         # Save the flow definition as a template in a temp location
-        from pathlib import Path
-        from core.paths import RUNTIME_DIR; tmp_dir = RUNTIME_DIR / "agent_templates"
+        from core.paths import RUNTIME_DIR
+        tmp_dir = RUNTIME_DIR / "agent_templates"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         # Strip internal fields
         clean_def = {k: v for k, v in definition.items() if not k.startswith("_")}

@@ -19,7 +19,8 @@ def _register_all_services():
     """Import all service modules to trigger ServiceFactory registration."""
     # Force project root into sys.path — always, no conditional check
     # (Windows path comparison is unreliable: C:\x vs C:/x vs c:\x)
-    import sys, os
+    import sys
+    import os
     _root = os.path.normpath(os.path.join(os.path.dirname(__file__), '..'))
     sys.path.insert(0, _root)
 

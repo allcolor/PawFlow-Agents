@@ -9,7 +9,6 @@ the retry should skip chunks 1..K-1 — they already have stored summaries
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 
 import pytest
 

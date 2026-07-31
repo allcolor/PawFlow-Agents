@@ -9,13 +9,12 @@ Supports:
 - Interactive mode: convert, review, re-submit with feedback
 """
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 
-from core.llm_client import LLMClient, LLMMessage, LLMResponse, LLMClientError
+from core.llm_client import LLMClient, LLMMessage, LLMClientError
 
 logger = logging.getLogger(__name__)
 

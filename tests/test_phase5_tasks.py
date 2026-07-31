@@ -4,13 +4,12 @@ import pytest
 import json
 import csv
 import sqlite3
-import os
 from io import StringIO
 
 from tasks import register_all_tasks
 register_all_tasks()
 
-from core import FlowFile, TaskFactory
+from core import FlowFile
 from tasks.control.funnel import FunnelTask
 from tasks.data.convert_csv import ConvertCSVToJSONTask, ConvertJSONToCSVTask
 from tasks.data.execute_sql import ExecuteSQLTask, PutSQLTask

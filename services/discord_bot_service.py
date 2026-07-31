@@ -10,11 +10,9 @@ Config:
     allowed_channels: str   — Comma-separated channel IDs (optional)
 """
 
-import json
 import logging
 import threading
-import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from core import ServiceFactory
 from services.base_messaging_service import BaseMessagingService
@@ -51,7 +49,7 @@ class DiscordBotService(BaseMessagingService):
             raise ValueError("bot_token is required for Discord")
 
         try:
-            import discord
+            import discord  # noqa: F401 -- the import IS the probe
         except ImportError:
             raise ImportError(
                 "discord.py is required for Discord bot. "

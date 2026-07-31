@@ -4,10 +4,10 @@ import json
 import pytest
 
 from engine.nifi_converter import (
-    NiFiConverter, ConversionResult, PROCESSOR_MAP, PROCESSOR_SHORT_MAP,
+    NiFiConverter, PROCESSOR_MAP, PROCESSOR_SHORT_MAP,
     RELATIONSHIP_MAP,
 )
-from engine.nifi_script_converter import NiFiScriptConverter, ScriptConversionResult
+from engine.nifi_script_converter import NiFiScriptConverter
 
 
 # ============================================================================
@@ -501,7 +501,7 @@ session.transfer(ff, REL_SUCCESS)
 class TestSharedLLMClient:
 
     def test_import_from_core(self):
-        from core.llm_client import LLMClient, LLMMessage, LLMResponse, LLMClientError
+        from core.llm_client import LLMClient
         assert LLMClient is not None
 
     def test_from_config(self):
@@ -521,7 +521,7 @@ class TestSharedLLMClient:
 
     def test_llm_service_still_works(self):
         """Verify LLMConnectionService still works after refactoring."""
-        from services.llm_connection import LLMConnectionService, LLMMessage, LLMResponse
+        from services.llm_connection import LLMConnectionService
         svc = LLMConnectionService({"provider": "openai", "api_key": "test"})
         assert svc.provider == "openai"
         assert svc.api_key == "test"
@@ -644,7 +644,8 @@ class TestProcessGroupToSubflow:
         assert "Get_Input" in tasks
         subflow_tasks = [t for t in tasks.values() if t["type"] == "executeFlow"]
         assert len(subflow_tasks) == 1
-        from pathlib import Path as _P; assert str(_P(subflow_tasks[0]["parameters"]["flow_path"])).replace(chr(92), "/").endswith("repository/flows/global/default/pg-child-etl/versions/1.0.0.json")
+        from pathlib import Path as _P
+        assert str(_P(subflow_tasks[0]["parameters"]["flow_path"])).replace(chr(92), "/").endswith("repository/flows/global/default/pg-child-etl/versions/1.0.0.json")
 
     def test_xml_subflow_is_separate_flow(self):
         converter = NiFiConverter()

@@ -16,15 +16,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List
-from unittest.mock import MagicMock, patch
+from typing import Any, Dict, List
+from unittest.mock import MagicMock
 
 import pytest
 
 from core.bg_bucket_builder import BgBucketBuilder
 from core.bucket_store import (
-    BUCKET_OUTPUT_TARGET, BucketStore, L1_TRIGGER_MSGS, ROLLUP_TRIGGER_COUNT,
-    TAIL_RESERVE, TAIL_TOKEN_BUDGET,
+    BUCKET_OUTPUT_TARGET, BucketStore, L1_TRIGGER_MSGS, TAIL_RESERVE, TAIL_TOKEN_BUDGET,
 )
 
 # _PARTIAL_MIN is a private class attribute; re-export under a clean

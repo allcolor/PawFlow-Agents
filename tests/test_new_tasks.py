@@ -4,8 +4,6 @@ import unittest
 import json
 import hashlib
 import base64
-import gzip
-import zlib
 import os
 import tempfile
 
@@ -416,7 +414,7 @@ class TestFilterContentTask(unittest.TestCase):
         results = task.execute(ff)
         lines = results[0].get_content().decode().split('\n')
         self.assertEqual(len(lines), 2)
-        self.assertTrue(all('ERROR' in l for l in lines))
+        self.assertTrue(all('ERROR' in line for line in lines))
 
     def test_exclude_mode(self):
         from tasks.data.filter_content import FilterContentTask

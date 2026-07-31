@@ -139,7 +139,7 @@ class TestCascadeResolution(unittest.TestCase):
     """Tests for cascading expression resolution."""
 
     def setUp(self):
-        import json, tempfile, shutil
+        import json
         self._orig_global = None
         self._user_dir = None
         # Save original global params — use dynamic paths (conftest may have patched)

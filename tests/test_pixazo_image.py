@@ -9,14 +9,12 @@ Covers:
   - Unknown model / unknown operation error paths.
 """
 
-from unittest.mock import patch
 
 import pytest
 
 from services.pixazo_image_service import (
-    PixazoImageService, _load_catalog, _CATALOG_CACHE,
+    PixazoImageService, _load_catalog,
 )
-import services.pixazo_image_service as _svc_mod
 
 
 def _svc(model: str = "nano-banana-pro") -> PixazoImageService:

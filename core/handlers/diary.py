@@ -1,6 +1,5 @@
 """Diary handlers — agent reads/writes its personal journal."""
 
-import json
 import logging
 from typing import Any, Dict
 

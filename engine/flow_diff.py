@@ -1,7 +1,7 @@
 """Flow diff — compare two flow configurations."""
 
-from typing import Dict, List, Any, Optional, Tuple
-from dataclasses import dataclass, field
+from typing import Dict, List, Any
+from dataclasses import dataclass
 
 
 @dataclass

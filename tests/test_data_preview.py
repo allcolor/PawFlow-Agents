@@ -2,10 +2,9 @@
 
 import time
 import threading
-import pytest
 
-from engine.data_preview import DataPreviewManager, DataSample
-from engine.flow_diff import FlowDiff, DiffEntry
+from engine.data_preview import DataPreviewManager
+from engine.flow_diff import FlowDiff
 from core import FlowFile
 
 

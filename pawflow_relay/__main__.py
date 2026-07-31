@@ -61,7 +61,6 @@ def main(argv=None):
     gateway_cookie = ""
     if args.gateway_key:
         try:
-            from pawflow_relay.utils import api_call
             import http.client
             from urllib.parse import urlparse
             parsed = urlparse(args.server)

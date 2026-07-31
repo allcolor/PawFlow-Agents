@@ -23,13 +23,13 @@ import base64
 import json
 import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 from core.key_vault import (
     KeyUnwrapError, unwrap_dek_passphrase, wrap_dek_passphrase,
 )
 from core.relay_keywrap import (
-    generate_relay_keypair, key_id_for, public_from_private,
+    generate_relay_keypair, key_id_for,
 )
 
 _WRAP_RESOURCE = "relay-key"  # AAD domain for the private-key wrap

@@ -6,8 +6,7 @@ import http.client
 import queue
 import ssl
 import threading
-import time
-from typing import Any, Callable, Dict, Optional
+from typing import Dict, Optional
 from urllib.parse import urlparse, urlencode
 from uuid import uuid4
 

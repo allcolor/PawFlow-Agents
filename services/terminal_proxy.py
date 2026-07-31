@@ -11,7 +11,6 @@ traffic alongside filesystem commands on the same relay channel.
 import base64
 import json
 import logging
-import socket
 import struct
 import subprocess  # nosec B404
 import threading

@@ -71,7 +71,7 @@ def test_cc_live_status_filters_by_conv(fake_registry):
 def test_cc_live_status_filters_by_conv_and_agent(fake_registry):
     ff = FlowFile(content=b"")
     body = {"conversation_id": "C1", "agent_name": "agentA"}
-    result = _handle_cc_live(_FakeSelf(), "cc_live_status", body,
+    _handle_cc_live(_FakeSelf(), "cc_live_status", body,
                               store=None, user_id="u", flowfile=ff)
     payload = json.loads(ff.get_content())
     assert payload["count"] == 1
@@ -81,7 +81,7 @@ def test_cc_live_status_filters_by_conv_and_agent(fake_registry):
 def test_cc_live_status_empty_conv_returns_zero(fake_registry):
     ff = FlowFile(content=b"")
     body = {"conversation_id": "C_nonexistent", "agent_name": ""}
-    result = _handle_cc_live(_FakeSelf(), "cc_live_status", body,
+    _handle_cc_live(_FakeSelf(), "cc_live_status", body,
                               store=None, user_id="u", flowfile=ff)
     payload = json.loads(ff.get_content())
     assert payload["count"] == 0
@@ -107,7 +107,7 @@ def test_cc_restart_without_agent_kills_whole_conv(fake_registry):
 def test_cc_restart_with_agent_kills_only_that_agent(fake_registry):
     ff = FlowFile(content=b"")
     body = {"conversation_id": "C1", "agent_name": "agentA"}
-    result = _handle_cc_live(_FakeSelf(), "cc_restart", body,
+    _handle_cc_live(_FakeSelf(), "cc_restart", body,
                               store=None, user_id="u", flowfile=ff)
     fake_registry.kill_and_evict_by_conv_agent.assert_called_once()
     fake_registry.kill_and_evict_by_conv.assert_not_called()

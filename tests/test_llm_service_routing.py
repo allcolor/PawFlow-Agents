@@ -9,11 +9,10 @@ Covers:
 
 import json
 import threading
-import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from core.llm_client import LLMClient, LLMMessage, LLMResponse, LLMToolCall
+from core.llm_client import LLMClient, LLMMessage
 from core.connection import Connection
 from core import FlowFile
 
@@ -274,7 +273,6 @@ class TestResolveAgentTask(unittest.TestCase):
         self.store.create("agent", "researcher", "alice", {
             "prompt": "Research assistant",
         })
-        from unittest.mock import patch
         from core.conv_agent_config import CONV_AGENTS_KEY
         _fake_extras = {CONV_AGENTS_KEY: {"researcher": {
             "definition": "researcher", "llm_service": "grok",

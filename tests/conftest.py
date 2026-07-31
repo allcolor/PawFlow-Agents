@@ -5,9 +5,7 @@ for the entire test session. This prevents any test from polluting the
 user's data/repository, data/runtime, or data/system directories.
 """
 
-import shutil
 import pytest
-from pathlib import Path
 
 
 @pytest.fixture(autouse=True)

@@ -66,11 +66,6 @@ class OpenAICompatibleSTTService(BaseSTTService):
                 "default": "https://api.openai.com/v1",
                 "description": f"OpenAI-compatible API base URL, e.g. relay://{CONV_RELAY_EXPR}/localhost:1234/v1.",
             },
-            "model": {
-                "type": "string",
-                "default": "whisper-1",
-                "description": "Transcription model name",
-            },
             "protocol": {
                 "type": "string",
                 "default": "auto",

@@ -35,9 +35,9 @@ class AgentSyncMixin:
 
         conversation_id = ctx.get("conversation_id", "")
         use_conv_store = ctx.get("use_conv_store", False)
-        conv_ttl = ctx.get("conv_ttl", 0)
+        ctx.get("conv_ttl", 0)
         conv_attr = ctx.get("conv_attr", "")
-        base_count = ctx.get("_base_message_count", 0)
+        ctx.get("_base_message_count", 0)
 
         # Persistence: each message was already routed through
         # ConversationWriter.enqueue_message during the loop (agent_core._append).
@@ -56,7 +56,6 @@ class AgentSyncMixin:
 
         # Build output JSON
         if use_conv_store:
-            import re as _re
             output = json.dumps({
                 "response": result.response_content,
                 "conversation_id": conversation_id,

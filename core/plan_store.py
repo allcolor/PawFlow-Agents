@@ -8,10 +8,9 @@ No duplication, no JSONL extras. Delete = delete file.
 
 import json
 import logging
-import os
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 

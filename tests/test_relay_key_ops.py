@@ -7,9 +7,7 @@ real FUSE store — that's the user's live validation).
 """
 
 import base64
-import os
 
-import pytest
 
 from pawflow_relay import key_ops
 from core.relay_keywrap import generate_relay_keypair, seal_dek, key_id_for

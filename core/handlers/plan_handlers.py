@@ -1,6 +1,5 @@
 """Plan tool handlers — create, update, approve, assign, cancel, delete, verify."""
 
-import json
 import logging
 import threading
 import time
@@ -78,7 +77,6 @@ class CreatePlanHandler(_PlanHandlerBase):
         self._agent_name = name
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        import time
         from core.handlers._arg_normalize import normalize_single_field_object_list
         title = arguments.get("title", "")
         # Tolerate string / list-of-string in addition to list-of-object:
@@ -705,7 +703,7 @@ class VerifyPlanStepHandler(_PlanHandlerBase):
                 return (
                     f"Step {step_num} approved."
                     + (f" Reason: {reason}" if reason else "")
-                    + (f" Plan completed!" if plan["status"] == "completed" else "")
+                    + (" Plan completed!" if plan["status"] == "completed" else "")
                 )
             else:
                 step["status"] = "pending"

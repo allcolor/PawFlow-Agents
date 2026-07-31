@@ -97,6 +97,12 @@ class StreamEvents(unittest.TestCase):
         self.assertEqual("".join(st.text), "hello")
         self.assertEqual("".join(st.reasoning), "think")
 
+    def test_reasoning_summary_deltas_are_visible_reasoning(self):
+        st = _StreamState()
+        st.feed({"type": "response.reasoning_summary_text.delta",
+                 "delta": "summary"})
+        self.assertEqual("".join(st.reasoning), "summary")
+
     def test_interleaved_calls_are_keyed_by_item_not_by_index(self):
         """Parallel tool calling is always on, so an index is not an identity."""
         st = _StreamState()
@@ -140,6 +146,7 @@ class StreamEvents(unittest.TestCase):
         self.assertEqual(st.status, "completed")
         self.assertEqual(st.model, "deepseek-v4-flash")
         self.assertEqual(st.usage["input_tokens"], 100)
+        self.assertEqual(st.terminal_event, "response.completed")
 
     def test_a_failed_response_keeps_its_reason(self):
         st = _StreamState()
@@ -296,6 +303,14 @@ class EndToEnd(unittest.TestCase):
                     "status": "failed",
                     "error": {"message": "context too long"}}}))
         self.assertIn("context too long", str(ctx.exception))
+
+    def test_eof_before_a_terminal_event_is_an_error(self):
+        from core.llm_client import LLMClientError
+        with self.assertRaises(LLMClientError) as ctx:
+            self._run(self._client(), _sse(
+                {"type": "response.output_text.delta",
+                 "delta": "partial"}))
+        self.assertIn("terminal event", str(ctx.exception))
 
     def test_the_text_callback_fires_once_for_the_whole_block(self):
         seen = []

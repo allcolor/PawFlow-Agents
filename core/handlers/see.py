@@ -272,7 +272,7 @@ class SeeHandler(BaseFsHandler):
             tmp.close()
 
             # Try whisper CLI
-            result = subprocess.run(  # nosec B603, B607
+            subprocess.run(  # nosec B603, B607
                 ["whisper", tmp.name, "--model", "base", "--output_format", "txt",
                  "--output_dir", os.path.dirname(tmp.name)],
                 capture_output=True, text=True, timeout=120)

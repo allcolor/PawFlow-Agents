@@ -14,8 +14,8 @@ import logging
 import os
 import queue
 import threading
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 

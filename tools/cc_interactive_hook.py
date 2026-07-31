@@ -108,6 +108,8 @@ def _compact_input(raw: dict) -> dict:
     keep = {
         "hook_event_name", "session_id", "cwd", "permission_mode",
         "source", "trigger", "error", "matcher", "agent_id", "agent_type",
+        "turn_id", "model", "last_assistant_message", "stop_hook_active",
+        "reason",
     }
     out = {k: v for k, v in raw.items() if k in keep}
     if raw.get("hook_event_name") == "UserPromptSubmit":

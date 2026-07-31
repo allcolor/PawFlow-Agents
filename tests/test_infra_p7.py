@@ -1,7 +1,6 @@
 """Tests for P7 infrastructure: Audit Log, Rate Limiter, WebSocket endpoints."""
 
 import json
-import time
 import pytest
 
 from tasks import register_all_tasks

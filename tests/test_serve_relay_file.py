@@ -6,7 +6,6 @@ Used by the chat UI to inline media stored on the user's relay
 
 from unittest.mock import patch
 
-import pytest
 
 from tasks import register_all_tasks
 register_all_tasks()

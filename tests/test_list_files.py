@@ -1,11 +1,9 @@
 """Tests for listFiles (enhanced), listSFTP, and FileTrackingService."""
 
-import json
 import os
 import time
 import pytest
 
-from core import FlowFile
 from tasks.system.list_files import ListFilesTask
 from services.file_tracking_service import FileTrackingService
 

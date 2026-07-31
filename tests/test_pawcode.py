@@ -28,7 +28,7 @@ class TestPawCodeImports:
         assert TerminalRenderer is not None
 
     def test_import_config(self):
-        from pawflow_cli.config import load_config, save_config, load_session
+        from pawflow_cli.config import load_config
         assert load_config is not None
 
     def test_stream_json_does_not_start_relay(self, monkeypatch):
@@ -173,7 +173,6 @@ class TestPawCodeImports:
         assert not saved
 
     def test_resume_command_sends_agent_message_without_waiting_for_command_result(self):
-        from pawflow_cli.app import PawCode
 
         app, api = _fake_pawcode()
 
@@ -604,7 +603,6 @@ class TestHeadlessLogin:
         monkeypatch.setattr(cli_auth, "save_session", lambda *a, **k: captured.setdefault("saved", a))
         monkeypatch.setattr(cli_auth, "check_session", lambda *a, **k: {})
 
-        pasted = "https://webchat.example/auth/login... http://127.0.0.1:1/callback?token=TKN&username=u"
         # The user pastes the redirected URL; parse_pasted_credential pulls
         # the token from the query string.
         result = cli_auth.authenticate(
@@ -782,7 +780,6 @@ class TestTokenCounter:
         assert token_counter._encoding_failed_at > 0.0
 
 
-from tools.fs_actions import action_edit as _action_edit
 
 
 class TestFuzzyEdit:

@@ -8,10 +8,7 @@ Verifies that:
 5. Reverse delegate (parent→task agent) finds the agent in task sub-conv
 6. source_task_id propagates through AgentTask and SSE events
 """
-import json
 import threading
-from pathlib import Path
-import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
 from core.handlers.resource_agent import FlashAgentHandler, SpawnAgentsHandler
@@ -148,11 +145,10 @@ class TestTaskConvIdExtraction:
         """Normal conv_id passes through unchanged."""
         h = _make_handler(conversation_id="conv1")
         # Trigger execute with a mock that lets us inspect what conv_id is used
-        with patch("core.agent_executor.resolve_agent_task") as mock_rat, \
+        with patch("core.agent_executor.resolve_agent_task"), \
              patch.object(h, "_deliver_shared_delegate", return_value={"state": "ok"}):
             h.execute({"tasks": [{"agent": "B", "message": "hi"}]})
             # shared path calls _deliver_shared_delegate with conv_id=conv1
-            call_kw = mock_rat.call_args  # not called for shared
             h._deliver_shared_delegate.assert_called_once()
             args = h._deliver_shared_delegate.call_args
             assert args.kwargs.get("conv_id") == "conv1"

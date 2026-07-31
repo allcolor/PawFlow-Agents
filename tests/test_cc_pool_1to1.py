@@ -8,15 +8,12 @@ preference, release-kills-container, top-up behavior, reaping.
 
 from __future__ import annotations
 
-import os
 import subprocess
-import threading
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-import core.claude_code_pool as pool_mod
 from core.claude_code_pool import ClaudeCodePool, _ContainerInfo
 
 

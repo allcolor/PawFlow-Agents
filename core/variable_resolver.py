@@ -5,7 +5,7 @@ Mixin for variable resolution in configuration.
 Avoids code duplication between BaseTask and BaseService.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 import re
 
 
@@ -59,7 +59,7 @@ class VariableResolverMixin:
             return value
 
         def replace_var(match):
-            var_path = match.group(1)
+            match.group(1)
 
             # Cannot be resolved at config time; keep unchanged
             return match.group(0)

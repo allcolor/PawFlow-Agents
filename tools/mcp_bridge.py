@@ -19,11 +19,9 @@ Uses JSON-RPC 2.0 over stdio (MCP standard).
 """
 import logging
 
-import hashlib
 import json
 import os
 import base64
-import struct
 import socket
 import ssl
 import sys

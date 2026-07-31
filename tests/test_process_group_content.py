@@ -1,7 +1,6 @@
 """Tests for ProcessGroup and ContentRepository."""
 
 import pytest
-import json
 
 from core.process_group import ProcessGroup
 from core.content_repository import ContentRepository, ContentClaim

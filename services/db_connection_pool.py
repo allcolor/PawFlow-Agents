@@ -8,7 +8,7 @@ Supporte SQLite et PostgreSQL.
 import queue
 import sqlite3
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from core.base_service import BaseService
 from core import ServiceFactory, ServiceError
 

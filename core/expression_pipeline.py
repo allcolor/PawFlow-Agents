@@ -15,8 +15,8 @@ import re
 import time
 import urllib.parse
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Any, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -333,7 +333,8 @@ def _apply_op(value: Any, op: str, args: List[str]) -> Any:
         hi = int(args[1]) if len(args) > 1 else 100
         return str(random.randint(lo, hi))  # nosec B311
     if op == "random_string":
-        import random, string
+        import random
+        import string
         n = int(args[0]) if args else 16
         return "".join(random.choices(string.ascii_letters + string.digits, k=n))  # nosec B311
     if op == "timestamp":

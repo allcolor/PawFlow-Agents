@@ -2,7 +2,6 @@
 
 import json
 import pytest
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from core.project_graph import ProjectGraph

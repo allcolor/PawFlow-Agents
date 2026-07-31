@@ -6,7 +6,6 @@ Filesystem storage implementation.
 
 import os
 import json
-import shutil
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 

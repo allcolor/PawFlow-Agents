@@ -4,7 +4,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from core.project_graph import ProjectGraph
 from core.project_graph_digest import build_project_graph_digest

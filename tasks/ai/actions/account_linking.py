@@ -2,9 +2,7 @@
 
 import json
 import logging
-from typing import Dict, Any, List, Optional
 
-from core import FlowFile
 
 logger = logging.getLogger(__name__)
 

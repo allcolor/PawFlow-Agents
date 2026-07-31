@@ -11,11 +11,9 @@ Tests cover:
 - i18n keys
 """
 
-import json
 import shutil
 import tempfile
 import unittest
-from pathlib import Path
 
 from core.memory_store import MemoryEntry, MemoryStore
 
@@ -325,7 +323,7 @@ class TestTtlCleanup(unittest.TestCase):
         # after the first remember triplet so we need to re-write.
         # Instead: poke directly via cleanup_expired which is the on-
         # demand path.
-        n = self.store.cleanup_expired("u1")
+        self.store.cleanup_expired("u1")
         # remember() already triggered the load cleanup; expired ones
         # were dropped on the first reload — but the *store_lock load*
         # was inside remember itself, before the new entry was added,

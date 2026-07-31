@@ -5,7 +5,7 @@ In-memory key-value cache service with TTL.
 """
 
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 from core.base_service import BaseService
 from core import ServiceFactory
 

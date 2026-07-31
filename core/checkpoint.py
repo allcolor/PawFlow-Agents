@@ -15,7 +15,6 @@ import difflib
 import json
 import logging
 import time
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

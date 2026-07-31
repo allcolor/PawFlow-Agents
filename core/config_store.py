@@ -18,7 +18,6 @@ except ImportError:  # pragma: no cover - non-POSIX fallback
     fcntl = None
 
 from core.config_value import ConfigValue
-from core.stream import SPILL_THRESHOLD
 
 logger = logging.getLogger(__name__)
 

@@ -9,9 +9,7 @@ Coverage:
 """
 
 import base64
-import errno
 import os
-import stat as _stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -77,7 +75,6 @@ class TestSandbox(_FsCase):
 
     def test_cannot_read_other_user_slot(self):
         # Even if alice's relay forges a path that resolves to bob's content
-        r = self.fs.open if False else None  # noqa: pyflakes — placeholder
         out = self.fs.handle("sfs.open",
                              {"path": "../bob/convB/secret.txt", "flags": os.O_RDONLY})
         self.assertEqual(out.get("error"), "EACCES")

@@ -10,14 +10,12 @@ with stats, orphan cleanup, and memory pressure monitoring.
 
 import atexit
 import io
-import os
 import hashlib
 import logging
-import tempfile
 import threading
 import weakref
 from pathlib import Path
-from typing import Optional, BinaryIO, Dict, Set
+from typing import Optional, BinaryIO, Dict
 
 logger = logging.getLogger(__name__)
 

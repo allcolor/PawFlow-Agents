@@ -8,7 +8,6 @@ touch.
 """
 import types
 
-import pytest
 
 from pawflow_relay import _relay_desktop as dt
 

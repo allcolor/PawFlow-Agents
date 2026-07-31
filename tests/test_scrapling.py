@@ -11,10 +11,8 @@ Tests cover:
 - i18n keys
 """
 
-import json
 import sys
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core import FlowFile, TaskFactory
@@ -255,7 +253,7 @@ class TestScraplingFetchTask(unittest.TestCase):
         ff.set_attribute("target.host", "example.com")
 
         with patch.dict(sys.modules, {"scrapling": mock_mod}):
-            results = task.execute(ff)
+            task.execute(ff)
 
         called_url = mock_mod.Fetcher.get.call_args[0][0]
         assert called_url == "https://example.com/page"

@@ -8,7 +8,6 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List
 
 from core import TaskFactory, ServiceFactory
 
@@ -205,13 +204,13 @@ def _admin_auto_layout(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
 
     by_layer = {}
     for tid in ids:
-        l = layers.get(tid, 0)
-        by_layer.setdefault(l, []).append(tid)
+        layer = layers.get(tid, 0)
+        by_layer.setdefault(layer, []).append(tid)
 
     positions = {}
-    for l in sorted(by_layer.keys()):
-        nodes = by_layer[l]
+    for layer in sorted(by_layer.keys()):
+        nodes = by_layer[layer]
         for i, tid in enumerate(nodes):
-            positions[tid] = {"x": 80 + l * 220, "y": 60 + i * 80}
+            positions[tid] = {"x": 80 + layer * 220, "y": 60 + i * 80}
 
     return {"positions": positions}

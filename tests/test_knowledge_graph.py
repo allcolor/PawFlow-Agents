@@ -13,7 +13,6 @@ Tests cover:
 - Confidence handling (string labels and float conversion)
 """
 
-import json
 import shutil
 import tempfile
 import unittest

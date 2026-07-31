@@ -2,11 +2,9 @@
 
 import argparse
 import json
-import sys
 import unittest
-from io import StringIO
 from pathlib import Path
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 
 
 # We need to mock 'tasks' import before importing cli, since cli.py

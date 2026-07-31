@@ -224,7 +224,6 @@ class TestCheckAndNotify:
         store.create(scope_type="user", scope_value="alice", period="daily",
                     limit_usd=10, policy="warn", created_by="admin")
         writer_calls = []
-        import core.budget_store as bs
 
         class _FakeWriter:
             def enqueue_message(self, *a, **k):

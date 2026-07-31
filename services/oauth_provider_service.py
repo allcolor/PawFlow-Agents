@@ -19,7 +19,7 @@ import logging
 import secrets
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from core.base_service import BaseService
 

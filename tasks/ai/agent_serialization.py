@@ -5,18 +5,13 @@ All methods access self (AgentLoopTask instance).
 """
 import json
 import logging
-import threading
-import time
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 
-from core import FlowFile
 from core.llm_client import (
-    LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
-    LLMToolCall, LLMToolResult, LLMClientError,
+    LLMMessage, LLMToolCall,
 )
-from core.tool_registry import ToolRegistry, create_default_registry
 
 logger = logging.getLogger(__name__)
 

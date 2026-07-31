@@ -569,7 +569,7 @@ class TriggerManager:
                 if isinstance(val, (str, int, float, bool)):
                     ff.set_attribute(f"trigger.{key}", str(val))
 
-            result = ContinuousFlowExecutor.run_batch(
+            ContinuousFlowExecutor.run_batch(
                 flow,
                 input_flowfiles=[ff],
                 parameters=trigger.config.parameters,

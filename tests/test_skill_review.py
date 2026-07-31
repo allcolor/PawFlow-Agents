@@ -77,7 +77,7 @@ def test_manage_resource_review_skill_uses_summarizer(monkeypatch):
     from core.handlers.resource_agent import ManageResourceHandler
 
     resolved = {}
-    captured = _patch_review_llm(monkeypatch, resolved)
+    _patch_review_llm(monkeypatch, resolved)
 
     handler = ManageResourceHandler()
     handler.set_user_id("alice")

@@ -212,9 +212,8 @@ def authenticate(server_url: str, force: bool = False,
         result["username"] = creds["username"]
     else:
         sys.stderr.write("Opening browser for login...\n")
-        opened = False
         try:
-            opened = webbrowser.open(auth_url)
+            webbrowser.open(auth_url)
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         # Always print URL — browser may fail in headless/WSL/SSH environments

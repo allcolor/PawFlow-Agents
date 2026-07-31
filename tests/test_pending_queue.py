@@ -1,6 +1,5 @@
 """Tests for core.pending_queue — persistent per-(conv, agent) ingress queue."""
 
-import json
 import threading
 from unittest.mock import patch
 

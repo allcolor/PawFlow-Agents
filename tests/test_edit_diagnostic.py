@@ -5,7 +5,6 @@ Each test case here reproduces a real-world failure mode and asserts
 the diagnostic surfaces a hint that points at the actual cause, so the
 agent can fix its input on the next attempt instead of guessing.
 """
-import pytest
 
 from tools.fs_actions import _diagnose_edit_mismatch
 

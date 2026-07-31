@@ -100,6 +100,7 @@ class InstallBootstrapTask(BaseTask):
         action_prefix = {
             "claude-code": "claude_code",
             "codex-app-server": "codex",
+            "codex-interactive": "codex",
             "gemini": "gemini",
             "antigravity-interactive": "gemini",
         }.get(provider)

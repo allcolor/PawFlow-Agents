@@ -8,9 +8,7 @@ Handles:
 
 import json
 import logging
-from typing import Optional, List
 
-from core import FlowFile
 
 logger = logging.getLogger(__name__)
 

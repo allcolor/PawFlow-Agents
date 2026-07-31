@@ -1,6 +1,5 @@
 """Tests for runtime infrastructure: TaskState, Connection."""
 
-import pytest
 
 from tasks import register_all_tasks
 register_all_tasks()
@@ -8,7 +7,6 @@ register_all_tasks()
 from core import FlowFile
 from core.task_state import TaskState, TaskStateManager
 from core.connection import Connection, ConnectionManager
-from core.prioritizer import PrioritizerType
 
 
 class TestTaskStateManager:

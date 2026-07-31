@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict
 
 from core import ServiceFactory, ServiceError
 from core.relay_proxy_url import (

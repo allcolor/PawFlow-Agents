@@ -2,7 +2,7 @@
 
 import json
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +368,7 @@ class TestSlackSendHandler:
         mock_svc.send_message.return_value = {"message_id": "123"}
         handler = SlackSendHandler()
         handler.set_service(mock_svc)
-        result = handler.execute({"channel_id": "C456", "text": "hello"})
+        handler.execute({"channel_id": "C456", "text": "hello"})
         mock_svc.send_message.assert_called_once()
 
     def test_parameters_schema(self):

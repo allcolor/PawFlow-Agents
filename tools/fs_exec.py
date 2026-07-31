@@ -91,9 +91,9 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         stdout = result.stdout or ""
         stderr = result.stderr or ""
         if len(stdout) > MAX_EXEC_OUTPUT:
-            stdout = stdout[:MAX_EXEC_OUTPUT] + f"\n... (truncated)"
+            stdout = stdout[:MAX_EXEC_OUTPUT] + "\n... (truncated)"
         if len(stderr) > MAX_EXEC_OUTPUT:
-            stderr = stderr[:MAX_EXEC_OUTPUT] + f"\n... (truncated)"
+            stderr = stderr[:MAX_EXEC_OUTPUT] + "\n... (truncated)"
         return {"stdout": stdout, "stderr": stderr, "returncode": result.returncode}
 
     # Docker-based execution: docker-python, docker-node, docker-bash

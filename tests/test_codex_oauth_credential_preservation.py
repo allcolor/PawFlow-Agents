@@ -1,8 +1,8 @@
-"""Regression tests: concurrent OAuth refresh must never destroy a valid
-codex credential. Two codex sessions sharing one pool slot must not both
-POST the same single-use refresh_token (the loser would error and drop a
-slot the winner just rotated). Mirror of test_oauth_credential_preservation
-for the codex provider.
+"""Regression tests for concurrent refresh of a shared Codex credential.
+
+Live Codex sessions may share one OAuth slot. PawFlow serializes only the short
+refresh transaction and waiters reuse the fresh access token persisted by the
+first session, regardless of whether OpenAI rotates the refresh token.
 """
 
 import threading
@@ -93,6 +93,19 @@ class TestCoordinatedCodexRefreshDedup(unittest.TestCase):
         self.assertEqual(out["access_token"], "AT1")
         self.assertEqual(out["refresh_token"], "RT1")
         self.assertEqual(out["id_token"], "ID1")
+
+    def test_peer_fresh_access_token_is_reused_when_refresh_token_is_unchanged(self):
+        live = [{"access_token": "AT1", "refresh_token": "RT0",
+                 "id_token": "ID1", "expires_at": 9_999_999_999_000}]
+        client = self._client()
+        with patch.object(cxs, "_load_credentials_pool",
+                          return_value=[dict(live[0])]), \
+                patch.object(cxs, "refresh_oauth_token") as raw:
+            out = client._codex_refresh_oauth_token_coordinated(
+                "RT0", service_id="svc", pool_index=0, user_id="", conv_id="")
+        raw.assert_not_called()
+        self.assertEqual(out["access_token"], "AT1")
+        self.assertEqual(out["refresh_token"], "RT0")
 
     def test_unrotated_slot_falls_through_to_network_refresh(self):
         live = [{"access_token": "AT0", "refresh_token": "RT0",

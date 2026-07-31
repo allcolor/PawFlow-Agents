@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
+from core.log_context import bind_session
+
 logger = logging.getLogger(__name__)
 
 # Composite key: every dimension that would invalidate reuse if it drifts.
@@ -342,10 +344,14 @@ class LiveSessionRegistry:
             for key, _reason, _session in to_kill:
                 self._sessions.pop(key, None)
         for key, reason, session in to_kill:
-            logger.info("[cc-live] sweeper evict %s (%s, idle=%.0fs, reuse=%d)",
-                        _fmt_key(key), reason,
-                        now - session.last_used, session.reuse_count)
-            _teardown_session(session, reason, killer, recover=self._recover)
+            # Bound around the teardown, not just the line: the kill, the pool
+            # release and the token copy-back all log from here, and those are
+            # the lines one needs to tie to a container after the fact.
+            with bind_session(_fmt_key(key)):
+                logger.info("[cc-live] sweeper evict %s (%s, idle=%.0fs, reuse=%d)",
+                            _fmt_key(key), reason,
+                            now - session.last_used, session.reuse_count)
+                _teardown_session(session, reason, killer, recover=self._recover)
         # Same rescue for the sessions that stay: teardown is the only other
         # moment it runs, and a server killed hard never reaches teardown.
         # The recover hook skips a token it has already copied, so a tick
@@ -358,17 +364,18 @@ class LiveSessionRegistry:
         if self._recover is None:
             return
         with self._lock:
-            sessions = list(self._sessions.values())
-        for session in sessions:
+            entries = list(self._sessions.items())
+        for key, session in entries:
             if not getattr(session, "workdir", ""):
                 continue
-            try:
-                self._recover(session.workdir, session.service_id,
-                              session.svc_pool_idx, session.user_id,
-                              session.conv_id)
-            except Exception:
-                logger.debug("[cc-live] live token recover failed",
-                             exc_info=True)
+            with bind_session(_fmt_key(key)):
+                try:
+                    self._recover(session.workdir, session.service_id,
+                                  session.svc_pool_idx, session.user_id,
+                                  session.conv_id)
+                except Exception:
+                    logger.debug("[cc-live] live token recover failed",
+                                 exc_info=True)
 
     # ── Shutdown ─────────────────────────────────────────────
 
@@ -384,21 +391,23 @@ class LiveSessionRegistry:
         for _key, session in entries:
             if self._recover is None or not getattr(session, "workdir", ""):
                 continue
-            try:
-                self._recover(session.workdir, session.service_id,
-                              session.svc_pool_idx, session.user_id,
-                              session.conv_id)
-            except Exception:
-                logger.debug("[cc-live] shutdown token recover failed",
-                             exc_info=True)
+            with bind_session(_fmt_key(_key)):
+                try:
+                    self._recover(session.workdir, session.service_id,
+                                  session.svc_pool_idx, session.user_id,
+                                  session.conv_id)
+                except Exception:
+                    logger.debug("[cc-live] shutdown token recover failed",
+                                 exc_info=True)
         for key, session in entries:
-            logger.info("[cc-live] shutdown kill %s (reuse=%d, lived=%.1fs)",
-                        _fmt_key(key), session.reuse_count,
-                        time.monotonic() - session.spawn_at)
-            # No recover here: the pass above covered exactly these entries,
-            # and asking twice would make the count of copies depend on the
-            # hook deduplicating itself.
-            _teardown_session(session, "shutdown", killer, recover=None)
+            with bind_session(_fmt_key(key)):
+                logger.info("[cc-live] shutdown kill %s (reuse=%d, lived=%.1fs)",
+                            _fmt_key(key), session.reuse_count,
+                            time.monotonic() - session.spawn_at)
+                # No recover here: the pass above covered exactly these
+                # entries, and asking twice would make the count of copies
+                # depend on the hook deduplicating itself.
+                _teardown_session(session, "shutdown", killer, recover=None)
 
     # ── Diagnostics ──────────────────────────────────────────
 

@@ -245,7 +245,7 @@ class TestConversationEventBus(unittest.TestCase):
         bus = ConversationEventBus.instance()
         w1 = bus.subscribe("conv1")
         w1.close()
-        w2 = bus.subscribe("conv1")
+        bus.subscribe("conv1")
         bus.publish_event("conv1", "test")
         assert bus.subscriber_count("conv1") == 1
 

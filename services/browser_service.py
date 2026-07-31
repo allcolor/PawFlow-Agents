@@ -17,7 +17,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from core.base_service import BaseService

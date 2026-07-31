@@ -7,7 +7,6 @@ Flow pattern:
     httpReceiver (GET /auth/login) → serveLogin → handleHTTPResponse
 """
 
-import json
 import logging
 import urllib.parse
 import html

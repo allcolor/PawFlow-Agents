@@ -21,13 +21,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Tuple
 
 import pytest
 
 from core.bucket_store import (
-    BucketStore, L1_TRIGGER_MSGS, ROLLUP_TRIGGER_COUNT, HEADER_BUDGET,
-    TAIL_RESERVE,
+    BucketStore, L1_TRIGGER_MSGS, ROLLUP_TRIGGER_COUNT, TAIL_RESERVE,
 )
 from tests.test_bg_bucket_builder import (
     _FakeBuilder, _fake_client, _shared_msg, _write_shared,
@@ -344,7 +342,6 @@ def test_tail_reserve_invariant_across_iterations(fake_builder):
 def test_per_agent_context_op_lock_isolation():
     """Agent-scoped context op lock must not block other agents on the
     same conversation, and must not block any agent on OTHER convs."""
-    import threading
     from tasks.ai.agent_loop import AgentLoopTask
 
     task = AgentLoopTask.__new__(AgentLoopTask)

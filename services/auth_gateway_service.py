@@ -331,13 +331,17 @@ All string values may use `${...}` expressions. They are resolved recursively at
                         invite_token: str = "") -> AuthResult:  # nosec B107 - optional token parameter defaults to absent.
         """Resolve, link, or create an OAuth user.
 
-        External OAuth never auto-creates users. A provider identity must match
-        an existing PawFlow user, or an admin-created temporary token must be
-        supplied to create/link exactly once.
+        A provider identity must match an existing PawFlow user, or be admitted
+        once -- by an admin-created onboarding token, or by a MAPPED group when
+        the provider explicitly opts into auto-provisioning. Both routes are
+        deliberate acts by an operator; neither lets an unknown identity in on
+        the strength of a name it chose itself.
         """
         from core.security import SecurityManager
 
         sm = SecurityManager.get_instance()
+        mapped_role, groups = self._mapped_role(auth_result)
+        auth_result.groups = list(groups)
 
         # Check if user already exists by an explicit OAuth link.
         existing = self._find_existing_user(sm, auth_result)
@@ -349,10 +353,12 @@ All string values may use `${...}` expressions. They are resolved recursively at
             sm._save_users()
             auth_result.user_id = existing.username
             auth_result.username = existing.username
-            auth_result.roles = [existing.role.value]
+            auth_result.roles = [self._effective_role(
+                existing.username, existing.role.value, mapped_role)]
             return auth_result
 
-        if not invite_token:
+        if not invite_token and not (mapped_role
+                                     and self._auto_provision(auth_result.provider)):
             pending_id = self._store_pending_oauth(auth_result)
             logger.warning("[auth_gateway] OAuth identity %s:%s requires onboarding token",
                            auth_result.provider, auth_result.user_id)
@@ -362,6 +368,12 @@ All string values may use `${...}` expressions. They are resolved recursively at
             )
             setattr(denied, "pending_oauth_id", pending_id)
             return denied
+
+        if not invite_token:
+            # Auto-provisioning: the mapped group IS the grant, so there is no
+            # token to consume and the role comes from the mapping.
+            return self._create_oauth_user(sm, auth_result, mapped_role,
+                                           reason="mapped group")
 
         from core import oauth_invite_tokens
         invite = oauth_invite_tokens.consume_token(
@@ -386,13 +398,76 @@ All string values may use `${...}` expressions. They are resolved recursively at
             sm._save_users()
             auth_result.user_id = link_username
             auth_result.username = link_username
-            auth_result.roles = [user.role.value]
+            auth_result.roles = [self._effective_role(
+                link_username, user.role.value, mapped_role)]
             return auth_result
 
         # Create the user only when an admin-issued token explicitly grants a role.
+        return self._create_oauth_user(
+            sm, auth_result, str(invite.get("role") or "user"),
+            reason="onboarding token")
+
+    # ── Group claims ───────────────────────────────────────────────
+
+    def _provider_config(self, provider_name: str) -> dict:
+        provider = self._providers.get(provider_name)
+        return dict(getattr(provider, "config", {}) or {}) if provider else {}
+
+    def _mapped_role(self, auth_result: AuthResult):
+        """(role granted by the identity's groups, the groups themselves).
+
+        An unmapped group yields "" -- authority lives in the operator's
+        mapping table, never in the group's name.
+        """
+        from core.auth_groups import highest_role, map_groups
+
+        groups = list(getattr(auth_result, "groups", None) or [])
+        if not groups:
+            return "", []
+        mappings = self._provider_config(auth_result.provider).get("group_mappings") or {}
+        if isinstance(mappings, str):
+            import json as _json
+            try:
+                mappings = _json.loads(mappings)
+            except ValueError:
+                logger.warning("[auth_gateway] group_mappings for %r is not JSON",
+                               auth_result.provider)
+                mappings = {}
+        if not isinstance(mappings, dict):
+            mappings = {}
+        return highest_role(map_groups(groups, mappings)), groups
+
+    def _auto_provision(self, provider_name: str) -> bool:
+        raw = self._provider_config(provider_name).get("auto_provision", False)
+        if isinstance(raw, str):
+            return raw.strip().lower() in ("1", "true", "yes", "on")
+        return bool(raw)
+
+    def _effective_role(self, username: str, stored_role: str,
+                        mapped_role: str) -> str:
+        """Apply the precedence, then refuse to strand the last admin."""
+        from core.auth_groups import resolve_role, would_orphan_last_admin
+
+        effective = resolve_role(stored_role, mapped_role)
+        if effective != stored_role and would_orphan_last_admin(username, effective):
+            logger.warning(
+                "[auth_gateway] refusing to demote %s to %r: it is the last "
+                "enabled admin — fix the group mapping, or promote another "
+                "admin first", username, effective)
+            return stored_role
+        if effective != stored_role:
+            logger.info("[auth_gateway] %s role %s -> %s from IdP groups",
+                        username, stored_role, effective)
+        return effective
+
+    def _create_oauth_user(self, sm, auth_result: AuthResult, role_str: str,
+                           reason: str) -> AuthResult:
+        """Create and link a PawFlow user for an admitted OAuth identity."""
+        from core.identity_service import IdentityService
         from core.security import Role
-        role_str = str(invite.get("role") or "user")
-        role = Role(role_str)
+
+        ids = IdentityService.instance()
+        role = Role(role_str or "user")
         username = self._derive_username(auth_result)
         try:
             user = sm.create_user(
@@ -405,7 +480,8 @@ All string values may use `${...}` expressions. They are resolved recursively at
             # Link identity via IdentityService (generic multi-provider)
             ids.link(username, auth_result.provider, auth_result.user_id)
             logger.info(f"[auth_gateway] Created user {username} "
-                        f"(provider={auth_result.provider}, role={role.value})")
+                        f"(provider={auth_result.provider}, role={role.value}, "
+                        f"admitted by {reason})")
         except ValueError:
             # User already exists (race condition) — fetch it
             user = sm.get_user(username)

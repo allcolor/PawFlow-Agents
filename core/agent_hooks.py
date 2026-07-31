@@ -13,7 +13,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 

@@ -102,7 +102,7 @@ class CopyHandler(BaseFsHandler):
                 return data  # error message
 
             # Write to dest
-            result = self._write_bytes(dst_svc, dst_workdir, dest_path, data, local=_local)
+            self._write_bytes(dst_svc, dst_workdir, dest_path, data, local=_local)
             fname = source_path.rsplit("/", 1)[-1] if "/" in source_path else source_path
             return f"Copied {fname} ({len(data):,} bytes): {source_path} → {dest_path}"
         except Exception as e:

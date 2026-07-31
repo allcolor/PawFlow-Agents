@@ -10,11 +10,9 @@ import logging
 
 import base64
 import hashlib
-import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 # Use `sys.platform` (constant string baked at interpreter startup)
 # rather than `platform.system()`. Python 3.14 reimplemented

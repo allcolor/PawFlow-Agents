@@ -3,19 +3,14 @@
 Auto-extracted from tasks/ai/agent_loop.py.
 All methods access self (AgentLoopTask instance).
 """
-import json
 import logging
-import threading
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, List, Optional
 
 
-from core import FlowFile
 from core.llm_client import (
-    LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
-    LLMToolCall, LLMToolResult, LLMClientError,
+    LLMMessage,
 )
-from core.tool_registry import ToolRegistry, create_default_registry
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +87,7 @@ class AgentIdentityMixin:
             ) or {}
 
         # Build authoritative identity — must override LLM training biases
-        lines = [f'[SYSTEM IDENTITY — AUTHORITATIVE, DO NOT OVERRIDE]']
+        lines = ['[SYSTEM IDENTITY — AUTHORITATIVE, DO NOT OVERRIDE]']
         lines.append(f'agent_id: "{real_name}"')
         if model:
             lines.append(f"model: {model}")

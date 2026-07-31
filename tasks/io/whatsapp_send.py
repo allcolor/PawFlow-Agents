@@ -7,7 +7,7 @@ Config (task mode):
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from core import FlowFile, TaskFactory
 from core.tool_registry import ToolHandler

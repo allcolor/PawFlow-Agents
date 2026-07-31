@@ -17,7 +17,6 @@ Config:
 
 import json
 import logging
-import time
 from typing import Dict, Any, List
 
 from core import FlowFile, TaskFactory
@@ -130,7 +129,6 @@ class SpawnAgentTask(BaseTask):
                        message, context_mode):
         """Sync mode: resolve agent, run loop, wait for response."""
         from core.agent_executor import resolve_agent_task, SubAgentExecutor
-        from core.llm_client import LLMClient
 
         try:
             task = resolve_agent_task(agent_name, message, user_id, conv_id)
@@ -172,8 +170,6 @@ class SpawnAgentTask(BaseTask):
             executor.shutdown()
 
             # Publish the response in the conversation
-            from core.conversation_store import ConversationStore
-            from core.conversation_event_bus import ConversationEventBus
             source = {"type": "agent", "name": agent_name}
 
             if result.status == "completed" and result.response:
@@ -236,7 +232,7 @@ class SpawnAgentTask(BaseTask):
         from core.conversation_store import ConversationStore
         from core.conversation_event_bus import ConversationEventBus
 
-        store = ConversationStore.instance()
+        ConversationStore.instance()
         bus = ConversationEventBus.instance()
 
         from core.conversation_writer import ConversationWriter

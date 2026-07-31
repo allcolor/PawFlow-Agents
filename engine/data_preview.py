@@ -3,8 +3,8 @@ import logging
 
 import time
 import threading
-from typing import Dict, List, Optional, Any, Set
-from dataclasses import dataclass, field
+from typing import Dict, List, Set
+from dataclasses import dataclass
 
 
 @dataclass

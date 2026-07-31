@@ -61,8 +61,6 @@ def test_agent_builders_inject_common_prompt_and_cli_mcp_separately():
     from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
     from core.llm_providers.claude_code import LLMClaudeCodeMixin
     from core.llm_providers.gemini import LLMGeminiMixin
-    from tasks.ai.agent_core import AgentCoreMixin
-    from tasks.ai.agent_context import AgentContextMixin
 
     agent_context_src = _agent_context_src()
     assert "inject_common_agent_system_prompt" in agent_context_src
@@ -110,7 +108,6 @@ def test_agent_skills_use_assigned_skills_as_single_source():
     from tasks.ai.actions import (
         agent_resource, _agentres_base, _agentres_k1, _agentres_k2,
         _agentres_k3, _agentres_k4, _agentres_k5)
-    from tasks.ai.agent_context import AgentContextMixin
 
     context_src = _agent_context_src()
     executor_src = inspect.getsource(resolve_agent_task)

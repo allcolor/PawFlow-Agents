@@ -66,11 +66,11 @@ def test_an_unidentified_run_releases_nothing(monkeypatch):
     assert not called, "no conversation/agent pair means nothing to release"
 
 
-def test_the_five_cli_registries_are_covered():
+def test_all_cli_registries_are_covered():
     src = Path("core/cli_live_sessions.py").read_text(encoding="utf-8")
     for registry in ("LiveSessionRegistry", "InteractiveClaudeCodePool",
-                     "CodexLiveRegistry", "GeminiLiveRegistry",
-                     "AntigravityObserverPool"):
+                     "CodexInteractivePool", "CodexLiveRegistry",
+                     "GeminiLiveRegistry", "AntigravityObserverPool"):
         assert registry in src, registry
 
 

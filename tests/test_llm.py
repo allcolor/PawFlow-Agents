@@ -4,8 +4,6 @@ import json
 import time
 import pytest
 from unittest.mock import patch, MagicMock
-from http.client import HTTPResponse
-from io import BytesIO
 
 from tasks import register_all_tasks
 register_all_tasks()

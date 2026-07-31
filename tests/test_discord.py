@@ -1,9 +1,7 @@
 """Tests for Discord integration: service, tasks, handler, flow, i18n."""
 
-import os
-import queue
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +82,6 @@ class TestDiscordReceiverTask:
         assert task.has_pending_input() is False
 
     def test_parse_update_creates_flowfile(self):
-        from core import FlowFile
         task = self._make_task()
         update = {
             "content": "hello world",
@@ -227,7 +224,7 @@ class TestDiscordSendHandler:
 
     def _make_handler(self, service=None):
         from core.tool_registry import ToolRegistry
-        registry = ToolRegistry()
+        ToolRegistry()
         from tasks.io.discord_send import DiscordSendHandler
         handler = DiscordSendHandler(service=service)
         return handler
@@ -256,6 +253,6 @@ class TestDiscordSendHandler:
         mock_svc.send_message.return_value = {"message_id": "123"}
         handler = DiscordSendHandler()
         handler.set_service(mock_svc)
-        result = handler.execute({"channel_id": "ch1", "text": "hello"})
+        handler.execute({"channel_id": "ch1", "text": "hello"})
         mock_svc.send_message.assert_called_once()
 

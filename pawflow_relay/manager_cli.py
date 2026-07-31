@@ -235,7 +235,8 @@ def main(argv=None) -> int:
 
         if args.command == "start":
             if getattr(args, "unlock_key", False):
-                import base64 as _b64, os as _os
+                import base64 as _b64
+                import os as _os
                 from core import relay_key_store as _ks
                 from pawflow_relay.manager import relay_home as _rh
                 _pw = getpass.getpass("Relay key passphrase: ")

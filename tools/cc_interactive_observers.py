@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import json
 import zlib
+from urllib.parse import urlsplit
 
 try:
     from cc_interactive_filters import (
@@ -77,11 +78,56 @@ class SSEObserver:
         EVENTS.emit(ev)
 
 def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
-    if not path.startswith("/v1/messages"):
-        return
     try:
         payload = json.loads(body.decode("utf-8"))
     except Exception:
+        return
+    if urlsplit(path).path.rstrip("/").endswith("/responses"):
+        items = payload.get("input") or []
+        if not isinstance(items, list):
+            return
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type == "function_call":
+                call_id = item.get("call_id") or item.get("id") or ""
+                if not call_id:
+                    continue
+                raw_args = item.get("arguments") or "{}"
+                try:
+                    args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                except Exception:
+                    args = {}
+                tool_name = item.get("name", "")
+                display_name, display_args = normalize_observed_tool(
+                    tool_name, args if isinstance(args, dict) else {})
+                EVENTS.emit({
+                    "type": "tool_use",
+                    "request_id": request_id,
+                    "path": path,
+                    "tool_use_id": call_id,
+                    "name": display_name,
+                    "arguments": display_args,
+                    "tool_origin": observed_tool_origin(tool_name),
+                })
+            elif item_type == "function_call_output":
+                call_id = item.get("call_id") or item.get("id") or ""
+                if not call_id:
+                    continue
+                output = item.get("output", "")
+                result = output if isinstance(output, str) else json.dumps(
+                    output, ensure_ascii=False)
+                EVENTS.emit({
+                    "type": "tool_result",
+                    "request_id": request_id,
+                    "path": path,
+                    "tool_use_id": call_id,
+                    "content": result,
+                    "is_error": False,
+                })
+        return
+    if not path.startswith("/v1/messages"):
         return
     messages = payload.get("messages") or []
     if not isinstance(messages, list):

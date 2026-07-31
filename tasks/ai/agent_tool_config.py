@@ -3,19 +3,10 @@
 Auto-extracted from tasks/ai/agent_loop.py.
 All methods access self (AgentLoopTask instance).
 """
-import json
 import logging
-import threading
-import time
-from typing import Dict, Any, List, Optional
 
 
-from core import FlowFile
-from core.llm_client import (
-    LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
-    LLMToolCall, LLMToolResult, LLMClientError,
-)
-from core.tool_registry import ToolRegistry, create_default_registry
+from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +52,6 @@ class AgentToolConfigMixin:
             SecurityScanHandler,
         )
         from core.handlers._fs_base import BaseFsHandler
-        from core.handlers.compact_result import CompactResultHandler
         from core.handlers.diary import DiaryWriteHandler, DiaryReadHandler
         from core.handlers.knowledge_graph import _KgBaseHandler
         from core.handlers.learn import LearnHandler

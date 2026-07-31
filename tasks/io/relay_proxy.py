@@ -19,7 +19,7 @@ import base64
 import json
 import logging
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask

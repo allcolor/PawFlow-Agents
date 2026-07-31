@@ -5,7 +5,7 @@ All tests mock Playwright — no real browser required.
 
 import pytest
 import time
-from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
+from unittest.mock import patch, MagicMock
 from dataclasses import fields
 
 

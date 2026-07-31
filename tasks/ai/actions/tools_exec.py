@@ -4,10 +4,7 @@ import json
 import logging
 import time
 import threading
-from typing import Dict, Any, List, Optional
 
-from core import FlowFile
-from core.llm_client import LLMMessage, LLMClient
 from core.tool_registry import ToolRegistry
 from tasks.ai.actions._conv_base import (_deny_conversation,
                                          _gate_conversation_action)
@@ -209,7 +206,7 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "install_tool":
-        filename = body.get("filename", "")
+        body.get("filename", "")
         source = body.get("source", "")
         if not source:
             flowfile.set_content(json.dumps({"error": "Missing source code"}).encode())

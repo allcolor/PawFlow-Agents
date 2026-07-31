@@ -5,7 +5,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from core.identity_service import IdentityService
 from core.conversation_store import ConversationStore
@@ -135,7 +135,10 @@ class TestAgentLoopTelegramAuth(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         IdentityService.reset()
-        import core.paths as _p; self._orig_ucd = _p.USER_CONFIG_DIR; _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp); self.ids = IdentityService()
+        import core.paths as _p
+        self._orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp)
+        self.ids = IdentityService()
         IdentityService._instance = self.ids
 
     def tearDown(self):
@@ -189,7 +192,10 @@ class TestTelegramConvCommands(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         IdentityService.reset()
-        import core.paths as _p; self._orig_ucd = _p.USER_CONFIG_DIR; _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp); self.ids = IdentityService()
+        import core.paths as _p
+        self._orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp)
+        self.ids = IdentityService()
         self._orig_oauth_tokens = _p.OAUTH_INVITE_TOKENS_FILE
         _p.OAUTH_INVITE_TOKENS_FILE = __import__("pathlib").Path(self.tmp) / "oauth_tokens.json"
         IdentityService._instance = self.ids
@@ -287,7 +293,10 @@ class TestAgentLoopAccountLinking(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         IdentityService.reset()
-        import core.paths as _p; self._orig_ucd = _p.USER_CONFIG_DIR; _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp); self.ids = IdentityService()
+        import core.paths as _p
+        self._orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp)
+        self.ids = IdentityService()
         IdentityService._instance = self.ids
         ConversationStore.reset()
         self.store = ConversationStore(store_dir=os.path.join(self.tmp, "convs"))
@@ -415,7 +424,10 @@ class TestIdentityBotToken(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         IdentityService.reset()
-        import core.paths as _p; self._orig_ucd = _p.USER_CONFIG_DIR; _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp); self.ids = IdentityService()
+        import core.paths as _p
+        self._orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp)
+        self.ids = IdentityService()
         IdentityService._instance = self.ids
 
     def tearDown(self):

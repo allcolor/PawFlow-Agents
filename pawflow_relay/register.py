@@ -19,7 +19,6 @@ Exported:
 import logging
 
 import http.client
-import json
 import os
 import secrets
 import sys

@@ -5,6 +5,33 @@ import threading
 import time
 
 
+def test_proxy_observes_responses_function_calls_and_outputs(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "input": [
+            {"type": "function_call", "call_id": "call-1",
+             "name": "mcp__pawflow__use_tool",
+             "arguments": json.dumps({
+                 "tool_name": "read",
+                 "arguments": {"path": "/workspace/a.py"}})},
+            {"type": "function_call_output", "call_id": "call-1",
+             "output": "file contents"},
+        ]
+    }).encode()
+
+    proxy._emit_observed_tool_blocks(
+        "request-1", "/backend-api/codex/responses", body)
+
+    assert [event["type"] for event in events] == [
+        "tool_use", "tool_result"]
+    assert events[0]["name"] == "read"
+    assert events[0]["arguments"] == {"path": "/workspace/a.py"}
+    assert events[1]["content"] == "file contents"
+
+
 class _RecvSocket:
     def __init__(self, chunks):
         self.chunks = list(chunks)

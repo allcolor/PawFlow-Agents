@@ -8,7 +8,6 @@ Streaming is supported via on_chunk callback for SSE responses.
 """
 
 import base64
-import json
 import logging
 from typing import Any, Dict, Optional
 

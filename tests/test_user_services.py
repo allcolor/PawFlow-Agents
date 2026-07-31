@@ -1,10 +1,6 @@
 """Tests for ServiceRegistry — CRUD, scope isolation, resolution chain, persistence, i18n."""
 
 import json
-import os
-import tempfile
-import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -616,7 +612,6 @@ class TestServiceForwarding:
             mock_svc = MagicMock()
             mock_reg.resolve.return_value = mock_svc
 
-            from core.service_registry import ServiceRegistry
             svc = mock_reg.resolve("shared_llm")
             assert svc == mock_svc
 

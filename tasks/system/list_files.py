@@ -11,7 +11,6 @@ Can run as:
 - Self-triggering: polls directory at configurable interval (for continuous mode)
 """
 
-import fnmatch
 import os
 import re
 import time

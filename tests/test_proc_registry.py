@@ -161,5 +161,7 @@ class TestIsolation:
             assert inflight_count() == 1
             assert proc2.poll() is None  # still running
         finally:
-            proc1.terminate(); proc2.terminate()
-            proc1.wait(); proc2.wait()
+            proc1.terminate()
+            proc2.terminate()
+            proc1.wait()
+            proc2.wait()

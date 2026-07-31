@@ -11,7 +11,6 @@ every section key in the self-view must also be present under view=all.
 
 import json
 
-import pytest
 
 from core import FlowFile
 from tasks import register_all_tasks

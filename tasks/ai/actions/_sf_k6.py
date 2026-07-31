@@ -111,8 +111,15 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
             return [flowfile]
         try:
             from core.claude_code_interactive_pool import InteractiveClaudeCodePool
-            sessions = InteractiveClaudeCodePool.instance().list_sessions(
-                user_id, conversation_id, service_id=service_id)
+            from core.codex_interactive_pool import CodexInteractivePool
+            sessions = []
+            for pool in (InteractiveClaudeCodePool.instance(),
+                         CodexInteractivePool.instance()):
+                sessions.extend(pool.list_sessions(
+                    user_id, conversation_id, service_id=service_id))
+            sessions.sort(
+                key=lambda row: float(row.get("last_used", 0) or 0),
+                reverse=True)
             flowfile.set_content(json.dumps({"sessions": sessions}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -122,6 +129,7 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
         agent_name = body.get("agent_name", "") or body.get("agent", "")
         conversation_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         service_id = body.get("service_id", "") or ""
+        provider = body.get("provider", "") or ""
         if not agent_name:
             flowfile.set_content(json.dumps({"error": "Missing agent_name"}).encode())
             return [flowfile]
@@ -131,24 +139,43 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
         try:
             import uuid
             from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+            from core.codex_interactive_pool import CodexInteractivePool
             from core.docker_utils import docker_cmd
             from services.terminal_proxy import register_terminal
 
-            pool = InteractiveClaudeCodePool.instance()
+            if provider == "codex-interactive":
+                pools = [CodexInteractivePool.instance()]
+            elif provider == "claude-code-interactive":
+                pools = [InteractiveClaudeCodePool.instance()]
+            else:
+                # Backward-compatible fallback for callers predating the
+                # provider field. A service id normally makes this unique.
+                pools = [InteractiveClaudeCodePool.instance(),
+                         CodexInteractivePool.instance()]
+            pool = None
+            state = None
+            for candidate in pools:
+                found = candidate.find_session(
+                    user_id, conversation_id, agent_name,
+                    service_id=service_id)
+                if found and (state is None
+                              or found.last_used > state.last_used):
+                    pool = candidate
+                    state = found
             # The terminal viewer must attach tmux as the SAME uid the pool
             # used to start the session (PAWFLOW_RUN_UID, not a hardcoded
             # 1000) — otherwise tmux looks in /tmp/tmux-<other-uid>/ and
             # reports "no sessions".
-            user_spec = pool._user_spec()
-            state = pool.find_session(
-                user_id, conversation_id, agent_name, service_id=service_id)
             if not state:
                 flowfile.set_content(json.dumps({
-                    "error": f"No live Claude Code interactive tmux session for agent '{agent_name}'"
+                    "error": f"No live interactive tmux session for agent '{agent_name}'"
                 }).encode())
                 return [flowfile]
+            user_spec = pool._user_spec()
 
-            session_id = f"cci_term_{uuid.uuid4().hex[:12]}"
+            terminal_kind = (
+                "codexi" if isinstance(pool, CodexInteractivePool) else "cci")
+            session_id = f"{terminal_kind}_term_{uuid.uuid4().hex[:12]}"
             cols = int(body.get("cols", 120) or 120)
             rows = int(body.get("rows", 30) or 30)
             bridge_script = r'''
@@ -260,7 +287,7 @@ finally:
                 "ok": True,
                 "session_id": session_id,
                 "token": _term_token,
-                "relay_id": f"cc:{agent_name}",
+                "relay_id": f"{terminal_kind}:{agent_name}",
                 "container": state.name,
             }).encode())
         except Exception as e:

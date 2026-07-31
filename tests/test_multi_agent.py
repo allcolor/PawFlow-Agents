@@ -9,7 +9,7 @@ from core.agent_executor import (
     SubAgentExecutor, AgentTask, AgentResult,
     resolve_agent_task, _get_depth, _set_depth, MAX_GLOBAL_DEPTH,
 )
-from core.llm_client import LLMClient, LLMMessage, LLMResponse, LLMToolCall
+from core.llm_client import LLMClient, LLMResponse, LLMToolCall
 from core.tool_registry import ToolRegistry, ToolHandler
 
 

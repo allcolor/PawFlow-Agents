@@ -18,7 +18,8 @@ MAX_EXEC_OUTPUT = 10 * 1024 * 1024  # 10 MB for stdout/stderr
 # Docker / path / host-IP helpers canonicalized in pawflow_relay.utils.
 # Re-exported here under the underscore aliases that fs_actions, fs_exec,
 # tools/pawflow_relay.py have always used, so downstream imports stay put.
-from pawflow_relay.utils import (
+# noqa on each: they are unused HERE by design -- the import IS the export.
+from pawflow_relay.utils import (  # noqa: F401
     docker_cmd as _docker_cmd,
     translate_path as _translate_path,
     to_host_path as _to_host_path,

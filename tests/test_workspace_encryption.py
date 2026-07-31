@@ -5,7 +5,6 @@ constraint (RFC #8), and CryFS command construction (key delivered via stdin,
 never argv). The actual FUSE mount runs on the relay (integration).
 """
 
-import base64
 
 import pytest
 

@@ -2,9 +2,8 @@
 
 import json
 import logging
-import re
 import threading
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from core.tool_handler import ToolHandler
 

@@ -5,7 +5,6 @@ The code executes on the relay (or sandbox), same as execute_script.
 Parameters are injected as local variables in the code.
 """
 
-import json
 import logging
 from typing import Dict, Any
 

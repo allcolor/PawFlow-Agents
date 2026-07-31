@@ -221,7 +221,6 @@ def _category_for(section_title: str, endpoint: str) -> str:
 def _iter_sections(text: str):
     """Yield (category, section_body) for every meaningful subsection."""
     # Walk headers in document order, tracking which category we're under.
-    pos = 0
     current_cat = "image"
     header_re = re.compile(r"^(#{2,3}) (.+)$", re.M)
     matches = list(header_re.finditer(text))
@@ -236,7 +235,6 @@ def _iter_sections(text: str):
         # Only H3 sections produce models (H2 are category headers)
         if level == 3 and not title.startswith("Category:"):
             yield current_cat, title, body
-        pos = end
 
 
 # ── Build catalog patch ────────────────────────────────────────────────

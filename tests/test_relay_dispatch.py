@@ -9,7 +9,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
 
 # tools/ on path so the dispatcher's lazy `from fs_actions import ACTIONS`
 # (only hit on the generic fall-through) resolves like in the relay container.

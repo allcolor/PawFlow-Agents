@@ -11,7 +11,6 @@ in dedicated admin endpoints, not in list_resources.
 import json
 from types import SimpleNamespace
 
-import pytest
 
 from core import FlowFile
 from tasks.ai.actions.agent_resource import _handle_agent_resource

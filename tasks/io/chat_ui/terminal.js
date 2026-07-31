@@ -133,6 +133,7 @@ function _pickCCInteractiveTerminal(sessions) {
       btn.className = 'exec-approve';
       btn.style.cssText = 'display:block;width:100%;margin-bottom:6px;text-align:left;';
       const bits = [session.agent_name || ''];
+      if (session.provider) bits.push(session.provider);
       if (session.service_id) bits.push(session.service_id);
       if (session.container_name) bits.push(session.container_name);
       btn.textContent = bits.filter(Boolean).join(' - ');

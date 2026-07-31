@@ -6,9 +6,8 @@ and publishes a `notification` SSE event (so every live webchat client
 sees the bell + toast).
 """
 
-import time
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from core.handlers.push_notification import PushNotificationHandler
 

@@ -2,11 +2,10 @@
 import logging
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 CONFIG_DIR = Path.home() / ".pawflow"
 SESSION_FILE = CONFIG_DIR / "session.json"

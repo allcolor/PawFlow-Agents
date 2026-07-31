@@ -24,7 +24,7 @@ FlowFile attributes set on failure:
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from core import FlowFile
 from core.base_task import BaseTask

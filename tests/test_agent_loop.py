@@ -26,7 +26,7 @@ from core.tool_registry import (
     ToolRegistry, ToolHandler, create_default_registry,
     ExecuteScriptHandler,
     HTTPToolHandler, TaskToolHandler, MCPToolHandler,
-    ConfigurableToolHandler, discover_mcp_tools,
+    discover_mcp_tools,
 )
 from core import FlowFile, TaskFactory
 from tasks.ai.agent_loop import AgentLoopTask

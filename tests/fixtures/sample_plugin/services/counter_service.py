@@ -1,7 +1,7 @@
 """Sample plugin service: a simple counter."""
 
 from core import Service
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 
 class CounterService(Service):

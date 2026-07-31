@@ -1,8 +1,6 @@
 """Tests for storage backends (Git, SQLite, Filesystem)."""
 
-import json
 import pytest
-from pathlib import Path
 
 
 # ============================================================================

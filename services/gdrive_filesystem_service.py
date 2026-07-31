@@ -13,7 +13,6 @@ Requires: OAuth2 authorization with google_drive provider (scope: drive).
 The user_id is injected at runtime from the authenticated session.
 """
 
-import base64
 import json
 import logging
 import posixpath
@@ -286,7 +285,7 @@ class GoogleDriveBackend(FilesystemBackend):
         # Convert glob to Drive query
         # Drive supports 'name contains' but not full glob
         search_term = pattern.replace("*", "").replace("?", "")
-        q_parts = [f"trashed = false"]
+        q_parts = ["trashed = false"]
         if search_term:
             q_parts.append(f"name contains '{search_term}'")
         if not recursive:

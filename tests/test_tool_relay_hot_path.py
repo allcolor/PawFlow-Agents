@@ -226,7 +226,6 @@ def test_tool_relay_injects_source_context_for_flash_delegate(monkeypatch):
 
 
 def test_read_only_search_does_not_resolve_full_env_for_plain_args(monkeypatch):
-    import services.tool_relay_service as relay_mod
 
     ToolRelayService.clear_runtime_caches()
     registry = _Registry("plain TOPSECRET output")
@@ -269,7 +268,6 @@ def test_read_only_search_does_not_resolve_full_env_for_plain_args(monkeypatch):
 
 
 def test_bash_still_receives_secret_environment(monkeypatch):
-    import services.tool_relay_service as relay_mod
     from core.tool_approval import ToolApprovalGate
 
     ToolRelayService.clear_runtime_caches()
@@ -310,7 +308,6 @@ def test_bash_still_receives_secret_environment(monkeypatch):
 
 
 def test_subconversation_tool_execution_uses_parent_runtime_scope(monkeypatch):
-    import services.tool_relay_service as relay_mod
 
     ToolRelayService.clear_runtime_caches()
     registry = _Registry("ok")

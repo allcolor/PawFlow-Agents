@@ -1,11 +1,8 @@
 """Tests for semantic memory: embeddings, memory store, tool handlers, LLM client."""
 
-import json
-import math
 import tempfile
-import os
 import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +138,6 @@ class TestMemoryStoreSemanticRecall:
         return MemoryStore(store_dir=tmp)
 
     def test_returns_correct_order(self):
-        from core.memory_store import MemoryStore
         with tempfile.TemporaryDirectory() as tmp:
             store = self._make_store(tmp)
             store.remember("u1", "close", tags=[], source="test", embedding=[1.0, 0.0])
@@ -196,7 +192,7 @@ class TestMemoryStoreRememberWithEmbedding:
         from core.memory_store import MemoryStore
         with tempfile.TemporaryDirectory() as tmp:
             store = MemoryStore(store_dir=tmp)
-            e1 = store.remember("u1", "same text", tags=["a"], source="test", embedding=[0.1, 0.2])
+            store.remember("u1", "same text", tags=["a"], source="test", embedding=[0.1, 0.2])
             e2 = store.remember("u1", "same text", tags=["a"], source="test", embedding=[0.9, 0.8])
             assert e2.embedding == [0.9, 0.8]
 
@@ -414,7 +410,7 @@ class TestEmbeddingProvider:
         from core.embeddings import EmbeddingProvider
         provider = EmbeddingProvider.instance()
         # With an api_key, should select openai
-        with patch.object(provider, 'embed', wraps=provider.embed) as mock_embed:
+        with patch.object(provider, 'embed', wraps=provider.embed):
             try:
                 provider.embed(["test"], provider="auto", api_key="sk-test123")
             except Exception:

@@ -111,7 +111,6 @@ def docx_to_markdown(path: Path) -> str:
     """Convert a .docx file to markdown text using python-docx."""
     try:
         from docx import Document
-        from docx.oxml.ns import qn
         doc = Document(str(path))
         lines = []
         for para in doc.paragraphs:

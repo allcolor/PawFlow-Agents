@@ -17,12 +17,9 @@ Agent tool types:
 
 import json
 import logging
-import http.client
-import ssl
 import threading
 import time
 from typing import Dict, Any, List, Optional
-from urllib.parse import urlparse
 
 # ToolHandler base class — in separate module to avoid circular imports
 from core.tool_handler import ToolHandler  # noqa: F401

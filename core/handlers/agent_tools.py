@@ -3,10 +3,9 @@
 import json
 import logging
 import http.client
-import re
 import ssl
 import threading
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 
 from core.tool_handler import ToolHandler

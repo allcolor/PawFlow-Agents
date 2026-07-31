@@ -7,7 +7,6 @@ plugin install/uninstall, etc.
 import json
 import logging
 import threading
-import time
 from collections import deque
 from dataclasses import dataclass, asdict
 from datetime import datetime

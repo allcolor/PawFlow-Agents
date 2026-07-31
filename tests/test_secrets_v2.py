@@ -246,7 +246,6 @@ def test_per_install_salt_changes_derived_key(monkeypatch, tmp_path):
     # Same password, different salt -> different master key. This is the
     # whole point: two installs sharing a password do not share a key.
     import core.paths as paths
-    import core.secrets as secrets
     monkeypatch.delenv("PAWFLOW_SECRET_SALT_B64", raising=False)
     salt_file = tmp_path / "secret.salt"
     monkeypatch.setattr(paths, "SECRET_SALT_FILE", salt_file)

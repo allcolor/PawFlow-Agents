@@ -9,7 +9,6 @@ Pour POST/PUT/PATCH/DELETE ou quand Scrapling n'est pas disponible, fallback url
 
 import json
 import logging
-import re
 import subprocess  # nosec B404
 import sys
 from typing import Dict, Any, List

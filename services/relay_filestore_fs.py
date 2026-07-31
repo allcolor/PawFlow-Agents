@@ -55,7 +55,6 @@ import os
 import stat as _stat
 import threading
 import time
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from core.file_store import FileStore

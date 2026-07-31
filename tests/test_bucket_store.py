@@ -12,7 +12,6 @@ Cover:
 
 import json
 
-import pytest
 
 from core.bucket_store import (
     BucketStore, L1_TRIGGER_MSGS, BUCKET_OUTPUT_TARGET,

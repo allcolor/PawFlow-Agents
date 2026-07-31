@@ -12,15 +12,13 @@ Config:
     webhook_path: str       — Webhook path (default: /whatsapp/webhook)
 """
 
-import hashlib
-import hmac
 import json
 import http.client
 import logging
 import ssl
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict
 
 from core import ServiceFactory
 from services.base_messaging_service import BaseMessagingService

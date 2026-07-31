@@ -11,9 +11,7 @@ Independent file from cc_live.py / codex_live.py by design — see memory
 
 import json
 import logging
-from typing import Optional, List
 
-from core import FlowFile
 
 logger = logging.getLogger(__name__)
 

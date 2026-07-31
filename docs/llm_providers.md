@@ -58,8 +58,9 @@ or context edit invalidates that session and resets the gauge to zero. On the ne
 cold turn, PawFlow first counts only the short injected bootstrap prompt. When the
 CLI reads `initial_context.md`, the native tool result becomes part of the gauge;
 the same serialized PawFlow messages are not counted a second time. This lifecycle
-applies to Claude Code, Claude Code interactive, Codex app-server, Antigravity, and
-Gemini CLI. Direct API-provider gauges continue to count their request messages.
+applies to Claude Code, Claude Code interactive, Codex app-server, Codex
+interactive, Antigravity, and Gemini CLI. Direct API-provider gauges continue
+to count their request messages.
 
 That read is kept out of the *next* cold start's context, and the two rules are
 not the same rule. The call and its result stay in the transcript and stay on the

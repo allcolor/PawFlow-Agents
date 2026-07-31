@@ -322,6 +322,7 @@ class TestStreamClaude(unittest.TestCase):
         tool_use_blocks = [p for (et, p) in blocks if et == "tool_use"]
         self.assertEqual(len(tool_use_blocks), 1)
         self.assertEqual(tool_use_blocks[0]["id"], "tc1")
+        self.assertEqual(tool_use_blocks[0]["tool_origin"], "native")
         # its result went live too
         self.assertTrue(any(et == "tool_result" and p.get("tc_id") == "tc1"
                             for (et, p) in blocks))

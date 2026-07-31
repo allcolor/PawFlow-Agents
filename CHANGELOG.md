@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   52 KB and 53.5 KB quoting content already present in clear a few hundred lines
   above. Transcript and agent context are two surfaces with two rules: the pair
   stays in the first and is dropped from the second, in every serialization path
-  of all five CLI providers. The gauge still charges for that body — it is
+  of all CLI providers. The gauge still charges for that body — it is
   literally what fills the provider's window — and the serializer reuses the
   gauge's own predicate so the two cannot drift apart.
 - `# nosec B404` markers point at the line Bandit flags again. The beta.63 ruff

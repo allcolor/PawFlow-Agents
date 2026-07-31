@@ -538,12 +538,17 @@ class _GeminiStreamMixin:
                     stream_tc_display_names[tc_id] = display_name
                     stream_tc_display_args[tc_id] = display_args
                     defer_wrapper = raw_name == "use_tool" and not raw_input and not result_text
+                    tool_origin = (
+                        "mcp"
+                        if self._gemini_acp_is_pawflow_mcp_tool(update, raw_name)
+                        else "native")
                     if block_callback and not defer_wrapper:
                         block_callback("tool_use", {
                             "id": tc_id,
                             "name": display_name,
                             "arguments": display_args,
                             "thinking": "".join(thinking_parts).strip(),
+                            "tool_origin": tool_origin,
                         })
                         thinking_parts.clear()
                         started_tool_ids.add(tc_id)

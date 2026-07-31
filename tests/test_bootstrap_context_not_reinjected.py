@@ -24,7 +24,7 @@ from core.llm_client import LLMClient, LLMMessage, LLMToolCall
 
 BOOTSTRAP_BODY = "# PawFlow Initial Context\n" + ("serialized history " * 400)
 
-# Every shape the five CLI providers use to open their own bootstrap file.
+# Every shape the CLI providers use to open their own bootstrap file.
 BOOTSTRAP_CALLS = [
     ("Read", {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md"}),
     ("Read", {"file_path": "/cc_sessions/c/a/.pawflow_cli/initial_context.md"}),

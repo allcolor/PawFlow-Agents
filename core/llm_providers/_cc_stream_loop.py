@@ -8,6 +8,7 @@ import time
 from core.interrupt_policy import SOFT_INTERRUPT_USER_COMMAND  # noqa: F401
 from core.llm_providers._cc_base import (
     _CC_READER_EOF, _CC401Retry, _CCStreamState)  # noqa: F401
+from tools.cc_interactive_filters import observed_tool_origin
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +309,8 @@ class _CCStreamLoopMixin:
                                     "name": block.get("name", "") or _tc_name,
                                     "arguments": block.get("input", _tc_args),
                                     "thinking": st._turn_thinking,
+                                    "tool_origin": observed_tool_origin(
+                                        block.get("name", "")),
                                 }
                                 if _parent_tc_id:
                                     _bc_payload["parent_tc_id"] = _parent_tc_id

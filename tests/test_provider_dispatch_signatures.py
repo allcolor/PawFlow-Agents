@@ -130,6 +130,8 @@ def test_gemini_provider_uses_acp_runtime_contracts():
     assert '"authenticate"' in provider_src
     assert "_gemini_acp_start_stdout_drain" in stream_src
     assert '"session/prompt"' in stream_src
+    assert "_gemini_acp_is_pawflow_mcp_tool(update, raw_name)" in stream_src
+    assert '"tool_origin": tool_origin' in stream_src
     assert "GeminiLiveRegistry" in stream_src
     assert "[gemini-acp-live] REUSE" in stream_src
     assert "[gemini-acp-live] active" in stream_src

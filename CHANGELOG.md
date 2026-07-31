@@ -4,6 +4,33 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.67] — 2026-07-31
+
+### Fixed
+
+- A claim owns the interactive stream from the moment it is granted, not from
+  the first poll. A request coordinator claims the stream, then blocks through
+  TUI readiness, paste, settle and submit verification before `run()` starts
+  polling — up to ~55s on a cold TUI. The orphan-turn net judged the presence
+  of a reader on `last_wait_at` and `injected_intent_at`, both set only after
+  that send, so in between the stream looked unowned: the capture adopted the
+  live turn and its own claim evicted the coordinator that was about to read
+  it. The service now timestamps the `request` claim itself and the net honours
+  it, capped at 120s. A coordinator that dies inside that window has already
+  failed its turn with an error, so there is no invisible response left to
+  recover and suppressing the net there costs nothing.
+- The codex TUI no longer opens its trust modal on a cold start. `config.toml`
+  declares the session slot as a trusted project — `projects."<path>"`,
+  `trust_level = "trusted"`, the key read out of the codex 0.146 binary rather
+  than assumed. Without it the dialog waits while drawing no readiness marker,
+  so the launch burns the full prompt-ready timeout, the injected prompt is
+  pasted into the modal, and only a human at the tmux can unblock it. The
+  declared path is exactly the directory the tmux `cd`s into, and the table is
+  written inside the PawFlow-managed section so a regeneration replaces it
+  instead of stacking a second table on the same key — duplicate TOML, which
+  makes codex reject the whole file. `codex exec` never asks the question, so
+  the headless provider emits nothing.
+
 ## [1.0.0-beta.66] — 2026-07-31
 
 ### Fixed

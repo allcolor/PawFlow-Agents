@@ -4,6 +4,84 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.63] — 2026-07-31
+
+### Fixed
+
+- A chain of `read_history` calls no longer brings the server down. Not a
+  deadlock — no lock is involved — but CPU and memory: eight of the nine
+  actions called `ConversationStore.load()`, which parses every row of the
+  transcript, sorts all of them and composes every display trace, to render at
+  most a hundred messages. `range` did it twice per call, once to slice and
+  once more inside the renderer to rebuild a msg_id-to-position index. That is
+  the exact shape the archived-phase summaries hand an agent — one `range()`
+  hint per phase — and on a 257k-message conversation a handful of those calls
+  is hundreds of megabytes and seconds of CPU each. The store gains bounded
+  readers (`iter_display_windows`, `load_window_by_index`,
+  `find_display_index`), `load_range_by_msg_id` collects between its two
+  anchors and stops at the closing one, and every action now retains only what
+  it returns: totals are counters, `recent` keeps a sliding tail, `around`
+  locates its anchor in a streaming pass then reads the window by index, and
+  `search` keeps its best hits bounded. An unterminated range is an error
+  naming the bad anchor instead of a silent empty answer. The regression test
+  measures the largest batch the store actually composes per call and fails if
+  it tracks the size of the conversation instead of the size of the page.
+- The cold/live rule is guarded in both directions. Case 1 — no process, so we
+  launch, so it is a cold start with the full context — was already enforced.
+  Its mirror was not: a turn built as a cold start whose provider then found
+  the process alive simply sent a delta carved out of a context assembled for
+  a launch that never happened. Nothing crashed, so nothing was noticed, but
+  every message paid for the whole transcript being loaded and compacted for
+  nothing, the gauge was zeroed against a session that never restarted, and
+  the persisted session pointers were cleared and rewritten each turn.
+  `_cli_require_delta_context` now raises `DeltaContextRequired` at every
+  provider's reuse site and the turn is rebuilt as the delta it is, at most
+  once per turn, on all five CLI providers.
+- Updating from the UI reclaims disk, as updating from the command line always
+  did. The installer has always pruned the image tags an install stopped
+  using; the UI updater never did, so an instance that only ever updated from
+  the UI kept every version it had run — beta.49, .50, .53, .57, .59, .61 — at
+  a couple of gigabytes each. Both updater scripts now end with the same
+  cleanup, after the restart, tolerating their own failures. What to keep is
+  read from the daemon rather than assumed: any image a container references
+  is spared, along with the server image being installed and the configured
+  relay images, which sit referenced by nothing between agent turns.
+- The admin gate matches a role exactly instead of as a substring. `"admin" in
+  roles` also accepted `admin-readonly` and `non-admin` — and a group named
+  `admin` in the identity provider was a privilege escalation waiting to be
+  created.
+
+### Added
+
+- `codex-interactive`: the real Codex TUI in tmux, kept alive across turns and
+  read from a local MITM of its `/responses` stream, on the credential pool
+  `codex-app-server` already owns. One user-visible turn can span several
+  Responses exchanges around MCP calls. It obeys the cold/delta rule like every
+  other CLI provider.
+- Session correlation in logs, always on and free. A `ContextVar`-bound session
+  key is injected by a logging filter, so every line emitted at any depth
+  carries `session=` and "what happened to this container" becomes a grep. The
+  bugs of the last ten betas were all shaped like that question.
+- Optional OpenTelemetry tracing, off unless an operator sets an endpoint.
+  Absent package or absent endpoint, every path is a no-op costing one
+  attribute lookup; a misconfiguration warns instead of stopping the boot.
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is read first. When a span is active its trace
+  id becomes the ambient log correlation, so a trace names its log lines and a
+  log line names its trace.
+- IdP claims, groups and permissions. Groups are extracted from the configured
+  claim by dotted path (`realm_access.roles` works) and mapped to PawFlow roles
+  by an explicit table. A mapped group can provision an account only if the
+  provider also carries a rule saying so. Local role wins over remote by
+  default, configurable through `auth.role_precedence`. The session carries its
+  groups and they reach flows as `http.auth.groups`. The Keycloak pitfall —
+  roles are not in `userinfo` without a mapper — is documented.
+
+### Changed
+
+- Ruff passes clean across the tree: 936 findings resolved, no functional
+  change intended, committed separately so a reviewer can skip it and a bisect
+  never lands on it.
+
 ## [1.0.0-beta.62] — 2026-07-31
 
 ### Fixed

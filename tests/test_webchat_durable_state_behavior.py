@@ -149,12 +149,12 @@ def test_turn_controller_keeps_positional_boundaries_and_rehydrates_live(tmp_pat
           const a = simplifiedTurns.get('turn-A');
           const b = simplifiedTurns.get('turn-B');
           const hydrated = {
-            aWorking:a.status === 'working', aNotFinal:!a.finalEl,
+            aWorking:a.status === 'working', aReadable:a.finalEl === partialA,
             aElapsed:Date.now() - a.startedAt >= 11000,
             aTimer:!!a.elapsedTimer, aRain:!!a.rainEl, aCue:a.transient.cues.length > 0,
             bPulse:!!b.idleEl,
-            filedA:a.tabs.messages.bodyEl.contains(partialA),
-            filedB:b.tabs.messages.bodyEl.contains(partialB)
+            detailA:!!a.finalDetailEl && a.tabs.messages.bodyEl.contains(a.finalDetailEl),
+            detailB:!!b.finalDetailEl && b.tabs.messages.bodyEl.contains(b.finalDetailEl)
           };
           // The done carries turn-A's id while turn-B is the one on screen.
           // An id NAMES a turn, it never selects one: the open block closes.
@@ -163,7 +163,7 @@ def test_turn_controller_keeps_positional_boundaries_and_rehydrates_live(tmp_pat
             content:'final B'}, finalB);
           turnViewFinalize({turn_id:'turn-A', final_msg_id:'final-B'});
           return {hydrated, aStatus:a.status, bStatus:b.status,
-            bFinal:b.finalEl === finalB, aUntouched:!a.finalEl};
+            bFinal:b.finalEl === finalB, aUntouched:a.finalEl === partialA};
         """,
     )
     assert all(value["hydrated"].values())

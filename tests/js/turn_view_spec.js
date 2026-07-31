@@ -136,6 +136,34 @@ test('a turn with no turn_id anywhere still groups', () => {
   assert(narration.parentNode !== e.messages, 'the message it replaced went back in');
 });
 
+test('the detail block always contains every message including its live last', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const first = e.row('a1');
+  first.dataset.messageRole = 'assistant'; first.dataset.rawText = 'first';
+  first.dataset.live = '1';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1', content: 'first' }, first);
+
+  const block = e.block();
+  const body = block.querySelector('#turn-panel-u1-messages .simple-turn-panel-scroll');
+  eq(body.children.length, 1, 'one message means one detail row');
+  assert(body.children[0].classList.contains('simple-turn-last-detail'),
+         'the current last is mirrored inside the detail block');
+  assert(body.children[0].dataset.live === undefined,
+         'the visual copy never keeps the live eviction marker');
+  assert(block.nextSibling === first, 'the interactive original stays readable outside');
+
+  const second = e.row('a2');
+  second.dataset.messageRole = 'assistant'; second.dataset.rawText = 'second';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a2', content: 'second' }, second);
+
+  eq(body.children.length, 2, 'two messages mean two detail rows');
+  assert(body.children[0] === first, 'the former last becomes its canonical detail row');
+  assert(body.children[1].classList.contains('simple-turn-last-detail'),
+         'the new last is mirrored inside the detail block');
+  assert(block.nextSibling === second, 'the live outside last advances immediately');
+});
+
 // The compact notice is born of a compact_progress event, not of a message
 // event, so it was the one row-creating path left uninstrumented: it sat at
 // top level, outside every block, for the rest of the conversation. Ingesting
@@ -410,12 +438,13 @@ test('a runtime turn stops protecting itself once it has ended', () => {
   e.ctx.turnViewIngest('assistant',
     { msg_id: 'a1', turn_id: 'u1', content: 'voila', _history: true }, answer);
   e.ctx.turnViewReconcile();
-  eq(topLevelIds(e).join(','), 'u1,BLOCK', 'a live turn keeps its rows inside');
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1',
+     'a live turn keeps its last readable while staying open');
 
   e.ctx.turnViewFinalize({ turn_id: 'u1' });   // done, naming nothing
   e.ctx.turnViewReconcile();                    // load more, recovery, anything
   eq(topLevelIds(e).join(','), 'u1,BLOCK,a1',
-     'the ended turn owes the reader its last message');
+     'ending the turn keeps the same last message in place');
 });
 
 // The browser-level copy of this lives in
@@ -452,8 +481,9 @@ test('the runtime snapshot rehydrates a live turn, and a done still closes the o
   const blocks = e.messages.querySelectorAll('.simple-turn-block');
   eq(blocks.length, 2, 'one block per turn');
   const [blockA, blockB] = blocks;
-  eq(topLevelIds(e).join(','), 'turn-A,BLOCK,turn-B,BLOCK',
-     'neither live turn is given an answer of its own');
+  eq(topLevelIds(e).join(','),
+     'turn-A,BLOCK,partial-A,turn-B,BLOCK,partial-B',
+     'each live turn keeps its current last message readable');
   assert(blockA.classList.contains('turn-working'),
          'a turn the server still runs stays open');
   eq(blockA.querySelector('.simple-turn-status').className,
@@ -469,8 +499,12 @@ test('the runtime snapshot rehydrates a live turn, and a done still closes the o
     for (let p = el.parentNode; p; p = p.parentNode) if (p === block) return true;
     return false;
   };
-  assert(inside(partialA, blockA), 'partial A filed in A');
-  assert(inside(partialB, blockB), 'partial B filed in B');
+  assert(partialA.parentNode === e.messages, "partial A is A's outside last");
+  assert(partialB.parentNode === e.messages, "partial B is B's outside last");
+  assert(inside(blockA.querySelector('.simple-turn-last-detail'), blockA),
+         'partial A is also represented in A details');
+  assert(inside(blockB.querySelector('.simple-turn-last-detail'), blockB),
+         'partial B is also represented in B details');
 
   // The done carries turn-A's id while turn-B is the turn on screen. An id
   // names a turn, it never selects one: the open block closes.
@@ -483,7 +517,8 @@ test('the runtime snapshot rehydrates a live turn, and a done still closes the o
 
   eq(blockB.querySelector('.simple-turn-status').className,
      'simple-turn-status completed', 'the open turn is the one that closed');
-  eq(topLevelIds(e).join(','), 'turn-A,BLOCK,turn-B,BLOCK,final-B',
+  eq(topLevelIds(e).join(','),
+     'turn-A,BLOCK,partial-A,turn-B,BLOCK,final-B',
      'the answer sits under the block that closed');
   assert(blockA.classList.contains('turn-working'),
          'the turn the done NAMED was not touched');
@@ -496,7 +531,7 @@ test('a reloaded turn files every intermediate row into its tab', () => {
     const panel = e.block().querySelector('#turn-panel-u1-' + key + ' .simple-turn-panel-scroll');
     return panel ? panel.children.length : -1;
   };
-  eq(rows('messages'), 1, 'narration in Messages');
+  eq(rows('messages'), 2, 'narration plus the last-message detail mirror');
   eq(rows('thinking'), 1, 'thinking in Thinking');
   eq(rows('tools'), 2, 'call and result in Tool calls');
 });

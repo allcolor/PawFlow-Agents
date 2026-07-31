@@ -12,6 +12,15 @@ from core.llm_client import (
 logger = logging.getLogger(__name__)
 
 
+def _cli_service_id(st) -> str:
+    """Return the same logical service id stamped on the provider client."""
+    active = str(getattr(st, "_active_llm_service", "") or "").strip()
+    if active:
+        return active
+    config = getattr(getattr(st, "resolved_svc", None), "config", {}) or {}
+    return str(config.get("_service_id", "") or "").strip()
+
+
 class _PACPhase1Mixin:
     def _pac_p1(self, st):
         st.model = self.config.get("model", "")
@@ -416,6 +425,11 @@ class _PACPhase1Mixin:
                 from core.conversation_store import ConversationStore as _CSSession
                 st._agent_key = st._active_agent_name or st._context_agent or 'default'
                 st._store_session = _CSSession.instance()
+                # Every live registry is keyed by the logical LLM service id
+                # stamped on client._agent_service. Service instances do not
+                # expose a `service_id` attribute; probing that attribute used
+                # an empty key and declared every warm CLI session cold.
+                st._svc_id = _cli_service_id(st)
                 if st._is_claude_code:
                     # The same question every other CLI asks: is there a LIVE
                     # process? A persisted session id is not one. claude-code
@@ -425,7 +439,6 @@ class _PACPhase1Mixin:
                     # would announce "warm", empty the message list, and hand
                     # a bare delta to a process that holds nothing.
                     from core.cc_live_registry import LiveSessionRegistry
-                    st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
                     st._live = LiveSessionRegistry.instance().find_for_agent(
                         st._user_id_for_svc, st.conversation_id,
                         st._agent_key, st._svc_id)
@@ -438,7 +451,6 @@ class _PACPhase1Mixin:
                 elif st._is_claude_code_interactive:
                     try:
                         from core.claude_code_interactive_pool import InteractiveClaudeCodePool
-                        st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
                         st._state = InteractiveClaudeCodePool.instance().find_session(
                             st._user_id_for_svc, st.conversation_id, st._agent_key, st._svc_id)
                         st._cli_has_session = bool(st._state)
@@ -449,7 +461,6 @@ class _PACPhase1Mixin:
                 elif st._is_antigravity_interactive:
                     try:
                         from core.antigravity_observer_pool import AntigravityObserverPool
-                        st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
                         st._state = AntigravityObserverPool.instance().find_session(
                             st._user_id_for_svc, st.conversation_id, st._agent_key, st._svc_id)
                         st._cli_has_session = bool(st._state)
@@ -467,7 +478,6 @@ class _PACPhase1Mixin:
                     # id here made us load the whole transcript for a turn the
                     # provider then resumed. Same rule as every other CLI: only
                     # a live process can claim to still hold this context.
-                    st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
                     st._live = None
                     try:
                         from core.cli_live_sessions import find_live_cli_session
@@ -526,7 +536,6 @@ class _PACPhase1Mixin:
                     # context. Starting an instance is a cold start, like every
                     # other CLI.
                     st._session_valid = False
-                    st._svc_id = getattr(st.resolved_svc, "service_id", "") or ""
                     try:
                         from core.cli_live_sessions import find_live_cli_session
                         from core.codex_live_registry import CodexLiveRegistry

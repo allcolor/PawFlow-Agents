@@ -124,7 +124,7 @@ class _CCStreamMixin:
         # _spawn_cc_stream. Ephemeral streams (compact / memory_extract
         # / btw) never reuse: they're short-lived by design and must
         # not inherit nor leak another stream's proc.
-        st._svc_id = getattr(self, '_agent_service', '') or 'default'
+        st._svc_id = getattr(self, '_agent_service', '') or ''
         # The slot the lookup asks about is the PERSISTED one, and setting a
         # slot up is not a question but a write: _setup_credentials stamps
         # .credentials.json, self._current_pool_index and the stored extra.

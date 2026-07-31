@@ -138,7 +138,8 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
   const state = {
     turnId, userMsgId: (userEl && userEl.dataset.msgid) || turnId, userEl: userEl || null,
     agentName: '', llmService: '',
-    status: 'working', expanded: false, activeTab: 'messages', finalMsgId: '', finalEl: null,
+    status: 'working', expanded: false, activeTab: 'messages', finalMsgId: '',
+    finalEl: null, finalDetailEl: null,
     identityRendered: false,
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
     artifactElementsByFileId: new Map(), artifactFileIdByCallId: new Map(),
@@ -369,11 +370,13 @@ function turnViewIngest(kind, data, element) {
     const tcId = String((data && (data.tc_id || data.tool_call_id)) || (element.dataset && element.dataset.tcId) || '');
     if (tcId) state.toolElementsByCallId.set(tcId, element);
     // The visible answer is positional: the last message of a turn is the one
-    // the reader is owed, and it lives *outside* the block. Deciding it from
+    // the reader is owed, and its original lives *outside* the block. Deciding it from
     // the done payload instead left it inside whenever the server did not name
     // a final message -- with the block stuck on "working" and the answer
     // buried in a collapsed tab. A live message row takes the outside spot as
-    // it arrives and hands it back to the block when a newer one appears.
+    // it arrives and hands it back to the block when a newer one appears. A
+    // visual copy stays in Messages so the detail block still contains every
+    // message of the turn, including the current last one.
     //
     // Replayed history is not live: an older page arrives *after* rows that
     // came before it, so "the last one ingested" is not "the last one of the
@@ -398,7 +401,9 @@ function turnViewIngest(kind, data, element) {
 
 // The one place the outside spot changes hands. The row that held it goes back
 // into the Messages tab -- appended, because it is the newest thing the tab has
-// seen -- and the newcomer takes its place directly under the block.
+// seen -- and the newcomer takes its place directly under the block. While it
+// holds that spot, a visual copy of it remains in Messages: the detail block
+// always contains every message in the turn.
 //
 // Whatever reaches here is MOVED. That is fine for a row of this turn and it is
 // destructive for anything else: a `final_msg_id` is resolved with a lookup that
@@ -410,10 +415,27 @@ function _turnPromoteLast(state, element) {
   if (!element) return;
   if (!_turnRowBelongsHere(state, element)) return;
   if (state.finalEl && state.finalEl !== element && state.tabs.messages) {
+    if (state.finalDetailEl && state.finalDetailEl.parentNode) state.finalDetailEl.remove();
     state.tabs.messages.bodyEl.appendChild(state.finalEl);
   }
   state.finalEl = element;
   state.finalMsgId = String((element.dataset && element.dataset.msgid) || state.finalMsgId || '');
+  if (state.finalDetailEl && state.finalDetailEl.parentNode) state.finalDetailEl.remove();
+  if (state.tabs.messages && typeof element.cloneNode === 'function') {
+    const detail = element.cloneNode(true);
+    detail.classList.add('simple-turn-last-detail');
+    detail.dataset.turnDetailMirror = '1';
+    detail.removeAttribute('id');
+    detail.removeAttribute('data-msgid');
+    detail.removeAttribute('data-history-units');
+    detail.removeAttribute('data-live');
+    detail.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    detail.querySelectorAll('[data-msgid]').forEach(el => el.removeAttribute('data-msgid'));
+    detail.querySelectorAll('[data-history-units]').forEach(el => el.removeAttribute('data-history-units'));
+    detail.querySelectorAll('[data-live]').forEach(el => el.removeAttribute('data-live'));
+    state.tabs.messages.bodyEl.appendChild(detail);
+    state.finalDetailEl = detail;
+  }
   const parent = state.blockEl.parentNode;
   if (parent && element.parentNode !== parent) parent.insertBefore(element, state.blockEl.nextSibling);
   else if (parent && state.blockEl.nextSibling !== element) parent.insertBefore(element, state.blockEl.nextSibling);
@@ -965,7 +987,7 @@ function turnViewReconcile() {
     // Every block owes the reader its last message, under it. A live row takes
     // that spot as it arrives; a replayed turn has to be given it here, or a
     // reload shows a block with the answer buried inside it.
-    if (!_turnRuntime.has(s.turnId) && (!s.finalEl || !s.finalEl.isConnected)) {
+    if (!s.finalEl || !s.finalEl.isConnected) {
       _turnPromoteRecordedLast(s);
     }
     _turnPlaceBlock(s);
@@ -1003,6 +1025,7 @@ function _turnPromoteRecordedLast(state) {
   const rows = Array.from(tab.bodyEl.children);
   for (let i = rows.length - 1; i >= 0; i--) {
     const el = rows[i];
+    if (el.dataset && el.dataset.turnDetailMirror === '1') continue;
     if (_turnRowRole(el) === 'system') continue;
     if (!String((el.dataset && el.dataset.rawText) || '').trim()) continue;
     _turnPromoteLast(state, el);

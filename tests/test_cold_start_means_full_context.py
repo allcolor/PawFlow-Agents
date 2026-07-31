@@ -255,6 +255,34 @@ def test_the_context_phase_asks_claude_code_the_live_question():
         "claude-code decides warm/cold on something other than a live process")
 
 
+def test_every_cli_probe_uses_the_provider_service_id():
+    """The context probe and provider must address the same registry key.
+
+    LLMConnectionService stores its id in config; it has no `service_id`
+    attribute. The active resolved id is also what _alc_setup stamps on
+    client._agent_service before every provider call.
+    """
+    from tasks.ai._agentctx_p1 import _cli_service_id
+
+    service = SimpleNamespace(config={"_service_id": "configured-service"})
+    state = SimpleNamespace(
+        _active_llm_service="active-service", resolved_svc=service)
+    assert _cli_service_id(state) == "active-service"
+
+    state._active_llm_service = ""
+    assert _cli_service_id(state) == "configured-service"
+
+    source = Path("tasks/ai/_agentctx_p1.py").read_text(encoding="utf-8")
+    probe = source[source.index("# CLI session detection"):
+                   source.index("# A cold CLI session")]
+    assert probe.count("st._svc_id = _cli_service_id(st)") == 1
+    assert 'getattr(st.resolved_svc, "service_id"' not in probe
+
+    cc_stream = Path("core/llm_providers/_cc_stream.py").read_text(encoding="utf-8")
+    assert "getattr(self, '_agent_service', '') or ''" in cc_stream
+    assert "getattr(self, '_agent_service', '') or 'default'" not in cc_stream
+
+
 # -- the rebuild is the ordinary cold path ----------------------------------
 
 def test_force_cold_skips_the_live_probe():

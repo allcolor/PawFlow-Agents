@@ -187,6 +187,82 @@ test('resume, gap recovery and load-more all page in backend cursor units', () =
   eq(value.delegateUnits, '2', 'a delegate box worth two rows advances the cursor by two');
 });
 
+test('two simplified load-more pages preserve order, live status, last message and scroll anchor', () => {
+  const e = env(CONVERSATION_PRELUDE + `
+    const calls=[], scrollWrites=[];
+    const pages=[
+      {conversation_id:'C',messages:[
+        {role:'user',content:'live question',msg_id:'u-live',turn_id:'u-live'},
+        {role:'assistant',content:'09:25',msg_id:'a-0925',turn_id:'u-live'}],
+       message_count:6,raw_count:2,offset:0,has_more:true,
+       history_cursor:{offset:2,before_msg_id:'u-live'},active_agent:'bot',
+       view_mode:'simplified',group_delegate_messages:false,
+       active_turns:[{turn_id:'u-live',started_at:10,duration:5,status:'running'}]},
+      {conversation_id:'C',messages:[
+        {role:'user',content:'old question',msg_id:'u-old'},
+        {role:'assistant',content:'09:12',msg_id:'a-0912'}],
+       message_count:6,raw_count:2,offset:2,has_more:true,
+       history_cursor:{offset:4,before_msg_id:'u-old'}},
+      {conversation_id:'C',messages:[
+        {role:'user',content:'oldest question',msg_id:'u-oldest'},
+        {role:'assistant',content:'09:00',msg_id:'a-0900'}],
+       message_count:6,raw_count:2,offset:4,has_more:false,
+       history_cursor:{offset:6,before_msg_id:'u-oldest'}}
+    ];
+    function action$(action,args){ calls.push({action,args:{...args}}); return {subscribe(next){
+      const fn=typeof next==='function'?next:next.next; fn(pages.shift());
+      if(next && next.complete) next.complete(); }}; }
+    function connectSSE(){}
+    function setMessagesScrollTop(value){
+      scrollWrites.push(value); document.getElementById('messages').scrollTop=value;
+    }
+  `, ['turn_view.js', 'conversations.js']);
+
+  const value = e.run(`
+    const box=document.getElementById('messages');
+    Object.defineProperty(box,'scrollHeight',{configurable:true,get(){return this.children.length*20;}});
+    Object.defineProperty(box,'clientHeight',{configurable:true,value:80});
+    resumeConv('C');
+    box.scrollTop=0;
+    loadMoreMessages();
+    box.scrollTop=0;
+    loadMoreMessages();
+
+    const blocks=Array.from(box.querySelectorAll('.simple-turn-block'));
+    const liveBlock=blocks.find(block=>block.dataset.turnId==='u-live');
+    const ids=()=>Array.from(box.children)
+      .filter(el=>el.id!=='loadMoreBanner')
+      .map(el=>el.dataset.msgid || (el.classList.contains('simple-turn-block')?'BLOCK':'?'));
+    const beforeIds=ids();
+    const beforeStatus=liveBlock.querySelector('.simple-turn-status').textContent;
+    const beforeDetail=liveBlock.querySelector('#turn-panel-u-live-messages .simple-turn-panel-scroll').children.length;
+    const atBottom=box.scrollHeight-box.scrollTop-box.clientHeight<=5;
+
+    const newest=addMsg('assistant','09:26',{msg_id:'a-0926',turn_id:'u-live'});
+    turnViewIngest('assistant',{msg_id:'a-0926',turn_id:'u-live',content:'09:26'},newest);
+    return {beforeIds,afterIds:ids(),beforeStatus,
+      afterStatus:liveBlock.querySelector('.simple-turn-status').textContent,
+      beforeDetail,
+      afterDetail:liveBlock.querySelector('#turn-panel-u-live-messages .simple-turn-panel-scroll').children.length,
+      scrollWrites,atBottom,currentOffset};
+  `);
+
+  jsonEq(value.beforeIds, [
+    'u-oldest','BLOCK','a-0900',
+    'u-old','BLOCK','a-0912',
+    'u-live','BLOCK','a-0925',
+  ], 'history pages stay before the current window in transcript order');
+  jsonEq(value.afterIds.slice(-3), ['u-live','BLOCK','a-0926'],
+    'the live last advances without historical rows replacing it');
+  eq(value.beforeStatus, 'Working');
+  eq(value.afterStatus, 'Working', 'pagination and live updates do not close the runtime turn');
+  eq(value.beforeDetail, 1, 'the one-message live block contains its last detail row');
+  eq(value.afterDetail, 2, 'the live block contains both messages after the update');
+  jsonEq(value.scrollWrites, [60, 60], 'each prepend preserves the current visual anchor');
+  eq(value.atBottom, false, 'the second load-more does not jump back to the bottom');
+  eq(value.currentOffset, 6);
+});
+
 // -- Runtime turns belong to the conversation being opened ---------------
 //
 // A -> B -> A: each load publishes its own active turns, hydrates them, and

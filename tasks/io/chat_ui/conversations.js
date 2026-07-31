@@ -471,6 +471,7 @@ function _clearConvLoadingPlaceholder() {
 // and for the post-reconnect gap recovery below, so a recovered message is
 // built exactly like the same message rendered on a normal load.
 function _renderHistoryRow(m) {
+  const options = arguments.length > 1 ? arguments[1] : null;
   let content = m.content || '';
   if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
     content = content.replace(/^\[[^\]]+\]:\s*/, '');
@@ -479,7 +480,8 @@ function _renderHistoryRow(m) {
   if (el && el.dataset) {
     el.dataset.historyUnits = String((Number(el.dataset.historyUnits) || 0) + 1);
   }
-  if (el && typeof turnViewIsSimplified === 'function' && turnViewIsSimplified()) {
+  if (el && !(options && options.deferTurnView)
+      && typeof turnViewIsSimplified === 'function' && turnViewIsSimplified()) {
     const role = m.type || m.role;
     const turnData = Object.assign({}, m, { _history: true });
     if (role === 'user') turnViewRegisterUser(turnData, el);
@@ -720,6 +722,7 @@ function loadMoreMessages() {
   const banner = document.getElementById('loadMoreBanner');
   if (banner) banner.innerHTML = 'Loading...';
   const prevHeight = container.scrollHeight;
+  const prevScrollTop = container.scrollTop;
   const nextOffset = Number(historyCursor && historyCursor.offset) || currentOffset;
   const requestConversationId = conversationId;
   const historyRequest = {
@@ -737,11 +740,29 @@ function loadMoreMessages() {
       _adoptHistoryPage(data);
       const insertPoint = banner && banner.parentNode === container ? banner.nextSibling : container.firstChild;
       if (typeof turnViewIsSimplified === 'function' && turnViewIsSimplified()) {
+        // History is older than every row already on screen. Build it without
+        // the live turn-ingestion path, then prepend the whole page in the
+        // transcript's own order. Replaying it at the bottom lets an old USER
+        // close the live turn and lets an old answer replace the live last row.
+        const frag = document.createDocumentFragment();
+        const existingRoots = new Set(Array.from(container.children));
         if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
-        try { for (const m of (data.messages || [])) _renderHistoryRow(m); }
+        try {
+          for (const m of (data.messages || [])) {
+            _renderHistoryRow(m, { deferTurnView: true });
+          }
+        }
         finally { if (typeof resumeTechnicalMessageGrouping === 'function') resumeTechnicalMessageGrouping(false); }
+        // Detach only after the complete page was rendered. Grouped rows from
+        // the same page must see one another while addMsg builds their shared
+        // delegate/task node; detaching each result immediately split one
+        // logical group into several roots.
+        for (const el of Array.from(container.children)) {
+          if (!existingRoots.has(el)) frag.appendChild(el);
+        }
+        container.insertBefore(frag, insertPoint);
         if (typeof turnViewReconcile === 'function') turnViewReconcile();
-        setMessagesScrollTop(container.scrollHeight - prevHeight);
+        setMessagesScrollTop(prevScrollTop + container.scrollHeight - prevHeight);
         _updateLoadMoreBanner(); loadingMore = false; return;
       }
       // Build elements in a fragment, then insert at the right position.
@@ -800,7 +821,7 @@ function loadMoreMessages() {
       }
       container.insertBefore(frag, insertPoint);
       if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
-      setMessagesScrollTop(container.scrollHeight - prevHeight);
+      setMessagesScrollTop(prevScrollTop + container.scrollHeight - prevHeight);
       _updateLoadMoreBanner();
       loadingMore = false;
     });

@@ -91,7 +91,8 @@ class _CsTranscriptMixin:
     def load_range_by_msg_id(self, cid: str,
                              from_msg_id: str,
                              to_msg_id: str,
-                             user_id: str = "") -> Optional[List[Dict]]:
+                             user_id: str = "",
+                             max_messages: int = 0) -> Optional[List[Dict]]:
         """Load messages in [from_msg_id, to_msg_id] inclusive.
 
         Used by read_history(action="range") — drives the bucket nav hints
@@ -99,6 +100,13 @@ class _CsTranscriptMixin:
         original messages. Returns [] if either id is missing or out of
         order. Returns None when the conversation doesn't exist / the
         user doesn't own it.
+
+        Bounded. Rows are collected only between the two anchors, the scan
+        stops at the closing one, and ``max_messages`` caps what is ever held
+        at once. This used to materialise the entire transcript just to slice
+        it: on a 257k-message conversation that is hundreds of megabytes and
+        a full sort per call, and read_history is called in chains -- a
+        handful of them was enough to bring the server to its knees.
         """
         if not self.exists(cid):
             return None
@@ -108,19 +116,148 @@ class _CsTranscriptMixin:
                 return None
         if not from_msg_id or not to_msg_id:
             return []
-        all_msgs = self._read(cid, self._scan_transcript)
-        if not all_msgs:
+        log = self._transcript_log(cid)
+        if not log.exists():
             return []
-        start = end = -1
-        for i, m in enumerate(all_msgs):
-            mid = m.get("msg_id") if isinstance(m, dict) else getattr(m, "msg_id", "")
-            if mid == from_msg_id and start < 0:
-                start = i
-            if mid == to_msg_id:
-                end = i
-        if start < 0 or end < 0 or end < start:
+        raw: List[Dict[str, Any]] = []
+        inside = False
+        closed = False
+        for row in log.iter_rows():
+            if self._is_trace_update_row(row):
+                if inside:
+                    raw.append(row)
+                continue
+            if not row.get("role"):
+                continue
+            # Break on the display row *after* the closing anchor, so the
+            # trace_update rows that trail it are still absorbed.
+            if closed:
+                break
+            if not inside:
+                if row.get("msg_id") != from_msg_id:
+                    continue
+                inside = True
+            if max_messages <= 0 or len(raw) < max_messages:
+                raw.append(row)
+            if row.get("msg_id") == to_msg_id:
+                closed = True
+        # An unterminated range is not a partial answer: to_msg_id missing or
+        # sitting before from_msg_id both mean the caller's anchors are wrong.
+        if not inside or not closed:
             return []
-        return all_msgs[start:end + 1]
+        return self._compose_display_traces(raw)
+
+    #: Display rows composed at once by the bounded readers below. Large
+    #: enough that a trace_update rarely falls outside its anchor's window,
+    #: small enough that reading the largest transcript on the instance costs
+    #: this many rows of memory instead of all of them.
+    _WINDOW_CHUNK = 2000
+
+    def iter_display_windows(self, cid: str, chunk: int = 0):
+        """Yield ``(start_index, messages)`` across the whole transcript.
+
+        The bounded counterpart of :meth:`load`, for the callers that really
+        must look at every message -- a search, a date range, a filtered
+        count. They keep only what they return, so walking the largest
+        conversation costs one window, not the conversation.
+
+        ``start_index`` is the absolute display index of the window's first
+        message, which is what the callers render as ``[#n]``.
+        """
+        chunk = int(chunk or self._WINDOW_CHUNK)
+        if chunk <= 0 or not self.exists(cid):
+            return
+        log = self._transcript_log(cid)
+        if not log.exists():
+            return
+        raw: List[Dict[str, Any]] = []
+        seen = 0
+        start_index = 0
+        for row in log.iter_rows():
+            if self._is_trace_update_row(row):
+                raw.append(row)
+                continue
+            if not row.get("role"):
+                continue
+            raw.append(row)
+            seen += 1
+            if seen >= chunk:
+                msgs = self._compose_display_traces(raw)
+                yield start_index, msgs
+                start_index += len(msgs)
+                raw = []
+                seen = 0
+        if seen:
+            yield start_index, self._compose_display_traces(raw)
+
+    def load_window_by_index(self, cid: str, start: int, count: int) -> List[Dict]:
+        """``count`` display messages from absolute display index ``start``.
+
+        Reads forward and stops as soon as the window is closed, so the cost
+        is the distance to the window plus its size -- never the whole file.
+        """
+        if count <= 0 or start < 0 or not self.exists(cid):
+            return []
+        log = self._transcript_log(cid)
+        if not log.exists():
+            return []
+        raw: List[Dict[str, Any]] = []
+        idx = 0
+        taken = 0
+        for row in log.iter_rows():
+            if self._is_trace_update_row(row):
+                if taken:
+                    raw.append(row)
+                continue
+            if not row.get("role"):
+                continue
+            if taken >= count:
+                break
+            if idx >= start:
+                raw.append(row)
+                taken += 1
+            idx += 1
+        return self._compose_display_traces(raw)
+
+    def find_display_index(self, cid: str, msg_id: str = "", seq: int = 0,
+                           ts: float = 0.0, backward: bool = False) -> int:
+        """Absolute display index of an anchor, or -1 when there is none.
+
+        Exactly one anchor is used, in the order msg_id, seq, ts. An exact
+        ``seq`` wins; failing that ``backward`` picks the last row at or
+        before it and forward picks the first at or after. Costs one streaming
+        pass and O(1) memory: the row is tested and dropped.
+        """
+        if not self.exists(cid):
+            return -1
+        log = self._transcript_log(cid)
+        if not log.exists():
+            return -1
+        idx = -1
+        best = -1
+        for row in log.iter_rows():
+            if self._is_trace_update_row(row) or not row.get("role"):
+                continue
+            idx += 1
+            if msg_id:
+                if row.get("msg_id") == msg_id:
+                    return idx
+                continue
+            if seq:
+                row_seq = int(row.get("seq") or 0)
+                if row_seq == seq:
+                    return idx
+                if not row_seq:
+                    continue
+                if backward:
+                    if row_seq <= seq:
+                        best = idx
+                elif row_seq >= seq:
+                    return idx
+                continue
+            if ts and float(row.get("ts") or row.get("timestamp") or 0.0) >= ts:
+                return idx
+        return best
 
     def load_page(self, cid: str, limit: int = 50, offset: int = 0,
                   user_id: str = "", before_msg_id: str = "") -> Optional[Dict]:

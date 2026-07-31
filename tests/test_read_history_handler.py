@@ -2,11 +2,62 @@ from core.handlers.history import ReadHistoryHandler
 
 
 class FakeConversationStore:
+    """The bounded reader API the handler is allowed to use.
+
+    ``load`` is deliberately absent: the handler must never ask for the whole
+    transcript. A conversation reaches hundreds of thousands of messages and
+    read_history is called in chains -- a handler that materialises the file
+    once per call takes the server down with it, which is exactly what
+    happened. If a future change reintroduces a full load, these tests fail
+    with AttributeError rather than passing quietly on a small fixture.
+    """
+
+    #: Small on purpose: the tests then exercise the window boundary itself
+    #: rather than always fitting in a single window.
+    WINDOW = 2
+
     def __init__(self, messages):
         self.messages = messages
 
-    def load(self, conversation_id, user_id=None):
-        return self.messages
+    def message_count(self, conversation_id):
+        return len(self.messages)
+
+    def _load_cache(self, conversation_id):
+        return {"user_id": ""}
+
+    def iter_display_windows(self, conversation_id, chunk=0):
+        step = int(chunk or self.WINDOW)
+        for start in range(0, len(self.messages), step):
+            yield start, self.messages[start:start + step]
+
+    def load_window_by_index(self, conversation_id, start, count):
+        if count <= 0 or start < 0:
+            return []
+        return self.messages[start:start + count]
+
+    def find_display_index(self, conversation_id, msg_id="", seq=0, ts=0.0,
+                           backward=False):
+        best = -1
+        for i, m in enumerate(self.messages):
+            if msg_id:
+                if m.get("msg_id") == msg_id:
+                    return i
+                continue
+            if seq:
+                row_seq = int(m.get("seq") or 0)
+                if row_seq == seq:
+                    return i
+                if not row_seq:
+                    continue
+                if backward:
+                    if row_seq <= seq:
+                        best = i
+                elif row_seq >= seq:
+                    return i
+                continue
+            if ts and float(m.get("ts") or m.get("timestamp") or 0.0) >= ts:
+                return i
+        return best
 
 
 def test_read_history_search_falls_back_to_keyword_matches():

@@ -1,6 +1,7 @@
 """Read conversation history tool — lets the LLM pull messages outside ctx."""
 import logging
 import re
+from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -394,34 +395,103 @@ class ReadHistoryHandler(ToolHandler):
 
     # ── Loader helper ─────────────────────────────────────────────────
 
-    def _load_all(self, store) -> Optional[List]:
-        return store.load(self._conversation_id, user_id=self._user_id)
+    def _owns_conversation(self, store) -> bool:
+        """Ownership check, without reading a single message.
 
-    def _index_by_id(self, all_msgs: List) -> Dict[str, int]:
-        return {_msg_id(m): i for i, m in enumerate(all_msgs) if _msg_id(m)}
+        ``load()`` used to do this on the way past. The bounded readers do not
+        read the whole conversation, so the check is made explicitly here --
+        it is the one thing the full load was still good for.
+        """
+        if not self._user_id:
+            return True
+        try:
+            cache = store._load_cache(self._conversation_id)
+        except Exception:
+            logger.debug("read_history: ownership lookup failed", exc_info=True)
+            return True
+        owner = cache.get("user_id") or ""
+        return not owner or owner == self._user_id
+
+    def _windows(self, store):
+        """Walk the transcript a bounded window at a time.
+
+        Every caller of this keeps only what it returns. Nothing in this
+        handler may hold the whole transcript: conversations reach hundreds of
+        thousands of messages, read_history is called in chains, and a handler
+        that materialises the file once per call takes the server down with
+        it.
+        """
+        if not self._owns_conversation(store):
+            return
+        for start, msgs in store.iter_display_windows(self._conversation_id):
+            yield start, msgs
+
+    def _collect(self, store, keep, budget: int):
+        """Stream the transcript, keep what ``keep`` accepts, up to ``budget``.
+
+        Returns ``(indexed_messages, total_matched)``: the page's worth of
+        ``(absolute_index, message)`` pairs, and how many matched in total.
+        The count keeps growing after the budget is spent -- a footer that
+        says "of 4000" costs a counter, not 4000 retained messages.
+        """
+        kept: List = []
+        total = 0
+        for start, msgs in self._windows(store):
+            for i, msg in enumerate(msgs):
+                if not keep(start + i, msg):
+                    continue
+                total += 1
+                if len(kept) < budget:
+                    kept.append((start + i, msg))
+        return kept, total
+
+    @staticmethod
+    def _matches(msg, role_filter: str, agent_filter: str) -> bool:
+        """``_apply_filters`` for a single message, so it can gate a stream."""
+        if not role_filter and not agent_filter:
+            return True
+        return bool(_apply_filters([msg], role_filter, agent_filter))
+
+    @staticmethod
+    def _budget(offset_arg, limit_arg) -> tuple:
+        """``(offset, limit, offset + limit)`` -- how much a page may retain.
+
+        Normalised through the same paginator the rendering uses, so the
+        streaming readers keep exactly what the page can show and not one
+        message more.
+        """
+        _page, offset, limit, _total = _paginate([], offset_arg, limit_arg)
+        return offset, limit, offset + limit
 
     # ── Actions ───────────────────────────────────────────────────────
 
     def _do_count(self, store, role_filter: str, agent_filter: str) -> str:
         if not role_filter and not agent_filter:
             return f"Total messages in history: {store.message_count(self._conversation_id)}"
-        msgs = self._load_all(store) or []
-        filtered = _apply_filters(msgs, role_filter, agent_filter)
+        total = 0
+        matched = 0
+        for _start, msgs in self._windows(store):
+            total += len(msgs)
+            matched += len(_apply_filters(msgs, role_filter, agent_filter))
         scope = _scope_label(role_filter, agent_filter)
-        return (f"Total messages in history: {len(msgs)} "
-                f"({scope}: {len(filtered)})")
+        return (f"Total messages in history: {total} "
+                f"({scope}: {matched})")
 
     def _do_read(self, store, arguments,
                  role_filter: str, agent_filter: str) -> str:
         idx = int(arguments.get("index", 0))
-        all_msgs = self._load_all(store)
-        if not all_msgs:
+        if not self._owns_conversation(store):
             return "No history found"
-        if idx < 0 or idx >= len(all_msgs):
-            return f"Error: index {idx} out of range (0-{len(all_msgs) - 1})"
-        msg = all_msgs[idx]
-        if (role_filter or agent_filter) and not _apply_filters(
-                [msg], role_filter, agent_filter):
+        total = store.message_count(self._conversation_id)
+        if not total:
+            return "No history found"
+        if idx < 0 or idx >= total:
+            return f"Error: index {idx} out of range (0-{total - 1})"
+        window = store.load_window_by_index(self._conversation_id, idx, 1)
+        if not window:
+            return f"Error: index {idx} out of range (0-{total - 1})"
+        msg = window[0]
+        if not self._matches(msg, role_filter, agent_filter):
             return (f"Message at index {idx} does not match "
                     f"{_scope_label(role_filter, agent_filter)}")
         return self._format_message(msg, idx, role_filter=role_filter)
@@ -431,40 +501,55 @@ class ReadHistoryHandler(ToolHandler):
         query = arguments.get("query", "")
         if not query:
             return "Error: search requires a query"
-        all_msgs = self._load_all(store)
-        if not all_msgs:
-            return "No history found"
-        # Collect every match first, then paginate — the offset/limit
-        # pair lets the LLM page through large hit sets instead of being
-        # silently cut off at 20 like the old impl did. Exact phrase search
-        # wins; keyword fallback handles natural multi-term queries.
-        exact_hits = []  # list of (index, msg)
-        token_hits = []  # list of (-score, index, msg)
+        # The offset/limit pair pages through large hit sets. Both tiers are
+        # kept bounded: only the page's worth of hits is retained, the rest is
+        # counted and dropped, so searching a 257k-message conversation costs
+        # one window of memory. Exact phrase search wins; the keyword fallback
+        # handles natural multi-term queries.
+        offset, limit, budget = self._budget(
+            arguments.get("offset"), arguments.get("limit"))
+        exact_hits = []      # (index, msg), first `budget` of them
+        token_hits = []      # (score, index, msg), the `budget` best
+        exact_total = 0
+        token_total = 0
         query_lower = query.lower()
         tokens = _search_tokens(query)
-        for i, msg in enumerate(all_msgs):
-            if (role_filter or agent_filter) and not _apply_filters(
-                    [msg], role_filter, agent_filter):
-                continue
-            content = self._render_body(msg, role_filter)
-            content_lower = content.lower()
-            if query_lower in content_lower:
-                exact_hits.append((i, msg))
-                continue
-            if tokens:
+        for start, msgs in self._windows(store):
+            for i, msg in enumerate(msgs):
+                if not self._matches(msg, role_filter, agent_filter):
+                    continue
+                content_lower = self._render_body(msg, role_filter).lower()
+                if query_lower in content_lower:
+                    exact_total += 1
+                    if len(exact_hits) < budget:
+                        exact_hits.append((start + i, msg))
+                    continue
+                if not tokens or exact_total:
+                    continue
                 score = sum(1 for token in tokens if token in content_lower)
-                if score:
-                    token_hits.append((-score, i, msg))
-        hits = exact_hits
-        if not hits and token_hits:
-            token_hits.sort()
+                if not score:
+                    continue
+                token_total += 1
+                # Bounded best-of: replace the weakest kept hit rather than
+                # growing a list that a wide query could make enormous.
+                if len(token_hits) < budget:
+                    token_hits.append((score, start + i, msg))
+                else:
+                    weakest = min(range(len(token_hits)),
+                                  key=lambda k: token_hits[k][0])
+                    if token_hits[weakest][0] < score:
+                        token_hits[weakest] = (score, start + i, msg)
+        if exact_hits:
+            hits, total = exact_hits, exact_total
+        else:
+            token_hits.sort(key=lambda h: (-h[0], h[1]))
             hits = [(i, msg) for _score, i, msg in token_hits]
+            total = token_total
         if not hits:
             scope = _scope_label(role_filter, agent_filter)
             tag = f" ({scope})" if scope else ""
             return f"No messages matching '{query}'{tag}"
-        page, offset, limit, total = _paginate(
-            hits, arguments.get("offset"), arguments.get("limit"))
+        page = hits[offset:offset + limit]
         lines = [
             self._format_message(m, i, preview=True, role_filter=role_filter)
             for (i, m) in page
@@ -482,16 +567,35 @@ class ReadHistoryHandler(ToolHandler):
         to_id = arguments.get("to_msg_id", "")
         if not from_id or not to_id:
             return "Error: range requires from_msg_id and to_msg_id"
-        msgs = store.load_range_by_msg_id(
-            self._conversation_id, from_id, to_id, user_id=self._user_id)
-        if msgs is None:
-            return "Error: conversation not found"
+        offset, limit, budget = self._budget(
+            arguments.get("offset"), arguments.get("limit"))
+        # One streaming pass: start at the opening anchor, stop at the closing
+        # one, retain a page. A super-bucket range spans tens of thousands of
+        # messages and the caller renders at most a hundred of them.
+        state = {"inside": False, "closed": False}
+
+        def keep(_index, msg) -> bool:
+            if state["closed"]:
+                return False
+            mid = _msg_id(msg)
+            if not state["inside"]:
+                if mid != from_id:
+                    return False
+                state["inside"] = True
+            if mid == to_id:
+                state["closed"] = True
+            return self._matches(msg, role_filter, agent_filter)
+
+        kept, total = self._collect(store, keep, budget)
+        if not state["inside"]:
+            return f"Error: from_msg_id {from_id} not found"
+        if not state["closed"]:
+            return (f"Error: to_msg_id {to_id} not found at or after "
+                    f"{from_id}")
         return self._render_slice(
-            store, msgs, f"Range {from_id}..{to_id}",
-            role_filter, agent_filter,
-            action="range",
-            offset_arg=arguments.get("offset"),
-            limit_arg=arguments.get("limit"))
+            kept, f"Range {from_id}..{to_id}",
+            role_filter, agent_filter, action="range",
+            offset=offset, limit=limit, total=total)
 
     def _do_range_by_seq(self, store, arguments,
                          role_filter: str, agent_filter: str) -> str:
@@ -502,16 +606,17 @@ class ReadHistoryHandler(ToolHandler):
             return "Error: from_seq and to_seq must be integers"
         if from_seq <= 0 or to_seq <= 0 or to_seq < from_seq:
             return "Error: range_by_seq requires from_seq <= to_seq, both > 0"
-        all_msgs = self._load_all(store) or []
-        msgs = [m for m in all_msgs
-                if from_seq <= _msg_seq(m) <= to_seq]
+        offset, limit, budget = self._budget(
+            arguments.get("offset"), arguments.get("limit"))
+        kept, total = self._collect(
+            store,
+            lambda _i, m: (from_seq <= _msg_seq(m) <= to_seq
+                           and self._matches(m, role_filter, agent_filter)),
+            budget)
         return self._render_slice(
-            store, msgs, f"Seq range {from_seq}..{to_seq}",
-            role_filter, agent_filter,
-            action="range_by_seq",
-            offset_arg=arguments.get("offset"),
-            limit_arg=arguments.get("limit"),
-            all_msgs=all_msgs)
+            kept, f"Seq range {from_seq}..{to_seq}",
+            role_filter, agent_filter, action="range_by_seq",
+            offset=offset, limit=limit, total=total)
 
     def _do_range_by_date(self, store, arguments,
                           role_filter: str, agent_filter: str) -> str:
@@ -520,16 +625,19 @@ class ReadHistoryHandler(ToolHandler):
         if from_ts is None or to_ts is None or to_ts < from_ts:
             return ("Error: range_by_date requires from_date <= to_date "
                     "(ISO 8601 'YYYY-MM-DD' or full datetime)")
-        all_msgs = self._load_all(store) or []
-        msgs = [m for m in all_msgs if from_ts <= _msg_ts(m) <= to_ts]
+        offset, limit, budget = self._budget(
+            arguments.get("offset"), arguments.get("limit"))
+        kept, total = self._collect(
+            store,
+            lambda _i, m: (from_ts <= _msg_ts(m) <= to_ts
+                           and self._matches(m, role_filter, agent_filter)),
+            budget)
         label = (f"Date range {arguments.get('from_date', '')}.."
                  f"{arguments.get('to_date', '')}")
         return self._render_slice(
-            store, msgs, label, role_filter, agent_filter,
+            kept, label, role_filter, agent_filter,
             action="range_by_date",
-            offset_arg=arguments.get("offset"),
-            limit_arg=arguments.get("limit"),
-            all_msgs=all_msgs)
+            offset=offset, limit=limit, total=total)
 
     def _do_around(self, store, arguments,
                    role_filter: str, agent_filter: str) -> str:
@@ -550,15 +658,16 @@ class ReadHistoryHandler(ToolHandler):
         if sum(anchors) != 1:
             return ("Error: around requires exactly one of "
                     "from_msg_id / from_seq / from_date")
-        all_msgs = self._load_all(store) or []
-        if not all_msgs:
+        if not self._owns_conversation(store):
             return "No history found"
-        anchor_idx = -1
+        if not store.message_count(self._conversation_id):
+            return "No history found"
+        # Locating the anchor is a streaming pass that keeps no message, and
+        # the window is then read by index. Neither step is proportional to
+        # the size of the conversation in memory.
+        cid = self._conversation_id
         if from_msg_id:
-            for i, m in enumerate(all_msgs):
-                if _msg_id(m) == from_msg_id:
-                    anchor_idx = i
-                    break
+            anchor_idx = store.find_display_index(cid, msg_id=from_msg_id)
             if anchor_idx < 0:
                 return f"Error: msg_id {from_msg_id} not found"
         elif from_seq_raw is not None:
@@ -566,56 +675,38 @@ class ReadHistoryHandler(ToolHandler):
                 fs = int(from_seq_raw)
             except (TypeError, ValueError):
                 return "Error: from_seq must be an integer"
-            for i, m in enumerate(all_msgs):
-                if _msg_seq(m) == fs:
-                    anchor_idx = i
-                    break
+            anchor_idx = store.find_display_index(cid, seq=fs,
+                                                  backward=limit < 0)
             if anchor_idx < 0:
                 if limit > 0:
-                    for i, m in enumerate(all_msgs):
-                        seq = _msg_seq(m)
-                        if seq and seq >= fs:
-                            anchor_idx = i
-                            break
-                    if anchor_idx < 0:
-                        return f"Error: no message at or after seq={fs}"
-                else:
-                    for i in range(len(all_msgs) - 1, -1, -1):
-                        seq = _msg_seq(all_msgs[i])
-                        if seq and seq <= fs:
-                            anchor_idx = i
-                            break
-                    if anchor_idx < 0:
-                        return f"Error: no message at or before seq={fs}"
+                    return f"Error: no message at or after seq={fs}"
+                return f"Error: no message at or before seq={fs}"
         else:
             fts = _parse_date(from_date)
             if fts is None:
                 return "Error: from_date must be ISO 8601"
-            for i, m in enumerate(all_msgs):
-                if _msg_ts(m) >= fts:
-                    anchor_idx = i
-                    break
+            anchor_idx = store.find_display_index(cid, ts=fts)
             if anchor_idx < 0:
                 return f"Error: no message at or after {from_date}"
 
         if limit > 0:
-            window = all_msgs[anchor_idx:anchor_idx + limit]
+            lo, count = anchor_idx, limit
         else:
             lo = max(0, anchor_idx + limit + 1)
-            window = all_msgs[lo:anchor_idx + 1]
+            count = anchor_idx - lo + 1
+        window = store.load_window_by_index(cid, lo, count)
+        indexed = [(lo + i, m) for i, m in enumerate(window)
+                   if self._matches(m, role_filter, agent_filter)]
         direction = "forward" if limit > 0 else "backward"
         label = f"Around anchor [#{anchor_idx}] ({direction} {abs(limit)})"
-        # around is anchor-relative: its "limit" already encodes the
-        # window size + direction, so we don't paginate further — just
-        # render everything the window holds. _render_slice still caps
-        # at _MAX_LIMIT via its paginator, which matches the abs(limit)
-        # we already clamped above.
+        # around is anchor-relative: its "limit" already encodes the window
+        # size + direction, so we don't paginate further — just render
+        # everything the window holds. abs(limit) was clamped to _MAX_LIMIT
+        # above, so the window is already page-sized.
         return self._render_slice(
-            store, window, label, role_filter, agent_filter,
+            indexed, label, role_filter, agent_filter,
             action="around",
-            offset_arg=0,
-            limit_arg=_MAX_LIMIT,
-            all_msgs=all_msgs)
+            offset=0, limit=_MAX_LIMIT, total=len(indexed))
 
     def _do_recent(self, store, arguments,
                    role_filter: str, agent_filter: str) -> str:
@@ -631,23 +722,32 @@ class ReadHistoryHandler(ToolHandler):
         except (TypeError, ValueError):
             offset = 0
         if role_filter or agent_filter:
-            all_msgs = self._load_all(store) or []
-            filtered = _apply_filters(all_msgs, role_filter, agent_filter)
-            total = len(filtered)
-            end = total - offset
-            start = max(0, end - limit)
-            window = filtered[start:end]
-            idx_by_id = self._index_by_id(all_msgs)
+            # recent is a tail: keep a sliding window of the last
+            # offset+limit matches and let everything older fall out of it,
+            # so the cost is the page, not the conversation.
+            tail = deque(maxlen=max(1, offset + limit))
+            total = 0
+            for start, msgs in self._windows(store):
+                for i, msg in enumerate(msgs):
+                    if not self._matches(msg, role_filter, agent_filter):
+                        continue
+                    total += 1
+                    tail.append((start + i, msg))
+            items = list(tail)
+            end = len(items) - offset
+            window = items[max(0, end - limit):end] if end > 0 else []
+            if not window:
+                scope = _scope_label(role_filter, agent_filter)
+                return f"No messages found ({scope})"
+            start_idx = total - offset - len(window)
             lines = [
-                self._format_message(
-                    m, idx_by_id.get(_msg_id(m), -1),
-                    role_filter=role_filter)
-                for m in window
+                self._format_message(m, idx, role_filter=role_filter)
+                for idx, m in window
             ]
             scope = _scope_label(role_filter, agent_filter)
-            header = (f"Messages ({scope}) {start}-"
-                      f"{start + len(window) - 1} of {total}")
-            if start > 0:
+            header = (f"Messages ({scope}) {start_idx}-"
+                      f"{start_idx + len(window) - 1} of {total}")
+            if start_idx > 0:
                 header += (f". More older — repeat with "
                            f"offset={offset + limit}.")
             return header + "\n\n" + "\n\n".join(lines)
@@ -670,44 +770,41 @@ class ReadHistoryHandler(ToolHandler):
 
     def _do_oldest(self, store, arguments,
                    role_filter: str, agent_filter: str) -> str:
-        all_msgs = self._load_all(store) or []
-        if role_filter or agent_filter:
-            msgs = _apply_filters(all_msgs, role_filter, agent_filter)
-        else:
-            msgs = all_msgs
+        offset, limit, budget = self._budget(
+            arguments.get("offset"), arguments.get("limit"))
+        kept, total = self._collect(
+            store,
+            lambda _i, m: self._matches(m, role_filter, agent_filter),
+            budget)
         return self._render_slice(
-            store, msgs, "Oldest messages",
-            role_filter, agent_filter,
-            action="oldest",
-            offset_arg=arguments.get("offset"),
-            limit_arg=arguments.get("limit"),
-            all_msgs=all_msgs)
+            kept, "Oldest messages",
+            role_filter, agent_filter, action="oldest",
+            offset=offset, limit=limit, total=total)
 
     # ── Rendering ─────────────────────────────────────────────────────
 
-    def _render_slice(self, store, msgs: List, label: str,
+    def _render_slice(self, indexed: List, label: str,
                       role_filter: str, agent_filter: str,
-                      action: str, offset_arg, limit_arg,
-                      all_msgs: Optional[List] = None) -> str:
-        if msgs is None:
-            return "Error: conversation not found"
-        if not msgs:
+                      action: str, offset: int, limit: int,
+                      total: int) -> str:
+        """Render ``(absolute_index, message)`` pairs already filtered.
+
+        Filtering and counting happen in the streaming readers now: this only
+        renders. ``total`` is how many messages matched in the whole scan --
+        the footer can say "of 4000" while only a page was ever retained.
+        """
+        if not indexed:
             scope = _scope_label(role_filter, agent_filter)
             tag = f" ({scope})" if scope else ""
             return f"No messages found for {label}{tag}"
-        all_msgs = all_msgs if all_msgs is not None else (self._load_all(store) or [])
-        idx_by_id = self._index_by_id(all_msgs)
-        if role_filter or agent_filter:
-            msgs = _apply_filters(msgs, role_filter, agent_filter)
-            if not msgs:
-                return (f"No messages matching "
-                        f"{_scope_label(role_filter, agent_filter)} "
-                        f"inside {label}")
-        page, offset, limit, total = _paginate(msgs, offset_arg, limit_arg)
+        page = indexed[offset:offset + limit]
+        if not page:
+            scope = _scope_label(role_filter, agent_filter)
+            tag = f" ({scope})" if scope else ""
+            return f"No messages found for {label}{tag} at offset={offset}"
         lines = [
-            self._format_message(
-                m, idx_by_id.get(_msg_id(m), -1), role_filter=role_filter)
-            for m in page
+            self._format_message(m, idx, role_filter=role_filter)
+            for idx, m in page
         ]
         scope = _scope_label(role_filter, agent_filter)
         tag = f" [{scope}]" if scope else ""

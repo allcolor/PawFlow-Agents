@@ -39,6 +39,37 @@ _RECOVERED_LOCK = threading.Lock()
 #: wholesale rather than aged: a dropped entry costs one redundant write.
 _RECOVERED_MAX = 512
 
+# ── The credential-pool lock ───────────────────────────────────────────────
+#
+# Every pool update is a read-modify-write of ONE file: each provider loads
+# the whole pool, edits a slot, and writes the whole pool back into
+# GLOBAL_SECRETS_FILE -- itself read and rewritten whole, key by key. Nothing
+# about that is atomic, and the writers are genuinely concurrent: the Claude,
+# codex and gemini sweepers tick independently, a refresh can land mid-tick,
+# and a login or a teardown writes the same file from a third thread.
+#
+# Interleaved, two recoveries each write a pool built from a snapshot taken
+# before the other's edit, so the last writer restores the OTHER slot's
+# previous token. For Anthropic that is not a transient glitch: the
+# refresh_token is single-use, so the resurrected one is already dead and the
+# account is logged out for good once the container is gone.
+#
+# One process-wide lock, held across the whole load/mutate/save cycle by every
+# writer, is what makes the cycle atomic. It is shared across providers on
+# purpose -- they collide on the secrets file, not on their own pool key. It
+# is reentrant because a persist may fall through to add_credential_to_pool,
+# which loads and saves again on its own.
+_CREDENTIALS_POOL_LOCK = threading.RLock()
+
+
+def credentials_pool_lock():
+    """The lock every credential-pool read-modify-write must hold.
+
+    Hold it across load, mutate AND save. Guarding the halves separately
+    buys nothing: the lost update happens between them.
+    """
+    return _CREDENTIALS_POOL_LOCK
+
 
 def token_recovery_is_stale(workdir: str, service_id: str, pool_index: int,
                             signature: str) -> bool:
@@ -50,7 +81,13 @@ def token_recovery_is_stale(workdir: str, service_id: str, pool_index: int,
 
 def note_token_recovered(workdir: str, service_id: str, pool_index: int,
                          signature: str) -> None:
-    """Record a copy that succeeded, so the next tick can skip it."""
+    """Record a copy that REACHED THE POOL, so the next tick can skip it.
+
+    Only ever call this after a persist confirmed it wrote. Recording an
+    attempt instead of a result is how a token gets lost permanently: the
+    memo makes every later tick skip the slot, so the one write that failed
+    is never retried and the rotated token dies with the container.
+    """
     with _RECOVERED_LOCK:
         if len(_RECOVERED_SIGNATURES) >= _RECOVERED_MAX:
             _RECOVERED_SIGNATURES.clear()

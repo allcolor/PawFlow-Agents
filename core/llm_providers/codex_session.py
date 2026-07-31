@@ -19,6 +19,7 @@ import os
 import time
 
 from core.agent_prompt_policy import CLI_MCP_SYSTEM_PROMPT
+from core.llm_providers.cli_shared import credentials_pool_lock
 
 # OAuth refresh / auth.json parsing / token persistence / sessions-base live
 # in _codex_credentials to keep this module <=800 lines; re-exported so
@@ -108,45 +109,50 @@ def add_credential_to_pool(access_token: str, refresh_token: str,  # nosec B107
     ChatGPT account claim — codex CLI rejects auth.json without a valid
     id_token ("invalid ID token format"). Stored alongside access/refresh
     so we can reproduce the exact auth.json shape codex wrote on disk.
+
+    Under the shared pool lock, like every other read-modify-write of the
+    pool: a login lands while the sweepers are running.
     """
-    sid = _find_codex_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        raise ValueError(f"Codex credential service '{service_id}' not found")
-    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
-    for i, existing in enumerate(pool):
-        if existing.get("refresh_token") == refresh_token:
-            pool[i] = {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "id_token": id_token or existing.get("id_token", ""),
-                "expires_at": int(expires_at),
-                "account": account or existing.get("account", ""),
-                "added_at": int(time.time()),
-            }
-            _save_credentials_pool(
-                pool, service_id, user_id=user_id, conv_id=conv_id)
-            return
-    pool.append({
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "id_token": id_token,
-        "expires_at": int(expires_at),
-        "account": account,
-        "added_at": int(time.time()),
-    })
-    _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
-    logger.info("[codex] credential added to pool (now %d) for '%s'",
-                len(pool), sid)
+    with credentials_pool_lock():
+        sid = _find_codex_service_id(service_id, user_id=user_id, conv_id=conv_id)
+        if not sid:
+            raise ValueError(f"Codex credential service '{service_id}' not found")
+        pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
+        for i, existing in enumerate(pool):
+            if existing.get("refresh_token") == refresh_token:
+                pool[i] = {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "id_token": id_token or existing.get("id_token", ""),
+                    "expires_at": int(expires_at),
+                    "account": account or existing.get("account", ""),
+                    "added_at": int(time.time()),
+                }
+                _save_credentials_pool(
+                    pool, service_id, user_id=user_id, conv_id=conv_id)
+                return
+        pool.append({
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "id_token": id_token,
+            "expires_at": int(expires_at),
+            "account": account,
+            "added_at": int(time.time()),
+        })
+        _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
+        logger.info("[codex] credential added to pool (now %d) for '%s'",
+                    len(pool), sid)
 
 
 def remove_credential_from_pool(index: int, service_id: str = "",
                                 user_id: str = "", conv_id: str = "") -> bool:
-    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
-    if 0 <= index < len(pool):
-        pool.pop(index)
-        _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
-        return True
-    return False
+    with credentials_pool_lock():
+        pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
+        if 0 <= index < len(pool):
+            pool.pop(index)
+            _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
+            return True
+        return False
 
 
 def reset_credentials_pool(service_id: str = "", user_id: str = "",

@@ -18,7 +18,7 @@ import os
 import time
 
 from core.llm_providers.cli_shared import (
-    note_token_recovered, token_recovery_is_stale)
+    credentials_pool_lock, note_token_recovered, token_recovery_is_stale)
 
 logger = logging.getLogger(__name__)
 
@@ -107,42 +107,45 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
                             expires_at, account: str = "",
                             service_id: str = "", user_id: str = "",
                             conv_id: str = ""):
-    sid = _find_gemini_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        raise ValueError(f"Gemini credential service '{service_id}' not found")
-    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
-    for i, existing in enumerate(pool):
-        if existing.get("refresh_token") == refresh_token:
-            pool[i] = {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "expires_at": int(expires_at),
-                "account": account or existing.get("account", ""),
-                "added_at": int(time.time()),
-            }
-            _save_credentials_pool(
-                pool, service_id, user_id=user_id, conv_id=conv_id)
-            return
-    pool.append({
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "expires_at": int(expires_at),
-        "account": account,
-        "added_at": int(time.time()),
-    })
-    _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
-    logger.info("[gemini] credential added to pool (now %d) for '%s'",
-                len(pool), sid)
+    """Add a credential to the pool, under the shared pool lock."""
+    with credentials_pool_lock():
+        sid = _find_gemini_service_id(service_id, user_id=user_id, conv_id=conv_id)
+        if not sid:
+            raise ValueError(f"Gemini credential service '{service_id}' not found")
+        pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
+        for i, existing in enumerate(pool):
+            if existing.get("refresh_token") == refresh_token:
+                pool[i] = {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "expires_at": int(expires_at),
+                    "account": account or existing.get("account", ""),
+                    "added_at": int(time.time()),
+                }
+                _save_credentials_pool(
+                    pool, service_id, user_id=user_id, conv_id=conv_id)
+                return
+        pool.append({
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_at": int(expires_at),
+            "account": account,
+            "added_at": int(time.time()),
+        })
+        _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
+        logger.info("[gemini] credential added to pool (now %d) for '%s'",
+                    len(pool), sid)
 
 
 def remove_credential_from_pool(index: int, service_id: str = "",
                                 user_id: str = "", conv_id: str = "") -> bool:
-    pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
-    if 0 <= index < len(pool):
-        pool.pop(index)
-        _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
-        return True
-    return False
+    with credentials_pool_lock():
+        pool = _load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
+        if 0 <= index < len(pool):
+            pool.pop(index)
+            _save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
+            return True
+        return False
 
 
 def reset_credentials_pool(service_id: str = "", user_id: str = "",
@@ -246,42 +249,48 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
                                 expires_at, service_id: str = "",
                                 pool_index: int = -1,
                                 account: str = "", user_id: str = "",
-                                conv_id: str = ""):
-    """Update a credential in the gemini pool (after refresh).
+                                conv_id: str = "") -> bool:
+    """Update a credential in the gemini pool (after refresh). True if it landed.
 
     Mirror of codex_session._persist_tokens_to_service / cc equivalent.
+
+    Runs the whole load/mutate/save cycle under the shared pool lock -- the
+    three providers rewrite the same secrets file, so the collision is not
+    only with gemini's own sweeper.
     """
     if not _validate_oauth_token(access_token, refresh_token, expires_at):
         logger.warning(
             "[gemini] refusing to persist invalid token "
             "(access_token=%r, expires_at=%r) to pool[%s] — keeping old",
             bool(access_token), expires_at, pool_index)
-        return
-    sid = _find_gemini_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        return
-    pool = _load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
-    if not pool:
-        add_credential_to_pool(
-            access_token, refresh_token, expires_at,
-            account=account, service_id=sid, user_id=user_id, conv_id=conv_id)
-        return
-    if 0 <= pool_index < len(pool):
-        pool[pool_index]["access_token"] = access_token
-        pool[pool_index]["refresh_token"] = refresh_token
-        pool[pool_index]["expires_at"] = int(expires_at)
-    else:
-        for cred in pool:
-            if cred.get("refresh_token") == refresh_token:
-                cred["access_token"] = access_token
-                cred["expires_at"] = int(expires_at)
-                break
+        return False
+    with credentials_pool_lock():
+        sid = _find_gemini_service_id(service_id, user_id=user_id, conv_id=conv_id)
+        if not sid:
+            return False
+        pool = _load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
+        if not pool:
+            add_credential_to_pool(
+                access_token, refresh_token, expires_at,
+                account=account, service_id=sid, user_id=user_id, conv_id=conv_id)
+            return True
+        if 0 <= pool_index < len(pool):
+            pool[pool_index]["access_token"] = access_token
+            pool[pool_index]["refresh_token"] = refresh_token
+            pool[pool_index]["expires_at"] = int(expires_at)
         else:
-            pool[0]["access_token"] = access_token
-            pool[0]["refresh_token"] = refresh_token
-            pool[0]["expires_at"] = int(expires_at)
-    _save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
+            for cred in pool:
+                if cred.get("refresh_token") == refresh_token:
+                    cred["access_token"] = access_token
+                    cred["expires_at"] = int(expires_at)
+                    break
+            else:
+                pool[0]["access_token"] = access_token
+                pool[0]["refresh_token"] = refresh_token
+                pool[0]["expires_at"] = int(expires_at)
+        _save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
     logger.info("[gemini] credential updated in pool for '%s'", sid)
+    return True
 
 
 def recover_tokens_from_workdir(workdir: str, service_id: str,
@@ -310,13 +319,16 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
         if not new_access:
             return False
         _signature = f"{new_access}\x1f{new_refresh}\x1f{new_expiry}"
-        if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
-            return False
-        _persist_tokens_to_service(
-            new_access, new_refresh, new_expiry,
-            service_id=service_id, pool_index=pool_index,
-            user_id=user_id, conv_id=conv_id)
-        note_token_recovered(workdir, service_id, pool_index, _signature)
+        with credentials_pool_lock():
+            if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
+                return False
+            if not _persist_tokens_to_service(
+                    new_access, new_refresh, new_expiry,
+                    service_id=service_id, pool_index=pool_index,
+                    user_id=user_id, conv_id=conv_id):
+                # Not persisted, so not memoised -- the next tick must retry.
+                return False
+            note_token_recovered(workdir, service_id, pool_index, _signature)
         logger.info(
             "[gemini] recovered teardown tokens [pool:%s] for '%s'",
             pool_index, service_id)

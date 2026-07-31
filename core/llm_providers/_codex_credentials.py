@@ -19,7 +19,7 @@ import os
 import time
 
 from core.llm_providers.cli_shared import (
-    note_token_recovered, token_recovery_is_stale)
+    credentials_pool_lock, note_token_recovered, token_recovery_is_stale)
 
 logger = logging.getLogger(__name__)
 
@@ -153,55 +153,62 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,  # nosec B
                                 pool_index: int = -1,
                                 id_token: str = "",
                                 account: str = "", user_id: str = "",
-                                conv_id: str = ""):
-    """Update a credential in the codex pool (after refresh).
+                                conv_id: str = "") -> bool:
+    """Update a credential in the codex pool (after refresh). True if it landed.
 
     Mirror of claude_code_session._persist_tokens_to_service. If pool_index
     ≥ 0, updates that slot; otherwise finds by matching refresh_token.
     Refuses to persist a token that fails basic validation — better to
     keep the old broken token than overwrite with garbage.
+
+    Runs the whole load/mutate/save cycle under the shared pool lock: the
+    pool is rewritten whole and the secrets file with it, so an interleaved
+    writer -- another provider's sweeper included -- would otherwise restore
+    a snapshot taken before this edit.
     """
     if not _validate_oauth_token(access_token, refresh_token, expires_at):
         logger.warning(
             "[codex] refusing to persist invalid token "
             "(access_token=%r, expires_at=%r) to pool[%s] — keeping old",
             bool(access_token), expires_at, pool_index)
-        return
+        return False
     # Pool-CRUD helpers live in codex_session; reach them via a deferred import
     # so this module imports cleanly and monkeypatches on codex_session apply.
     from core.llm_providers import codex_session as _facade
-    sid = _facade._find_codex_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        return
-    pool = _facade._load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
-    if not pool:
-        _facade.add_credential_to_pool(
-            access_token, refresh_token, expires_at,
-            account=account, id_token=id_token, service_id=sid,
-            user_id=user_id, conv_id=conv_id)
-        return
-    if 0 <= pool_index < len(pool):
-        pool[pool_index]["access_token"] = access_token
-        pool[pool_index]["refresh_token"] = refresh_token
-        pool[pool_index]["expires_at"] = int(expires_at)
-        if id_token:
-            pool[pool_index]["id_token"] = id_token
-    else:
-        for cred in pool:
-            if cred.get("refresh_token") == refresh_token:
-                cred["access_token"] = access_token
-                cred["expires_at"] = int(expires_at)
-                if id_token:
-                    cred["id_token"] = id_token
-                break
-        else:
-            pool[0]["access_token"] = access_token
-            pool[0]["refresh_token"] = refresh_token
-            pool[0]["expires_at"] = int(expires_at)
+    with credentials_pool_lock():
+        sid = _facade._find_codex_service_id(service_id, user_id=user_id, conv_id=conv_id)
+        if not sid:
+            return False
+        pool = _facade._load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
+        if not pool:
+            _facade.add_credential_to_pool(
+                access_token, refresh_token, expires_at,
+                account=account, id_token=id_token, service_id=sid,
+                user_id=user_id, conv_id=conv_id)
+            return True
+        if 0 <= pool_index < len(pool):
+            pool[pool_index]["access_token"] = access_token
+            pool[pool_index]["refresh_token"] = refresh_token
+            pool[pool_index]["expires_at"] = int(expires_at)
             if id_token:
-                pool[0]["id_token"] = id_token
-    _facade._save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
+                pool[pool_index]["id_token"] = id_token
+        else:
+            for cred in pool:
+                if cred.get("refresh_token") == refresh_token:
+                    cred["access_token"] = access_token
+                    cred["expires_at"] = int(expires_at)
+                    if id_token:
+                        cred["id_token"] = id_token
+                    break
+            else:
+                pool[0]["access_token"] = access_token
+                pool[0]["refresh_token"] = refresh_token
+                pool[0]["expires_at"] = int(expires_at)
+                if id_token:
+                    pool[0]["id_token"] = id_token
+        _facade._save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
     logger.info("[codex] credential updated in pool for '%s'", sid)
+    return True
 
 
 # Base directory for per-session codex workdirs — read dynamically so a
@@ -237,14 +244,17 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
         # stamped fresh on every call, so it cannot be part of the signature
         # or a periodic copy would never look unchanged.
         _signature = f"{new_access}\x1f{new_refresh}\x1f{new_id}"
-        if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
-            return False
-        expires_at = int((time.time() + 3600) * 1000)
-        _persist_tokens_to_service(
-            new_access, new_refresh, expires_at,
-            service_id=service_id, pool_index=pool_index,
-            id_token=new_id, user_id=user_id, conv_id=conv_id)
-        note_token_recovered(workdir, service_id, pool_index, _signature)
+        with credentials_pool_lock():
+            if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
+                return False
+            expires_at = int((time.time() + 3600) * 1000)
+            if not _persist_tokens_to_service(
+                    new_access, new_refresh, expires_at,
+                    service_id=service_id, pool_index=pool_index,
+                    id_token=new_id, user_id=user_id, conv_id=conv_id):
+                # Not persisted, so not memoised -- the next tick must retry.
+                return False
+            note_token_recovered(workdir, service_id, pool_index, _signature)
         logger.info(
             "[codex] recovered teardown tokens [pool:%s] for '%s'",
             pool_index, service_id)

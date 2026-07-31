@@ -2471,8 +2471,9 @@ def test_recovering_the_same_token_twice_does_not_rewrite_the_pool(
     from core.llm_providers import _cc_credentials
 
     persisted = []
+    # True is the contract: the memo may only record a write that landed.
     monkeypatch.setattr(_cc_credentials, "_persist_tokens_to_service",
-                        lambda *a, **k: persisted.append(a))
+                        lambda *a, **k: persisted.append(a) or True)
 
     workdir = tmp_path / "session"
     workdir.mkdir()

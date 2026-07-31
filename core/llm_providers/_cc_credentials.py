@@ -23,7 +23,7 @@ import os
 from typing import Optional
 
 from core.llm_providers.cli_shared import (
-    note_token_recovered, token_recovery_is_stale)
+    credentials_pool_lock, note_token_recovered, token_recovery_is_stale)
 
 logger = logging.getLogger(__name__)
 
@@ -108,50 +108,57 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
                            expires_at, account: str = "",
                            service_id: str = "", user_id: str = "",
                            conv_id: str = ""):
-    """Add a credential to the pool."""
+    """Add a credential to the pool.
+
+    Under the shared pool lock like every other read-modify-write: a login
+    lands while the sweepers are running, and an unlocked append rewrites the
+    pool from a snapshot taken before a concurrent token recovery.
+    """
     from core.llm_providers import claude_code_session as _facade
     import time
-    sid = _facade._find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        raise ValueError(f"Claude Code credential service '{service_id}' not found")
-    pool = _facade._load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
-    # Dedup: if same refresh_token exists, update it (same account re-login)
-    for i, existing in enumerate(pool):
-        if existing.get("refresh_token") == refresh_token:
-            pool[i] = {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "expires_at": int(expires_at),
-                "account": account or existing.get("account", ""),
-                "added_at": int(time.time()),
-            }
-            _facade._save_credentials_pool(
-                pool, service_id, user_id=user_id, conv_id=conv_id)
-            logger.info("[claude-code] credential updated in pool (slot %d) for '%s'",
-                        i, sid)
-            return
-    pool.append({
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "expires_at": int(expires_at),
-        "account": account,
-        "added_at": int(time.time()),
-    })
-    _facade._save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
-    logger.info("[claude-code] credential added to pool (now %d) for '%s'",
-                len(pool), sid)
+    with credentials_pool_lock():
+        sid = _facade._find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
+        if not sid:
+            raise ValueError(f"Claude Code credential service '{service_id}' not found")
+        pool = _facade._load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
+        # Dedup: if same refresh_token exists, update it (same account re-login)
+        for i, existing in enumerate(pool):
+            if existing.get("refresh_token") == refresh_token:
+                pool[i] = {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "expires_at": int(expires_at),
+                    "account": account or existing.get("account", ""),
+                    "added_at": int(time.time()),
+                }
+                _facade._save_credentials_pool(
+                    pool, service_id, user_id=user_id, conv_id=conv_id)
+                logger.info("[claude-code] credential updated in pool (slot %d) for '%s'",
+                            i, sid)
+                return
+        pool.append({
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_at": int(expires_at),
+            "account": account,
+            "added_at": int(time.time()),
+        })
+        _facade._save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
+        logger.info("[claude-code] credential added to pool (now %d) for '%s'",
+                    len(pool), sid)
 
 
 def remove_credential_from_pool(index: int, service_id: str = "",
                                 user_id: str = "", conv_id: str = "") -> bool:
     """Remove a credential from the pool by index (0-based)."""
     from core.llm_providers import claude_code_session as _facade
-    pool = _facade._load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
-    if 0 <= index < len(pool):
-        pool.pop(index)
-        _facade._save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
-        return True
-    return False
+    with credentials_pool_lock():
+        pool = _facade._load_credentials_pool(service_id, user_id=user_id, conv_id=conv_id)
+        if 0 <= index < len(pool):
+            pool.pop(index)
+            _facade._save_credentials_pool(pool, service_id, user_id=user_id, conv_id=conv_id)
+            return True
+        return False
 
 
 def reset_credentials_pool(service_id: str = "", user_id: str = "",
@@ -186,8 +193,8 @@ def _validate_oauth_token(access_token: str, refresh_token: str,
 def _persist_tokens_to_service(access_token: str, refresh_token: str,
                                expires_at, service_id: str = "",
                                pool_index: int = -1, user_id: str = "",
-                               conv_id: str = ""):
-    """Update a credential in the pool (after refresh).
+                               conv_id: str = "") -> bool:
+    """Update a credential in the pool (after refresh). True if it landed.
 
     If pool_index >= 0, updates that specific slot. Otherwise finds
     the matching credential by refresh_token.
@@ -196,6 +203,12 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
     fields, expires_at in the past) — better to keep the old broken
     token and let _setup_credentials drop the slot than to pollute
     the pool with a token we already know is dead.
+
+    The whole load/mutate/save cycle runs under the shared pool lock: the
+    pool is rewritten whole, so an interleaved writer's snapshot would
+    resurrect the token this call is replacing. The return value is what
+    tells a caller whether it may memoise the write -- every early return
+    here is a slot left untouched.
     """
     from core.llm_providers import claude_code_session as _facade
     if not _validate_oauth_token(access_token, refresh_token, expires_at):
@@ -203,36 +216,38 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
             "[claude-code] refusing to persist invalid token "
             "(access_token=%r, expires_at=%r) to pool[%s] — keeping old",
             bool(access_token), expires_at, pool_index)
-        return
-    sid = _facade._find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
-    if not sid:
-        return
-    pool = _facade._load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
-    if not pool:
-        # No pool yet — create one
-        add_credential_to_pool(access_token, refresh_token, expires_at,
-                               service_id=sid, user_id=user_id, conv_id=conv_id)
-        return
+        return False
+    with credentials_pool_lock():
+        sid = _facade._find_cc_service_id(service_id, user_id=user_id, conv_id=conv_id)
+        if not sid:
+            return False
+        pool = _facade._load_credentials_pool(sid, user_id=user_id, conv_id=conv_id)
+        if not pool:
+            # No pool yet — create one
+            add_credential_to_pool(access_token, refresh_token, expires_at,
+                                   service_id=sid, user_id=user_id, conv_id=conv_id)
+            return True
 
-    if 0 <= pool_index < len(pool):
-        pool[pool_index]["access_token"] = access_token
-        pool[pool_index]["refresh_token"] = refresh_token
-        pool[pool_index]["expires_at"] = int(expires_at)
-    else:
-        # Find by matching refresh_token (access_token changes on refresh)
-        for cred in pool:
-            if cred.get("refresh_token") == refresh_token:
-                cred["access_token"] = access_token
-                cred["expires_at"] = int(expires_at)
-                break
+        if 0 <= pool_index < len(pool):
+            pool[pool_index]["access_token"] = access_token
+            pool[pool_index]["refresh_token"] = refresh_token
+            pool[pool_index]["expires_at"] = int(expires_at)
         else:
-            logger.warning(
-                "[claude-code] refusing to persist refreshed token: "
-                "no matching credential in pool '%s'", sid)
-            return
+            # Find by matching refresh_token (access_token changes on refresh)
+            for cred in pool:
+                if cred.get("refresh_token") == refresh_token:
+                    cred["access_token"] = access_token
+                    cred["expires_at"] = int(expires_at)
+                    break
+            else:
+                logger.warning(
+                    "[claude-code] refusing to persist refreshed token: "
+                    "no matching credential in pool '%s'", sid)
+                return False
 
-    _facade._save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
+        _facade._save_credentials_pool(pool, sid, user_id=user_id, conv_id=conv_id)
     logger.info("[claude-code] credential updated in pool for '%s'", sid)
+    return True
 
 
 def recover_tokens_from_workdir(workdir: str, service_id: str,
@@ -260,6 +275,10 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
     Returns True if a token was recovered and persisted, else False --
     including when this exact token was already copied back, which is the
     ordinary case on a periodic call.
+
+    The stale check, the persist and the memo are one critical section. Split
+    apart, two ticks both read "not stale", both write, and the loser's
+    snapshot puts back the token the winner had just replaced.
     """
     creds_path = os.path.join(workdir, ".credentials.json")
     if not os.path.exists(creds_path):
@@ -274,15 +293,19 @@ def recover_tokens_from_workdir(workdir: str, service_id: str,
         if not new_access:
             return False
         _signature = f"{new_access}\x1f{new_refresh}\x1f{new_expires}"
-        if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
-            return False
-        # _persist_tokens_to_service refuses invalid tokens (empty /
-        # already-expired) and addresses pool_index directly when >= 0.
-        _persist_tokens_to_service(
-            new_access, new_refresh, new_expires,
-            service_id=service_id, pool_index=pool_index,
-            user_id=user_id, conv_id=conv_id)
-        note_token_recovered(workdir, service_id, pool_index, _signature)
+        with credentials_pool_lock():
+            if token_recovery_is_stale(workdir, service_id, pool_index, _signature):
+                return False
+            # _persist_tokens_to_service refuses invalid tokens (empty /
+            # already-expired) and addresses pool_index directly when >= 0.
+            if not _persist_tokens_to_service(
+                    new_access, new_refresh, new_expires,
+                    service_id=service_id, pool_index=pool_index,
+                    user_id=user_id, conv_id=conv_id):
+                # Nothing reached the pool, so nothing may be memoised: the
+                # next tick has to try again or the rotation is lost.
+                return False
+            note_token_recovered(workdir, service_id, pool_index, _signature)
         logger.info(
             "[claude-code] recovered teardown tokens [pool:%s] for '%s'",
             pool_index, service_id)

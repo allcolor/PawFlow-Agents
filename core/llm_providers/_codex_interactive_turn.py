@@ -53,6 +53,11 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         # gauge has to follow it down.
         self.observed_context_tokens = 0
         self.context_tokens_callback = context_tokens_callback
+        # Code-mode call id -> how many MCP rows existed when it was emitted.
+        # The relay's rows for a script all arrive before that script's own
+        # result, so the difference at result time is what this script did.
+        self._code_mode_calls: dict = {}
+        self._mcp_rows_seen = 0
 
     def _record_context_tokens(self, usage) -> None:
         measured = observed_context_tokens(usage)
@@ -95,9 +100,21 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         no view at all. The row is coarse, but it is the only evidence that
         the turn ran anything, and the relay's rows name the rest.
         """
-        if code_mode_body(_event_tool_args(event)):
+        is_body = code_mode_body(_event_tool_args(event))
+        if is_body:
             self.event_service.mark_code_mode(self.session_token)
         super()._emit_observed_tool_use(event)
+        # After the emit: the base class is what resolves aliases to the id the
+        # row was drawn with, and that is the id the result will arrive under.
+        tc_id = str(event.get("tool_use_id", "") or event.get("id", "") or "")
+        block = self.tool_by_id.get(tc_id) or {}
+        row_id = str(block.get("id") or tc_id)
+        if not row_id:
+            return
+        if is_body:
+            self._code_mode_calls.setdefault(row_id, self._mcp_rows_seen)
+        elif block.get("tool_origin") == "mcp":
+            self._mcp_rows_seen += 1
 
     def _displayable_args(self, name: str, args: dict) -> dict:
         """Keep the code body's row, drop the body.
@@ -121,6 +138,33 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         elided = dict(args or {})
         elided["input"] = f"<code-mode script, {len(str(source))} chars>"
         return elided
+
+    def _displayable_result(self, block: dict, result: str) -> str:
+        """Keep the code body's result, drop what the rows beside it already say.
+
+        Eliding the body fixed half the duplication. The other half is what the
+        script printed: a code-mode script's output is the aggregate of the very
+        calls the relay reported one by one, so the same bytes reached the next
+        context twice -- once as each call's own tool result, once more inside
+        the script's. Invisible while the session is warm (Codex never sees the
+        relay's rows, only its own script and its output), and paid for real at
+        every cold start, which is to say at every compaction restart: exactly
+        when the window is already full.
+
+        Only when this script actually produced relay rows. A script that
+        reached no PawFlow tool -- it read a file with Codex's own runtime, or
+        computed something and printed it -- is described by nobody else, and
+        its output is the only record there is.
+        """
+        row_id = str((block or {}).get("id") or "")
+        before = self._code_mode_calls.get(row_id)
+        if before is None:
+            return result
+        rows = self._mcp_rows_seen - before
+        if rows <= 0:
+            return result
+        return (f"<code-mode script output, {len(str(result))} chars — "
+                f"the {rows} call(s) it made are the rows beside this one>")
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse

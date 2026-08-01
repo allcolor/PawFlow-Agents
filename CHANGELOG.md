@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.74] — 2026-08-01
+
+### Fixed
+
+- A code-mode script's output no longer reaches the next context alongside the
+  calls it is made of. beta.72 elided the script *body* — half the duplication.
+  The other half is what it printed: the relay hands each call's result to the
+  script, which aggregates them, so the same bytes were persisted twice, once
+  as each call's own tool result and once more inside the script's. The row
+  keeps its place and now reports the output's size and the calls beside it.
+  Only when the script actually produced relay rows: one that reached no
+  PawFlow tool — read through Codex's own runtime, or a value computed and
+  printed — is described by nobody else, and its output is the only record
+  there is. The rows counted are the ones this script produced, so a later
+  script in the same turn that drove nothing keeps its output.
+
+  This never affected the codex-interactive gauge, which is measured on the
+  wire: Codex's own window holds the script and its output once and never sees
+  the relay's rows. The duplication was invisible while a session stayed warm
+  and was paid in full at every cold start — which is to say at every
+  compaction restart, when the context is rebuilt from what PawFlow holds.
+
 ## [1.0.0-beta.73] — 2026-08-01
 
 ### Fixed

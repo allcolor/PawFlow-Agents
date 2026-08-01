@@ -537,6 +537,16 @@ class _CCITurnCoordinator:
         """
         return args
 
+    def _displayable_result(self, block: dict, result: str) -> str:
+        """The same last chance, for the other half of a call.
+
+        Eliding an argument only shrinks what a harness *sent*. What it got
+        back travels the same road -- row, then ``turn_tool_calls``, then the
+        next context -- and for an aggregating harness that is where the
+        duplication lives. Identity by default.
+        """
+        return result
+
     def _emit_tool_use(self, idx: int) -> None:
         block = self.tool_blocks.get(idx) or {}
         if not block or block.get("emitted"):
@@ -744,6 +754,7 @@ class _CCITurnCoordinator:
         if event_id:
             self.emitted_tool_result_ids.add(event_id)
         result = event.get("content", "") or "(no output)"
+        result = self._displayable_result(block, result)
         for tc in self.turn_tool_calls:
             if tc.get("id") == tc_id:
                 tc["result"] = result

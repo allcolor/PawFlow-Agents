@@ -579,6 +579,35 @@ load a turn's whole context existed in no view at all. The row is coarse, but
 it is the only evidence the turn ran anything; the relay's rows name the rest,
 and the model's direct native calls render as before.
 
+#### The row is kept, both of its halves are not quoted twice
+
+A call has two halves and both are persisted and replayed: the arguments
+(`_displayable_args`) and the result (`_displayable_result`). For a code-mode
+group each carries the same duplication.
+
+- **Arguments.** The script source is kilobytes of generated JavaScript
+  describing work the rows beside it already name. The row reports its size.
+- **Result.** The script's output is the *aggregate of those very calls*: the
+  relay hands each result to the script, which prints them. So the same bytes
+  reached the next context twice — once as each call's own tool result, once
+  more inside the script's. The row reports its size and points at the calls.
+
+The result elision is conditional, and the condition is what makes it safe:
+only a script that actually produced relay rows yields its output. One that
+reached no PawFlow tool — read through Codex's own runtime, or a value computed
+in the script and printed — is described by nobody else, and its output is the
+only record there is. The coordinator counts the MCP rows emitted since the
+code-mode call was drawn, so a later script in the same turn that drove nothing
+is not elided on the strength of an earlier one's rows.
+
+None of this changes the *gauge*, which on codex-interactive is measured on the
+wire rather than counted from messages. Codex never sees the relay's rows: its
+window holds the script and its output once, so the duplication was invisible
+while a session stayed warm. It became real at every cold start — which is to
+say at every compaction restart, when PawFlow rebuilds `initial_context.md`
+from its own context and hands it back. Exactly when the window is already
+full.
+
 Two things `publish_agent_event` has to get right for any of that to be worth
 anything.
 

@@ -393,6 +393,79 @@ def test_relay_reported_calls_render_like_any_other_tool(monkeypatch):
     assert blocks[2][1]["result"] == "line one"
 
 
+def test_a_script_output_yields_to_the_relay_rows_end_to_end(monkeypatch):
+    # The duplication the row elision left behind: a script's output is the
+    # aggregate of the calls the relay reported one by one, so the same bytes
+    # went into the next context twice. Codex never sees the relay's rows --
+    # only its own script and its output -- so this is free while the session
+    # is warm and paid in full at every cold start.
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    blocks = []
+    events = _Events([
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "custom_tool_call", "call_id": "call-1",
+                     "name": "exec",
+                     "input": 'await tools.mcp__pawflow__use_tool({tool_name})'}}},
+        {"type": "tool_use", "tool_use_id": "req-1", "name": "read",
+         "arguments": {"path": "/workspace/a.py"}, "tool_origin": "mcp"},
+        {"type": "tool_result", "tool_use_id": "req-1", "content": "AAA" * 200},
+        {"type": "tool_use", "tool_use_id": "req-2", "name": "grep",
+         "arguments": {"pattern": "x"}, "tool_origin": "mcp"},
+        {"type": "tool_result", "tool_use_id": "req-2", "content": "BBB" * 200},
+        # The script's own result: everything above, once more.
+        {"type": "tool_result", "tool_use_id": "call-1",
+         "content": "AAA" * 200 + "BBB" * 200},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(
+        events, "session",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)))
+
+    coordinator.run()
+
+    results = {payload.get("tc_id"): payload["result"]
+               for kind, payload in blocks if kind == "tool_result"}
+    # Each call keeps its own result in full: that is where the detail lives.
+    assert results["req-1"] == "AAA" * 200
+    assert results["req-2"] == "BBB" * 200
+    # The script's copy of both is replaced by its size and a pointer.
+    assert "2 call(s)" in results["call-1"]
+    assert "AAA" not in results["call-1"]
+    assert str(len("AAA" * 200 + "BBB" * 200)) in results["call-1"]
+
+
+def test_a_script_that_drove_no_relay_call_keeps_its_output(monkeypatch):
+    # Read through Codex's own runtime: no relay row describes it, so the
+    # script's output is the only record of what the turn did.
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    blocks = []
+    events = _Events([
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "custom_tool_call", "call_id": "call-1",
+                     "name": "exec",
+                     "input": 'await tools.mcp__pawflow__use_tool({tool_name})'}}},
+        {"type": "tool_result", "tool_use_id": "call-1",
+         "content": "the whole bootstrap context, read by the script itself"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(
+        events, "session",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)))
+
+    coordinator.run()
+
+    results = [payload["result"] for kind, payload in blocks
+               if kind == "tool_result"]
+    assert results == [
+        "the whole bootstrap context, read by the script itself"]
+
+
 def test_a_call_seen_under_each_of_its_two_ids_stays_one_row(monkeypatch):
     # A call item carries `call_id` AND `id`. The stream can quote one and
     # the replayed input the other: keyed on the raw id that is two rows for

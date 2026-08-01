@@ -1267,6 +1267,28 @@ arguments, on the one surface whose whole purpose is to say what is happening.
 The cue carries a copy of the canonical row, rendered as the classic view draws
 it; the original stays in its tab.
 
+**A tool cue shows the work, not the transport.** A code-mode turn is a
+sequence of groups: one native `exec(<code-mode script, N chars>)` per group,
+and underneath it the four or five MCP calls the relay reports for that script.
+Cueing every row alike put the wrapper in front and the work behind. Three
+things keep the surface on the calls:
+
+- A native row is held for `TURN_NATIVE_TOOL_DEFER_MS`, and an MCP call
+  arriving in that window takes its place. The window is 1500 ms, not 500:
+  the row is drawn when the model *finishes emitting* the call, while the first
+  MCP row still waits on the TUI, the relay round trip and the script's own
+  preamble, so half a second lost that race on nearly every group.
+- Once a turn has produced one MCP call, its native rows are dropped from the
+  cue for the rest of the turn. Deferring each wrapper only against the calls
+  that follow it let every *later* script win its own race — one deferral
+  fixed, the pattern unchanged.
+- A row is cued once, when the call appears. The `tool_result` offers the same
+  row a second time, by then grown to hold its output; for a code body that is
+  the whole `Script completed / Wall time / ...` block.
+
+The suppressed rows are unaffected in Tool calls — this is the animated surface
+only, and it is the one place that has to name what is happening now.
+
 **The header counts.** Elapsed seconds, ticking while the turn runs, frozen at
 the total once it ends.
 

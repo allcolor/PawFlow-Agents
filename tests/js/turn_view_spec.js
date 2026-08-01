@@ -1211,6 +1211,49 @@ test('every mcp call of a group is cued', () => {
   eq(e.cues(), 3, 'the three calls, and not the wrapper');
 });
 
+// A turn is a sequence of groups, and deferring each wrapper only against the
+// calls that follow it let every later script win its own race: the surface
+// read exec(...) most of the time even though four calls in five were MCP.
+test('a turn that has reached mcp never shows a wrapper again', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c0', 'tc-0', 'native', 'exec(<code-mode script, 900 chars>)');
+  toolRow(e, 'c1', 'tc-1', 'mcp', 'read(a)');
+  e.clock.tick(2000);
+  eq(e.cues(), 1);
+  toolRow(e, 'c2', 'tc-2', 'native', 'exec(<code-mode script, 1200 chars>)');
+  e.clock.tick(2000);
+  eq(e.cues(), 1, 'the second script is transport too, not work');
+  toolRow(e, 'c3', 'tc-3', 'mcp', 'grep(b)');
+  eq(e.cues(), 2, 'and the calls it makes still reach the surface');
+});
+
+// The first MCP row does not arrive within the wrapper's window by grace of the
+// UI: it waits on the TUI, the relay round trip and the script's own preamble.
+test('the wrapper waits long enough for the relay to answer', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c0', 'tc-0', 'native', 'exec(<code-mode script, 900 chars>)');
+  e.clock.tick(900);
+  eq(e.cues(), 0, 'half a second lost that race on nearly every group');
+  toolRow(e, 'c1', 'tc-1', 'mcp', 'read(a)');
+  e.clock.tick(2000);
+  eq(e.cues(), 1, 'the call, and not the script that ran it');
+});
+
+// A tool row is offered twice -- once as a call, once when its result lands on
+// it. For a code body the second offer carries the whole output block.
+test('a row is cued once, not again when its result lands', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const row = toolRow(e, 'c1', 'tc-1', 'mcp', 'read(a)');
+  eq(e.cues(), 1);
+  row.textContent = 'read(a)\nScript completed\nWall time 0.9 seconds';
+  e.ctx.turnViewIngest('tool_result', { msg_id: 'c1', tc_id: 'tc-1' }, row);
+  e.clock.tick(2000);
+  eq(e.cues(), 1, 'the result is not a second call');
+});
+
 if (failures.length) {
   console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
   for (const f of failures) console.error('  - ' + f);

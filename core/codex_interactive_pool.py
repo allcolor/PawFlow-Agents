@@ -338,8 +338,14 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     _instance: Optional["CodexInteractivePool"] = None
     _instance_lock = threading.Lock()
 
+    # `>_ OpenAI Codex (v...)` is the pane's PERMANENT header: it is drawn the
+    # instant the TUI starts, long before the input box is interactive. Used as
+    # a readiness marker it made the cold-start wait return immediately, and
+    # the first paste went into a composer that did not exist yet -- the same
+    # header that already fooled the composer scan before beta.72. Every marker
+    # here belongs to the input box or its footer.
     _PROMPT_READY_MARKERS = (
-        "ask codex", "for shortcuts", "context left", "openai codex")
+        "ask codex", "for shortcuts", "context left")
     _RUNNING_MARKERS = ("esc to interrupt",)
     # The Codex TUI never renders pasted text: it replaces it with an
     # attachment chip. The prompt sitting unsent in the input box therefore

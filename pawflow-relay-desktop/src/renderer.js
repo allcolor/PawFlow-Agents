@@ -479,7 +479,7 @@ function renderImageBuilderPanel() {
       <div class="card-head">
         <div>
           <h2>Relay image builder</h2>
-          <p>Select a preset or keep custom, then add individual capabilities. Docker build cache is pruned after a successful build.</p>
+          <p>Select a preset or keep custom, then add individual capabilities. The Docker build cache is left alone: it belongs to the daemon, not to this build.</p>
         </div>
       </div>
       <div class="form-grid">

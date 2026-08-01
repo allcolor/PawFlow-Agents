@@ -376,18 +376,50 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     "[cci] TUI prompt not detected ready before first send to "
                     "%s; submitting best-effort", state.name)
         self._cancel_copy_mode(state)
+        # Once, not once per attempt: the guard that keeps hooks from filing
+        # our own paste as a user message counts tickets, and a second record
+        # for the same text would leave one unspent to swallow the next thing
+        # the human really types.
         self._remember_injected_prompt(state, text)
         self._remember_injected_prompt_for_event_service(state, text)
-        if not self._load_buffer(state, text):
-            return False
-        if not self._paste_buffer(state):
-            return False
-        # Let the TUI finish ingesting the paste before pressing Enter: an
-        # Enter that lands inside the paste-detection window is treated as
-        # pasted newline (inserts a blank line) instead of submitting.
+        # Paste, then PROVE it landed, and paste again if it did not.
+        #
+        # Pressing Enter was the only retry there was, and it answers the
+        # wrong failure. When the paste itself never reaches the composer --
+        # a TUI still drawing itself, a pane not yet focused -- the composer
+        # is empty, and `_verify_submitted` reads an empty composer as
+        # "submitted": the same picture a delivered prompt leaves behind. So
+        # send_text returned True, raised nothing, and no prompt was ever
+        # submitted; the turn then sat waiting on a session that had been
+        # asked for nothing, holding the agent "active" until the 300s
+        # no-event timeout. Enter cannot fix an empty composer. Only another
+        # paste can.
         settle = self._paste_settle_seconds()
-        if settle > 0:
-            time.sleep(settle)
+        landed = False
+        for attempt in range(1, self._PASTE_ATTEMPTS + 1):
+            if not self._load_buffer(state, text):
+                return False
+            if not self._paste_buffer(state):
+                return False
+            # Let the TUI finish ingesting the paste before pressing Enter: an
+            # Enter that lands inside the paste-detection window is treated as
+            # pasted newline (inserts a blank line) instead of submitting.
+            if settle > 0:
+                time.sleep(settle)
+            if self._paste_landed(state, text):
+                landed = True
+                break
+            logging.getLogger(__name__).warning(
+                "[cci] paste did not reach the composer of %s; pasting again "
+                "(attempt %d/%d)", state.name, attempt, self._PASTE_ATTEMPTS)
+        if not landed:
+            # Bounded, and a failure rather than a silent success: the caller
+            # raises, which is strictly better than a turn that waits on a
+            # session nobody ever prompted.
+            state.last_error = (
+                f"prompt never reached the composer after "
+                f"{self._PASTE_ATTEMPTS} paste attempts")
+            return False
         try:
             delay = float(os.environ.get("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "1.0") or "1.0")
         except ValueError:
@@ -540,6 +572,60 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             if len(line) >= 8:
                 return line[-24:]
         return ""
+
+    # How many times the same prompt is pasted before the pool gives up. The
+    # retry answers a paste that never arrived, which is a startup race and
+    # settles within a couple of attempts; more would only spend seconds
+    # re-pasting into a TUI that is not coming up.
+    _PASTE_ATTEMPTS = 3
+    # How long to watch for the paste to appear in the composer before
+    # concluding it never will. Longer than the settle -- a TUI busy drawing
+    # itself ingests a multi-kilobyte buffer slowly -- and short enough that
+    # three attempts stay well inside a turn.
+    _PASTE_LANDED_SECONDS = 3.0
+
+    def _paste_landed(self, state: InteractiveContainer, text: str) -> bool:
+        """Did the paste actually reach the input box?
+
+        Three answers collapsed into a decision:
+
+        - the chip is in the composer, or the probe fragment is on the pane:
+          it landed;
+        - the composer is readable and holds neither: it did not, and Enter
+          would be pressed into an empty box;
+        - the composer cannot be located at all: unknowable, and the answer is
+          True. Refusing to submit on a pane we cannot read would turn every
+          unfamiliar TUI layout into a failed turn, where the double-Enter and
+          `_verify_submitted` behind it are already the best-effort path.
+
+        Reads the pane purely as transport signal -- the provider still never
+        assembles a response from tmux output.
+        """
+        fragment = self._submit_probe_fragment(text)
+        if not self._PASTE_CHIP_MARKERS and not fragment:
+            # Nothing to look for: this TUI leaves no chip and the text is too
+            # short to probe for. Unknowable, so it must not become a refusal.
+            return True
+        deadline = time.time() + max(0.0, self._PASTE_LANDED_SECONDS)
+        interval = 0.3
+        while True:
+            pane = self._pane_text(state.name)
+            if not pane:
+                # The pane could not be read at all -- also unknowable.
+                return True
+            if self._pane_holds_unsent_paste(pane):
+                return True
+            if fragment and fragment in pane:
+                return True
+            if self._pane_shows_running(pane):
+                # Already accepted between the paste and this look.
+                return True
+            if self._composer_text(pane) == "":
+                # Composer not on screen: cannot tell, do not block.
+                return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(interval)
 
     def _verify_submitted(self, state: InteractiveContainer, text: str) -> None:
         """Best-effort post-submit check with Enter retries.

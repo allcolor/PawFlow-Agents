@@ -321,12 +321,23 @@ A malformed stored item is dropped rather than raised on: a lost chain of
 thought costs continuity, a malformed item costs the whole request. Only items
 of `type: "reasoning"` are ever replayed.
 
-**Zero Data Retention.** Set `store: false` in the service config and PawFlow
-adds `include: ["reasoning.encrypted_content"]`, so the items come back
-encrypted and can be replayed from PawFlow's own history. Under ZDR this is not
-a quality question: a turn whose reasoning item the API cannot resolve is a
-hard 400. Leave `store` unset to keep the API default (server-side storage) —
-neither key is sent.
+**Zero Data Retention.** Set `store` to `false` — it is a field of the
+`llmConnection` schema, shown for `openai-responses` only — and PawFlow adds
+`include: ["reasoning.encrypted_content"]`, so the items come back encrypted and
+can be replayed from PawFlow's own history. Under ZDR this is not a quality
+question: a turn whose reasoning item the API cannot resolve is a hard 400.
+Leave `store` empty to keep the API default (server-side storage) — neither key
+is sent, because sending `store: true` unasked would be a decision about the
+org's data that PawFlow has no business making.
+
+The include is derived from the body that will actually be sent, **after**
+`extra_body` is merged over it. `store` is reachable both ways, and deciding
+before the merge described a body that no longer existed: `extra_body:
+{"store": false}` produced a ZDR request with no encrypted reasoning at all. An
+`include` you set yourself is never overwritten. And the value is read as a
+tri-state — a select answers with the *string* `"false"`, and `bool("false")`
+is `True`, which would have silently inverted the one setting a ZDR org
+depends on.
 
 The field is emitted only for the Responses builder
 (`_build_openai_messages(..., carry_reasoning=True)`). chat/completions must

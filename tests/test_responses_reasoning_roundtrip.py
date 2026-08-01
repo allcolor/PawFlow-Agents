@@ -187,6 +187,61 @@ def test_without_the_setting_neither_key_is_sent():
     assert "include" not in body
 
 
+def _body_with(**cfg):
+    client = LLMClient(provider="openai-responses", config=dict(
+        {"api_key": "k", "base_url": "https://api.openai.com/v1",
+         "default_model": "gpt-5.5"}, **cfg))
+    return client._build_responses_body(
+        _assistant_with_reasoning(), "gpt-5.5", 0.5, 100, None)
+
+
+def test_store_off_through_extra_body_still_asks_for_the_encrypted_content():
+    """`extra_body` is merged over the body, and the include used to be decided
+    BEFORE that merge -- so the one route the connection form actually exposed
+    produced a ZDR request with no encrypted reasoning: a 400 on the next turn
+    of any tool loop."""
+    body = _body_with(extra_body={"store": False})
+    assert body["store"] is False
+    assert body["include"] == ["reasoning.encrypted_content"]
+
+
+def test_a_form_field_answers_with_a_string():
+    """`store` is a select in the llmConnection schema, so it arrives as the
+    text "false" -- and `bool("false")` is True, which would silently turn the
+    one setting a ZDR org depends on into its opposite."""
+    body = _body_with(store="false")
+    assert body["store"] is False
+    assert body["include"] == ["reasoning.encrypted_content"]
+
+    on = _body_with(store="true")
+    assert on["store"] is True
+    assert "include" not in on
+
+    unset = _body_with(store="")
+    assert "store" not in unset, "empty select means unset, not false"
+    assert "include" not in unset
+
+
+def test_the_setting_is_reachable_from_the_connection_form():
+    """Documented and configurable are not the same thing: the docs asked for
+    `store: false` while the schema exposed no such field."""
+    from services.llm_connection import LLMConnectionService
+
+    svc = object.__new__(LLMConnectionService)
+    schema = svc.get_parameter_schema()
+    assert "store" in schema, "ZDR is not configurable without it"
+    assert schema["store"]["default"] == ""
+    # Responses-only: chat/completions has no stored response object.
+    shown = [r for r in svc.get_parameter_rules()
+             if "store" in r["set"] and r["set"]["store"]["visible"]]
+    assert shown and shown[0]["when"]["provider"] == ["openai-responses"]
+
+
+def test_an_explicit_include_is_not_overwritten():
+    body = _body_with(store=False, extra_body={"include": ["message.output_text"]})
+    assert body["include"] == ["message.output_text"]
+
+
 # ── persistence ────────────────────────────────────────────────────────────
 
 

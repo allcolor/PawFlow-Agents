@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.73] — 2026-08-01
+
+### Fixed
+
+- A prompt PawFlow pasted into a tmux TUI is no longer reported as submitted
+  when the paste never reached the composer. Pressing `Enter` again was the
+  only retry there was, and it answers the wrong failure: when the paste itself
+  does not land, the input box is empty — exactly what a delivered prompt
+  leaves behind — so the verifier concluded "submitted", `send_text` returned
+  success, and the turn waited on a session that had been asked for nothing.
+  No `UserPromptSubmit` hook, no proxy event, no error in the log, and the
+  agent shown active until the 300-second no-event timeout. The send now proves
+  the paste landed — the composer chip, or a probe fragment on the pane — and
+  pastes again if it did not, bounded, failing loudly rather than silently
+  succeeding. Where the TUI offers no usable signal the answer stays "cannot
+  tell" and the previous best-effort path is unchanged.
+- The Codex readiness wait no longer accepts the pane's permanent
+  `>_ OpenAI Codex (v...)` header as a drawn input box. It is rendered the
+  instant the TUI starts, so the cold-start wait returned immediately and the
+  first paste of a fresh session — the whole bootstrap collage, after a
+  compaction restart — went into a composer that did not exist yet.
+- A real user prompt is no longer swallowed by the hook-marked injection path,
+  which is the main one: the digest path only sees submits the flag did not
+  carry. Consuming a marked submit spent the ticket and a digest but left the
+  recorded text, so with digests at 0 and tickets at 0 the text still claimed
+  any twelve-character phrase the user typed that occurred inside it — neither
+  persisted nor answered. The text is now accounted for as the digest path does
+  it: whole injection dropped, a piece cut out and the rest left matchable, and
+  the last-resort record retired with its text.
+- Zero Data Retention is configurable as documented. `store` was absent from
+  the `llmConnection` schema, so the only route to it was `extra_body` — and
+  the ZDR `include` was derived *before* `extra_body` was merged, meaning
+  `extra_body: {"store": false}` produced a ZDR request with no encrypted
+  reasoning at all, a hard 400 on the next turn of any tool loop. The include
+  is now decided on the body that will actually be sent, an `include` set by
+  hand is never overwritten, and `store` is a Responses-only field of the
+  schema read as a tri-state: a select answers with the string `"false"`, and
+  `bool("false")` is `True`.
+- The simplified turn block's cue surface shows the MCP calls instead of the
+  `exec(...)` wrapper that carries them. Deferring each wrapper only against
+  the calls that follow it left every later script in a turn winning its own
+  race, the window was too short for the relay round trip, and every row was
+  cued twice — the second time carrying the code body's whole output block.
+- The desktop relay image builder no longer claims to prune the Docker build
+  cache after a build; beta.72 removed that daemon-wide prune.
+
 ## [1.0.0-beta.72] — 2026-08-01
 
 ### Fixed

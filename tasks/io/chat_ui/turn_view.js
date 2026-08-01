@@ -148,7 +148,8 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
     artifactElementsByFileId: new Map(), artifactFileIdByCallId: new Map(),
     transient: { cues: [], coalesceTimer: null, pendingText: '', pendingKind: '',
-                 deferredTool: null, deferredToolTimer: null },
+                 deferredTool: null, deferredToolTimer: null,
+                 mcpSeen: false, cuedTools: new Set() },
     tabs: {},
   };
   const block = document.createElement('section');
@@ -603,10 +604,13 @@ function _turnFlushTransient(state) {
 }
 
 // How long a native call waits to see whether it was only the wrapper around
-// the MCP calls that follow it. Long enough to cover the gap between a code
-// body's own row and the first call the relay reports for it, short enough
-// that a native call standing alone still reaches the surface promptly.
-const TURN_NATIVE_TOOL_DEFER_MS = 500;
+// the MCP calls that follow it. It has to cover the gap between a code body's
+// own row and the first call the relay reports for it, and that gap is not the
+// UI's: the row is drawn when the model *finishes emitting* the call, while the
+// first MCP row waits on the TUI, the relay round trip and the script's own
+// preamble. Half a second lost that race routinely, so the wrapper surfaced
+// first on nearly every group -- the very thing the deferral exists to prevent.
+const TURN_NATIVE_TOOL_DEFER_MS = 1500;
 
 // Which side of the MCP/native split a tool row is on. The row already says so
 // -- messages.js stamps `tc-origin-mcp` / `tc-origin-native` on the badge it
@@ -648,9 +652,28 @@ function _turnEmitDeferredTool(state) {
 // window takes its place. A native call that is genuinely on its own waits out
 // the window and is shown, because suppressing it outright would leave the
 // surface blank for turns that use no MCP tool at all.
+//
+// Deferring only the wrapper it happens to sit in front of was not enough. A
+// code-mode turn is a *sequence* of groups -- script, its calls, script, its
+// calls -- and each new script won its own race against the relay, so the
+// surface still read exec(...) most of the time. Once a turn has produced an
+// MCP call the question is settled for that turn: its work reaches PawFlow
+// through the relay, and the native rows around it are the transport carrying
+// it. They keep their row in Tool calls; they no longer take the surface that
+// says what is happening.
 function _turnOfferToolCue(state, element) {
+  // One cue per call, raised when the call appears. The tool_result offers the
+  // same row a second time -- by then grown to hold its output -- and for a
+  // code body that output is the whole `Script completed / Wall time / ...`
+  // block, cued as a wrapper the reader already saw and cannot read anyway.
+  const key = (element && element.dataset && element.dataset.tcId) || element;
+  if (key) {
+    if (state.transient.cuedTools.has(key)) return;
+    state.transient.cuedTools.add(key);
+  }
   const origin = _turnToolCueOrigin(element);
   if (origin === 'native') {
+    if (state.transient.mcpSeen) return;
     // A second native row means the first was not a wrapper after all.
     _turnEmitDeferredTool(state);
     state.transient.deferredTool = element;
@@ -660,7 +683,10 @@ function _turnOfferToolCue(state, element) {
     }, TURN_NATIVE_TOOL_DEFER_MS);
     return;
   }
-  if (origin === 'mcp') _turnDropDeferredTool(state);
+  if (origin === 'mcp') {
+    state.transient.mcpSeen = true;
+    _turnDropDeferredTool(state);
+  }
   _turnEnqueueTransient(state, { kind: 'tools', node: element });
 }
 

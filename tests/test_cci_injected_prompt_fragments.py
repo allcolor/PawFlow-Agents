@@ -175,6 +175,60 @@ def test_an_injection_spent_piece_by_piece_also_stops_claiming(service):
         state, "alpha bravo charlie delta") is False
 
 
+# The hook-marked path: `pawflow_injected_prompt` on the hook input, which is
+# the MAIN path -- the digest path only sees submits the flag did not carry.
+# It spent the ticket and popped a digest but left the recorded TEXT, so the
+# review's reproduction held there: digests=0, tickets=0, texts=1, and a
+# genuine substring the user typed was still claimed for the rest of the 600s
+# window -- neither persisted nor answered.
+
+
+def test_the_marked_path_accounts_for_the_text_it_consumed(service):
+    injected = "Continue from the latest user request and finish the release"
+    state = _state_with_injection(injected)
+    state.injected_prompts = {
+        CCInteractiveEventService._prompt_digest(injected): time.time()}
+    state.injected_prompt_texts[0].digest = (
+        CCInteractiveEventService._prompt_digest(injected))
+
+    assert service._consume_pending_injected_prompt(state, injected) is True
+    assert state.pending_injected_prompt_ignores == []
+    assert state.injected_prompts == {}
+    assert state.injected_prompt_texts == []
+
+    # The user's own words, a substring of what we injected.
+    assert service._consume_injected_prompt(
+        state, "Continue from the latest user request") is False
+
+
+def test_the_marked_path_still_recognises_the_rest_of_a_split_paste(service):
+    """The flag says "this submit is ours"; it does not say it carried the
+    whole injection. A piece must cut itself out and leave the rest
+    matchable, or the TUI's next piece is filed as a user message again."""
+    injected = "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+    state = _state_with_injection(injected)
+    state.pending_injected_prompt_ignores = [time.time(), time.time()]
+
+    assert service._consume_pending_injected_prompt(
+        state, "alpha bravo charlie delta") is True
+    assert state.injected_prompt_texts, "the rest of the paste is still ours"
+    assert service._consume_injected_prompt(
+        state, "echo foxtrot golf hotel india juliet") is True
+    assert state.injected_prompt_texts == []
+
+
+def test_a_marked_submit_that_identifies_nothing_drops_the_oldest_record(service):
+    """Last resort: a submit we cannot tie to any injection still spends a
+    ticket, and the record it retires must leave with its text. A digest that
+    is gone can never match again, so all its text can still do is claim
+    something the user typed."""
+    state = _state_with_injection()
+
+    assert service._consume_pending_injected_prompt(state, "") is True
+    assert state.injected_prompts == {}
+    assert state.injected_prompt_texts == []
+
+
 def test_a_stale_burst_no_longer_claims_fragments(service):
     """Time bound, independent of the content bound: pieces of one paste are
     one burst. A substring typed long after it is the user's."""

@@ -39,6 +39,28 @@ logger = logging.getLogger(__name__)
 #: absence of a [DONE] sentinel is why they have to be recognised explicitly.
 _TERMINAL_EVENTS = ("response.completed", "response.incomplete", "response.failed")
 
+#: Strings a human writes for "off" in a settings field.
+_FALSEY_TEXT = {"false", "0", "no", "off"}
+
+
+def _store_setting(value) -> bool | None:
+    """Tri-state read of `store`: None when unset, else the flag itself.
+
+    A connection field answers with a STRING, and `bool("false")` is True --
+    which would turn the one setting a Zero Data Retention org depends on into
+    its opposite, silently. Empty means unset: not sending `store` at all is
+    what an ordinary org wants, since sending `store: true` unasked is a
+    decision about their data that PawFlow has no business making.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if not text:
+            return None
+        return text not in _FALSEY_TEXT
+    return bool(value)
+
 
 def responses_endpoint(base_url: str) -> str:
     """The ``/responses`` suffix to append to ``base_url``'s path.
@@ -289,16 +311,9 @@ class LLMOpenaiResponsesMixin:
         if _re:
             body["reasoning"] = {"effort": _re}
         cfg = getattr(self, "_config_ref", None) or {}
-        # Zero Data Retention, or any org that turns off server-side storage:
-        # the reasoning items are then held nowhere but in our own history, so
-        # they have to come back encrypted or the model loses its chain of
-        # thought between every tool call -- and the API rejects a turn whose
-        # reasoning item it cannot resolve.
-        _store = cfg.get("store")
+        _store = _store_setting(cfg.get("store"))
         if _store is not None:
-            body["store"] = bool(_store)
-        if _store is False:
-            body["include"] = ["reasoning.encrypted_content"]
+            body["store"] = _store
         if tools:
             body["tools"] = [
                 {"type": "function", "name": t.name,
@@ -308,6 +323,24 @@ class LLMOpenaiResponsesMixin:
         extra_body = self.extra_body
         if extra_body:
             body.update(extra_body)
+        # Zero Data Retention, or any org that turns off server-side storage:
+        # the reasoning items are then held nowhere but in our own history, so
+        # they have to come back encrypted or the model loses its chain of
+        # thought between every tool call -- and the API rejects a turn whose
+        # reasoning item it cannot resolve.
+        #
+        # Decided AFTER the merge, on the body that will actually be sent.
+        # `store` is reachable through `extra_body` as well as through its own
+        # field, and an include derived before the merge described a body that
+        # no longer existed: `extra_body: {"store": false}` produced a ZDR
+        # request with no encrypted content -- a 400 on the next tool loop.
+        _effective = _store_setting(body.get("store"))
+        if _effective is None:
+            body.pop("store", None)
+        else:
+            body["store"] = _effective
+            if _effective is False and "include" not in body:
+                body["include"] = ["reasoning.encrypted_content"]
         return body
 
     def _stream_openai_responses(self, messages, model, temperature, max_tokens,

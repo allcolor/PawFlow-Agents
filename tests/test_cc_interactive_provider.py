@@ -1478,7 +1478,8 @@ def test_send_text_represses_enter_when_submit_swallowed(monkeypatch):
     enters = [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
     # Double-Enter submit plus at least one verifier retry.
     assert len(enters) >= 3
-    # The verifier stopped polling once the running marker appeared.
+    # One capture proves the paste landed before Enter, then the verifier
+    # polls until the running marker appears.
     assert panes["n"] == 3
 
 
@@ -1505,6 +1506,127 @@ def test_send_text_verifier_accepts_running_turn_without_retry(monkeypatch):
 
     enters = [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
     assert len(enters) == 2  # the standard double-Enter only
+
+
+# A paste that never arrived is not a submitted prompt.
+#
+# Enter was the only retry there was, and it answers the wrong failure. When
+# the paste itself never reaches the composer the box is empty -- exactly what
+# a delivered prompt leaves behind -- so the verifier concluded "submitted",
+# send_text returned True, and the turn waited on a session that had been asked
+# for nothing, holding the agent active until the 300s no-event timeout. Only
+# another paste can fix an empty composer.
+
+
+def _codex_paste_pool(monkeypatch, fake_run):
+    from core.codex_interactive_pool import CodexInteractivePool
+    from core.claude_code_interactive_pool import InteractiveContainer
+
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "0")
+    monkeypatch.setattr(
+        "core.claude_code_interactive_pool.time.sleep", lambda value: None)
+    pool = CodexInteractivePool()
+    monkeypatch.setattr(pool, "_PASTE_LANDED_SECONDS", 0.0)
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    monkeypatch.setattr(pool, "_remember_injected_prompt", lambda *a, **k: None)
+    monkeypatch.setattr(
+        pool, "_remember_injected_prompt_for_event_service", lambda *a, **k: None)
+    state = InteractiveContainer(
+        key=("u", "c", "a", "svc"),
+        name="container",
+        workdir="/host",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token="sess",
+        event_service_id="events",
+        internal_token="internal",
+    )
+    state.prompt_ready = True
+    return pool, state
+
+
+def _codex_pane(chip):
+    """A Codex pane: permanent header, then a loaded or empty composer."""
+    head = ">_ OpenAI Codex (v0.104.0)\n\n"
+    return head + ("> [Pasted Content 24470 chars]" if chip else "> ")
+
+
+PASTE_TEXT = "please read /workspace/core/llm_client.py and report what it does"
+
+
+class _PaneRun:
+    def __init__(self, stdout=""):
+        self.returncode = 0
+        self.stdout = stdout
+        self.stderr = ""
+
+
+def test_a_paste_that_missed_the_composer_is_pasted_again(monkeypatch):
+    calls = []
+    panes = {"n": 0}
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "capture-pane" in cmd:
+            panes["n"] += 1
+            # The first paste went nowhere: empty composer. The second lands.
+            return _PaneRun(_codex_pane(panes["n"] > 1))
+        return _PaneRun("")
+
+    pool, state = _codex_paste_pool(monkeypatch, fake_run)
+    assert pool.send_text(state, PASTE_TEXT) is True
+
+    pastes = [c for c in calls if "paste-buffer" in c]
+    assert len(pastes) == 2, "the prompt must be pasted again, not merely Entered"
+    assert len([c for c in calls if "load-buffer" in c]) == 2
+
+
+def test_a_paste_that_landed_is_not_pasted_twice(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "capture-pane" in cmd:
+            return _PaneRun(_codex_pane(True))
+        return _PaneRun("")
+
+    pool, state = _codex_paste_pool(monkeypatch, fake_run)
+    assert pool.send_text(state, PASTE_TEXT) is True
+    assert len([c for c in calls if "paste-buffer" in c]) == 1
+
+
+def test_a_prompt_that_never_lands_fails_loudly_and_bounded(monkeypatch):
+    """Bounded, and a failure rather than a silent success: the caller raises,
+    which beats a turn waiting on a session nobody ever prompted."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "capture-pane" in cmd:
+            return _PaneRun(_codex_pane(False))
+        return _PaneRun("")
+
+    pool, state = _codex_paste_pool(monkeypatch, fake_run)
+    assert pool.send_text(state, PASTE_TEXT) is False
+    assert "never reached the composer" in state.last_error
+    assert len([c for c in calls if "paste-buffer" in c]) == pool._PASTE_ATTEMPTS
+    # And no Enter pressed into an empty box.
+    assert not [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
+
+
+def test_the_codex_header_alone_is_not_a_ready_prompt():
+    """`>_ OpenAI Codex (v...)` is drawn the instant the TUI starts, long
+    before the input box is interactive. Counting it as readiness made the
+    cold-start wait return at once, and the first paste missed the composer."""
+    from core.codex_interactive_pool import CodexInteractivePool
+
+    pool = CodexInteractivePool()
+    assert pool._pane_shows_prompt(">_ OpenAI Codex (v0.104.0)\n\n") is False
+    assert pool._pane_shows_prompt(
+        ">_ OpenAI Codex (v0.104.0)\n\n> \n  ? for shortcuts") is True
 
 
 def test_send_interrupt_represses_enter_when_submit_swallowed(monkeypatch):

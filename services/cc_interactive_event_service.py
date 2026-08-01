@@ -522,7 +522,7 @@ class CCInteractiveEventService(BaseService):
         if not isinstance(prompt, str):
             prompt = ""
         if data.get("pawflow_injected_prompt"):
-            self._consume_pending_injected_prompt(state)
+            self._consume_pending_injected_prompt(state, prompt)
             self._capture_orphan_injected_turn(state)
             return
         if self._consume_injected_prompt(state, prompt):
@@ -772,8 +772,31 @@ class CCInteractiveEventService(BaseService):
             return
         oldest = min(state.injected_prompts, key=state.injected_prompts.get)
         state.injected_prompts.pop(oldest, None)
+        # And the text recorded with it. A record whose digest is gone can
+        # never be matched exactly again, so all its remaining text can still
+        # do is claim a phrase the user typed.
+        state.injected_prompt_texts = [
+            item for item in state.injected_prompt_texts
+            if item.digest != oldest
+        ]
 
-    def _consume_pending_injected_prompt(self, state: CCInteractiveSessionEvents) -> bool:
+    def _consume_pending_injected_prompt(self, state: CCInteractiveSessionEvents,
+                                         prompt: str = "") -> bool:
+        """Spend a ticket for a submit the hook itself marked as ours.
+
+        The flag says "this submit is PawFlow's". It does not say how much of
+        the injection it carried, and spending only the ticket left the text
+        behind: digests=0, tickets=0, texts=1, and for the rest of the 600s
+        window any twelve-character phrase the user typed that occurred inside
+        that text was claimed as a fragment -- neither persisted nor answered.
+        The user's message vanished with no trace anywhere.
+
+        So the text is accounted for here exactly as the digest path accounts
+        for it: a submit carrying the whole injection drops it, a submit
+        carrying a piece cuts that piece out of what is left (a TUI that splits
+        one paste into several submits still needs to recognise the rest), and
+        only a submit that identifies nothing falls back to the oldest record.
+        """
         now = time.time()
         cutoff = now - 600
         with self._sessions_lock:
@@ -781,9 +804,23 @@ class CCInteractiveEventService(BaseService):
                 ts for ts in state.pending_injected_prompt_ignores
                 if ts >= cutoff
             ]
+            state.injected_prompt_texts = [
+                item for item in state.injected_prompt_texts
+                if item.at >= cutoff
+            ]
             if not state.pending_injected_prompt_ignores:
                 return False
             state.pending_injected_prompt_ignores.pop(0)
+            digest = self._prompt_digest(prompt) if prompt else ""
+            if digest and digest in state.injected_prompts:
+                state.injected_prompts.pop(digest, None)
+                state.injected_prompt_texts = [
+                    item for item in state.injected_prompt_texts
+                    if item.digest != digest
+                ]
+                return True
+            if self._claim_injection_fragment(state, prompt, now):
+                return True
             self._pop_oldest_injected_prompt_locked(state)
             return True
 

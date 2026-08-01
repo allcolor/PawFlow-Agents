@@ -606,6 +606,17 @@ class LLMConnectionService(BaseService):
                     "transforms, route, or include_reasoning."
                 ),
             },
+            "store": {
+                "type": "select", "default": "",
+                "options": ["", "true", "false"],
+                "description": (
+                    "Responses API server-side storage (openai-responses). "
+                    "Set 'false' for a Zero Data Retention org: PawFlow then "
+                    "asks for encrypted reasoning items, without which a tool "
+                    "loop fails with a 400 on the following turn. Empty sends "
+                    "no store field at all."
+                ),
+            },
             "docker_image": {
                 "type": "string", "default": "pawflow-claude-code:latest",
                 "description": "Docker image for containerized execution",
@@ -687,6 +698,7 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "store":         {"visible": False},
                 }
             },
             {
@@ -694,6 +706,14 @@ class LLMConnectionService(BaseService):
                                      "copilot"]},
                 "set": {
                     "extra_body":    {"visible": True},
+                }
+            },
+            {
+                # `store` is a Responses-API concept: chat/completions has no
+                # server-side response objects to turn off.
+                "when": {"provider": ["openai-responses"]},
+                "set": {
+                    "store":         {"visible": True},
                 }
             },
             {

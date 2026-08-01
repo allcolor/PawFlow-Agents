@@ -302,6 +302,33 @@ collapses pastes declare their chip in `_PASTE_CHIP_MARKERS`, scoped to the
 composer via `_COMPOSER_PROMPT_PREFIX` so a chip left in the transcript by an
 already submitted message is not mistaken for an unsent one.
 
+### An empty composer is not proof of a submitted prompt
+
+Enter was the only retry there was, and it answers the wrong failure. When the
+**paste itself** never reaches the composer -- a TUI still drawing itself, a
+pane not yet focused -- the input box is empty, which is exactly what a
+delivered prompt leaves behind. `_verify_submitted` read that as "submitted",
+`send_text` returned success, and the turn then waited on a session that had
+been asked for nothing: no `UserPromptSubmit` hook, no proxy event, the agent
+shown active until the 300-second no-event timeout. The server log carried no
+error at all, because nothing had failed as far as any code could tell.
+
+So `send_text` proves the paste landed before pressing anything: paste, look for
+the chip in the composer or the probe fragment on the pane, and paste **again**
+if neither is there -- bounded to `_PASTE_ATTEMPTS`, after which the send fails
+loudly and the provider raises. Enter cannot fix an empty composer; only another
+paste can. Where the TUI leaves no usable signal (no chip declared, text too
+short to probe) the answer is "cannot tell", never a refusal, and the
+double-Enter path behind it is unchanged. The injected text is recorded once,
+not once per attempt: the hook guard counts tickets, and a second record would
+leave one unspent to swallow the next thing the user really types.
+
+The readiness markers a pool waits for must belong to the **input box**, not to
+the chrome around it. `>_ OpenAI Codex (v...)` is a permanent pane header drawn
+the instant the TUI starts: while it counted as readiness, the cold-start wait
+returned immediately and the first paste of a fresh session went into a composer
+that did not exist yet.
+
 If a user attaches to the provider-owned tmux and submits a prompt manually,
 Claude Code's `UserPromptSubmit` hook sends that prompt to PawFlow. PawFlow
 persists it as a normal user message with `channel="tmux"` and starts a passive
@@ -319,6 +346,19 @@ after the first were filed as messages the user had typed, published under their
 name and answered one by one -- the agent replying to fragments of a tool result
 it had just been handed. A slice shorter than 12 characters is still treated as
 manual: `ok` occurs inside any large paste and is also what a human types.
+
+The hook can also mark the submit as ours outright (`pawflow_injected_prompt`
+on the hook input), and that is the main path -- the digest path only sees
+submits the flag did not carry. The flag says "this submit is PawFlow's"; it
+does not say how much of the injection it carried. Spending only the ticket left
+the recorded text behind: digests 0, tickets 0, texts 1, and for the rest of the
+window any twelve-character phrase the user typed that occurred inside it was
+claimed as a fragment -- the message neither persisted nor answered, gone
+without a trace. The marked path now accounts for the text exactly as the digest
+path does: a submit carrying the whole injection drops it, a submit carrying a
+piece cuts that piece out and leaves the rest matchable, and only a submit that
+identifies nothing falls back to retiring the oldest record -- with its text,
+since a digest that is gone can never match again.
 
 The chat UI tmux action lists live Claude Code interactive sessions for the
 current conversation. It opens directly when only one tmux exists and shows a

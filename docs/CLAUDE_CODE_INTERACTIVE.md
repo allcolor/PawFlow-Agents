@@ -155,11 +155,33 @@ kept writing its rows, so the webchat showed the whole turn with active-agents
 and the context gauge dead for it. A capture claim is therefore refused on
 either fact: a request consumer polling within `_LISTENER_FRESH_SECONDS`, or a
 request claim still outstanding and unpolled within
-`_REQUEST_CLAIM_GRACE_SECONDS`. Adoption itself still fires on the queue —
-the backstop keeps deciding that the stream looks unread; it simply may not
-take it from a turn that provably has not begun reading. Past the grace the
-claim is granted as before, so a coordinator that claimed and died cannot mute
-the net for good.
+`_REQUEST_CLAIM_GRACE_SECONDS`. Past the grace the claim is granted as before,
+so a coordinator that claimed and died cannot mute the net for good.
+
+Adoption *also* respects that second fact, rather than firing on the queue and
+letting the claim refuse it downstream. Leaving the two out of step produced a
+loop: the rule adopted, `claim_consumer` refused, the refused capture consumed
+nothing, so the queue stayed stale and the next sweep repeated it — one capture
+every `_PENDING_SWEEP_SECONDS`, each streaming 0 chars and raising then dropping
+the active-agent marker, for the entire time a slow TUI took to accept its
+prompt. A stream a coordinator provably owns is not a stream nobody is reading,
+and there is nothing there to adopt.
+
+Two more facts the rule needs. `wait_event()` stamps the freshness clock only
+for the consumer that still owns the stream: stamping before the epoch check let
+an already-evicted coordinator refresh it on its way to its own exception, and
+that stamp reads as "has polled since claiming" — retiring the claim grace and
+handing the net a live turn three seconds later. And a session is marked
+*between turns* by its `Stop` hook, because nothing drains the queue when a turn
+ends: `drain_session()` runs when the *next* turn claims, so every finished turn
+left its post-Stop tail waiting and was re-adopted 25 seconds later by a capture
+that raised the marker and waited for a Stop that had already happened. Anything
+that starts a turn — a real provider request, a prompt submitted in the tmux —
+arms the rule again.
+
+A capture claims before it announces itself. Discovering the refusal inside the
+coordinator meant the active-agent marker had already been raised and was blinked
+straight back off; a capture that yields the stream now says nothing at all.
 
 A `cci-pending-sweep` thread re-asks every `_PENDING_SWEEP_SECONDS`. Checking
 on publish alone would miss the case the rule cares about most: a turn that

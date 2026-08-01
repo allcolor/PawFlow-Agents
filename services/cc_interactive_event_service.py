@@ -153,6 +153,12 @@ class CCInteractiveSessionEvents:
     # proof that it has not. Every other liveness signal here is a guess about
     # whether a reader exists; this one observes whether one is reading.
     oldest_pending_at: float = 0.0
+    # Whether the last thing this session's stream said was "the turn is over".
+    # Set by the Stop hook, cleared by anything that starts a turn. The
+    # undelivered rule below reads it: a turn that has ended leaves its
+    # post-Stop stragglers in the queue -- nothing drains until the NEXT turn
+    # claims -- and those waiting events are not a turn nobody is showing.
+    turn_over: bool = False
 
 
 class CCInteractiveEventService(BaseService):
@@ -468,6 +474,20 @@ class CCInteractiveEventService(BaseService):
         deadline = (None if timeout is None else
                     time.monotonic() + max(0.0, timeout))
         with state.stream_condition:
+            # Stamp the freshness clock only for the consumer that still owns
+            # the stream. Stamping first let an EVICTED coordinator refresh it
+            # on the way to its own exception: `last_wait_at` then sat newer
+            # than the incoming claim, which is exactly the shape
+            # `claim_consumer` reads as "has polled since claiming". Three
+            # seconds later the freshness check expired too, and the
+            # orphan-turn net was granted a capture against a live turn whose
+            # 120s claim grace should have refused it -- evicting the real
+            # coordinator on its first read. The capture kept the rows
+            # flowing, so the webchat filled in while active-agents and the
+            # block went dead: the turn read "Completed" while the tmux worked.
+            if epoch and epoch != state.consumer_epoch:
+                raise CCIConsumerEvicted(
+                    "CC interactive session taken over by a newer consumer")
             state.last_wait_at = time.time()
             while True:
                 if epoch and epoch != state.consumer_epoch:
@@ -532,6 +552,7 @@ class CCInteractiveEventService(BaseService):
         self._log_event_summary(session_token, event)
         if event.get("type") == "wire":
             return
+        self._track_turn_boundary(state, event)
         self._maybe_ingest_manual_prompt(state, event)
         self._maybe_adopt_orphan_turn(state, event)
         try:
@@ -708,16 +729,48 @@ class CCInteractiveEventService(BaseService):
         never spawn a capture that would outlive its turn and steal events
         from the next request's coordinator.
         """
-        if event.get("type") != "request_start":
-            return
-        path = event.get("path", "") or ""
-        is_provider_request = (
-            urlsplit(path).path.rstrip("/").endswith("/responses")
-            if state.provider == "codex-interactive"
-            else path.startswith("/v1/messages"))
-        if not is_provider_request or event.get("ignore_reason"):
+        if not self._is_provider_request(state, event):
             return
         self._adopt_orphan_turn(state, "request in flight")
+
+    @staticmethod
+    def _is_provider_request(state: CCInteractiveSessionEvents,
+                             event: dict) -> bool:
+        """A request_start that is the CLI calling its model for a real turn."""
+        if event.get("type") != "request_start" or event.get("ignore_reason"):
+            return False
+        path = event.get("path", "") or ""
+        return (urlsplit(path).path.rstrip("/").endswith("/responses")
+                if state.provider == "codex-interactive"
+                else path.startswith("/v1/messages"))
+
+    def _track_turn_boundary(self, state: CCInteractiveSessionEvents,
+                             event: dict) -> None:
+        """Remember whether this session is between turns.
+
+        The undelivered rule declares a stream unread when its events have
+        waited too long, and nothing drains a session's queue at the END of a
+        turn -- ``drain_session`` runs when the NEXT turn claims. So every
+        finished turn left its post-Stop stragglers waiting, and 25 seconds
+        later the rule adopted a turn that was already over: a capture spawned,
+        raised the active-agent marker, and waited for a Stop that had already
+        happened. Observed as active-agents switching itself back on five to
+        ten seconds after the answer landed, and staying on.
+
+        A Stop says the turn is over. Anything that starts one -- a real
+        provider request, a prompt submitted in the tmux -- arms the rule
+        again, so a genuine orphan turn is still adopted.
+        """
+        if self._is_provider_request(state, event):
+            state.turn_over = False
+            return
+        if event.get("type") != "hook":
+            return
+        hook = event.get("hook_event_name", "")
+        if hook == "Stop":
+            state.turn_over = True
+        elif hook == "UserPromptSubmit":
+            state.turn_over = False
 
     def _adopt_orphan_turn(self, state: CCInteractiveSessionEvents,
                            reason: str, *, force: bool = False) -> None:
@@ -770,9 +823,31 @@ class CCInteractiveEventService(BaseService):
         """
         with state.stream_condition:
             pending_since = state.oldest_pending_at
+            between_turns = state.turn_over
         if not pending_since:
             return
+        # Nothing drains a session's queue when a turn ENDS, only when the next
+        # one claims. What waits between the two is the finished turn's
+        # post-Stop tail, already streamed and persisted -- not a turn nobody is
+        # showing. Adopting it raised the active-agent marker minutes after the
+        # answer landed, on a capture waiting for a Stop that had come and gone.
+        if between_turns:
+            return
         if time.time() - pending_since < self._UNDELIVERED_ADOPT_SECONDS:
+            return
+        # One guess this rule may NOT force past: a coordinator that has claimed
+        # and not polled is inside its send, and `claim_consumer` will refuse
+        # the capture on exactly that ground. Forcing anyway produced a
+        # capture per sweep tick -- claimed, refused, streaming 0 chars, each
+        # one raising and dropping the active-agent marker, and none of them
+        # consuming an event, so the queue stayed stale and the next tick did
+        # it again. Observed every 5s for the whole 45s a slow codex TUI took
+        # to accept its prompt. The stream is owned; there is nothing to adopt.
+        with state.stream_condition:
+            claimed_at = state.last_request_claim_at
+            polled_at = state.last_wait_at
+        if (claimed_at > polled_at
+                and time.time() - claimed_at < self._REQUEST_CLAIM_GRACE_SECONDS):
             return
         self._adopt_orphan_turn(state, "events undelivered", force=True)
 
@@ -1354,10 +1429,24 @@ class CCInteractiveEventService(BaseService):
 
     def _run_manual_capture(self, session_token: str) -> None:
         state = self.session_state(session_token)
+        announced = False
         try:
             if not state:
                 return
+            # Claim before announcing. The claim is refused while a request
+            # consumer owns the stream, and that was only discovered inside
+            # the coordinator -- after the active-agent marker had been raised.
+            # A refused capture then blinked it straight back off, and the
+            # sweeper spawned the next one 5s later: active-agents flickering
+            # for as long as the real turn stayed inside its send.
+            capture_epoch = self.claim_consumer(session_token, kind="capture")
+            if not capture_epoch:
+                logger.info(
+                    "CC interactive capture yielded: session=%s is owned by a "
+                    "live request consumer", session_token[:8])
+                return
             self._publish_capture_active(state, active=True)
+            announced = True
             state.captured_msg_ids = []
             if state.provider == "codex-interactive":
                 from core.llm_providers._codex_interactive_turn import (
@@ -1383,7 +1472,7 @@ class CCInteractiveEventService(BaseService):
                 self, session_token, callback=_text_cb,
                 block_callback=_block_cb, emitted_tool_use_ids=_use_ids,
                 emitted_tool_result_ids=_result_ids,
-                consumer_kind="capture")
+                consumer_kind="capture", consumer_epoch=capture_epoch)
             response = coord.run()
             self._publish_capture_meta(state, response)
             logger.info(
@@ -1410,11 +1499,14 @@ class CCInteractiveEventService(BaseService):
                         restart = True
                     else:
                         state.manual_capture_active = False
-                if not restart:
+                if not restart and announced:
                     # Release only when no follow-up capture is queued: a
                     # chained capture continues the same visible activity,
                     # and blinking the marker off between the two would show
-                    # the agent idle in the middle of the work.
+                    # the agent idle in the middle of the work. And only when
+                    # this capture ever raised the marker -- one that yielded
+                    # the stream never claimed to be running, so releasing
+                    # would publish an end for a turn it never began.
                     self._publish_capture_active(state, active=False)
                     self._drain_pending_after_capture(state)
                 if restart:

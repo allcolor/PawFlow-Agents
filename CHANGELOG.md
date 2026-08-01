@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.79] — 2026-08-01
+
+### Fixed
+
+- The interactive-CLI safety net no longer fights the turn it is watching.
+  Three defects, all reported as the same thing — the activity block closing
+  while the tmux visibly worked, active-agents flickering, then switching
+  itself back on after the answer had landed:
+  - `wait_event` stamped the freshness clock before checking the epoch, so an
+    already-evicted coordinator refreshed it on its way out. That stamp reads
+    as "has polled since claiming", which retired the 120s claim grace and let
+    the net take the stream from a live turn three seconds later. The new owner
+    then died on its first read while the capture kept writing rows — the
+    webchat filled in under a block marked Completed.
+  - The undelivered rule forced adoption past a coordinator that had claimed
+    and not yet polled, which `claim_consumer` refuses on exactly that ground.
+    The refused capture consumed nothing, so the queue stayed stale and the
+    next sweep did it again: one capture every 5s, each streaming 0 chars and
+    blinking the active-agent marker, for the whole time a slow TUI took to
+    accept its prompt. It now respects the claim grace, which remains a ceiling
+    and not an amnesty.
+  - Nothing drains a session's queue when a turn ENDS — `drain_session` runs
+    when the next turn claims — so every finished turn left its post-Stop tail
+    waiting, and 25s later the rule adopted a turn that was already over. The
+    capture raised the active-agent marker and waited for a Stop that had come
+    and gone. A Stop now marks the session as between turns; anything that
+    starts one arms the rule again.
+  - A capture that yields the stream no longer announces itself: it claims
+    before raising the marker instead of discovering the refusal inside its
+    coordinator, after the fact.
+- `splitContent` now stamps `fragment.identifier`, so a split -> work -> merge
+  round trip cannot mix two documents. `mergeContent` correlates on that
+  attribute by default and the splitter never set it, so every fragment of
+  every document fell into the same `_default` bin — and beta.78's ordering by
+  `fragment.index` then interleaved two concurrent documents by position
+  instead of separating them (`a0|a1` and `b0|b1` in flight returned `b0|a1`).
+  The parent FlowFile's `process_id` names the split, as in NiFi.
+- The simplified view no longer leaves finished turns spinning after a load
+  more. Reconciliation closed a turn only when a USER row followed it, and a
+  history page routinely ends mid-transcript — its last turn followed by the
+  mid-turn head of the page below. That turn kept a ticking clock and a rain
+  surface over work long finished, one more per page loaded. Only the newest
+  turn on screen may still be working; the server's active-turn set is the only
+  thing that may hold an older one open.
+
 ## [1.0.0-beta.78] — 2026-08-01
 
 ### Fixed

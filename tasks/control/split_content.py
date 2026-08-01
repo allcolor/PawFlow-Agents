@@ -37,12 +37,23 @@ class SplitContentTask(BaseTask):
         if self.keep_separator and len(parts) > 1:
             parts = [p + sep for p in parts[:-1]] + [parts[-1]]
 
+        # Which split these pieces came out of. mergeContent correlates on
+        # `fragment.identifier` by default, and without one every fragment of
+        # every document fell into the same `_default` bin: two splits in
+        # flight at once merged into each other, and sorting the bin by
+        # `fragment.index` afterwards interleaved them by position rather than
+        # separating them. The parent's process_id is the split's identity --
+        # clone() gives each piece a fresh one, so the parent's is free to name
+        # the group they belong to.
+        fragment_id = flowfile.process_id
+
         results = []
         for i, part in enumerate(parts):
             if not part and not self.keep_separator:
                 continue
             ff = flowfile.clone()
             ff.set_content(part.encode('utf-8'))
+            ff.set_attribute('fragment.identifier', fragment_id)
             ff.set_attribute('fragment.index', str(i))
             ff.set_attribute('fragment.count', str(len(parts)))
             ff.set_attribute('fileSize', str(len(part.encode('utf-8'))))

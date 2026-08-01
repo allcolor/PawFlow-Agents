@@ -133,6 +133,33 @@ class TestMergeContent(unittest.TestCase):
 
         self.assertEqual(results[0].get_content(), b'first|second|third')
 
+    def test_two_concurrent_splits_do_not_merge_into_each_other(self):
+        """The round trip built out of the real tasks, not hand-made FlowFiles.
+
+        mergeContent correlates on `fragment.identifier` by default, and
+        splitContent stamped only `fragment.index` and `fragment.count`. Every
+        fragment of every document therefore landed in the same `_default`
+        bin, and sorting that bin by index interleaved two documents by
+        position instead of separating them: splitting 'a0|a1' and 'b0|b1'
+        with both in flight returned 'b0|a1'.
+        """
+        splitter = SplitContentTask({'separator': '|'})
+        doc_a = splitter.execute(FlowFile(content=b'a0|a1'))
+        doc_b = splitter.execute(FlowFile(content=b'b0|b1'))
+
+        self.assertNotEqual(doc_a[0].get_attribute('fragment.identifier'),
+                            doc_b[0].get_attribute('fragment.identifier'))
+
+        merger = MergeContentTask({'separator': '|', 'min_entries': 2})
+        # Interleaved arrival, which is what two branches of unequal cost do.
+        self.assertEqual(merger.execute(doc_a[0]), [])
+        self.assertEqual(merger.execute(doc_b[0]), [])
+        merged_a = merger.execute(doc_a[1])
+        merged_b = merger.execute(doc_b[1])
+
+        self.assertEqual(merged_a[0].get_content(), b'a0|a1')
+        self.assertEqual(merged_b[0].get_content(), b'b0|b1')
+
     def test_fragments_without_an_index_keep_arrival_order(self):
         """A plain fan-out carries no index, and inventing one would be a
         different guess rather than a fix."""

@@ -1243,6 +1243,21 @@ function turnViewReconcile() {
     _turnFileRow(state, el);
   }
   if (open) _turnOpen = open;
+  // Only the NEWEST turn on screen may still be working. Every turn above it is
+  // finished by construction -- there are rows after it -- and the user-boundary
+  // rule in the walk above is not enough to say so: it closes a turn only when a
+  // USER row follows it, and a load-more page routinely ends mid-transcript, its
+  // last turn followed by the mid-turn head of the page below. That turn kept a
+  // ticking clock and a rain surface over work that ended long ago, and each
+  // further page added another one. The server's active-turn set is the only
+  // thing that may hold an older turn open.
+  const blocks = Array.from(container.querySelectorAll('.simple-turn-block'));
+  for (let i = 0; i < blocks.length - 1; i++) {
+    const owner = simplifiedTurns.get((blocks[i].dataset && blocks[i].dataset.turnId) || '');
+    if (!owner || owner.status !== 'working' || _turnRuntime.has(owner.turnId)) continue;
+    _turnStopTransient(owner);
+    _turnUpdateStatus(owner, 'completed');
+  }
   for (const s of touched) {
     // Every block owes the reader its last message, under it. A live row takes
     // that spot as it arrives; a replayed turn has to be given it here, or a

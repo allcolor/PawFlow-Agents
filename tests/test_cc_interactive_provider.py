@@ -3000,12 +3000,15 @@ def test_cc_interactive_event_service_publishes_manual_tmux_response(monkeypatch
         def __init__(self, service, session_token, callback=None,
                      block_callback=None, consumer_kind="request",
                      emitted_tool_use_ids=None,
-                     emitted_tool_result_ids=None):
+                     emitted_tool_result_ids=None, consumer_epoch=0):
             assert session_token == "sess"
             # The capture path must declare itself as the safety net so it
             # yields to a live request coordinator instead of splitting the
             # session's event stream with it.
             assert consumer_kind == "capture"
+            # And it reuses the epoch the capture already claimed: claiming a
+            # second time here would bump the epoch out from under itself.
+            assert consumer_epoch
             # And it must dedup against the session's own tool ids: Claude
             # Code replays its whole context, so fresh sets re-emit every
             # earlier tool_use of the session.

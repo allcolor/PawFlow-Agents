@@ -119,7 +119,7 @@ def test_a_failed_send_releases_the_stream_for_the_orphan_net(monkeypatch):
     marked as owned by a coordinator that did not exist.
     """
     svc = _service()
-    state = _codex_session(svc)
+    _codex_session(svc)
     captured = []
     monkeypatch.setattr(
         CCInteractiveEventService, "_start_manual_capture",
@@ -174,9 +174,18 @@ def test_events_nobody_takes_out_of_the_queue_are_adopted(monkeypatch):
         CCInteractiveEventService, "_start_manual_capture",
         lambda self, st: captured.append(st.session_token))
 
-    # A claim so fresh that every liveness guess says a reader is coming.
-    svc.claim_consumer("sess")
+    # A reader that started reading and then stopped, leaving the rest of the
+    # stream in the queue. Its claim is older than its last poll, so nothing
+    # says it is still coming -- the case the rule exists for.
+    #
+    # A claim NEWER than the last poll is deliberately not this case: that
+    # coordinator is inside its send, and `claim_consumer` refuses the capture
+    # on that ground. Adopting anyway spawned a capture per sweep tick that was
+    # refused, consumed nothing and left the queue stale for the next one.
+    epoch = svc.claim_consumer("sess")
     svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START, request_id="r2"))
+    svc.wait_event("sess", timeout=0, epoch=epoch)
     assert captured == []
 
     _age_pending(svc, state,
@@ -235,8 +244,12 @@ def test_the_sweeper_notices_a_burst_that_went_quiet(monkeypatch):
         CCInteractiveEventService, "_start_manual_capture",
         lambda self, st: captured.append(st.session_token))
 
-    svc.claim_consumer("sess")
+    epoch = svc.claim_consumer("sess")
     svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START, request_id="r2"))
+    # It read the burst's first event and went quiet, so the claim is no
+    # longer newer than the last poll: nobody is coming back for the rest.
+    svc.wait_event("sess", timeout=0, epoch=epoch)
     _age_pending(svc, state,
                  CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
     # One sweep pass, run directly rather than waiting on its thread.
@@ -298,6 +311,189 @@ def test_the_net_may_not_evict_a_coordinator_still_inside_its_send():
     assert state.consumer_epoch == epoch
     # And the coordinator that finally polls still owns the stream.
     assert svc.wait_event("sess", timeout=0, epoch=epoch)["request_id"] == "r1"
+
+
+def test_the_undelivered_rule_does_not_storm_a_coordinator_still_sending(
+        monkeypatch):
+    """Production trace, codex conversation starting up:
+
+        19:46:07  events undelivered; capturing orphan turn
+        19:46:07  [codex-interactive] session=... already has an event consumer
+        19:46:07  captured turn streamed: chars=0
+        19:46:07  publish thinking / publish active_released
+        19:46:12  ... the same, and again at :17, :22, :27
+        19:46:25  [cci] TUI prompt not detected ready before first send
+
+    The coordinator claimed at 19:45:4x and was still inside its send -- the
+    TUI took forty-five seconds to accept the prompt. Every sweep tick forced
+    an adoption past that grace, `claim_consumer` refused it on exactly that
+    ground, and the refused capture consumed nothing -- so the queue stayed
+    stale and the next tick repeated it. Each round raised and dropped the
+    active-agent marker: the flicker the user sees.
+    """
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    svc.claim_consumer("sess")          # claimed, and still inside send_text
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    assert state.last_wait_at == 0.0
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
+
+    for _ in range(5):                  # five sweep ticks
+        svc._adopt_if_undelivered(state)
+    assert captured == [], "the stream is owned; there is nothing to adopt"
+
+    # The grace is still a ceiling, not an amnesty.
+    state.last_request_claim_at = (
+        time.time() - CCInteractiveEventService._REQUEST_CLAIM_GRACE_SECONDS - 1)
+    svc._adopt_if_undelivered(state)
+    assert captured == ["sess"]
+
+
+def test_a_refused_capture_never_raises_the_active_agent_marker(monkeypatch):
+    """The marker was raised before the claim was even attempted, so a capture
+    that yields still blinked active-agents on and off."""
+    svc = _service()
+    state = _codex_session(svc)
+    marks = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_publish_capture_active",
+        lambda self, st, *, active: marks.append(active))
+
+    # A live request consumer owns the stream: the capture claim is refused.
+    epoch = svc.claim_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    svc.wait_event("sess", timeout=0, epoch=epoch)
+
+    svc._run_manual_capture("sess")
+
+    assert marks == [], "a capture that never owned the stream says nothing"
+    assert state.consumer_epoch == epoch, "and it does not evict the real turn"
+
+
+def test_a_finished_turn_is_not_adopted_by_the_undelivered_rule(monkeypatch):
+    """Production trace, 20:00:31 -> 20:01:07, one conversation:
+
+        20:00:31  CC interactive hook event: hook=Stop
+        20:00:34  CC interactive captured turn streamed: chars=3566
+        20:00:34  publish active_released
+        20:01:07  turn with no listening request (events undelivered);
+                  capturing orphan turn
+
+    The turn ended and released its marker; thirty-three seconds later the
+    undelivered rule adopted it again and active-agents came back up for good.
+    Nothing drains a session's queue at the END of a turn -- ``drain_session``
+    runs when the NEXT turn claims -- so the post-Stop tail sat there and the
+    rule read it as a stream nobody is reading. A capture then waited for a
+    Stop that had already happened.
+
+    The rule itself arrived in beta.77, which is why this became systematic.
+    """
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    # A turn runs, watched by its coordinator, and ends on a Stop.
+    epoch = svc.claim_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    svc.wait_event("sess", timeout=0, epoch=epoch)
+    svc.publish_event("sess", {"type": "hook", "hook_event_name": "Stop"})
+    assert captured == []
+
+    # Its post-Stop tail is still in the queue and nobody polls any more --
+    # nothing drains until the next turn claims.
+    state.last_wait_at = 0.0
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 10)
+
+    svc._adopt_if_undelivered(state)
+    assert captured == [], "a turn that already ended must not be re-adopted"
+
+    # The net is armed again the moment a real turn starts -- here one nobody
+    # is reading: the coordinator that ran the last turn is gone and its claim
+    # withdrawn, so nothing owns the stream.
+    svc.release_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START, request_id="r2"))
+    captured.clear()  # that publish adopts on its own path; this tests the rule
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
+    svc._adopt_if_undelivered(state)
+    assert captured == ["sess"], "a genuine unread turn is still adopted"
+
+
+def test_a_tmux_prompt_after_a_stop_rearms_the_undelivered_rule(monkeypatch):
+    """A human typing in the tmux starts a turn no coordinator is watching --
+    the case the net exists for. The Stop before it must not mute that."""
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    svc.publish_event("sess", {"type": "hook", "hook_event_name": "Stop"})
+    svc.publish_event("sess", {"type": "hook",
+                               "hook_event_name": "UserPromptSubmit",
+                               "input": {"pawflow_managed_prompt": True}})
+    state.last_wait_at = 0.0
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
+
+    svc._adopt_if_undelivered(state)
+    assert captured == ["sess"]
+
+
+def test_an_evicted_coordinator_does_not_refresh_the_freshness_clock():
+    """The way the grace above was still bypassed in production.
+
+    Reported after a compact on codex-interactive: the block and active-agents
+    opened, closed ten seconds later, then flickered while the webchat kept
+    filling in -- the turn read "Completed" with the tmux visibly working.
+
+    ``wait_event`` stamped ``last_wait_at`` before checking the epoch, so a
+    coordinator that had ALREADY been evicted refreshed the clock on its way
+    to its own exception. That stamp sits newer than the incoming claim, which
+    is precisely the shape ``claim_consumer`` reads as "has polled since
+    claiming" -- so the claim grace stopped applying, and once the freshness
+    window expired the net was granted a capture against a live turn. The new
+    owner then died on its first read, and the capture kept the rows flowing
+    without the active-agent and gauge that belong to a coordinator.
+    """
+    svc = _service()
+    state = _codex_session(svc)
+
+    first = svc.claim_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    svc.wait_event("sess", timeout=0, epoch=first)
+
+    # A newer turn takes the stream and is still inside its own send.
+    second = svc.claim_consumer("sess")
+    assert second != first
+    stamped = state.last_wait_at
+
+    with pytest.raises(CCIConsumerEvicted):
+        svc.wait_event("sess", timeout=0, epoch=first)
+    assert state.last_wait_at == stamped, (
+        "an evicted consumer must not refresh the freshness clock")
+
+    # Age both clocks past the freshness window, their order intact: the new
+    # owner has claimed, has not polled, and is well inside its claim grace.
+    shift = CCInteractiveEventService._LISTENER_FRESH_SECONDS + 1
+    state.last_wait_at -= shift
+    state.last_request_claim_at -= shift
+    assert state.last_request_claim_at > state.last_wait_at
+
+    assert svc.claim_consumer("sess", kind="capture") == 0
+    assert state.consumer_epoch == second
+    assert svc.wait_event("sess", timeout=0, epoch=second) == {}
 
 
 def test_a_send_that_never_polls_still_loses_the_stream_eventually():

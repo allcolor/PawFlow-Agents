@@ -563,6 +563,73 @@ test('a load-more page starting mid-turn does not feed the live turn', () => {
          'an older tool row must never land in the live turn');
 });
 
+// Only the newest turn on screen may still be working. The user-boundary rule
+// closes a turn when a USER row follows it -- and a load-more page routinely
+// ends mid-transcript, its last turn followed by the mid-turn head of the page
+// below, so nothing closed it. Observed as a finished turn keeping a ticking
+// clock and a rain surface, one more of them per page loaded.
+test('load more leaves exactly one working turn: the newest', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const live = e.row('a1');
+  live.dataset.messageRole = 'assistant';
+  live.dataset.rawText = 'live';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1', turn_id: 'u1' }, live);
+  e.ctx.turnViewReconcile();
+
+  // Two successive pages, each ending on a complete turn no USER row follows.
+  prependDeferredRows(e, [
+    { type: 'assistant', msg_id: 'p1', content: 'tail of an older turn' },
+    { type: 'user', msg_id: 'up1' },
+    { type: 'assistant', msg_id: 'p2', content: 'answer' },
+  ]);
+  e.ctx.turnViewReconcile();
+  prependDeferredRows(e, [
+    { type: 'assistant', msg_id: 'q1', content: 'tail again' },
+    { type: 'user', msg_id: 'uq1' },
+    { type: 'assistant', msg_id: 'q2', content: 'answer' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(blocks.length, 5, 'one block per turn on screen');
+  const working = blocks.filter(b => b.classList.contains('turn-working'));
+  eq(working.length, 1, 'exactly one turn is still working');
+  eq(working[0], blocks[blocks.length - 1], 'and it is the newest one');
+});
+
+// Same rule for a turn with no user row of its own -- the shape an interactive
+// CLI produces when the loaded window starts mid-turn. The head fragment gets
+// its own block, and that block is not left spinning once older pages sit above
+// a newer turn.
+test('an orphan live turn does not leave older orphan blocks working', () => {
+  const e = env('simplified');
+  const c1 = e.row('c1');
+  c1.dataset.messageRole = 'tool_call';
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c1' }, c1);
+  const a1 = e.row('a1');
+  a1.dataset.messageRole = 'assistant';
+  a1.dataset.rawText = 'live';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, a1);
+  e.ctx.turnViewReconcile();
+
+  prependDeferredRows(e, [
+    { type: 'tool_call', msg_id: 'c0' },
+    { type: 'assistant', msg_id: 'a0', content: 'tail' },
+    { type: 'user', msg_id: 'u0' },
+    { type: 'tool_call', msg_id: 'cx' },
+    { type: 'assistant', msg_id: 'ax', content: 'answer' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'BLOCK,a0,u0,BLOCK,ax,BLOCK,a1',
+     'each stretch keeps its own block');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  const working = blocks.filter(b => b.classList.contains('turn-working'));
+  eq(working.length, 1, 'only the live turn is working');
+  eq(working[0], blocks[2], 'and it is the one at the bottom');
+});
+
 // The browser-level copy of this lives in
 // tests/test_webchat_durable_state_behavior.py, which skips wherever headless
 // Chromium cannot render. This is the copy that always runs.

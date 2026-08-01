@@ -179,6 +179,17 @@ that raised the marker and waited for a Stop that had already happened. Anything
 that starts a turn — a real provider request, a prompt submitted in the tmux —
 arms the rule again.
 
+That boundary is decided on the events' own timestamps, not on the order they
+arrive in. The two kinds of boundary event do not share a route: the proxy
+emits `request_start` over one persistent event socket, while every hook run
+opens its own connection, sends a single frame and closes it. A `Stop` delayed
+on its way in can therefore be published *after* the next turn's
+`request_start`, and taking it at face value marked the new turn as already
+over — which disarms the backstop for that whole turn, so its answer waits in
+the queue with nobody reading it and no capture is ever spawned. An event older
+than the one that set the current boundary describes a turn that is already
+history and is ignored.
+
 A capture claims before it announces itself. Discovering the refusal inside the
 coordinator meant the active-agent marker had already been raised and was blinked
 straight back off; a capture that yields the stream now says nothing at all.

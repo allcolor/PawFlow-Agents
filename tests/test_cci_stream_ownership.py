@@ -429,6 +429,63 @@ def test_a_finished_turn_is_not_adopted_by_the_undelivered_rule(monkeypatch):
     assert captured == ["sess"], "a genuine unread turn is still adopted"
 
 
+def test_a_late_stop_does_not_close_the_turn_that_started_after_it(monkeypatch):
+    """The two kinds of boundary event do not share a route.
+
+    The proxy holds ONE persistent event socket for a session; the hook opens
+    its own connection per invocation, sends a single frame and closes it. A
+    Stop can therefore be published after the next turn's request_start, and
+    applying the events in arrival order marked the new turn as already over.
+    That disarms the backstop for the whole turn: the answer sits in the queue
+    with nobody reading it and no capture is ever spawned -- the webchat stays
+    silent while the tmux works, which is the exact failure the rule exists to
+    prevent.
+
+    Timestamps say what arrival order cannot: the Stop belongs to the turn
+    before.
+    """
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    now = time.time()
+    # A new turn starts, and nobody is reading its stream.
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START, timestamp=now))
+    captured.clear()  # that publish adopts on its own path; this tests the rule
+    # The previous turn's Stop, delayed on its own connection, lands after it.
+    svc.publish_event("sess", {"type": "hook", "hook_event_name": "Stop",
+                               "timestamp": now - 100})
+    assert not state.turn_over, "a Stop older than the running turn is history"
+
+    # The answer to the new turn is streamed and nobody takes it out.
+    svc.publish_event("sess", {"type": "assistant_text", "text": "hi",
+                               "timestamp": now})
+    captured.clear()
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
+    svc._adopt_if_undelivered(state)
+    assert captured == ["sess"], "the running turn must still be adoptable"
+
+
+def test_the_stop_of_the_running_turn_still_closes_it(monkeypatch):
+    """The ordering guard must not make Stop unable to end anything: a Stop
+    newer than the request_start it follows is that turn's own end."""
+    svc = _service()
+    state = _codex_session(svc)
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: None)
+
+    now = time.time()
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START, timestamp=now - 10))
+    svc.publish_event("sess", {"type": "hook", "hook_event_name": "Stop",
+                               "timestamp": now})
+    assert state.turn_over
+
+
 def test_a_tmux_prompt_after_a_stop_rearms_the_undelivered_rule(monkeypatch):
     """A human typing in the tmux starts a turn no coordinator is watching --
     the case the net exists for. The Stop before it must not mute that."""

@@ -159,6 +159,12 @@ class CCInteractiveSessionEvents:
     # post-Stop stragglers in the queue -- nothing drains until the NEXT turn
     # claims -- and those waiting events are not a turn nobody is showing.
     turn_over: bool = False
+    # The timestamp of the event that last decided `turn_over`. Boundary events
+    # do not all travel the same way: the proxy holds one persistent event
+    # socket, while every hook invocation opens its own short-lived connection.
+    # A Stop can therefore land AFTER the next turn's request_start, and
+    # applying it in arrival order closed a turn that had just begun.
+    turn_boundary_at: float = 0.0
 
 
 class CCInteractiveEventService(BaseService):
@@ -760,17 +766,37 @@ class CCInteractiveEventService(BaseService):
         A Stop says the turn is over. Anything that starts one -- a real
         provider request, a prompt submitted in the tmux -- arms the rule
         again, so a genuine orphan turn is still adopted.
+
+        Decided on the events' own timestamps, not on their arrival order.
+        The two kinds of boundary event do not share a route: the proxy emits
+        request_start over one persistent event socket, while every hook run
+        opens its own connection to deliver a single frame and closes it. A
+        Stop delayed on its way in can therefore be published after the next
+        turn's request_start, and taking it at face value marked the new turn
+        as already over -- disarming the backstop for it, so the answer stayed
+        in the queue and nothing ever picked it up. An event older than the
+        one that set the current boundary describes a turn that is already
+        history.
         """
         if self._is_provider_request(state, event):
-            state.turn_over = False
+            over = False
+        elif event.get("type") == "hook":
+            hook = event.get("hook_event_name", "")
+            if hook == "Stop":
+                over = True
+            elif hook == "UserPromptSubmit":
+                over = False
+            else:
+                return
+        else:
             return
-        if event.get("type") != "hook":
+        # `publish_event` stamps anything that arrived without a timestamp, so
+        # an event with no clock of its own is ordered by its arrival, as before.
+        stamp = float(event.get("timestamp") or 0.0)
+        if stamp and stamp < state.turn_boundary_at:
             return
-        hook = event.get("hook_event_name", "")
-        if hook == "Stop":
-            state.turn_over = True
-        elif hook == "UserPromptSubmit":
-            state.turn_over = False
+        state.turn_over = over
+        state.turn_boundary_at = max(stamp, state.turn_boundary_at)
 
     def _adopt_orphan_turn(self, state: CCInteractiveSessionEvents,
                            reason: str, *, force: bool = False) -> None:

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.80] — 2026-08-01
+
+### Fixed
+
+- A late `Stop` can no longer close and disarm the turn that started after it.
+  The turn boundary was decided in arrival order, but the two kinds of boundary
+  event do not share a route: the proxy emits `request_start` over one
+  persistent event socket, while every hook run opens its own connection for a
+  single frame. A `Stop` delayed on its way in was therefore published after
+  the next turn's `request_start` and marked that turn as already over —
+  disarming the undelivered backstop for its whole duration, so the answer sat
+  in the queue with nobody reading it and no capture was ever spawned. The
+  boundary now compares the events' own timestamps and ignores one older than
+  the event that set it.
+
 ## [1.0.0-beta.79] — 2026-08-01
 
 ### Fixed

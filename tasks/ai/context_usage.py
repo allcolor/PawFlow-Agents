@@ -160,6 +160,47 @@ def _cli_bootstrap_tokens(active_ctx: Optional[Dict[str, Any]],
     return max(0, int(token_counts.get((conversation_id, agent_name), 0) or 0))
 
 
+def _gauge_client(conversation_id: str, agent_name: str, user_id: str,
+                  active_ctx: Optional[Dict[str, Any]]) -> Any:
+    """Return the LLM client for this agent, active turn or not."""
+    if active_ctx and active_ctx.get("client") is not None:
+        return active_ctx.get("client")
+    try:
+        from core.conv_agent_config import get_agent_config
+        from core.service_registry import ServiceRegistry
+        svc_id = (get_agent_config(conversation_id, agent_name).get("llm_service")
+                  or "")
+        if not svc_id:
+            return None
+        svc = ServiceRegistry.get_instance().resolve(
+            svc_id, user_id=user_id, conv_id=conversation_id)
+        return svc.get_client() if hasattr(svc, "get_client") else None
+    except Exception:
+        return None
+
+
+def _observed_cli_context_tokens(conversation_id: str, agent_name: str,
+                                 user_id: str,
+                                 active_ctx: Optional[Dict[str, Any]]) -> int:
+    """Return the prompt size the provider itself reported, or 0.
+
+    Only an observed CLI provider records this (see the Codex interactive
+    provider): PawFlow sits on its wire and reads the prompt-token count the
+    provider sends with every exchange. That number is the context window's
+    real occupancy -- provider system prompt, tool schemas and session history
+    included -- none of which PawFlow can enumerate from its own messages.
+
+    Unlike the bootstrap counts this is read WITHOUT an active context too, so
+    the gauge survives a conversation switch: the value lives on the resolved
+    service client, which outlives any one turn.
+    """
+    client = _gauge_client(conversation_id, agent_name, user_id, active_ctx)
+    counts = getattr(client, "_cli_observed_context_tokens_by_stream", None)
+    if not isinstance(counts, dict):
+        return 0
+    return max(0, int(counts.get((conversation_id, agent_name), 0) or 0))
+
+
 def context_usage_for_messages(conversation_id: str, agent_name: str,
                                messages: Any, *, svc_cfg: Optional[Dict[str, Any]] = None,
                                real_window: int = 0, provider: str = "",
@@ -234,9 +275,18 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     bootstrap_prompt_tokens = (
         _cli_bootstrap_tokens(active_ctx, conversation_id, agent_name)
         if is_cli else 0)
+    observed_tokens = (
+        _observed_cli_context_tokens(
+            conversation_id, agent_name, user_id, active_ctx)
+        if is_cli else 0)
     cli_context_state = ""
     if is_cli:
-        if (active_ctx and not active_ctx.get("_cli_has_session")
+        if observed_tokens > 0:
+            # The provider measured its own prompt. Whatever PawFlow believes
+            # about session/bootstrap state, that window is demonstrably full
+            # of something and the gauge is no longer an estimate.
+            cli_context_state = "active"
+        elif (active_ctx and not active_ctx.get("_cli_has_session")
                 and not active_ctx.get("_cli_bootstrap_read_seen")):
             cli_context_state = (
                 "bootstrap" if bootstrap_prompt_tokens > 0 else "cold")
@@ -274,7 +324,8 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
             logging.getLogger(__name__).debug(
                 "context usage snapshot lookup failed", exc_info=True)
     if (is_cli and active_ctx is None and isinstance(cache, dict)
-            and cache.get("cli_context_state") == "cold"):
+            and cache.get("cli_context_state") == "cold"
+            and observed_tokens <= 0):
         usage = dict(cache)
         usage.update({
             "conversation_id": conversation_id,
@@ -292,6 +343,17 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
         real_window=real_window, provider=provider, source=source,
         cache=cache, bootstrap_prompt_tokens=bootstrap_prompt_tokens,
         cli_context_state=cli_context_state)
+    if observed_tokens > 0:
+        # Measured beats reconstructed. Everything above counted the messages
+        # PawFlow holds, which for a CLI session is a subset of the window at
+        # best: it cannot see the provider's system prompt or tool schemas,
+        # and cannot see a context the provider read from inside a code body
+        # at all -- that case counted 0, and a gauge stuck at 0 never trips
+        # auto-compaction. Keep max/cache bookkeeping, replace the number.
+        max_ctx = int(usage.get("max", 0) or 0)
+        usage["used"] = observed_tokens
+        usage["pct"] = (observed_tokens / max_ctx) if max_ctx > 0 else 0.0
+        usage["context_source_measured"] = True
     if active_ctx is not None:
         try:
             from tasks.ai.agent_loop import AgentLoopTask
@@ -333,6 +395,14 @@ def reset_cli_context_usage(conversation_id: str, agent_name: str, *,
     token_counts = getattr(client, "_cli_bootstrap_tokens_by_stream", None)
     if isinstance(token_counts, dict):
         token_counts.pop((conversation_id, agent_name), None)
+    # The measured prompt size describes the session that was just
+    # invalidated. Left behind it would hold the gauge at the old window's
+    # occupancy until the next exchange reports a new one.
+    observed_counts = getattr(
+        _gauge_client(conversation_id, agent_name, user_id, active_ctx),
+        "_cli_observed_context_tokens_by_stream", None)
+    if isinstance(observed_counts, dict):
+        observed_counts.pop((conversation_id, agent_name), None)
     try:
         from tasks.ai.agent_loop import AgentLoopTask
         inst = AgentLoopTask._live_instance

@@ -770,5 +770,3 @@ def _extract_target(arg: str, default_agent: str = "") -> tuple:
     if not parts:
         return default_agent, ""
     return parts[0].lstrip("@"), " ".join(parts[1:])
-
-

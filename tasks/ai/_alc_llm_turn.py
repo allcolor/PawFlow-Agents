@@ -531,4 +531,3 @@ class _ALCLlmTurnMixin:
         finally:
             pass  # heartbeat stopped at iteration end
         return None
-

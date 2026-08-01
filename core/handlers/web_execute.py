@@ -246,5 +246,3 @@ class ExecuteScriptHandler(ToolHandler):
             return str(result)
         except Exception as e:
             return f"Error executing on '{svc_name}': {e}"
-
-

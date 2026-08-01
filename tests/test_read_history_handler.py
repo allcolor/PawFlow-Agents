@@ -168,3 +168,75 @@ def test_read_history_around_from_missing_seq_anchors_backward_to_previous_seq()
     assert "alpha" in result
     assert "beta" in result
     assert "gamma" not in result
+
+
+# ── Ownership ───────────────────────────────────────────────────────
+#
+# `recent` pages through load_page, which is given the user_id and scopes
+# itself. Every windowed reader -- search, oldest, range, around -- walks
+# iter_display_windows with the conversation_id alone, so for those
+# _owns_conversation is the only thing standing between another user's
+# transcript and whoever knows its id.
+
+
+class _BrokenCacheStore(FakeConversationStore):
+    """Metadata unreadable: corrupted extras, a bad disk, a race on write."""
+
+    def _load_cache(self, conversation_id):
+        raise OSError("extras.json is unreadable")
+
+
+class _OwnedByAliceStore(FakeConversationStore):
+
+    def _load_cache(self, conversation_id):
+        return {"user_id": "alice"}
+
+
+def _reader(store_cls, messages, user_id):
+    handler = ReadHistoryHandler()
+    handler.set_conversation_id("c1")
+    handler.set_user_id(user_id)
+    return handler, store_cls(messages)
+
+
+#: In the message body only. "No messages matching '<query>'" echoes the query
+#: back, so asserting on the search term would pass on a refusal AND on a hit.
+_SECRET = "zx-alice-only"
+
+
+def test_an_unreadable_ownership_lookup_denies_instead_of_serving():
+    # Fail-open here meant a metadata failure handed the transcript to any
+    # authenticated user who knew the conversation id.
+    handler, store = _reader(
+        _BrokenCacheStore,
+        [{"role": "user", "content": f"alice's private note {_SECRET}"}],
+        user_id="bob")
+
+    result = handler._do_search(store, {"query": "private", "limit": 10},
+                                role_filter="", agent_filter="")
+
+    assert _SECRET not in result
+
+
+def test_another_users_conversation_is_refused():
+    handler, store = _reader(
+        _OwnedByAliceStore,
+        [{"role": "user", "content": f"alice's private note {_SECRET}"}],
+        user_id="bob")
+
+    result = handler._do_search(store, {"query": "private", "limit": 10},
+                                role_filter="", agent_filter="")
+
+    assert _SECRET not in result
+
+
+def test_the_owner_still_reads_their_own_conversation():
+    handler, store = _reader(
+        _OwnedByAliceStore,
+        [{"role": "user", "content": f"alice's private note {_SECRET}"}],
+        user_id="alice")
+
+    result = handler._do_search(store, {"query": "private", "limit": 10},
+                                role_filter="", agent_filter="")
+
+    assert _SECRET in result

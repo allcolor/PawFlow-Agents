@@ -289,13 +289,13 @@ def _register_installed_package_tasks():
 def get_available_tasks() -> List[Dict[str, Any]]:
     """
     Get the list of available tasks.
-    
+
     Returns:
         Liste de dictionnaires avec les informations sur chaque task
     """
     tasks = []
     task_types = TaskFactory.list_types()
-    
+
     for task_type in task_types:
         task_class = TaskFactory.get(task_type)
         tasks.append({
@@ -305,5 +305,5 @@ def get_available_tasks() -> List[Dict[str, Any]]:
             'description': task_class.DESCRIPTION,
             'icon': task_class.ICON
         })
-    
+
     return tasks

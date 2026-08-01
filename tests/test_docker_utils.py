@@ -41,4 +41,3 @@ def test_to_host_path_preserves_existing_workspace_translation(monkeypatch):
     monkeypatch.setenv("PAWFLOW_HOST_WORKDIR", "/home/me/project")
 
     assert to_host_path("/workspace/pkg/file.py") == "/home/me/project/pkg/file.py"
-

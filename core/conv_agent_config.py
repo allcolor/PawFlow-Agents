@@ -262,4 +262,3 @@ def require_agent_member(conv_id: str, agent_name: str,
         f"{sorted(members.keys())}. Create '{agent_name}' as an agent "
         f"resource (with an llm_service) or add it to this conversation "
         f"via the agents panel.")
-

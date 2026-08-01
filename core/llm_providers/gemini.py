@@ -676,4 +676,3 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
                 return
             except Exception:
                 logger.debug("[gemini-acp] session/cancel failed", exc_info=True)
-

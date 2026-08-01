@@ -368,4 +368,3 @@ def write_install_state(path: Path, data: Dict[str, Any]) -> None:
     payload = dict(data)
     payload.setdefault("installed_at", time.time())
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-

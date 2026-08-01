@@ -407,8 +407,15 @@ class ReadHistoryHandler(ToolHandler):
         try:
             cache = store._load_cache(self._conversation_id)
         except Exception:
-            logger.debug("read_history: ownership lookup failed", exc_info=True)
-            return True
+            # Fail closed. The readers below take the conversation_id alone,
+            # so this check is the only thing between another user's
+            # transcript and whoever knows its id — and a metadata read that
+            # failed is not evidence of ownership, it is the absence of
+            # evidence.
+            logger.warning(
+                "read_history: ownership lookup failed for %s; denying",
+                str(self._conversation_id)[:8], exc_info=True)
+            return False
         owner = cache.get("user_id") or ""
         return not owner or owner == self._user_id
 

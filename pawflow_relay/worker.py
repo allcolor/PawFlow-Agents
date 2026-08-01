@@ -410,7 +410,3 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         time.sleep(reconnect_delay)
         # Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s → 60s
         reconnect_delay = min(reconnect_delay * 2, 60)
-
-
-
-

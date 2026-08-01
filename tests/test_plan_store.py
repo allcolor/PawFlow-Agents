@@ -13,7 +13,7 @@ import time
 import uuid
 import pytest
 
-from core.plan_store import PlanStore 
+from core.plan_store import PlanStore
 
 
 @pytest.fixture(autouse=True)

@@ -627,4 +627,3 @@ class _ALCIterationMixin:
             st._patch_cc_turn_gauge(
                 st.response, getattr(st.client, '_last_turn_msg_id', ''))
         return None
-

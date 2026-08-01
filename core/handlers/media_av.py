@@ -524,5 +524,3 @@ class AudioGenerationHandler(ToolHandler):
 
         except Exception as e:
             return f"Error generating audio: {e}"
-
-

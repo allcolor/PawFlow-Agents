@@ -752,14 +752,28 @@ _pf_keep=" %(keep)s "
 for _pf_used in $(docker ps -a --format '{{.Image}}' 2>/dev/null || true); do
   _pf_keep="$_pf_keep$_pf_used "
 done
-docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | while read -r _pf_ref; do
+docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' 2>/dev/null | while read -r _pf_ref _pf_id; do
   case "$_pf_ref" in %(repos)s) ;; *) continue ;; esac
-  case "$_pf_ref" in *:"<none>") continue ;; esac
   case "$_pf_keep" in *" $_pf_ref "*) continue ;; esac
+  if [ -n "$_pf_id" ]; then
+    case "$_pf_keep" in *" $_pf_id "*) continue ;; esac
+  fi
+  case "$_pf_ref" in *:"<none>")
+    [ -n "$_pf_id" ] || continue
+    echo "Removing untagged image: $_pf_id"
+    docker rmi "$_pf_id" >/dev/null 2>&1 || true
+    continue ;;
+  esac
   echo "Removing old image tag: $_pf_ref"
   docker rmi "$_pf_ref" >/dev/null 2>&1 || echo "Warning: could not remove $_pf_ref" >&2
-done
-docker image prune -f --filter dangling=true >/dev/null 2>&1 || true"""
+done"""
+#: No `docker image prune` any more. It is daemon-wide: every line above is
+#: careful to touch only refs matching a PawFlow repository, and a blanket
+#: dangling prune gave all of that back by deleting the untagged layers of
+#: whatever else the operator builds on the same host. Updating PawFlow may
+#: not cost someone else their build cache. What that prune legitimately
+#: reclaimed -- the untagged layers this install itself left behind -- is
+#: removed by id above, inside the same repository filter as everything else.
 
 
 def images_to_keep(target_image: str = "") -> List[str]:

@@ -27,6 +27,30 @@ class LLMCodexInteractiveMixin:
         LLMClaudeCodeInteractiveMixin._cci_attachment_block)
     _cci_preempt_prompt = LLMClaudeCodeInteractiveMixin._cci_preempt_prompt
 
+    def record_observed_cli_context(self, conversation_id: str,
+                                    agent_name: str, tokens: int) -> None:
+        """Store the prompt size Codex reported for this stream.
+
+        Read back by the context gauge, which otherwise has nothing to
+        measure: the window belongs to the Codex session, not to PawFlow.
+        The dict is created in ``LLMClient.__init__`` and shared by reference
+        with call clones, so the clone that runs the turn and the resolver
+        client the gauge reads expose one authoritative value.
+        """
+        if not conversation_id or not agent_name:
+            return
+        try:
+            measured = int(tokens or 0)
+        except (TypeError, ValueError):
+            return
+        if measured <= 0:
+            return
+        counts = getattr(self, "_cli_observed_context_tokens_by_stream", None)
+        if not isinstance(counts, dict):
+            counts = {}
+            self._cli_observed_context_tokens_by_stream = counts
+        counts[(conversation_id, agent_name)] = measured
+
     def _stream_codex_interactive(
         self, messages, model, temperature=0.7, max_tokens=0, tools=None,
         callback=None, thinking_budget=0, thinking_callback=None,
@@ -89,7 +113,10 @@ class LLMCodexInteractiveMixin:
             touch_callback=lambda: pool.touch(state),
             emitted_tool_use_ids=state.emitted_tool_use_ids,
             emitted_tool_result_ids=state.emitted_tool_result_ids,
-            consumer_epoch=consumer_epoch)
+            consumer_epoch=consumer_epoch,
+            context_tokens_callback=lambda tokens: (
+                self.record_observed_cli_context(
+                    conversation_id, agent_name, tokens)))
         response = coord.run(getattr(self, "_abort", None))
         response.model = response.model or model or self.default_model
         return response
@@ -125,7 +152,10 @@ class LLMCodexInteractiveMixin:
             touch_callback=lambda: pool.touch(state),
             emitted_tool_use_ids=state.emitted_tool_use_ids,
             emitted_tool_result_ids=state.emitted_tool_result_ids,
-            consumer_epoch=consumer_epoch)
+            consumer_epoch=consumer_epoch,
+            context_tokens_callback=lambda tokens: (
+                self.record_observed_cli_context(
+                    state.conversation_id, state.agent_name, tokens)))
         response = coord.run(getattr(self, "_abort", None))
         response.model = response.model or model or self.default_model
         return response
@@ -175,4 +205,3 @@ class LLMCodexInteractiveMixin:
         if not state:
             return False
         return CodexInteractivePool.instance().force_stop(state)
-

@@ -284,4 +284,3 @@ class AgentRuntimeAPI:
         # NO implicit timeout — project rule. Pass an explicit timeout only
         # when the caller genuinely needs a bounded wait.
         return AgentResultWaiter.instance().wait(conversation_id, turn_id, timeout)
-

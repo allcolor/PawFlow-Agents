@@ -344,4 +344,3 @@ class TestDeploymentRegistry(unittest.TestCase):
         assert len(results) == 10
         assert all(not r.startswith("ERROR") for r in results)
         assert len(reg.get_all()) == 10
-

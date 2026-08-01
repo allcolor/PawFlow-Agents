@@ -133,4 +133,3 @@ def test_openai_compatible_stt_blocks_public_host_resolving_private(monkeypatch)
 
     with pytest.raises(ServiceError, match="resolves to a private/local"):
         svc.connect()
-

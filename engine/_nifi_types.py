@@ -159,4 +159,3 @@ class ConversionResult:
     script_processors: List[Dict[str, Any]] = field(default_factory=list)
     subflows: List[Dict[str, Any]] = field(default_factory=list)
     success: bool = True
-

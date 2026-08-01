@@ -550,5 +550,3 @@ class ManageResourceHandler(ToolHandler):
                 lst.remove(name)
             active[key] = lst
         cs.set_extra(self._conversation_id, "active_resources", active)
-
-

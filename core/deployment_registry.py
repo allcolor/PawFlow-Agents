@@ -438,4 +438,3 @@ class DeploymentRegistry:
                     except Exception:
                         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return None
-

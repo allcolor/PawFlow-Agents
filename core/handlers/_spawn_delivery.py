@@ -477,5 +477,3 @@ class _SpawnDeliveryMixin:
             ).start()
         except Exception as e:
             logger.error("[bg-delegate] wake failed: %s", e)
-
-

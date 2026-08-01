@@ -6077,4 +6077,3 @@ def test_skill_install_writes_binary_assets_verbatim(tmp_path, monkeypatch):
     skill_root = Path(ResourceStore.instance().get(
         "skill", "bin-skill", "alice")["skill_root"])
     assert (skill_root / "assets" / "logo.png").read_bytes() == png_bytes
-

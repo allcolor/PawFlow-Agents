@@ -675,6 +675,22 @@ at all and a message about how to rebuild one. The probes are read-only, so
 they now run first: the destruction is the last thing that happens before
 `docker run`.
 
+**Disk is reclaimed inside PawFlow's own repositories, and nowhere else.**
+The last step of every updater script (`_IMAGE_CLEANUP_SH`,
+`core/update_manager.py`) removes the PawFlow image tags this install stopped
+using — an instance that only ever updated from the UI used to keep every
+version it had run, at a couple of gigabytes each. What it may touch is
+bounded twice: the ref must match one of `PRUNABLE_REPOSITORIES`, and it must
+not be referenced by any container the daemon reports (`docker ps -a`), which
+is what spares a relay image no container happens to be running at the moment
+an update ends. Untagged layers of those repositories — `repo:<none>`, which
+cannot be removed by name — are removed by image id inside the same filter.
+There is deliberately no `docker image prune`: that filter is daemon-wide, and
+it made updating PawFlow delete the untagged layers of every other project
+sharing the host's Docker daemon. Every removal tolerates its own failure: a
+cleanup that fails costs disk, and must never turn a successful update into a
+failed one.
+
 **Update inputs are fail-fast and confined to the deployment.** A requested git
 pull must succeed; its exit status is not hidden behind a later Compose command.
 Artifact refresh resolves and validates every destination beneath the deployment

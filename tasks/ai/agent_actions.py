@@ -807,4 +807,3 @@ class AgentActionsMixin(_AgentActionsConvMixin):
 
     # All context ops manage their own lock in background threads
     _CONTEXT_OPS = frozenset()
-

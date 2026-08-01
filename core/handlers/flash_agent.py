@@ -244,5 +244,3 @@ class FlashAgentHandler(SpawnAgentsHandler):
         if injected_results:
             reply["injected"] = injected_results
         return json.dumps(reply, ensure_ascii=False)
-
-

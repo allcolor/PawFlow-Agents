@@ -159,4 +159,3 @@ class LuxTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
 
 
 ServiceFactory.register(LuxTTSService)
-

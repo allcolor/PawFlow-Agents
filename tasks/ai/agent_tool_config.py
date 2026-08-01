@@ -394,4 +394,3 @@ class AgentToolConfigMixin:
             elif isinstance(h, SecurityScanHandler):
                 if user_id:
                     h.set_user_id(user_id)
-

@@ -102,4 +102,3 @@ class PlanStore:
                     plan_dir.rmdir()
                 except OSError:
                     pass
-

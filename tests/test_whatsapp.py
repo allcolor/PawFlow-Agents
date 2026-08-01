@@ -321,4 +321,3 @@ class TestWhatsAppSendHandler:
         handler = WhatsAppSendHandler()
         result = handler.execute({"phone": "", "text": ""})
         assert "error" in result.lower() or "Error" in result
-

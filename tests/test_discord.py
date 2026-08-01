@@ -255,4 +255,3 @@ class TestDiscordSendHandler:
         handler.set_service(mock_svc)
         handler.execute({"channel_id": "ch1", "text": "hello"})
         mock_svc.send_message.assert_called_once()
-

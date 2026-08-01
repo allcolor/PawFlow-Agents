@@ -60,6 +60,15 @@ class _ToolRelayExecuteMixin:
         from services.cc_interactive_event_service import (
             CCInteractiveEventService)
         data = result.get("data") if isinstance(result, dict) else result
+        # Same rule as the MCP bridge (`tools/call` sets isError on it), so a
+        # refusal reads as a refusal wherever it is rendered. Every gate in
+        # _handle_execute answers with a string: read-only and per-tool
+        # denials, a rejected approval, a failed hook — all `Error: ...`, and
+        # the hook block `Blocked by hook: ...`. Published as a success, they
+        # drew a green row under a tool that never ran. A list payload is an
+        # image/text block set, never an error.
+        is_error = isinstance(data, str) and (
+            data.startswith("Error:") or data.startswith("Blocked by hook:"))
         if not isinstance(data, str):
             data = json.dumps(data, default=str, ensure_ascii=False)
         CCInteractiveEventService.publish_agent_event(
@@ -67,7 +76,7 @@ class _ToolRelayExecuteMixin:
                 "type": "tool_result",
                 "tool_use_id": row_id,
                 "content": data,
-                "is_error": False,
+                "is_error": is_error,
             })
 
     def _handle_execute(self, request_id: str, tool_name: str,

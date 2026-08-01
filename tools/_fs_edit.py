@@ -875,8 +875,3 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 
     return {"method": "manual_unified", "files_modified": files_modified,
             "hunks_applied": hunks_applied, "applied": True}
-
-
-
-
-

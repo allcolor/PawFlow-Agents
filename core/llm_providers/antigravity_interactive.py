@@ -731,4 +731,3 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
         if not state:
             return False
         return AntigravityObserverPool.instance().force_stop(state)
-

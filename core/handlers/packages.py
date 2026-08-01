@@ -225,4 +225,3 @@ class ManagePackageHandler(ToolHandler):
             expected_sha256=arguments.get("sha256") or "",
             confirm_download=bool(arguments.get("confirm_download", False)),
         )
-

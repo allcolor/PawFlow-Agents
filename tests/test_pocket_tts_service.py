@@ -241,4 +241,3 @@ def test_pocket_tts_service_registers_with_tasks_import():
     tasks._register_all_services()
 
     assert ServiceFactory.get("pocketTTS") is PocketTTSService
-

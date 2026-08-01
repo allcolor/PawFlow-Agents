@@ -38,4 +38,3 @@ class ExecutionResult:
     duration_ms: float = 0.0
     timestamp: datetime = field(default_factory=datetime.now)
     task_statistics: Dict[str, TaskStats] = field(default_factory=dict)
-

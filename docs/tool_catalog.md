@@ -267,6 +267,24 @@ Four properties worth knowing before relying on it:
   ranking, and a shared conversation is searchable by its owner, not yet by
   its collaborators.
 
+### Reading the current conversation
+
+`read_history` reads the conversation it is called in, a bounded window at a
+time — it never loads a transcript whole, which is what a conversation of a
+few hundred thousand messages makes fatal.
+
+Ownership is therefore checked once, up front, in `_owns_conversation`
+(`core/handlers/history.py`): `recent` pages through `load_page`, which is
+given the user id and scopes itself, but every windowed reader — `search`,
+`oldest`, `range`, `around` — walks `iter_display_windows` with the
+conversation id alone. That check is the only thing between another user's
+transcript and whoever knows its id, so it **fails closed**: a metadata read
+that raises denies the call and logs a warning. It used to grant access, which
+turned any corrupted or unreadable `extras.json` into a disclosure to any
+authenticated user who knew the id. A conversation with no recorded owner is
+still readable — that is a conversation nobody claimed, not one belonging to
+someone else.
+
 ## Multi-Agent, Plans, and Tasks
 
 | Tool | Purpose |

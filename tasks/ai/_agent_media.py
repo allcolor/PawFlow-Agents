@@ -498,4 +498,3 @@ class _AgentMediaMixin:
             self._active_claude_client.pop(_cc_key, None)
         if ctx and _released_turn:
             ctx["_active_cleanup_done"] = True
-

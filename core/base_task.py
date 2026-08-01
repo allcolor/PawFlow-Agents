@@ -49,7 +49,7 @@ class BaseTask(VariableResolverMixin, Task, ABC):
     def log(self, level: str = "INFO", message: str = "", **kwargs):
         """
         Log a message.
-        
+
         Args:
             level: Log level (DEBUG, INFO, WARNING, ERROR)
             message: Message to log
@@ -57,11 +57,11 @@ class BaseTask(VariableResolverMixin, Task, ABC):
         """
         import logging
         logger = logging.getLogger(self.__class__.__name__)
-        
+
         log_message = message
         if kwargs:
             log_message += f" | Attributes: {json.dumps(kwargs)}"
-        
+
         if level == "DEBUG":
             logger.debug(log_message)
         elif level == "INFO":
@@ -70,31 +70,31 @@ class BaseTask(VariableResolverMixin, Task, ABC):
             logger.warning(log_message)
         elif level == "ERROR":
             logger.error(log_message)
-    
+
     def get_attribute(self, flowfile: FlowFile, key: str, default: Optional[str] = None) -> Optional[str]:
         """
         Get a FlowFile attribute with variable resolution.
-        
+
         Args:
             flowfile: Source FlowFile
             key: Attribute key
             default: Default value
-            
+
         Returns:
             Attribute value or default value
         """
         value = flowfile.get_attribute(key, default)
-        
+
         if value and '${' in value:
             # Resolve variables in the attribute
             return self._resolve_string(value)
-        
+
         return value
-    
+
     def set_attribute(self, flowfile: FlowFile, key: str, value: str):
         """
         Set an attribute on the FlowFile.
-        
+
         Args:
             flowfile: Target FlowFile
             key: Attribute key
@@ -102,7 +102,7 @@ class BaseTask(VariableResolverMixin, Task, ABC):
         """
         resolved_value = self._resolve_string(str(value))
         flowfile.set_attribute(key, resolved_value)
-    
+
     def create_flowfile(
         self,
         content: bytes,
@@ -111,87 +111,87 @@ class BaseTask(VariableResolverMixin, Task, ABC):
     ) -> FlowFile:
         """
         Create a new FlowFile.
-        
+
         Args:
             content: FlowFile content
             attributes: Optional attributes
             parent_flowfile: Parent FlowFile used to inherit attributes
-            
+
         Returns:
             New FlowFile
         """
         new_attributes = attributes.copy() if attributes else {}
-        
+
         # Inherit attributes from the parent if specified
         if parent_flowfile:
             for key, value in parent_flowfile.get_attributes().items():
                 if key not in new_attributes:
                     new_attributes[key] = value
-        
+
         return FlowFile(
             content=content,
             attributes=new_attributes
         )
-    
+
     def read_content(self, flowfile: FlowFile) -> bytes:
         """
         Read a FlowFile's content.
-        
+
         Args:
             flowfile: Source FlowFile
-            
+
         Returns:
             Binary content
         """
         return flowfile.get_content()
-    
+
     def write_content(self, flowfile: FlowFile, content: bytes):
         """
         Write content into a FlowFile.
-        
+
         Args:
             flowfile: Target FlowFile
             content: Content to write
         """
         flowfile.set_content(content)
-    
+
     def split_content(self, content: bytes, split_by: bytes = b"\n") -> List[bytes]:
         """
         Split content into multiple parts.
-        
+
         Args:
             content: Content to split
             split_by: Separator bytes
-            
+
         Returns:
             List of split content chunks
         """
         if isinstance(content, str):
             content = content.encode('utf-8')
-        
+
         parts = content.split(split_by)
         return [p for p in parts if p]  # Filter out empty parts
-    
+
     def merge_content(self, contents: List[bytes], separator: bytes = b"\n") -> bytes:
         """
         Merge multiple content chunks.
-        
+
         Args:
             contents: List of content chunks
             separator: Separator between chunks, as bytes
-            
+
         Returns:
             Merged content
         """
         return separator.join(contents)
-    
+
     def validate_json(self, content: str) -> bool:
         """
         Validate JSON content.
-        
+
         Args:
             content: JSON content to validate
-            
+
         Returns:
             True if valid
         """
@@ -200,17 +200,17 @@ class BaseTask(VariableResolverMixin, Task, ABC):
             return True
         except json.JSONDecodeError:
             return False
-    
+
     def parse_json(self, content: str) -> Dict[str, Any]:
         """
         Parse JSON content.
-        
+
         Args:
             content: JSON content
-            
+
         Returns:
             Parsed JSON object
-            
+
         Raises:
             TaskError: If the JSON is invalid
         """
@@ -218,17 +218,17 @@ class BaseTask(VariableResolverMixin, Task, ABC):
             return json.loads(content)
         except json.JSONDecodeError as e:
             raise TaskError(f"JSON invalide: {e}")
-    
+
     def serialize_json(self, data: Any) -> str:
         """
         Serialize an object to JSON.
-        
+
         Args:
             data: Object to serialize
-            
+
         Returns:
             JSON string
-            
+
         Raises:
             TaskError: If serialization fails
         """
@@ -236,22 +236,22 @@ class BaseTask(VariableResolverMixin, Task, ABC):
             return json.dumps(data, ensure_ascii=False, indent=2)
         except (TypeError, ValueError) as e:
             raise TaskError(f"Erreur de sérialisation JSON: {e}")
-    
+
     def copy_flowfile_attributes(self, source: FlowFile, target: FlowFile, exclude: Optional[List[str]] = None):
         """
         Copy attributes from one FlowFile to another.
-        
+
         Args:
             source: Source FlowFile
             target: Target FlowFile
             exclude: List of attributes to exclude
         """
         exclude = exclude or []
-        
+
         for key, value in source.get_attributes().items():
             if key not in exclude:
                 target.set_attribute(key, value)
-    
+
     def get_service(self, service_id: str) -> Optional[Any]:
         """Get a controller service by ID.
 
@@ -454,7 +454,7 @@ class BaseTask(VariableResolverMixin, Task, ABC):
     def get_task_id(self) -> str:
         """
         Return the task ID.
-        
+
         Returns:
             Task ID, based on the class name
         """

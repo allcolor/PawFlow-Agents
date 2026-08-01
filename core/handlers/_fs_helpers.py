@@ -159,5 +159,3 @@ def cap_binary_output(text: str, cap: int = _BINARY_CAP) -> str:
 
 def _truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-

@@ -1205,4 +1205,3 @@ class TestConversationScoping(unittest.TestCase):
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
         self.assertIn("mykey", data)
         self.assertTrue(data["mykey"].startswith("enc:"))
-

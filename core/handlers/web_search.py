@@ -701,5 +701,3 @@ class WebSearchHandler(ToolHandler):
             if title_clean and url.startswith("http"):
                 results.append({"title": title_clean, "url": url, "snippet": snippet_clean})
         return results
-
-

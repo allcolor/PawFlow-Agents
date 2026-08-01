@@ -426,4 +426,3 @@ class AgentUtilsMixin(_AgentMediaMixin, _AgentMsgProcMixin):
             threading.Thread(
                 target=_backfill, name="memory-embed-backfill", daemon=True,
             ).start()
-

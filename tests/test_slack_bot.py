@@ -400,4 +400,3 @@ class TestNotifySlackBackwardCompat:
         registry = TaskFactory._tasks
         assert "notifySlack" in registry
         assert "slackSend" in registry
-

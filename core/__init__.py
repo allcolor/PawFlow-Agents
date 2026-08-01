@@ -300,19 +300,19 @@ class Flow:
         self.scope: str = config.get('scope', 'independent')
         # Directory containing the flow definition file (for asset resolution)
         self.source_dir: str = config.get('_source_dir', '')
-    
+
     def add_task(self, task_id: str, task: Task):
         self.tasks[task_id] = task
-    
+
     def add_service(self, service_id: str, service: Service):
         self.services[service_id] = service
-    
+
     def get_task(self, task_id: str) -> Optional[Task]:
         return self.tasks.get(task_id)
-    
+
     def get_service(self, service_id: str) -> Optional[Service]:
         return self.services.get(service_id)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {'id': self.id, 'name': self.name, 'tasks': list(self.tasks.keys())}
 
@@ -323,44 +323,44 @@ class Flow:
 
 class Task:
     """Abstract interface for all tasks."""
-    
+
     TYPE: str = ""
     VERSION: str = "1.0.0"
     NAME: str = ""
     DESCRIPTION: str = ""
     ICON: str = "default"
-    
+
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self._validate_config()
-    
+
     def _validate_config(self):
         errors = self.validate()
         if errors:
             raise ValueError("; ".join(errors))
-    
+
     def validate(self) -> List[str]:
         errors = []
         schema = self.get_parameter_schema()
-        
+
         for param_name, param_schema in schema.items():
             if param_schema.get('required', False):
                 if param_name not in self.config:
                     errors.append(f"Paramètre requis manquant: {param_name}")
         return errors
-    
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {}
-    
+
     def execute(self, flowfile: 'FlowFile') -> List['FlowFile']:
         return [flowfile]
-    
+
     def get_type(self) -> str:
         return self.TYPE
-    
+
     def get_name(self) -> str:
         return self.NAME
-    
+
     def get_version(self) -> str:
         return self.VERSION
 
@@ -371,32 +371,32 @@ class Task:
 
 class Service:
     """Abstract interface for all services."""
-    
+
     TYPE: str = ""
     VERSION: str = "1.0.0"
     NAME: str = ""
     DESCRIPTION: str = ""
-    
+
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self._connection = None
         self._validated = False
-    
+
     def _validate_config(self):
         errors = self.validate()
         if errors:
             raise ValueError("; ".join(errors))
-    
+
     def validate(self) -> List[str]:
         errors = []
         schema = self.get_parameter_schema()
-        
+
         for param_name, param_schema in schema.items():
             if param_schema.get('required', False):
                 if param_name not in self.config:
                     errors.append(f"Paramètre requis manquant: {param_name}")
         return errors
-    
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {}
 
@@ -420,10 +420,10 @@ class Service:
 
     def disconnect(self):
         pass
-    
+
     def get_type(self) -> str:
         return self.TYPE
-    
+
     def get_name(self) -> str:
         return self.NAME
 
@@ -434,20 +434,20 @@ class Service:
 
 class TaskFactory:
     """Factory for creating tasks."""
-    
+
     _tasks: Dict[str, type] = {}
-    
+
     @classmethod
     def register(cls, task_class: type):
         if hasattr(task_class, 'TYPE') and task_class.TYPE:
             cls._tasks[task_class.TYPE] = task_class
-    
+
     @classmethod
     def get(cls, task_type: str) -> type:
         if task_type not in cls._tasks:
             raise TaskError(f"Task non trouvée: {task_type}")
         return cls._tasks[task_type]
-    
+
     @classmethod
     def list_types(cls) -> List[str]:
         return list(cls._tasks.keys())
@@ -455,20 +455,20 @@ class TaskFactory:
 
 class ServiceFactory:
     """Factory for creating services."""
-    
+
     _services: Dict[str, type] = {}
-    
+
     @classmethod
     def register(cls, service_class: type):
         if hasattr(service_class, 'TYPE') and service_class.TYPE:
             cls._services[service_class.TYPE] = service_class
-    
+
     @classmethod
     def get(cls, service_type: str) -> type:
         if service_type not in cls._services:
             raise ServiceError(f"Service non trouvé: {service_type}")
         return cls._services[service_type]
-    
+
     @classmethod
     def list_types(cls) -> List[str]:
         return list(cls._services.keys())

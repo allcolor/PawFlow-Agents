@@ -737,5 +737,3 @@ class ListSecretsHandler(ToolHandler):
             suffix = f" (large: {cv.size / 1024:.0f}KB)" if cv.is_large else ""
             lines.append(f"- {k}{suffix}  →  ${{{k}}}")
         return "\n".join(lines)
-
-

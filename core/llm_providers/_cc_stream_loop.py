@@ -666,4 +666,3 @@ class _CCStreamLoopMixin:
                     sorted(st._pending_tool_ids)[:5],
                     st._got_assistant, _since_tr)
             st._watchdog_stop.wait(5)
-

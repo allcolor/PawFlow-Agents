@@ -248,4 +248,3 @@ def notify_skill_updated(skill_name: str, skill_def: Optional[Dict[str, Any]],
             updated_skill_context_message(skill_name, skill_def or {}), source)
         notified.append(agent_name)
     return notified
-

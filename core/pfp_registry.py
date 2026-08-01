@@ -462,4 +462,3 @@ def _dedupe(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _is_http_url(value: str) -> bool:
     return urlparse(str(value or "")).scheme in {"http", "https"}
-

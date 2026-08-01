@@ -2571,4 +2571,3 @@ class TestTelegramPersistentSend(unittest.TestCase):
         self.assertEqual(result, {"message_id": 7})
         # Reconnected after the broken socket was dropped.
         self.assertEqual(state["created"], 2)
-

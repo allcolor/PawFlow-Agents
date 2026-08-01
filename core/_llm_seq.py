@@ -139,4 +139,3 @@ def stamp_message(msg: Dict[str, Any],
     if not msg.get("msg_id"):
         msg["msg_id"] = _uuid.uuid4().hex[:12]
     return msg
-

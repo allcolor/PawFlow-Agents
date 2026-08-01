@@ -767,4 +767,3 @@ class LLMClaudeCodeMixin(
                 "Binary 'docker' not found. Install Docker Desktop.")
 
         return proc, self._pool_container_name, _mcp_internal_token
-

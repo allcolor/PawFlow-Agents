@@ -277,4 +277,3 @@ class TestScraplingFetchTask(unittest.TestCase):
 
 
 # ── i18n ─────────────────────────────────────────────────────────────
-

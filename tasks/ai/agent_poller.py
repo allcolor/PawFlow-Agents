@@ -751,4 +751,3 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             return False
 
         return True
-

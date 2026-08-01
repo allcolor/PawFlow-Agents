@@ -593,4 +593,3 @@ def test_telegram_filestore_media_does_not_fallback_to_unscoped_access():
     assert name == "secret.txt"
     assert raw == b"secret"
     assert content_type == "text/plain"
-

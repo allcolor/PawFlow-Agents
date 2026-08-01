@@ -421,5 +421,3 @@ class AssignTaskHandler(ToolHandler):
                 seen.add(n)
                 merged.append(s)
         return merged
-
-

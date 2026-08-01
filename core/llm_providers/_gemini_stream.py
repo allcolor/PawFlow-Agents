@@ -721,4 +721,3 @@ class _GeminiStreamMixin:
                     live_session.turn_lock.release()
                 except Exception:
                     logger.debug("[gemini-acp-live] turn lock release failed", exc_info=True)
-

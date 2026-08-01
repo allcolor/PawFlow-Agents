@@ -244,11 +244,27 @@ class CCInteractiveEventService(BaseService):
             services = list(cls._instances.values())
         for service in services:
             with service._sessions_lock:
-                tokens = [
-                    token for token, state in service._sessions.items()
+                # Connected first, then newest. A session is never
+                # unregistered, so a conversation accumulates the state of
+                # every container it ever had — all still flagged
+                # code_mode_open. Insertion order handed the event to the
+                # OLDEST of them: publish returned True while it sat in a
+                # queue nobody reads, and the live UI drew no tool row at all.
+                # `connected` is the evidence `live_session` trusts (the proxy
+                # WebSocket is up exactly while the container is alive), but
+                # it only orders here — a session that is in code mode is
+                # still tried if nothing claims to be connected, so this can
+                # only improve on the arbitrary order it replaces.
+                candidates = [
+                    (bool(state.connected),
+                     state.last_event_at or state.created_at, token)
+                    for token, state in service._sessions.items()
                     if state.code_mode_open
                     and state.conversation_id == conversation_id
                     and state.agent_name == agent_name]
+                tokens = [token for _conn, _ts, token in
+                          sorted(candidates, key=lambda c: (c[0], c[1]),
+                                 reverse=True)]
             for token in tokens:
                 try:
                     service.publish_event(token, dict(event))

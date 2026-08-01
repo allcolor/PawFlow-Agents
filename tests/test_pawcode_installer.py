@@ -84,4 +84,3 @@ def test_pawcode_docs_cover_standalone_installer():
     assert "Standalone Installer Builds" in docs
     assert "python scripts/build-pawcode-installer.py" in docs
     assert "does not bundle or manage `pawflow-relay`" in docs
-

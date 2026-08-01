@@ -743,4 +743,3 @@ class SegmentedJsonl(_SegmentedJsonlIOMixin):
         if not should_write:
             return
         self._write_index_hot(index)
-

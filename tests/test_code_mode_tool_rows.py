@@ -108,3 +108,98 @@ def test_the_relay_row_is_keyed_on_the_id_its_buttons_act_on(service):
         "conv", "assistant", row_id,
         {"type": "result", "data": "line one"})
     assert _row(service)["content"] == "line one"
+
+
+# ── A refusal is not a result ───────────────────────────────────────
+
+
+@pytest.mark.parametrize("data", [
+    "Error: tool 'bash' is not allowed in read-only mode.",
+    "Error: Tool 'edit' was rejected by the user.",
+    "Error: pre_tool_call hook failed: boom",
+    "Blocked by hook: writes are frozen",
+])
+def test_a_refused_call_is_reported_as_an_error(service, data):
+    # Every gate in _handle_execute answers with one of these strings.
+    # Publishing them as successes drew a green row under a tool that never
+    # ran -- and the model read the refusal while the user read a result.
+    service.register_session("sess", conversation_id="conv",
+                             agent_name="assistant")
+    service.mark_code_mode("sess")
+
+    _ToolRelayExecuteMixin._publish_code_mode_result(
+        "conv", "assistant", "row-1", {"type": "result", "data": data})
+
+    assert _row(service)["is_error"] is True
+
+
+def test_an_ordinary_result_is_not_an_error(service):
+    service.register_session("sess", conversation_id="conv",
+                             agent_name="assistant")
+    service.mark_code_mode("sess")
+
+    # A grep hit that merely quotes the word is a result like any other.
+    _ToolRelayExecuteMixin._publish_code_mode_result(
+        "conv", "assistant", "row-1",
+        {"type": "result", "data": "log.py:12: Error: connection refused"})
+
+    assert _row(service)["is_error"] is False
+
+
+def test_a_block_payload_is_never_an_error(service):
+    # Images and text blocks come back as a list, not a string.
+    service.register_session("sess", conversation_id="conv",
+                             agent_name="assistant")
+    service.mark_code_mode("sess")
+
+    _ToolRelayExecuteMixin._publish_code_mode_result(
+        "conv", "assistant", "row-1",
+        {"type": "result", "data": [{"type": "text", "text": "ok"}]})
+
+    assert _row(service)["is_error"] is False
+
+
+# ── Which session the row reaches ───────────────────────────────────
+
+
+def test_the_row_goes_to_the_live_session_not_the_one_it_replaced(service):
+    # A session is never unregistered, so a conversation accumulates the state
+    # of every container it ever had. Insertion order handed the event to the
+    # oldest of them: publish returned True while the event sat in a queue
+    # nobody reads, and the live UI drew no tool row at all.
+    service.register_session("old", conversation_id="conv",
+                             agent_name="assistant")
+    service.mark_code_mode("old")
+    service.register_session("new", conversation_id="conv",
+                             agent_name="assistant")
+    service.mark_code_mode("new")
+    with service._sessions_lock:
+        service._sessions["old"].connected = False
+        service._sessions["new"].connected = True
+
+    published = CCInteractiveEventService.publish_agent_event(
+        "conv", "assistant", {"type": "tool_use", "tool_use_id": "r1",
+                              "name": "read", "arguments": {}})
+
+    assert published is True
+    assert _row(service, "new").get("tool_use_id") == "r1"
+    assert _row(service, "old") == {}
+
+
+def test_with_nothing_connected_the_newest_session_still_gets_it(service):
+    # `connected` orders, it does not filter: a provider whose proxy never
+    # marks the session must not lose its rows over it.
+    service.register_session("old", conversation_id="conv",
+                             agent_name="assistant")
+    service.mark_code_mode("old")
+    service.register_session("new", conversation_id="conv",
+                             agent_name="assistant")
+    service.mark_code_mode("new")
+
+    published = CCInteractiveEventService.publish_agent_event(
+        "conv", "assistant", {"type": "tool_use", "tool_use_id": "r1",
+                              "name": "read", "arguments": {}})
+
+    assert published is True
+    assert _row(service, "new").get("tool_use_id") == "r1"
+    assert _row(service, "old") == {}

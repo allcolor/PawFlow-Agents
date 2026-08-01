@@ -539,4 +539,3 @@ def extract_swift(path: Path) -> dict:
 
 
 # ── Go extractor (custom walk) ────────────────────────────────────────────────
-

@@ -254,5 +254,3 @@ def _relay_kind_config(kind: str) -> Dict[str, Any]:
         "publish_desktop": True,
         "description": "Server workspace relay (server-spawned)",
     }
-
-

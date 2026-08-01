@@ -364,6 +364,51 @@ class _ToolRelayCacheReqMixin:
         return False
 
     @classmethod
+    def inflight_snapshot(cls, conversation_id: str,
+                          agent_name: str = "") -> list:
+        """What is running right now in a conversation — the read side.
+
+        A tool row is "running" only in the live SSE stream: a view rebuilt
+        from the transcript renders a call whose result has not been written
+        yet as an ordinary finished row — no pending bullet, no BG/Kill. The
+        relay knows better, and until now this table was write-only
+        (background_by_tc_id, cancel_*, has_unbound_inflight).
+
+        Sub-conversations (task/delegate/flash) render inside their parent,
+        so the match is on the root id — otherwise a delegate's running call
+        hydrates in no view at all.
+
+        An entry with an empty tc_id is a request whose provider tool_call id
+        has not been bound yet (see bind_pending_cc_tc): it is genuinely in
+        flight but no row can be addressed for it, so callers keying on the
+        id simply skip it.
+        """
+        root = cls._root_conversation_id(conversation_id)
+        now = time.time()
+        out = []
+        with cls._inflight_lock:
+            for rid, info in cls._inflight.items():
+                if not isinstance(info, dict):
+                    continue
+                if cls._root_conversation_id(info.get("conv", "")) != root:
+                    continue
+                if agent_name and info.get("agent") != agent_name:
+                    continue
+                started_at = float(info.get("started_at") or now)
+                bg_evt = info.get("background")
+                out.append({
+                    "tc_id": str(info.get("cc_tc_id") or ""),
+                    "bg_tc_id": str(info.get("bg_tc_id") or rid),
+                    "request_id": str(rid),
+                    "agent_name": str(info.get("agent") or ""),
+                    "tool_name": str(info.get("tool_name") or ""),
+                    "started_at": started_at,
+                    "duration": max(0.0, now - started_at),
+                    "backgrounded": bool(bg_evt and bg_evt.is_set()),
+                })
+        return out
+
+    @classmethod
     def bind_pending_cc_tc(cls, conversation_id: str, agent_name: str,
                            tc_id: str, tool_name: str,
                            args_hash: str) -> bool:

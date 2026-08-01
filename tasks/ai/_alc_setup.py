@@ -320,5 +320,3 @@ class _ALCSetupMixin:
         st.ctx.pop("_auto_compact_usage_cache", None)
         st.llm_context = list(st.messages)
         self._alc_materialize_initial_context(st)
-
-

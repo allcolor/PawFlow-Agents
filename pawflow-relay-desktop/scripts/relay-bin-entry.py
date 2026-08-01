@@ -32,4 +32,3 @@ if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "__pawflow_screen_action_child__":
         raise SystemExit(_screen_action_child(sys.argv[2]))
     raise SystemExit(main() or 0)
-

@@ -700,5 +700,3 @@ class _LLMClientDriverMixin:
                 all_embeddings.append(item.get("embedding", []))
 
         return all_embeddings
-
-

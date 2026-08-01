@@ -47,6 +47,8 @@ class CleanupSelectsTheRightTags(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _run(self, keep, images, containers=()):
+        # `docker images` is asked for "<ref> <id>"; a fixture may give either
+        # a bare ref (id irrelevant to that test) or the pair.
         (self.tmp / "images").write_text("\n".join(images) + "\n",
                                          encoding="utf-8")
         (self.tmp / "ps").write_text(
@@ -118,17 +120,45 @@ class CleanupSelectsTheRightTags(unittest.TestCase):
             ])
         self.assertEqual(removed, ["ghcr.io/allcolor/pawflow:1.0.0-beta.61"])
 
-    def test_untagged_images_are_left_to_the_dangling_prune(self):
-        """``repo:<none>`` is not a ref worth an rmi by name."""
+    def test_untagged_pawflow_layers_go_by_id_and_no_global_prune_runs(self):
+        """``repo:<none>`` cannot be removed by name, only by id.
+
+        It used to be left to ``docker image prune --filter dangling=true``,
+        which is daemon-wide: updating PawFlow deleted the untagged layers of
+        every other project sharing the host's Docker daemon -- the one thing
+        the repository filter above exists to prevent. The layer is still
+        reclaimed; the blast radius is now the same as every other removal.
+        """
+        removed, out = self._run(
+            keep=["ghcr.io/allcolor/pawflow:1.0.0-beta.62"],
+            images=[
+                "ghcr.io/allcolor/pawflow:<none> sha256deadbeef",
+                "ghcr.io/allcolor/pawflow:1.0.0-beta.62 sha256current",
+            ])
+        self.assertEqual(removed, ["sha256deadbeef"])
+        self.assertIn("Removing untagged image", out)
+        self.assertFalse(self.prune.exists(),
+                         "no daemon-wide prune may run: it reaches every "
+                         "other project on the host")
+
+    def test_an_untagged_layer_a_container_still_uses_is_spared(self):
+        # `docker ps --format {{.Image}}` reports an untagged image by id, so
+        # the keep list has to be matched against the id too.
+        removed, _ = self._run(
+            keep=["ghcr.io/allcolor/pawflow:1.0.0-beta.62"],
+            images=["ghcr.io/allcolor/pawflow:<none> sha256inuse"],
+            containers=["sha256inuse"])
+        self.assertEqual(removed, [])
+
+    def test_another_projects_untagged_layer_is_never_touched(self):
         removed, _ = self._run(
             keep=["ghcr.io/allcolor/pawflow:1.0.0-beta.62"],
             images=[
-                "ghcr.io/allcolor/pawflow:<none>",
-                "ghcr.io/allcolor/pawflow:1.0.0-beta.62",
+                "postgres:<none> sha256postgres",
+                "ghcr.io/someone-else/pawflow:<none> sha256other",
             ])
         self.assertEqual(removed, [])
-        self.assertTrue(self.prune.exists(),
-                        "the dangling prune must still run")
+        self.assertFalse(self.prune.exists())
 
     def test_the_relay_images_survive_even_with_no_relay_running(self):
         """A relay is spawned on demand, so it is normally referenced by no

@@ -400,5 +400,3 @@ class TestBm25Recall(unittest.TestCase):
         rs = self.store.recall("u", query="deadline")
         self.assertGreater(len(rs), 0)
         self.assertEqual(rs[0].text, "opaque body")
-
-

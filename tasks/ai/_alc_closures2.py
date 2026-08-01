@@ -804,4 +804,3 @@ class _ALCClosures2Mixin:
                 store=ConversationStore.instance())
         except Exception:
             logger.debug("exception suppressed", exc_info=True)
-

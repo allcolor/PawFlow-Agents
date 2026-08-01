@@ -549,4 +549,3 @@ class AgentSummarizeMixin(_AgentSummarizeBackendMixin):
                     FileStore.instance().delete(_fid)
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-

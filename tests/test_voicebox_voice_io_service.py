@@ -736,4 +736,3 @@ def test_voicebox_resolve_start_command_uses_wsl_for_wsl_unc_venv(monkeypatch):
     assert f"cd {linux_repo}" in cmd[-1]
     assert "export HF_HUB_DISABLE_PROGRESS_BARS=1" in cmd[-1]
     assert f"exec {linux_repo}/backend/venv/bin/python -m uvicorn backend.main:app" in cmd[-1]
-

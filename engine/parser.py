@@ -36,21 +36,21 @@ class FlowParser:
     def parse(cls, config: Dict[str, Any]) -> Flow:
         """
         Parse a flow from a configuration.
-        
+
         Args:
             config: Configuration du flux
-            
+
         Returns:
             Parsed Flow object
         """
         flow = Flow(config)
-        
+
         # Parse inputs
         flow.entries = config.get('entries', [])
-        
+
         # Parse outputs
         flow.exits = config.get('exits', [])
-        
+
         flow_parameters = config.get('parameters', {})
 
         # Pre-resolve service configs (needed for service reference injection)
@@ -115,7 +115,7 @@ class FlowParser:
             service_class = ServiceFactory.get(service_type)
             service = service_class(service_parameters)
             flow.add_service(service_id, service)
-        
+
         # Parse groups through ProcessGroup.from_dict.
         for group_id, group_config in config.get('groups', {}).items():
             if not isinstance(group_config, dict):
@@ -185,7 +185,7 @@ class FlowParser:
                 _ef_task._original_config = dict(_ef_params)
                 _ef_task._max_instances = 1
                 flow.add_task(group_id, _ef_task)
-        
+
         # Parse relationships. Repository templates may use either the editor
         # shape (from/to/type) or the package shape
         # (source/target/relationships). Normalize before the executor builds
@@ -216,15 +216,15 @@ class FlowParser:
             item['type'] = rel_type or 'success'
             normalized.append(item)
         return normalized
-    
+
     @classmethod
     def parse_from_file(cls, filepath: str) -> Flow:
         """
         Parse a flow from a JSON file.
-        
+
         Args:
             filepath: Path to the JSON file
-            
+
         Returns:
             Parsed Flow object
         """
@@ -234,15 +234,15 @@ class FlowParser:
         from pathlib import Path
         config['_source_dir'] = str(Path(filepath).resolve().parent)
         return cls.parse(config)
-    
+
     @classmethod
     def parse_from_json(cls, json_string: str) -> Flow:
         """
         Parse a flow from a JSON string.
-        
+
         Args:
             json_string: JSON string
-            
+
         Returns:
             Parsed Flow object
         """
@@ -252,93 +252,93 @@ class FlowParser:
 
 class FlowValidator:
     """Flow validator."""
-    
+
     @classmethod
     def validate(cls, flow: Flow, strict: bool = True) -> List[str]:
         """
         Validate a flow.
-        
+
         Args:
             flow: Flow to validate
             strict: Strict mode (raises errors) or not
-            
+
         Returns:
             Liste de messages d'erreur (vide si valide)
         """
         errors = []
-        
+
         # Validate the name
         if not flow.name:
             errors.append("Le flux doit avoir un nom")
-        
+
         # Validate tasks
         for task_id, task in flow.tasks.items():
             task_errors = task.validate()
             for error in task_errors:
                 errors.append(f"Task {task_id}: {error}")
-        
+
         # Validate services
         for service_id, service in flow.services.items():
             service_errors = service.validate()
             for error in service_errors:
                 errors.append(f"Service {service_id}: {error}")
-        
+
         # Validate relationships
         relation_errors = cls._validate_relations(flow)
         errors.extend(relation_errors)
-        
+
         # Validate connectivity
         connectivity_errors = cls._validate_connectivity(flow)
         errors.extend(connectivity_errors)
-        
+
         if strict and errors:
             raise ValidationError("; ".join(errors))
-        
+
         return errors
-    
+
     @classmethod
     def _validate_relations(cls, flow: Flow) -> List[str]:
         """Validate relationships between components."""
         errors = []
-        
+
         # Check that all references in relationships exist
         all_ids = set(flow.tasks.keys()) | set(flow.services.keys())
-        
+
         for relation in flow.relations:
             from_id = relation.get('from')
             to_id = relation.get('to')
-            
+
             if from_id not in all_ids:
                 errors.append(f"Relation: source inconnue {from_id}")
-            
+
             if to_id not in all_ids:
                 errors.append(f"Relation: destination inconnue {to_id}")
-        
+
         return errors
-    
+
     @classmethod
     def _validate_connectivity(cls, flow: Flow) -> List[str]:
         """Validate DAG connectivity."""
         errors = []
-        
+
         # Check that there is at least one input
         if not flow.entries and not flow.tasks:
             errors.append("Le flux doit avoir au moins une entrée ou une task")
-        
+
         # Check for cycles (simplified)
         # A full implementation would use DFS to detect cycles
-        
+
         return errors
-    
+
     @classmethod
     def validate_from_file(cls, filepath: str, strict: bool = True) -> List[str]:
         """
         Validate a flow from a file.
-        
+
         Args:
             filepath: Path to the JSON file
             strict: Mode strict
-            
+
         Returns:
             Liste de messages d'erreur
         """
@@ -347,16 +347,16 @@ class FlowValidator:
             return cls.validate(flow, strict)
         except Exception as e:
             return [f"Erreur de lecture: {e}"]
-    
+
     @classmethod
     def validate_from_json(cls, json_string: str, strict: bool = True) -> List[str]:
         """
         Validate a flow from a JSON string.
-        
+
         Args:
             json_string: JSON string
             strict: Mode strict
-            
+
         Returns:
             Liste de messages d'erreur
         """

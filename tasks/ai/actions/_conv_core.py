@@ -135,6 +135,32 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
                            if turn.get("turn_id")}
         history = self._classify_messages_for_display(
             raw_messages, active_turn_ids=active_turn_ids)
+
+        # A tool call that is still running has no result in the transcript,
+        # so a rebuilt view would render it as an ordinary finished row —
+        # no pending bullet, no BG/Kill. The relay holds the truth; stamp
+        # `live` on the rows it still has in flight so a reloaded or
+        # switched-to conversation renders them exactly like the live
+        # stream does (messages_render.js reads `extra.live`).
+        active_tool_calls = []
+        try:
+            from services.tool_relay_service import ToolRelayService
+            active_tool_calls = ToolRelayService.inflight_snapshot(conv_id)
+        except Exception:
+            logger.debug("in-flight tool snapshot failed", exc_info=True)
+        _live_tc_ids = {c["tc_id"] for c in active_tool_calls if c.get("tc_id")}
+        if _live_tc_ids:
+            # A result written between the page read and the snapshot wins:
+            # a row that already carries its result is finished, whatever the
+            # table still says.
+            _done_tc_ids = {row.get("tc_id") for row in history
+                            if row.get("type") == "tool_result"}
+            for row in history:
+                if row.get("type") != "tool_call":
+                    continue
+                _tc = row.get("tc_id") or ""
+                if _tc in _live_tc_ids and _tc not in _done_tc_ids:
+                    row["live"] = True
         extras = store.get_extras_snapshot(conv_id)
         nicknames = extras.get("agent_nicknames") or {}
         active_res = extras.get("active_resources") or {}
@@ -188,6 +214,7 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
                     if raw_messages else "",
             },
             "active_turns": active_turns,
+            "active_tool_calls": active_tool_calls,
             "nicknames": nicknames,
             "active_agent": active_agent,
             "custom_css": custom_css,

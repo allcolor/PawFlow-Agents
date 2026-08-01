@@ -463,4 +463,3 @@ class _CCStreamResultMixin:
             finish_reason="stop",
             raw=st.last_data,
         )
-

@@ -15,6 +15,29 @@ from tools.cc_interactive_filters import (
 logger = logging.getLogger(__name__)
 
 
+def observed_context_tokens(usage) -> int:
+    """Return the prompt size one observed Responses exchange reported.
+
+    This is the context gauge measured where it is exact: on the wire. Codex
+    owns its context window -- its own system prompt, its tool schemas, and
+    everything it has read since the session started, none of which PawFlow
+    can enumerate. Rebuilding a gauge from the messages PawFlow knows about
+    estimates the wrong set, and when Codex reads its context from inside a
+    code body PawFlow knows about none of it, so the estimate was 0.
+
+    ``input_tokens`` already includes the cached prefix (Responses details it
+    separately under ``input_tokens_details.cached_tokens``); adding that back
+    would count the cache twice. Returns 0 when no input side was reported,
+    so the caller keeps its previous measurement instead of dropping to zero.
+    """
+    if not isinstance(usage, dict) or "input_tokens" not in usage:
+        return 0
+    try:
+        return max(0, int(usage.get("input_tokens") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
     """Assemble one Codex TUI turn from proxy and lifecycle events.
 
@@ -23,7 +46,31 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
     hook closes the user-visible turn.
     """
 
+    def __init__(self, *args, context_tokens_callback=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Prompt size of the LAST observed exchange -- the context gauge.
+        # Last, not max: a compaction inside Codex shrinks the window and the
+        # gauge has to follow it down.
+        self.observed_context_tokens = 0
+        self.context_tokens_callback = context_tokens_callback
+
+    def _record_context_tokens(self, usage) -> None:
+        measured = observed_context_tokens(usage)
+        if measured <= 0:
+            return
+        self.observed_context_tokens = measured
+        if self.context_tokens_callback:
+            try:
+                self.context_tokens_callback(measured)
+            except Exception:
+                logger.debug(
+                    "observed context gauge callback failed", exc_info=True)
+
     def _merge_usage(self, usage: dict) -> None:
+        # Cost accounting sums every exchange of the turn. The context gauge
+        # must NOT be read from that sum: it is the size of one prompt, and
+        # the last exchange is the one that says how full the window is now.
+        self._record_context_tokens(usage)
         for key in ("input_tokens", "output_tokens", "total_tokens"):
             try:
                 value = int((usage or {}).get(key, 0) or 0)
@@ -33,19 +80,23 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                 self.usage[key] = int(self.usage.get(key, 0) or 0) + value
 
     def _emit_observed_tool_use(self, event: dict) -> None:
-        """Render observed calls, except the code bodies that make them.
+        """Render every observed call, and arm the relay on a code body.
 
         A code-mode harness calls nothing directly: it runs one script in a
-        freeform tool and drives everything from inside it. That item is not a
-        tool call to show — rendered as one it puts a single ``exec(...)`` row
-        with a native badge where every tool it ran should be. The rows for
-        those tools come from the relay that executes them, with the name,
-        arguments and result it really used, exactly as they do for a provider
-        that calls each tool itself.
+        freeform tool and drives everything from inside it. Flagging the
+        session makes the relay report the calls it executes for that script,
+        with the name, arguments and result it really used.
+
+        The body itself still draws its row. Hiding it hid more than the
+        noise it was meant to remove: a script does not have to reach a tool
+        through PawFlow, and what it runs with Codex's own runtime -- reading
+        the bootstrap context is the first thing it does -- is executed by no
+        relay and reported by nobody. Suppressed here, those calls existed in
+        no view at all. The row is coarse, but it is the only evidence that
+        the turn ran anything, and the relay's rows name the rest.
         """
         if code_mode_body(_event_tool_args(event)):
             self.event_service.mark_code_mode(self.session_token)
-            return
         super()._emit_observed_tool_use(event)
 
     def run(self, abort_event=None):
@@ -203,4 +254,3 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
                 "effective_model": self.effective_model,
                 "lifecycle_events": self.lifecycle_events,
             })
-

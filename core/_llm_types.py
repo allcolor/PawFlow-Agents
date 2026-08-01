@@ -374,4 +374,3 @@ class DeltaContextRequired(Exception):
     so the restart costs no tokens.
     """
     pass
-

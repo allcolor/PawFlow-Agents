@@ -461,4 +461,3 @@ class AgentToolExecMixin:
         if len(log) > 500:
             log = log[-500:]
         store.set_extra(conversation_id, key, log)
-

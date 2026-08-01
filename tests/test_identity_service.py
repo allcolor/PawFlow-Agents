@@ -550,4 +550,3 @@ class TestTelegramBotPool(unittest.TestCase):
         self.assertEqual(
             self.pool.get_bot_token_for_user("bob@test.com"), "BOT:bob"
         )
-

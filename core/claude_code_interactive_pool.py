@@ -815,4 +815,3 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             f"{user_id[:6] or '?'}/{conv_id[:8] or '?'}/"
             f"{agent_name or 'default'}@{service_id or 'default'}"
         )
-

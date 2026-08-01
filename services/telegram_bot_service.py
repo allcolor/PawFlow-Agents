@@ -669,4 +669,3 @@ class TelegramBotPool:
                 logger.warning("TelegramBotPool dispatch submit failed (%s); "
                                "running inline", e)
                 self._run_callback(cb, update)
-

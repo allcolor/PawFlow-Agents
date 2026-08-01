@@ -480,8 +480,8 @@ and its result. So the rows come from there.
 
 - `code_mode_body` (`tools/cc_interactive_filters.py`) only recognises such a
   body — a call whose source invokes `tools.<something>(`.
-- `_CodexInteractiveTurnCoordinator._emit_observed_tool_use` drops that item
-  instead of rendering it, and flags the session with `mark_code_mode`.
+- `_CodexInteractiveTurnCoordinator._emit_observed_tool_use` flags the session
+  with `mark_code_mode`, and still renders the item.
 - `ToolRelayService._handle_execute` publishes each call it executes for a
   flagged session through `CCInteractiveEventService.publish_agent_event`, as
   an ordinary `tool_use` / `tool_result` pair.
@@ -500,10 +500,34 @@ directly already has its row, and publishing it again would show it twice.
 decomposed and typed. The wire's single `custom_tool_call` is a MITM-only
 problem, and sourcing the rows from the relay is what restores parity.
 
-What this does not cover: a call the script makes to one of Codex's own tools
-from inside a code body. PawFlow does not execute it, so it has no row. The
-model's direct native calls — the `exec_command` items it emits itself — are
-unaffected and render as before.
+The body keeps its own row. Dropping it — which an earlier version did, to
+remove the unreadable `exec(<javascript>)` line — hid more than that line: a
+script does not have to reach a tool through PawFlow, and what it runs with
+Codex's own runtime is executed by no relay and reported by nobody. Reading
+the bootstrap context is the first thing such a script does, so the calls that
+load a turn's whole context existed in no view at all. The row is coarse, but
+it is the only evidence the turn ran anything; the relay's rows name the rest,
+and the model's direct native calls render as before.
+
+Two things `publish_agent_event` has to get right for any of that to be worth
+anything.
+
+**Which session receives it.** A session is never unregistered, so a
+conversation accumulates the state of every container it ever had — each one
+still flagged `code_mode_open`. Insertion order handed the event to the oldest
+of them: the publish reported success while the event sat in a queue nobody
+reads, and the live UI drew no row at all. Candidates are now ordered
+connected-first, then newest — `connected` being the same evidence
+`live_session` trusts, since the proxy WebSocket is up exactly while the
+container is alive. It orders rather than filters: a provider whose proxy
+never marks the session must not lose its rows over it.
+
+**Whether it is a result or a refusal.** `is_error` was hardcoded false, so a
+read-only denial, a rejected approval and a failed hook all drew a green row
+under a tool that never ran — the model read the refusal while the user read a
+result. It is now derived the same way the MCP bridge derives `isError` for
+`tools/call`: the gates in `_handle_execute` all answer with a string, `Error:
+…` or `Blocked by hook: …`. A list payload is a block set, never an error.
 
 ### One call, two ids, one row
 
@@ -576,3 +600,43 @@ container receives only the delta. If no matching live container exists, the
 new TUI must receive the complete PawFlow initial context. Context edits and
 compaction evict both individual and conversation-wide Codex interactive
 sessions so a stale TUI can never receive a delta after its history changed.
+
+### The Codex context gauge is measured on the wire
+
+Codex owns its context window. PawFlow cannot enumerate what is in it: the
+provider's own system prompt and tool schemas are invisible to it, and the
+PawFlow context itself is externalized into `initial_context.md`, which Codex
+reads with its own tools.
+
+The gauge used to be rebuilt from the messages PawFlow holds, gated on
+observing the native read of that file (`_is_cli_bootstrap_read`,
+`tasks/ai/context_usage_cache.py`). A code-mode harness reads it from inside
+its script, so that call never reaches PawFlow — the gate never opened,
+`_context_messages` kept returning `[]`, and the gauge read 0 for the entire
+life of the session. A gauge stuck at 0 never trips auto-compaction, and
+switching conversation showed 0 because the persisted snapshot said `cold`.
+
+PawFlow sits on the wire, so it does not have to rebuild anything: every
+`/responses` exchange reports the prompt-token count Codex computed itself.
+
+- `observed_context_tokens` (`core/llm_providers/_codex_interactive_turn.py`)
+  reads `usage.input_tokens`. Responses already includes the cached prefix
+  there and details it under `input_tokens_details.cached_tokens`; adding that
+  back would count the cache twice. A payload with no input side returns 0,
+  meaning "no measurement" — never "the window is empty".
+- `_merge_usage` records the **last** exchange, while it keeps summing for
+  cost. A turn runs several exchanges; summing their prompts would report
+  several times the window. Last also means a compaction inside Codex moves
+  the gauge down.
+- `record_observed_cli_context` stores it per `(conversation_id, agent_name)`
+  on `_cli_observed_context_tokens_by_stream`, created in `LLMClient.__init__`
+  and shared by reference with call clones — so the clone that runs the turn
+  and the resolver client the gauge reads expose one value.
+- `compute_context_usage` prefers that number over the reconstructed one and
+  reports `cli_context_state="active"`. It is read without an active context
+  too, which is what makes the gauge survive a conversation switch.
+- `reset_cli_context_usage` drops it: after a session is invalidated the old
+  measurement describes a window that no longer exists.
+
+This is Codex interactive only. The other interactive providers keep the
+reconstructed gauge.

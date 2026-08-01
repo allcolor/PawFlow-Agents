@@ -114,5 +114,3 @@ def _syn_diff_line(console, marker: str, code: str, lang: str, bg: str):
         line = Text(f"    {marker} {code}", style=marker_style)
     line.stylize(Style(bgcolor=bg))
     console.print(line, highlight=False)
-
-

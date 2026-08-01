@@ -219,4 +219,3 @@ def test_read_conversation_serves_a_collaborator_from_the_owners_storage():
 
     assert result["conversation_id"] == cid
     assert result["messages"][0]["content"] == "shared"
-

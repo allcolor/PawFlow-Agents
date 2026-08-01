@@ -177,5 +177,3 @@ def _set_depth(depth: int):
             _depth_local.pop(tid, None)
         else:
             _depth_local[tid] = depth
-
-

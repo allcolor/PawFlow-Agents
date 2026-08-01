@@ -6,6 +6,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.70] — 2026-08-01
+
+### Fixed
+
+- The Codex interactive context gauge reads the real window instead of 0. It
+  was rebuilt from the messages PawFlow holds, and only once it had observed
+  the provider read `initial_context.md` -- the file the PawFlow context is
+  externalized into. The GPT-5.x "sol" harness reads that file from inside its
+  own script, so the call never reaches PawFlow: the gate never opened, the
+  computation kept counting an empty message list, and the gauge showed 0 for
+  the entire life of the session, including after switching conversation,
+  where the persisted snapshot said the session was still cold. A gauge stuck
+  at 0 also never trips auto-compaction. PawFlow sits on that wire and does
+  not have to rebuild anything: every `/responses` exchange reports the
+  prompt-token count Codex computed itself, so that number is now the gauge.
+  It is the last exchange's, not the turn's sum -- a turn runs several, and
+  summing their prompts would report several times the window -- which also
+  means a compaction inside Codex moves the gauge back down. Cost accounting
+  keeps summing, unchanged. Codex interactive only; the other interactive
+  providers keep the reconstructed gauge.
+- No tool call a Codex code-mode turn runs is hidden any more. The `exec` body
+  that drives them was dropped from the view, on the grounds that its rows
+  come from the tool relay that executes them. That holds only for the calls
+  the script routes through PawFlow: what it runs with Codex's own runtime is
+  executed by no relay and reported by nobody, and reading the bootstrap
+  context is the first thing such a script does -- so the calls that load a
+  turn's whole context appeared in no view at all. The body keeps its row; the
+  relay's rows still name the tools it ran.
+- A tool call that is still running still looks like it is running after a
+  reload or a conversation switch. That state lived only in the live SSE
+  stream, so a view rebuilt from the transcript drew a call whose result had
+  not been written yet as an ordinary finished row -- no pending bullet, and
+  no BG or Kill button on the one call that could still use them. The relay
+  knew all along: its in-flight table carries the conversation, the agent, the
+  tool and its call id for every executing request, but the table was
+  write-only. `load_history` now reads it (`inflight_snapshot`), ships an
+  `active_tool_calls` snapshot, and marks the rows still in flight as live --
+  a row that already carries its result is never marked, and a call running in
+  a task or delegate sub-conversation hydrates in the parent view where its
+  row is drawn. All providers: the defect was in hydration, not in a stream.
+- `read_history` fails closed on an unreadable ownership lookup. The windowed
+  readers -- `search`, `oldest`, `range`, `around` -- walk the transcript with
+  the conversation id alone, so `_owns_conversation` is the only check between
+  another user's messages and whoever knows that id; an exception reading the
+  conversation metadata used to grant access. A corrupted or unreadable
+  `extras.json` was therefore enough to disclose a conversation to any
+  authenticated user who knew its id. The denial is logged. `recent` was never
+  affected: it pages through `load_page`, which is given the user id.
+- A code-mode tool row reaches the session that is actually running, and
+  reports a refusal as one. Sessions are never unregistered, so a conversation
+  accumulates the state of every container it ever had -- all still flagged as
+  being in code mode -- and the event went to the first in insertion order:
+  the oldest, usually dead. Publishing reported success while the event sat in
+  a queue nobody reads, and the live UI drew no tool row at all. Candidates are
+  now ordered connected-first, then newest; `connected` orders rather than
+  filters, so a provider whose proxy never marks it cannot lose its rows over
+  it. Separately, `is_error` was hardcoded false: a read-only denial, a
+  rejected approval, a blocked hook and a failed tool all drew a green row
+  under a tool that never ran. It now follows the same rule as the MCP bridge.
+- Updating PawFlow no longer prunes other projects' Docker images. The cleanup
+  step ended on a daemon-wide `docker image prune --filter dangling=true`,
+  which deletes the untagged layers of everything else built on the same
+  daemon -- undoing, in one line, the repository filter every other line of
+  that script exists to enforce. The untagged layers of PawFlow's own
+  repositories are still reclaimed, by image id, inside that filter.
+
 ## [1.0.0-beta.69] — 2026-07-31
 
 ### Fixed

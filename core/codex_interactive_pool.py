@@ -331,4 +331,3 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         for row in rows:
             row["provider"] = "codex-interactive"
         return rows
-

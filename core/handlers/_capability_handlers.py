@@ -576,5 +576,3 @@ class TrainImageModelHandler(_CapabilityHandlerBase):
 
 
 # ── Speech to Video ─────────────────────────────────────────────────
-
-

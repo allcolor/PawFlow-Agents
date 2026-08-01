@@ -343,5 +343,3 @@ def _rollback_service_refs(payload: Dict[str, Any]) -> list[Dict[str, str]]:
     for spec in _voice_service_specs(payload):
         refs.append({"scope": spec["scope"], "service_id": spec["service_id"]})
     return refs
-
-

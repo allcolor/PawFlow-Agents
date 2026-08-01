@@ -214,5 +214,3 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         if len(results) >= limit:
             break
     return results
-
-

@@ -482,4 +482,3 @@ class _ContinuousExecRunMixin:
                 f"Task '{task_id}' discarded failed FlowFile ({consecutive}/5 consecutive). "
                 f"Error: {error_msg}. Task continues processing."
             )
-

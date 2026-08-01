@@ -611,4 +611,3 @@ _SWIFT_CONFIG = LanguageConfig(
 
 
 # ── Generic extractor ─────────────────────────────────────────────────────────
-

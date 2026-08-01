@@ -244,4 +244,3 @@ class ConfigStore:
         except Exception as e:
             logger.warning(f"Error cleaning sidecars: {e}")
         return cleaned
-

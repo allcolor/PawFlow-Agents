@@ -464,5 +464,3 @@ class KgGodNodesHandler(_KgBaseHandler):
         for n in nodes:
             lines.append(f"  {n['entity']} ({n['connections']} connections)")
         return "\n".join(lines)
-
-

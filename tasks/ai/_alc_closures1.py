@@ -779,4 +779,3 @@ class _ALCClosures1Mixin:
             _compact_ms,
             (time.monotonic() - _append_started) * 1000.0,
         )
-

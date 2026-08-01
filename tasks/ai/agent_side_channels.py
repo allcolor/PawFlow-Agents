@@ -333,4 +333,3 @@ class AgentSideChannelsMixin:
             bus.publish_event(conversation_id, "error_event", {
                 "message": f"Broadcast failed: {e}",
             })
-

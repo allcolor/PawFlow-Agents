@@ -42,4 +42,3 @@ def _resolve_explicit_media_service(service_id: str, user_id: str = "", conversa
     if not svc:
         return None, f"media service '{service_id}' not found or not connected"
     return svc, ""
-

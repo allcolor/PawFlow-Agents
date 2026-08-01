@@ -359,4 +359,3 @@ class _AgentPollCheckinMixin:
             f"approved=false, reason=\"what needs to be fixed\")\n\n"
             f"Do NOT respond with text only — verify and call the tool."
         )
-

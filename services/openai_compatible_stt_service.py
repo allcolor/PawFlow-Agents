@@ -303,4 +303,3 @@ class OpenAICompatibleSTTService(BaseSTTService):
 
 
 ServiceFactory.register(OpenAICompatibleSTTService)
-

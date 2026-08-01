@@ -676,4 +676,3 @@ def extract_powershell(path: Path) -> dict:
 
 
 # ── Cross-file import resolution ──────────────────────────────────────────────
-

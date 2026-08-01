@@ -411,4 +411,3 @@ class _CCStreamTurnMixin:
                     "[claude-code] pre-phantom-compact flush failed: %s",
                     _fe, exc_info=True)
             self._kill_cc_hard(st.proc)
-

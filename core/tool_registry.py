@@ -552,6 +552,3 @@ def discover_mcp_tools(server_url: str,
     except Exception as e:
         logger.error(f"MCP discovery failed for {server_url}: {e}")
         return []
-
-
-

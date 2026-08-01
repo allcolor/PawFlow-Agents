@@ -979,4 +979,3 @@ def test_antigravity_start_new_does_not_mutate_client_agent_service(monkeypatch,
 
     assert state.service_id == "agy_llm_service"
     assert client._agent_service == "agy_llm_service"
-

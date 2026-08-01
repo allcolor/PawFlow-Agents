@@ -513,4 +513,3 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
                 if self._is_interactive_http_ff(ff):
                     return True
         return False
-

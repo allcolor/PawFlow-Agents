@@ -517,5 +517,3 @@ def _configure_admin_user(payload: Dict[str, Any]) -> str:
         except ValueError:
             pass
     return username
-
-

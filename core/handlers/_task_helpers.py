@@ -118,8 +118,3 @@ def _append_task_log(conversation_id: str, task_id: str, entry: dict):
     if len(log) > 500:
         log = log[-500:]
     store.set_extra(conversation_id, key, log)
-
-
-
-
-

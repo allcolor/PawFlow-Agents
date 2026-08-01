@@ -737,5 +737,3 @@ class _ConcatReader:
     @property
     def closed(self):
         return self._second.closed
-
-

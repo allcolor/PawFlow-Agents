@@ -695,4 +695,3 @@ class BgBucketBuilder(_BgBucketBuildMixin):
         return fired
 
     # ── Internals ─────────────────────────────────────────────────
-

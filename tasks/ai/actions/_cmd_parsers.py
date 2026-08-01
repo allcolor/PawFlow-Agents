@@ -733,4 +733,3 @@ def _parse_hooks_command(arg: str, base: dict) -> dict:
 
 
 # ── Main handler ──────────────────────────────────────────────────────
-

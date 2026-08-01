@@ -92,6 +92,38 @@ live work instead. `has_unbound_inflight()` separates the two: the broad
 unbound. Otherwise `kill_tool` returns `ok: false` with `reason:
 "not_in_flight"` rather than killing a bystander.
 
+### A Running Call Still Looks Running After a Reload
+
+"Running" used to exist only in the live SSE stream: `live: true` was set at
+one place, on the event that announced the call. A view rebuilt from the
+transcript — a reload, a conversation switch, a load-more page — renders a
+call whose result has not been written yet as an ordinary finished row: no
+pending bullet, no BG, no Kill. The call was running the whole time, and the
+two buttons that could act on it were the ones missing.
+
+The relay already knew. `_inflight` carries `conv`, `agent`, `tool_name`,
+`cc_tc_id`, `bg_tc_id` and `started_at` for every executing request, but the
+table was write-only (`background_by_tc_id`, `cancel_*`,
+`has_unbound_inflight`). `inflight_snapshot(conversation_id, agent_name="")`
+is its read side, and `load_history` consumes it:
+
+- the page carries `active_tool_calls`, one entry per running request;
+- every `tool_call` row whose `tc_id` is in flight is stamped `live`, which is
+  the flag the renderer already keys on (`messages_render.js`) — so a replayed
+  row is drawn exactly like a streamed one, in both views;
+- a row that already carries its result is never stamped, whatever the table
+  still says: a result written between the page read and the snapshot wins;
+- the match is on the **root** conversation id, so a call running in a
+  `::task::`/`::delegate::` sub-conversation hydrates in the parent view where
+  its row is rendered;
+- an entry with an empty `tc_id` is a request whose provider id is not bound
+  yet: genuinely in flight, but no row can be addressed for it, so nothing is
+  marked. It is still reported, because it is what `has_unbound_inflight`
+  reasons about above.
+
+This is provider-agnostic — the defect was in hydration, not in any one
+provider's stream.
+
 ### Tool Relay Timing Logs
 
 For CLI-provider latency debugging, the MCP bridge and tool relay emit correlated

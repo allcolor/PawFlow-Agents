@@ -710,5 +710,3 @@ def save_llm_credential(payload: Dict[str, Any]) -> Dict[str, Any]:
     state["updated_at"] = time.time()
     _write_state(state)
     return {"ok": True, "service_id": service_id, "provider": provider, "pool": pool_status}
-
-

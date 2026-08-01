@@ -123,6 +123,12 @@ class LLMClient(
         # Active-context gauge reads use the resolver client, so all descendants
         # share this small authoritative per-stream state by reference.
         self._cli_bootstrap_tokens_by_stream = {}
+        # Prompt size the provider itself reported on its last observed
+        # exchange, per (conversation_id, agent_name). For an interactive CLI
+        # this IS the context gauge: PawFlow cannot enumerate what is in that
+        # window, but the proxy sees the number the provider counted. Shared
+        # by reference with call clones, like the bootstrap counts above.
+        self._cli_observed_context_tokens_by_stream = {}
         # Token tracking callback — set by LLMConnectionService
         self._on_tokens = None
         # Abort signal — set from another thread to cancel the current LLM call
@@ -181,6 +187,8 @@ class LLMClient(
         clone._on_tokens = self._on_tokens
         clone._cli_bootstrap_tokens_by_stream = (
             self._cli_bootstrap_tokens_by_stream)
+        clone._cli_observed_context_tokens_by_stream = (
+            self._cli_observed_context_tokens_by_stream)
         _active_key = getattr(self, '_active_api_key', None)
         if _active_key:
             clone._active_api_key = _active_key

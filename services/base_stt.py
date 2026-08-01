@@ -20,4 +20,3 @@ class BaseSTTService(BaseService):
             {"text": str, "language": str, "duration": float, "segments": list}
         """
         ...
-

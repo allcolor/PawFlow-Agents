@@ -447,13 +447,63 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         low = (text or "").lower()
         return any(marker in low for marker in self._RUNNING_MARKERS)
 
-    @staticmethod
-    def _paste_settle_seconds() -> float:
+    # How long to let the TUI finish ingesting a paste before pressing Enter.
+    # Per-pool because the ingestion cost is the TUI's, not ours: a TUI that
+    # buffers the whole paste into a single attachment needs longer than one
+    # that echoes it character by character.
+    _PASTE_SETTLE_DEFAULT = 0.2
+
+    def _paste_settle_seconds(self) -> float:
         try:
             return max(0.0, float(os.environ.get(
-                "PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "0.2") or "0.2"))
+                "PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "")
+                or self._PASTE_SETTLE_DEFAULT))
         except ValueError:
-            return 0.2
+            return self._PASTE_SETTLE_DEFAULT
+
+    # A TUI that collapses pasted text into a placeholder chip
+    # ("[Pasted Content 24470 chars]") never shows the text itself, so the
+    # probe-fragment heuristic below cannot see it and reads "gone from the
+    # input box" as "submitted" — the exact opposite of the truth. Pools whose
+    # TUI does that declare their chip here and the chip becomes the signal.
+    # Empty means the TUI echoes pasted text verbatim (Claude Code): the
+    # fragment heuristic stands unchanged.
+    _PASTE_CHIP_MARKERS: tuple = ()
+    # First characters of the TUI's input-box line, used to cut the pane down
+    # to the composer. Without it a chip left in the *transcript* by an already
+    # submitted message would read as an unsent one, and we would press Enter
+    # forever.
+    _COMPOSER_PROMPT_PREFIX = ""
+
+    def _composer_text(self, pane: str) -> str:
+        """The input-box region of the pane: the last prompt line onward.
+
+        Returns '' when the prompt line is not on screen — the caller treats
+        that as "cannot tell", never as "empty composer".
+        """
+        prefix = self._COMPOSER_PROMPT_PREFIX
+        if not prefix:
+            return pane or ""
+        lines = (pane or "").splitlines()
+        for idx in range(len(lines) - 1, -1, -1):
+            if lines[idx].lstrip().startswith(prefix):
+                return "\n".join(lines[idx:])
+        return ""
+
+    def _pane_holds_unsent_paste(self, pane: str):
+        """Is the pasted prompt still sitting in the input box?
+
+        Tri-state on purpose: True (chip in the composer), False (composer
+        located and clean), None (this TUI has no chip, or the composer is not
+        on screen) — None keeps the caller on the fragment heuristic.
+        """
+        if not self._PASTE_CHIP_MARKERS:
+            return None
+        composer = self._composer_text(pane)
+        if not composer:
+            return None
+        low = composer.lower()
+        return any(marker in low for marker in self._PASTE_CHIP_MARKERS)
 
     @staticmethod
     def _submit_probe_fragment(text: str) -> str:
@@ -496,8 +546,22 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         for _ in range(polls):
             pane = self._pane_text(state.name)
             if pane:
+                holds = self._pane_holds_unsent_paste(pane)
+                if holds:
+                    # The chip is authoritative: the prompt is in the input
+                    # box, whatever else the pane shows. Press Enter again.
+                    if retries >= 3:
+                        break
+                    retries += 1
+                    log.warning(
+                        "[cci] pasted prompt still in the input box of %s; "
+                        "pressing Enter again (retry %d)", state.name, retries)
+                    if not self.send_keys(state, ["Enter"]):
+                        break
+                    time.sleep(interval)
+                    continue
                 if self._pane_shows_running(pane):
-                    if not fragment or fragment not in pane:
+                    if holds is False or not fragment or fragment not in pane:
                         return
                     # Running but our text is still on screen: either the
                     # interrupted OLD turn is winding down, or the TUI echoes
@@ -505,6 +569,9 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     # while a turn is running.
                     time.sleep(interval)
                     continue
+                if holds is False:
+                    # Composer located and free of the chip: submitted.
+                    return
                 if fragment and fragment not in pane:
                     # Input box no longer holds the prompt: submitted.
                     return

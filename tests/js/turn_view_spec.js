@@ -183,6 +183,38 @@ test('a system notice is filed in the block, never in the outside spot', () => {
   assert(block.nextSibling === answer, 'and it does not displace the answer');
 });
 
+// The other half of the same rule. /compact answers with a notice and nothing
+// else: barred from the outside spot on principle, it was filed inside the
+// block, and a collapsed turn reported its own result nowhere the reader could
+// see it -- the detail block had swallowed it.
+test('a system notice takes the outside spot while nothing else holds it', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const notice = e.row('s1');
+  eq(e.ctx.turnViewIngest('system', {}, notice), true, 'the notice is ingested');
+  assert(e.block().nextSibling === notice, 'the notice holds the outside spot');
+});
+
+test('an answer takes the outside spot back from a system notice', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const notice = e.row('s1');
+  e.ctx.turnViewIngest('system', {}, notice);
+  const answer = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, answer);
+  assert(e.block().nextSibling === answer, 'the answer displaces the notice');
+  assert(notice.parentNode !== e.messages, 'and the notice is filed in the block');
+});
+
+test('a newer system notice replaces the one holding the spot', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  e.ctx.turnViewIngest('system', {}, e.row('s1'));
+  const second = e.row('s2');
+  e.ctx.turnViewIngest('system', {}, second);
+  assert(e.block().nextSibling === second, 'the newest notice holds the spot');
+});
+
 test('a user message with no id at all still opens its own turn', () => {
   const e = env('simplified');
   const user = e.row('');

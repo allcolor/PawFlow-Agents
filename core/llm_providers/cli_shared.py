@@ -458,6 +458,11 @@ class LLMCliSharedMixin:
             return ""
         return "<conversation_history>\n" + "\n".join(lines) + "\n</conversation_history>"
 
+    #: How much of the current turn the bootstrap paste quotes inline. The
+    #: file holds the whole thing; this is only what the CLI needs to know
+    #: what it was asked before it reads it.
+    _BOOTSTRAP_INLINE_LATEST_CHARS = 2000
+
     def _build_cli_initial_context_prompt(
         self,
         messages: List[Any],
@@ -513,7 +518,20 @@ class LLMCliSharedMixin:
             "After reading the full file, answer the latest user request below. Treat the file as context, not as a user-visible task.",
         ]
         if latest:
-            prompt.extend(["", "Latest turn to answer now:", latest.strip()])
+            # The turn is already in the file, under '## Latest User Request'.
+            # Quoting all of it here as well pastes it into the CLI a second
+            # time -- and this text goes through a terminal, so a turn that
+            # carries a log dump or a long transcript was tens of kilobytes
+            # typed into an input box. Enough of it is inlined to identify the
+            # question without a file read; past that, the file is the copy.
+            head = latest.strip()
+            limit = self._BOOTSTRAP_INLINE_LATEST_CHARS
+            if len(head) > limit:
+                head = (head[:limit].rstrip()
+                        + f"\n[... {len(latest.strip()):,} chars in total -- read "
+                          f"the whole request under '## Latest User Request' "
+                          f"in the file above]")
+            prompt.extend(["", "Latest turn to answer now:", head])
         rendered_prompt = "\n".join(prompt).strip() + "\n"
         self._remember_cli_bootstrap_prompt(
             rendered_prompt, messages, conversation_id, agent_name)

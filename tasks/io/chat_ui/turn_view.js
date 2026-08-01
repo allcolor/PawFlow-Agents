@@ -402,13 +402,26 @@ function turnViewIngest(kind, data, element) {
     // turn". Those rows are filed, and only what is marked final is promoted.
     //
     // A system notice -- compact finished, git history pruned -- is not the
-    // agent's answer either. It goes in the record like everything else, but
-    // it must never take the outside spot, or it displaces the very message
-    // the reader came for.
+    // agent's answer either. It must never displace the message the reader
+    // came for, so it yields the outside spot to any real message.
+    //
+    // It may hold that spot while nothing else does. Barring it outright made
+    // the collapsed view swallow the only thing some turns produce: /compact
+    // answers with a notice and nothing more, and filing it inside the block
+    // left a turn that reports its own result nowhere the reader can see it.
+    // A later message takes the spot over; a newer notice replaces an older
+    // one rather than queueing behind it.
     const claimed = data && data.turn_final
       && turnViewFinalize(Object.assign({}, data, { final_msg_id: msgId }));
     if (!claimed) {
-      if (tabKey === 'messages' && kind !== 'system' && !(data && data._history)) _turnPromoteLast(state, element);
+      const isSystem = kind === 'system';
+      const spotFree = !state.finalEl || !state.finalEl.isConnected
+        || (state.finalEl.dataset && state.finalEl.dataset.turnSystemNotice === '1');
+      if (tabKey === 'messages' && !(data && data._history)
+          && (!isSystem || spotFree)) {
+        if (isSystem && element.dataset) element.dataset.turnSystemNotice = '1';
+        _turnPromoteLast(state, element);
+      }
       else if (element.parentNode !== tab.bodyEl) tab.bodyEl.appendChild(element);
     }
   }

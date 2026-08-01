@@ -99,6 +99,29 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
             self.event_service.mark_code_mode(self.session_token)
         super()._emit_observed_tool_use(event)
 
+    def _displayable_args(self, name: str, args: dict) -> dict:
+        """Keep the code body's row, drop the body.
+
+        The script is plumbing twice over. On screen it is the aggregator the
+        eye lands on -- ``exec(const r=await tools.mcp__pawflow__use_tool...)``
+        in front of every group of calls -- while the calls it actually made
+        are the rows worth reading, and the relay already published each of
+        them by name. In the record it is worse: PawFlow persists a call's
+        arguments and replays them into the next context, so kilobytes of
+        generated JavaScript come back at every bootstrap, describing work
+        that is already described by the rows around it.
+
+        The row stays -- it is the only evidence the turn ran a script, and
+        what the script did with Codex's own runtime is reported by nobody
+        else -- but it says how big the body was instead of quoting it.
+        """
+        if not code_mode_body(args):
+            return args
+        source = (args or {}).get("input")
+        elided = dict(args or {})
+        elided["input"] = f"<code-mode script, {len(str(source))} chars>"
+        return elided
+
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
 

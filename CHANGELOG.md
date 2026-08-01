@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.71] — 2026-08-01
+
+### Fixed
+
+- Fragments of a PawFlow-injected prompt are no longer filed as messages the
+  user typed. One paste does not always produce one submit: a TUI that collapses
+  pasted text into an attachment chip can submit a composer holding several of
+  them as several `UserPromptSubmit` hooks, and a piece's SHA-256 matches no
+  recorded injection. The pieces after the first fell through to the manual-prompt
+  path, were published under the user's name, and woke the agent one by one --
+  the visible result being an agent commenting, line by line, on a background
+  tool result it had just been handed itself. The injected text is now kept for
+  the same 600-second window as its digest and a prompt that is a slice of it is
+  recognised as PawFlow's own. A slice under 12 characters stays manual: `ok`
+  occurs inside any large paste and is also exactly what a human types. The
+  ignore ticket is still spent on the first piece, or it would survive the paste
+  and swallow the next thing the user really typed.
+- A pasted prompt that never left the Codex input box no longer reports success.
+  `_verify_submitted` looked for a tail fragment of the injected text in the pane
+  and read its absence as "the input box let it go". The Codex TUI never renders
+  pasted text -- it shows `[Pasted Content N chars]` -- so that condition held
+  from the first poll onwards, every send reported success, and six pastes
+  stacked up in one composer until a human pressed Enter. The chip is the signal
+  instead, scoped to the composer so one left in the transcript by an already
+  submitted message is not mistaken for an unsent one. Paste settle is now
+  per-pool and 1s for Codex: a multi-kilobyte paste takes its TUI longer to
+  ingest than the 0.2s that suits Claude Code.
+- The bootstrap paste no longer carries the whole current turn. It was written
+  to `initial_context.md` under `## Latest User Request` *and* quoted in full in
+  the pasted text, so a turn carrying a log dump was tens of kilobytes typed into
+  a terminal input box. 2000 characters are quoted inline -- enough to identify
+  the question without a file read -- and the rest points at the file.
+- A code-mode script body is no longer quoted, on screen or in the record. The
+  GPT-5.x "sol" harness runs one freeform `exec` item and drives every tool from
+  inside its JavaScript, so each group of MCP calls was fronted by a row reading
+  `exec(const r=await tools.mcp__pawflow__use_tool...)` -- the aggregator the eye
+  lands on, in front of the rows that name what actually ran. Worse in the
+  record: a call's arguments are persisted and replayed into the next context, so
+  kilobytes of generated JavaScript came back at every bootstrap describing work
+  already described by the rows around it. The row stays -- it is the only
+  evidence the turn ran a script, and what the script does with Codex's own
+  runtime is reported by nobody else -- but it states the body's size instead of
+  quoting it.
+- `/compact` shows its result again in the simplified view. A system notice was
+  barred from the spot under the block so it could never displace the agent's
+  answer, but a compact answers with a notice and nothing else: barred, it was
+  filed inside the detail block and the turn reported its own outcome nowhere the
+  reader could see it. A notice now holds that spot while nothing else does,
+  yields it to the first real message, and is replaced by a newer notice rather
+  than queueing behind it. Same path, same fix, for every slash command whose
+  answer is a notice.
+
 ## [1.0.0-beta.70] — 2026-08-01
 
 ### Fixed

@@ -276,11 +276,31 @@ not receive the full context or tool instructions again; PawFlow sends only the
 latest turn delta, any current attachment references, and a narrow catch-up block
 containing new messages from other participants since the agent's last response.
 
+The bootstrap paste quotes the current turn inline only up to
+`_BOOTSTRAP_INLINE_LATEST_CHARS` (2000). The turn is already in the file under
+`## Latest User Request`; quoting all of it in the paste as well sent it twice,
+and that text goes through a terminal, so a turn carrying a log dump or a long
+transcript became tens of kilobytes typed into an input box. Past the limit the
+paste says how long the request is and points at the file.
+
 Live interrupt pastes the interrupt message, then sends `Escape`, then `Enter`
 as separate tmux key events. If the interrupt carries image attachments, PawFlow
 materializes them into `.pawflow_vision/` and includes `@/cc_sessions/...` file
 references in the pasted message. Force stop sends `Escape Escape` to the tmux
 session and leaves the container lifecycle intact.
+
+A submit is verified, not assumed. An `Enter` that lands inside the TUI's
+paste-detection window becomes a pasted newline and the prompt stays in the
+input box, so `_verify_submitted` polls the pane and presses `Enter` again if it
+is still there. How "still there" is read depends on the TUI: Claude Code echoes
+pasted text, so the absence of a tail fragment of the injected prompt means it
+was accepted. The Codex TUI never renders pasted text -- it shows
+`[Pasted Content N chars]` -- so that fragment is absent from the first poll
+onwards and the check reported success while nothing had been sent; six pastes
+stacked up in one composer until a human pressed `Enter`. Pools whose TUI
+collapses pastes declare their chip in `_PASTE_CHIP_MARKERS`, scoped to the
+composer via `_COMPOSER_PROMPT_PREFIX` so a chip left in the transcript by an
+already submitted message is not mistaken for an unsent one.
 
 If a user attaches to the provider-owned tmux and submits a prompt manually,
 Claude Code's `UserPromptSubmit` hook sends that prompt to PawFlow. PawFlow
@@ -289,6 +309,16 @@ MITM capture for the resulting Claude Code turn, so the assistant response also
 lands in the conversation context. Prompts pasted by PawFlow itself are recorded
 by SHA-256 in `.pawflow_cci/injected_prompts.jsonl`; the hook consumes that
 marker and does not mirror those managed prompts back into the transcript.
+
+One paste does not always produce one submit. A TUI that collapses pasted text
+into an attachment chip can submit a composer holding several of them as several
+`UserPromptSubmit` hooks, and a piece's SHA-256 matches no recorded injection.
+PawFlow therefore also keeps the injected *text* for the same 600-second window
+and treats a prompt that is a slice of it as its own. Without that, the pieces
+after the first were filed as messages the user had typed, published under their
+name and answered one by one -- the agent replying to fragments of a tool result
+it had just been handed. A slice shorter than 12 characters is still treated as
+manual: `ok` occurs inside any large paste and is also what a human types.
 
 The chat UI tmux action lists live Claude Code interactive sessions for the
 current conversation. It opens directly when only one tmux exists and shows a

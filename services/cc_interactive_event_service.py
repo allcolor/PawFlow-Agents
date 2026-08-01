@@ -75,6 +75,11 @@ class CCInteractiveSessionEvents:
     captured_msg_ids: list = field(default_factory=list)
     injected_prompts: dict[str, float] = field(default_factory=dict)
     pending_injected_prompt_ignores: list[float] = field(default_factory=list)
+    # (timestamp, text) of what PawFlow pasted, kept for the same window as
+    # the digests. A TUI is free to submit one paste as several prompts; the
+    # digest of a fragment matches nothing, so the text itself is what tells
+    # a fragment of our own injection apart from something a human typed.
+    injected_prompt_texts: list = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     last_event_at: float = 0.0
     # Listener liveness: when a PawFlow-injected prompt is submitted while
@@ -288,6 +293,11 @@ class CCInteractiveEventService(BaseService):
                 if ts >= cutoff
             }
             state.injected_prompts[digest] = now
+            state.injected_prompt_texts = [
+                item for item in state.injected_prompt_texts
+                if item[0] >= cutoff
+            ]
+            state.injected_prompt_texts.append((now, prompt))
             state.pending_injected_prompt_ignores = [
                 ts for ts in state.pending_injected_prompt_ignores
                 if ts >= cutoff
@@ -631,11 +641,55 @@ class CCInteractiveEventService(BaseService):
                 if state.pending_injected_prompt_ignores:
                     state.pending_injected_prompt_ignores.pop(0)
                 return True
+            state.injected_prompt_texts = [
+                item for item in state.injected_prompt_texts
+                if item[0] >= cutoff
+            ]
+            if self._is_fragment_of_injection(state, prompt):
+                # One paste, several submits: the TUI split what PawFlow sent
+                # and each piece arrives as its own UserPromptSubmit. Only the
+                # first carries the ticket; without this the rest are filed as
+                # messages the user typed, published under their name, and
+                # answered one by one -- the agent replying to fragments of a
+                # tool result it was handed itself.
+                #
+                # The ticket is still spent on the first piece, exactly as the
+                # digest path spends it: left unspent it survives the paste and
+                # swallows the next thing the user really types. The pieces
+                # after it need no ticket -- the text is what identifies them.
+                if state.pending_injected_prompt_ignores:
+                    state.pending_injected_prompt_ignores.pop(0)
+                return True
             if state.pending_injected_prompt_ignores:
                 state.pending_injected_prompt_ignores.pop(0)
                 self._pop_oldest_injected_prompt_locked(state)
                 return True
             return False
+
+    # A fragment shorter than this proves nothing: "ok", "go", a bare digit
+    # occur inside any large paste and are also exactly what a human types.
+    # Below it, the prompt is treated as manual -- losing a two-character
+    # fragment of our own paste is harmless, swallowing a two-character human
+    # message is not.
+    _MIN_FRAGMENT_CHARS = 12
+
+    @staticmethod
+    def _is_fragment_of_injection(state: CCInteractiveSessionEvents,
+                                  prompt: str) -> bool:
+        """True when `prompt` is a slice of something PawFlow pasted.
+
+        Called with the sessions lock held. Whitespace is normalised on both
+        sides because a TUI re-wraps what it renders, so a fragment is rarely
+        byte-identical to its span of the original.
+        """
+        needle = " ".join((prompt or "").split())
+        if len(needle) < CCInteractiveEventService._MIN_FRAGMENT_CHARS:
+            return False
+        for _ts, text in state.injected_prompt_texts:
+            haystack = " ".join((text or "").split())
+            if needle != haystack and needle in haystack:
+                return True
+        return False
 
     @staticmethod
     def _pop_oldest_injected_prompt_locked(state: CCInteractiveSessionEvents) -> None:

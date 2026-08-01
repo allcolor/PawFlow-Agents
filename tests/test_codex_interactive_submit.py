@@ -1,0 +1,133 @@
+"""A pasted prompt that never left the input box must not report success.
+
+The Codex TUI does not render pasted text. It replaces it with an attachment
+chip -- ``[Pasted Content 24470 chars]`` -- so the prompt waiting unsent in the
+composer is, to a text probe, indistinguishable from a prompt that was
+accepted. ``_verify_submitted`` probed for a tail fragment of the injected text
+and read its absence as "the input box let it go": on Codex that condition is
+true from the first poll onwards, always. Every send reported success, none of
+them submitted, and six pastes stacked up in one composer until a human pressed
+Enter.
+
+These tests pin the chip probe that replaces the fragment heuristic on TUIs
+that collapse pastes, and pin that the Claude Code path -- whose TUI does echo
+pasted text -- is left on the fragment heuristic unchanged.
+"""
+
+import core.claude_code_interactive_pool as ccip
+from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+from core.codex_interactive_pool import CodexInteractivePool
+
+PROMPT = "Some long injected prompt\nwith a distinctive trailing line here"
+
+# What `tmux capture-pane` returns while the paste sits unsent: the composer
+# line carries the chip, the text itself appears nowhere.
+UNSENT_PANE = """\
+>_ OpenAI Codex (v0.146.0)
+
+  model:  gpt-5.6-sol medium
+
+> [Pasted Content 24470 chars][Pasted Content 1013 chars]
+
+  gpt-5.6-sol medium  ~
+"""
+
+# After submission: the chip moves into the transcript (the TUI keeps showing
+# the user turn that way) and the composer is empty again.
+SUBMITTED_PANE = """\
+>_ OpenAI Codex (v0.146.0)
+
+› You
+  [Pasted Content 24470 chars]
+
+> Ask Codex
+
+  gpt-5.6-sol medium  ~  context left 74%
+"""
+
+RUNNING_PANE = SUBMITTED_PANE + "\n  Working (Esc to interrupt)\n"
+
+
+class _State:
+    name = "pawflow-codex-int-test"
+
+
+def _harness(pool, panes, monkeypatch):
+    """Drive _verify_submitted over a scripted pane sequence.
+
+    Returns the list of key batches it sent. `panes` is consumed one poll at a
+    time; the last entry repeats once exhausted.
+    """
+    sent = []
+    seq = list(panes)
+
+    monkeypatch.setattr(pool, "_pane_text",
+                        lambda _name: seq.pop(0) if len(seq) > 1 else seq[0])
+    monkeypatch.setattr(pool, "send_keys",
+                        lambda _state, keys: sent.append(list(keys)) or True)
+    monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "1.2")
+    pool._verify_submitted(_State(), PROMPT)
+    return sent
+
+
+def test_unsent_paste_chip_is_detected_in_the_composer():
+    pool = CodexInteractivePool()
+    assert pool._pane_holds_unsent_paste(UNSENT_PANE) is True
+
+
+def test_chip_left_in_the_transcript_is_not_an_unsent_prompt():
+    """The submitted turn keeps its chip on screen. Scanning the whole pane
+    would see it forever and press Enter forever, so the probe is scoped to
+    the composer -- the last prompt line onward."""
+    pool = CodexInteractivePool()
+    assert pool._pane_holds_unsent_paste(SUBMITTED_PANE) is False
+
+
+def test_missing_composer_line_is_unknown_not_empty():
+    pool = CodexInteractivePool()
+    assert pool._pane_holds_unsent_paste("a pane with no prompt line") is None
+
+
+def test_verify_presses_enter_again_while_the_chip_is_in_the_composer(monkeypatch):
+    """The bug: this returned immediately having sent nothing."""
+    pool = CodexInteractivePool()
+    sent = _harness(pool, [UNSENT_PANE], monkeypatch)
+    assert sent == [["Enter"]] * 3
+
+
+def test_verify_stops_as_soon_as_the_composer_clears(monkeypatch):
+    pool = CodexInteractivePool()
+    sent = _harness(pool, [UNSENT_PANE, SUBMITTED_PANE], monkeypatch)
+    assert sent == [["Enter"]]
+
+
+def test_verify_never_presses_enter_while_a_turn_runs(monkeypatch):
+    pool = CodexInteractivePool()
+    assert _harness(pool, [RUNNING_PANE], monkeypatch) == []
+
+
+def test_claude_code_keeps_the_fragment_heuristic():
+    """Its TUI echoes pasted text, so absence of the fragment really does mean
+    submitted. No chip markers -> the probe abstains."""
+    pool = InteractiveClaudeCodePool()
+    assert pool._PASTE_CHIP_MARKERS == ()
+    assert pool._pane_holds_unsent_paste(UNSENT_PANE) is None
+
+
+def test_claude_code_verify_returns_when_its_text_left_the_box(monkeypatch):
+    pool = InteractiveClaudeCodePool()
+    pane = "> \n  ? for shortcuts\n"
+    assert _harness(pool, [pane], monkeypatch) == []
+
+
+def test_paste_settle_is_longer_for_codex_than_for_claude_code(monkeypatch):
+    monkeypatch.delenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", raising=False)
+    assert CodexInteractivePool()._paste_settle_seconds() == 1.0
+    assert InteractiveClaudeCodePool()._paste_settle_seconds() == 0.2
+
+
+def test_paste_settle_env_override_still_wins(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "2.5")
+    assert CodexInteractivePool()._paste_settle_seconds() == 2.5
+    assert InteractiveClaudeCodePool()._paste_settle_seconds() == 2.5

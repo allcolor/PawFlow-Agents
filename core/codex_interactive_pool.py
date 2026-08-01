@@ -275,6 +275,17 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     _PROMPT_READY_MARKERS = (
         "ask codex", "for shortcuts", "context left", "openai codex")
     _RUNNING_MARKERS = ("esc to interrupt",)
+    # The Codex TUI never renders pasted text: it replaces it with an
+    # attachment chip. The prompt sitting unsent in the input box therefore
+    # looks, to a text probe, exactly like a prompt that was accepted --
+    # which is how six pastes stacked up in one composer while every send
+    # reported success. The chip is the signal instead.
+    _PASTE_CHIP_MARKERS = ("[pasted content", "[image ")
+    _COMPOSER_PROMPT_PREFIX = ">"
+    # A multi-kilobyte paste takes the Codex TUI longer to ingest than the
+    # 0.2s that suits Claude Code; an Enter landing inside that window is
+    # swallowed into the attachment as a newline instead of submitting.
+    _PASTE_SETTLE_DEFAULT = 1.0
 
     def __init__(self):
         super().__init__()

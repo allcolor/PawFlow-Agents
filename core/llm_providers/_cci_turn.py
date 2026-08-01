@@ -527,6 +527,16 @@ class _CCITurnCoordinator:
         self.turn_callback(text, tool_calls, thinking)
         self._turn_callback_sent = True
 
+    def _displayable_args(self, name: str, args: dict) -> dict:
+        """Last chance to shrink a call's arguments before they are kept.
+
+        The value returned here is what the row shows, what the turn's cue
+        copies, and -- through ``_remember_turn_tool_call`` -- what PawFlow
+        persists and replays into the next context. Identity by default;
+        providers whose harness hides a payload in an argument override it.
+        """
+        return args
+
     def _emit_tool_use(self, idx: int) -> None:
         block = self.tool_blocks.get(idx) or {}
         if not block or block.get("emitted"):
@@ -535,6 +545,7 @@ class _CCITurnCoordinator:
         raw = block.get("json", "") or "{}"
         args = _loads_tolerant(raw)
         display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
+        display_args = self._displayable_args(display_name, display_args)
         block["display_name"] = display_name
         block["display_args"] = display_args
         if not display_args and str(block.get("name") or "").strip():
@@ -620,6 +631,7 @@ class _CCITurnCoordinator:
         self.emitted_tool_use_ids.update(alias_ids)
         args = _loads_tolerant(block.get("json", "") or "{}")
         display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
+        display_args = self._displayable_args(display_name, display_args)
         block["display_name"] = display_name
         block["display_args"] = display_args
         if not display_args and str(block.get("name") or "").strip():
@@ -695,6 +707,7 @@ class _CCITurnCoordinator:
             })
 
     def _remember_turn_tool_call(self, tc_id: str, name: str, args: dict) -> None:
+        """Record a call for the turn PawFlow will persist and replay."""
         if not tc_id:
             return
         entry = {"id": tc_id, "name": name or "", "arguments": args or {}}

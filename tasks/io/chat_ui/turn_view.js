@@ -1182,7 +1182,19 @@ function turnViewReconcile() {
   // reload ends up filing new rows into a turn that scrolled away -- or into
   // none at all.
   let open = null;
+  // `_turnOpen` describes the LIVE turn, which is the newest thing on screen.
+  // This pass walks the DOM from the top, so any row it meets before that
+  // turn's user row is older and cannot belong to it. load-more prepends a
+  // page that usually starts mid-turn -- tool rows with no user row above
+  // them -- and seeding those from `_turnOpen` filed them into the live
+  // turn's block, far below where they sit, leaving the fragment's own answer
+  // at top level with no block above it. Only rows already past that user row
+  // may claim it; the ones before it open their own turn, as they would if no
+  // turn were running at all.
+  const _openUserEl = (_turnOpen && _turnOpen.userEl) || null;
+  let _passedOpenUser = !(_openUserEl && _openUserEl.parentNode === container);
   for (const el of Array.from(container.children)) {
+    if (_openUserEl && el === _openUserEl) _passedOpenUser = true;
     if (!el || !el.dataset || !el.classList) continue;
     if (el.classList.contains('simple-turn-block')) {
       const owner = simplifiedTurns.get(el.dataset.turnId || '');
@@ -1219,7 +1231,8 @@ function turnViewReconcile() {
     if (!TURN_FILABLE_ROLES.has(_turnRowRole(el))) continue;
     if (state && el === state.finalEl) continue;
     if (!state) {
-      state = (_turnOpen && _turnOpen.userEl && _turnOpen.userEl.isConnected)
+      state = (_passedOpenUser && _turnOpen && _turnOpen.userEl
+               && _turnOpen.userEl.isConnected)
         ? _turnCurrentState(true) : _turnOpenOrphanTurn(el);
       if (!state) continue;
       touched.add(state);

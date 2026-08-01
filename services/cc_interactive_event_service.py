@@ -384,12 +384,36 @@ class CCInteractiveEventService(BaseService):
         refuses when a request coordinator is actively polling — the net
         must never take the stream away from the real turn. Returns the
         granted epoch, or 0 when the claim is refused.
+
+        "Actively polling" is two facts, not one. A coordinator that polled
+        recently is obviously alive; so is one that has claimed and not polled
+        YET, because it is still inside its send -- the send blocks on TUI
+        readiness, paste, settle, double Enter and submit verification before
+        run() reads anything, and `_REQUEST_CLAIM_GRACE_SECONDS` is the
+        ceiling that window was measured against. Only the first fact was
+        checked, so the net could take the stream from a turn that had not
+        started reading. Bumping the epoch is not a passive act: the
+        coordinator then dies with CCIConsumerEvicted on its very first read.
+        Observed on codex-interactive when a slow TUI ("prompt not detected
+        ready") pushed the first poll past 50s -- the tmux kept working and
+        the capture kept the rows flowing, so the webchat showed the whole
+        turn while active-agents and the context gauge stayed dead for it.
         """
         state = self.register_session(session_token)
         with self._sessions_lock:
-            if kind != "request" and (
-                    time.time() - state.last_wait_at < self._LISTENER_FRESH_SECONDS):
-                return 0
+            if kind != "request":
+                now = time.time()
+                if now - state.last_wait_at < self._LISTENER_FRESH_SECONDS:
+                    return 0
+                # Claimed more recently than it last polled = has not read
+                # since claiming = still sending. Once it polls, last_wait_at
+                # overtakes the claim and the check above governs again; if it
+                # never polls at all, the grace expires and the net gets the
+                # stream, so no turn is left invisible for longer than that.
+                if (state.last_request_claim_at > state.last_wait_at
+                        and now - state.last_request_claim_at
+                        < self._REQUEST_CLAIM_GRACE_SECONDS):
+                    return 0
             with state.stream_condition:
                 state.consumer_epoch += 1
                 if kind == "request":
@@ -738,6 +762,11 @@ class CCInteractiveEventService(BaseService):
         coordinator: adoption goes through a `capture` claim, which is refused
         while a request consumer is actually polling. A coordinator that has
         not polled in 25 seconds while its events pile up is not one.
+
+        Adoption stays the decision this makes; whether it may TAKE the stream
+        from a coordinator that has claimed but not started reading is
+        arbitrated by `claim_consumer`, which is where evicting a live turn
+        would do the damage.
         """
         with state.stream_condition:
             pending_since = state.oldest_pending_at

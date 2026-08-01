@@ -6,6 +6,22 @@ import zipfile
 from unittest.mock import MagicMock
 
 
+def test_model_caches_live_on_the_persistent_mount():
+    """A cache in the container layer is re-downloaded on every recreate.
+
+    tiktoken was already pinned to /app/data for exactly this reason. The
+    HuggingFace cache had no such variable, so the local embedding model was
+    re-fetched on the FIRST message after every server restart -- forty-odd
+    HEAD/GET round trips to huggingface.co, holding that message, for weights
+    that never change.
+    """
+    src = Path("Dockerfile").read_text(encoding="utf-8")
+
+    assert "TIKTOKEN_CACHE_DIR=/app/data/tiktoken_cache" in src
+    for var in ("HF_HOME", "HUGGINGFACE_HUB_CACHE", "SENTENCE_TRANSFORMERS_HOME"):
+        assert f"{var}=/app/data/hf_cache" in src, f"{var} is not on the mount"
+
+
 def test_server_dockerfile_supports_bootstrap_docker_builds():
     src = Path("Dockerfile").read_text(encoding="utf-8")
 

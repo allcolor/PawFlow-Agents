@@ -567,6 +567,22 @@ turnViewReset();
 turnViewReconcile();
 ```
 
+`turnViewReconcile` reads the DOM top-down and rebuilds `USER > BLOCK > last
+message` from whatever is there, so it is what a load-more page relies on:
+`loadMoreMessages` renders its page with `deferTurnView: true` — replaying an
+older USER through the live path would close the running turn — prepends it,
+and calls this pass.
+
+That walk starts at the TOP while `_turnOpen` still describes the live turn at
+the BOTTOM, and a load-more page usually starts mid-turn: its first rows are
+the tail of a turn whose user message was not loaded. Seeding those rows from
+`_turnOpen` filed them into the live turn's block, far below where they sit,
+and left the fragment's own answer at top level with no block above it. Rows
+encountered before the live turn's user row therefore open their own turn, as
+they would if nothing were running; only rows past it may claim it. The symptom
+appeared only while a turn was running, because `_turnOpen` is what a running
+turn leaves behind.
+
 `turnViewIngest` performs these operations synchronously from the user's
 perspective:
 

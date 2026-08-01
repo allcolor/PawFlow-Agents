@@ -479,6 +479,90 @@ test('a runtime turn stops protecting itself once it has ended', () => {
      'ending the turn keeps the same last message in place');
 });
 
+// ── Load more, while a turn is live ───────────────────────────────────────
+//
+// loadMoreMessages renders its page with deferTurnView:true -- deliberately no
+// ingestion, because replaying it through the live path would let an old USER
+// close the live turn -- prepends the whole page above everything, and leans on
+// turnViewReconcile to group it. That is exactly the case the display rule
+// promises to cover: a page of older history.
+
+// What _renderHistoryRow(m, {deferTurnView:true}) leaves behind: a row in the
+// DOM carrying its role, and nothing at all told to the turn view.
+function prependDeferredRows(e, rows) {
+  const anchor = e.messages.firstChild;
+  for (const m of rows) {
+    const el = e.dom.document.createElement('div');
+    el.className = 'msg';
+    el.dataset.msgid = m.msg_id;
+    el.dataset.messageRole = m.type || m.role;
+    if (m.content) el.dataset.rawText = m.content;
+    e.messages.insertBefore(el, anchor);
+  }
+}
+
+test('a load-more page groups into USER > BLOCK > answer, not one block per row', () => {
+  const e = env('simplified');
+  // A live turn is on screen and still working -- loading more while it spins.
+  startTurn(e, 'u1');
+  const partial = e.row('a1');
+  partial.dataset.messageRole = 'assistant';
+  partial.dataset.rawText = 'je regarde';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1', turn_id: 'u1' }, partial);
+  e.ctx.turnViewReconcile();
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1', 'the live turn starts well formed');
+
+  // Load more prepends one older, complete turn above it.
+  prependDeferredRows(e, [
+    { type: 'user', msg_id: 'u0' },
+    { type: 'tool_call', msg_id: 'c0' },
+    { type: 'tool_result', msg_id: 'r0' },
+    { type: 'assistant', msg_id: 'a0', content: 'fini' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'u0,BLOCK,a0,u1,BLOCK,a1',
+     'the older turn is one block, and the live turn is left intact');
+});
+
+test('a load-more page starting mid-turn does not feed the live turn', () => {
+  // The page begins at an arbitrary offset, so most of the time its first rows
+  // are the tail of a turn whose user message was not loaded. This pass walks
+  // the DOM from the top while `_turnOpen` still points at the live turn at
+  // the BOTTOM, so those older rows were filed into the live turn's block --
+  // far below where they sit -- and the fragment's own answer was left at top
+  // level with no block above it. Observed only while a turn was running,
+  // because `_turnOpen` is what a running turn leaves behind.
+  const e = env('simplified');
+  startTurn(e, 'u9');
+  const live = e.row('a9');
+  live.dataset.messageRole = 'assistant';
+  live.dataset.rawText = 'je regarde';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a9', turn_id: 'u9' }, live);
+  e.ctx.turnViewReconcile();
+
+  prependDeferredRows(e, [
+    // tail of an older turn: no user row above it
+    { type: 'tool_call', msg_id: 'c0' },
+    { type: 'tool_result', msg_id: 'r0' },
+    { type: 'assistant', msg_id: 'a0', content: 'fin du tour precedent' },
+    // then one complete older turn
+    { type: 'user', msg_id: 'u0' },
+    { type: 'tool_call', msg_id: 'c1' },
+    { type: 'tool_result', msg_id: 'r1' },
+    { type: 'assistant', msg_id: 'a1', content: 'reponse' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'BLOCK,a0,u0,BLOCK,a1,u9,BLOCK,a9',
+     'the head fragment gets its own block instead of joining the live turn');
+  eq(e.messages.querySelectorAll('.simple-turn-block').length, 3,
+     'one block per turn on screen');
+  const liveBlock = e.messages.querySelectorAll('.simple-turn-block')[2];
+  assert(!liveBlock.querySelector('[data-msgid="c0"]'),
+         'an older tool row must never land in the live turn');
+});
+
 // The browser-level copy of this lives in
 // tests/test_webchat_durable_state_behavior.py, which skips wherever headless
 // Chromium cannot render. This is the copy that always runs.

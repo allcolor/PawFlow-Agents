@@ -115,6 +115,42 @@ class TestMergeContent(unittest.TestCase):
         self.assertTrue(content.startswith(b'START'))
         self.assertTrue(content.endswith(b'END'))
 
+    def test_split_fragments_merge_back_in_split_order(self):
+        """splitContent stamps fragment.index and this task ignored it.
+
+        A split -> parallel work -> merge round trip returned the pieces in
+        whatever order they happened to arrive, so the document came back
+        shuffled whenever the branches differed in cost.
+        """
+        task = MergeContentTask({'separator': '|', 'min_entries': 3})
+        # Arrival order 2, 0, 1 -- the slow middle piece lands last.
+        task.execute(FlowFile(content=b'third', attributes={
+            'fragment.index': '2'}))
+        task.execute(FlowFile(content=b'first', attributes={
+            'fragment.index': '0'}))
+        results = task.execute(FlowFile(content=b'second', attributes={
+            'fragment.index': '1'}))
+
+        self.assertEqual(results[0].get_content(), b'first|second|third')
+
+    def test_fragments_without_an_index_keep_arrival_order(self):
+        """A plain fan-out carries no index, and inventing one would be a
+        different guess rather than a fix."""
+        task = MergeContentTask({'separator': '|', 'min_entries': 2})
+        task.execute(FlowFile(content=b'B'))
+        results = task.execute(FlowFile(content=b'A'))
+
+        self.assertEqual(results[0].get_content(), b'B|A')
+
+    def test_a_non_numeric_index_falls_back_to_arrival_order(self):
+        task = MergeContentTask({'separator': '|', 'min_entries': 2})
+        task.execute(FlowFile(content=b'B', attributes={
+            'fragment.index': 'oops'}))
+        results = task.execute(FlowFile(content=b'A', attributes={
+            'fragment.index': '0'}))
+
+        self.assertEqual(results[0].get_content(), b'B|A')
+
 
 class TestUpdateAttribute(unittest.TestCase):
 

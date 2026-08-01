@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.78] — 2026-08-01
+
+### Fixed
+
+- The orphan-turn net can no longer kill the turn it was meant to rescue.
+  beta.77's backstop argued it was safe against a live coordinator because
+  adoption goes through a `capture` claim, refused while a request consumer
+  is actually polling. That reads liveness from one fact — did it poll
+  recently — and a coordinator that has claimed and not polled YET is alive
+  too: it is inside its send, which blocks on TUI readiness, paste, settle,
+  double Enter and submit verification before it reads anything.
+  `_REQUEST_CLAIM_GRACE_SECONDS` (120s) already describes that window, while
+  the backstop declared the stream unread after 25. On a slow TUI (`prompt
+  not detected ready`, submitted best-effort ~50s in) the net took the stream
+  and the real coordinator died on its very first read with
+  `CCIConsumerEvicted`. The tmux kept working and the capture kept writing
+  rows, so the webchat showed the whole turn while active-agents and the
+  context gauge stayed dead for the rest of it. A capture claim now also
+  refuses while a request claim is outstanding and unpolled; past the grace
+  it takes the stream as before, so no turn stays invisible any longer than
+  it did.
+- Load more no longer feeds older rows to the running turn. `turnViewReconcile`
+  walks the DOM from the top to rebuild `USER > BLOCK > last message`, but
+  started that walk holding `_turnOpen` — the LIVE turn, which is the newest
+  thing on screen and sits at the bottom. A load-more page usually starts
+  mid-turn (its first rows are the tail of a turn whose user message was not
+  loaded), and those rows have no user row above them, so they were seeded from
+  `_turnOpen` and filed into the live turn's block far below where they sit,
+  leaving the fragment's own answer at top level with no block above it — the
+  structure broken exactly where the page was joined. Rows met before the live
+  turn's user row now open their own turn, as they would if nothing were
+  running. Only reproducible while a turn was running, because `_turnOpen` is
+  what a running turn leaves behind.
+- `mergeContent` now restores split order. `splitContent` stamps
+  `fragment.index` on every piece it emits and the merge never read it, so a
+  split → work → merge round trip returned the document with its pieces in
+  arrival order — shuffled, the more reliably the more the branches differed
+  in cost. Fragments carrying no usable index keep arrival order: a plain
+  executor fan-out tags clones with `fragment.identifier` only, and those
+  have no order to restore.
+- The local embedding model is downloaded once instead of on the first
+  message after every server restart. With no `HF_HOME` the HuggingFace cache
+  landed in the container's own `~/.cache`, which a recreate throws away, so
+  each restart re-fetched `all-MiniLM-L6-v2` through some forty HEAD/GET
+  round trips to huggingface.co — holding that first message, and logging an
+  unauthenticated rate-limit warning on the way — for weights that never
+  change. The HF caches now sit under `/app/data` like the tiktoken cache
+  already did; `core.embeddings` was already trying `local_files_only` first
+  and can finally succeed.
+
 ## [1.0.0-beta.77] — 2026-08-01
 
 ### Fixed

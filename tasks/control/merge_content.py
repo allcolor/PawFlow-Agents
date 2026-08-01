@@ -89,6 +89,32 @@ class MergeContentTask(BaseTask):
 
         return []
 
+    @staticmethod
+    def _ordered(buf: List[FlowFile]) -> List[FlowFile]:
+        """Restore split order when the fragments carry one.
+
+        splitContent stamps `fragment.index` on every piece it emits, and this
+        task never read it: a bin merged in arrival order, so a split -> work
+        -> merge round trip could hand the document back with its pieces
+        shuffled, the more reliably the more the branches differ in cost.
+
+        Arrival order stays the rule when the fragments carry no usable index.
+        A plain executor fan-out tags clones with `fragment.identifier` only,
+        and those have no meaningful order to restore -- inventing one there
+        would be a different guess, not a fix.
+        """
+        indexed = []
+        for flowfile in buf:
+            raw = flowfile.get_attribute('fragment.index')
+            if raw is None or str(raw) == '':
+                return buf
+            try:
+                indexed.append((int(raw), flowfile))
+            except (TypeError, ValueError):
+                return buf
+        # Stable: equal indices keep the order they arrived in.
+        return [flowfile for _, flowfile in sorted(indexed, key=lambda p: p[0])]
+
     def _flush_bin(self, key: str) -> List[FlowFile]:
         """Merge all FlowFiles in a bin. Must hold self._lock."""
         buf = self._bins.pop(key, [])
@@ -96,6 +122,7 @@ class MergeContentTask(BaseTask):
         if not buf:
             return []
 
+        buf = self._ordered(buf)
         contents = [ff.get_content() for ff in buf]
         merged = self.separator.join(contents)
 

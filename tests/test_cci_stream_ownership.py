@@ -266,6 +266,76 @@ def test_capture_claim_does_not_stamp_the_request_claim_clock():
     assert state.last_request_claim_at == 0.0
 
 
+def test_the_net_may_not_evict_a_coordinator_still_inside_its_send():
+    """Observed on codex-interactive, 16:36 -> 16:37 in production.
+
+    The coordinator claimed at 16:36:26 and was still inside its send at
+    16:36:58 -- the TUI was slow to come up ("prompt not detected ready",
+    submitted best-effort at 16:37:17), so it had not polled once while the
+    proxy's events piled up. The undelivered backstop declared the stream
+    unread after 25s and the capture took it; the real coordinator then died
+    on its very first read:
+
+        LLM call failed (iter 1): CCIConsumerEvicted:
+        CC interactive session taken over by a newer consumer
+
+    The tmux kept working and the capture kept writing rows, so the webchat
+    showed the whole turn while active-agents and the gauge were dead for it.
+    A claim newer than the last poll is a coordinator that has not started
+    reading, not one that is gone.
+    """
+    svc = _service()
+    state = _codex_session(svc)
+
+    epoch = svc.claim_consumer("sess")
+    # Still sending: it has claimed and never polled, and its events wait.
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    state.last_wait_at = 0.0
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
+
+    assert svc.claim_consumer("sess", kind="capture") == 0
+    assert state.consumer_epoch == epoch
+    # And the coordinator that finally polls still owns the stream.
+    assert svc.wait_event("sess", timeout=0, epoch=epoch)["request_id"] == "r1"
+
+
+def test_a_send_that_never_polls_still_loses_the_stream_eventually():
+    """The grace defers the net, it does not disable it: a coordinator that
+    dies inside its send without releasing must not mute the net forever, or
+    the turn it was holding stays invisible."""
+    svc = _service()
+    state = _codex_session(svc)
+
+    svc.claim_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    state.last_wait_at = 0.0
+    state.last_request_claim_at = (
+        time.time() - CCInteractiveEventService._REQUEST_CLAIM_GRACE_SECONDS - 1)
+
+    assert svc.claim_consumer("sess", kind="capture") > 0
+
+
+def test_a_coordinator_that_has_polled_is_governed_by_freshness_alone():
+    """Once it reads, the claim stops shielding it: a reader that then goes
+    quiet past _LISTENER_FRESH_SECONDS is the case the net was built for."""
+    svc = _service()
+    state = _codex_session(svc)
+
+    epoch = svc.claim_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    svc.wait_event("sess", timeout=0, epoch=epoch)
+    # It polled after claiming -- the ordering that says the send is over --
+    # and has since gone quiet past the freshness window.
+    now = time.time()
+    state.last_request_claim_at = now - 10
+    state.last_wait_at = (
+        now - CCInteractiveEventService._LISTENER_FRESH_SECONDS - 1)
+    assert state.last_wait_at > state.last_request_claim_at
+
+    assert svc.claim_consumer("sess", kind="capture") > 0
+
+
 def test_coordinator_yields_when_claim_refused():
     class _Refusing:
         def claim_consumer(self, session_token, kind="request"):

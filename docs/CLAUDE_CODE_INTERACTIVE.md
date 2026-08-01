@@ -146,12 +146,20 @@ them, whatever the timestamps claim, and the turn is adopted — forced past the
 liveness graces, because those graces are exactly the guesses being backstopped.
 
 It stays safe against a live coordinator without asking about one: adoption
-goes through a `capture` claim, which is refused while a request consumer is
-actually polling. A coordinator that has not polled in 25 seconds while its own
-events pile up is not one. The threshold clears the worst legitimate handover
-— a coordinator claims *before* its send, and the send can spend a second
-settling the paste, three proving it landed, one between the two Enters and six
-verifying the submit before `run()` polls for the first time.
+goes through a `capture` claim, and that claim is what arbitrates the takeover.
+Deciding it on polling alone contradicted the window described above: a
+coordinator inside its send has claimed and not polled, so 25 seconds of queued
+events is what it looks like *by design*, and the net evicted it — the real
+turn then died on its first read with `CCIConsumerEvicted` while the capture
+kept writing its rows, so the webchat showed the whole turn with active-agents
+and the context gauge dead for it. A capture claim is therefore refused on
+either fact: a request consumer polling within `_LISTENER_FRESH_SECONDS`, or a
+request claim still outstanding and unpolled within
+`_REQUEST_CLAIM_GRACE_SECONDS`. Adoption itself still fires on the queue —
+the backstop keeps deciding that the stream looks unread; it simply may not
+take it from a turn that provably has not begun reading. Past the grace the
+claim is granted as before, so a coordinator that claimed and died cannot mute
+the net for good.
 
 A `cci-pending-sweep` thread re-asks every `_PENDING_SWEEP_SECONDS`. Checking
 on publish alone would miss the case the rule cares about most: a turn that

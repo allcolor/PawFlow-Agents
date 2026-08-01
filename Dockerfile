@@ -41,6 +41,18 @@ RUN mkdir -p /app/default-tiktoken-cache && \
     python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" && \
     chmod -R 755 /app/default-tiktoken-cache
 
+# Same reasoning for the local embedding model (all-MiniLM-L6-v2). With no
+# HF_HOME the cache lands in the container's own ~/.cache, which a recreate
+# throws away: every restart then re-fetched the model on the FIRST message,
+# holding that message through some forty HEAD/GET round trips to
+# huggingface.co and logging an unauthenticated rate-limit warning on the way.
+# The weights never change, so the fetch is pure latency. /app/data is the
+# persistent bind mount, so the model is downloaded once and found offline
+# from then on -- core.embeddings already tries local_files_only first.
+ENV HF_HOME=/app/data/hf_cache \
+    HUGGINGFACE_HUB_CACHE=/app/data/hf_cache/hub \
+    SENTENCE_TRANSFORMERS_HOME=/app/data/hf_cache/sentence-transformers
+
 # Browser automation / Scrapling support.
 RUN python -m playwright install --with-deps chromium \
     && python -m patchright install chromium

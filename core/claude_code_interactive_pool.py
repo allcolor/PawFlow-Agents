@@ -486,9 +486,31 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return pane or ""
         lines = (pane or "").splitlines()
         for idx in range(len(lines) - 1, -1, -1):
-            if lines[idx].lstrip().startswith(prefix):
+            if self._is_composer_line(lines[idx], prefix):
                 return "\n".join(lines[idx:])
         return ""
+
+    @staticmethod
+    def _is_composer_line(line: str, prefix: str) -> bool:
+        """Is this the TUI's input-box line, or chrome that shares its prefix?
+
+        `startswith(prefix)` alone is not enough. Codex's prefix is `>`, and
+        its pane carries a PERMANENT header, `>_ OpenAI Codex (v...)`, which
+        starts with it too. When the composer is off screen the backward scan
+        then stops on that header and _composer_text() returns the whole
+        transcript as "the composer" — so a chip left by an already-submitted
+        message reads as an unsent paste, and the verifier presses Enter into
+        a turn that is running.
+
+        What separates them is the character right after the prefix: an input
+        box is the prefix then a space (`> `, `> [Pasted Content ...]`) or
+        nothing at all. The header glues punctuation to it.
+        """
+        stripped = line.lstrip()
+        if not stripped.startswith(prefix):
+            return False
+        rest = stripped[len(prefix):]
+        return rest == "" or rest[0].isspace()
 
     def _pane_holds_unsent_paste(self, pane: str):
         """Is the pasted prompt still sitting in the input box?

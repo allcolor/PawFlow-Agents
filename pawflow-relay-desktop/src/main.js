@@ -304,14 +304,10 @@ async function buildRelayImage(input) {
 
   appendLog('image-build', `Building Docker image ${imageName}\n`);
   await runDockerBuild(imageName, outDir, { logName: 'image-build' });
-  appendLog('image-build', 'Pruning Docker build cache\n');
-  try {
-    await runDocker(['builder', 'prune', '-f'], { logName: 'image-build' });
-  } catch (err) {
-    appendLog('image-build', `[prune] ${err.message}\n`);
-  } finally {
-    fs.rmSync(outDir, { recursive: true, force: true });
-  }
+  // No `docker builder prune`: it is daemon-wide, so building one relay image
+  // would throw away every other project's build cache on the same machine.
+  // BuildKit garbage-collects its own cache under the daemon's GC policy.
+  fs.rmSync(outDir, { recursive: true, force: true });
   return { ok: true, image: imageName };
 }
 
@@ -362,11 +358,9 @@ async function cleanupOldRelayImages(currentImage, oldIds) {
       appendLog('image-download', `[cleanup] ${err.message}\n`);
     }
   }
-  try {
-    await runDocker(['image', 'prune', '-f', '--filter', 'dangling=true'], { logName: 'image-download' });
-  } catch (err) {
-    appendLog('image-download', `[prune] ${err.message}\n`);
-  }
+  // No global `docker image prune`: the loop above already removed, by id, the
+  // relay images this download untagged. A dangling sweep can therefore only
+  // reach images that belong to somebody else's project on the same daemon.
 }
 
 async function downloadRelayImage(input = {}) {

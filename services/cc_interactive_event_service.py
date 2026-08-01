@@ -55,6 +55,30 @@ def _safe_wire_field(data_b64: str, text_repr: str) -> tuple[str, str]:
 
 
 @dataclass
+class _InjectedText:
+    """One thing PawFlow pasted, and how much of it is still unaccounted for.
+
+    A TUI may split one paste into several submits, so the pieces have to be
+    recognisable as ours. Recognising them by "is a substring of something we
+    pasted in the last ten minutes" was too generous: after the injection had
+    already been consumed in full, a human typing any twelve-character phrase
+    that happened to occur inside it was silently swallowed -- never persisted,
+    never answered.
+
+    So an injection is CONSUMED as its pieces arrive. ``remaining`` starts as
+    the whole normalized text and each claimed piece is cut out of it; when
+    what is left is too small to identify anything, the entry is dropped and
+    can match nothing more. ``last_seen`` bounds the same thing in time: the
+    pieces of one paste belong to one burst, not to the rest of the session.
+    """
+    at: float
+    digest: str
+    full: str
+    remaining: str
+    last_seen: float
+
+
+@dataclass
 class CCInteractiveSessionEvents:
     session_token: str
     events: "queue.Queue[dict]"
@@ -75,10 +99,11 @@ class CCInteractiveSessionEvents:
     captured_msg_ids: list = field(default_factory=list)
     injected_prompts: dict[str, float] = field(default_factory=dict)
     pending_injected_prompt_ignores: list[float] = field(default_factory=list)
-    # (timestamp, text) of what PawFlow pasted, kept for the same window as
-    # the digests. A TUI is free to submit one paste as several prompts; the
-    # digest of a fragment matches nothing, so the text itself is what tells
-    # a fragment of our own injection apart from something a human typed.
+    # What PawFlow pasted, as _InjectedText entries. A TUI is free to submit
+    # one paste as several prompts; the digest of a fragment matches nothing,
+    # so the text itself is what tells a fragment of our own injection apart
+    # from something a human typed. Each entry is CONSUMED as its pieces
+    # arrive -- see _InjectedText -- so it stops matching once it is spent.
     injected_prompt_texts: list = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     last_event_at: float = 0.0
@@ -295,9 +320,12 @@ class CCInteractiveEventService(BaseService):
             state.injected_prompts[digest] = now
             state.injected_prompt_texts = [
                 item for item in state.injected_prompt_texts
-                if item[0] >= cutoff
+                if item.at >= cutoff
             ]
-            state.injected_prompt_texts.append((now, prompt))
+            normalized = " ".join((prompt or "").split())
+            state.injected_prompt_texts.append(_InjectedText(
+                at=now, digest=digest, full=normalized,
+                remaining=normalized, last_seen=now))
             state.pending_injected_prompt_ignores = [
                 ts for ts in state.pending_injected_prompt_ignores
                 if ts >= cutoff
@@ -636,16 +664,26 @@ class CCInteractiveEventService(BaseService):
                 ts for ts in state.pending_injected_prompt_ignores
                 if ts >= cutoff
             ]
+            state.injected_prompt_texts = [
+                item for item in state.injected_prompt_texts
+                if item.at >= cutoff
+            ]
             if digest and digest in state.injected_prompts:
                 state.injected_prompts.pop(digest, None)
+                # The whole paste arrived as ONE submit, so there are no pieces
+                # left to recognise. Dropping the text here is what stops it
+                # from swallowing a real prompt later: without it the injection
+                # stayed matchable for the rest of the 600s window, and any
+                # phrase the user typed that occurred inside it was consumed as
+                # a fragment -- neither persisted nor answered.
+                state.injected_prompt_texts = [
+                    item for item in state.injected_prompt_texts
+                    if item.digest != digest
+                ]
                 if state.pending_injected_prompt_ignores:
                     state.pending_injected_prompt_ignores.pop(0)
                 return True
-            state.injected_prompt_texts = [
-                item for item in state.injected_prompt_texts
-                if item[0] >= cutoff
-            ]
-            if self._is_fragment_of_injection(state, prompt):
+            if self._claim_injection_fragment(state, prompt, now):
                 # One paste, several submits: the TUI split what PawFlow sent
                 # and each piece arrives as its own UserPromptSubmit. Only the
                 # first carries the ticket; without this the rest are filed as
@@ -672,24 +710,61 @@ class CCInteractiveEventService(BaseService):
     # fragment of our own paste is harmless, swallowing a two-character human
     # message is not.
     _MIN_FRAGMENT_CHARS = 12
+    # The pieces of one split paste are submitted as one burst -- keystrokes of
+    # a single event, possibly with a turn running between two of them, but not
+    # spread across a session. The digests live for 600s because a digest is an
+    # exact match and cannot claim anything it did not produce; a substring can,
+    # so it gets its own, far shorter window, refreshed by each piece claimed.
+    _FRAGMENT_BURST_SECONDS = 180.0
 
     @staticmethod
     def _is_fragment_of_injection(state: CCInteractiveSessionEvents,
-                                  prompt: str) -> bool:
-        """True when `prompt` is a slice of something PawFlow pasted.
+                                  prompt: str, now: float = 0.0):
+        """Return the injection `prompt` is an unclaimed slice of, or None.
 
         Called with the sessions lock held. Whitespace is normalised on both
         sides because a TUI re-wraps what it renders, so a fragment is rarely
         byte-identical to its span of the original.
+
+        Matched against what is LEFT of the injection, not against the whole of
+        it: a piece already accounted for must not be recognisable twice, and
+        an injection entirely accounted for must be recognisable no more.
         """
         needle = " ".join((prompt or "").split())
         if len(needle) < CCInteractiveEventService._MIN_FRAGMENT_CHARS:
+            return None
+        moment = now or time.time()
+        burst = CCInteractiveEventService._FRAGMENT_BURST_SECONDS
+        for item in state.injected_prompt_texts:
+            if moment - item.last_seen > burst:
+                continue
+            # The complete injection is the digest path's business; letting it
+            # through here would spend the ticket twice over.
+            if needle == item.full:
+                continue
+            if needle in item.remaining:
+                return item
+        return None
+
+    @classmethod
+    def _claim_injection_fragment(cls, state: CCInteractiveSessionEvents,
+                                  prompt: str, now: float) -> bool:
+        """Recognise a piece of our own paste and cut it out of what is left."""
+        item = cls._is_fragment_of_injection(state, prompt, now)
+        if item is None:
             return False
-        for _ts, text in state.injected_prompt_texts:
-            haystack = " ".join((text or "").split())
-            if needle != haystack and needle in haystack:
-                return True
-        return False
+        needle = " ".join((prompt or "").split())
+        item.remaining = item.remaining.replace(needle, " ", 1)
+        item.last_seen = now
+        if len(item.remaining.strip()) < cls._MIN_FRAGMENT_CHARS:
+            # Spent: what is left could no longer identify anything as ours,
+            # and keeping it would only give it the chance to claim something
+            # of the user's.
+            state.injected_prompt_texts = [
+                other for other in state.injected_prompt_texts
+                if other is not item
+            ]
+        return True
 
     @staticmethod
     def _pop_oldest_injected_prompt_locked(state: CCInteractiveSessionEvents) -> None:

@@ -363,6 +363,34 @@ class _ToolRelayCacheReqMixin:
                     return True
         return False
 
+    # How long a finished request stays visible to row hydration. It has to
+    # outlast the gap between execute() returning and the provider persisting
+    # the result; everything after that is covered by _conv_core, which stops
+    # marking a row live once the row carries its result.
+    _HYDRATION_GRACE_SECONDS = 15.0
+
+    @classmethod
+    def retire_inflight(cls, request_id: str) -> None:
+        """Take a request out of flight, keeping it hydratable for a moment.
+
+        Every control path (kill, cancel, has_unbound_inflight, background
+        binding) must see it gone immediately -- it is finished. Only
+        ``inflight_snapshot`` still sees it, because the row it describes has
+        no result in the transcript yet.
+        """
+        now = time.time()
+        with cls._inflight_lock:
+            info = cls._inflight.pop(request_id, None)
+            if isinstance(info, dict):
+                retired = dict(info)
+                retired["finished_at"] = now
+                cls._recently_finished[request_id] = retired
+            cutoff = now - cls._HYDRATION_GRACE_SECONDS
+            stale = [rid for rid, entry in cls._recently_finished.items()
+                     if float(entry.get("finished_at") or 0) < cutoff]
+            for rid in stale:
+                cls._recently_finished.pop(rid, None)
+
     @classmethod
     def inflight_snapshot(cls, conversation_id: str,
                           agent_name: str = "") -> list:
@@ -387,7 +415,13 @@ class _ToolRelayCacheReqMixin:
         now = time.time()
         out = []
         with cls._inflight_lock:
-            for rid, info in cls._inflight.items():
+            cutoff = now - cls._HYDRATION_GRACE_SECONDS
+            entries = list(cls._inflight.items()) + [
+                (rid, entry)
+                for rid, entry in cls._recently_finished.items()
+                if float(entry.get("finished_at") or 0) >= cutoff
+            ]
+            for rid, info in entries:
                 if not isinstance(info, dict):
                     continue
                 if cls._root_conversation_id(info.get("conv", "")) != root:

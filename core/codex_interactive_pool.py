@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess  # nosec B404
 import threading
@@ -28,6 +29,71 @@ from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.docker_utils import docker_cmd, get_host_ip
 
 logger = logging.getLogger(__name__)
+
+#: The Codex TUI prints its remaining budget in the status bar:
+#: ``gpt-5.6-sol medium  ~  context left 74%``. It is the only place the
+#: session's real context window is observable at all -- the Responses API
+#: reports prompt sizes but never the window they are measured against.
+_CONTEXT_LEFT_RE = re.compile(r"context\s+left\s+(\d+(?:\.\d+)?)\s*%",
+                              re.IGNORECASE)
+
+# Below this occupancy the derivation is not worth trusting: the TUI rounds to
+# a whole percent, so at 5% used a +-0.5 point error moves the derived window
+# by +-10%. At 15% used the same error is worth under 4%.
+_MIN_OCCUPANCY_FOR_WINDOW = 0.15
+# Replacing the stored window on every turn would make the gauge denominator
+# wobble with the TUI's rounding -- the exact defect class this value exists to
+# remove. Only a genuine change (a different model, a [1m] variant) moves it.
+_WINDOW_REPLACE_TOLERANCE = 0.05
+
+
+def context_left_fraction(pane: str):
+    """Fraction of the Codex context window still free, or None.
+
+    The last match wins: the status bar is redrawn at the bottom of the pane,
+    so an older value may still be visible higher up in the transcript.
+    """
+    matches = _CONTEXT_LEFT_RE.findall(pane or "")
+    if not matches:
+        return None
+    try:
+        value = float(matches[-1])
+    except (TypeError, ValueError):
+        return None
+    if not 0.0 <= value <= 100.0:
+        return None
+    return value / 100.0
+
+
+def derive_context_window(used_tokens: int, left_fraction, *,
+                          previous: int = 0) -> int:
+    """Turn (measured prompt size, TUI percentage) into a window in tokens.
+
+    PawFlow measures ``used`` exactly -- it is the ``input_tokens`` the
+    Responses API reported on the wire -- and Codex displays what fraction of
+    the window is left. The window is the one unknown, so it follows:
+    ``window = used / (1 - left)``.
+
+    Returns ``previous`` unchanged when the reading is not trustworthy or when
+    the new derivation agrees with it, so the denominator stays put instead of
+    breathing with the TUI's rounding.
+    """
+    try:
+        used = int(used_tokens or 0)
+    except (TypeError, ValueError):
+        used = 0
+    prev = max(0, int(previous or 0))
+    if used <= 0 or left_fraction is None:
+        return prev
+    occupancy = 1.0 - float(left_fraction)
+    if occupancy < _MIN_OCCUPANCY_FOR_WINDOW:
+        return prev
+    derived = int(round((used / occupancy) / 1000.0)) * 1000
+    if derived <= 0:
+        return prev
+    if prev and abs(derived - prev) <= prev * _WINDOW_REPLACE_TOLERANCE:
+        return prev
+    return derived
 
 
 class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):

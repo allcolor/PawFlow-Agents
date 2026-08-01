@@ -6,6 +6,91 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.72] — 2026-08-01
+
+### Fixed
+
+- A real user prompt is no longer swallowed as a fragment of a PawFlow
+  injection. beta.71 taught the guard to recognise a piece of a split paste by
+  matching it against the injected text, but kept that text matchable for the
+  full 600-second digest window — so once the injection had already been
+  consumed in full, any twelve-character phrase the user typed that happened to
+  occur inside it was claimed as ours, and was neither persisted nor answered.
+  An injection is now *consumed* as its pieces arrive: each claimed piece is cut
+  out of what remains, an injection matched whole by its digest drops its text
+  immediately, and an entry with nothing identifiable left is discarded. A far
+  shorter burst window, refreshed by each piece, bounds the same thing in time.
+- The Codex submit verifier no longer presses Enter into a running turn. The
+  composer region was located by scanning the pane bottom-up for a line starting
+  with `>`, which also matches the permanent `>_ OpenAI Codex` header. With the
+  composer off screen the scan stopped on the header and returned the whole
+  transcript as the composer, so a chip left by an already-submitted message
+  read as an unsent paste and three Enters were sent mid-turn. A composer line
+  is the prefix followed by a space or nothing; the header glues punctuation to
+  it.
+- The context gauge is no longer inflated by counting on top of a measurement.
+  For an observed CLI provider `used` is the prompt size the provider itself
+  reported, and it already contains the message being appended. The streaming
+  hot path added PawFlow's own count for each append anyway, compounding every
+  time: the gauge climbed for a whole turn — observed going from 62% to 92% with
+  no compaction of any kind — until the next full recompute put the measurement
+  back and it resumed growing correctly. It also armed `compact_threshold_pct`
+  on the inflated number, firing auto-compaction early. Both incremental paths
+  now refuse a measured cache.
+- The gauge denominator no longer changes at the turn boundary. Claude Code's
+  own `modelUsage[model].contextWindow` was consulted only while a turn was
+  active; between turns the code read `client._real_context_size` /
+  `client._context_window`, attributes PawFlow assigns nowhere, so it resolved
+  to 0 and the denominator silently fell back to the configured budget. One
+  lookup, `_client_real_window`, now serves both — and also the turn budget in
+  `_agentctx_p3` and the cap in `context_ops`, neither of which had ever applied
+  the provider's real window.
+- A tool row whose result has not reached the transcript yet hydrates correctly.
+  A request leaves `_inflight` the moment it completes, but its result is
+  written slightly later; a `load_history` landing between the two read the page
+  before the result existed and the snapshot after the entry was gone, rendering
+  a running call as an ordinary finished one — no pending bullet, no BG/Kill, no
+  result. Finished requests stay visible to row hydration alone for a short
+  grace; every control path (kill, cancel, unbound checks) still sees them gone
+  at once.
+- The three global `docker image prune --filter dangling=true` calls are gone
+  from `install-pawflow.sh`, `install-pawflow.ps1` and the relay desktop app, as
+  is a `docker builder prune -f` that wiped the entire daemon build cache after
+  building a relay image. All of them are daemon-wide: on a machine where
+  PawFlow shares Docker with anything else they deleted other projects untagged
+  layers and build cache. Each path already removes, by id, the images it
+  untagged itself. The UI update path had received this fix already; the
+  installers carried assertions *requiring* the prune, which is why it survived.
+
+### Changed
+
+- The detail block cue surface names the work instead of the wrapper. A
+  code-mode turn is one native call — `exec(<code-mode script, N chars>)` — and
+  everything it does is the MCP calls the relay reports underneath it. Cueing
+  every tool row identically put the wrapper in front and the work behind. A
+  native row now yields: it is held briefly and an MCP call arriving in that
+  window takes its place. A native call genuinely on its own still reaches the
+  surface, so a turn using no MCP tool is not left blank.
+
+### Added
+
+- Codex real context window is derived from its TUI status bar. The Responses
+  API reports how full the window is (`input_tokens`) but never how big it is,
+  so the gauge and the auto-compact threshold divided by whatever
+  `max_context_size` happened to be configured. The TUI prints the missing half
+  (`context left 74%`), and the two together determine the window exactly.
+  Sampled once per turn; a reading below 15% occupancy is refused as rounding
+  noise, and a derivation within 5% of the stored value does not replace it.
+- OpenAI Responses reasoning items are carried end to end. On that API the chain
+  of thought is an output item the next request must hand back with the turn
+  that produced it — PawFlow kept only the reasoning text, so every iteration of
+  a tool loop re-entered having forgotten why it called the tool. The item is
+  now captured verbatim, stored on the assistant message, and replayed ahead of
+  the message and the calls it led to. Setting `store: false` in the service
+  config adds `include: ["reasoning.encrypted_content"]`, which Zero Data
+  Retention requires: there, a turn whose reasoning item the API cannot resolve
+  is a hard 400, not a quality loss.
+
 ## [1.0.0-beta.71] — 2026-08-01
 
 ### Fixed

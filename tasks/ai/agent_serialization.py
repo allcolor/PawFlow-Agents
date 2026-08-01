@@ -57,6 +57,12 @@ class AgentSerializationMixin:
                 entry["display_only"] = True
             if m.is_error:
                 entry["is_error"] = True
+            # On the assistant row, not on the thinking row that follows it: a
+            # Responses reasoning item routinely exists with an EMPTY summary,
+            # and hanging it off `thinking` would lose it exactly then -- the
+            # common case on OpenAI.
+            if getattr(m, "reasoning_item", ""):
+                entry["reasoning_item"] = m.reasoning_item
             if m.role == "assistant":
                 parent_id = entry.get("msg_id", "")
                 result.append(entry)
@@ -167,6 +173,7 @@ class AgentSerializationMixin:
                 display_only=entry.get("display_only", False),
                 thinking=entry.get("thinking", ""),
                 thinking_signature=entry.get("thinking_signature", ""),
+                reasoning_item=entry.get("reasoning_item", ""),
                 timestamp=_ts,
                 seq=_seq,
                 conversation_id=(entry.get("conversation_id")

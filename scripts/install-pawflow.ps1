@@ -271,7 +271,9 @@ function Cleanup-RetaggedPawFlowImages {
         & docker rmi -f $oldId *> $null
         if ($LASTEXITCODE -ne 0) { Warn "Failed to remove old untagged PawFlow image id: $oldId" }
     }
-    & docker image prune -f --filter "dangling=true" *> $null
+    # No global `docker image prune`: the loop above already removed, by id, the
+    # PawFlow images this install untagged. A dangling sweep can therefore only
+    # reach images that belong to somebody else's project on the same daemon.
 }
 
 

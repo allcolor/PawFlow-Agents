@@ -147,7 +147,8 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
     liveFed: false, closedByGuess: false,
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
     artifactElementsByFileId: new Map(), artifactFileIdByCallId: new Map(),
-    transient: { cues: [], coalesceTimer: null, pendingText: '', pendingKind: '' },
+    transient: { cues: [], coalesceTimer: null, pendingText: '', pendingKind: '',
+                 deferredTool: null, deferredToolTimer: null },
     tabs: {},
   };
   const block = document.createElement('section');
@@ -567,7 +568,7 @@ function _turnOfferTransient(state, kind, text, element) {
   // rendered; the cue carries a copy of it, exactly as the classic view draws
   // it, and the original stays the tab's own.
   if (kind === 'tools') {
-    if (element) { _turnEnqueueTransient(state, { kind, node: element }); return; }
+    if (element) { _turnOfferToolCue(state, element); return; }
     label = label || _turnText('turnCallingTool', 'Calling tool...');
   }
   if (!label) return; label = label.slice(0, TURN_TRANSIENT_MAX_CHARS);
@@ -599,6 +600,68 @@ function _turnFlushTransient(state) {
   state.transient.pendingKind = ''; state.transient.pendingText = '';
   if (!text || state.expanded || state.status !== 'working') return;
   _turnEnqueueTransient(state, { kind, text });
+}
+
+// How long a native call waits to see whether it was only the wrapper around
+// the MCP calls that follow it. Long enough to cover the gap between a code
+// body's own row and the first call the relay reports for it, short enough
+// that a native call standing alone still reaches the surface promptly.
+const TURN_NATIVE_TOOL_DEFER_MS = 500;
+
+// Which side of the MCP/native split a tool row is on. The row already says so
+// -- messages.js stamps `tc-origin-mcp` / `tc-origin-native` on the badge it
+// draws -- so the cue reads the rendered truth instead of re-deriving it.
+function _turnToolCueOrigin(element) {
+  if (!element) return '';
+  const has = (cls) => (element.classList && element.classList.contains(cls))
+    || (element.querySelector && !!element.querySelector('.' + cls));
+  if (has('tc-origin-mcp')) return 'mcp';
+  if (has('tc-origin-native')) return 'native';
+  return '';
+}
+
+function _turnDropDeferredTool(state) {
+  if (state.transient.deferredToolTimer) {
+    clearTimeout(state.transient.deferredToolTimer);
+    state.transient.deferredToolTimer = null;
+  }
+  const held = state.transient.deferredTool;
+  state.transient.deferredTool = null;
+  return held;
+}
+
+function _turnEmitDeferredTool(state) {
+  const held = _turnDropDeferredTool(state);
+  if (!held || state.expanded || state.status !== 'working') return;
+  _turnEnqueueTransient(state, { kind: 'tools', node: held });
+}
+
+// The cue surface is the one place that says what the agent is doing right
+// now, and a code-mode turn spent it on the wrong row. The body is ONE native
+// call -- `exec(<code-mode script, N chars>)` -- and everything it actually
+// does is the MCP calls the relay reports underneath it. Cueing every row the
+// same way put the wrapper in front and the work behind, so the animation read
+// `exec(...)`, `exec(...)`, `exec(...)` while the interesting names scrolled
+// past unseen.
+//
+// So a native row yields: it is held briefly, and an MCP call arriving in that
+// window takes its place. A native call that is genuinely on its own waits out
+// the window and is shown, because suppressing it outright would leave the
+// surface blank for turns that use no MCP tool at all.
+function _turnOfferToolCue(state, element) {
+  const origin = _turnToolCueOrigin(element);
+  if (origin === 'native') {
+    // A second native row means the first was not a wrapper after all.
+    _turnEmitDeferredTool(state);
+    state.transient.deferredTool = element;
+    state.transient.deferredToolTimer = setTimeout(() => {
+      state.transient.deferredToolTimer = null;
+      _turnEmitDeferredTool(state);
+    }, TURN_NATIVE_TOOL_DEFER_MS);
+    return;
+  }
+  if (origin === 'mcp') _turnDropDeferredTool(state);
+  _turnEnqueueTransient(state, { kind: 'tools', node: element });
 }
 
 // Every attribute a cue copy must not keep. A copy is decoration: it shows
@@ -903,6 +966,10 @@ function _turnStopTransient(state) {
   if (state.transient.coalesceTimer) clearTimeout(state.transient.coalesceTimer);
   state.transient.coalesceTimer = null;
   state.transient.pendingText = ''; state.transient.pendingKind = '';
+  // A native row held back waiting for its MCP calls is dropped, not flushed:
+  // the surface is going away, and a cue arriving after it would have nothing
+  // to condense onto.
+  _turnDropDeferredTool(state);
   while (state.transient.cues.length) _turnRetireCue(state, state.transient.cues[0]);
   if (state.idleEl && state.idleEl.parentNode) state.idleEl.parentNode.removeChild(state.idleEl);
   state.idleEl = null;

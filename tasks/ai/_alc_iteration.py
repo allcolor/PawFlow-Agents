@@ -445,6 +445,7 @@ class _ALCIterationMixin:
                 st._append(LLMMessage(role="assistant", content="",
                                    thinking=st.response.thinking or "",
                                    thinking_signature=getattr(st.response, "thinking_signature", "") or "",
+                                   reasoning_item=getattr(st.response, "reasoning_item", "") or "",
                                    source=st._agent_source(st.response.tokens_in, st.response.tokens_out,
                                                         tok_cache_creation=st.response.cache_creation_tokens,
                                                         tok_cache_read=st.response.cache_read_tokens),
@@ -467,12 +468,20 @@ class _ALCIterationMixin:
             # Attach thinking to the first assistant message
             st._thinking_txt = st.response.thinking or ""
             st._thinking_sig = getattr(st.response, "thinking_signature", "") or ""
+            # The Responses reasoning items belong to the turn, not to its
+            # text, so they ride the first assistant message even when it
+            # carried no visible thinking at all -- the common case on
+            # OpenAI, where the summary may be empty while the item exists.
+            st._reasoning_item = getattr(st.response, "reasoning_item", "") or ""
             for st._m in st.msgs:
                 if st._m.role == "assistant" and st._thinking_txt:
                     st._m.thinking = st._thinking_txt
                     st._m.thinking_signature = st._thinking_sig
                     st._thinking_txt = ""  # only on the first one
                     st._thinking_sig = ""
+                if st._m.role == "assistant" and st._reasoning_item:
+                    st._m.reasoning_item = st._reasoning_item
+                    st._reasoning_item = ""
                 st._append(st._m)
             if st.action == "break":
                 st.response_content = st.final
@@ -495,6 +504,7 @@ class _ALCIterationMixin:
             tool_calls=st.response.tool_calls,
             thinking=st.response.thinking or "",
             thinking_signature=getattr(st.response, "thinking_signature", "") or "",
+            reasoning_item=getattr(st.response, "reasoning_item", "") or "",
             source=st._agent_source(st.response.tokens_in, st.response.tokens_out, st.response.model,
                                  tok_cache_creation=st.response.cache_creation_tokens,
                                  tok_cache_read=st.response.cache_read_tokens),

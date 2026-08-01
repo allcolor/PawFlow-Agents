@@ -90,9 +90,13 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "Cleaning older PawFlow relay image tags" in main
     assert "runDocker(['pull', imageName]" in main
     assert "runDocker(['rmi', ref]" in main
-    assert "runDocker(['image', 'prune', '-f', '--filter', 'dangling=true']" in main
-    assert "docker builder prune" not in main
-    assert "builder', 'prune', '-f'" in main
+    assert "runDocker(['rmi', '-f', id]" in main
+    # Both Docker prunes are daemon-wide: an image prune deletes every other
+    # project's untagged layers, a builder prune their whole build cache. The
+    # loops above already remove, by id, what this download untagged.
+    assert "'prune'" not in main
+    assert "runDocker(['image', 'prune'" not in main
+    assert "runDocker(['builder', 'prune'" not in main
     assert "nodeIntegration: false" in main
     assert "contextIsolation: true" in main
     assert "process.platform === 'win32' ? 'python' : 'python3'" in main

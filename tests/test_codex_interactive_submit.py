@@ -89,6 +89,51 @@ def test_missing_composer_line_is_unknown_not_empty():
     assert pool._pane_holds_unsent_paste("a pane with no prompt line") is None
 
 
+# The composer has scrolled off, but the header has NOT: it is permanent, and
+# it starts with the composer prefix `>`. Everything below it is transcript,
+# including a chip from a message submitted long ago.
+NO_COMPOSER_PANE = """\
+>_ OpenAI Codex (v0.146.0)
+
+\u203a You
+  [Pasted Content 24470 chars]
+
+  Working (Esc to interrupt)
+"""
+
+
+def test_the_permanent_header_is_not_mistaken_for_the_composer():
+    """`>_ OpenAI Codex` starts with `>`, so a bare startswith() matched it.
+
+    The scan runs bottom-up and stopped on the header, making _composer_text()
+    return the whole transcript. The historical chip below it then read as an
+    unsent paste.
+    """
+    pool = CodexInteractivePool()
+    assert pool._composer_text(NO_COMPOSER_PANE) == ""
+    assert pool._pane_holds_unsent_paste(NO_COMPOSER_PANE) is None
+
+
+def test_no_enter_is_sent_when_only_the_header_and_a_stale_chip_are_visible(
+        monkeypatch):
+    """The reviewer's repro: this sent three Enter into a running turn.
+
+    The chip probe is authoritative over the running marker on purpose -- a
+    chip in the composer means the paste never left it, whatever else the pane
+    shows. That authority is only safe while the composer region is real.
+    """
+    pool = CodexInteractivePool()
+    assert _harness(pool, [NO_COMPOSER_PANE], monkeypatch) == []
+
+
+def test_the_composer_is_still_found_when_it_is_on_screen():
+    """The header fix must not cost us the composer itself: both the empty box
+    (`> Ask Codex`) and the loaded one (`> [Pasted ...]`) are prefix+space."""
+    pool = CodexInteractivePool()
+    assert pool._composer_text(UNSENT_PANE).startswith("> [Pasted Content")
+    assert pool._composer_text(SUBMITTED_PANE).startswith("> Ask Codex")
+
+
 def test_verify_presses_enter_again_while_the_chip_is_in_the_composer(monkeypatch):
     """The bug: this returned immediately having sent nothing."""
     pool = CodexInteractivePool()

@@ -299,6 +299,40 @@ you want when you need reasoning items or the server-side built-in tools;
 for ordinary text and function calling the two are equivalent, and
 chat/completions is the more widely implemented of the pair.
 
+### Reasoning items travel with the turn
+
+On chat/completions a model's chain of thought is a field on the message, and
+dropping it costs nothing but display. On the Responses API it is its own
+output item, and the next request is expected to hand it back with the turn
+that produced it — this is what Codex does.
+
+PawFlow accumulated only the reasoning *text*, so every iteration of a tool
+loop re-entered having forgotten why it had called the tool. The item itself is
+now carried end to end:
+
+| Stage | Where |
+|---|---|
+| Capture | `_StreamState.reasoning_items` keeps each `reasoning` item verbatim, in arrival order. `output_item.done` supersedes the `added` stub — that is where `encrypted_content` arrives. |
+| Return | `LLMResponse.reasoning_item`, JSON-encoded and opaque. |
+| Store | `LLMMessage.reasoning_item`, persisted on the **assistant** row (not the `thinking` row: on OpenAI the summary is routinely empty while the item still exists). |
+| Replay | `build_responses_input` emits the items **before** the message and the calls they led to — the API validates that order. |
+
+A malformed stored item is dropped rather than raised on: a lost chain of
+thought costs continuity, a malformed item costs the whole request. Only items
+of `type: "reasoning"` are ever replayed.
+
+**Zero Data Retention.** Set `store: false` in the service config and PawFlow
+adds `include: ["reasoning.encrypted_content"]`, so the items come back
+encrypted and can be replayed from PawFlow's own history. Under ZDR this is not
+a quality question: a turn whose reasoning item the API cannot resolve is a
+hard 400. Leave `store` unset to keep the API default (server-side storage) —
+neither key is sent.
+
+The field is emitted only for the Responses builder
+(`_build_openai_messages(..., carry_reasoning=True)`). chat/completions must
+never see it: an unknown key inside a message there is a 400, not an ignored
+field.
+
 ## Claude Code Providers
 
 PawFlow has two Claude Code provider surfaces:

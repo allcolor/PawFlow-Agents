@@ -56,6 +56,44 @@ def _active_context(conversation_id: str, agent_name: str) -> Optional[Dict[str,
     return None
 
 
+def _client_real_window(client: Any, conversation_id: str,
+                        agent_name: str) -> int:
+    """The provider's own context window for this stream, or 0.
+
+    One lookup, used whether or not a turn is running. Two providers can report
+    a window, and both write it per (conversation, agent):
+
+      * ``_cli_observed_context_window_by_stream`` -- Codex, derived from the
+        TUI's "context left N%" status bar against the prompt size measured on
+        the wire. Checked first: it describes the session actually running.
+      * ``_cc_context_window_by_stream`` -- Claude Code, from its own
+        authoritative ``modelUsage[model].contextWindow``.
+
+    The CC map used to be consulted only while a turn was active. Between turns
+    the code reached instead for ``client._real_context_size`` /
+    ``client._context_window`` -- attributes assigned NOWHERE in PawFlow, so
+    that branch always resolved to 0. The denominator was therefore
+    min(configured, real) during a turn and plain `configured` after it: when
+    the two differ, the gauge moved at the turn boundary with nothing at all
+    behind the move.
+    """
+    if client is None:
+        return 0
+    key = (conversation_id, agent_name)
+    for attr in ("_cli_observed_context_window_by_stream",
+                 "_cc_context_window_by_stream"):
+        cw_map = getattr(client, attr, None)
+        if not isinstance(cw_map, dict):
+            continue
+        try:
+            value = max(0, int(cw_map.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return 0
+
+
 def _service_config(conversation_id: str, agent_name: str, user_id: str,
                     active_ctx: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], int, str]:
     """Return llm service config, runtime context window, and provider name."""
@@ -64,9 +102,7 @@ def _service_config(conversation_id: str, agent_name: str, user_id: str,
         real = int(active_ctx.get("real_context_size") or 0)
         client = active_ctx.get("client")
         if real <= 0:
-            cw_map = (getattr(client, "_cc_context_window_by_stream", None)
-                      if client else None) or {}
-            real = int(cw_map.get((conversation_id, agent_name), 0) or 0)
+            real = _client_real_window(client, conversation_id, agent_name)
         provider = str(active_ctx.get("active_llm_provider", "")
                        or getattr(client, "provider", "") or "")
         return dict(cfg), real, provider
@@ -82,10 +118,7 @@ def _service_config(conversation_id: str, agent_name: str, user_id: str,
         if svc:
             cfg = dict(getattr(svc, "config", {}) or {})
             client = svc.get_client() if hasattr(svc, "get_client") else None
-            real = int(
-                getattr(client, "_real_context_size", 0)
-                or getattr(client, "_context_window", 0)
-                or 0) if client else 0
+            real = _client_real_window(client, conversation_id, agent_name)
             provider = str(getattr(client, "provider", "")
                            or cfg.get("provider", "") or "")
             return cfg, real, provider

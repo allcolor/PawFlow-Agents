@@ -51,6 +51,52 @@ class LLMCodexInteractiveMixin:
             self._cli_observed_context_tokens_by_stream = counts
         counts[(conversation_id, agent_name)] = measured
 
+    def record_codex_context_window(self, pool, state, conversation_id: str,
+                                    agent_name: str, used_tokens: int) -> None:
+        """Derive and store the session's real context window from the TUI.
+
+        The Responses API reports the size of each prompt but never the window
+        it is measured against, so PawFlow drew the gauge -- and armed its
+        auto-compact threshold -- against whatever ``max_context_size`` was
+        configured, with no guarantee it matched the model. The Codex TUI shows
+        the missing half in its status bar ("context left 74%"), and the two
+        together determine the window exactly.
+
+        Sampled once per turn: capturing the pane costs a `docker exec`, and
+        the window does not change within a turn.
+        """
+        if not conversation_id or not agent_name or not state:
+            return
+        try:
+            used = int(used_tokens or 0)
+        except (TypeError, ValueError):
+            return
+        if used <= 0:
+            return
+        windows = getattr(self, "_cli_observed_context_window_by_stream", None)
+        if not isinstance(windows, dict):
+            windows = {}
+            self._cli_observed_context_window_by_stream = windows
+        key = (conversation_id, agent_name)
+        previous = int(windows.get(key, 0) or 0)
+        try:
+            from core.codex_interactive_pool import (
+                context_left_fraction, derive_context_window)
+            pane = pool._pane_text(state.name)
+            left = context_left_fraction(pane)
+            window = derive_context_window(used, left, previous=previous)
+        except Exception:
+            logger.debug("[codex-interactive] context window probe failed",
+                         exc_info=True)
+            return
+        if window <= 0 or window == previous:
+            return
+        windows[key] = window
+        logger.info(
+            "[codex-interactive] context window derived: used=%d left=%s "
+            "-> window=%d (was %d)", used,
+            f"{left:.2f}" if left is not None else "?", window, previous)
+
     def _stream_codex_interactive(
         self, messages, model, temperature=0.7, max_tokens=0, tools=None,
         callback=None, thinking_budget=0, thinking_callback=None,
@@ -118,6 +164,9 @@ class LLMCodexInteractiveMixin:
                 self.record_observed_cli_context(
                     conversation_id, agent_name, tokens)))
         response = coord.run(getattr(self, "_abort", None))
+        self.record_codex_context_window(
+            pool, state, conversation_id, agent_name,
+            coord.observed_context_tokens)
         response.model = response.model or model or self.default_model
         return response
 
@@ -157,6 +206,9 @@ class LLMCodexInteractiveMixin:
                 self.record_observed_cli_context(
                     state.conversation_id, state.agent_name, tokens)))
         response = coord.run(getattr(self, "_abort", None))
+        self.record_codex_context_window(
+            pool, state, state.conversation_id, state.agent_name,
+            coord.observed_context_tokens)
         response.model = response.model or model or self.default_model
         return response
 

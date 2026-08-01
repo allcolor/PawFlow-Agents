@@ -237,10 +237,14 @@ def context_usage_from_cache(messages: Iterable[Any], max_context_size: int,
                 out["updated_at"] = time.time()
                 return out
             if (same_params and same_first and cached_used >= 0 and
+                    not cache.get("context_source_measured") and
                     0 < cached_n < n and
                     cache.get("last_marker") == _marker(msg_list[cached_n - 1])):
                 # cached_used already includes `overhead`; the delta is
-                # a raw recount of the appended suffix only.
+                # a raw recount of the appended suffix only. It is also our
+                # OWN count, which is why a measured cache is excluded above:
+                # there, cached_used is the provider's reported prompt size and
+                # the suffix is already inside it.
                 suffix = msg_list[cached_n:]
                 # A new cold-session boundary replaces the provider's prior
                 # representation, so it requires a full recount. Ordinary
@@ -274,6 +278,17 @@ def context_usage_append_delta(cache: Dict[str, Any], message: Any, *,
     if not isinstance(cache, dict):
         return None
     try:
+        if cache.get("context_source_measured"):
+            # `used` is not PawFlow's count here: it is the prompt size the
+            # provider itself reported on its last observed exchange, and that
+            # number ALREADY contains everything in its window -- including the
+            # message being appended right now. Adding our own count on top
+            # double-counts it, and the error compounds with every append: the
+            # gauge climbs all turn (observed: 62% -> 92% with no compaction)
+            # until the next full recompute drops it back onto the measurement.
+            # A measured cache can only be advanced by a new measurement, so
+            # decline and let the caller run the authoritative calculation.
+            return None
         if _is_cli_bootstrap_boundary(message):
             # The old cached total represents the context serialized into the
             # bootstrap file. Recount now so that representation is replaced

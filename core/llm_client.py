@@ -129,6 +129,13 @@ class LLMClient(
         # window, but the proxy sees the number the provider counted. Shared
         # by reference with call clones, like the bootstrap counts above.
         self._cli_observed_context_tokens_by_stream = {}
+        # The window those prompt sizes are measured against, per (conversation,
+        # agent). The Responses API never reports it, so for Codex it is derived
+        # from the TUI's own "context left N%" status bar (see
+        # core.codex_interactive_pool.derive_context_window). Without it the
+        # gauge and the auto-compact threshold divide by whatever
+        # max_context_size happens to say. Shared by reference like the counts.
+        self._cli_observed_context_window_by_stream = {}
         # Token tracking callback — set by LLMConnectionService
         self._on_tokens = None
         # Abort signal — set from another thread to cancel the current LLM call
@@ -189,6 +196,8 @@ class LLMClient(
             self._cli_bootstrap_tokens_by_stream)
         clone._cli_observed_context_tokens_by_stream = (
             self._cli_observed_context_tokens_by_stream)
+        clone._cli_observed_context_window_by_stream = (
+            self._cli_observed_context_window_by_stream)
         _active_key = getattr(self, '_active_api_key', None)
         if _active_key:
             clone._active_api_key = _active_key

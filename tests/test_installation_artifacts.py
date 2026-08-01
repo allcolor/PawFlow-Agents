@@ -265,7 +265,6 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert 'sed \'s/:[^/]*$//\'' in install_src
     assert "Removing old untagged PawFlow image id" in install_src
     assert 'docker rmi -f "$old_id"' in install_src
-    assert 'docker image prune -f --filter "dangling=true"' in install_src
     assert "PAWFLOW_VERSION" in install_src
     assert "PAWFLOW_DOCKER_PLATFORM" in install_src
     assert "PAWFLOW_START_TARGET" in install_src
@@ -375,7 +374,6 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "Capture-ExistingPawFlowImageIds" in install_ps1_src
     assert "Cleanup-RetaggedPawFlowImages" in install_ps1_src
     assert "docker rmi -f $oldId" in install_ps1_src
-    assert 'docker image prune -f --filter "dangling=true"' in install_ps1_src
     assert "ghcr.io/allcolor/pawflow" in install_ps1_src
     assert 'RelayMinimalImage = "${RelayMinimalImageRepo}:${tag}"' not in install_ps1_src
     assert 'RelayDevImage = "${RelayDevImageRepo}:${tag}"' not in install_ps1_src
@@ -1471,3 +1469,25 @@ def test_server_relay_always_injects_runtime_code_from_server_image():
     assert 'source_hash' in src
     assert ':{_TOOLS_IN_CONTAINER}:ro' in src
     assert "pawflow_relay_launcher.py" in src
+
+
+def test_no_installer_path_prunes_images_globally():
+    """Image cleanup removes PawFlow ids, never every dangling image.
+
+    `docker image prune --filter dangling=true` and `docker builder prune` are
+    both daemon-wide: on a machine where PawFlow shares Docker with anything
+    else, they delete the untagged layers and the build cache of projects the
+    installer knows nothing about. Each of these three paths already removes,
+    by id, the images it untagged itself -- the sweep only ever reached
+    somebody else's.
+    """
+    for path in ("scripts/install-pawflow.sh",
+                 "scripts/install-pawflow.ps1",
+                 "pawflow-relay-desktop/src/main.js"):
+        src = Path(path).read_text(encoding="utf-8")
+        # Strip the explanatory comments first: they name the forbidden
+        # commands on purpose, and the assertion is about the calls.
+        code = src.replace("No global `docker image prune`", "")
+        code = code.replace("No `docker builder prune`", "")
+        assert "prune" not in code, f"{path} prunes Docker globally again"
+        assert "rmi" in src, f"{path} no longer cleans its own images at all"

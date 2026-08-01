@@ -390,7 +390,8 @@ class LLMOpenaiMixin:
 
     def _build_openai_messages(self, messages, *,
                                 user_id: str, conversation_id: str,
-                                allow_vision: bool = True) -> List[Dict[str, Any]]:
+                                allow_vision: bool = True,
+                                carry_reasoning: bool = False) -> List[Dict[str, Any]]:
         """Convert LLMMessage list to OpenAI API message format.
 
         Messages are regrouped first so the split (assistant text / assistant
@@ -469,6 +470,13 @@ class LLMOpenaiMixin:
                 if isinstance(content, list):
                     content = m.text_content or None
                 msg: Dict[str, Any] = {"role": "assistant", "content": content or None}
+                # Only for the Responses builder, which reads it off the
+                # normalised message rather than re-deriving the turn from
+                # LLMMessage a second time. chat/completions must never see it:
+                # an unknown key inside a message is a 400, not an ignored
+                # field, so the caller has to ask for it explicitly.
+                if carry_reasoning and getattr(m, "reasoning_item", ""):
+                    msg["reasoning_item"] = m.reasoning_item
                 msg["tool_calls"] = [
                     {
                         "id": tc.id,
@@ -524,7 +532,15 @@ class LLMOpenaiMixin:
                         parts.append(part)
                 api_messages.append({"role": m.role, "content": parts if parts else m.text_content})
             else:
-                api_messages.append({"role": m.role, "content": m.content})
+                plain: Dict[str, Any] = {"role": m.role, "content": m.content}
+                # An assistant turn that reasoned and then simply answered also
+                # owns its reasoning items; only the tool-call branch above was
+                # carrying them, which broke continuity on every turn that
+                # called nothing.
+                if (carry_reasoning and m.role == "assistant"
+                        and getattr(m, "reasoning_item", "")):
+                    plain["reasoning_item"] = m.reasoning_item
+                api_messages.append(plain)
         return api_messages
 
     @staticmethod

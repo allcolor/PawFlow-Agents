@@ -337,6 +337,16 @@ class ToolRelayService(
     _cancelled: set = set()
     # In-flight request_id → (conv_id, agent_name) for targeted cancellation
     _inflight: Dict[str, tuple] = {}
+    # Requests that just finished, kept only for row hydration. A call leaves
+    # _inflight the moment it completes -- it must, or kill/cancel/unbound
+    # would act on finished work -- but its result reaches the transcript a
+    # little later, written by the provider after execute() returns. A
+    # load_history landing in that gap read the page before the result existed
+    # and the snapshot after the entry was gone, so the row rendered as an
+    # ordinary finished call: no pending bullet, no BG/Kill, no result either.
+    # Only inflight_snapshot reads this, and _conv_core drops the `live` flag
+    # as soon as the row carries its result, so a stale entry costs nothing.
+    _recently_finished: Dict[str, dict] = {}
     _inflight_lock = threading.Lock()
     _auto_bg_after_seconds: float = 0.0
 

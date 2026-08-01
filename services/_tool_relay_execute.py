@@ -334,8 +334,7 @@ class _ToolRelayExecuteMixin:
                 with self._cache_lock:
                     self._result_cache[request_id] = result
                     self._executing.pop(request_id, None)
-                with self._inflight_lock:
-                    self._inflight.pop(request_id, None)
+                self.retire_inflight(request_id)
                 if auto_bg_timer:
                     auto_bg_timer.cancel()
                 logger.debug(
@@ -358,8 +357,7 @@ class _ToolRelayExecuteMixin:
                 with self._cache_lock:
                     self._result_cache[request_id] = result
                     self._executing.pop(request_id, None)
-                with self._inflight_lock:
-                    self._inflight.pop(request_id, None)
+                self.retire_inflight(request_id)
                 if auto_bg_timer:
                     auto_bg_timer.cancel()
                 logger.debug(
@@ -389,8 +387,7 @@ class _ToolRelayExecuteMixin:
                 self._result_cache[request_id] = result
                 self._executing.pop(request_id, None)
                 evt.set()
-            with self._inflight_lock:
-                self._inflight.pop(request_id, None)
+            self.retire_inflight(request_id)
             if auto_bg_timer:
                 auto_bg_timer.cancel()
             # Cleanup old cache entries (keep last 100)

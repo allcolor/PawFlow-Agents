@@ -253,6 +253,13 @@ class LLMMessage:
     display_only: bool = False  # True = visible in transcript, excluded from LLM context
     thinking: str = ""  # LLM thinking/reasoning output (part of context, visible in transcript)
     thinking_signature: str = ""  # Anthropic extended-thinking signature, when provided
+    # OpenAI Responses `reasoning` items, JSON-encoded, opaque to PawFlow.
+    # On that API a reasoning model's chain of thought is an ITEM in the output,
+    # not a field on the message, and it has to be handed back with the turn it
+    # belonged to or the model starts each tool-loop iteration having forgotten
+    # why it called the tool. Under Zero Data Retention (`store: false`) the
+    # content is only ever held here, encrypted, and omitting it is a hard 400.
+    reasoning_item: str = ""
     is_error: bool = False  # True = LLM error message (displayed as error in UI)
     timestamp: float = 0.0  # creation time (epoch seconds)
     seq: int = 0  # per-conversation monotonic — minted at creation from conversation_id's counter
@@ -310,6 +317,9 @@ class LLMResponse:
     cache_read_tokens: int = 0
     thinking: str = ""
     thinking_signature: str = ""
+    # See LLMMessage.reasoning_item: the turn's reasoning items, JSON-encoded,
+    # to be handed back with this assistant turn on the next request.
+    reasoning_item: str = ""
 
 
 

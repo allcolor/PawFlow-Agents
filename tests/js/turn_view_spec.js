@@ -1144,6 +1144,73 @@ test('a delegate box is filed in the block, not left beside it', () => {
     'the historical delegate is in Tool calls, not Messages');
 });
 
+// ── The cue surface names the work, not the wrapper ─────────────────
+//
+// A code-mode turn is ONE native call -- exec(<code-mode script, N chars>) --
+// and everything it does is the MCP calls the relay reports underneath it.
+// Cueing every tool row identically put the wrapper in front and the work
+// behind: the animation read exec(...), exec(...), exec(...) while the names
+// worth reading went past unseen.
+
+function toolRow(e, msgId, tcId, origin, text) {
+  const el = e.row(msgId);
+  el.textContent = text || '';
+  if (origin) {
+    const badge = e.dom.document.createElement('span');
+    badge.className = 'tc-origin tc-origin-' + origin;
+    el.appendChild(badge);
+  }
+  e.ctx.turnViewIngest('tool_call', { msg_id: msgId, tc_id: tcId }, el);
+  return el;
+}
+
+test('an mcp call takes the cue away from the native wrapper', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c1', 'tc-1', 'native', 'exec(<code-mode script, 2411 chars>)');
+  eq(e.cues(), 0, 'the wrapper is held back, not shown at once');
+  toolRow(e, 'c2', 'tc-2', 'mcp', 'read(path=/workspace/core/llm_client.py)');
+  eq(e.cues(), 1, 'the mcp call is cued immediately');
+  e.clock.tick(2000);
+  eq(e.cues(), 1, 'and the wrapper never arrives behind it');
+});
+
+test('a native call on its own is still shown', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c1', 'tc-1', 'native', 'exec(...)');
+  eq(e.cues(), 0);
+  e.clock.tick(2000);
+  eq(e.cues(), 1, 'suppressing it outright would leave the surface blank');
+});
+
+test('two native calls both reach the surface', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c1', 'tc-1', 'native', 'exec(a)');
+  toolRow(e, 'c2', 'tc-2', 'native', 'exec(b)');
+  e.clock.tick(2000);
+  eq(e.cues(), 2, 'a second native row means the first was no wrapper');
+});
+
+test('a row with no origin badge is cued as before', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c1', 'tc-1', '', 'something(...)');
+  eq(e.cues(), 1, 'unclassified rows must not be delayed or dropped');
+});
+
+test('every mcp call of a group is cued', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c0', 'tc-0', 'native', 'exec(<code-mode script, 900 chars>)');
+  toolRow(e, 'c1', 'tc-1', 'mcp', 'read(a)');
+  toolRow(e, 'c2', 'tc-2', 'mcp', 'grep(b)');
+  toolRow(e, 'c3', 'tc-3', 'mcp', 'edit(c)');
+  e.clock.tick(2000);
+  eq(e.cues(), 3, 'the three calls, and not the wrapper');
+});
+
 if (failures.length) {
   console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
   for (const f of failures) console.error('  - ' + f);

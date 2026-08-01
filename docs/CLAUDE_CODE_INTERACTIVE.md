@@ -670,3 +670,56 @@ PawFlow sits on the wire, so it does not have to rebuild anything: every
 
 This is Codex interactive only. The other interactive providers keep the
 reconstructed gauge.
+
+#### A measured gauge is never advanced by counting
+
+The measurement is the numerator, and it is complete: `input_tokens` is Codex's
+whole prompt, including the message PawFlow is about to append. The streaming
+hot path nevertheless advanced the cached gauge by adding PawFlow's own token
+count for each appended message (`context_usage_append_delta`). On a measured
+cache that double-counts, and it compounds: the gauge climbed for a whole turn
+— observed going from 62% to 92% with no compaction of any kind — until the
+next full recompute put the measurement back and it resumed growing correctly.
+
+The drift was not only cosmetic. `_alc_maybe_auto_compact_after_append` arms
+`compact_threshold_pct` against that same cached `used`, so auto-compaction
+fired early, on an inflated number.
+
+Both incremental paths now refuse a cache carrying `context_source_measured`:
+`context_usage_append_delta` returns `None` (the caller falls through to the
+authoritative calculation) and `context_usage_from_cache` declines it as a base
+for a suffix delta. **A measured gauge can only be moved by a new measurement.**
+
+#### The window the measurement is divided by
+
+`input_tokens` says how full the window is, never how big it is — the Responses
+API does not report the window at all. So the denominator fell back to whatever
+`max_context_size` was configured, with no guarantee it matched the model.
+
+The Codex TUI prints the missing half in its status bar (`context left 74%`),
+and the two together determine the window exactly:
+
+- `context_left_fraction` / `derive_context_window`
+  (`core/codex_interactive_pool.py`) parse the status bar and compute
+  `window = used / (1 - left)`.
+- A reading below 15% occupancy is refused: the TUI rounds to a whole percent,
+  so at 5% used half a point of rounding moves the result by 10%. A derivation
+  within 5% of the stored one is also refused — a denominator that breathes
+  turn to turn is the very defect this area exists to remove.
+- `record_codex_context_window` samples the pane once per turn (capturing it
+  costs a `docker exec`, and the window cannot change mid-turn) and stores it
+  on `_cli_observed_context_window_by_stream`, shared with call clones like the
+  token counts.
+- `_client_real_window` (`tasks/ai/context_usage.py`) is the single lookup for
+  a provider-reported window, used whether or not a turn is running. It checks
+  the Codex map first, then `_cc_context_window_by_stream` (Claude Code's own
+  `modelUsage[model].contextWindow`).
+
+That last point closed a separate defect. The Claude Code map used to be read
+**only** while a turn was active; between turns the code reached for
+`client._real_context_size` / `client._context_window`, attributes PawFlow
+assigns nowhere, so it always resolved to 0. The denominator was therefore
+`min(configured, real)` during a turn and plain `configured` after it — the
+gauge moved at the turn boundary with nothing at all behind the move. The same
+dead lookup also meant `_agentctx_p3` resolved the turn budget, and
+`context_ops` its cap, without ever applying the provider's real window.

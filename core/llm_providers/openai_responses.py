@@ -93,6 +93,29 @@ def _content_parts(content, role: str) -> List[Dict[str, Any]]:
     return parts
 
 
+def _reasoning_items_of(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The reasoning items an assistant turn carried, ready to send back.
+
+    Stored JSON-encoded and opaque on the message (see LLMMessage.
+    reasoning_item). Anything unreadable is dropped rather than raised on: a
+    lost chain of thought costs continuity, a malformed item costs the request.
+    """
+    raw = message.get("reasoning_item") or ""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.debug("undecodable reasoning item dropped")
+        return []
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed
+            if isinstance(item, dict) and item.get("type") == "reasoning"]
+
+
 def build_responses_input(api_messages: List[Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
     """Convert chat-completions messages into ``(instructions, input items)``.
 
@@ -111,6 +134,13 @@ def build_responses_input(api_messages: List[Dict[str, Any]]) -> Tuple[str, List
 
     for m in api_messages:
         role = m.get("role", "")
+        # The turn's reasoning items come back FIRST, ahead of the message and
+        # the calls they produced -- that is the order the model emitted them
+        # in, and the API validates it: a reasoning item must be followed by
+        # the item it reasoned towards.
+        for item in _reasoning_items_of(m):
+            items.append(item)
+            seen_non_system = True
         if role in ("system", "developer") and not seen_non_system:
             text = _text_of(m.get("content"))
             if text:
@@ -151,6 +181,13 @@ class _StreamState:
     def __init__(self):
         self.text: List[str] = []
         self.reasoning: List[str] = []
+        # The `reasoning` items themselves, kept verbatim and in arrival order.
+        # They are opaque -- an id, a summary, and under ZDR an encrypted blob --
+        # and the next request has to carry them back with the turn that
+        # produced them. Keyed by item id so `.done` replaces the stub `.added`
+        # opened, which is where `encrypted_content` actually arrives.
+        self.reasoning_items: Dict[str, Dict[str, Any]] = {}
+        self.reasoning_order: List[str] = []
         self.calls: Dict[str, Dict[str, Any]] = {}
         self.order: List[str] = []
         self.usage: Dict[str, Any] = {}
@@ -185,6 +222,18 @@ class _StreamState:
             self._slot(key)["arguments"] += ev.get("delta", "") or ""
         elif etype in ("response.output_item.added", "response.output_item.done"):
             item = ev.get("item") or {}
+            if item.get("type") == "reasoning":
+                rid = item.get("id") or ev.get("item_id") or ""
+                if not rid:
+                    return False
+                if rid not in self.reasoning_items:
+                    self.reasoning_order.append(rid)
+                # `.done` carries the complete item, including the encrypted
+                # content when it was requested; it supersedes the stub.
+                if (etype == "response.output_item.done"
+                        or rid not in self.reasoning_items):
+                    self.reasoning_items[rid] = dict(item)
+                return False
             if item.get("type") != "function_call":
                 return False
             key = item.get("id") or ev.get("item_id") or str(ev.get("output_index", 0))
@@ -219,7 +268,8 @@ class LLMOpenaiResponsesMixin:
                               allow_vision: bool = True) -> Dict[str, Any]:
         api_messages = self._build_openai_messages(
             messages, user_id=call_user_id,
-            conversation_id=call_conversation_id, allow_vision=allow_vision)
+            conversation_id=call_conversation_id, allow_vision=allow_vision,
+            carry_reasoning=True)
         instructions, items = build_responses_input(api_messages)
 
         body: Dict[str, Any] = {
@@ -238,6 +288,17 @@ class LLMOpenaiResponsesMixin:
         _re = self.reasoning_effort or None
         if _re:
             body["reasoning"] = {"effort": _re}
+        cfg = getattr(self, "_config_ref", None) or {}
+        # Zero Data Retention, or any org that turns off server-side storage:
+        # the reasoning items are then held nowhere but in our own history, so
+        # they have to come back encrypted or the model loses its chain of
+        # thought between every tool call -- and the API rejects a turn whose
+        # reasoning item it cannot resolve.
+        _store = cfg.get("store")
+        if _store is not None:
+            body["store"] = bool(_store)
+        if _store is False:
+            body["include"] = ["reasoning.encrypted_content"]
         if tools:
             body["tools"] = [
                 {"type": "function", "name": t.name,
@@ -354,6 +415,15 @@ class LLMOpenaiResponsesMixin:
 
             content = "".join(state.text)
             thinking = "".join(state.reasoning)
+            # Carried on the response so the agent loop can store it with the
+            # turn and hand it back on the next request. Without it the model
+            # re-enters every tool-loop iteration having forgotten why it
+            # called the tool.
+            reasoning_item = (
+                json.dumps([state.reasoning_items[rid]
+                            for rid in state.reasoning_order
+                            if rid in state.reasoning_items])
+                if state.reasoning_order else "")
             # Block-level callbacks fire once each at end of stream, the same
             # contract the chat/completions path gives the UI.
             if thinking and thinking_callback:
@@ -397,6 +467,7 @@ class LLMOpenaiResponsesMixin:
                 total_tokens=total_tokens,
                 thinking=thinking,
                 cache_read_tokens=cached,
+                reasoning_item=reasoning_item,
             )
         finally:
             self._active_http_conn = None

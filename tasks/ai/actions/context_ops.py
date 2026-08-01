@@ -193,7 +193,14 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return {}
 
     def _ctx_real_context_size(conv_id, agent_name=""):
-        """Return provider/CLI real context window when the client exposes it."""
+        """Return provider/CLI real context window when the client exposes it.
+
+        Same single source as the gauge (tasks.ai.context_usage): the per-stream
+        window the Claude Code stream reports. The previous lookup here read
+        `_real_context_size` / `_context_window`, which PawFlow never assigns,
+        so this helper always returned 0 and the cap it exists to apply was
+        never applied.
+        """
         _name = _ctx_agent_name(agent_name)
         if not _name:
             return 0
@@ -207,12 +214,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             svc = ServiceRegistry.get_instance().resolve(
                 llm_service, user_id=user_id, conv_id=conv_id)
             client = svc.get_client() if svc and hasattr(svc, "get_client") else None
-            if not client:
-                return 0
-            return int(
-                getattr(client, "_real_context_size", 0)
-                or getattr(client, "_context_window", 0)
-                or 0)
+            from tasks.ai.context_usage import _client_real_window
+            return _client_real_window(client, conv_id, _name)
         except Exception:
             return 0
 

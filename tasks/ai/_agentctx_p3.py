@@ -321,14 +321,14 @@ class _PACPhase3Mixin:
         st._agent_max = int((st._selected_agent_def or {}).get("max_context_size", 0) or 0)
         st._task_max = int(self.config.get("max_context_size", 0) or 0)
         st._configured_max_ctx = st._svc_max or st._agent_max or st._task_max or 0
-        st._real_max_ctx = 0
-        try:
-            st._real_max_ctx = int(
-                getattr(st.client, "_real_context_size", 0)
-                or getattr(st.client, "_context_window", 0)
-                or 0)
-        except (TypeError, ValueError):
-            st._real_max_ctx = 0
+        # Same single source as the live gauge, so the budget resolved here and
+        # the denominator drawn there cannot disagree. The previous lookup read
+        # `_real_context_size` / `_context_window`, which PawFlow assigns
+        # nowhere: it always yielded 0, and the provider's real window never
+        # capped the configured budget.
+        from tasks.ai.context_usage import _client_real_window
+        st._real_max_ctx = _client_real_window(
+            st.client, st.conversation_id or "", st._active_agent_name or "")
         from core.context_window import effective_context_window
         st._resolved_max_ctx = effective_context_window(
             st._configured_max_ctx, st._real_max_ctx, fallback=200000)

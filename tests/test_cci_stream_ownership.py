@@ -153,6 +153,109 @@ def test_release_leaves_a_newer_claim_alone(monkeypatch):
     assert state.last_request_claim_at > 0.0
 
 
+# ── the rule: what crosses the wire reaches the webchat ────────────────────
+#
+# Every other test above arbitrates between readers. This one is about there
+# being no reader at all: the proxy publishes a real turn, nothing takes it out
+# of the queue, and the webchat shows nothing while the tmux visibly works.
+# Releasing the claim of a failed send closed one way of getting there. The
+# queue itself is the only fact that closes all of them.
+
+
+def _age_pending(svc, state, seconds):
+    state.oldest_pending_at = time.time() - seconds
+
+
+def test_events_nobody_takes_out_of_the_queue_are_adopted(monkeypatch):
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    # A claim so fresh that every liveness guess says a reader is coming.
+    svc.claim_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    assert captured == []
+
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
+    svc._adopt_if_undelivered(state)
+    assert captured == ["sess"]
+
+
+def test_a_reader_that_drains_is_never_adopted_from_under(monkeypatch):
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    epoch = svc.claim_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    assert svc.wait_event("sess", timeout=0, epoch=epoch)["request_id"] == "r1"
+    # Nothing is waiting, so there is nothing to declare unread.
+    assert state.oldest_pending_at == 0.0
+    svc._adopt_if_undelivered(state)
+    assert captured == []
+
+
+def test_taking_one_event_does_not_clear_the_rest(monkeypatch):
+    """A consumer that takes one event and dies leaves the rest waiting, and
+    the rest is what the rule is about."""
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    epoch = svc.claim_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    svc.publish_event("sess", {"type": "sse", "payload": {"type": "x"}})
+    svc.wait_event("sess", timeout=0, epoch=epoch)
+    assert state.oldest_pending_at > 0.0
+
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
+    svc._adopt_if_undelivered(state)
+    assert captured == ["sess"]
+
+
+def test_the_sweeper_notices_a_burst_that_went_quiet(monkeypatch):
+    """The case checking on publish alone cannot see: a turn that streams in
+    five seconds and then stops. No further event will ever come to notice
+    that none of them were delivered."""
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    svc.claim_consumer("sess")
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    _age_pending(svc, state,
+                 CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
+    # One sweep pass, run directly rather than waiting on its thread.
+    for st in list(svc._sessions.values()):
+        svc._adopt_if_undelivered(st)
+    assert captured == ["sess"]
+
+
+def test_a_drain_clears_the_undelivered_clock():
+    """drain_session discards the pre-turn backlog on purpose; those events are
+    not owed to anyone and must not trip the rule."""
+    svc = _service()
+    state = _codex_session(svc)
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+    assert state.oldest_pending_at > 0.0
+    svc.drain_session("sess")
+    assert state.oldest_pending_at == 0.0
+
+
 def test_capture_claim_does_not_stamp_the_request_claim_clock():
     # Only a request claim marks the stream as owned by a turn; a capture
     # claim recording it would make the net immune to its own adoption.

@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.77] — 2026-08-01
+
+### Fixed
+
+- Whatever crosses the wire now reaches the webchat, as a rule rather than as
+  a set of cases. Everything that decided whether a turn was being watched was
+  a guess about the reader — has a coordinator claimed recently, did one poll
+  recently, was a prompt injected recently — and every way of being wrong had
+  the same outcome: the proxy streams a real turn into a queue, nobody takes
+  it out, and the webchat shows nothing while the tmux visibly works. The
+  claim released by a failed send in beta.76 closed one such way. This closes
+  the rest by observing the queue instead of the reader: events waiting longer
+  than 25 seconds mean nobody is reading them, whatever the timestamps claim,
+  and the turn is adopted — forced past the liveness graces, since those are
+  the guesses being backstopped. Still safe against a live coordinator without
+  asking about one, because adoption goes through a `capture` claim, which is
+  refused while a request consumer is actually polling. A `cci-pending-sweep`
+  thread re-asks every five seconds, so a turn that streams in a burst and
+  then goes quiet — the case a check on publish alone can never see — is
+  adopted too.
+
 ## [1.0.0-beta.76] — 2026-08-01
 
 ### Fixed

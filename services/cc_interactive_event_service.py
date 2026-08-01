@@ -147,6 +147,12 @@ class CCInteractiveSessionEvents:
     # a new claim wake an old waiter before either can take the replacement's
     # first event, and makes choosing pushback-vs-queue one ordered operation.
     stream_condition: threading.Condition = field(default_factory=threading.Condition)
+    # When the events currently waiting in the queue started waiting, or 0 when
+    # nothing is waiting. This is the invariant's only fact: whatever crosses
+    # the wire has to reach the webchat, and a queue nobody drains is the
+    # proof that it has not. Every other liveness signal here is a guess about
+    # whether a reader exists; this one observes whether one is reading.
+    oldest_pending_at: float = 0.0
 
 
 class CCInteractiveEventService(BaseService):
@@ -166,6 +172,9 @@ class CCInteractiveEventService(BaseService):
         self._route_path = ""
         self._sessions: Dict[str, CCInteractiveSessionEvents] = {}
         self._sessions_lock = threading.RLock()
+        self._sweeper: Optional[threading.Thread] = None
+        self._sweeper_lock = threading.Lock()
+        self._sweeper_stop = threading.Event()
         try:
             self._max_queue = int(self.config.get("max_queue", 4096) or 4096)
         except (TypeError, ValueError):
@@ -201,10 +210,12 @@ class CCInteractiveEventService(BaseService):
         self._connection = listener
         with self._instances_lock:
             self._instances[self._service_id] = self
+        self._ensure_pending_sweeper()
         self._initialized = True
         logger.info("CC interactive event service registered at %s", route)
 
     def disconnect(self):
+        self._sweeper_stop.set()
         if self._connection and self._route_path:
             try:
                 self._connection.unregister_routes(self._service_id)
@@ -442,9 +453,9 @@ class CCInteractiveEventService(BaseService):
                     raise RuntimeError(
                         state.error or "CC interactive session is unreliable")
                 if state.pushback:
-                    return state.pushback.pop(0)
+                    return self._delivered(state, state.pushback.pop(0))
                 try:
-                    return state.events.get_nowait()
+                    return self._delivered(state, state.events.get_nowait())
                 except queue.Empty:
                     pass
                 if deadline is not None:
@@ -454,6 +465,18 @@ class CCInteractiveEventService(BaseService):
                 else:
                     remaining = None
                 state.stream_condition.wait(remaining)
+
+    @staticmethod
+    def _delivered(state: CCInteractiveSessionEvents, event: dict) -> dict:
+        """Record that one event reached a consumer. Caller holds the condition.
+
+        The clock restarts on what is still waiting rather than stopping: a
+        consumer that takes one event and dies leaves the rest waiting, and the
+        rest is what the invariant is about.
+        """
+        state.oldest_pending_at = (
+            time.time() if (state.pushback or not state.events.empty()) else 0.0)
+        return event
 
     def drain_session(self, session_token: str) -> int:
         state = self.session_state(session_token)
@@ -470,6 +493,7 @@ class CCInteractiveEventService(BaseService):
                     state.events.get_nowait()
                     drained += 1
                 except queue.Empty:
+                    state.oldest_pending_at = 0.0
                     return drained
 
     def publish_event(self, session_token: str, event: dict, *, block: bool = True) -> None:
@@ -497,7 +521,10 @@ class CCInteractiveEventService(BaseService):
                 state.stream_condition.notify_all()
             raise RuntimeError(state.error) from exc
         with state.stream_condition:
+            if not state.oldest_pending_at:
+                state.oldest_pending_at = time.time()
             state.stream_condition.notify_all()
+        self._adopt_if_undelivered(state)
 
     @staticmethod
     def _log_event_summary(session_token: str, event: dict) -> None:
@@ -669,8 +696,8 @@ class CCInteractiveEventService(BaseService):
         self._adopt_orphan_turn(state, "request in flight")
 
     def _adopt_orphan_turn(self, state: CCInteractiveSessionEvents,
-                           reason: str) -> None:
-        if self._request_listener_recent(state):
+                           reason: str, *, force: bool = False) -> None:
+        if not force and self._request_listener_recent(state):
             return
         if not state.conversation_id or not state.agent_name:
             logger.debug("orphan CC turn ignored without session binding")
@@ -679,6 +706,80 @@ class CCInteractiveEventService(BaseService):
             "CC interactive turn with no listening request (%s, session=%s); "
             "capturing orphan turn", reason, state.session_token[:8])
         self._start_manual_capture(state)
+
+    # How long events may sit in a session's queue before the stream is
+    # declared unread. A live coordinator polls every 0.25s, so any positive
+    # value works against a reader that exists; this one clears the worst
+    # legitimate gap instead -- a coordinator claims BEFORE its send, and the
+    # send can spend a second settling the paste, three proving it landed, one
+    # between the two Enters and six verifying the submit before run() polls
+    # for the first time. Anything above that is a stream nobody is reading.
+    _UNDELIVERED_ADOPT_SECONDS = 25.0
+    # How often the sweeper re-asks. A turn adopted this way is late by at
+    # most the threshold plus this.
+    _PENDING_SWEEP_SECONDS = 5.0
+
+    def _adopt_if_undelivered(self, state: CCInteractiveSessionEvents) -> None:
+        """Enforce the rule: what crosses the wire is shown in the webchat.
+
+        Everything else deciding whether a turn is being watched is a guess
+        about the reader -- has a coordinator claimed recently, did one poll
+        recently, was a prompt injected recently. Each guess has its own way of
+        being wrong, and each time it is wrong the same thing happens: the
+        proxy streams a real turn into a queue, nobody takes it out, and the
+        webchat shows nothing while the tmux visibly works. The claim released
+        on a failed send fixed one such way. This is the rule itself, and it
+        does not ask about the reader at all: events waiting in the queue for
+        longer than any legitimate handover means no one is reading them,
+        whatever the timestamps claim, so the turn is adopted.
+
+        Forced past `_request_listener_recent` on purpose -- those graces are
+        exactly the guesses this backstops. It is still safe against a live
+        coordinator: adoption goes through a `capture` claim, which is refused
+        while a request consumer is actually polling. A coordinator that has
+        not polled in 25 seconds while its events pile up is not one.
+        """
+        with state.stream_condition:
+            pending_since = state.oldest_pending_at
+        if not pending_since:
+            return
+        if time.time() - pending_since < self._UNDELIVERED_ADOPT_SECONDS:
+            return
+        self._adopt_orphan_turn(state, "events undelivered", force=True)
+
+    def _ensure_pending_sweeper(self) -> None:
+        """Start the thread that re-asks after the last event has arrived.
+
+        Checking on publish alone leaves the case the rule cares about most: a
+        turn that streams in five seconds and then goes quiet has every one of
+        its events waiting, and no further publish will ever come to notice.
+
+        Tied to `connect()`/`disconnect()` rather than started on demand from
+        `publish_event`: a thread that outlives what started it keeps its
+        service alive with it, and a service built without being connected --
+        every one in the test suite -- would leak one apiece and go on adopting
+        turns from sessions its test had finished with.
+        """
+        with self._sweeper_lock:
+            if self._sweeper is not None and self._sweeper.is_alive():
+                return
+            self._sweeper_stop.clear()
+            self._sweeper = threading.Thread(
+                target=self._sweep_pending, name="cci-pending-sweep",
+                daemon=True)
+            self._sweeper.start()
+
+    def _sweep_pending(self) -> None:
+        while not self._sweeper_stop.wait(self._PENDING_SWEEP_SECONDS):
+            with self._sessions_lock:
+                states = list(self._sessions.values())
+            for state in states:
+                try:
+                    self._adopt_if_undelivered(state)
+                except Exception:
+                    logger.debug(
+                        "undelivered-event sweep failed for %s",
+                        state.session_token[:8], exc_info=True)
 
     @staticmethod
     def _prompt_digest(prompt: str) -> str:

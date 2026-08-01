@@ -128,6 +128,36 @@ was about to read the stream. The claim timestamp closes the window, bounded by
 a ceiling so a coordinator that claimed and died cannot disable the net for
 good.
 
+### What crosses the wire is shown in the webchat
+
+That is the rule, and it holds for every MITM-observed session. Everything that
+decides whether a turn is being watched — has a coordinator claimed recently,
+did one poll recently, was a prompt injected recently — is a *guess about the
+reader*. Each guess has its own way of being wrong, and every time one is wrong
+the outcome is identical: the proxy streams a real turn into a queue, nobody
+takes it out, and the webchat shows nothing while the tmux visibly works.
+
+So the rule is enforced on a fact instead. `oldest_pending_at` records when the
+events currently in a session's queue started waiting; `wait_event()` restarts
+it on what is *still* queued (a consumer that takes one event and dies leaves
+the rest waiting, and the rest is the point), and a drain clears it. Events
+waiting longer than `_UNDELIVERED_ADOPT_SECONDS` (25s) mean nobody is reading
+them, whatever the timestamps claim, and the turn is adopted — forced past the
+liveness graces, because those graces are exactly the guesses being backstopped.
+
+It stays safe against a live coordinator without asking about one: adoption
+goes through a `capture` claim, which is refused while a request consumer is
+actually polling. A coordinator that has not polled in 25 seconds while its own
+events pile up is not one. The threshold clears the worst legitimate handover
+— a coordinator claims *before* its send, and the send can spend a second
+settling the paste, three proving it landed, one between the two Enters and six
+verifying the submit before `run()` polls for the first time.
+
+A `cci-pending-sweep` thread re-asks every `_PENDING_SWEEP_SECONDS`. Checking
+on publish alone would miss the case the rule cares about most: a turn that
+streams in five seconds and then goes quiet has every one of its events
+waiting, and no further publish will ever come to notice.
+
 That ceiling is a backstop, not the mechanism. A send that fails builds no
 coordinator at all, and the claim it left behind muted the net for the rest of
 the grace window — which is exactly when the turn happens. The user watches the

@@ -206,8 +206,37 @@ class EmbeddingProvider:
                         "sentence-transformers is required for local embeddings. "
                         "Install with: pip install sentence-transformers"
                     )
-                self._local_model = SentenceTransformer("all-MiniLM-L6-v2")
-                logger.info("Loaded local embedding model: all-MiniLM-L6-v2")
+                self._local_model = self._load_local_model(
+                    SentenceTransformer, "all-MiniLM-L6-v2")
 
         embeddings = self._local_model.encode(texts, show_progress_bar=False)
         return [emb.tolist() for emb in embeddings]
+
+    @staticmethod
+    def _load_local_model(loader, name: str):
+        """Load the embedding model from the local cache, download if absent.
+
+        The model itself is cached and has been for a long time -- the weights
+        load in well under a second. What the default load does anyway is ask
+        huggingface.co whether the cache is still current: some forty HEAD and
+        GET round trips, on the FIRST message after every server restart,
+        holding that message while they run, and logging an unauthenticated
+        rate-limit warning on the way through. The answer is always the same,
+        because a pinned model does not change.
+
+        So try offline first. It is not a downgrade in reliability: a cache
+        that is missing or incomplete raises, and the online load is then run
+        exactly as before -- that is the path that has to reach the network,
+        and the only one that has anything to fetch.
+        """
+        try:
+            model = loader(name, local_files_only=True)
+            logger.info("Loaded local embedding model from cache: %s", name)
+            return model
+        except Exception as exc:
+            logger.info(
+                "Local embedding model %s not in cache (%s); downloading",
+                name, type(exc).__name__)
+        model = loader(name)
+        logger.info("Loaded local embedding model: %s", name)
+        return model

@@ -374,7 +374,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 # with the paste + double-Enter and hope the TUI catches up.
                 logging.getLogger(__name__).warning(
                     "[cci] TUI prompt not detected ready before first send to "
-                    "%s; submitting best-effort", state.name)
+                    "%s; submitting best-effort%s",
+                    state.name, self._pane_diagnostic(state.name))
         self._cancel_copy_mode(state)
         # Once, not once per attempt: the guard that keeps hooks from filing
         # our own paste as a user message counts tickets, and a second record
@@ -397,6 +398,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         settle = self._paste_settle_seconds()
         landed = False
         for attempt in range(1, self._PASTE_ATTEMPTS + 1):
+            # What the screen looked like before this paste. The strongest
+            # proof a paste arrived is not that the pane shows something we
+            # recognise -- it is that the pane is no longer what it was.
+            before = self._pane_text(state.name)
             if not self._load_buffer(state, text):
                 return False
             if not self._paste_buffer(state):
@@ -406,12 +411,13 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             # pasted newline (inserts a blank line) instead of submitting.
             if settle > 0:
                 time.sleep(settle)
-            if self._paste_landed(state, text):
+            if self._paste_landed(state, text, before):
                 landed = True
                 break
             logging.getLogger(__name__).warning(
                 "[cci] paste did not reach the composer of %s; pasting again "
-                "(attempt %d/%d)", state.name, attempt, self._PASTE_ATTEMPTS)
+                "(attempt %d/%d)%s", state.name, attempt, self._PASTE_ATTEMPTS,
+                self._pane_diagnostic(state.name))
         if not landed:
             # Bounded, and a failure rather than a silent success: the caller
             # raises, which is strictly better than a turn that waits on a
@@ -470,6 +476,43 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     def _pane_shows_prompt(self, text: str) -> bool:
         low = (text or "").lower()
         return any(marker in low for marker in self._PROMPT_READY_MARKERS)
+
+    # How much of the pane a failure carries into the log. Enough to hold the
+    # header, the composer and the footer of a 50-line pane; short enough that
+    # a stuck TUI cannot flood the log, and that the injected prompt below the
+    # first screenful is not copied there wholesale.
+    _PANE_DIAGNOSTIC_CHARS = 2000
+
+    def _pane_diagnostic(self, name: str) -> str:
+        """The screen a failure happened on, ready to append to its log line.
+
+        Every check in this file reads the pane, and every failure used to
+        report only its own verdict: "TUI prompt not detected ready", "paste
+        did not reach the composer". Neither says what was actually drawn --
+        so when a TUI release moves its footer or boxes its composer, the log
+        records that our reading of the screen failed and never the screen,
+        and the next person is left inferring the pane from a photograph of a
+        terminal. The pane is the evidence; a failure should carry it.
+
+        Best-effort by construction: it costs one extra capture on a path that
+        has already failed, and an unreadable pane degrades to a note saying
+        so rather than to an exception inside a warning.
+
+        Note this puts the head of the pane in the server log, and on a fresh
+        session that includes the beginning of the injected prompt. It is
+        bounded, it only happens on failure, and the alternative has been
+        guessing.
+        """
+        try:
+            pane = self._pane_text(name)
+        except Exception:
+            return " [pane unreadable]"
+        if not pane:
+            return " [pane empty or unreadable]"
+        limit = self._PANE_DIAGNOSTIC_CHARS
+        head = pane[:limit]
+        suffix = f" (+{len(pane) - limit} chars)" if len(pane) > limit else ""
+        return f"; pane{suffix}:\n{head}"
 
     # Rendered by the CC TUI only while a turn is running — the strongest
     # version-tolerant signal that a submitted prompt was accepted.
@@ -616,37 +659,61 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     # three attempts stay well inside a turn.
     _PASTE_LANDED_SECONDS = 3.0
 
-    def _paste_landed(self, state: InteractiveContainer, text: str) -> bool:
+    def _paste_landed(self, state: InteractiveContainer, text: str,
+                      before_pane: str = "") -> bool:
         """Did the paste actually reach the input box?
 
-        The answers, in the order they settle the question:
+        The question is answered first by the pane itself, then by what we can
+        recognise in it:
 
+        - the pane is no longer what it was just before the paste: it landed;
         - the chip is in the composer, or the probe fragment is on the pane:
           it landed;
         - the turn is already running: it landed and was accepted between the
           paste and this look;
-        - the composer is readable and holds neither: it did not, and Enter
-          would be pressed into an empty box;
-        - the composer is not on screen: not an answer yet. Keep looking until
-          the window closes, then call it a failure.
+        - the pane is readable and none of the above: not an answer yet. Keep
+          looking until the window closes, then call it a failure.
 
-        That last one used to return True immediately, and it accepted the one
+        The before/after comparison leads because it is the only test that
+        does not model the TUI. Every recognition-based test does: the chip
+        probe assumes the composer can be located by its prompt prefix, the
+        fragment probe assumes the pasted text is rendered as text and
+        findable across the layout the TUI wrapped it in. Both assumptions
+        are a moving target -- they are read off a TUI that ships a new
+        version every few weeks -- and each time one of them goes stale the
+        failure is the same: a prompt sitting in the composer needing nothing
+        but Enter is declared missing, and pasted again, and again, until the
+        send fails with the prompt stacked three times in the input box.
+        Whether the screen changed is a fact about the screen. A TUI that
+        renames its chip, boxes its composer or re-wraps its text still
+        redraws when 16 kB arrive.
+
+        A composer that cannot be located used to return True immediately,
+        and it accepted the one
         case this check exists for. `>_ OpenAI Codex (v0.104.0)` is drawn the
         instant the TUI starts and the input box is not: a pane holding only
         the header locates no composer, so a paste into a TUI that has no
         input box yet -- past the readiness timeout, or mid-redraw -- was
         declared landed, Enter went nowhere, and the turn waited out its 300s
-        no-event timeout. A pool that declares no composer prefix is
-        unaffected: its whole pane IS the composer, so it is always located,
-        and the answer stays what it was.
+        no-event timeout. That case is still a refusal -- an unchanged pane
+        is not evidence of anything -- and it is now reached by the pane
+        comparison rather than by recognising an empty box.
+
+        What the comparison costs: a pane that redraws for its own reasons
+        (a footer that ticks, a spinner winding down) reads as a landed
+        paste. That direction is the cheap one. A false "landed" presses
+        Enter into a box that may be empty, which is a no-op, and the turn
+        then fails visibly on the no-event timeout with the session left
+        clean. A false "missing" pastes the whole prompt a second time into a
+        composer that already holds it, and what the user gets is a turn that
+        cannot be submitted at all because the input box now contains the
+        prompt three times over. Those are not symmetrical, and the check
+        must not err toward the second one.
 
         The fragment is still looked for across the whole pane, and on a TUI
         that echoes pasted text that cannot tell this paste from the same text
         still visible in the transcript. Every way of narrowing it costs a
-        FALSE NEGATIVE -- a landed paste declared missing is pasted a second
-        time, and the composer then holds the prompt twice, which is worse
-        than the ambiguity. It stays as it is until the composer of such a TUI
-        can be located outright.
+        false negative, for the reason above. It stays as it is.
 
         It is looked for on the SQUEEZED pane, though. The pane is a screen,
         not a buffer: the composer hard-wraps the prompt at the pane width,
@@ -664,7 +731,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         assembles a response from tmux output.
         """
         fragment = self._submit_probe_fragment(text)
-        if not self._PASTE_CHIP_MARKERS and not fragment:
+        if not before_pane and not self._PASTE_CHIP_MARKERS and not fragment:
             # Nothing to look for: this TUI leaves no chip and the text is too
             # short to probe for. Unknowable, so it must not become a refusal.
             return True
@@ -674,6 +741,9 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             pane = self._pane_text(state.name)
             if not pane:
                 # The pane could not be read at all -- also unknowable.
+                return True
+            if before_pane and pane != before_pane:
+                # The screen moved. Something arrived; only the paste did.
                 return True
             if self._pane_holds_unsent_paste(pane):
                 return True

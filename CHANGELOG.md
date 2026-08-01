@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.76] — 2026-08-01
+
+### Fixed
+
+- A paste is now judged by whether the screen moved, not by whether we
+  recognise what is on it. The two probes that decided it — a chip in the
+  composer, a tail fragment of the prompt on the pane — both model a TUI, and
+  a Codex build that draws its composer inside a box and collapses the paste
+  into `[Pasted Content N chars]` satisfies neither: the composer line no
+  longer starts with `>` so the chip probe cannot locate it, and the pasted
+  text is a chip so no fragment of it is rendered. Every paste attempt was
+  therefore declared missing and pasted again, and the send failed with
+  `prompt never reached the composer` on a prompt that was in the composer
+  four chips deep and needed nothing but `Enter` — a composer a human then has
+  to clear by hand. `send_text` captures the pane before pasting and compares:
+  a screen that changed is proof the paste arrived, whatever the TUI chose to
+  draw. An unchanged screen is still a refusal, and still retried — that is
+  the case the retry exists for.
+
+- A turn started by hand after a failed send is no longer invisible in the
+  webchat. The provider claims the event stream before sending, which mutes
+  the orphan-turn safety net for two minutes on the reasoning that the
+  coordinator is inside its send and about to start polling. A send that fails
+  builds no coordinator and withdrew nothing, so when the user pressed `Enter`
+  in the tmux themselves and the TUI ran the prompt it had been holding, the
+  proxy streamed a real turn to a stream marked as owned by a coordinator that
+  did not exist: tmux working, webchat silent. A failed send now calls
+  `release_consumer()` before raising, scoped by epoch so a claim taken since
+  then is left alone.
+
+- The local embedding model is loaded from its cache without asking
+  huggingface.co whether the cache is still current. Some forty HEAD/GET round
+  trips ran on the first message after every server restart — holding that
+  message, and logging an unauthenticated rate-limit warning — to confirm that
+  a pinned model had not changed. The load is offline first and falls back to
+  the online path unchanged when the cache is missing or incomplete.
+
+### Added
+
+- A tmux send failure now logs the pane it happened on. Every check in the
+  interactive pool reads the screen, and each of them reported only its own
+  verdict — *TUI prompt not detected ready*, *paste did not reach the
+  composer* — which records that our reading of the screen failed and never
+  what was drawn. That is the whole difference between fixing a TUI change and
+  guessing at one: the pane behind the paste bug above had to be inferred from
+  a photograph of a terminal. The head of the pane (2000 chars) is appended to
+  the warning, on failure only, degrading to a note when the pane cannot be
+  read. On a fresh session this puts the beginning of the injected prompt in
+  the server log.
+
 ## [1.0.0-beta.75] — 2026-08-01
 
 ### Fixed

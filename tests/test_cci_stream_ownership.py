@@ -108,6 +108,51 @@ def test_orphan_capture_granted_once_the_claim_grace_expired(monkeypatch):
     assert captured == ["sess"]
 
 
+def test_a_failed_send_releases_the_stream_for_the_orphan_net(monkeypatch):
+    """The user's repro: the paste failed, they pressed Enter themselves, and
+    the webchat stayed empty for the whole turn.
+
+    The claim is taken before the send and suppresses the net for two
+    minutes. A send that fails builds no coordinator, so nothing ever came
+    to read the stream -- and nothing withdrew the claim either. The turn the
+    user started by hand 30s later was streamed by the proxy to a stream
+    marked as owned by a coordinator that did not exist.
+    """
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    svc.remember_injected_prompt("sess", "the prompt PawFlow pasted")
+    epoch = svc.claim_consumer("sess")
+    # ... send_text returns False, the provider raises, and releases.
+    svc.release_consumer("sess", epoch)
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+
+    assert captured == ["sess"]
+
+
+def test_release_leaves_a_newer_claim_alone(monkeypatch):
+    """A failed send releasing after the next turn already claimed would
+    hand that live turn to the orphan net."""
+    svc = _service()
+    state = _codex_session(svc)
+    captured = []
+    monkeypatch.setattr(
+        CCInteractiveEventService, "_start_manual_capture",
+        lambda self, st: captured.append(st.session_token))
+
+    stale = svc.claim_consumer("sess")
+    svc.claim_consumer("sess")
+    svc.release_consumer("sess", stale)
+    svc.publish_event("sess", dict(_CODEX_REQUEST_START))
+
+    assert captured == []
+    assert state.last_request_claim_at > 0.0
+
+
 def test_capture_claim_does_not_stamp_the_request_claim_clock():
     # Only a request claim marks the stream as owned by a turn; a capture
     # claim recording it would make the net immune to its own adoption.

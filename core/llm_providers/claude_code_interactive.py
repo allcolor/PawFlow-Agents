@@ -83,6 +83,10 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         consumer_epoch = event_service.claim_consumer(state.session_token)
         event_service.drain_session(state.session_token)
         if not pool.send_text(state, prompt):
+            # No coordinator will ever poll this claim -- release it, or the
+            # orphan-turn net stays muted for the whole grace window and the
+            # turn a human starts with their own Enter runs invisibly.
+            event_service.release_consumer(state.session_token, consumer_epoch)
             detail = getattr(state, "last_error", "") or "unknown tmux error"
             raise LLMClientError(
                 "Failed to paste prompt into Claude Code interactive tmux session: "
@@ -132,6 +136,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         consumer_epoch = event_service.claim_consumer(state.session_token)
         event_service.drain_session(state.session_token)
         if not pool.send_interrupt(state, text):
+            # Same as the send path: no coordinator will poll this claim.
+            event_service.release_consumer(state.session_token, consumer_epoch)
             detail = getattr(state, "last_error", "") or "unknown tmux error"
             raise LLMClientError(
                 "Failed to send interrupt to Claude Code interactive tmux session: "

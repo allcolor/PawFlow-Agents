@@ -435,6 +435,39 @@ class TestEmbeddingProvider:
             # Local provider may not be installed; that's OK
             pass
 
+    def test_local_model_is_loaded_from_the_cache_without_asking_the_hub(self):
+        """The cached model must not be revalidated against huggingface.co.
+
+        Some forty HEAD/GET round trips ran on the first message after every
+        server restart, holding that message, to confirm a pinned model had
+        not changed.
+        """
+        from core.embeddings import EmbeddingProvider
+        seen = []
+
+        def loader(name, **kwargs):
+            seen.append(kwargs)
+            return f"model:{name}"
+
+        assert EmbeddingProvider._load_local_model(
+            loader, "all-MiniLM-L6-v2") == "model:all-MiniLM-L6-v2"
+        assert seen == [{"local_files_only": True}]
+
+    def test_a_missing_cache_still_downloads(self):
+        """Offline-first is an optimisation, not a new failure mode."""
+        from core.embeddings import EmbeddingProvider
+        seen = []
+
+        def loader(name, **kwargs):
+            seen.append(kwargs)
+            if kwargs.get("local_files_only"):
+                raise OSError("not in cache")
+            return f"model:{name}"
+
+        assert EmbeddingProvider._load_local_model(
+            loader, "all-MiniLM-L6-v2") == "model:all-MiniLM-L6-v2"
+        assert seen == [{"local_files_only": True}, {}]
+
     def test_unknown_provider_raises(self):
         from core.embeddings import EmbeddingProvider
         provider = EmbeddingProvider.instance()

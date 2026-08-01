@@ -390,6 +390,41 @@ class CCInteractiveEventService(BaseService):
                 state.stream_condition.notify_all()
                 return state.consumer_epoch
 
+    def release_consumer(self, session_token: str, epoch: int = 0) -> None:
+        """Give up a claim whose coordinator never started reading.
+
+        A request claim suppresses the orphan-turn net for two minutes, on the
+        reasoning that the coordinator is busy inside its send (TUI readiness,
+        paste, settle, double Enter, verification) and will start polling any
+        moment. When the send FAILS the coordinator is never built, and
+        nothing withdrew the claim: the net stayed muted for the rest of the
+        grace window.
+
+        That window is exactly when the turn happens. The user watches the
+        send fail, presses Enter in the tmux themselves, and the TUI runs the
+        prompt it was holding all along -- a real turn, streamed through the
+        proxy, addressed to nobody. The net exists to adopt precisely that
+        turn, and it declined because a claim from a dead coordinator was
+        still on the books. Releasing hands the stream back so the next
+        request_start is adopted and the answer reaches the webchat.
+
+        Scoped by epoch: a claim taken since then belongs to a live turn and
+        must not be cleared by the loser's cleanup. Passing 0 releases
+        unconditionally.
+        """
+        state = self.session_state(session_token)
+        if state is None:
+            return
+        with self._sessions_lock:
+            with state.stream_condition:
+                if epoch and epoch != state.consumer_epoch:
+                    return
+                state.last_request_claim_at = 0.0
+                # The paste intent is the other half of the same suppression:
+                # remember_injected_prompt sets it so the net keeps quiet
+                # while the send runs. The send is over.
+                state.injected_intent_at = 0.0
+
     def wait_event(self, session_token: str, timeout: Optional[float] = None,
                    epoch: int = 0) -> dict:
         state = self.session_state(session_token)

@@ -126,8 +126,18 @@ made that whole window look unowned: a `request_start` arriving inside it was
 adopted as an orphan turn, and the capture's claim evicted the coordinator that
 was about to read the stream. The claim timestamp closes the window, bounded by
 a ceiling so a coordinator that claimed and died cannot disable the net for
-good. A coordinator that dies inside the window has already failed its turn with
-an error, so there is no invisible response left for the net to rescue.
+good.
+
+That ceiling is a backstop, not the mechanism. A send that fails builds no
+coordinator at all, and the claim it left behind muted the net for the rest of
+the grace window — which is exactly when the turn happens. The user watches the
+send fail, presses `Enter` in the tmux themselves, and the TUI runs the prompt
+it was holding all along: a real turn, streamed through the proxy, addressed to
+nobody, with the webchat silent throughout. So a provider whose send fails calls
+`release_consumer()` before it raises, and the net adopts the next
+`request_start` as it should. The release is scoped by epoch: a claim taken
+since then belongs to a live turn and must not be cleared by the loser's
+cleanup.
 
 ### Captured turns and the active-agent marker
 
@@ -313,15 +323,49 @@ been asked for nothing: no `UserPromptSubmit` hook, no proxy event, the agent
 shown active until the 300-second no-event timeout. The server log carried no
 error at all, because nothing had failed as far as any code could tell.
 
-So `send_text` proves the paste landed before pressing anything: paste, look for
-the chip in the composer or the probe fragment on the pane, and paste **again**
-if neither is there -- bounded to `_PASTE_ATTEMPTS`, after which the send fails
-loudly and the provider raises. Enter cannot fix an empty composer; only another
-paste can. Where the TUI leaves no usable signal (no chip declared, text too
-short to probe) the answer is "cannot tell", never a refusal, and the
-double-Enter path behind it is unchanged. The injected text is recorded once,
-not once per attempt: the hook guard counts tickets, and a second record would
-leave one unspent to swallow the next thing the user really types.
+So `send_text` proves the paste landed before pressing anything: capture the
+pane, paste, capture it again, and paste **again** only if the screen never
+moved -- bounded to `_PASTE_ATTEMPTS`, after which the send fails loudly and the
+provider raises. Enter cannot fix an empty composer; only another paste can.
+Where the TUI leaves no usable signal (no before-image, no chip declared, text
+too short to probe) the answer is "cannot tell", never a refusal, and the
+double-Enter path behind it is unchanged.
+
+The before/after comparison leads, and the chip and fragment probes come after
+it, because it is the only test that does not model the TUI. The chip probe
+assumes the composer can be located by its prompt prefix; the fragment probe
+assumes the pasted text is rendered as text and findable across the layout the
+TUI wrapped it in. Both are read off a TUI that ships a new version every few
+weeks, and each time one of them goes stale the failure is the same: a prompt
+sitting in the composer needing nothing but `Enter` is declared missing, pasted
+again, and again, until the send fails with the prompt stacked three times in
+the input box -- which is not merely a failed turn but a composer a human has
+to clear by hand. Whether the screen changed is a fact about the screen: a TUI
+that renames its chip, boxes its composer or re-wraps its text still redraws
+when 16 kB arrive.
+
+What the comparison costs is a pane that redraws for its own reasons reading as
+a landed paste. That direction is the cheap one: a false "landed" presses
+`Enter` into a box that may be empty, which is a no-op, and the turn fails
+visibly on the no-event timeout with the session left clean. A false "missing"
+pastes the prompt into a composer that already holds it. Those are not
+symmetrical, and the check must not err toward the second.
+
+The injected text is recorded once, not once per attempt: the hook guard counts
+tickets, and a second record would leave one unspent to swallow the next thing
+the user really types.
+
+A failure on any of these paths logs the pane it happened on. Every check in
+the pool reads the screen and each of them used to report only its own verdict
+— *TUI prompt not detected ready*, *paste did not reach the composer* — which
+says that our reading of the screen failed and never what was drawn. When a TUI
+release moves its footer or boxes its composer, that is the whole difference
+between a fix and a guess, and the pane ended up being inferred from a
+photograph of a terminal. `_pane_diagnostic()` appends the head of the pane
+(`_PANE_DIAGNOSTIC_CHARS`, 2000) to the warning; it costs one extra capture on
+a path that has already failed, and an unreadable pane degrades to a note. Note
+that on a fresh session this puts the beginning of the injected prompt in the
+server log — bounded, and only on failure.
 
 The readiness markers a pool waits for must belong to the **input box**, not to
 the chrome around it. `>_ OpenAI Codex (v...)` is a permanent pane header drawn

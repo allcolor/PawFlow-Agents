@@ -230,3 +230,143 @@ def test_a_tui_that_declares_no_composer_is_judged_exactly_as_before(
     pane = "> " + pool._submit_probe_fragment(PROMPT) + "\n  ? for shortcuts\n"
     assert _landed(pool, pane, monkeypatch) is True
     assert _landed(pool, "> \n  ? for shortcuts\n", monkeypatch) is False
+
+
+# ── the paste that landed and was pasted three times anyway ────────────────
+#
+# Both probes above recognise a TUI. The chip probe needs the composer line to
+# start with `>`; the fragment probe needs the pasted text to be RENDERED as
+# text. A Codex build that draws its composer inside a box and collapses the
+# whole paste into chips satisfies neither, and the send then failed with
+# "prompt never reached the composer" on a prompt that was in the composer and
+# needed nothing but Enter -- pasted three times over on the way there.
+
+IDLE_PANE = """\
+>_ OpenAI Codex (v0.146.0)
+
+\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e
+\u2502 > Ask Codex \u2502
+\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f
+  gpt-5.6-sol medium  ~
+"""
+
+BOXED_UNSENT_PANE = """\
+>_ OpenAI Codex (v0.146.0)
+
+\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e
+\u2502 > [Pasted Content 1024 chars][Pasted Content 1021 chars] \u2502
+\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f
+  gpt-5.6-sol medium  ~
+"""
+
+
+def test_both_probes_are_blind_to_a_boxed_composer_full_of_chips():
+    """Neither of them is wrong. Both are modelling a TUI that moved."""
+    pool = CodexInteractivePool()
+    # The composer line starts with the box border, not with `>`.
+    assert pool._pane_holds_unsent_paste(BOXED_UNSENT_PANE) is None
+    # And the pasted text is a chip, so no fragment of it is on screen.
+    fragment = pool._submit_probe_fragment(PROMPT)
+    assert pool._fragment_on_pane(BOXED_UNSENT_PANE, fragment) is False
+
+
+def _landed_after(pool, before, after, monkeypatch):
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: after)
+    monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(type(pool), "_PASTE_LANDED_SECONDS", 0.0)
+    return pool._paste_landed(_State(), PROMPT, before)
+
+
+def test_a_pane_that_changed_is_proof_the_paste_arrived(monkeypatch):
+    """The screen moved between the two captures. Only the paste moved it."""
+    pool = CodexInteractivePool()
+    assert _landed_after(
+        pool, IDLE_PANE, BOXED_UNSENT_PANE, monkeypatch) is True
+
+
+def test_without_the_comparison_the_same_pane_is_still_a_refusal(monkeypatch):
+    """Pins that the comparison is what fixes it, not a loosened probe: the
+    recognition tests alone still fail on this pane, exactly as they did."""
+    assert _landed(CodexInteractivePool(), BOXED_UNSENT_PANE,
+                   monkeypatch) is False
+
+
+def test_an_unchanged_pane_is_still_a_refusal(monkeypatch):
+    """The case the retry exists for: nothing arrived, so paste again."""
+    pool = CodexInteractivePool()
+    assert _landed_after(pool, IDLE_PANE, IDLE_PANE, monkeypatch) is False
+
+
+# ── a failure carries the screen it happened on ────────────────────────────
+
+
+def test_a_refused_paste_logs_the_pane_it_refused(monkeypatch):
+    """Every check here reads the pane and none of them reported it. When a
+    TUI release moved its composer, the log said our reading failed and never
+    what was drawn -- which is how the pane ended up being inferred from a
+    photograph of a terminal."""
+    pool = CodexInteractivePool()
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: BOXED_UNSENT_PANE)
+    out = pool._pane_diagnostic(_State.name)
+    assert "[Pasted Content 1024 chars]" in out
+    assert out.startswith("; pane")
+
+
+def test_the_pane_diagnostic_is_bounded(monkeypatch):
+    pool = CodexInteractivePool()
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: "x" * 5000)
+    out = pool._pane_diagnostic(_State.name)
+    assert "(+3000 chars)" in out
+    assert out.count("x") == pool._PANE_DIAGNOSTIC_CHARS
+
+
+def test_an_unreadable_pane_never_raises_inside_a_warning(monkeypatch):
+    pool = CodexInteractivePool()
+
+    def _boom(_name):
+        raise RuntimeError("docker exec failed")
+
+    monkeypatch.setattr(pool, "_pane_text", _boom)
+    assert pool._pane_diagnostic(_State.name) == " [pane unreadable]"
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: "")
+    assert pool._pane_diagnostic(_State.name) == " [pane empty or unreadable]"
+
+
+def test_the_prompt_is_pasted_once_when_the_screen_reacts(monkeypatch):
+    """The user's report, end to end: one paste, then Enter.
+
+    Before the comparison this pasted the prompt three times and then failed
+    the send, leaving a composer holding it four chips deep.
+    """
+    pool = CodexInteractivePool()
+    state = _State()
+    state.prompt_ready = True
+    state.last_error = ""
+    panes = [IDLE_PANE]
+    pastes = []
+    keys = []
+
+    monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
+    monkeypatch.setattr(pool, "_cancel_copy_mode", lambda _state: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt",
+                        lambda _state, _text: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt_for_event_service",
+                        lambda _state, _text: None)
+    monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
+    monkeypatch.setattr(pool, "_verify_submitted",
+                        lambda _state, _text: None)
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: panes[-1])
+
+    def _paste(_state):
+        pastes.append(1)
+        panes.append(BOXED_UNSENT_PANE)
+        return True
+
+    monkeypatch.setattr(pool, "_paste_buffer", _paste)
+    monkeypatch.setattr(pool, "send_keys",
+                        lambda _state, batch: keys.append(list(batch)) or True)
+    monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
+
+    assert pool.send_text(state, PROMPT) is True
+    assert len(pastes) == 1
+    assert keys == [["Enter"], ["Enter"]]

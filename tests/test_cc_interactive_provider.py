@@ -1337,15 +1337,18 @@ def test_interactive_pool_send_text_pastes_then_sends_enter(monkeypatch):
 
     assert pool.send_text(state, "hello") is True
     assert calls[0][0][-6:] == ["tmux", "send-keys", "-t", "pawflow", "-X", "cancel"]
-    assert calls[1][0][-2:] == ["load-buffer", "-"]
-    assert calls[1][1] == b"hello"
-    assert calls[2][0][-3:] == ["paste-buffer", "-t", "pawflow"]
+    # The screen as it was before the paste: what the paste is compared
+    # against to decide whether it arrived.
+    assert calls[1][0][-4:] == ["capture-pane", "-p", "-t", "pawflow"]
+    assert calls[2][0][-2:] == ["load-buffer", "-"]
+    assert calls[2][1] == b"hello"
+    assert calls[3][0][-3:] == ["paste-buffer", "-t", "pawflow"]
     # Double Enter separated by the submit delay: the first submits in the
     # normal case, the second guarantees submission when the TUI drops the
     # first Enter at container restart.
-    assert calls[3][0][-1:] == ["Enter"]
-    assert sleeps == [1.0]
     assert calls[4][0][-1:] == ["Enter"]
+    assert sleeps == [1.0]
+    assert calls[5][0][-1:] == ["Enter"]
 
 
 def test_interactive_pool_send_text_waits_for_prompt_ready_on_cold_start(monkeypatch):
@@ -1367,6 +1370,10 @@ def test_interactive_pool_send_text_waits_for_prompt_ready_on_cold_start(monkeyp
         calls.append((cmd, kwargs.get("input")))
         if "capture-pane" in cmd:
             captures["n"] += 1
+            if any("paste-buffer" in call[0] for call in calls):
+                # The TUI echoed the paste: the screen moved, which is what
+                # tells the send the prompt arrived.
+                return _Run("│ > hello │\n  ? for shortcuts")
             # TUI still booting for the first two probes, then ready.
             out = ("Welcome back\n   loading..." if captures["n"] < 3
                    else "│ > │\n  ? for shortcuts")
@@ -1398,12 +1405,13 @@ def test_interactive_pool_send_text_waits_for_prompt_ready_on_cold_start(monkeyp
 
     assert pool.send_text(state, "hello") is True
 
-    # Polled the pane until ready (3 probes: not-ready, not-ready, ready).
-    capture_idx = [i for i, c in enumerate(calls) if "capture-pane" in c[0]]
-    assert len(capture_idx) == 3
-    # Paste happened only AFTER readiness was confirmed.
     paste_idx = next(i for i, c in enumerate(calls) if "paste-buffer" in c[0])
-    assert paste_idx > capture_idx[-1]
+    capture_idx = [i for i, c in enumerate(calls) if "capture-pane" in c[0]]
+    # Polled the pane until ready (3 probes: not-ready, not-ready, ready),
+    # then captured it once more as the before-image the paste is compared to.
+    assert len([i for i in capture_idx if i < paste_idx]) == 4
+    # Paste happened only AFTER readiness was confirmed (3rd probe).
+    assert paste_idx > capture_idx[2]
     # The readiness gate latched so later sends skip the wait.
     assert state.prompt_ready is True
     # Two 0.4s readiness sleeps + the 1.0s double-Enter submit delay.
@@ -1464,7 +1472,10 @@ def test_send_text_represses_enter_when_submit_swallowed(monkeypatch):
         calls.append(cmd)
         if "capture-pane" in cmd:
             panes["n"] += 1
-            if panes["n"] <= 2:
+            if panes["n"] == 1:
+                # The before-image: idle TUI, empty input box.
+                return _Run("│ > │\n  ? for shortcuts")
+            if panes["n"] <= 3:
                 # Idle TUI, message stranded in the input box.
                 return _Run(f"│ > {text} │\n  ? for shortcuts")
             # After the retried Enter the turn is running and the input
@@ -1478,9 +1489,9 @@ def test_send_text_represses_enter_when_submit_swallowed(monkeypatch):
     enters = [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
     # Double-Enter submit plus at least one verifier retry.
     assert len(enters) >= 3
-    # One capture proves the paste landed before Enter, then the verifier
-    # polls until the running marker appears.
-    assert panes["n"] == 3
+    # Before-image, then the capture proving the paste landed, then the
+    # verifier polling until the running marker appears.
+    assert panes["n"] == 4
 
 
 def test_send_text_verifier_accepts_running_turn_without_retry(monkeypatch):
@@ -1572,8 +1583,10 @@ def test_a_paste_that_missed_the_composer_is_pasted_again(monkeypatch):
         calls.append(cmd)
         if "capture-pane" in cmd:
             panes["n"] += 1
-            # The first paste went nowhere: empty composer. The second lands.
-            return _PaneRun(_codex_pane(panes["n"] > 1))
+            # Two captures per attempt: the before-image, then the check.
+            # The first paste went nowhere -- the screen never moved -- and
+            # the second lands.
+            return _PaneRun(_codex_pane(panes["n"] >= 4))
         return _PaneRun("")
 
     pool, state = _codex_paste_pool(monkeypatch, fake_run)

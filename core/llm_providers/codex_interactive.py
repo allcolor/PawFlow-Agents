@@ -146,6 +146,12 @@ class LLMCodexInteractiveMixin:
         consumer_epoch = event_service.claim_consumer(state.session_token)
         event_service.drain_session(state.session_token)
         if not pool.send_text(state, prompt):
+            # No coordinator will ever poll this claim. Hand the stream back
+            # so the orphan-turn net can adopt the turn the user is about to
+            # start by pressing Enter in the tmux themselves -- the prompt is
+            # usually sitting in the composer, and its answer has to reach the
+            # webchat rather than run into a stream nobody owns.
+            event_service.release_consumer(state.session_token, consumer_epoch)
             detail = getattr(state, "last_error", "") or "unknown tmux error"
             raise LLMClientError(
                 "Failed to paste prompt into Codex interactive tmux session: "
@@ -190,6 +196,8 @@ class LLMCodexInteractiveMixin:
         consumer_epoch = event_service.claim_consumer(state.session_token)
         event_service.drain_session(state.session_token)
         if not pool.send_interrupt(state, text):
+            # Same as the send path: no coordinator will poll this claim.
+            event_service.release_consumer(state.session_token, consumer_epoch)
             detail = getattr(state, "last_error", "") or "unknown tmux error"
             raise LLMClientError(
                 "Failed to interrupt Codex interactive tmux session: "

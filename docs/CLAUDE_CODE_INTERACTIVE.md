@@ -329,6 +329,37 @@ the instant the TUI starts: while it counted as readiness, the cold-start wait
 returned immediately and the first paste of a fresh session went into a composer
 that did not exist yet.
 
+That header is also why "the composer is not on screen" cannot mean "landed".
+It used to: an unlocatable composer was read as unknowable and answered `True`,
+which accepted the exact case the proof exists for -- a pane holding only the
+header locates no composer, so a paste into a TUI that has no input box yet
+(past the readiness timeout, or during a redraw) was declared landed, `Enter`
+went nowhere, and the turn sat on a session nobody had prompted until the
+300-second timeout. A missing composer is now not an answer at all: the probe
+keeps looking until its window closes, then refuses. A pool that declares no
+`_COMPOSER_PROMPT_PREFIX` is untouched -- its whole pane *is* the composer, so
+it is always located and its answer is what it always was.
+
+Known and left alone: on a TUI that echoes pasted text, the probe fragment is
+searched across the whole pane, and the same prompt still visible in the
+transcript can answer for a paste that never landed. Narrowing that search
+costs a **false negative** -- a landed paste declared missing is pasted again,
+and the composer then holds the prompt twice, which is worse than the
+ambiguity. It stays until such a composer can be located outright.
+
+The fragment is searched on the **squeezed** pane: borders and all whitespace
+removed from both sides before the comparison. `capture-pane` returns a screen,
+not a buffer, and the composer hard-wraps the prompt at the pane width, so a
+24-character tail routinely arrives split across two screen lines with a border
+and padding between its halves -- every character present, and absent from any
+verbatim search. The wrap falls at the same column on every attempt, so the
+failure was deterministic: all three pastes declared missing, and a prompt that
+was sitting in the composer needing only `Enter` failed the turn with "never
+reached the composer". `_verify_submitted` keeps the verbatim test on purpose --
+there an absent fragment means "submitted", so a wrap-blinded match errs toward
+leaving a running turn alone, while a squeezed one would keep finding the prompt
+Claude Code echoes into its own transcript and press `Enter` at it.
+
 If a user attaches to the provider-owned tmux and submits a prompt manually,
 Claude Code's `UserPromptSubmit` hook sends that prompt to PawFlow. PawFlow
 persists it as a normal user message with `channel="tmux"` and starts a passive
@@ -587,18 +618,28 @@ group each carries the same duplication.
 
 - **Arguments.** The script source is kilobytes of generated JavaScript
   describing work the rows beside it already name. The row reports its size.
-- **Result.** The script's output is the *aggregate of those very calls*: the
-  relay hands each result to the script, which prints them. So the same bytes
-  reached the next context twice — once as each call's own tool result, once
-  more inside the script's. The row reports its size and points at the calls.
+- **Result.** The script's output *quotes those very calls*: the relay hands
+  each result to the script, which prints them. So the same bytes reached the
+  next context twice — once as each call's own tool result, once more inside
+  the script's. Each quotation is replaced by a pointer to the row that holds
+  it.
 
-The result elision is conditional, and the condition is what makes it safe:
-only a script that actually produced relay rows yields its output. One that
-reached no PawFlow tool — read through Codex's own runtime, or a value computed
-in the script and printed — is described by nobody else, and its output is the
-only record there is. The coordinator counts the MCP rows emitted since the
-code-mode call was drawn, so a later script in the same turn that drove nothing
-is not elided on the strength of an earlier one's rows.
+The result elision is **per fragment, not per output**, and that is what makes
+it safe. A script does not only relay: it compares what it read, counts it,
+concludes. Replacing the whole output because the script happened to make a
+call deleted that conclusion, and no row was holding it. So only what a row
+already carries verbatim (and is long enough to be worth a marker) is dropped;
+everything else is kept exactly as printed, and an output that quotes nothing
+is returned untouched. A script that reached no PawFlow tool at all — read
+through Codex's own runtime, or a value computed and printed — is described by
+nobody else and keeps everything.
+
+The rows a script answers for are the ones **emitted while it ran**, tracked
+per row rather than counted per observation. A Responses call item is observed
+twice — streamed as it is made, then replayed in the next request's input —
+and the coordinator renders the second observation onto the first row; counted
+there, a re-read became a call the *next* script had to answer for, and that
+script lost the output only it had.
 
 None of this changes the *gauge*, which on codex-interactive is measured on the
 wire rather than counted from messages. Codex never sees the relay's rows: its

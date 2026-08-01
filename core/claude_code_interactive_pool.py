@@ -573,6 +573,38 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 return line[-24:]
         return ""
 
+    @staticmethod
+    def _pane_squeeze(text: str) -> str:
+        """Pane text with everything the TUI's layout added taken back out.
+
+        `capture-pane` returns what is on the SCREEN, and a composer is not a
+        text buffer: Claude Code draws a box around it and hard-wraps the
+        prompt to the pane width, so a line of the injected text arrives as
+        `\u2502 ... commun` / `ication ... \u2502` -- the wrap falls wherever the
+        pane happens to end, mid-word as often as not. A verbatim search for a
+        24-character tail therefore fails whenever that tail straddles a wrap,
+        which is not a rare case but a function of the prompt's length and the
+        terminal's width.
+
+        Removing the borders and ALL whitespace from both sides makes the
+        search indifferent to where the TUI chose to break the line. It does
+        not make it less specific: a 24-character tail of the prompt is no
+        likelier to appear in chrome squeezed than spaced.
+        """
+        out = []
+        for ch in (text or ""):
+            if ch.isspace() or ch in "\u2502\u2551|":
+                continue
+            out.append(ch)
+        return "".join(out)
+
+    @classmethod
+    def _fragment_on_pane(cls, pane: str, fragment: str) -> bool:
+        """Is the probe fragment on the pane, however the TUI wrapped it?"""
+        if not fragment:
+            return False
+        return cls._pane_squeeze(fragment) in cls._pane_squeeze(pane)
+
     # How many times the same prompt is pasted before the pool gives up. The
     # retry answers a paste that never arrived, which is a startup race and
     # settles within a couple of attempts; more would only spend seconds
@@ -587,16 +619,46 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     def _paste_landed(self, state: InteractiveContainer, text: str) -> bool:
         """Did the paste actually reach the input box?
 
-        Three answers collapsed into a decision:
+        The answers, in the order they settle the question:
 
         - the chip is in the composer, or the probe fragment is on the pane:
           it landed;
+        - the turn is already running: it landed and was accepted between the
+          paste and this look;
         - the composer is readable and holds neither: it did not, and Enter
           would be pressed into an empty box;
-        - the composer cannot be located at all: unknowable, and the answer is
-          True. Refusing to submit on a pane we cannot read would turn every
-          unfamiliar TUI layout into a failed turn, where the double-Enter and
-          `_verify_submitted` behind it are already the best-effort path.
+        - the composer is not on screen: not an answer yet. Keep looking until
+          the window closes, then call it a failure.
+
+        That last one used to return True immediately, and it accepted the one
+        case this check exists for. `>_ OpenAI Codex (v0.104.0)` is drawn the
+        instant the TUI starts and the input box is not: a pane holding only
+        the header locates no composer, so a paste into a TUI that has no
+        input box yet -- past the readiness timeout, or mid-redraw -- was
+        declared landed, Enter went nowhere, and the turn waited out its 300s
+        no-event timeout. A pool that declares no composer prefix is
+        unaffected: its whole pane IS the composer, so it is always located,
+        and the answer stays what it was.
+
+        The fragment is still looked for across the whole pane, and on a TUI
+        that echoes pasted text that cannot tell this paste from the same text
+        still visible in the transcript. Every way of narrowing it costs a
+        FALSE NEGATIVE -- a landed paste declared missing is pasted a second
+        time, and the composer then holds the prompt twice, which is worse
+        than the ambiguity. It stays as it is until the composer of such a TUI
+        can be located outright.
+
+        It is looked for on the SQUEEZED pane, though. The pane is a screen,
+        not a buffer: the composer hard-wraps the prompt at the pane width,
+        and a tail that falls across a wrap is not on the pane verbatim even
+        though every character of it is. That failure is deterministic -- the
+        same prompt wraps at the same column on every attempt -- so all three
+        pastes were declared missing and a turn whose prompt was sitting in
+        the composer, needing only Enter, failed with "never reached the
+        composer". `_verify_submitted` keeps the verbatim test on purpose:
+        there "fragment absent" means "submitted", so a wrap-blinded match
+        errs toward leaving a running turn alone, while a squeezed one would
+        keep finding the prompt Claude Code echoes into its own transcript.
 
         Reads the pane purely as transport signal -- the provider still never
         assembles a response from tmux output.
@@ -615,13 +677,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 return True
             if self._pane_holds_unsent_paste(pane):
                 return True
-            if fragment and fragment in pane:
+            if self._fragment_on_pane(pane, fragment):
                 return True
             if self._pane_shows_running(pane):
                 # Already accepted between the paste and this look.
-                return True
-            if self._composer_text(pane) == "":
-                # Composer not on screen: cannot tell, do not block.
                 return True
             if time.time() >= deadline:
                 return False

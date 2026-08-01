@@ -431,10 +431,94 @@ def test_a_script_output_yields_to_the_relay_rows_end_to_end(monkeypatch):
     # Each call keeps its own result in full: that is where the detail lives.
     assert results["req-1"] == "AAA" * 200
     assert results["req-2"] == "BBB" * 200
-    # The script's copy of both is replaced by its size and a pointer.
-    assert "2 call(s)" in results["call-1"]
+    # The script's copy of each is replaced by a pointer to the row that has
+    # it. Both copies, and nothing else -- there was nothing else here.
     assert "AAA" not in results["call-1"]
-    assert str(len("AAA" * 200 + "BBB" * 200)) in results["call-1"]
+    assert "BBB" not in results["call-1"]
+    assert str(len("AAA" * 200)) in results["call-1"]
+    assert str(len("BBB" * 200)) in results["call-1"]
+
+
+def test_what_a_script_derived_survives_the_elision_end_to_end(monkeypatch):
+    # A script does not only relay: it compares, counts, concludes. That
+    # sentence exists in no row, and dropping the whole output because the
+    # script happened to make a call deleted the one thing the turn produced.
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    blocks = []
+    derived = "\nderived comparison: 3 lines differ, none in the API\n"
+    events = _Events([
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "custom_tool_call", "call_id": "call-1",
+                     "name": "exec",
+                     "input": 'await tools.mcp__pawflow__use_tool({tool_name})'}}},
+        {"type": "tool_use", "tool_use_id": "req-1", "name": "read",
+         "arguments": {"path": "/workspace/a.py"}, "tool_origin": "mcp"},
+        {"type": "tool_result", "tool_use_id": "req-1", "content": "AAA" * 200},
+        {"type": "tool_result", "tool_use_id": "call-1",
+         "content": "AAA" * 200 + derived},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(
+        events, "session",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)))
+
+    coordinator.run()
+
+    results = {payload.get("tc_id"): payload["result"]
+               for kind, payload in blocks if kind == "tool_result"}
+    assert "AAA" not in results["call-1"], "the echoed result still goes"
+    assert derived in results["call-1"], "and what only the script knows stays"
+
+
+def test_a_re_read_relay_row_is_not_a_second_call(monkeypatch):
+    # A Responses call item is observed twice -- streamed as it is made, then
+    # replayed in the next request's input with its output. The base class
+    # renders the second observation onto the first row, and a counter bumped
+    # after that call counted the re-read as a new call: the NEXT script, which
+    # drove nothing at all, was then billed for it and lost its own output.
+    import core.llm_providers._codex_interactive_turn as turn_mod
+
+    monkeypatch.setattr(turn_mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    blocks = []
+    alone = "what the second script read with Codex's own runtime" * 3
+    events = _Events([
+        # script 1 and its one relay row.
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "custom_tool_call", "call_id": "call-1",
+                     "name": "exec",
+                     "input": 'await tools.mcp__pawflow__use_tool({tool_name})'}}},
+        {"type": "tool_use", "tool_use_id": "req-1", "name": "read",
+         "arguments": {"path": "/workspace/a.py"}, "tool_origin": "mcp"},
+        {"type": "tool_result", "tool_use_id": "req-1", "content": "AAA" * 200},
+        {"type": "tool_result", "tool_use_id": "call-1", "content": "AAA" * 200},
+        # script 2: no relay row of its own, ever.
+        {"type": "sse", "payload": {
+            "type": "response.output_item.done",
+            "item": {"type": "custom_tool_call", "call_id": "call-2",
+                     "name": "exec",
+                     "input": 'await tools.mcp__pawflow__use_tool({tool_name})'}}},
+        # ...and only now is script 1's relay row observed a second time, as
+        # the next request replays it in its input. Counted there, it became
+        # script 2's call.
+        {"type": "tool_use", "tool_use_id": "req-1", "name": "read",
+         "arguments": {"path": "/workspace/a.py"}, "tool_origin": "mcp"},
+        {"type": "tool_result", "tool_use_id": "call-2", "content": alone},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ])
+    coordinator = _CodexInteractiveTurnCoordinator(
+        events, "session",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)))
+
+    coordinator.run()
+
+    results = {payload.get("tc_id"): payload["result"]
+               for kind, payload in blocks if kind == "tool_result"}
+    assert results["call-2"] == alone, "it drove nothing; nobody else says this"
+    assert len(coordinator._mcp_row_results) == 1, "one row, seen twice"
 
 
 def test_a_script_that_drove_no_relay_call_keeps_its_output(monkeypatch):

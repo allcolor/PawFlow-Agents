@@ -6,6 +6,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.75] — 2026-08-01
+
+### Fixed
+
+- A pasted prompt is no longer declared missing because the composer wrapped
+  it. The proof that a paste landed is a 24-character tail of the prompt found
+  on the pane, and `capture-pane` returns a screen, not a buffer: Claude Code
+  hard-wraps the prompt at the pane width, so that tail routinely arrives split
+  across two screen lines with a border and padding between its halves —
+  present character for character, absent from any verbatim search. The wrap
+  falls at the same column every time, so all three paste attempts failed the
+  same way and a prompt that was sitting in the composer needing only `Enter`
+  ended the turn with "prompt never reached the composer". The fragment is now
+  matched with borders and whitespace removed from both sides.
+  `_verify_submitted` keeps the verbatim test: there an absent fragment means
+  "submitted", and erring toward silence leaves a running turn alone.
+
+- A code-mode script no longer loses what only it knows. beta.74 replaced a
+  script's whole output as soon as one relay row had been counted, without
+  checking that the output was a copy of anything: a script that made a call
+  and then printed a conclusion drawn from it — `derived comparison: ...` —
+  had that conclusion persisted as a size, and lost it at the next cold start.
+  The elision is now per fragment. What a row beside it already carries
+  verbatim is replaced by a pointer to that row; everything else is kept
+  exactly as printed, and an output that quotes nothing is returned untouched.
+
+- The rows a code-mode script answers for are counted per row, not per
+  observation. A Responses call item is observed twice — streamed as it is
+  made, then replayed in the next request's input — and the base coordinator
+  renders the second observation onto the first row. The counter was bumped
+  after that call regardless, so a re-read became a call the *next* script had
+  to answer for: three rows really emitted (script, its call, a second script),
+  a counter reading two, and the second script — which drove nothing at all —
+  lost the output nobody else was holding.
+
+- A pane with no input box is no longer proof that a paste landed. When the
+  composer could not be located, `_paste_landed` answered "unknowable", which
+  is `True` — and that accepted the one case the proof exists for. A Codex pane
+  showing only its permanent `>_ OpenAI Codex (v...)` header locates no
+  composer, so a paste into a TUI that has no input box yet — past the
+  readiness timeout, or during a redraw — was declared landed, `Enter` went
+  nowhere, and the turn waited out its 300-second no-event timeout. A missing
+  composer is now not an answer: the probe keeps looking until its window
+  closes, then refuses, and the paste is retried. A pool that declares no
+  composer prefix is untouched — its whole pane *is* the composer.
+
+- `store: false` now completes an explicit `include` instead of standing aside
+  for it. Testing only for the presence of the key left
+  `extra_body: {"include": []}` — or an include naming anything else — as a
+  Zero Data Retention request asking for no encrypted reasoning: the API keeps
+  nothing, our history gets no ciphertext, and the next turn of the tool loop
+  is a 400. The caller's include is kept and `reasoning.encrypted_content` is
+  added to it, once.
+
+- The animated block no longer hides a native tool the agent really ran. Once a
+  turn had produced an MCP call, *every* remaining native row was dropped from
+  the cue surface — which is right for the `exec()` wrapper around a code-mode
+  script and wrong for a `local_shell_call` or an `apply_patch` in a mixed
+  turn. A wrapper is now recognised by the mark the provider leaves on it
+  (`<code-mode script, N chars>`); anything else keeps its cue.
+
+- That recognition now also covers the native row the first MCP call arrives
+  *behind*. A native row is held briefly to see whether it was only the
+  wrapper; the first MCP call ended that wait by discarding whatever was held,
+  without asking what it was. A `local_shell(ls -la)` immediately followed by
+  `read(a)` — the ordinary shape of a mixed turn — therefore showed one cue
+  instead of two, and the shell command the agent ran went past unseen. The
+  held row is dropped only if it carries the wrapper mark; anything else is
+  cued behind the call that ended its wait.
+
+- An artifact result releases the cue its call pinned. A pinned cue is freed by
+  the second offer of its row, and a `show_file` result never makes one: it is
+  claimed for the Artifacts tab and the ordinary `tool_result` ingest is
+  skipped. A finished `show_file` went on being shown as the thing the agent
+  was doing — bounded, and gone at the end of the turn, but contradicting what
+  the pin promises. The release is now raised where the artifact is claimed as
+  well.
+
+### Changed
+
+- A tool that is still running stays on the animated surface until it answers.
+  Cues are pushed off the back of the column by newer ones, so the thinking and
+  the messages an agent produces *while it waits* pushed the running call out
+  of sight — at the one moment the reader wants to know what is running. A tool
+  cue with no result yet is now pinned: newer cues push it back and dim it, but
+  cannot push it out. It is released the moment its result lands, bounded so a
+  script firing a dozen calls at once does not turn the column into a wall, and
+  never faded past the last readable step.
+
 ## [1.0.0-beta.74] — 2026-08-01
 
 ### Fixed

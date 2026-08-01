@@ -237,8 +237,44 @@ def test_the_setting_is_reachable_from_the_connection_form():
     assert shown and shown[0]["when"]["provider"] == ["openai-responses"]
 
 
-def test_an_explicit_include_is_not_overwritten():
-    body = _body_with(store=False, extra_body={"include": ["message.output_text"]})
+def test_an_explicit_include_is_completed_not_overwritten():
+    """A caller's include is kept AND the ZDR one is added to it.
+
+    Testing the key alone made an explicit include a second way to break the
+    same thing `store` did: `store: false` with any include of one's own was a
+    request the API keeps nothing of, asking for no encrypted reasoning --
+    a 400 on the next turn of the tool loop, exactly as before.
+    """
+    body = _body_with(store=False,
+                      extra_body={"include": ["message.output_text"]})
+    assert body["include"] == ["message.output_text",
+                               "reasoning.encrypted_content"]
+
+
+def test_an_empty_include_is_still_completed():
+    """The reviewer's repro: `include: []` is present, so the key test passed
+    it through untouched."""
+    body = _body_with(store=False, extra_body={"include": []})
+    assert body["include"] == ["reasoning.encrypted_content"]
+
+
+def test_the_include_is_not_asked_for_twice():
+    body = _body_with(store=False, extra_body={
+        "include": ["reasoning.encrypted_content"]})
+    assert body["include"] == ["reasoning.encrypted_content"]
+
+
+def test_a_scalar_include_is_not_dropped_on_the_floor():
+    """Not a shape the API takes, but silently replacing what the caller wrote
+    is how the first version of this lost the setting it was fixing."""
+    body = _body_with(store=False, extra_body={"include": "message.output_text"})
+    assert body["include"] == ["message.output_text",
+                               "reasoning.encrypted_content"]
+
+
+def test_storage_on_asks_for_nothing_even_with_an_include():
+    """The encrypted content is only needed when the API keeps nothing."""
+    body = _body_with(store=True, extra_body={"include": ["message.output_text"]})
     assert body["include"] == ["message.output_text"]
 
 

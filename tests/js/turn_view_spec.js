@@ -761,12 +761,15 @@ test('a cue always resolves to its true text', () => {
 test('cues stack instead of taking turns, and the stack is bounded', () => {
   const e = env('simplified');
   startTurn(e, 'u1');
+  const stream = e.row('a1');
   for (let i = 0; i < 3; i++) {
-    e.ctx.turnViewIngest('tool_call', { msg_id: 'c' + i, tc_id: 'tc-' + i }, e.row('c' + i));
+    e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'step ' + i }, stream);
+    e.clock.tick(300);
   }
   eq(e.cues(), 3, 'three cues are on screen at once');
   for (let i = 3; i < 9; i++) {
-    e.ctx.turnViewIngest('tool_call', { msg_id: 'c' + i, tc_id: 'tc-' + i }, e.row('c' + i));
+    e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'step ' + i }, stream);
+    e.clock.tick(300);
   }
   eq(e.cues(), 4, 'the stack is capped, the oldest fall off the back');
 });
@@ -1252,6 +1255,125 @@ test('a row is cued once, not again when its result lands', () => {
   e.ctx.turnViewIngest('tool_result', { msg_id: 'c1', tc_id: 'tc-1' }, row);
   e.clock.tick(2000);
   eq(e.cues(), 1, 'the result is not a second call');
+});
+
+// A native row is not automatically the transport around MCP calls. The code
+// body announces itself -- its arguments are elided to `<code-mode script, N
+// chars>` before the row is drawn -- and suppressing every native row once the
+// turn had reached MCP hid a real local_shell_call in a mixed turn: the one
+// thing the surface exists to name went past unseen while the turn ran it.
+test('a genuine native call is still cued in a mixed turn', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c0', 'tc-0', 'native', 'exec(<code-mode script, 900 chars>)');
+  toolRow(e, 'c1', 'tc-1', 'mcp', 'read(a)');
+  e.clock.tick(2000);
+  eq(e.cues(), 1, 'the wrapper still yields to the calls it drove');
+  toolRow(e, 'c2', 'tc-2', 'native', 'local_shell(ls -la)');
+  e.clock.tick(2000);
+  eq(e.cues(), 2, 'a tool the agent ran itself is work, not transport');
+});
+
+// The same mixed turn, in the order that actually happens when the agent runs
+// a shell command and then reaches for a file: the native row is still inside
+// its deferral window when the first MCP row arrives. That window asks whether
+// the row was a wrapper -- it is not a verdict on whatever is waiting in it.
+test('a genuine native call just before the first mcp call is still cued', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c1', 'tc-1', 'native', 'local_shell(ls -la)');
+  toolRow(e, 'c2', 'tc-2', 'mcp', 'read(a)');
+  e.clock.tick(2000);
+  eq(e.cues(), 2, 'the shell command the agent ran is not transport for the read');
+});
+
+test('a wrapper just before the first mcp call still yields', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c1', 'tc-1', 'native', 'exec(<code-mode script, 2411 chars>)');
+  toolRow(e, 'c2', 'tc-2', 'mcp', 'read(a)');
+  e.clock.tick(2000);
+  eq(e.cues(), 1, 'the row that only carried the call must not be cued beside it');
+});
+
+// ── A tool that is still running holds its place ────────────────────────
+//
+// The surface says what is happening now. A call that has not answered yet is
+// exactly that, and the thinking and the message that arrive while it runs used
+// to push it out of sight -- so the one moment the reader wants to know what is
+// running was the moment it stopped being shown.
+
+function cueCopies(e) {
+  return e.messages.querySelectorAll('.simple-turn-cue-copy').length;
+}
+
+test('a running tool stays on the surface while the turn talks over it', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  toolRow(e, 'c1', 'tc-1', 'mcp', 'grep(a very slow pattern)');
+  eq(cueCopies(e), 1);
+  const stream = e.row('a1');
+  for (let i = 0; i < 6; i++) {
+    e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'step ' + i }, stream);
+    e.clock.tick(300);
+  }
+  eq(cueCopies(e), 1, 'six cues later, the call it is waiting on is still shown');
+});
+
+test('and it leaves as soon as its result lands', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const row = toolRow(e, 'c1', 'tc-1', 'mcp', 'grep(a very slow pattern)');
+  const stream = e.row('a1');
+  for (let i = 0; i < 6; i++) {
+    e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'step ' + i }, stream);
+    e.clock.tick(300);
+  }
+  e.ctx.turnViewIngest('tool_result', { msg_id: 'c1', tc_id: 'tc-1' }, row);
+  eq(cueCopies(e), 0, 'answered, it is history like anything else');
+});
+
+test('the held column is bounded too', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  for (let i = 0; i < 12; i++) toolRow(e, 'c' + i, 'tc-' + i, 'mcp', 'read(' + i + ')');
+  eq(e.cues(), 8, 'a dozen calls at once must not turn the column into a wall');
+});
+
+// A show_file result is taken by the artifact path, which is the whole reason
+// it never reaches the tool cue a second time: the SSE handler hands the
+// result to `turnViewHandleToolResult` and stops there when it is claimed.
+// The pin has to be released on that path too, or a finished show_file goes on
+// being shown as the thing the agent is doing until the turn ends.
+//
+// `parseShowFileArtifact` lives in messages_markdown.js, which wires the page's
+// scroll handlers as it loads and cannot run against the stub; the parser
+// itself is exercised where it is defined.
+function withArtifactParser(e) {
+  e.ctx.parseShowFileArtifact = (resultText, toolName) => (
+    String(toolName || '') === 'show_file'
+      ? { file_id: 'f1', filename: 'chart.png', url: 'fs://filestore/f1/chart.png',
+          content_type: 'image/png', size_kb: 12 }
+      : null);
+}
+
+test('an artifact result releases the cue its call pinned', () => {
+  const e = env('simplified');
+  withArtifactParser(e);
+  startTurn(e, 'u1');
+  toolRow(e, 'c1', 'tc-1', 'mcp', 'show_file(chart.png)');
+  const stream = e.row('a1');
+  for (let i = 0; i < 6; i++) {
+    e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'step ' + i }, stream);
+    e.clock.tick(300);
+  }
+  eq(cueCopies(e), 1, 'still running, so still held');
+  // Exactly what sse_handlers_a.js does: the artifact claims the result and
+  // the ordinary tool_result ingest never runs.
+  const owned = e.ctx.turnViewHandleToolResult(
+    { msg_id: 'c1', tc_id: 'tc-1', tool: 'show_file', result: '{}' }, null);
+  eq(owned, true, 'the artifact path claimed it');
+  eq(cueCopies(e), 0, 'released the moment its result lands, artifact or not');
 });
 
 if (failures.length) {

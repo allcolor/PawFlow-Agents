@@ -15,6 +15,39 @@ from tools.cc_interactive_filters import (
 logger = logging.getLogger(__name__)
 
 
+# Below this, an echoed result is not worth a marker: the marker costs about
+# as much as the bytes it replaces, and a short string ('ok', a bare count)
+# is exactly the kind that collides with unrelated prose by accident.
+_MIN_ECHOED_RESULT_CHARS = 40
+
+
+def elide_echoed_results(result: str, echoed: list) -> str:
+    """Drop from a script's output only what the rows beside it already say.
+
+    A code-mode script prints what its calls returned, and the relay published
+    each of those results as a row of its own -- the same bytes twice in the
+    next context. But a script also computes: it compares two files, counts
+    what it read, derives a verdict. Replacing the whole output on the sole
+    ground that the script made a call threw that away, and nobody else was
+    holding it.
+
+    So the elision is per fragment, not per output. What a row already carries
+    verbatim is replaced by a pointer to that row; everything else -- the
+    script's own words -- is kept exactly as it was printed. A script whose
+    output quotes none of its results is returned untouched: that output is
+    not a copy of anything.
+    """
+    remaining = str(result)
+    for index, text in enumerate(echoed, start=1):
+        text = str(text or "")
+        if len(text) < _MIN_ECHOED_RESULT_CHARS or text not in remaining:
+            continue
+        remaining = remaining.replace(
+            text, f"<result of call {index}, {len(text)} chars — "
+                  f"the row beside this one>")
+    return remaining
+
+
 def observed_context_tokens(usage) -> int:
     """Return the prompt size one observed Responses exchange reported.
 
@@ -57,7 +90,16 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         # The relay's rows for a script all arrive before that script's own
         # result, so the difference at result time is what this script did.
         self._code_mode_calls: dict = {}
-        self._mcp_rows_seen = 0
+        # Relay rows in emission order, each mapped to what it returned.
+        # Keyed by row, not counted: a Responses call item is observed twice
+        # -- streamed, then replayed in the next request's input -- and the
+        # base class renders the second observation onto the first row. A
+        # counter bumped after that call counted the re-read as a new call,
+        # and the next script paid for a row it never produced. Ordered
+        # (dict, 3.7+) because a script answers only for the rows that
+        # appeared while it ran; valued because eliding its output needs to
+        # know what those rows actually say.
+        self._mcp_row_results: dict = {}
 
     def _record_context_tokens(self, usage) -> None:
         measured = observed_context_tokens(usage)
@@ -112,9 +154,12 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         if not row_id:
             return
         if is_body:
-            self._code_mode_calls.setdefault(row_id, self._mcp_rows_seen)
+            self._code_mode_calls.setdefault(
+                row_id, len(self._mcp_row_results))
         elif block.get("tool_origin") == "mcp":
-            self._mcp_rows_seen += 1
+            # setdefault, not append: the second observation of the same call
+            # is the same row, and it must not count twice.
+            self._mcp_row_results.setdefault(row_id, "")
 
     def _displayable_args(self, name: str, args: dict) -> dict:
         """Keep the code body's row, drop the body.
@@ -143,28 +188,35 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         """Keep the code body's result, drop what the rows beside it already say.
 
         Eliding the body fixed half the duplication. The other half is what the
-        script printed: a code-mode script's output is the aggregate of the very
-        calls the relay reported one by one, so the same bytes reached the next
-        context twice -- once as each call's own tool result, once more inside
-        the script's. Invisible while the session is warm (Codex never sees the
+        script printed: a code-mode script's output quotes the very calls the
+        relay reported one by one, so those bytes reached the next context
+        twice -- once as each call's own tool result, once more inside the
+        script's. Invisible while the session is warm (Codex never sees the
         relay's rows, only its own script and its output), and paid for real at
         every cold start, which is to say at every compaction restart: exactly
         when the window is already full.
 
-        Only when this script actually produced relay rows. A script that
-        reached no PawFlow tool -- it read a file with Codex's own runtime, or
-        computed something and printed it -- is described by nobody else, and
-        its output is the only record there is.
+        Only the quoted bytes, and only the rows THIS script produced. A
+        script that reached no PawFlow tool -- it read a file with Codex's own
+        runtime, or computed something and printed it -- is described by
+        nobody else. Neither is the part of a script's output it derived
+        rather than echoed, so that part stays even when the calls beside it
+        do not.
+
+        This is also where a relay row's own result is recorded: the rows for
+        a script all land before the script's own result, so by the time the
+        aggregate arrives its pieces are known.
         """
         row_id = str((block or {}).get("id") or "")
         before = self._code_mode_calls.get(row_id)
         if before is None:
+            if row_id in self._mcp_row_results:
+                self._mcp_row_results[row_id] = str(result)
             return result
-        rows = self._mcp_rows_seen - before
-        if rows <= 0:
+        echoed = list(self._mcp_row_results.values())[before:]
+        if not echoed:
             return result
-        return (f"<code-mode script output, {len(str(result))} chars — "
-                f"the {rows} call(s) it made are the rows beside this one>")
+        return elide_echoed_results(result, echoed)
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse

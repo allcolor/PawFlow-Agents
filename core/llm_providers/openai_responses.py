@@ -42,6 +42,10 @@ _TERMINAL_EVENTS = ("response.completed", "response.incomplete", "response.faile
 #: Strings a human writes for "off" in a settings field.
 _FALSEY_TEXT = {"false", "0", "no", "off"}
 
+#: What a `store: false` request must ask for, or the model's chain of thought
+#: is held nowhere: the API keeps nothing, and our history gets no ciphertext.
+_REASONING_INCLUDE = "reasoning.encrypted_content"
+
 
 def _store_setting(value) -> bool | None:
     """Tri-state read of `store`: None when unset, else the flag itself.
@@ -339,8 +343,23 @@ class LLMOpenaiResponsesMixin:
             body.pop("store", None)
         else:
             body["store"] = _effective
-            if _effective is False and "include" not in body:
-                body["include"] = ["reasoning.encrypted_content"]
+            if _effective is False:
+                # Completed, not merely defaulted. Testing the KEY alone left
+                # `extra_body: {"include": []}` -- or an include naming
+                # something else entirely -- as a ZDR request with no
+                # encrypted reasoning: the same 400 on the next tool loop the
+                # store fix was for. A caller's include is kept, ours is added
+                # to it, and a non-list value is not silently dropped.
+                include = body.get("include")
+                if isinstance(include, (list, tuple)):
+                    include = list(include)
+                elif include in (None, ""):
+                    include = []
+                else:
+                    include = [include]
+                if _REASONING_INCLUDE not in include:
+                    include.append(_REASONING_INCLUDE)
+                body["include"] = include
         return body
 
     def _stream_openai_responses(self, messages, model, temperature, max_tokens,

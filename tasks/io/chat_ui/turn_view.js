@@ -7,6 +7,12 @@ const TURN_TEXT_COALESCE_MS = 300;
 // there is something newer to read.
 const TURN_TRANSIENT_MAX_CHARS = 400;
 const TURN_TRANSIENT_MAX_STACK = 4;
+// A cue whose tool has not answered yet is exempt from that cap: what is still
+// running is exactly what the surface is for, and a thinking block or a
+// message arriving mid-call used to push it out of sight while it ran. Still
+// bounded -- a script that fires a dozen calls at once must not turn the
+// column into a wall -- so the oldest one yields once this many are held.
+const TURN_TRANSIENT_MAX_PINNED_STACK = 8;
 const TURN_ELAPSED_TICK_MS = 1000;
 // The waiting state is a rain of glyphs behind the cues, and a cue arrives by
 // condensing out of it: its own characters land one after another out of the
@@ -533,6 +539,13 @@ function turnViewHandleToolResult(data, resultElement) {
   const resultText = data && (data.result !== undefined ? data.result : data.content);
   const artifact = typeof parseShowFileArtifact === 'function' ? parseShowFileArtifact(resultText, toolName) : null;
   if (!artifact) return false;
+  // This IS the result landing on that call, and it is the last thing this
+  // surface will hear about it: an artifact result never reaches
+  // `_turnOfferToolCue` a second time, because the caller stops at the
+  // artifact. Releasing here keeps the promise the pin makes -- held while it
+  // runs, freed when it answers -- instead of leaving a finished show_file
+  // pinned as "running" until the turn ends.
+  _turnReleasePinnedCue(state, callEl ? _turnCueKey(callEl) : (tcId || null));
   if (callEl) {
     state.toolElementsByCallId.set(tcId, callEl);
     if (callEl.parentNode !== state.tabs.tools.bodyEl) state.tabs.tools.bodyEl.appendChild(callEl);
@@ -624,6 +637,32 @@ function _turnToolCueOrigin(element) {
   return '';
 }
 
+// The marker the provider itself leaves on a code-mode wrapper: its body is
+// elided to `<code-mode script, N chars>` before the row is ever drawn. A
+// native row carrying it IS the transport around the MCP calls; a native row
+// without it is a call the agent made in its own right -- a local_shell_call,
+// an apply_patch -- and a mixed turn has both. Suppressing every native row
+// once the turn had reached MCP hid the second kind as well, which is the one
+// the surface exists to show.
+const TURN_CODE_MODE_WRAPPER_MARK = '<code-mode script,';
+
+function _turnCueKey(node) {
+  return (node && node.dataset && node.dataset.tcId) || node;
+}
+
+function _turnIsCodeModeWrapper(element) {
+  const text = element && (element.textContent || '');
+  return !!text && text.indexOf(TURN_CODE_MODE_WRAPPER_MARK) >= 0;
+}
+
+// Has this row already received its output? A tool that has not is still
+// running, and the cue that carries it holds its place instead of being pushed
+// off the back of the stack.
+function _turnToolRowIsDone(element) {
+  if (!element || !element.querySelector) return true;
+  return !!element.querySelector('.tc-result');
+}
+
 function _turnDropDeferredTool(state) {
   if (state.transient.deferredToolTimer) {
     clearTimeout(state.transient.deferredToolTimer);
@@ -635,7 +674,10 @@ function _turnDropDeferredTool(state) {
 }
 
 function _turnEmitDeferredTool(state) {
-  const held = _turnDropDeferredTool(state);
+  _turnEmitHeldTool(state, _turnDropDeferredTool(state));
+}
+
+function _turnEmitHeldTool(state, held) {
   if (!held || state.expanded || state.status !== 'working') return;
   _turnEnqueueTransient(state, { kind: 'tools', node: held });
 }
@@ -666,14 +708,20 @@ function _turnOfferToolCue(state, element) {
   // same row a second time -- by then grown to hold its output -- and for a
   // code body that output is the whole `Script completed / Wall time / ...`
   // block, cued as a wrapper the reader already saw and cannot read anyway.
-  const key = (element && element.dataset && element.dataset.tcId) || element;
+  const key = _turnCueKey(element);
   if (key) {
-    if (state.transient.cuedTools.has(key)) return;
+    if (state.transient.cuedTools.has(key)) {
+      // The second offer is the result landing on the row, and it is the only
+      // completion signal this surface gets: the cue stops being pinned and
+      // rejoins the ordinary stack, free to be pushed off by newer ones.
+      _turnReleasePinnedCue(state, key);
+      return;
+    }
     state.transient.cuedTools.add(key);
   }
   const origin = _turnToolCueOrigin(element);
   if (origin === 'native') {
-    if (state.transient.mcpSeen) return;
+    if (state.transient.mcpSeen && _turnIsCodeModeWrapper(element)) return;
     // A second native row means the first was not a wrapper after all.
     _turnEmitDeferredTool(state);
     state.transient.deferredTool = element;
@@ -685,7 +733,14 @@ function _turnOfferToolCue(state, element) {
   }
   if (origin === 'mcp') {
     state.transient.mcpSeen = true;
-    _turnDropDeferredTool(state);
+    // The native row waiting in front of this one is transport only if it is
+    // the wrapper this call came out of. Dropping it unconditionally hid a
+    // genuine native call -- a local_shell, an apply_patch -- for the single
+    // reason that it happened to be the row before the turn's first MCP one:
+    // the deferral window is a question about the wrapper, not a sentence on
+    // whatever sits in it.
+    const held = _turnDropDeferredTool(state);
+    if (held && !_turnIsCodeModeWrapper(held)) _turnEmitHeldTool(state, held);
   }
   _turnEnqueueTransient(state, { kind: 'tools', node: element });
 }
@@ -726,8 +781,15 @@ function _turnEnqueueTransient(state, item) {
   icon.className = 'simple-turn-ephemeral-icon'; icon.innerHTML = _turnSvg(item.kind);
   icons.appendChild(icon);
   const body = document.createElement('span');
-  const entry = { el: cue, enter: null, scramble: null };
+  const entry = { el: cue, enter: null, scramble: null, pinned: null };
   if (item.node) {
+    // A call still waiting for its output is what "working" means right now,
+    // so its cue is pinned: thinking and message cues arriving behind it push
+    // it back but cannot push it out. Released when the result lands on the
+    // row, or dropped with the rest when the turn ends.
+    if (item.kind === 'tools' && !_turnToolRowIsDone(item.node)) {
+      entry.pinned = _turnCueKey(item.node);
+    }
     // A copy, never the row itself: the original is the tab's canonical node
     // and moving it here would take it out of the record the reader opens.
     body.className = 'simple-turn-ephemeral-node';
@@ -968,14 +1030,35 @@ function _turnStyleCue(el, depth) {
 
 function _turnRestackCues(state) {
   // Snapshot: retiring splices the live array, and depth is read off the
-  // order as it was when the pass started.
+  // order as it was when the pass started. Newest first, so a cue that keeps
+  // its place does not push the ones in front of it any deeper.
   const cues = state.transient.cues.slice();
-  for (let i = 0; i < cues.length; i++) {
-    const depth = cues.length - 1 - i;
-    if (depth >= TURN_TRANSIENT_MAX_STACK) { _turnRetireCue(state, cues[i]); continue; }
-    if (!cues[i].enter) _turnStyleCue(cues[i].el, depth);
+  let depth = 0;
+  for (let i = cues.length - 1; i >= 0; i--) {
+    const entry = cues[i];
+    const limit = entry.pinned ? TURN_TRANSIENT_MAX_PINNED_STACK
+                               : TURN_TRANSIENT_MAX_STACK;
+    if (depth >= limit) { _turnRetireCue(state, entry); continue; }
+    // A pinned cue past the last visible step keeps that step's pose rather
+    // than fading to nothing: it is held to be READ, and a tool one still
+    // has to squint at is not being shown.
+    if (!entry.enter) {
+      _turnStyleCue(entry.el, Math.min(depth, TURN_TRANSIENT_MAX_STACK - 1));
+    }
+    depth++;
   }
   _turnSyncIdle(state);
+}
+
+// A cue stops being pinned the moment its tool answers. Restacked at once, so
+// the newer cues piled up behind it can take the room back.
+function _turnReleasePinnedCue(state, key) {
+  if (!key) return;
+  let released = false;
+  for (const entry of state.transient.cues) {
+    if (entry.pinned === key) { entry.pinned = null; released = true; }
+  }
+  if (released) _turnRestackCues(state);
 }
 
 function _turnRetireCue(state, entry) {

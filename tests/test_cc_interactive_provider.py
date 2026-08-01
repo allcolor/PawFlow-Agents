@@ -1616,6 +1616,95 @@ def test_a_prompt_that_never_lands_fails_loudly_and_bounded(monkeypatch):
     # And no Enter pressed into an empty box.
     assert not [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
 
+# The pane is a screen, not a buffer. Claude Code hard-wraps the prompt at the
+# pane width, so the probe fragment routinely arrives split across two screen
+# lines with a border and padding between its halves -- present, character for
+# character, and absent from any verbatim search. It wraps at the same column
+# on every attempt, so all three pastes were declared missing and a prompt that
+# was sitting in the composer needing only Enter failed the turn outright.
+
+
+def _cc_paste_pool(monkeypatch, fake_run):
+    from core.claude_code_interactive_pool import (
+        InteractiveClaudeCodePool, InteractiveContainer)
+
+    monkeypatch.setattr("core.claude_code_interactive_pool.docker_cmd", lambda: ["docker"])
+    monkeypatch.setattr("core.claude_code_interactive_pool.subprocess.run", fake_run)
+    monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "0")
+    monkeypatch.setattr(
+        "core.claude_code_interactive_pool.time.sleep", lambda value: None)
+    pool = InteractiveClaudeCodePool()
+    monkeypatch.setattr(pool, "_PASTE_LANDED_SECONDS", 0.0)
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    monkeypatch.setattr(pool, "_remember_injected_prompt", lambda *a, **k: None)
+    monkeypatch.setattr(
+        pool, "_remember_injected_prompt_for_event_service", lambda *a, **k: None)
+    state = InteractiveContainer(
+        key=("u", "c", "a", "svc"),
+        name="container",
+        workdir="/host",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token="sess",
+        event_service_id="events",
+        internal_token="internal",
+    )
+    state.prompt_ready = True
+    return pool, state
+
+
+WRAPPED_TEXT = (
+    "please read /workspace/core/llm_client.py\n"
+    "and report the communication path it takes to the relay"
+)
+
+
+def _wrapped_composer_pane(pool, text):
+    """The composer holding `text`, wrapped mid-fragment like the real TUI."""
+    fragment = pool._submit_probe_fragment(text)
+    cut = len(fragment) // 2
+    pane = ("\u2502 > please read /workspace/core/llm_client.py and report "
+            + fragment[:cut] + " \u2502\n"
+            "\u2502   " + fragment[cut:] + "                            \u2502\n"
+            "  ? for shortcuts")
+    assert fragment and fragment not in pane, (
+        "the fixture must reproduce the wrap: verbatim search has to fail")
+    return pane
+
+
+def test_a_paste_wrapped_by_the_composer_counts_as_landed(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "capture-pane" in cmd:
+            return _PaneRun(_wrapped_composer_pane(pool, WRAPPED_TEXT))
+        return _PaneRun("")
+
+    pool, state = _cc_paste_pool(monkeypatch, fake_run)
+    assert pool.send_text(state, WRAPPED_TEXT) is True
+    assert len([c for c in calls if "paste-buffer" in c]) == 1, (
+        "the prompt is in the composer; re-pasting would put it there twice")
+    assert len([c for c in calls if c[-2:] == ["pawflow", "Enter"]]) == 2
+
+
+def test_an_empty_composer_is_still_a_missing_paste(monkeypatch):
+    """Squeezing the pane must not make the probe match anything: an empty box
+    is the case this check exists for."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "capture-pane" in cmd:
+            return _PaneRun("\u2502 >                    \u2502\n  ? for shortcuts")
+        return _PaneRun("")
+
+    pool, state = _cc_paste_pool(monkeypatch, fake_run)
+    assert pool.send_text(state, WRAPPED_TEXT) is False
+    assert "never reached the composer" in state.last_error
+    assert not [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
+
 
 def test_the_codex_header_alone_is_not_a_ready_prompt():
     """`>_ OpenAI Codex (v...)` is drawn the instant the TUI starts, long

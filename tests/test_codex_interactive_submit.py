@@ -176,3 +176,57 @@ def test_paste_settle_env_override_still_wins(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "2.5")
     assert CodexInteractivePool()._paste_settle_seconds() == 2.5
     assert InteractiveClaudeCodePool()._paste_settle_seconds() == 2.5
+
+
+# ── the proof that the paste landed ────────────────────────────────────────
+#
+# `_paste_landed` is what stands between a paste that never arrived and a turn
+# that waits out its 300s no-event timeout. Two ways it said yes without
+# evidence.
+
+# The header is drawn the instant the TUI starts; the input box is not. Past
+# the readiness timeout, or during a redraw, this is the whole pane.
+HEADER_ONLY_PANE = ">_ OpenAI Codex (v0.104.0)\n\n  model:  gpt-5.6-sol\n"
+
+
+def _landed(pool, pane, monkeypatch):
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: pane)
+    monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(type(pool), "_PASTE_LANDED_SECONDS", 0.0)
+    return pool._paste_landed(_State(), PROMPT)
+
+
+def test_a_pane_with_no_input_box_is_not_proof_of_a_paste(monkeypatch):
+    """The reviewer's repro. `>_ OpenAI Codex` locates no composer, and
+    "cannot tell" was answered True -- so a paste into a TUI that has no input
+    box yet was declared landed, Enter went nowhere, and the turn sat on a
+    session nobody had prompted until the no-event timeout fired."""
+    assert _landed(CodexInteractivePool(), HEADER_ONLY_PANE, monkeypatch) is False
+
+
+def test_the_chip_in_the_composer_is_still_proof(monkeypatch):
+    assert _landed(CodexInteractivePool(), UNSENT_PANE, monkeypatch) is True
+
+
+def test_an_empty_composer_is_still_a_refusal(monkeypatch):
+    assert _landed(CodexInteractivePool(), SUBMITTED_PANE, monkeypatch) is False
+
+
+def test_a_running_turn_is_still_proof(monkeypatch):
+    """Accepted between the paste and this look."""
+    assert _landed(CodexInteractivePool(), RUNNING_PANE, monkeypatch) is True
+
+
+def test_an_unreadable_pane_still_must_not_block_a_send(monkeypatch):
+    assert _landed(CodexInteractivePool(), "", monkeypatch) is True
+
+
+def test_a_tui_that_declares_no_composer_is_judged_exactly_as_before(
+        monkeypatch):
+    """Claude Code declares no composer prefix, so its whole pane IS the
+    composer and is always located: the new refusal cannot reach it, and its
+    fragment heuristic answers as it always did."""
+    pool = InteractiveClaudeCodePool()
+    pane = "> " + pool._submit_probe_fragment(PROMPT) + "\n  ? for shortcuts\n"
+    assert _landed(pool, pane, monkeypatch) is True
+    assert _landed(pool, "> \n  ? for shortcuts\n", monkeypatch) is False

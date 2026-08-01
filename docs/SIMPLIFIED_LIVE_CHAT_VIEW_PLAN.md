@@ -1278,13 +1278,40 @@ things keep the surface on the calls:
   the row is drawn when the model *finishes emitting* the call, while the first
   MCP row still waits on the TUI, the relay round trip and the script's own
   preamble, so half a second lost that race on nearly every group.
-- Once a turn has produced one MCP call, its native rows are dropped from the
-  cue for the rest of the turn. Deferring each wrapper only against the calls
-  that follow it let every *later* script win its own race — one deferral
-  fixed, the pattern unchanged.
+- Once a turn has produced one MCP call, its native **wrappers** are dropped
+  from the cue for the rest of the turn. Deferring each wrapper only against
+  the calls that follow it let every *later* script win its own race — one
+  deferral fixed, the pattern unchanged. A wrapper is recognised by the mark
+  the provider leaves on it (`<code-mode script, N chars>`), not by "native in
+  a turn that has reached MCP": that reading also hid a real `local_shell_call`
+  or `apply_patch` in a mixed turn, which is a tool the agent ran in its own
+  right and exactly what the surface is for.
+  The same mark decides the fate of a row still *inside* its deferral window
+  when the first MCP call arrives: the wrapper is dropped, a genuine native
+  call is emitted behind the MCP cue. The window asks whether the row was
+  transport; it is not a sentence on whatever happens to be waiting in it.
 - A row is cued once, when the call appears. The `tool_result` offers the same
   row a second time, by then grown to hold its output; for a code body that is
-  the whole `Script completed / Wall time / ...` block.
+  the whole `Script completed / Wall time / ...` block. That second offer is
+  also the only completion signal this surface gets — see below.
+
+**A tool that is still running holds its place.** A cue is normally pushed off
+the back of the column by the four newer ones behind it. For a call that has
+not answered yet that is backwards: the thinking and the message the agent
+produces *while it waits* pushed the call out of sight, so the one moment the
+reader wants to know what is running was the moment it stopped being shown. A
+tool cue whose row carries no `.tc-result` is pinned: newer cues push it back
+and dim it, but cannot push it out. It is released when its result lands on
+the row (the second offer), and dropped with everything else when the turn
+ends. Bounded like the rest — `TURN_TRANSIENT_MAX_PINNED_STACK` — so a script
+that fires a dozen calls at once does not turn the column into a wall, and a
+pinned cue never fades past the last visible step: it is held to be read.
+
+A `show_file` result never produces that second offer: `turnViewHandleToolResult`
+claims it for the Artifacts tab and the caller stops there. The release is
+therefore raised where the artifact is claimed, not only where the second offer
+is seen — both paths are the result landing on the row, and the pin means the
+same thing on either.
 
 The suppressed rows are unaffected in Tool calls — this is the animated surface
 only, and it is the one place that has to name what is happening now.

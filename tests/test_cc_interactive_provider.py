@@ -3062,6 +3062,47 @@ def test_cc_interactive_event_service_publishes_manual_tmux_response(monkeypatch
     }}]
 
 
+def test_manual_capture_persists_final_text_when_only_tokens_arrived(monkeypatch):
+    """A transient token bubble is not the conversation record.
+
+    Regression: the coordinator returned a complete response after its final
+    block callback was lost at the Stop boundary. The tmux and live token bubble
+    showed the answer, then active_released closed the turn with no durable row.
+    """
+    from services.cc_interactive_event_service import CCInteractiveEventService
+
+    writes = []
+
+    class _Writer:
+        def enqueue_message(self, msg, agent_name="", user_id="", ttl=0,
+                            sse_events=None):
+            writes.append((msg, sse_events))
+
+    class _ConversationWriter:
+        @staticmethod
+        def for_conversation(_cid):
+            return _Writer()
+
+    monkeypatch.setattr(
+        "core.conversation_writer.ConversationWriter", _ConversationWriter)
+
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    state = svc.register_session(
+        "sess", user_id="uid1", conversation_id="cid1",
+        agent_name="assistant")
+    text_cb, _block_cb, ensure_final = svc._capture_stream_callbacks(state)
+
+    text_cb("answer visible only as tokens")
+    assert writes == []
+    ensure_final("answer visible only as tokens")
+    ensure_final("answer visible only as tokens")
+
+    assert len(writes) == 1
+    assert writes[0][0]["content"] == "answer visible only as tokens"
+    assert writes[0][0]["channel"] == "tmux"
+    assert writes[0][1][0]["type"] == "new_message"
+
+
 def test_cc_interactive_event_service_ignores_pawflow_injected_prompt(monkeypatch):
     from services.cc_interactive_event_service import CCInteractiveEventService
 

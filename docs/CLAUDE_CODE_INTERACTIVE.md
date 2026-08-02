@@ -514,20 +514,27 @@ write into a terminal:
   mirrors it as a `channel="tmux"` user message and the MITM captures the
   answer, so the turn appears in the chat by the same route as a prompt typed
   at the tmux. Nothing is echoed locally, or the hook's copy would double it.
-- **A typed newline is the `Ctrl+Enter` key, forwarded.** Codex, Claude Code
-  and Antigravity all break the line on it, and modern terminals encode it as
-  the CSI u sequence `ESC[13;5u` (`ESC[13;2u` for `Shift+Enter`) — the same
-  sequences PawCode binds on its own prompt. Grabbed, the composer's contents
-  go over first and then the key, so the break is made by the TUI in its own
-  composer. Assembling a multiline block here and pushing it across is what
-  unfolds one prompt into several submissions.
+- **A typed newline stays in the webchat composer.** `Ctrl+Enter` and
+  `Shift+Enter` insert it locally before Grab sees the key. The real tmux path
+  normalizes the otherwise-correct CSI-u modified Enter sequence into a plain
+  submit, so forwarding it cannot preserve the user's intent. The multiline
+  draft crosses the terminal only when the user finally submits it.
 - **A block that is already multiline was pasted, not typed**, and goes as one
-  bracketed paste (`ESC[200~` ... `ESC[201~`), then a settle delay, then
-  `Enter` — the pool's paste-then-submit discipline.
+  bracketed paste (`ESC[200~` ... `ESC[201~`). Every non-empty terminal write,
+  including a one-line prompt, then gets the bounded settle delay before its
+  single `Enter`: WebSocket frame order does not mean the TUI has ingested the
+  text frame before the key frame arrives.
 
-Keys, grabbed: `Enter` submits to the TUI; `Ctrl+Enter` and `Shift+Enter` are
-forwarded as newlines (ungrabbed, both insert one in the composer too —
-`Ctrl+Enter` previously did nothing at all there); `Esc` passes through, which
+Captured answers stream as transient `token` events and are finalized by a
+durable `new_message` carrying the same message id. The browser reconciles that
+pair in place instead of dropping the final event as a duplicate, and the
+capture verifies on exit that the coordinator's final text has a persisted row
+before publishing `active_released`.
+
+Keys, grabbed: `Enter` submits to the TUI; `Ctrl+Enter` and `Shift+Enter` insert
+a newline locally, exactly as they do ungrabbed. The complete multiline draft
+is sent later as one bracketed paste, because CSI-u modified Enter is normalized
+into a submit key by the real tmux path. `Esc` passes through, which
 is what Codex's *Esc to interrupt* needs; `Ctrl+C` passes through as `0x03`
 unless there is a selection, where it stays a copy. `Enter` on an empty
 composer still submits — that is how lines broken with `Ctrl+Enter` are sent.

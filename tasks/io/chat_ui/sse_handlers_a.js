@@ -8,8 +8,41 @@ function _sseWireA() {
     const data = e.data ? JSON.parse(e.data) : {};
     if (data.role && data.content) {
       finalizeThinkingFromEvent(data, 'message');
-      // Dedup by msg_id — don't render if already in DOM
-      if (data.msg_id && document.querySelector('[data-msgid="' + data.msg_id + '"]')) return;
+      // A token event can win the race and create the bubble before the durable
+      // new_message carrying the same id arrives. That is reconciliation, not a
+      // duplicate: replace the preview with the persisted text and retire its
+      // stream. Merely returning leaves a transient bubble that a later release
+      // can close without ever displaying the durable answer.
+      const existing = data.msg_id
+        ? document.querySelector('[data-msgid="' + data.msg_id + '"]') : null;
+      if (existing) {
+        if (data.role === 'assistant') {
+          const contentEl = existing.querySelector('.msg-content');
+          if (contentEl) {
+            contentEl.innerHTML = sourceBadge(data.source || {})
+              + renderMarkdown(String(data.content || '').replace(/^\[[^\]]+\]:\s*/, ''));
+          }
+          existing.dataset.rawText = String(data.content || '').substring(0, 500);
+          existing.classList.remove('streaming');
+          existing.classList.add('finalized');
+          delete existing.dataset.transientUi;
+          const agent = data.agent_name || (data.source && data.source.name) || '';
+          const stream = streams[(agent || '').toLowerCase()];
+          if (stream && stream.el === existing) {
+            stream.lastEl = existing;
+            stream.el = null;
+            stream.text = '';
+            stream.chunks = [];
+          }
+          if (typeof turnViewIngest === 'function') {
+            turnViewIngest('assistant', data, existing);
+          }
+          if (typeof _noteLiveHistoryAppend === 'function') {
+            _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
+          }
+        }
+        return;
+      }
       const messageExtra = Object.assign({}, data, {
         source: data.source, msg_id: data.msg_id, ts: data.ts,
         attachments: data.attachments || [],

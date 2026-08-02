@@ -58,23 +58,20 @@ def test_grab_never_routes_through_the_pool_send_path():
     assert "addMsg('user'" not in src
 
 
-def test_a_typed_newline_is_the_ctrl_enter_key_forwarded():
-    """Codex, Claude Code and Antigravity all break the line on Ctrl+Enter.
+def test_a_typed_newline_stays_local_until_the_final_grab_submit():
+    """The real tmux path normalizes CSI-u Ctrl+Enter into a submit key.
 
-    So grabbed, that key is FORWARDED and the TUI makes the newline in its own
-    composer. Assembling a multiline block here and pushing it over is the
-    thing that unfolds one prompt into several submissions.
+    Keep the multiline draft in the textarea, then send it once as a bracketed
+    paste when plain Enter eventually submits it.
     """
-    src = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
-    # CSI u, the encoding modern terminals use — same sequences PawCode binds.
-    assert "_GRAB_CTRL_ENTER = '\\x1b[13;5u'" in src
-    assert "_GRAB_SHIFT_ENTER = '\\x1b[13;2u'" in src
-    body = src[src.index("function grabHandleKey"):]
-    body = body[:body.index("\n// A conversation")]
-    # Composer contents go over first, then the key: the break lands after
-    # what was typed, not before it.
-    assert body.index("_grabFlush(input)") < body.index("_GRAB_CTRL_ENTER")
-    assert "_composerInsertNewline" not in body
+    grab = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
+    assert "_GRAB_CTRL_ENTER" not in grab
+    attach = (CHAT_UI / "attachments.js").read_text(encoding="utf-8")
+    body = attach[attach.index("function handleKey(e)"):]
+    newline = "e.shiftKey || e.ctrlKey || e.metaKey || e.altKey"
+    assert newline in body
+    assert body.index(newline) < body.index("grabHandleKey(e)")
+    assert body.index("_composerInsertNewline(input)") < body.index("grabHandleKey(e)")
 
 
 def test_a_pasted_block_still_goes_as_one_bracketed_paste():
@@ -87,11 +84,34 @@ def test_a_pasted_block_still_goes_as_one_bracketed_paste():
     flush = flush[:flush.index("\n/** Send the composer")]
     assert "text.indexOf('\\n') !== -1" in flush
     assert "_GRAB_PASTE_START + text + _GRAB_PASTE_END" in flush
-    # A paste needs a settle before the Enter that submits it.
+    # Every non-empty terminal write needs a settle before Enter. WebSocket
+    # frame ordering does not mean the TUI has ingested the first frame yet.
     send = src[src.index("function grabSend"):]
     send = send[:send.index("\n/** Composer keys")]
-    assert "setTimeout(() => _grabWrite('\\r'), _GRAB_SUBMIT_DELAY_MS)" in send
+    assert "if (hadText) setTimeout(() => _grabWrite('\\r'), _GRAB_SUBMIT_DELAY_MS)" in send
     assert "_grabWrite('\\r')" in send
+
+
+def test_single_line_grab_also_settles_before_its_only_enter():
+    """Regression: immediate text-frame + Enter-frame made Codex swallow Enter,
+    so the user had to press it a second time to submit a one-line prompt."""
+    src = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
+    send = src[src.index("function grabSend"):]
+    send = send[:send.index("\n/** Composer keys")]
+    assert "const hadText = !!text" in send
+    assert "const pasted = _grabFlush" not in send
+
+
+def test_durable_grab_response_reconciles_its_token_bubble():
+    """The final new_message must finalize, not ignore, the same-id preview."""
+    src = (CHAT_UI / "sse_handlers_a.js").read_text(encoding="utf-8")
+    listener = src[src.index("eventSource.addEventListener('new_message'"):]
+    listener = listener[:listener.index("// ── Proactive notifications")]
+    assert "const existing = data.msg_id" in listener
+    assert "existing.classList.remove('streaming')" in listener
+    assert "existing.classList.add('finalized')" in listener
+    assert "stream.el = null" in listener
+    assert "turnViewIngest('assistant', data, existing)" in listener
 
 
 def test_escape_and_ctrl_c_reach_the_tui():
@@ -105,29 +125,25 @@ def test_escape_and_ctrl_c_reach_the_tui():
 
 
 def test_both_newline_keys_work_grabbed_and_ungrabbed():
-    """The TUIs newline on Ctrl+Enter, the webchat only ever had Shift+Enter."""
-    grab = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
-    body = grab[grab.index("function grabHandleKey"):]
-    assert "e.shiftKey || e.ctrlKey" in body
-    # Grabbed, each is forwarded as itself rather than folded into one key.
-    assert "_GRAB_SHIFT_ENTER : _GRAB_CTRL_ENTER" in body
-
+    """One local branch owns newline before grabbed or normal submission."""
     attach = (CHAT_UI / "attachments.js").read_text(encoding="utf-8")
     assert "function _composerInsertNewline(" in attach
-    # Ctrl+Enter now inserts a newline instead of doing nothing at all, and it
-    # is checked before the plain-Enter send.
-    assert "if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {" in attach
-    assert (attach.index("e.key === 'Enter' && (e.ctrlKey || e.metaKey)")
-            < attach.index("e.key === 'Enter' && !e.shiftKey && !e.ctrlKey"))
+    body = attach[attach.index("function handleKey(e)"):]
+    assert "e.shiftKey || e.ctrlKey || e.metaKey || e.altKey" in body
+    assert body.index("_composerInsertNewline(input)") < body.index("grabHandleKey(e)")
+    assert body.index("_composerInsertNewline(input)") < body.index("send();")
 
 
-def test_composer_hooks_defer_to_grab_first():
+def test_composer_newline_precedes_grab_then_other_hooks_defer_to_it():
     attach = (CHAT_UI / "attachments.js").read_text(encoding="utf-8")
     send = attach[attach.index("async function send()"):]
     send = send[:send.index("messageHistory.unshift")]
     assert "grabActive()" in send and "grabSend(); return;" in send
     key = attach[attach.index("function handleKey(e)"):]
-    assert "grabHandleKey(e)) return;" in key[:400]
+    newline = key.index("_composerInsertNewline(input)")
+    grab = key.index("grabHandleKey(e)) return;")
+    assert newline < grab
+    assert grab < key.index("if (_skillAutocomplete.open)")
 
 
 def test_grab_is_released_when_the_session_or_selection_moves():

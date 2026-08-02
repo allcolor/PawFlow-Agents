@@ -551,6 +551,14 @@ function _composerInsertNewline(input) {
 
 function handleKey(e) {
   const input = e.target;
+  // Newline is a composer operation in both modes. Handle it before Grab so a
+  // held/releasing terminal session cannot reinterpret Ctrl+Enter as submit.
+  // The complete multiline value is sent later as one bracketed paste.
+  if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)) {
+    e.preventDefault();
+    _composerInsertNewline(input);
+    return;
+  }
   // Grab takes the keys it needs (Esc, Enter, Ctrl+C) before anything here.
   if (typeof grabHandleKey === 'function' && grabHandleKey(e)) return;
   if (_skillAutocomplete.open) {
@@ -601,14 +609,7 @@ function handleKey(e) {
     }
     return;
   }
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-    // Ctrl+Enter = newline, like the CLI TUIs. Shift+Enter still works and
-    // the textarea inserts that one itself.
-    e.preventDefault();
-    _composerInsertNewline(input);
-    return;
-  }
-  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+  if (e.key === 'Enter') {
     e.preventDefault();
     _hideSkillAutocomplete();
     send();

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.85] — 2026-08-02
+
+### Fixed
+
+- Grab waits for the terminal to ingest every non-empty composer write before
+  sending its single Enter, including one-line prompts. This removes the race
+  where Codex displayed the text but required a second Enter to submit it.
+- Modified Enter keys insert a newline locally in both normal and Grab modes.
+  The complete multiline draft is sent later as one bracketed paste, avoiding
+  tmux normalisation of CSI-u Ctrl+Enter into a submit.
+- Manual terminal capture cannot lose its final answer at a Stop/request
+  boundary: a response visible only through transient tokens is persisted
+  before activity is released, and the browser reconciles the durable
+  `new_message` with its same-id streaming bubble.
+
 ## [1.0.0-beta.84] — 2026-08-02
 
 ### Added

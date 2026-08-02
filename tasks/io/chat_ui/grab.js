@@ -29,14 +29,6 @@ const _GRAB_OPEN_ACTIONS = {
   'codex-interactive': 'open_cc_interactive_terminal',
   'antigravity-interactive': 'open_antigravity_interactive_terminal',
 };
-// Newline inside the TUI's own composer. Codex, Claude Code and Antigravity
-// all break the line on Ctrl+Enter, which modern terminals encode as the CSI u
-// sequence below -- the same one PawCode binds on its own prompt (see
-// pawflow_cli/app.py). Forwarding the key beats assembling a multiline block
-// here: the newline is made by the TUI, in its composer, exactly as it would
-// be for a human at the keyboard.
-const _GRAB_CTRL_ENTER = '\x1b[13;5u';
-const _GRAB_SHIFT_ENTER = '\x1b[13;2u';
 // A block that arrives already multiline did not come from the keyboard -- it
 // was pasted into the composer. Bracketed paste is how a terminal says "this
 // is one paste", so the TUI collapses it into a chip instead of reading each
@@ -252,10 +244,14 @@ function grabSend() {
                          JSON.stringify(messageHistory.slice(0, 50)));
   }
   if (typeof historyIndex !== 'undefined') historyIndex = -1;
-  const pasted = _grabFlush(input);
+  const hadText = !!text;
+  _grabFlush(input);
   // Enter on an empty composer is still meaningful when the TUI already holds
-  // lines the user broke with Ctrl+Enter -- that is what submits them.
-  if (pasted) setTimeout(() => _grabWrite('\r'), _GRAB_SUBMIT_DELAY_MS);
+  // lines the user broke with Ctrl+Enter -- that is what submits them. Any text
+  // goes through the terminal WebSocket in a frame before Enter; Codex may not
+  // have ingested even a one-line frame when the next frame arrives, so give
+  // both typed text and bracketed pastes the same bounded settle window.
+  if (hadText) setTimeout(() => _grabWrite('\r'), _GRAB_SUBMIT_DELAY_MS);
   else _grabWrite('\r');
   input.focus();
 }
@@ -270,17 +266,6 @@ function grabHandleKey(e) {
   if (e.key === 'Escape') {
     e.preventDefault();
     _grabWrite('\x1b');
-    return true;
-  }
-  // Ctrl+Enter and Shift+Enter are newline in Codex, Claude Code and
-  // Antigravity alike. Grabbed, they are FORWARDED rather than applied here:
-  // whatever is in the composer goes over first, then the key, so the line
-  // break happens in the TUI's own composer. That is the difference between
-  // driving the terminal and assembling a block to shove into it.
-  if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)) {
-    e.preventDefault();
-    _grabFlush(input);
-    _grabWrite(e.shiftKey && !e.ctrlKey ? _GRAB_SHIFT_ENTER : _GRAB_CTRL_ENTER);
     return true;
   }
   if (e.key === 'Enter') {

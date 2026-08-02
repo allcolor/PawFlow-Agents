@@ -1312,6 +1312,7 @@ class CCInteractiveEventService(BaseService):
         """
         cid = state.conversation_id
         live = {"msg_id": "", "ts": 0.0}
+        persisted_texts = []
 
         def _source():
             # `provider` is what the meta line under a message is built from
@@ -1382,6 +1383,7 @@ class CCInteractiveEventService(BaseService):
                             "source": msg.get("source") or {},
                             "channel": "tmux",
                         }}])
+                    persisted_texts.append(text)
                     return
 
                 if event_type in ("thinking", "thinking_content"):
@@ -1475,7 +1477,20 @@ class CCInteractiveEventService(BaseService):
                     "CC interactive capture block persist failed (%s)",
                     event_type, exc_info=True)
 
-        return _text_callback, _block_callback
+        def _ensure_final_text(text: str) -> None:
+            """Persist the visible final answer if its terminal block vanished.
+
+            Token callbacks are deliberately transient; the block callback is
+            what turns their bubble into a durable transcript row.  A capture
+            can still return a complete ``response.content`` after losing that
+            final block at a Stop/request boundary.  Never release activity with
+            a response that exists only in tmux and the transient token bubble.
+            """
+            final_text = text or ""
+            if final_text.strip() and final_text not in persisted_texts:
+                _block_callback("text", {"text": final_text})
+
+        return _text_callback, _block_callback, _ensure_final_text
 
     def _capture_dedup_sets(self, state: CCInteractiveSessionEvents):
         """The tool-id dedup sets a capture must share with PawFlow-driven turns.
@@ -1581,7 +1596,8 @@ class CCInteractiveEventService(BaseService):
             # block is persisted and published as it arrives. Without them
             # the coordinator ran the whole turn silently and the webchat saw
             # nothing until it ended, while the tmux was visibly working.
-            _text_cb, _block_cb = self._capture_stream_callbacks(state)
+            _text_cb, _block_cb, _ensure_final_text = (
+                self._capture_stream_callbacks(state))
             # The session's own dedup sets, not fresh per-coordinator ones.
             # A live Claude Code session replays its ENTIRE context on every
             # API request, so a capture that starts with empty sets re-emits
@@ -1597,6 +1613,7 @@ class CCInteractiveEventService(BaseService):
                 emitted_tool_result_ids=_result_ids,
                 consumer_kind="capture", consumer_epoch=capture_epoch)
             response = coord.run()
+            _ensure_final_text(response.content or "")
             self._publish_capture_meta(state, response)
             logger.info(
                 "CC interactive captured turn streamed: conv=%s agent=%s chars=%d",

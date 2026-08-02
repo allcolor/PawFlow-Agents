@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.84] — 2026-08-02
+
+### Added
+
+- Grab mode covers `antigravity-interactive` too. Antigravity owns a tmux like
+  the other two CLI providers, so there was never a reason it could not be
+  grabbed — it simply attaches through `open_antigravity_interactive_terminal`
+  rather than the CC one, which only searches the CC and Codex pools.
+  `_GRAB_OPEN_ACTIONS` now maps provider to attach action, and
+  `list_cc_interactive_terminals` — the listing that decides whether the button
+  appears — includes the Antigravity pool, normalising its self-reported
+  `antigravity-observer` (the container) to the LLM provider name callers
+  dispatch on.
+
 ## [1.0.0-beta.83] — 2026-08-02
 
 ### Fixed

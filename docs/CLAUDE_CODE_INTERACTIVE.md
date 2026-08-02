@@ -492,9 +492,9 @@ session-state replacement while old paste chips can still be waiting in the TUI.
 
 ### Grab: the composer as a terminal input
 
-When the selected agent runs on `claude-code-interactive` or `codex-interactive`
-and its tmux is live, a grab button (🖥️) appears in the composer row, before
-the reload button. Held, the chat composer becomes a direct input to that TUI:
+When the selected agent runs on an interactive CLI provider and its tmux is
+live, a grab button (🖥️) appears in the composer row, before the reload
+button. Held, the chat composer becomes a direct input to that TUI:
 what you type lands in the terminal exactly as if you were attached to it.
 Releasing it puts the composer back on the normal `/api/agent` path. Switching
 agent or conversation, or the session dying, releases it on its own.
@@ -534,9 +534,14 @@ composer still submits — that is how lines broken with `Ctrl+Enter` are sent.
 Typing while a turn runs is allowed and queues in the TUI, exactly as it would
 for a human attached to the same tmux.
 
-Grab covers `claude-code-interactive` and `codex-interactive`, the two
-providers `open_cc_interactive_terminal` attaches. `antigravity-interactive`
-has its own attach action and its own listing, and is not wired to grab yet.
+Grab covers every provider that owns a tmux: `claude-code-interactive`,
+`codex-interactive` and `antigravity-interactive`. The first two attach through
+`open_cc_interactive_terminal`, Antigravity through
+`open_antigravity_interactive_terminal`; `_GRAB_OPEN_ACTIONS` maps provider to
+action and the listing that drives button visibility covers all three pools.
+The Antigravity pool reports itself as `antigravity-observer` (what the
+container is) and the listing normalises that to the LLM provider name callers
+dispatch on.
 
 One paste does not always produce one submit. A TUI that collapses pasted text
 into an attachment chip can submit a composer holding several of them as several

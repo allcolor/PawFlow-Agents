@@ -22,8 +22,13 @@
  *    TUI composer is what unfolds one prompt into several submissions.
  */
 
-// Providers whose tmux `open_cc_interactive_terminal` knows how to attach.
-const _GRAB_PROVIDERS = ['claude-code-interactive', 'codex-interactive'];
+// Every provider that owns a tmux PawFlow can attach to. Each maps to the
+// action that hands back a terminal session and token for it.
+const _GRAB_OPEN_ACTIONS = {
+  'claude-code-interactive': 'open_cc_interactive_terminal',
+  'codex-interactive': 'open_cc_interactive_terminal',
+  'antigravity-interactive': 'open_antigravity_interactive_terminal',
+};
 // Newline inside the TUI's own composer. Codex, Claude Code and Antigravity
 // all break the line on Ctrl+Enter, which modern terminals encode as the CSI u
 // sequence below -- the same one PawCode binds on its own prompt (see
@@ -67,7 +72,7 @@ function _grabProviderFor(agentName) {
   if (!agentName) return '';
   const provider = (typeof _agentLlmProvider === 'function')
     ? _agentLlmProvider(agentName) : '';
-  return _GRAB_PROVIDERS.indexOf(provider) === -1 ? '' : provider;
+  return _GRAB_OPEN_ACTIONS[provider] ? provider : '';
 }
 
 /** Refresh the set of agents with a live tmux, throttled. */
@@ -138,7 +143,7 @@ function toggleGrab() {
   _grab.connecting = true;
   const size = (typeof _estimateTerminalSize === 'function')
     ? _estimateTerminalSize() : { cols: 220, rows: 50 };
-  action$('open_cc_interactive_terminal', {
+  action$(_GRAB_OPEN_ACTIONS[provider], {
     agent_name: agent,
     service_id: (typeof _agentLlmService === 'function') ? _agentLlmService(agent) : '',
     provider: provider,

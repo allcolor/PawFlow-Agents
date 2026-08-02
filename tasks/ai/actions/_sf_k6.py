@@ -110,6 +110,7 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
         try:
+            from core.antigravity_observer_pool import AntigravityObserverPool
             from core.claude_code_interactive_pool import InteractiveClaudeCodePool
             from core.codex_interactive_pool import CodexInteractivePool
             sessions = []
@@ -117,6 +118,15 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
                          CodexInteractivePool.instance()):
                 sessions.extend(pool.list_sessions(
                     user_id, conversation_id, service_id=service_id))
+            # Antigravity owns a tmux like the other two, so it belongs in any
+            # listing of attachable agent terminals. Its pool reports itself as
+            # "antigravity-observer" (what the container is); callers dispatch
+            # on the LLM provider, so it is normalised to that here.
+            for row in AntigravityObserverPool.instance().list_sessions(
+                    user_id, conversation_id, service_id=service_id):
+                row["provider"] = "antigravity-interactive"
+                row.setdefault("live", True)
+                sessions.append(row)
             sessions.sort(
                 key=lambda row: float(row.get("last_used", 0) or 0),
                 reverse=True)

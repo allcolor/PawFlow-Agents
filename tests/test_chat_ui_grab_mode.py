@@ -145,6 +145,35 @@ def test_grab_is_released_when_the_session_or_selection_moves():
     assert "grabOnConversationSwitch()" in conversations
 
 
+def test_grab_covers_every_provider_that_owns_a_tmux():
+    """Antigravity has a tmux like the other two, so it is grabbable too.
+
+    It just opens through its own action -- the CC one only looks in the CC and
+    Codex pools.
+    """
+    src = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
+    for provider, action in [
+        ("claude-code-interactive", "open_cc_interactive_terminal"),
+        ("codex-interactive", "open_cc_interactive_terminal"),
+        ("antigravity-interactive", "open_antigravity_interactive_terminal"),
+    ]:
+        assert f"'{provider}': '{action}'" in src
+    # The open action is looked up per provider, never hardcoded.
+    assert "action$(_GRAB_OPEN_ACTIONS[provider]" in src
+
+
+def test_the_session_listing_includes_antigravity():
+    """Button visibility comes from this listing, so a pool missing from it is
+    a provider that can never be grabbed."""
+    src = Path("tasks/ai/actions/_sf_k6.py").read_text(encoding="utf-8")
+    block = src[src.index('if action == "list_cc_interactive_terminals"'):]
+    block = block[:block.index('if action == "open_cc_interactive_terminal"')]
+    assert "AntigravityObserverPool" in block
+    # Its pool names the container ("antigravity-observer"); callers dispatch
+    # on the LLM provider.
+    assert 'row["provider"] = "antigravity-interactive"' in block
+
+
 def test_grab_strings_exist_in_every_language():
     keys = ["grabTitle", "grabOnTitle", "grabPlaceholder", "grabOn", "grabOff",
             "grabNoLive", "grabFailed"]

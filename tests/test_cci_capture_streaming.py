@@ -62,7 +62,7 @@ def test_text_streams_live_then_persists_under_the_same_id(captured):
     up twice.
     """
     svc, state, written, published = captured
-    text_cb, block_cb = svc._capture_stream_callbacks(state)
+    text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
 
     text_cb("Hel")
     text_cb("lo")
@@ -82,7 +82,7 @@ def test_text_streams_live_then_persists_under_the_same_id(captured):
 
 def test_a_second_text_block_gets_a_fresh_live_id(captured):
     svc, state, written, published = captured
-    text_cb, block_cb = svc._capture_stream_callbacks(state)
+    text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
 
     text_cb("one")
     block_cb("text", {"text": "one"})
@@ -95,7 +95,7 @@ def test_a_second_text_block_gets_a_fresh_live_id(captured):
 def test_tool_calls_and_results_are_persisted_and_published(captured):
     """They used to be dropped entirely: the capture kept only the text."""
     svc, state, written, published = captured
-    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+    _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
 
     block_cb("tool_use", {"id": "tc1", "name": "read",
                           "arguments": {"path": "/x"}})
@@ -119,7 +119,7 @@ def test_tool_calls_and_results_are_persisted_and_published(captured):
 def test_incomplete_mcp_tool_call_is_not_persisted(captured):
     """A call with empty args renders bare and is dropped downstream."""
     svc, state, written, _published = captured
-    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+    _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
 
     block_cb("tool_use", {"id": "tc1", "name": "use_tool", "arguments": {}})
 
@@ -128,7 +128,7 @@ def test_incomplete_mcp_tool_call_is_not_persisted(captured):
 
 def test_thinking_is_persisted_and_published(captured):
     svc, state, written, _published = captured
-    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+    _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
 
     block_cb("thinking_content", {"text": "reasoning"})
 
@@ -142,7 +142,7 @@ def test_thinking_is_persisted_and_published(captured):
 ])
 def test_empty_blocks_are_not_persisted(captured, event_type, payload):
     svc, state, written, _published = captured
-    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+    _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
 
     block_cb(event_type, payload)
 
@@ -161,7 +161,7 @@ def test_a_failing_block_never_kills_the_capture(captured, monkeypatch):
     import core.conversation_writer as cw
     monkeypatch.setattr(cw, "ConversationWriter", _Boom)
 
-    _text_cb, block_cb = svc._capture_stream_callbacks(state)
+    _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
     block_cb("text", {"text": "hello"})  # must not raise
 
 
@@ -278,7 +278,7 @@ class TestTheMetaLineUnderACapturedTurn:
     def test_the_source_carries_the_provider(self, captured):
         """With no provider the client renders no meta line at all."""
         svc, state, written, _published = captured
-        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+        _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
 
         block_cb("text", {"text": "Hello"})
 
@@ -287,7 +287,7 @@ class TestTheMetaLineUnderACapturedTurn:
     def test_the_real_numbers_update_the_message_that_was_written(
             self, captured):
         svc, state, written, published = captured
-        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+        _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
         block_cb("text", {"text": "Hello"})
         written_id = written[0][0]["msg_id"]
 
@@ -302,7 +302,7 @@ class TestTheMetaLineUnderACapturedTurn:
     def test_the_last_block_is_the_one_labelled(self, captured):
         """The numbers describe the turn, and the answer ends it."""
         svc, state, written, published = captured
-        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+        _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
         block_cb("text", {"text": "one"})
         block_cb("text", {"text": "two"})
 
@@ -314,7 +314,7 @@ class TestTheMetaLineUnderACapturedTurn:
     def test_nothing_measured_means_nothing_claimed(self, captured):
         """Better no meta line than one asserting zeroes nobody measured."""
         svc, state, written, published = captured
-        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+        _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
         block_cb("text", {"text": "Hello"})
 
         svc._publish_capture_meta(state, _Resp(model="", tokens_in=0,
@@ -333,7 +333,7 @@ class TestTheMetaLineUnderACapturedTurn:
                                                         monkeypatch):
         """This closes a display gap; it must not cost the answer itself."""
         svc, state, _written, _published = captured
-        _text_cb, block_cb = svc._capture_stream_callbacks(state)
+        _text_cb, block_cb, _final_cb = svc._capture_stream_callbacks(state)
         block_cb("text", {"text": "Hello"})
 
         class _Broken:

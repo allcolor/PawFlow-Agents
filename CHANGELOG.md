@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.86] — 2026-08-02
+
+### Fixed
+
+- CI is green again. beta.85 gave `_capture_stream_callbacks` a third callback,
+  `ensure_final_text`, and updated every caller but one test module:
+  `tests/test_cci_capture_streaming.py` still unpacked two values in twelve
+  places, so the suite died on the first of them and `-x` hid the eleven
+  others. The docstring that still announced the old two-value contract is
+  corrected too — it is what the stale test was written against. No production
+  behaviour changed.
+
 ## [1.0.0-beta.85] — 2026-08-02
 
 ### Fixed

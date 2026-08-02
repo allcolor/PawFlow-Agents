@@ -1308,7 +1308,7 @@ class CCInteractiveEventService(BaseService):
         Mirrors the Antigravity observer's manual ingest, which streams
         out-of-band tmux activity by default.
 
-        Returns ``(text_callback, block_callback)``.
+        Returns ``(text_callback, block_callback, ensure_final_text)``.
         """
         cid = state.conversation_id
         live = {"msg_id": "", "ts": 0.0}

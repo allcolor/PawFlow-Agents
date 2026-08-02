@@ -20,6 +20,8 @@ from urllib.parse import urlparse
 
 
 _INJECTED_PROMPT_TTL_SECONDS = 300
+_INJECTED_FRAGMENT_BURST_SECONDS = 180
+_MIN_INJECTED_FRAGMENT_CHARS = 12
 
 
 def _masked_frame(obj: dict) -> bytes:
@@ -142,26 +144,55 @@ def _consume_injected_prompt(prompt: str) -> bool:
             fh.seek(0)
             rows = fh.readlines()
             found = False
-            kept = []
+            payloads = []
+            changed = False
             for row in rows:
                 try:
                     payload = json.loads(row)
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                    changed = True
                     continue
                 ts = float(payload.get("ts") or 0)
                 consumed_at = float(payload.get("consumed_at") or 0)
                 if max(ts, consumed_at) and max(ts, consumed_at) < cutoff:
+                    changed = True
                     continue
+                payloads.append(payload)
+
+            normalized = " ".join(prompt.split())
+            # Prefer the newest marker.  A retry or a second send can record
+            # the same text more than once; one submitted chip must spend only
+            # one record, otherwise a later real user message could be hidden.
+            for payload in reversed(payloads):
                 if payload.get("sha256") in digest_candidates:
                     found = True
                     payload["consumed_at"] = now
-                    kept.append(json.dumps(payload, separators=(",", ":")) + "\n")
+                    payload["remaining"] = ""
+                    changed = True
+                    break
+                remaining = str(payload.get("remaining") or "")
+                last_fragment = float(payload.get("fragment_seen_at")
+                                      or payload.get("ts") or 0)
+                if (len(normalized) < _MIN_INJECTED_FRAGMENT_CHARS
+                        or not remaining
+                        or now - last_fragment > _INJECTED_FRAGMENT_BURST_SECONDS
+                        or normalized not in remaining):
                     continue
-                kept.append(row)
-            if found:
+                found = True
+                payload["remaining"] = remaining.replace(normalized, " ", 1)
+                payload["fragment_seen_at"] = now
+                payload["consumed_at"] = now
+                changed = True
+                break
+
+            if changed:
                 fh.seek(0)
                 fh.truncate()
+                kept = [
+                    json.dumps(payload, separators=(",", ":")) + "\n"
+                    for payload in payloads
+                ]
                 fh.writelines(kept)
             return found
     except FileNotFoundError:

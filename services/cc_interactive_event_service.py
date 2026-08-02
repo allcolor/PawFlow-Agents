@@ -165,6 +165,14 @@ class CCInteractiveSessionEvents:
     # A Stop can therefore land AFTER the next turn's request_start, and
     # applying it in arrival order closed a turn that had just begun.
     turn_boundary_at: float = 0.0
+    # Non-destructive submission acknowledgements.  The turn coordinator owns
+    # ``events``; transport code must never take an item from that queue merely
+    # to learn whether tmux accepted an Enter.  These monotonic side-channel
+    # counters are updated from the same published events and observed through
+    # ``stream_condition`` without stealing anything from the coordinator.
+    prompt_submit_seq: int = 0
+    prompt_submit_receipts: list = field(default_factory=list)
+    provider_request_seq: int = 0
 
 
 class CCInteractiveEventService(BaseService):
@@ -357,6 +365,56 @@ class CCInteractiveEventService(BaseService):
             # A coordinator will start polling as soon as the tmux send
             # returns — suppress orphan-turn capture for the send window.
             state.injected_intent_at = now
+
+    def submission_marker(self, session_token: str) -> tuple[int, int]:
+        """Return the current hook/MITM counters for a prompt about to submit."""
+        state = self.session_state(session_token)
+        if state is None:
+            raise RuntimeError("Unknown CC interactive session")
+        with state.stream_condition:
+            return state.prompt_submit_seq, state.provider_request_seq
+
+    @staticmethod
+    def _hook_prompt_digests(prompt: str) -> set[str]:
+        """Digests the hook may report after a TUI trims a terminal newline."""
+        return {
+            hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+            for candidate in (
+                prompt or "", (prompt or "") + "\n", (prompt or "") + "\r\n",
+                (prompt or "").rstrip("\r\n"),
+            )
+        }
+
+    def wait_for_prompt_submission(
+            self, session_token: str, prompt: str, *,
+            after_submit: int, after_request: int,
+            timeout: float) -> str:
+        """Wait without consuming the event stream for proof of submission.
+
+        Returns ``hook`` for the exact ``UserPromptSubmit``, ``request`` when
+        the provider MITM has already seen the model request, ``fragment`` when
+        Codex submitted only a piece of PawFlow's paste, or ``""`` on timeout.
+        """
+        state = self.session_state(session_token)
+        if state is None:
+            return ""
+        digests = self._hook_prompt_digests(prompt)
+        deadline = time.monotonic() + max(0.0, timeout)
+        with state.stream_condition:
+            while True:
+                for seq, digest, kind in state.prompt_submit_receipts:
+                    if seq <= after_submit:
+                        continue
+                    if kind == "fragment":
+                        return "fragment"
+                    if digest in digests:
+                        return "hook"
+                if state.provider_request_seq > after_request:
+                    return "request"
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return ""
+                state.stream_condition.wait(remaining)
 
     def session_state(self, session_token: str) -> Optional[CCInteractiveSessionEvents]:
         with self._sessions_lock:
@@ -555,6 +613,7 @@ class CCInteractiveEventService(BaseService):
         event.setdefault("session_token", session_token)
         event.setdefault("timestamp", time.time())
         state.last_event_at = time.time()
+        self._record_submission_signal(state, event)
         self._log_event_summary(session_token, event)
         if event.get("type") == "wire":
             return
@@ -576,6 +635,39 @@ class CCInteractiveEventService(BaseService):
                 state.oldest_pending_at = time.time()
             state.stream_condition.notify_all()
         self._adopt_if_undelivered(state)
+
+    def _record_submission_signal(self, state: CCInteractiveSessionEvents,
+                                  event: dict) -> None:
+        """Mirror submit proof into counters without removing the real event."""
+        if self._is_provider_request(state, event):
+            with state.stream_condition:
+                state.provider_request_seq += 1
+                state.stream_condition.notify_all()
+            return
+        if (event.get("type") != "hook"
+                or event.get("hook_event_name") != "UserPromptSubmit"):
+            return
+        data = event.get("input") or {}
+        if not isinstance(data, dict):
+            return
+        digest = str(data.get("prompt_sha256") or "")
+        if not digest:
+            return
+        kind = "exact" if data.get("pawflow_injected_prompt") else ""
+        if not kind:
+            prompt = data.get("prompt", "")
+            if isinstance(prompt, str):
+                with self._sessions_lock:
+                    if self._is_fragment_of_injection(state, prompt) is not None:
+                        kind = "fragment"
+        if not kind:
+            return
+        with state.stream_condition:
+            state.prompt_submit_seq += 1
+            state.prompt_submit_receipts.append(
+                (state.prompt_submit_seq, digest, kind))
+            del state.prompt_submit_receipts[:-64]
+            state.stream_condition.notify_all()
 
     @staticmethod
     def _log_event_summary(session_token: str, event: dict) -> None:

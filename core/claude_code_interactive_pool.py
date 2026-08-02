@@ -53,6 +53,8 @@ _DISALLOWED_BUILTIN_TOOLS = (
 class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     _instance: Optional["InteractiveClaudeCodePool"] = None
     _instance_lock = threading.Lock()
+    _REQUIRE_PROMPT_READY = False
+    _INITIAL_SUBMIT_ENTERS = 2
 
     @classmethod
     def instance(cls) -> "InteractiveClaudeCodePool":
@@ -370,6 +372,15 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             if self._wait_for_prompt_ready(state.name):
                 state.prompt_ready = True
             else:
+                if self._REQUIRE_PROMPT_READY:
+                    state.last_error = (
+                        "TUI composer was not ready before the cold-start "
+                        "readiness timeout")
+                    logging.getLogger(__name__).error(
+                        "[cci] refusing first send to %s because the TUI "
+                        "composer is not ready%s",
+                        state.name, self._pane_diagnostic(state.name))
+                    return False
                 # Best-effort: never make sends worse than before. Proceed
                 # with the paste + double-Enter and hope the TUI catches up.
                 logging.getLogger(__name__).warning(
@@ -382,7 +393,17 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         # for the same text would leave one unspent to swallow the next thing
         # the human really types.
         self._remember_injected_prompt(state, text)
-        self._remember_injected_prompt_for_event_service(state, text)
+        event_service = self._remember_injected_prompt_for_event_service(
+            state, text)
+        submit_marker = (0, 0)
+        if event_service is not None:
+            try:
+                submit_marker = event_service.submission_marker(
+                    state.session_token)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Could not mark CCI prompt submission", exc_info=True)
+                event_service = None
         # Paste, then PROVE it landed, and paste again if it did not.
         #
         # Pressing Enter was the only retry there was, and it answers the
@@ -430,19 +451,25 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             delay = float(os.environ.get("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "1.0") or "1.0")
         except ValueError:
             delay = 1.0
-        # Submit with a double Enter separated by a short wait. At container
+        # Claude submits with a double Enter separated by a short wait. At container
         # restart the Claude Code TUI can drop the first Enter before its input
         # box is focused, leaving the pasted prompt unsent. The first Enter
         # submits in the normal case; the second guarantees submission after a
         # restart. An extra Enter on an already-submitted or empty prompt is a
         # no-op in the CC TUI.
-        if not self.send_keys(state, ["Enter"]):
+        enter_count = max(1, int(self._INITIAL_SUBMIT_ENTERS))
+        for index in range(enter_count):
+            if not self.send_keys(state, ["Enter"]):
+                return False
+            if index + 1 < enter_count and delay > 0:
+                time.sleep(delay)
+        verified = self._verify_submitted(
+            state, text, event_service=event_service,
+            submit_marker=submit_marker)
+        if verified is False:
+            if not state.last_error:
+                state.last_error = "prompt submission was not confirmed"
             return False
-        if delay > 0:
-            time.sleep(delay)
-        if not self.send_keys(state, ["Enter"]):
-            return False
-        self._verify_submitted(state, text)
         return True
 
     # Footer/affordance strings the Claude Code TUI only renders once its
@@ -756,7 +783,9 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 return False
             time.sleep(interval)
 
-    def _verify_submitted(self, state: InteractiveContainer, text: str) -> None:
+    def _verify_submitted(self, state: InteractiveContainer, text: str, *,
+                          event_service=None,
+                          submit_marker=(0, 0)):
         """Best-effort post-submit check with Enter retries.
 
         Despite the settle delay, an Enter can still be coalesced into the
@@ -774,7 +803,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         except ValueError:
             window = 6.0
         if window <= 0:
-            return
+            return True
         fragment = self._submit_probe_fragment(text)
         interval = 0.3
         polls = max(1, int(window / interval))
@@ -799,7 +828,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     continue
                 if self._pane_shows_running(pane):
                     if holds is False or not fragment or fragment not in pane:
-                        return
+                        return True
                     # Running but our text is still on screen: either the
                     # interrupted OLD turn is winding down, or the TUI echoes
                     # the submitted prompt. Keep polling — never press Enter
@@ -808,10 +837,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     continue
                 if holds is False:
                     # Composer located and free of the chip: submitted.
-                    return
+                    return True
                 if fragment and fragment not in pane:
                     # Input box no longer holds the prompt: submitted.
-                    return
+                    return True
                 if self._pane_shows_prompt(pane):
                     if retries >= 3:
                         break
@@ -826,6 +855,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             log.warning(
                 "[cci] submit verification inconclusive for %s after %d "
                 "Enter retries", state.name, retries)
+        return None
 
     def _wait_for_prompt_ready(self, name: str, *,
                                timeout: Optional[float] = None) -> bool:
@@ -891,6 +921,11 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 "sha256": hashlib.sha256((text or "").encode("utf-8")).hexdigest(),
                 "length": len(text or ""),
                 "ts": time.time(),
+                # The hook runs in a separate process and the in-memory event
+                # service can disappear across stop/compact.  Keep the
+                # whitespace-normalised text here so that process can still
+                # recognise and consume a TUI-split piece of our paste.
+                "remaining": " ".join((text or "").split()),
             }
             with open(marker, "a", encoding="utf-8") as fh:
                 if fcntl is not None:
@@ -901,13 +936,15 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
 
     @staticmethod
     def _remember_injected_prompt_for_event_service(state: InteractiveContainer,
-                                                    text: str) -> None:
+                                                    text: str):
         try:
             from services.cc_interactive_event_service import get_or_create_cc_interactive_event_service
             _, _, event_service = get_or_create_cc_interactive_event_service()
             event_service.remember_injected_prompt(state.session_token, text or "")
+            return event_service
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            return None
 
     def send_interrupt(self, state: InteractiveContainer, text: str) -> bool:
         state.last_error = ""

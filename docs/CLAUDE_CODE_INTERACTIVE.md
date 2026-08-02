@@ -359,12 +359,11 @@ not receive the full context or tool instructions again; PawFlow sends only the
 latest turn delta, any current attachment references, and a narrow catch-up block
 containing new messages from other participants since the agent's last response.
 
-The bootstrap paste quotes the current turn inline only up to
-`_BOOTSTRAP_INLINE_LATEST_CHARS` (2000). The turn is already in the file under
-`## Latest User Request`; quoting all of it in the paste as well sent it twice,
-and that text goes through a terminal, so a turn carrying a log dump or a long
-transcript became tens of kilobytes typed into an input box. Past the limit the
-paste says how long the request is and points at the file.
+The bootstrap paste is one short physical line and never quotes the current turn
+inline. The turn is already in the file under `## Latest User Request`; copying
+it into a terminal composer created a second transport and let multiline paste
+pieces become independent TUI submissions and false user messages. The paste
+only points at the file and names the section containing the current request.
 
 Live interrupt pastes the interrupt message, then sends `Escape`, then `Enter`
 as separate tmux key events. If the interrupt carries image attachments, PawFlow
@@ -486,17 +485,26 @@ persists it as a normal user message with `channel="tmux"` and starts a passive
 MITM capture for the resulting Claude Code turn, so the assistant response also
 lands in the conversation context. Prompts pasted by PawFlow itself are recorded
 by SHA-256 in `.pawflow_cci/injected_prompts.jsonl`; the hook consumes that
-marker and does not mirror those managed prompts back into the transcript.
+marker and does not mirror those managed prompts back into the transcript. The
+marker also holds a whitespace-normalised, consumable copy of the injected text.
+Unlike the event service's in-memory copy, it survives a stop, compact, or
+session-state replacement while old paste chips can still be waiting in the TUI.
 
 One paste does not always produce one submit. A TUI that collapses pasted text
 into an attachment chip can submit a composer holding several of them as several
 `UserPromptSubmit` hooks, and a piece's SHA-256 matches no recorded injection.
-PawFlow therefore also keeps the injected *text* for the same 600-second window
-and treats a prompt that is a slice of it as its own. Without that, the pieces
+PawFlow therefore also keeps the injected *text* in memory and in the local
+marker, and treats a prompt that is an unspent slice of it as its own. The
+durable hook marker uses a 300-second lifetime and a 180-second fragment burst;
+the service retains its exact-match state for 600 seconds. Without that, the
+pieces
 after the first were filed as messages the user had typed, published under their
 name and answered one by one -- the agent replying to fragments of a tool result
 it had just been handed. A slice shorter than 12 characters is still treated as
-manual: `ok` occurs inside any large paste and is also what a human types.
+manual: `ok` occurs inside any large paste and is also what a human types. Each
+matched slice is removed once, and an exact full-prompt submit clears all slice
+state, so later human text cannot be claimed merely because it occurred in an
+older PawFlow paste.
 
 The hook can also mark the submit as ours outright (`pawflow_injected_prompt`
 on the hook input), and that is the main path -- the digest path only sees

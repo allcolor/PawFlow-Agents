@@ -1,7 +1,14 @@
 import json
+import inspect
 
 from core import server_relay_manager as srm
 from core import _relay_naming as _rn
+
+
+def test_managed_relay_spawn_log_does_not_include_secret_command():
+    source = inspect.getsource(srm.ServerRelayManager.spawn_service_relay)
+    assert 'cmd=%s' not in source
+    assert 'logger.info("Spawning managed server relay service: %s", container_name)' in source
 
 
 def test_server_minimal_relay_has_distinct_stable_identity():

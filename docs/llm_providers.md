@@ -39,9 +39,10 @@ Advanced endpoint routing is supported where the underlying CLI honors it. `clau
 
 On a cold CLI session, PawFlow writes the full serialized initial context to a
 session-local `.pawflow_cli/initial_context.md` file and sends a short bootstrap
-prompt that tells the CLI to read that file first. The bootstrap also repeats the
-latest user turn with XML-sensitive characters escaped, so the immediate request
-is visible even if the CLI reads the context file selectively. Resume turns keep
+prompt that tells the CLI to read that file first. The terminal bootstrap is one
+short physical line and does not repeat the latest user turn: multiline bootstrap
+pieces must never become independent TUI submissions or user messages. The latest
+turn lives under `## Latest User Request` in the context file. Resume turns keep
 the existing delta-only behavior because the provider session already carries the
 prior context. Direct API providers do not use this file bootstrap; they receive
 their message context directly in the API request.
@@ -467,6 +468,19 @@ Operational notes:
 - Like every CLI provider, it obeys the cold/delta rule in both directions:
   launching a process means a cold start and a full context, finding one alive
   means a delta. See [Agent System](AGENT_SYSTEM.md).
+- A cold Codex session waits for the real composer before PawFlow pastes the
+  bootstrap. Submission then uses one initial `Enter`: PawFlow waits for the
+  exact `UserPromptSubmit` digest or the corresponding MITM `/responses`
+  request and retries `Enter` only while neither signal exists. The event queue
+  is never consumed by this check, so the normal turn coordinator still receives
+  the complete stream. Large pastes receive a proportionally longer bounded
+  acknowledgement window; a fragmented submit or an unacknowledged prompt fails
+  explicitly instead of being reported as a successful turn.
+- Codex's `.codex/sessions/**/rollout-*.jsonl` remains useful for post-mortem
+  inspection, as it is for app-server preempt receipts. It is not the interactive
+  submit control signal: the TUI owns the active rollout identity and disk-write
+  ordering, while the exact hook and MITM request are already ordered live
+  events for the session PawFlow is driving.
 
 Known limitations:
 

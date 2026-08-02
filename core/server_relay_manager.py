@@ -392,7 +392,10 @@ class ServerRelayManager:
             "python3", _SCRIPT_IN_CONTAINER,
         ])
         cmd = docker_cmd() + ["run"] + docker_run_args
-        logger.info("Spawning managed server relay service: %s  cmd=%s", container_name, cmd)
+        # The command carries relay and internal-auth tokens in --env values.
+        # Logging it exposes live credentials; the container identity is enough
+        # to correlate spawn failures with Docker diagnostics.
+        logger.info("Spawning managed server relay service: %s", container_name)
         result = subprocess.run(  # nosec B603
             cmd, capture_output=True, text=True,
         )

@@ -348,7 +348,29 @@ def test_compact_resume_wake_is_provider_agnostic():
     assert 'reason=f"[compact_resume:{_resume_agent}]' in _AGENT_ACTIONS
     assert "AgentLoopTask.wake_agent" in _AGENT_ACTIONS
     assert "even_if_active=True" in _AGENT_ACTIONS
+    assert _AGENT_ACTIONS.count("force_stop_invalidates_turn_resume(") == 2
     assert "provider turn will restart immediately" in _AGENT_CORE
+
+
+def test_force_stop_invalidates_only_the_turn_that_started_before_it():
+    from tasks.ai.actions.cancel_interrupt import (
+        force_stop_invalidates_turn_resume,
+    )
+
+    class Store:
+        def get_extra(self, _conv_id, key):
+            return {
+                "last_force_stop_at": 200.0,
+                "last_force_stop_at:assistant": 210.0,
+            }.get(key)
+
+    store = Store()
+    assert force_stop_invalidates_turn_resume(
+        "conv", "assistant", 190.0, store=store)
+    assert force_stop_invalidates_turn_resume(
+        "conv", "assistant", 0.0, store=store)
+    assert not force_stop_invalidates_turn_resume(
+        "conv", "assistant", 211.0, store=store)
 
 
 def test_compact_resume_poll_prompt_continues_without_new_user_message():

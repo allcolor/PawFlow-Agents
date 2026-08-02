@@ -337,6 +337,10 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                            InteractiveClaudeCodePool):
     _instance: Optional["CodexInteractivePool"] = None
     _instance_lock = threading.Lock()
+    _REQUIRE_PROMPT_READY = True
+    # A second blind Enter is precisely what unfolds a slow, multi-chip paste.
+    # Further Enters are driven by an exact hook/MITM acknowledgement below.
+    _INITIAL_SUBMIT_ENTERS = 1
 
     # `>_ OpenAI Codex (v...)` is the pane's PERMANENT header: it is drawn the
     # instant the TUI starts, long before the input box is interactive. Used as
@@ -361,15 +365,14 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
 
     def _wait_for_prompt_ready(self, name: str, *,
                                timeout: Optional[float] = None) -> bool:
-        """Probe Codex readiness once instead of blocking a reused session.
+        """Wait for the real Codex composer on a cold session.
 
-        Codex changes its composer chrome frequently enough that a visual marker
-        is not a reliable 45-second gate.  The paste proof below is the actual
-        transport check and latches ``prompt_ready`` once the pane reacts.
-        Explicit timeouts remain available to diagnostics and tests.
+        Warm sessions bypass this method through ``state.prompt_ready``.  A
+        cold session must not turn the inherited wait into a zero-second probe:
+        pasting into the permanent header fragmented the bootstrap into orphan
+        turns when the composer had not been drawn yet.
         """
-        return super()._wait_for_prompt_ready(
-            name, timeout=0.0 if timeout is None else timeout)
+        return super()._wait_for_prompt_ready(name, timeout=timeout)
 
     def _pane_diagnostic(self, name: str) -> str:
         """Never copy the Codex pane (and potentially prompts) into logs."""
@@ -385,8 +388,10 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             state.prompt_ready = True
         return landed
 
-    def _verify_submitted(self, state: InteractiveContainer, text: str) -> None:
-        """Retry Enter until Codex shows submission or a running turn.
+    def _verify_submitted(self, state: InteractiveContainer, text: str, *,
+                          event_service=None,
+                          submit_marker=(0, 0)):
+        """Retry Enter only while neither the hook nor MITM proves submission.
 
         Codex collapses pasted text into a chip, so the inherited
         ``fragment absent == submitted`` rule is never valid here.  When a new
@@ -395,13 +400,55 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         Enter is retried.  Enter on an empty composer is a no-op; failing to send
         it leaves the real prompt waiting for a human.
         """
+        configured = os.environ.get("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "")
         try:
-            window = float(os.environ.get(
-                "PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "6.0") or "6.0")
+            window = (float(configured) if configured
+                      else max(6.0, min(
+                          30.0, 2.0 + len((text or "").encode("utf-8")) / 4096.0)))
         except ValueError:
             window = 6.0
         if window <= 0:
-            return
+            return True
+        if event_service is not None:
+            after_submit, after_request = submit_marker
+            retries = 0
+            per_attempt = window / 4.0
+            while True:
+                proof = event_service.wait_for_prompt_submission(
+                    state.session_token, text,
+                    after_submit=after_submit,
+                    after_request=after_request,
+                    timeout=per_attempt)
+                if proof in {"hook", "request"}:
+                    logger.debug(
+                        "[codex-interactive] prompt submission confirmed for "
+                        "%s by %s", state.name, proof)
+                    return True
+                if proof == "fragment":
+                    state.last_error = (
+                        "Codex submitted only a fragment of the pasted prompt")
+                    logger.error(
+                        "[codex-interactive] fragmented prompt submission for "
+                        "%s; refusing further Enter retries", state.name)
+                    return False
+                if retries >= 3:
+                    state.last_error = (
+                        "Codex prompt submission was not acknowledged by "
+                        "UserPromptSubmit or the MITM after 3 Enter retries")
+                    logger.error(
+                        "[codex-interactive] prompt submission failed for %s "
+                        "after %d Enter retries", state.name, retries)
+                    return False
+                retries += 1
+                logger.warning(
+                    "[codex-interactive] no UserPromptSubmit/MITM request for "
+                    "%s; pressing Enter again (retry %d)",
+                    state.name, retries)
+                if not self.send_keys(state, ["Enter"]):
+                    return False
+
+        # No event service is available only in isolated diagnostics/tests.
+        # Retain the pane fallback there; production submission is receipt-led.
         interval = 0.3
         polls = max(1, int(window / interval))
         retries = 0
@@ -409,7 +456,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             pane = self._pane_text(state.name)
             holds = self._pane_holds_unsent_paste(pane) if pane else None
             if holds is False or (pane and self._pane_shows_running(pane)):
-                return
+                return True
             if retries >= 3:
                 break
             retries += 1
@@ -423,6 +470,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             logger.warning(
                 "[codex-interactive] submit verification inconclusive for %s "
                 "after %d Enter retries", state.name, retries)
+        return None
 
     def __init__(self):
         super().__init__()

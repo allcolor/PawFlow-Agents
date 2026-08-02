@@ -458,11 +458,6 @@ class LLMCliSharedMixin:
             return ""
         return "<conversation_history>\n" + "\n".join(lines) + "\n</conversation_history>"
 
-    #: How much of the current turn the bootstrap paste quotes inline. The
-    #: file holds the whole thing; this is only what the CLI needs to know
-    #: what it was asked before it reads it.
-    _BOOTSTRAP_INLINE_LATEST_CHARS = 2000
-
     def _build_cli_initial_context_prompt(
         self,
         messages: List[Any],
@@ -502,37 +497,19 @@ class LLMCliSharedMixin:
             body.extend(["## Latest User Request", "", latest.strip(), ""])
         host_path.write_text("\n".join(body).rstrip() + "\n", encoding="utf-8")
         provider_path = os.path.join(provider_workdir, rel.as_posix()).replace("\\", "/")
-        prompt = [
-            "PawFlow cold-session bootstrap.",
-            "",
-            "You must first read this initial context file before answering.",
-            f"Path: {provider_path}",
-            "If your CLI supports file mentions, this is the same file:",
-            f"@{provider_path}",
-            "",
-            "Use your local filesystem/file-read capability if the file mention is not expanded automatically.",
-            "After that read, use PawFlow MCP tools for PawFlow work: get_tool_schema/use_tool for filesystem, shell, search, edit, patch, browser, web, image, and desktop actions. Native provider tools are only for reading this bootstrap file or provider-runtime diagnostics explicitly requested by the user.",
-            "It contains mandatory system/project instructions, available skills, tool-use hints, compacted conversation context, prior decisions, tool/result history, and the latest user request.",
-            "Read the entire file at least once before deciding what to do; do not rely only on a head or tail read, because skills, tool guidance, and constraints may appear before the latest request.",
-            "The newest and most important request is at the END of the file, under 'Latest User Request'. Use the tail/end to identify the current task after you have loaded the full context.",
-            "After reading the full file, answer the latest user request below. Treat the file as context, not as a user-visible task.",
-        ]
-        if latest:
-            # The turn is already in the file, under '## Latest User Request'.
-            # Quoting all of it here as well pastes it into the CLI a second
-            # time -- and this text goes through a terminal, so a turn that
-            # carries a log dump or a long transcript was tens of kilobytes
-            # typed into an input box. Enough of it is inlined to identify the
-            # question without a file read; past that, the file is the copy.
-            head = latest.strip()
-            limit = self._BOOTSTRAP_INLINE_LATEST_CHARS
-            if len(head) > limit:
-                head = (head[:limit].rstrip()
-                        + f"\n[... {len(latest.strip()):,} chars in total -- read "
-                          f"the whole request under '## Latest User Request' "
-                          f"in the file above]")
-            prompt.extend(["", "Latest turn to answer now:", head])
-        rendered_prompt = "\n".join(prompt).strip() + "\n"
+        # This prompt crosses a terminal composer. It must be ONE physical line:
+        # Codex can turn the lines of a multiline paste into separate submit
+        # chips, and those pieces used to re-enter PawFlow as user messages such
+        # as "PawFlow cold-session bootstrap", "You must first read...", and
+        # "Path: ...". The file is the sole copy of the full context and latest
+        # user turn; the composer receives only this indivisible read command.
+        rendered_prompt = (
+            "PawFlow cold-session bootstrap. Before answering, use your local "
+            f"file-read capability to read the entire context file at {provider_path} "
+            f"(file mention: @{provider_path}); treat that file as context, follow "
+            "its Bootstrap Contract, and answer the Latest User Request at its end. "
+            "For PawFlow project work, use PawFlow MCP get_tool_schema/use_tool."
+        )
         self._remember_cli_bootstrap_prompt(
             rendered_prompt, messages, conversation_id, agent_name)
         return rendered_prompt

@@ -500,6 +500,9 @@ When a step completes, the executing agent is force-stopped to prevent it from r
 2. Setting the interrupt flag.
 3. Killing any CLI provider subprocess or live app-server container if applicable.
 4. Clearing the stopped agent's pending queue, pending PollScheduler wakeups, and cancel checkpoint so force stop cannot replay queued work or relaunch the agent.
+5. Recording the stop cutoff. A later manual compaction may resume only a turn
+   whose runtime marker started after that cutoff; a stale worker marker from
+   the stopped turn can never schedule `compact_resume`.
 
 ---
 

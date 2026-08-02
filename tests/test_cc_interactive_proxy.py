@@ -1027,6 +1027,127 @@ def test_hook_matches_injected_prompt_when_claude_strips_trailing_newline(tmp_pa
     assert "consumed_at" in marker.read_text(encoding="utf-8")
 
 
+def test_hook_consumes_one_fragment_from_durable_injected_prompt(tmp_path, monkeypatch):
+    hook = importlib.import_module("tools.cc_interactive_hook")
+    full = "PawFlow cold-session bootstrap. Read the whole context first."
+    fragment = "PawFlow cold-session bootstrap."
+    marker = tmp_path / "injected_prompts.jsonl"
+    marker.write_text(json.dumps({
+        "sha256": hook.hashlib.sha256(full.encode("utf-8")).hexdigest(),
+        "length": len(full),
+        "ts": hook.time.time(),
+        "remaining": full,
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_CCI_INJECTED_PROMPTS", str(marker))
+
+    compact = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": fragment,
+    })
+    duplicate = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": fragment,
+    })
+
+    assert compact["pawflow_injected_prompt"] is True
+    assert "prompt" not in compact
+    assert duplicate["pawflow_injected_prompt"] is False
+    assert duplicate["prompt"] == fragment
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert fragment not in payload["remaining"]
+    assert payload["fragment_seen_at"] > 0
+
+
+def test_pool_marker_persists_normalized_fragment_state(tmp_path):
+    pool_module = importlib.import_module("core.claude_code_interactive_pool")
+    state = type("State", (), {"workdir": str(tmp_path)})()
+    prompt = "PawFlow cold-session bootstrap.\nRead   the whole context first.\n"
+
+    pool_module.InteractiveClaudeCodePool._remember_injected_prompt(
+        state, prompt)
+
+    marker = tmp_path / ".pawflow_cci" / "injected_prompts.jsonl"
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert payload["remaining"] == (
+        "PawFlow cold-session bootstrap. Read the whole context first.")
+    assert payload["sha256"] == pool_module.hashlib.sha256(
+        prompt.encode("utf-8")).hexdigest()
+
+
+def test_hook_never_claims_short_fragment_of_injected_prompt(tmp_path, monkeypatch):
+    hook = importlib.import_module("tools.cc_interactive_hook")
+    full = "PawFlow cold-session bootstrap. Read the whole context first."
+    marker = tmp_path / "injected_prompts.jsonl"
+    marker.write_text(json.dumps({
+        "sha256": hook.hashlib.sha256(full.encode("utf-8")).hexdigest(),
+        "length": len(full),
+        "ts": hook.time.time(),
+        "remaining": full,
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_CCI_INJECTED_PROMPTS", str(marker))
+
+    compact = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "PawFlow",
+    })
+
+    assert compact["pawflow_injected_prompt"] is False
+    assert compact["prompt"] == "PawFlow"
+
+
+def test_hook_does_not_claim_fragment_after_its_burst(tmp_path, monkeypatch):
+    hook = importlib.import_module("tools.cc_interactive_hook")
+    full = "PawFlow cold-session bootstrap. Read the whole context first."
+    fragment = "PawFlow cold-session bootstrap."
+    marker = tmp_path / "injected_prompts.jsonl"
+    marker.write_text(json.dumps({
+        "sha256": hook.hashlib.sha256(full.encode("utf-8")).hexdigest(),
+        "length": len(full),
+        "ts": hook.time.time() - hook._INJECTED_FRAGMENT_BURST_SECONDS - 1,
+        "remaining": full,
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_CCI_INJECTED_PROMPTS", str(marker))
+
+    compact = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": fragment,
+    })
+
+    assert compact["pawflow_injected_prompt"] is False
+    assert compact["prompt"] == fragment
+
+
+def test_exact_hook_match_spends_fragment_state_but_stays_idempotent(tmp_path, monkeypatch):
+    hook = importlib.import_module("tools.cc_interactive_hook")
+    full = "PawFlow cold-session bootstrap. Read the whole context first."
+    marker = tmp_path / "injected_prompts.jsonl"
+    marker.write_text(json.dumps({
+        "sha256": hook.hashlib.sha256(full.encode("utf-8")).hexdigest(),
+        "length": len(full),
+        "ts": hook.time.time(),
+        "remaining": full,
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_CCI_INJECTED_PROMPTS", str(marker))
+
+    exact = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": full,
+    })
+    fragment = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "PawFlow cold-session bootstrap.",
+    })
+    duplicate_exact = hook._compact_input({
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": full,
+    })
+
+    assert exact["pawflow_injected_prompt"] is True
+    assert fragment["pawflow_injected_prompt"] is False
+    assert fragment["prompt"] == "PawFlow cold-session bootstrap."
+    assert duplicate_exact["pawflow_injected_prompt"] is True
+
+
 def test_hook_keeps_manual_user_prompt(monkeypatch):
     hook = importlib.import_module("tools.cc_interactive_hook")
     monkeypatch.delenv("PAWFLOW_CCI_INJECTED_PROMPTS", raising=False)

@@ -1037,11 +1037,10 @@ def test_initial_interactive_prompt_writes_context_file(tmp_path):
     assert "latest request" in body
     assert body.count('<message role="user">\nlatest request\n</message>') == 1
     assert body.index("## Latest User Request") > body.index("## Bootstrap Contract")
-    assert "Latest turn to answer now:" in prompt
-    assert "latest request" in prompt
-    assert "Read the entire file at least once" in prompt
-    assert "do not rely only on a head or tail read" in prompt
-    assert "Use the tail/end to identify the current task" in prompt
+    assert "latest request" not in prompt
+    assert "\n" not in prompt
+    assert "read the entire context file" in prompt
+    assert "Latest User Request" in prompt
     assert "Read the entire file at least once" in body
     assert "use PawFlow MCP tools first" in body
     assert "compact summary" not in prompt

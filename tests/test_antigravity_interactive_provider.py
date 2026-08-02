@@ -773,8 +773,9 @@ def test_antigravity_initial_context_uses_ag_file(tmp_path):
         "u", "conv", initial_context=True, agent_name="agent")
 
     assert ".pawflow_ag/initial_context.md" in prompt
-    assert "Latest turn to answer now:" in prompt
-    assert "hello" in prompt
+    assert "Latest User Request" in prompt
+    assert "hello" not in prompt
+    assert "\n" not in prompt
     assert (tmp_path / ".pawflow_ag" / "initial_context.md").is_file()
     initial_context = (tmp_path / ".pawflow_ag" / "initial_context.md").read_text(
         encoding="utf-8")

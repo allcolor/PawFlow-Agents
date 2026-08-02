@@ -178,7 +178,13 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             )
             parts.append(prompt)
         if image_lines:
-            parts.append("Attachments:\n" + "\n".join(image_lines))
+            if initial_context:
+                # Keep the cold terminal paste physically indivisible even
+                # when the latest request carries files.
+                parts[0] += " Attachments: " + " ; ".join(
+                    line.replace("\n", " ") for line in image_lines)
+            else:
+                parts.append("Attachments:\n" + "\n".join(image_lines))
         if not initial_context:
             catchup = self._cci_catchup_context(conversation_id, agent_name)
             if catchup:
@@ -186,7 +192,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             current = self._cci_live_text(messages) or user_text
             if current:
                 parts.append(current)
-        rendered = "\n\n".join(parts).strip() + "\n"
+        rendered = "\n\n".join(parts).strip()
+        if not initial_context:
+            rendered += "\n"
         if initial_context:
             self._remember_cli_bootstrap_prompt(
                 rendered, messages, conversation_id, agent_name)

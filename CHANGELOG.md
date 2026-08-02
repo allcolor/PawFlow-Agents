@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.82] — 2026-08-02
+
+### Fixed
+
+- Cold interactive CLI bootstraps are now pasted as one physical line that
+  points at the complete `initial_context.md` file instead of pasting a
+  multiline instruction into a terminal composer. Codex can no longer unfold
+  those lines into separate submissions that PawFlow persists and displays as
+  user messages.
+- PawFlow-injected prompt markers now retain consumable fragment state for the
+  local `UserPromptSubmit` hook. A fragment remains recognisable after a stop,
+  compaction, or event-service replacement, is consumed only once, and cannot
+  later hide matching text genuinely typed by the user. Short and expired
+  fragments remain normal user input.
+- `codex-interactive` now proves prompt submission from the exact
+  `UserPromptSubmit` receipt or the first MITM `/responses` request without
+  consuming the coordinator's event stream. It sends another `Enter` only when
+  neither proof arrived, reports partial submissions explicitly, and fails
+  instead of claiming that an unsent composer was accepted.
+- A cold Codex session waits for the actual composer before pasting, while a
+  successful pane reaction latches readiness for later turns. This prevents
+  bootstraps from landing before the TUI exists and stops repeated pastes from
+  stacking attachment chips in the composer.
+- Force stop records an authoritative timestamp and clears pending relaunch
+  state. Manual compaction resumes a turn only when its runtime marker started
+  after the most recent force stop, including when the stop occurs during the
+  compaction itself.
+- Managed server-relay launch diagnostics no longer expose relay or internal
+  authentication tokens in process-command logs.
+
 ## [1.0.0-beta.81] — 2026-08-02
 
 ### Fixed

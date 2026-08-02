@@ -15,7 +15,10 @@ from typing import Dict, List, Optional
 from core import FlowFile
 
 from tasks.ai.actions.conversation import _handle_conversation
-from tasks.ai.actions.cancel_interrupt import _handle_cancel_interrupt
+from tasks.ai.actions.cancel_interrupt import (
+    _handle_cancel_interrupt,
+    force_stop_invalidates_turn_resume,
+)
 from tasks.ai.actions.context_ops import _handle_context_ops
 from tasks.ai.actions.agent_resource import _handle_agent_resource
 from tasks.ai.actions.service_flow import _handle_service_flow
@@ -600,6 +603,23 @@ class AgentActionsMixin(_AgentActionsConvMixin):
             for _, active_ctx in _matching_active_contexts(target_agent):
                 active_ctx["_context_usage_suspended"] = bool(suspended)
 
+        def _active_turn_started_at(target_agent: str = "") -> float:
+            target = "" if target_agent in ("", "shared", "ALL") else target_agent
+            prefix = conv_id + ":"
+            with self._active_contexts_lock:
+                turns = list(self._active_turns.items())
+            starts = []
+            for key, turn in turns:
+                if key != conv_id and not key.startswith(prefix):
+                    continue
+                if target and str(turn.get("agent_name") or "") != target:
+                    continue
+                try:
+                    starts.append(float(turn.get("started_at") or 0.0))
+                except (TypeError, ValueError):
+                    continue
+            return max(starts, default=0.0)
+
         def _refresh_active_context_from_store(target_agent: str = ""):
             """Replace active in-memory messages with the compacted store view."""
             try:
@@ -636,6 +656,7 @@ class AgentActionsMixin(_AgentActionsConvMixin):
         def _bg():
             _resume_after_compact = False
             _resume_agent = agent_name or ""
+            _resume_turn_started_at = 0.0
             _resume_user_id = flowfile.get_attribute("http.auth.principal") or ""
             if op_name == "compact":
                 try:
@@ -649,6 +670,13 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                             _ares = ConversationStore.instance().get_extra(
                                 conv_id, "active_resources") or {}
                             _resume_agent = _ares.get("agent", "") or ""
+                    _resume_turn_started_at = _active_turn_started_at(
+                        _resume_agent)
+                    if (_resume_after_compact
+                            and force_stop_invalidates_turn_resume(
+                                conv_id, _resume_agent,
+                                _resume_turn_started_at)):
+                        _resume_after_compact = False
                     if not _resume_user_id:
                         from core.conversation_store import ConversationStore
                         _resume_user_id = ConversationStore.instance().get_user_id(
@@ -722,7 +750,10 @@ class AgentActionsMixin(_AgentActionsConvMixin):
                     _set_context_usage_suspended(agent_name, False)
                 self._release_context_op(conv_id, agent_name)
                 if (op_name == "compact" and _resume_after_compact
-                        and _resume_agent and _resume_agent != "shared"):
+                        and _resume_agent and _resume_agent != "shared"
+                        and not force_stop_invalidates_turn_resume(
+                            conv_id, _resume_agent,
+                            _resume_turn_started_at)):
                     try:
                         from tasks.ai.agent_loop import AgentLoopTask
                         AgentLoopTask.wake_agent(

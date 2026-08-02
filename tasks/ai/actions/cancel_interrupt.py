@@ -97,6 +97,35 @@ def _clear_force_stop_relaunch_state(conv_id: str, agent_name: str,
         logger.debug("force-stop cancel checkpoint cleanup failed", exc_info=True)
 
 
+def force_stop_invalidates_turn_resume(conv_id: str, agent_name: str,
+                                       turn_started_at: float,
+                                       store=None) -> bool:
+    """Return whether a force stop forbids resuming this compacted turn.
+
+    A stopped worker can briefly restore an active marker while its background
+    thread unwinds.  Manual compact must not interpret that stale marker as a
+    request to restart the turn.
+    """
+    if not conv_id:
+        return False
+    try:
+        if store is None:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+        global_cutoff = float(
+            store.get_extra(conv_id, "last_force_stop_at") or 0.0)
+        agent_cutoff = 0.0
+        if agent_name:
+            agent_cutoff = float(store.get_extra(
+                conv_id, f"last_force_stop_at:{agent_name.lower()}") or 0.0)
+        cutoff = max(global_cutoff, agent_cutoff)
+        return cutoff > 0.0 and (
+            not turn_started_at or float(turn_started_at) <= cutoff)
+    except Exception:
+        logger.debug("compact resume force-stop check failed", exc_info=True)
+        return False
+
+
 def _clear_force_stop_runtime_state(executor, conv_id: str,
                                     agent_name: str = "") -> None:
     """Remove stale in-memory active markers after a force stop.

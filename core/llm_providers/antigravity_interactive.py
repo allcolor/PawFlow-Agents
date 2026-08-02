@@ -517,7 +517,11 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
                 agent_name=agent_name,
             ))
         if image_lines:
-            parts.append("Attachments:\n" + "\n".join(image_lines))
+            if initial_context:
+                parts[0] += " Attachments: " + " ; ".join(
+                    line.replace("\n", " ") for line in image_lines)
+            else:
+                parts.append("Attachments:\n" + "\n".join(image_lines))
         if not initial_context:
             catchup = self._agi_catchup_context(conversation_id, agent_name)
             if catchup:
@@ -525,7 +529,9 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
             current = self._agi_live_text(messages) or user_text
             if current:
                 parts.append(current)
-        rendered = "\n\n".join(parts).strip() + "\n"
+        rendered = "\n\n".join(parts).strip()
+        if not initial_context:
+            rendered += "\n"
         if initial_context:
             self._remember_cli_bootstrap_prompt(
                 rendered, messages, conversation_id, agent_name)

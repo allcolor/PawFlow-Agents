@@ -71,9 +71,13 @@ serializing that same body into the next `initial_context.md` would embed a
 verbatim copy of the file the agent is already reading, one layer deeper on every
 cold start; a 671 KB bootstrap file was found to be 16% copies of itself. So every
 CLI serializer drops the pair (`bootstrap_read_call_ids` in
-`core/llm_providers/cli_shared.py`), using the same predicate the gauge uses
-(`_is_cli_bootstrap_read`) so the two can never disagree. Deduplicating the
-context must never turn into not counting it.
+`core/llm_providers/cli_shared.py`). It normally uses the same visible-path
+predicate as the gauge (`_is_cli_bootstrap_read`). Codex Interactive code
+mode elides its script before persistence, including that path, so the
+serializer additionally recognizes the linked native result by the exact
+`# PawFlow Initial Context` first-line header. A mere quoted mention does not
+match. This fallback changes only the next serialized context; the transcript
+and provider-side gauge still retain the read.
 
 ## Agent Configuration
 

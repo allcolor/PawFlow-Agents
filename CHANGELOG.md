@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.87] — 2026-08-02
+
+### Fixed
+
+- Codex Interactive cold starts no longer embed the previous
+  `.pawflow_cci/initial_context.md` inside the next one. Code mode deliberately
+  elides its persisted script arguments, which hid the bootstrap path from the
+  visible-path deduplicator and let the full tool result recurse one layer
+  deeper on every restart. The shared CLI serializer now pairs native results
+  carrying the exact bootstrap header with their call and excludes that pair
+  from the next context. The call and result remain visible in the transcript
+  and counted by the provider-side gauge; quoted mentions of the header remain
+  ordinary context.
+
 ## [1.0.0-beta.86] — 2026-08-02
 
 ### Fixed

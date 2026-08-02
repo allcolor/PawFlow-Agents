@@ -125,6 +125,8 @@ def request_path(base_url: str, endpoint_path: str = "") -> str:
 _TOOL_ARG_TRUNC = 120
 _TOOL_PARALLEL_ARG_TRUNC = 80
 _TOOL_RESULT_TRUNC = 400
+_BOOTSTRAP_CONTEXT_HEADER_RE = re.compile(
+    r"(?:\A|\r?\n)# PawFlow Initial Context(?:\r?\n|\Z)")
 
 
 def summarize_tool_call(name: str, args: Any) -> str:
@@ -246,20 +248,37 @@ def bootstrap_read_call_ids(messages: List[Any]) -> Set[str]:
     every cold start. Two surfaces, two rules: the transcript keeps the pair,
     the agent context drops it.
 
-    The gauge already draws this line -- see ``_is_cli_bootstrap_read``, whose
-    reason for existing is that counting this body charges the same context
-    twice. Same predicate here, so the two never disagree.
+    Normally the same predicate as the gauge identifies the call from its
+    arguments. Codex Interactive code mode is the exception: before persistence
+    it deliberately replaces the script -- and therefore the bootstrap path --
+    with a size marker. Its linked result still contains the bootstrap's exact
+    first-line header, so use that as a narrow fallback for native calls.
     """
     from tasks.ai.context_usage_cache import _is_cli_bootstrap_read
 
     call_ids: Set[str] = set()
+    native_call_ids: Set[str] = set()
     for msg in messages or []:
         for tool_call in (getattr(msg, "tool_calls", None) or []):
-            if not _is_cli_bootstrap_read(tool_call):
-                continue
             call_id = str(getattr(tool_call, "id", "") or "")
-            if call_id:
+            if not call_id:
+                continue
+            if str(getattr(tool_call, "tool_origin", "") or "").lower() == "native":
+                native_call_ids.add(call_id)
+            if _is_cli_bootstrap_read(tool_call):
                 call_ids.add(call_id)
+
+    for msg in messages or []:
+        if str(getattr(msg, "role", "") or "") != "tool":
+            continue
+        call_id = str(getattr(msg, "tool_call_id", "") or "")
+        if not call_id or call_id not in native_call_ids:
+            continue
+        content = getattr(msg, "content", "")
+        text = msg.text_content if isinstance(content, list) else content
+        if (_BOOTSTRAP_CONTEXT_HEADER_RE.search(
+                text if isinstance(text, str) else str(text or ""))):
+            call_ids.add(call_id)
     return call_ids
 
 

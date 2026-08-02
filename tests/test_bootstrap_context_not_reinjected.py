@@ -23,6 +23,13 @@ import pytest
 from core.llm_client import LLMClient, LLMMessage, LLMToolCall
 
 BOOTSTRAP_BODY = "# PawFlow Initial Context\n" + ("serialized history " * 400)
+OPAQUE_EXEC_RESULT = (
+    '<tool_output tool="exec">\n'
+    "Script completed\n"
+    "Output:\n"
+    f"{BOOTSTRAP_BODY}\n"
+    "</tool_output>"
+)
 
 # Every shape the CLI providers use to open their own bootstrap file.
 BOOTSTRAP_CALLS = [
@@ -87,6 +94,43 @@ def test_ordinary_tool_results_still_reach_the_context():
     assert "read(" in body
 
 
+def test_opaque_codex_code_mode_bootstrap_result_is_not_reinjected():
+    """The persisted exec body has lost the path, but its result is conclusive."""
+    messages = (
+        [LLMMessage(role="user", content="earlier", conversation_id="conv")]
+        + _pair(
+            "exec",
+            {"input": "<code-mode script, 249 chars>"},
+            body=OPAQUE_EXEC_RESULT,
+        )
+        + [LLMMessage(role="assistant", content="an answer",
+                      conversation_id="conv"),
+           LLMMessage(role="user", content="latest", conversation_id="conv")]
+    )
+
+    body = _client()._cli_context_before_latest_text(messages)
+
+    assert "# PawFlow Initial Context" not in body
+    assert "serialized history" not in body
+    assert "code-mode script" not in body
+    assert "earlier" in body
+    assert "an answer" in body
+
+
+def test_a_quoted_bootstrap_title_is_not_mistaken_for_the_file():
+    """A search hit mentioning the title is context, not a bootstrap read."""
+    quoted = 'Search result:\n> 1  "# PawFlow Initial Context"'
+    messages = (
+        _pair("exec", {"input": "<code-mode script, 80 chars>"}, body=quoted)
+        + [LLMMessage(role="user", content="latest", conversation_id="conv")]
+    )
+
+    body = _client()._cli_context_before_latest_text(messages)
+
+    assert "# PawFlow Initial Context" in body
+    assert "code-mode script" in body
+
+
 def test_free_text_survives_when_its_call_is_dropped():
     """Only the call synopsis goes; anything the agent said stays."""
     messages = (
@@ -122,7 +166,11 @@ def test_cold_start_context_file_does_not_embed_its_own_previous_copy(tmp_path):
     """End to end: the written file never quotes a bootstrap file."""
     messages = (
         [LLMMessage(role="system", content="system rules", conversation_id="conv")]
-        + _pair("Read", {"file_path": "/cc_sessions/u/conv/a/.pawflow_cci/initial_context.md"})
+        + _pair(
+            "exec",
+            {"input": "<code-mode script, 249 chars>"},
+            body=OPAQUE_EXEC_RESULT,
+        )
         + [LLMMessage(role="user", content="latest request", conversation_id="conv")]
     )
 

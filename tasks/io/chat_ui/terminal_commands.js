@@ -130,6 +130,7 @@ async function _openCCInteractiveAgentTmux(targetAgent, serviceId, provider) {
       _initXterm(container, sessionId, token, {
         fixedCols: Number(resp.fixed_cols) || 0,
         fixedRows: Number(resp.fixed_rows) || 0,
+        reconnectOnExit: true,
       });
     },
     error: (e) => {
@@ -163,7 +164,7 @@ async function _openAntigravityAgentTmux(targetAgent, serviceId) {
       const tabId = addTerminalTab(sessionId, resp.relay_id || ('agy:' + targetAgent));
       const panel = document.getElementById('tabContent_' + tabId);
       const container = panel.querySelector('.xterm-container');
-      _initXterm(container, sessionId, token);
+      _initXterm(container, sessionId, token, { reconnectOnExit: true });
     },
     error: (e) => {
       addMsg('system', t('failedToOpenTerminal', { error: e.message }));

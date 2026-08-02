@@ -692,6 +692,34 @@ class TestAgentLoopStreaming(unittest.TestCase):
         PendingQueue.drop_cache()
         PollScheduler.reset()
 
+    def test_active_cleanup_drops_older_marker_but_preserves_newer_one(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+
+        task = AgentLoopTask({"api_key": "k", "streaming": True})
+        conversation_id = "test-conv-active-generation"
+        agent_name = "assistant"
+        key = f"{conversation_id}:{agent_name}"
+
+        task._active_turns = {key: {"generation": 0}}
+        task._active_conversations = {conversation_id: 1}
+        task._user_active_conversations = {conversation_id}
+        task._decrement_active(conversation_id, {
+            "active_agent_name": agent_name,
+            "_active_turn_key": key,
+            "_generation": 1,
+        })
+        assert key not in task._active_turns
+
+        task._active_turns = {key: {"generation": 2}}
+        task._active_conversations = {conversation_id: 1}
+        task._user_active_conversations = {conversation_id}
+        task._decrement_active(conversation_id, {
+            "active_agent_name": agent_name,
+            "_active_turn_key": key,
+            "_generation": 1,
+        })
+        assert task._active_turns[key]["generation"] == 2
+
     def test_interrupted_cleanup_still_wakes_queued_pending_message(self):
         from tasks.ai.agent_loop import AgentLoopTask
         from core.pending_queue import PendingQueue

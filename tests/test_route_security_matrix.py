@@ -221,6 +221,30 @@ def test_register_terminal_requires_owner(cap_db):
         register_terminal("sX", "relay-A")
 
 
+def test_old_terminal_cleanup_does_not_clobber_reconnected_viewer():
+    from services import terminal_proxy as tp
+
+    old_sock, new_sock = object(), object()
+    old_proc, new_proc = object(), object()
+    sid = "term-reconnect-race"
+    with tp._lock:
+        tp._sessions[sid] = {
+            "browser_sock": new_sock,
+            "server_pipe_process": new_proc,
+        }
+    try:
+        tp._clear_terminal_connection(sid, old_sock, old_proc)
+        assert tp.get_terminal(sid)["browser_sock"] is new_sock
+        assert tp.get_terminal(sid)["server_pipe_process"] is new_proc
+
+        tp._clear_terminal_connection(sid, new_sock, new_proc)
+        assert tp.get_terminal(sid)["browser_sock"] is None
+        assert "server_pipe_process" not in tp.get_terminal(sid)
+    finally:
+        with tp._lock:
+            tp._sessions.pop(sid, None)
+
+
 def test_register_code_server_requires_owner(cap_db):
     from services.code_server_proxy import register_code_server
     with pytest.raises(ValueError):

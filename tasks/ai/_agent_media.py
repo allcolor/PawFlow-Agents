@@ -492,7 +492,17 @@ class _AgentMediaMixin:
             _turn = self._active_turns.get(_turn_key)
             _ctx_gen = (ctx or {}).get("_generation")
             _turn_gen = _turn.get("generation") if isinstance(_turn, dict) else None
-            if _turn is None or _turn_gen is None or _ctx_gen is None or _turn_gen == _ctx_gen:
+            # Preserve only a marker owned by a strictly newer generation.
+            # A stopped turn can observe an older marker after force-stop bumped
+            # the generation; retaining that stale marker makes list_active show
+            # a ghost until the next user message happens to clean it up.
+            _newer_turn = False
+            if _turn is not None and _turn_gen is not None and _ctx_gen is not None:
+                try:
+                    _newer_turn = int(_turn_gen) > int(_ctx_gen)
+                except (TypeError, ValueError):
+                    _newer_turn = _turn_gen != _ctx_gen
+            if not _newer_turn:
                 self._active_turns.pop(_turn_key, None)
                 _released_turn = True
             self._active_claude_client.pop(_cc_key, None)

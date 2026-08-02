@@ -90,6 +90,25 @@ def get_terminal(session_id: str):
         return _sessions.get(session_id)
 
 
+def _clear_terminal_connection(session_id: str, browser_sock,
+                               server_pipe_process=None) -> None:
+    """Clear only the viewer generation owned by this handler.
+
+    A persistent tmux viewer may reconnect before the prior WS handler reaches
+    its finally block. Identity checks keep that old cleanup from erasing the
+    replacement socket or process.
+    """
+    with _lock:
+        sess = _sessions.get(session_id)
+        if not sess:
+            return
+        if sess.get("browser_sock") is browser_sock:
+            sess["browser_sock"] = None
+        if (server_pipe_process is not None
+                and sess.get("server_pipe_process") is server_pipe_process):
+            sess.pop("server_pipe_process", None)
+
+
 def dispatch_terminal_data(session_id: str, data_b64: str):
     """Called by RelayService when it receives terminal_data from relay."""
     with _lock:
@@ -207,9 +226,7 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         if "0 bytes" not in str(e) and "Connection" not in str(e):
             logger.warning("Terminal proxy error: %s", e)
     finally:
-        with _lock:
-            if session_id in _sessions:
-                _sessions[session_id]["browser_sock"] = None
+        _clear_terminal_connection(session_id, client_sock)
         try:
             client_sock.close()
         except Exception:
@@ -315,10 +332,7 @@ def _server_pipe_ws_loop(client_sock, session_id: str, sess: dict):
                     proc.kill()
                 except Exception:
                     logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-        with _lock:
-            if session_id in _sessions:
-                _sessions[session_id]["browser_sock"] = None
-                _sessions[session_id].pop("server_pipe_process", None)
+        _clear_terminal_connection(session_id, client_sock, proc)
         try:
             client_sock.close()
         except Exception:

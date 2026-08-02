@@ -250,6 +250,8 @@ function _initXterm(container, sessionId, token, sizing) {
   const fixedCols = Math.max(0, Number(sizing && sizing.fixedCols) || 0);
   const fixedRows = Math.max(0, Number(sizing && sizing.fixedRows) || 0);
   const fixedSize = fixedCols && fixedRows ? { cols: fixedCols, rows: fixedRows } : null;
+  const reconnectOnExit = !!(sizing && sizing.reconnectOnExit);
+  const maxReconnects = reconnectOnExit ? 3 : 0;
   const termOptions = {
     cursorBlink: true,
     fontSize: 13,
@@ -282,10 +284,61 @@ function _initXterm(container, sessionId, token, sizing) {
   ro.observe(container);
   container._resizeObserver = ro;
 
-  // Connect WS
+  // Connect WS. Agent tmux viewers are detachable clients of a persistent
+  // session, so a dead attach process may be replaced without killing tmux.
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/terminal/' + sessionId + '/' + token);
-  container._ws = ws;
+  const terminalUrl = proto + '//' + location.host + '/terminal/' + sessionId + '/' + token;
+  let reconnectCount = 0;
+  let stableTimer = null;
+
+  function scheduleReconnect(connection) {
+    if (!reconnectOnExit || container._terminalManualClose
+        || reconnectCount >= maxReconnects) return false;
+    reconnectCount += 1;
+    container._terminalReconnectPending = true;
+    if (stableTimer) clearTimeout(stableTimer);
+    try { connection.close(); } catch (_) {}
+    setTimeout(() => {
+      if (container._terminalManualClose) return;
+      container._terminalReconnectPending = false;
+      connectTerminal();
+    }, 250 * reconnectCount);
+    return true;
+  }
+
+  function connectTerminal() {
+    const connection = new WebSocket(terminalUrl);
+    container._ws = connection;
+    connection.onopen = () => {
+      connection.send(JSON.stringify({ type: 'terminal_resize', cols: term.cols, rows: term.rows }));
+      stableTimer = setTimeout(() => {
+        if (connection.readyState === WebSocket.OPEN) reconnectCount = 0;
+      }, 5000);
+    };
+    connection.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'terminal_data') {
+          term.write(Uint8Array.from(atob(msg.data), c => c.charCodeAt(0)));
+        } else if (msg.type === 'terminal_exit') {
+          if (scheduleReconnect(connection)) return;
+          term.write('\r\n[' + t('processExited') + ']\r\n');
+          container._terminalExited = true;
+          try { connection.close(); } catch (_) {}
+        }
+      } catch (err) {}
+    };
+    connection.onclose = () => {
+      if (connection !== container._ws || container._terminalManualClose
+          || container._terminalReconnectPending) return;
+      if (!container._terminalExited && scheduleReconnect(connection)) return;
+      if (!container._terminalExited) {
+        term.write('\r\n[' + t('disconnected') + ']\r\n');
+      }
+    };
+  }
+
+  connectTerminal();
 
   term.attachCustomKeyEventHandler((ev) => {
     const key = (ev.key || '').toLowerCase();
@@ -295,7 +348,7 @@ function _initXterm(container, sessionId, token, sizing) {
       return false;
     }
     if (ev.type === 'keydown' && accel && ev.shiftKey && key === 'v') {
-      _pasteClipboardToTerminal(ws);
+      _pasteClipboardToTerminal(container._ws);
       return false;
     }
     return true;
@@ -320,36 +373,14 @@ function _initXterm(container, sessionId, token, sizing) {
     }
   });
 
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ type: 'terminal_resize', cols: term.cols, rows: term.rows }));
-  };
-
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'terminal_data') {
-        term.write(Uint8Array.from(atob(msg.data), c => c.charCodeAt(0)));
-      } else if (msg.type === 'terminal_exit') {
-        term.write('\r\n[' + t('processExited') + ']\r\n');
-        container._terminalExited = true;
-        try { ws.close(); } catch (_) {}
-      }
-    } catch (err) {}
-  };
-
-  ws.onclose = () => {
-    if (!container._terminalExited) {
-      term.write('\r\n[' + t('disconnected') + ']\r\n');
-    }
-  };
-
   term.onData((data) => {
-    _sendTerminalInput(ws, data);
+    _sendTerminalInput(container._ws, data);
   });
 
   term.onResize(({ cols, rows }) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'terminal_resize', cols, rows }));
+    const activeWs = container._ws;
+    if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+      activeWs.send(JSON.stringify({ type: 'terminal_resize', cols, rows }));
     }
   });
 }

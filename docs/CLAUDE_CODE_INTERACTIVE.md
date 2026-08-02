@@ -550,6 +550,15 @@ The Antigravity pool reports itself as `antigravity-observer` (what the
 container is) and the listing normalises that to the LLM provider name callers
 dispatch on.
 
+The browser terminal is only a detachable tmux viewer; it does not own the
+provider session. If its `tmux attach-session` process exits while the warm tmux
+still exists, the xterm client retries the same registered attachment up to
+three times. Closing the tab disables retries. Exhausting the bound still shows
+`Process terminated`, so a genuinely dead container or tmux is not hidden.
+Likewise, `Active Agents` represents current work rather than a warm session:
+cleanup removes markers from the same or any older generation and preserves
+only a strictly newer turn marker.
+
 One paste does not always produce one submit. A TUI that collapses pasted text
 into an attachment chip can submit a composer holding several of them as several
 `UserPromptSubmit` hooks, and a piece's SHA-256 matches no recorded injection.

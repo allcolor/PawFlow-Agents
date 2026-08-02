@@ -85,6 +85,7 @@ function closeTerminalTab(tabId) {
     // Clean up xterm WS
     const container = panel.querySelector('.xterm-container');
     if (container && container._ws) {
+      container._terminalManualClose = true;
       try { container._ws.close(); } catch(e) {}
     }
     // Tell server to close the PTY

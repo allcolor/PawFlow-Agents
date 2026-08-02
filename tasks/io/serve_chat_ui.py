@@ -67,7 +67,9 @@ _JS_MODULES = [
     "tabs.js",
     # terminal.js = xterm engine; terminal_commands.js = /terminal,/code,
     # /desktop,/audio,/port-forward,/vm + agent-tmux handlers (load right after).
-    "terminal.js", "terminal_commands.js",
+    # grab.js reuses terminal.js helpers (_terminalInputB64,
+    # _estimateTerminalSize, _agentLlmProvider) — must load after it.
+    "terminal.js", "terminal_commands.js", "grab.js",
     "audio.js",
     "conversation_tts.js",
     "conversation_stt.js",

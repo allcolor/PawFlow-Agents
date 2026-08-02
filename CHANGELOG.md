@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.83] — 2026-08-02
+
+### Fixed
+
+- `codex-interactive` no longer refuses a turn when it fails to recognise the
+  Codex composer. beta.82 turned the cold-start readiness marker into a hard
+  gate, so the first Codex release whose idle composer drew none of the known
+  markers broke the provider outright: every cold send was refused with
+  `refusing first send ... because the TUI composer is not ready`, five LLM
+  retries deep at ~45 s apiece, against a TUI that was sitting there ready to
+  be pasted into. Readiness is advisory again — a missed marker pastes anyway —
+  and the Codex wait runs on its own 12-second clock instead of Claude Code's
+  45. The undrawn-composer case the gate was added for is still caught by the
+  before/after paste proof, which does not model the TUI and re-pastes when
+  nothing arrived. Every line of the fix is on `CodexInteractivePool`; the
+  Claude Code pool is untouched, and a test pins that.
+- `Ctrl+Enter` in the chat composer inserts a newline instead of doing nothing.
+  Both CLI TUIs use it for that; the webchat only ever honoured `Shift+Enter`.
+  Both work now.
+
+### Added
+
+- **Grab mode.** When the selected agent runs on an interactive CLI provider
+  and its tmux is live, a grab button appears in the composer row: held, the
+  chat composer becomes a direct input to that TUI, and what you type lands in
+  the terminal as if you were attached to it. Releasing it — or switching
+  agent, switching conversation, or the session dying — returns the composer to
+  the normal path.
+
+  It reuses the terminal transport whole (`open_cc_interactive_terminal`, then
+  `terminal_input` into the container PTY) and deliberately never uses
+  `pool.send_text()`: that path files an anti-mirror ticket meant for
+  PawFlow-injected prompts, and a prompt a human typed must be mirrored. Typed
+  through the PTY, the `UserPromptSubmit` hook files it as a `channel="tmux"`
+  user message and the MITM captures the answer, so a grabbed prompt is an
+  ordinary conversation turn.
+
+  A typed newline is `Ctrl+Enter` forwarded to the TUI as the CSI u sequence
+  `ESC[13;5u` — Codex, Claude Code and Antigravity all break the line on it —
+  so the break is made by the TUI in its own composer rather than by shoving a
+  multiline block across, which is what unfolds one prompt into several
+  submissions. A block that arrives already multiline was pasted rather than
+  typed, and goes as one bracketed paste followed by `Enter`. `Esc` and
+  `Ctrl+C` pass through to the TUI, and typing while a turn is running is
+  allowed — the TUI queues it, exactly as it would for a human at the same
+  tmux. Grab covers the two providers `open_cc_interactive_terminal` attaches
+  (`claude-code-interactive`, `codex-interactive`); `antigravity-interactive`
+  is not wired to it yet.
+
 ## [1.0.0-beta.82] — 2026-08-02
 
 ### Fixed

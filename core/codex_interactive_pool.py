@@ -337,7 +337,25 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                            InteractiveClaudeCodePool):
     _instance: Optional["CodexInteractivePool"] = None
     _instance_lock = threading.Lock()
-    _REQUIRE_PROMPT_READY = True
+    # NOT a gate. Every readiness marker below is a string read off a Codex
+    # release, and Codex redraws its composer chrome every few weeks: the
+    # placeholder, the footer and the box around them have all moved already.
+    # beta.82 made a missed marker fatal, and the first release whose idle
+    # composer drew none of them took the whole provider down with it -- every
+    # cold send refused, five LLM retries deep, ~45s apiece, while the TUI on
+    # the other side sat there perfectly ready to be pasted into. A recognition
+    # test that models somebody else's UI must never be the thing that decides
+    # a turn cannot happen. The transport proof is `_paste_landed` (below, and
+    # TUI-agnostic: did the screen move?), which refuses and re-pastes when
+    # nothing arrived -- exactly the undrawn-composer case the gate was added
+    # for.
+    _REQUIRE_PROMPT_READY = False
+    # And the wait is short, because it is advisory: on a stale marker it is
+    # pure latency on every cold turn, paid before each of the five LLM
+    # retries. Long enough for the composer to draw, not long enough to matter
+    # when it never announces itself. Claude Code keeps its own 45s: its
+    # markers are dependable, and nothing here changes that pool.
+    _PROMPT_READY_SECONDS = 12.0
     # A second blind Enter is precisely what unfolds a slow, multi-chip paste.
     # Further Enters are driven by an exact hook/MITM acknowledgement below.
     _INITIAL_SUBMIT_ENTERS = 1
@@ -350,7 +368,6 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     # here belongs to the input box or its footer.
     _PROMPT_READY_MARKERS = (
         "ask codex", "for shortcuts", "context left")
-    _RUNNING_MARKERS = ("esc to interrupt",)
     # The Codex TUI never renders pasted text: it replaces it with an
     # attachment chip. The prompt sitting unsent in the input box therefore
     # looks, to a text probe, exactly like a prompt that was accepted --
@@ -365,13 +382,24 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
 
     def _wait_for_prompt_ready(self, name: str, *,
                                timeout: Optional[float] = None) -> bool:
-        """Wait for the real Codex composer on a cold session.
+        """Give the real Codex composer a short chance to appear.
 
         Warm sessions bypass this method through ``state.prompt_ready``.  A
-        cold session must not turn the inherited wait into a zero-second probe:
-        pasting into the permanent header fragmented the bootstrap into orphan
-        turns when the composer had not been drawn yet.
+        cold session does not turn the inherited wait into a zero-second probe
+        -- pasting into the permanent header fragmented the bootstrap into
+        orphan turns when the composer had not been drawn yet -- but it waits
+        on a Codex clock, not Claude Code's 45s, and its failure is advisory
+        (see ``_REQUIRE_PROMPT_READY``): a marker Codex stopped drawing is a
+        reason to paste unproven, not a reason to refuse the turn.
         """
+        if timeout is None:
+            configured = os.environ.get(
+                "PAWFLOW_CCI_PROMPT_READY_TIMEOUT_SECONDS", "")
+            try:
+                timeout = (float(configured) if configured
+                           else self._PROMPT_READY_SECONDS)
+            except ValueError:
+                timeout = self._PROMPT_READY_SECONDS
         return super()._wait_for_prompt_ready(name, timeout=timeout)
 
     def _pane_diagnostic(self, name: str) -> str:

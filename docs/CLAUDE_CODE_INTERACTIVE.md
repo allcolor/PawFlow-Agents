@@ -490,6 +490,54 @@ marker also holds a whitespace-normalised, consumable copy of the injected text.
 Unlike the event service's in-memory copy, it survives a stop, compact, or
 session-state replacement while old paste chips can still be waiting in the TUI.
 
+### Grab: the composer as a terminal input
+
+When the selected agent runs on `claude-code-interactive` or `codex-interactive`
+and its tmux is live, a grab button (🖥️) appears in the composer row, before
+the reload button. Held, the chat composer becomes a direct input to that TUI:
+what you type lands in the terminal exactly as if you were attached to it.
+Releasing it puts the composer back on the normal `/api/agent` path. Switching
+agent or conversation, or the session dying, releases it on its own.
+
+It reuses the terminal transport whole — `open_cc_interactive_terminal` for the
+session and token, then `terminal_input` over the terminal WebSocket, raw bytes
+into the container PTY. Grab is write-only: the terminal tab is where you watch
+the pane.
+
+Two rules make a grabbed prompt a real conversation turn rather than a blind
+write into a terminal:
+
+- **Never through `pool.send_text()`.** That path files a SHA-256 ticket in
+  `injected_prompts.jsonl` whose whole purpose is to stop the hook from
+  mirroring the prompt — correct for a PawFlow-injected prompt, exactly wrong
+  for one a human typed. Typed through the PTY, the `UserPromptSubmit` hook
+  mirrors it as a `channel="tmux"` user message and the MITM captures the
+  answer, so the turn appears in the chat by the same route as a prompt typed
+  at the tmux. Nothing is echoed locally, or the hook's copy would double it.
+- **A typed newline is the `Ctrl+Enter` key, forwarded.** Codex, Claude Code
+  and Antigravity all break the line on it, and modern terminals encode it as
+  the CSI u sequence `ESC[13;5u` (`ESC[13;2u` for `Shift+Enter`) — the same
+  sequences PawCode binds on its own prompt. Grabbed, the composer's contents
+  go over first and then the key, so the break is made by the TUI in its own
+  composer. Assembling a multiline block here and pushing it across is what
+  unfolds one prompt into several submissions.
+- **A block that is already multiline was pasted, not typed**, and goes as one
+  bracketed paste (`ESC[200~` ... `ESC[201~`), then a settle delay, then
+  `Enter` — the pool's paste-then-submit discipline.
+
+Keys, grabbed: `Enter` submits to the TUI; `Ctrl+Enter` and `Shift+Enter` are
+forwarded as newlines (ungrabbed, both insert one in the composer too —
+`Ctrl+Enter` previously did nothing at all there); `Esc` passes through, which
+is what Codex's *Esc to interrupt* needs; `Ctrl+C` passes through as `0x03`
+unless there is a selection, where it stays a copy. `Enter` on an empty
+composer still submits — that is how lines broken with `Ctrl+Enter` are sent.
+Typing while a turn runs is allowed and queues in the TUI, exactly as it would
+for a human attached to the same tmux.
+
+Grab covers `claude-code-interactive` and `codex-interactive`, the two
+providers `open_cc_interactive_terminal` attaches. `antigravity-interactive`
+has its own attach action and its own listing, and is not wired to grab yet.
+
 One paste does not always produce one submit. A TUI that collapses pasted text
 into an attachment chip can submit a composer holding several of them as several
 `UserPromptSubmit` hooks, and a piece's SHA-256 matches no recorded injection.
@@ -617,9 +665,22 @@ events. PawFlow never reads terminal output or Codex rollout files to assemble a
 response. The tmux is input and lifecycle transport; the MITM side channel is
 the output source.
 
-Codex readiness is a single non-blocking visual probe, not the inherited
-45-second marker wait. A successful before/after paste proof latches the session
-ready for later turns. Submission verification is also Codex-specific: absence
+Codex readiness is a short advisory wait on its own clock (12 seconds,
+`_PROMPT_READY_SECONDS`), not the inherited 45-second one, and **never** a
+gate: a cold send
+whose readiness marker was not recognised pastes anyway. Every marker in
+`_PROMPT_READY_MARKERS` is a string read off a Codex release, and Codex redraws
+its composer chrome every few weeks — placeholder, footer and the box around
+them have all moved already. Making a missed marker fatal (beta.82) meant the
+first release whose idle composer drew none of them took the whole provider
+down: every cold send refused with *refusing first send … because the TUI
+composer is not ready*, five LLM retries deep at ~45 s apiece, against a TUI
+that was sitting there ready to be pasted into. The transport proof is the
+before/after paste comparison below, which does not model the TUI at all and
+still refuses (and re-pastes) when nothing reached the composer — the undrawn-
+composer case the gate was meant to catch. A successful before/after paste proof
+latches the session ready for later turns. Submission verification is also
+Codex-specific: absence
 of the injected text is never accepted as proof because Codex renders pastes as
 attachment chips. If the composer layout is unknown and no running marker is
 visible, PawFlow retries `Enter` up to three times; an extra `Enter` in an empty

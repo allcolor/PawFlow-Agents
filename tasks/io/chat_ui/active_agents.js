@@ -204,6 +204,8 @@ function trackAgentDone(agentName, taskId) {
 }
 
 function updateActivePanel() {
+  // Same poll: whether the selected agent has a tmux to grab.
+  if (typeof updateGrabButton === 'function') updateGrabButton();
   const panel = document.getElementById('activePanel');
   const rows = document.getElementById('activeRows');
   const names = Object.keys(activeInteractions);

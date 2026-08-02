@@ -257,6 +257,10 @@ function cancelAgent(target) {
 
 async function send() {
   const input = document.getElementById('input');
+  // Grabbed, the composer is an input to the agent's tmux, not to /api/agent.
+  // Nothing else in this function applies: no slash commands, no attachments,
+  // and no local echo (the UserPromptSubmit hook files the message).
+  if (typeof grabActive === 'function' && grabActive()) { grabSend(); return; }
   let text = input.value.trim();
   if (!text && pendingFiles.length === 0) return;
 
@@ -530,8 +534,25 @@ async function _openSkillAutocomplete(input) {
   return true;
 }
 
+/** Insert a newline at the caret, as Shift+Enter does natively.
+ *
+ * Ctrl+Enter is the newline in both CLI TUIs, and the webchat only ever
+ * honoured Shift+Enter — so Ctrl+Enter did nothing at all here. Both work
+ * now, grabbed or not.
+ */
+function _composerInsertNewline(input) {
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
+  input.value = input.value.slice(0, start) + '\n' + input.value.slice(end);
+  input.setSelectionRange(start + 1, start + 1);
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+}
+
 function handleKey(e) {
   const input = e.target;
+  // Grab takes the keys it needs (Esc, Enter, Ctrl+C) before anything here.
+  if (typeof grabHandleKey === 'function' && grabHandleKey(e)) return;
   if (_skillAutocomplete.open) {
     if (e.key === 'Escape') { e.preventDefault(); _hideSkillAutocomplete(); return; }
     if (e.key === 'Enter') {
@@ -578,6 +599,13 @@ function handleKey(e) {
       addMsg('system', t('interruptEscape', { agent: target }));
       fireAction('interrupt', { agent_name: target });
     }
+    return;
+  }
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    // Ctrl+Enter = newline, like the CLI TUIs. Shift+Enter still works and
+    // the textarea inserts that one itself.
+    e.preventDefault();
+    _composerInsertNewline(input);
     return;
   }
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {

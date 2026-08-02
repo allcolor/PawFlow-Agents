@@ -315,16 +315,59 @@ def test_codex_pane_diagnostic_never_leaks_the_pane(monkeypatch):
 
 
 def test_codex_default_readiness_check_keeps_the_cold_start_wait(monkeypatch):
+    """Still a real wait, not the zero-second probe: a paste into the permanent
+    header fragments the bootstrap when the composer has not been drawn yet."""
+    monkeypatch.delenv("PAWFLOW_CCI_PROMPT_READY_TIMEOUT_SECONDS", raising=False)
     pool = CodexInteractivePool()
     seen = []
     monkeypatch.setattr(
         InteractiveClaudeCodePool, "_wait_for_prompt_ready",
         lambda self, name, *, timeout=None: seen.append((name, timeout)) or False)
     assert pool._wait_for_prompt_ready(_State.name) is False
-    assert seen == [(_State.name, None)]
+    assert seen == [(_State.name, pool._PROMPT_READY_SECONDS)]
+    assert 0 < pool._PROMPT_READY_SECONDS <= 15.0
 
 
-def test_codex_cold_send_refuses_to_paste_before_composer_is_ready(monkeypatch):
+def test_codex_readiness_wait_is_its_own_clock(monkeypatch):
+    """The wait is advisory, and on a stale marker it is paid in full before
+    every one of the five LLM retries. Claude Code's 45s is Claude Code's."""
+    monkeypatch.setenv("PAWFLOW_CCI_PROMPT_READY_TIMEOUT_SECONDS", "3")
+    pool = CodexInteractivePool()
+    seen = []
+    monkeypatch.setattr(
+        InteractiveClaudeCodePool, "_wait_for_prompt_ready",
+        lambda self, name, *, timeout=None: seen.append(timeout) or False)
+    assert pool._wait_for_prompt_ready(_State.name) is False
+    assert seen == [3.0]
+
+
+def test_the_codex_fix_leaves_the_claude_code_pool_alone(monkeypatch):
+    """Codex reaching parity is not a licence to touch the pool that works.
+
+    Everything the readiness fix changes lives on CodexInteractivePool. Claude
+    Code keeps its own 45-second wait and its own defaults, unread from here.
+    """
+    monkeypatch.delenv("PAWFLOW_CCI_PROMPT_READY_TIMEOUT_SECONDS", raising=False)
+    pool = InteractiveClaudeCodePool()
+    seen = []
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: seen.append(1) or "")
+
+    assert pool._REQUIRE_PROMPT_READY is False
+    assert not hasattr(pool, "_PROMPT_READY_SECONDS")
+    # Its own timeout, read from its own env default, not from Codex's clock.
+    assert pool._wait_for_prompt_ready(_State.name, timeout=0) is False
+    assert seen == [1]
+
+
+def test_codex_cold_send_pastes_even_when_no_marker_was_recognised(monkeypatch):
+    """The regression that took Codex interactive down whole (beta.82).
+
+    A missed readiness marker was fatal, so the first Codex release whose idle
+    composer drew none of them refused every cold send -- "refusing first send
+    ... because the TUI composer is not ready" -- against a TUI that was ready.
+    The unproven composer must fall through to the paste, where `_paste_landed`
+    decides on evidence instead of on chrome.
+    """
     pool = CodexInteractivePool()
     state = _State()
     state.prompt_ready = False
@@ -334,10 +377,47 @@ def test_codex_cold_send_refuses_to_paste_before_composer_is_ready(monkeypatch):
     monkeypatch.setattr(pool, "_wait_for_prompt_ready", lambda _name: False)
     monkeypatch.setattr(
         pool, "_cancel_copy_mode", lambda _state: touched.append("cancel"))
+    monkeypatch.setattr(pool, "_remember_injected_prompt",
+                        lambda _state, _text: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt_for_event_service",
+                        lambda _state, _text: None)
+    monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
+    monkeypatch.setattr(pool, "_paste_buffer",
+                        lambda _state: touched.append("paste") or True)
+    monkeypatch.setattr(pool, "_paste_landed",
+                        lambda _state, _text, _before="": True)
+    monkeypatch.setattr(pool, "send_keys", lambda _state, _keys: True)
+    monkeypatch.setattr(pool, "_verify_submitted",
+                        lambda _state, _text, **_kw: True)
+    monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
+
+    assert pool.send_text(state, PROMPT) is True
+    assert "paste" in touched
+    assert state.last_error == ""
+
+
+def test_a_paste_that_never_arrives_is_still_the_refusal(monkeypatch):
+    """Dropping the gate does not restore the case it was added for: a paste
+    into an undrawn composer still fails, on evidence rather than on chrome."""
+    pool = CodexInteractivePool()
+    state = _State()
+    state.prompt_ready = False
+    state.last_error = ""
+    monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
+    monkeypatch.setattr(pool, "_wait_for_prompt_ready", lambda _name: False)
+    monkeypatch.setattr(pool, "_cancel_copy_mode", lambda _state: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt",
+                        lambda _state, _text: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt_for_event_service",
+                        lambda _state, _text: None)
+    monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
+    monkeypatch.setattr(pool, "_paste_buffer", lambda _state: True)
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: IDLE_PANE)
+    monkeypatch.setattr(type(pool), "_PASTE_LANDED_SECONDS", 0.0)
+    monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
 
     assert pool.send_text(state, PROMPT) is False
-    assert "composer was not ready" in state.last_error
-    assert touched == []
+    assert "never reached the composer" in state.last_error
 
 
 def test_successful_codex_paste_latches_readiness(monkeypatch):

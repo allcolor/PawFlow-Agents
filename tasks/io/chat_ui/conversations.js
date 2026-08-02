@@ -186,6 +186,7 @@ function _clearConvState() {
   }
   pendingAgent = null;
   selectedAgent = '';
+  if (typeof grabOnConversationSwitch === 'function') grabOnConversationSwitch();
   if (typeof updateActiveAgentBadge === 'function') updateActiveAgentBadge();
   if (typeof nicknameMap !== 'undefined') nicknameMap = {};
   if (typeof _autoScroll !== 'undefined') _autoScroll = true;

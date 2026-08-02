@@ -556,6 +556,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 #stopBtn:hover { background: #aa2222; }
 .btn-attach { background: #0f3460 !important; padding: 10px 12px !important; font-size: 18px !important; }
 .btn-attach:hover { background: #1a4a8a !important; }
+/* Grab mode: the composer is wired to a terminal, and that has to be
+   unmistakable — anything typed goes to the TUI, Enter included. */
+#grabBtn.on { background: #e94560 !important; }
+.input-area.grab-on textarea { border: 1px solid #e94560 !important; background: #17111a !important; }
+.input-area.grab-on #sendBtn { background: #e94560 !important; }
 .btn-folder { background: #0f3460 !important; padding: 10px 12px !important; font-size: 18px !important; }
 .btn-folder:hover { background: #1a4a8a !important; }
 .btn-folder.active { background: #1a5a2a !important; }
@@ -1056,6 +1061,7 @@ if (typeof hljs !== 'undefined') {
     <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
     <button class="btn-attach" id="speechInputBtn" onclick="toggleConversationSTT()" oncontextmenu="showConversationSTTServiceDialog(); return false;" title="Dictate and send" data-i18n-title="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
     <button class="btn-attach" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
+    <button class="btn-attach" id="grabBtn" onclick="toggleGrab()" title="Type straight into the agent tmux" data-i18n-title="grabTitle" style="display:none">&#x1F5A5;&#xFE0F;</button>
     <button class="btn-attach" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"

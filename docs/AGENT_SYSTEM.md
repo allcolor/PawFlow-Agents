@@ -698,6 +698,14 @@ If a user sends a message while the agent is already running:
 - For Claude Code providers: the message is injected directly into the active session (preemption).
 - For API providers: the message is queued in memory (`_pending_user_msgs`). After the current turn completes, a `PollScheduler` delay triggers processing of queued messages.
 
+`schedule_continuation` wake-ups are one-shot handoffs. If one becomes due while
+the conversation is already running, the active turn has already satisfied the
+handoff and the poller acknowledges the entry without creating a
+`::pending::<hash>` retry. Other due work remains deferred normally. This keeps
+a continuation from recreating itself every ten seconds while preserving the
+safety net for queued user messages, tasks, plans, thoughts, and external
+wake-ups.
+
 ---
 
 ## 11. Auto-triggers

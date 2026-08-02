@@ -176,8 +176,16 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
             terminal_kind = (
                 "codexi" if isinstance(pool, CodexInteractivePool) else "cci")
             session_id = f"{terminal_kind}_term_{uuid.uuid4().hex[:12]}"
-            cols = int(body.get("cols", 120) or 120)
-            rows = int(body.get("rows", 30) or 30)
+            codex_viewer = isinstance(pool, CodexInteractivePool)
+            # The Codex tmux window is pinned to this grid.  Its viewer PTY and
+            # xterm must use the same dimensions: fitting xterm alone after a
+            # tab switch makes its grid diverge from the non-resizable PTY and
+            # leaves the restored screen garbled.
+            if codex_viewer:
+                cols, rows = 220, 50
+            else:
+                cols = int(body.get("cols", 120) or 120)
+                rows = int(body.get("rows", 30) or 30)
             bridge_script = r'''
 import fcntl
 import os
@@ -289,6 +297,8 @@ finally:
                 "token": _term_token,
                 "relay_id": f"{terminal_kind}:{agent_name}",
                 "container": state.name,
+                "fixed_cols": cols if codex_viewer else 0,
+                "fixed_rows": rows if codex_viewer else 0,
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

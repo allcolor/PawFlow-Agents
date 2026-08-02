@@ -359,6 +359,71 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     # swallowed into the attachment as a newline instead of submitting.
     _PASTE_SETTLE_DEFAULT = 1.0
 
+    def _wait_for_prompt_ready(self, name: str, *,
+                               timeout: Optional[float] = None) -> bool:
+        """Probe Codex readiness once instead of blocking a reused session.
+
+        Codex changes its composer chrome frequently enough that a visual marker
+        is not a reliable 45-second gate.  The paste proof below is the actual
+        transport check and latches ``prompt_ready`` once the pane reacts.
+        Explicit timeouts remain available to diagnostics and tests.
+        """
+        return super()._wait_for_prompt_ready(
+            name, timeout=0.0 if timeout is None else timeout)
+
+    def _pane_diagnostic(self, name: str) -> str:
+        """Never copy the Codex pane (and potentially prompts) into logs."""
+        return ""
+
+    def _paste_landed(self, state: InteractiveContainer, text: str,
+                      before_pane: str = "") -> bool:
+        landed = super()._paste_landed(state, text, before_pane)
+        if landed:
+            # The pane reacting to the paste is stronger evidence than Codex's
+            # release-dependent readiness labels.  Keep later turns off the old
+            # cold-start gate even when the initial visual probe missed.
+            state.prompt_ready = True
+        return landed
+
+    def _verify_submitted(self, state: InteractiveContainer, text: str) -> None:
+        """Retry Enter until Codex shows submission or a running turn.
+
+        Codex collapses pasted text into a chip, so the inherited
+        ``fragment absent == submitted`` rule is never valid here.  When a new
+        Codex release boxes the composer and the chip probe cannot locate it,
+        absence of a running marker is deliberately treated as inconclusive and
+        Enter is retried.  Enter on an empty composer is a no-op; failing to send
+        it leaves the real prompt waiting for a human.
+        """
+        try:
+            window = float(os.environ.get(
+                "PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "6.0") or "6.0")
+        except ValueError:
+            window = 6.0
+        if window <= 0:
+            return
+        interval = 0.3
+        polls = max(1, int(window / interval))
+        retries = 0
+        for _ in range(polls):
+            pane = self._pane_text(state.name)
+            holds = self._pane_holds_unsent_paste(pane) if pane else None
+            if holds is False or (pane and self._pane_shows_running(pane)):
+                return
+            if retries >= 3:
+                break
+            retries += 1
+            logger.warning(
+                "[codex-interactive] prompt submission not confirmed for %s; "
+                "pressing Enter again (retry %d)", state.name, retries)
+            if not self.send_keys(state, ["Enter"]):
+                break
+            time.sleep(interval)
+        if retries:
+            logger.warning(
+                "[codex-interactive] submit verification inconclusive for %s "
+                "after %d Enter retries", state.name, retries)
+
     def __init__(self):
         super().__init__()
         self._idle_ttl = float(os.environ.get(

@@ -170,6 +170,10 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         # Source 1: PollScheduler — persistent scheduled rechecks
         # Map cid -> list of reasons for scheduled wakeups (non-thought)
         scheduled_reasons: Dict[str, List[str]] = {}
+        # Keep the consumed entries too.  Active-turn handling must distinguish
+        # a one-shot continuation (already satisfied by that active turn) from
+        # pending work that really needs a later retry.
+        scheduled_entries: Dict[str, List[Dict]] = {}
         # Thought entries are processed individually (each agent gets its own loop)
         thought_entries: List[Dict] = []
         due_entries = scheduler.get_due()
@@ -200,6 +204,7 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             to_poll.add(cid)
             scheduled_ids.add(cid)
             scheduled_reasons.setdefault(cid, []).append(reason)
+            scheduled_entries.setdefault(cid, []).append(entry)
 
         # Source 2 removed: all autonomous wake-ups go through PollScheduler
         # with agent-qualified keys (::thought::, ::task::, ::recheck::).
@@ -216,8 +221,30 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             # message until another event happens.
             with self._active_lock:
                 if conversation_id in self._active_conversations:
-                    reasons = scheduled_reasons.get(conversation_id, []) or ["[pending] active retry"]
-                    for r in reasons:
+                    entries = scheduled_entries.get(conversation_id, [])
+                    deferred_reasons = []
+                    for entry in entries:
+                        entry_key = entry.get("key", "") or ""
+                        reason = entry.get("reason", "") or ""
+                        if ("::continuation::" in entry_key
+                                or "[continuation]" in reason):
+                            # schedule_continuation is a one-shot handoff after
+                            # the current response.  If another turn is already
+                            # active when it fires, that turn *is* the resumed
+                            # work.  Re-keying it as ::pending:: created an
+                            # immortal 10-second loop and duplicated two log
+                            # lines on every poll pass.
+                            logger.info(
+                                "[poller] Continuation already satisfied by "
+                                "active conversation %s; acknowledging %s",
+                                conversation_id[:8], entry_key)
+                            continue
+                        deferred_reasons.append(reason or "[pending] active retry")
+                    if not entries:
+                        deferred_reasons = (
+                            scheduled_reasons.get(conversation_id, [])
+                            or ["[pending] active retry"])
+                    for r in deferred_reasons:
                         import re as _re_resched
                         _tid_m = _re_resched.search(r'\[agent_task:(t_\w+)\]', r)
                         if _tid_m:

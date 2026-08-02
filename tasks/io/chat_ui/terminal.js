@@ -225,8 +225,16 @@ function _estimateTerminalSize() {
 }
 
 function _fitAndNotifyTerminal(container) {
-  if (!container || !container._xterm || !container._fitAddon) return;
-  try { container._fitAddon.fit(); } catch (e) {}
+  if (!container || !container._xterm) return;
+  const fixedSize = container._fixedTerminalSize;
+  if (fixedSize) {
+    if (container._xterm.cols !== fixedSize.cols || container._xterm.rows !== fixedSize.rows) {
+      try { container._xterm.resize(fixedSize.cols, fixedSize.rows); } catch (e) {}
+    }
+  } else {
+    if (!container._fitAddon) return;
+    try { container._fitAddon.fit(); } catch (e) {}
+  }
   const ws = container._ws;
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
@@ -238,8 +246,11 @@ function _fitAndNotifyTerminal(container) {
 }
 
 /** Initialize xterm.js inside a container element. */
-function _initXterm(container, sessionId, token) {
-  const term = new window.Terminal({
+function _initXterm(container, sessionId, token, sizing) {
+  const fixedCols = Math.max(0, Number(sizing && sizing.fixedCols) || 0);
+  const fixedRows = Math.max(0, Number(sizing && sizing.fixedRows) || 0);
+  const fixedSize = fixedCols && fixedRows ? { cols: fixedCols, rows: fixedRows } : null;
+  const termOptions = {
     cursorBlink: true,
     fontSize: 13,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -247,16 +258,22 @@ function _initXterm(container, sessionId, token) {
     fastScrollModifier: 'alt',
     fastScrollSensitivity: 5,
     theme: { background: '#0f0f23', foreground: '#e0e0e0', cursor: '#e94560' },
-  });
+  };
+  if (fixedSize) {
+    termOptions.cols = fixedSize.cols;
+    termOptions.rows = fixedSize.rows;
+  }
+  const term = new window.Terminal(termOptions);
   const fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(container);
-  setTimeout(() => { _fitAndNotifyTerminal(container); term.focus(); }, 50);
-  setTimeout(() => { _fitAndNotifyTerminal(container); }, 250);
 
   // Store refs on the container for cleanup
   container._xterm = term;
   container._fitAddon = fitAddon;
+  container._fixedTerminalSize = fixedSize;
+  setTimeout(() => { _fitAndNotifyTerminal(container); term.focus(); }, 50);
+  setTimeout(() => { _fitAndNotifyTerminal(container); }, 250);
 
   // Resize observer
   const ro = new ResizeObserver(() => {

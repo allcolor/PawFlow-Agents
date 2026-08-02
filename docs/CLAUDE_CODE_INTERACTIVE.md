@@ -428,7 +428,7 @@ The injected text is recorded once, not once per attempt: the hook guard counts
 tickets, and a second record would leave one unspent to swallow the next thing
 the user really types.
 
-A failure on any of these paths logs the pane it happened on. Every check in
+A Claude Code failure on any of these paths logs the pane it happened on. Every check in
 the pool reads the screen and each of them used to report only its own verdict
 — *TUI prompt not detected ready*, *paste did not reach the composer* — which
 says that our reading of the screen failed and never what was drawn. When a TUI
@@ -438,7 +438,10 @@ photograph of a terminal. `_pane_diagnostic()` appends the head of the pane
 (`_PANE_DIAGNOSTIC_CHARS`, 2000) to the warning; it costs one extra capture on
 a path that has already failed, and an unreadable pane degrades to a note. Note
 that on a fresh session this puts the beginning of the injected prompt in the
-server log — bounded, and only on failure.
+server log — bounded, and only on failure. Codex interactive deliberately
+overrides this diagnostic with an empty string: its attachment chips and pane
+history can contain user prompt material, and Codex transport warnings never
+copy the pane into the server log.
 
 The readiness markers a pool waits for must belong to the **input box**, not to
 the chrome around it. `>_ OpenAI Codex (v...)` is a permanent pane header drawn
@@ -544,6 +547,13 @@ screenful. Before PawFlow injects a chat turn into the live tmux, it also sends 
 best-effort `tmux send-keys -X cancel` so a debug attach left in copy-mode cannot
 swallow the server-side paste or final `Enter`.
 
+The Codex interactive viewer uses the same fixed `220x50` grid as its pinned
+tmux window for both the bridge PTY and xterm. Tab switches and resize observers
+therefore reassert that grid instead of calling the fit addon and changing only
+the browser side. Claude Code interactive and ordinary terminals retain their
+responsive fit behavior. No viewer resize is propagated to the shared tmux
+window, so attaching a browser still cannot deliver `SIGWINCH` to a running TUI.
+
 ### Proxy capture log
 
 The shell that starts the proxy appends its stderr to `/tmp/cci_proxy.log`
@@ -598,6 +608,14 @@ architecture above, but runs the Codex TUI and observes OpenAI Responses API
 events. PawFlow never reads terminal output or Codex rollout files to assemble a
 response. The tmux is input and lifecycle transport; the MITM side channel is
 the output source.
+
+Codex readiness is a single non-blocking visual probe, not the inherited
+45-second marker wait. A successful before/after paste proof latches the session
+ready for later turns. Submission verification is also Codex-specific: absence
+of the injected text is never accepted as proof because Codex renders pastes as
+attachment chips. If the composer layout is unknown and no running marker is
+visible, PawFlow retries `Enter` up to three times; an extra `Enter` in an empty
+composer is harmless, while omitting it leaves the prompt waiting for a human.
 
 Each live session remains scoped by `(user, conversation, agent, LLM service)`.
 The provider shares the OAuth credential pool used by `codex-app-server`:

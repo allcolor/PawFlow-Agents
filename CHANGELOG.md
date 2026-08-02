@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.81] — 2026-08-02
+
+### Fixed
+
+- `codex-interactive` no longer waits up to 45 seconds for release-dependent
+  visual readiness markers on an already usable session. Codex performs one
+  immediate probe, proves that the paste reached the TUI from the pane reaction,
+  and latches readiness for subsequent turns.
+- A Codex prompt that reached the composer can no longer be mistaken for a
+  submitted prompt merely because its text is absent from the pane. Codex
+  renders large pastes as attachment chips, so its verifier now retries `Enter`
+  up to three times whenever submission remains unconfirmed and no turn is
+  running. This removes the failure where a prompt waited in tmux until a human
+  submitted it manually.
+- Codex transport warnings no longer dump the tmux pane into server logs. The
+  pane can contain prompt material and is not required to report the bounded
+  transport verdict.
+- Returning to a Codex tmux tab no longer leaves xterm and its bridge PTY on
+  different grids. The Codex viewer alone stays fixed at the same `220x50` size
+  as the pinned tmux window, while ordinary and Claude Code terminals retain
+  responsive fitting. Browser resizes still never propagate to the shared tmux
+  window or send `SIGWINCH` to an in-flight TUI.
+- A due `schedule_continuation` wake-up no longer recreates itself every ten
+  seconds while the conversation is already active. The active turn satisfies
+  that one-shot handoff; the poller acknowledges it while continuing to defer
+  unrelated pending work normally.
+
 ## [1.0.0-beta.80] — 2026-08-01
 
 ### Fixed

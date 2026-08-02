@@ -2055,6 +2055,44 @@ class TestRandomThought(unittest.TestCase):
         assert sched.get("conv1::thought::assistant") is not None
         assert sched.get("conv1::task::t_123") is not None
 
+    def test_active_conversation_acknowledges_continuation_without_retry_loop(self):
+        """A fired one-shot continuation is complete when its turn is active.
+
+        It must not be converted to ``::pending::<hash>`` every ten seconds.
+        Unrelated pending work due in the same poll is still rescheduled.
+        """
+        from core.poll_scheduler import PollScheduler
+        import threading
+        import time
+
+        scheduler = PollScheduler.instance()
+        cid = "active_continuation"
+        task = self._make_task()
+        task._last_task_watchdog = time.time()
+        task._last_thought_watchdog = time.time()
+        task._active_lock = threading.RLock()
+        task._active_conversations = {cid: 1}
+        task._active_thoughts = set()
+
+        scheduler.schedule(
+            cid, time.time() - 1,
+            key=f"{cid}::continuation::deadbeef",
+            reason="[scheduled:assistant] [continuation] finish the fix")
+        scheduler.schedule(
+            cid, time.time() - 1,
+            key=f"{cid}::external-wakeup",
+            reason="check an external job")
+
+        task._poll_once()
+
+        remaining = [
+            entry for entry in scheduler.list_all()
+            if entry.get("conversation_id") == cid
+        ]
+        assert len(remaining) == 1
+        assert remaining[0]["reason"] == "check an external job"
+        assert "::pending::" in remaining[0]["key"]
+
     def test_task_poll_resumes_private_compacted_context(self):
         """Task wakes resume from private context.jsonl when it exists."""
         from core.conversation_store import ConversationStore

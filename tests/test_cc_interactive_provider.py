@@ -3334,6 +3334,11 @@ def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
     # The viewer must NOT resize the shared pawflow window.
     assert 'resize-window", "-t", "pawflow"' not in block
     assert "server_pipe_resize_command=None" in block
+    # Only Codex pins the viewer PTY/xterm to the tmux window's 220x50 grid.
+    assert "codex_viewer = isinstance(pool, CodexInteractivePool)" in block
+    assert "cols, rows = 220, 50" in block
+    assert '"fixed_cols": cols if codex_viewer else 0' in block
+    assert '"fixed_rows": rows if codex_viewer else 0' in block
     # And never pins the CLI uid to a literal inside this block.
     assert "1000:1000" not in block
 

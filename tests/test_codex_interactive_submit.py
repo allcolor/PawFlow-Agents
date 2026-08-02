@@ -141,6 +141,13 @@ def test_verify_presses_enter_again_while_the_chip_is_in_the_composer(monkeypatc
     assert sent == [["Enter"]] * 3
 
 
+def test_verify_presses_enter_when_boxed_composer_cannot_be_located(monkeypatch):
+    """Unknown Codex chrome is not proof that its pasted chip was submitted."""
+    pool = CodexInteractivePool()
+    sent = _harness(pool, [BOXED_UNSENT_PANE], monkeypatch)
+    assert sent == [["Enter"]] * 3
+
+
 def test_verify_stops_as_soon_as_the_composer_clears(monkeypatch):
     pool = CodexInteractivePool()
     sent = _harness(pool, [UNSENT_PANE, SUBMITTED_PANE], monkeypatch)
@@ -297,39 +304,33 @@ def test_an_unchanged_pane_is_still_a_refusal(monkeypatch):
     assert _landed_after(pool, IDLE_PANE, IDLE_PANE, monkeypatch) is False
 
 
-# ── a failure carries the screen it happened on ────────────────────────────
+# ── Codex failures never copy the pane into server logs ───────────────────
 
 
-def test_a_refused_paste_logs_the_pane_it_refused(monkeypatch):
-    """Every check here reads the pane and none of them reported it. When a
-    TUI release moved its composer, the log said our reading failed and never
-    what was drawn -- which is how the pane ended up being inferred from a
-    photograph of a terminal."""
+def test_codex_pane_diagnostic_never_leaks_the_pane(monkeypatch):
     pool = CodexInteractivePool()
     monkeypatch.setattr(pool, "_pane_text", lambda _name: BOXED_UNSENT_PANE)
-    out = pool._pane_diagnostic(_State.name)
-    assert "[Pasted Content 1024 chars]" in out
-    assert out.startswith("; pane")
+    assert pool._pane_diagnostic(_State.name) == ""
 
 
-def test_the_pane_diagnostic_is_bounded(monkeypatch):
+def test_codex_default_readiness_check_is_an_immediate_probe(monkeypatch):
     pool = CodexInteractivePool()
-    monkeypatch.setattr(pool, "_pane_text", lambda _name: "x" * 5000)
-    out = pool._pane_diagnostic(_State.name)
-    assert "(+3000 chars)" in out
-    assert out.count("x") == pool._PANE_DIAGNOSTIC_CHARS
+    sleeps = []
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: HEADER_ONLY_PANE)
+    monkeypatch.setattr(ccip.time, "sleep", lambda value: sleeps.append(value))
+    assert pool._wait_for_prompt_ready(_State.name) is False
+    assert sleeps == []
 
 
-def test_an_unreadable_pane_never_raises_inside_a_warning(monkeypatch):
+def test_successful_codex_paste_latches_readiness(monkeypatch):
     pool = CodexInteractivePool()
-
-    def _boom(_name):
-        raise RuntimeError("docker exec failed")
-
-    monkeypatch.setattr(pool, "_pane_text", _boom)
-    assert pool._pane_diagnostic(_State.name) == " [pane unreadable]"
-    monkeypatch.setattr(pool, "_pane_text", lambda _name: "")
-    assert pool._pane_diagnostic(_State.name) == " [pane empty or unreadable]"
+    state = _State()
+    state.prompt_ready = False
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: BOXED_UNSENT_PANE)
+    monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(type(pool), "_PASTE_LANDED_SECONDS", 0.0)
+    assert pool._paste_landed(state, PROMPT, IDLE_PANE) is True
+    assert state.prompt_ready is True
 
 
 def test_the_prompt_is_pasted_once_when_the_screen_reacts(monkeypatch):

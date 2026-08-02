@@ -8,6 +8,7 @@ with empty args — which makes an MCP wrapper fall back to its raw
 ``use_tool`` name. These tests pin the claim/evict protocol that prevents it.
 """
 
+import threading
 import time
 
 import pytest
@@ -468,6 +469,39 @@ def test_a_late_stop_does_not_close_the_turn_that_started_after_it(monkeypatch):
                  CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
     svc._adopt_if_undelivered(state)
     assert captured == ["sess"], "the running turn must still be adoptable"
+
+
+def test_boundary_comparison_and_update_are_atomic_across_event_sockets():
+    """A hook handler must not pass the timestamp check while the proxy handler
+    is committing a newer boundary on the same session."""
+    svc = _service()
+    state = _codex_session(svc)
+    now = time.time()
+    old_stop_finished = threading.Event()
+
+    def publish_old_stop():
+        svc._track_turn_boundary(state, {
+            "type": "hook",
+            "hook_event_name": "Stop",
+            "timestamp": now - 100,
+        })
+        old_stop_finished.set()
+
+    # Both boundary handlers must use this same lock. Hold it while the stale
+    # hook starts, then commit the newer request_start re-entrantly. Once the
+    # hook is allowed through it must see the newer timestamp and do nothing.
+    with state.stream_condition:
+        thread = threading.Thread(target=publish_old_stop)
+        thread.start()
+        assert not old_stop_finished.wait(0.2), (
+            "a boundary update escaped the session's critical section")
+        svc._track_turn_boundary(
+            state, dict(_CODEX_REQUEST_START, timestamp=now))
+
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    assert not state.turn_over
+    assert state.turn_boundary_at == now
 
 
 def test_the_stop_of_the_running_turn_still_closes_it(monkeypatch):

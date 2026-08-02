@@ -188,7 +188,9 @@ on its way in can therefore be published *after* the next turn's
 over — which disarms the backstop for that whole turn, so its answer waits in
 the queue with nobody reading it and no capture is ever spawned. An event older
 than the one that set the current boundary describes a turn that is already
-history and is ignored.
+history and is ignored. The comparison and boundary-state update are serialized
+under the session stream condition because proxy and hook WebSocket handlers
+may execute concurrently.
 
 A capture claims before it announces itself. Discovering the refusal inside the
 coordinator meant the active-agent marker had already been raised and was blinked

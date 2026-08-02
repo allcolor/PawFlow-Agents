@@ -793,10 +793,15 @@ class CCInteractiveEventService(BaseService):
         # `publish_event` stamps anything that arrived without a timestamp, so
         # an event with no clock of its own is ordered by its arrival, as before.
         stamp = float(event.get("timestamp") or 0.0)
-        if stamp and stamp < state.turn_boundary_at:
-            return
-        state.turn_over = over
-        state.turn_boundary_at = max(stamp, state.turn_boundary_at)
+        # Boundary events arrive through independent WebSocket handlers. Keep
+        # the comparison and both writes atomic, otherwise an older Stop can
+        # pass the check, pause, then overwrite turn_over after a newer
+        # request_start has advanced turn_boundary_at.
+        with state.stream_condition:
+            if stamp and stamp < state.turn_boundary_at:
+                return
+            state.turn_over = over
+            state.turn_boundary_at = max(stamp, state.turn_boundary_at)
 
     def _adopt_orphan_turn(self, state: CCInteractiveSessionEvents,
                            reason: str, *, force: bool = False) -> None:

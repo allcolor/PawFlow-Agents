@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.88] — 2026-08-03
+
+### Added
+
+- Added architecture plans for resource ACL sharing, remote relay enrollment,
+  and remote relay storage/CLI execution.
+
+### Fixed
+
+- Interactive tmux viewers now survive normal chat-state cleanup while their
+  terminal session is still open, with route authorization and active-agent
+  invariants covered by regression tests.
+- Streaming workers and out-of-band CCI captures now carry distinct active-turn
+  ownership tokens. Cleanup can only remove state owned by that turn, so a
+  terminal capture cannot overwrite or release a live worker, a finished worker
+  cannot leave a ghost in Active Agents, and a replacement worker's client is
+  preserved.
+
 ## [1.0.0-beta.87] — 2026-08-02
 
 ### Fixed

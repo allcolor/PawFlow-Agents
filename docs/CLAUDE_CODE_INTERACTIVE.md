@@ -227,6 +227,14 @@ it ends (skipping the release when a chained capture continues the same visible
 activity). Without this the webchat shows the agent idle while the tmux is
 visibly working.
 
+The marker is ownership-scoped. A streaming worker and an out-of-band capture
+share the same conversation/agent key, but each registration carries a unique
+`owner_id`. A capture therefore cannot overwrite a worker marker, and either
+producer releases the entry only when the stored owner still matches its own.
+Generation numbers order streaming workers; they are not used as a substitute
+for ownership. This prevents a terminal `active_released` path from leaving a
+ghost marker or deleting a replacement turn during a concurrent CCI boundary.
+
 A capture also owns the turn's *inbound* path. It registers `_active_turns`
 without an `_active_contexts` entry or an `_active_claude_client`, and
 `agent_streaming` reads that combination as "already active but not

@@ -692,7 +692,7 @@ class TestAgentLoopStreaming(unittest.TestCase):
         PendingQueue.drop_cache()
         PollScheduler.reset()
 
-    def test_active_cleanup_drops_older_marker_but_preserves_newer_one(self):
+    def test_active_cleanup_removes_only_its_owned_marker(self):
         from tasks.ai.agent_loop import AgentLoopTask
 
         task = AgentLoopTask({"api_key": "k", "streaming": True})
@@ -700,25 +700,39 @@ class TestAgentLoopStreaming(unittest.TestCase):
         agent_name = "assistant"
         key = f"{conversation_id}:{agent_name}"
 
-        task._active_turns = {key: {"generation": 0}}
-        task._active_conversations = {conversation_id: 1}
-        task._user_active_conversations = {conversation_id}
-        task._decrement_active(conversation_id, {
+        own_ctx = {
             "active_agent_name": agent_name,
             "_active_turn_key": key,
             "_generation": 1,
-        })
+            "_active_turn_owner_id": "worker-one",
+        }
+        task._active_turns = {key: {
+            "generation": 0, "owner_id": "worker-one"}}
+        task._active_claude_client = {key: object()}
+        task._active_conversations = {conversation_id: 1}
+        task._user_active_conversations = {conversation_id}
+        task._decrement_active(conversation_id, own_ctx)
         assert key not in task._active_turns
+        assert key not in task._active_claude_client
+        assert own_ctx["_active_cleanup_done"] is True
 
-        task._active_turns = {key: {"generation": 2}}
-        task._active_conversations = {conversation_id: 1}
-        task._user_active_conversations = {conversation_id}
-        task._decrement_active(conversation_id, {
+        replacement_client = object()
+        stale_ctx = {
             "active_agent_name": agent_name,
             "_active_turn_key": key,
             "_generation": 1,
-        })
+            "_active_turn_owner_id": "worker-one",
+        }
+        task._active_turns = {key: {
+            "generation": 2, "owner_id": "worker-two"}}
+        task._active_claude_client = {key: replacement_client}
+        task._active_conversations = {conversation_id: 1}
+        task._user_active_conversations = {conversation_id}
+        task._decrement_active(conversation_id, stale_ctx)
         assert task._active_turns[key]["generation"] == 2
+        assert task._active_turns[key]["owner_id"] == "worker-two"
+        assert task._active_claude_client[key] is replacement_client
+        assert stale_ctx["_active_cleanup_done"] is True
 
     def test_interrupted_cleanup_still_wakes_queued_pending_message(self):
         from tasks.ai.agent_loop import AgentLoopTask

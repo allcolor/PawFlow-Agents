@@ -48,9 +48,50 @@ def test_capture_registers_and_releases_the_active_turn(live_task):
     entry = live_task._active_turns["80c37670:claude"]
     assert entry["conversation_id"] == "80c37670"
     assert entry["agent_name"] == "claude"
+    assert entry["owner_type"] == "cci_capture"
+    assert entry["owner_id"] == state.active_turn_owner_id
 
     svc._active_turn_marker(state, register=False)
     assert live_task._active_turns == {}
+
+
+def test_capture_cannot_replace_or_release_a_streaming_worker(live_task):
+    key = "80c37670:claude"
+    live_task._active_turns[key] = {
+        "conversation_id": "80c37670",
+        "agent_name": "claude",
+        "owner_id": "worker-owner",
+        "owner_type": "streaming_worker",
+        "generation": 4,
+    }
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    state = _state(svc)
+
+    assert svc._active_turn_marker(state, register=True) is False
+    assert state.active_turn_owner_id == ""
+    assert live_task._active_turns[key]["owner_id"] == "worker-owner"
+
+    assert svc._active_turn_marker(state, register=False) is False
+    assert live_task._active_turns[key]["owner_id"] == "worker-owner"
+
+
+def test_capture_release_does_not_remove_replacement_worker(live_task):
+    key = "80c37670:claude"
+    svc = CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+    state = _state(svc)
+    assert svc._active_turn_marker(state, register=True) is True
+
+    live_task._active_turns[key] = {
+        "conversation_id": "80c37670",
+        "agent_name": "claude",
+        "owner_id": "replacement-worker",
+        "owner_type": "streaming_worker",
+        "generation": 5,
+    }
+
+    assert svc._active_turn_marker(state, register=False) is False
+    assert state.active_turn_owner_id == ""
+    assert live_task._active_turns[key]["owner_id"] == "replacement-worker"
 
 
 def test_marker_is_skipped_without_a_bound_conversation(live_task):

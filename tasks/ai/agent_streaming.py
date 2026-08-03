@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from typing import List
 
 
@@ -496,6 +497,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             if _active_agent_guess else conversation_id
         )
         _active_turn_started = time.time()
+        _active_turn_owner_id = uuid.uuid4().hex
         _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
         with self._conv_gen_lock:
             _starting_generation = self._conv_generation.get(_gen_key, 0)
@@ -511,6 +513,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 "status": "preparing",
                 "message_preview": _user_text[:160],
                 "generation": _starting_generation,
+                "owner_id": _active_turn_owner_id,
+                "owner_type": "streaming_worker",
             }
 
         if _target:
@@ -556,6 +560,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 self._decrement_active(conversation_id, {
                     "active_agent_name": _err_agent or _active_agent_guess,
                     "_active_turn_key": _active_turn_key,
+                    "_active_turn_owner_id": _active_turn_owner_id,
                 })
                 return
 
@@ -567,6 +572,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             ctx["_generation"] = _starting_generation
             ctx["_gen_key"] = _gen_key
             ctx["_active_turn_key"] = _active_turn_key
+            ctx["_active_turn_owner_id"] = _active_turn_owner_id
 
             if not self._is_current_generation(_gen_key, _starting_generation):
                 logger.info(

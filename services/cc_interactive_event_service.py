@@ -92,6 +92,10 @@ class CCInteractiveSessionEvents:
     error: str = ""
     manual_capture_active: bool = False
     manual_capture_pending: int = 0
+    # Ownership token for the `_active_turns` marker installed by a capture.
+    # The same conversation/agent key is also used by the streaming worker, so
+    # capture release must never remove a marker it did not create.
+    active_turn_owner_id: str = ""
     #: Assistant messages persisted by the capture in progress. A captured
     #: turn writes its text before the coordinator returns, so the model and
     #: token counts are only known once it does -- these ids are what the
@@ -1203,7 +1207,7 @@ class CCInteractiveEventService(BaseService):
 
     @staticmethod
     def _active_turn_marker(state: CCInteractiveSessionEvents, *,
-                           register: bool) -> None:
+                           register: bool) -> bool:
         """Mirror a captured turn into the UI's active-agent truth.
 
         A captured turn runs entirely outside the streaming worker, so none
@@ -1216,16 +1220,24 @@ class CCInteractiveEventService(BaseService):
         must register itself there, and release it when it ends.
         """
         if not state.conversation_id:
-            return
+            return False
         try:
             from tasks.ai.agent_loop import AgentLoopTask
             inst = AgentLoopTask._live_instance
             if not inst:
-                return
+                return False
             key = (f"{state.conversation_id}:{state.agent_name}"
                    if state.agent_name else state.conversation_id)
             with inst._active_contexts_lock:
                 if register:
+                    owner_id = state.active_turn_owner_id or uuid.uuid4().hex
+                    current = inst._active_turns.get(key)
+                    current_owner = (
+                        current.get("owner_id")
+                        if isinstance(current, dict) else None)
+                    if current is not None and current_owner != owner_id:
+                        return False
+                    state.active_turn_owner_id = owner_id
                     inst._active_turns[key] = {
                         "conversation_id": state.conversation_id,
                         "agent_name": state.agent_name,
@@ -1233,15 +1245,28 @@ class CCInteractiveEventService(BaseService):
                         "status": "running",
                         "message_preview": "(tmux turn)",
                         "generation": 0,
+                        "owner_id": owner_id,
+                        "owner_type": "cci_capture",
                     }
-                else:
-                    inst._active_turns.pop(key, None)
+                    return True
+                owner_id = state.active_turn_owner_id
+                current = inst._active_turns.get(key)
+                current_owner = (
+                    current.get("owner_id")
+                    if isinstance(current, dict) else None)
+                state.active_turn_owner_id = ""
+                if not owner_id or current_owner != owner_id:
+                    return False
+                inst._active_turns.pop(key, None)
+                return True
         except Exception:
             logger.debug("CC interactive active-turn marker failed", exc_info=True)
+            return False
 
     def _publish_capture_active(self, state: CCInteractiveSessionEvents, *,
                                 active: bool) -> None:
-        self._active_turn_marker(state, register=active)
+        if not self._active_turn_marker(state, register=active):
+            return
         if not state.conversation_id:
             return
         try:

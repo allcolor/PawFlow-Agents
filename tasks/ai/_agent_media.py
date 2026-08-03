@@ -487,24 +487,34 @@ class _AgentMediaMixin:
         _agent_n = ctx.get("active_agent_name", "") if ctx else ""
         _cc_key = f"{conversation_id}:{_agent_n}" if _agent_n else conversation_id
         _turn_key = (ctx or {}).get("_active_turn_key") or _cc_key
-        _released_turn = False
         with self._active_contexts_lock:
             _turn = self._active_turns.get(_turn_key)
+            _ctx_owner = (ctx or {}).get("_active_turn_owner_id")
+            _turn_owner = (
+                _turn.get("owner_id") if isinstance(_turn, dict) else None)
+            # A key is shared by the normal streaming worker and an out-of-band
+            # interactive capture.  Only the producer that registered a marker
+            # may remove it.  Generation is not ownership: another producer can
+            # replace the same key without starting a newer streaming worker.
+            _foreign_owner = bool(
+                _turn is not None and _ctx_owner and _turn_owner
+                and _turn_owner != _ctx_owner)
             _ctx_gen = (ctx or {}).get("_generation")
             _turn_gen = _turn.get("generation") if isinstance(_turn, dict) else None
-            # Preserve only a marker owned by a strictly newer generation.
-            # A stopped turn can observe an older marker after force-stop bumped
-            # the generation; retaining that stale marker makes list_active show
-            # a ghost until the next user message happens to clean it up.
+            # Owner-less entries only exist in legacy/tests. Keep the generation
+            # fallback so a stale old worker cannot delete a genuinely newer one.
             _newer_turn = False
-            if _turn is not None and _turn_gen is not None and _ctx_gen is not None:
+            if (not _ctx_owner or not _turn_owner) and _turn is not None \
+                    and _turn_gen is not None and _ctx_gen is not None:
                 try:
                     _newer_turn = int(_turn_gen) > int(_ctx_gen)
                 except (TypeError, ValueError):
                     _newer_turn = _turn_gen != _ctx_gen
-            if not _newer_turn:
+            if not _foreign_owner and not _newer_turn:
                 self._active_turns.pop(_turn_key, None)
-                _released_turn = True
-            self._active_claude_client.pop(_cc_key, None)
-        if ctx and _released_turn:
+                self._active_claude_client.pop(_cc_key, None)
+        if ctx:
+            # This worker's cleanup is complete even when a different owner has
+            # already installed its marker. Coupling this flag to deletion made
+            # later finally blocks decrement the conversation refcount again.
             ctx["_active_cleanup_done"] = True

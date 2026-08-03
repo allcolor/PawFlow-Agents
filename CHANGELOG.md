@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.91] — 2026-08-03
+
+### Added
+
+- Added an implementation-ready plan for isolating parallel agents with Git
+  worktrees, including lifecycle, ownership, conflict, recovery, cleanup, UI,
+  observability, security, rollout, and testing requirements.
+
+### Fixed
+
+- Codex interactive usage now separates cached prompt reads from uncached input
+  tokens across Responses exchanges. Message footers and cost accounting no
+  longer report repeated cached context as ordinary input, while the context
+  gauge continues to use the complete prompt size of the latest exchange.
+
 ## [1.0.0-beta.90] — 2026-08-03
 
 ### Added

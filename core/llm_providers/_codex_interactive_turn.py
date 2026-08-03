@@ -117,8 +117,37 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         # Cost accounting sums every exchange of the turn. The context gauge
         # must NOT be read from that sum: it is the size of one prompt, and
         # the last exchange is the one that says how full the window is now.
+        #
+        # Responses includes cache hits inside input_tokens. Keep that gross
+        # value for the gauge, but split it before usage accounting just like
+        # the regular OpenAI Responses provider does. Otherwise a tool-heavy
+        # Codex turn displays (and prices) the same cached prefix as ordinary
+        # input once per exchange.
         self._record_context_tokens(usage)
-        for key in ("input_tokens", "output_tokens", "total_tokens"):
+
+        try:
+            prompt_total = max(
+                0, int((usage or {}).get("input_tokens", 0) or 0))
+        except (TypeError, ValueError):
+            prompt_total = 0
+        try:
+            cached = max(0, int(
+                ((usage or {}).get("input_tokens_details") or {}).get(
+                    "cached_tokens", 0) or 0))
+        except (AttributeError, TypeError, ValueError):
+            cached = 0
+        # Defensive clamp: malformed provider usage must never create negative
+        # ordinary input or more cache reads than prompt tokens.
+        cached = min(cached, prompt_total)
+        uncached = prompt_total - cached
+        if uncached:
+            self.usage["input_tokens"] = int(
+                self.usage.get("input_tokens", 0) or 0) + uncached
+        if cached:
+            self.usage["cached_input_tokens"] = int(
+                self.usage.get("cached_input_tokens", 0) or 0) + cached
+
+        for key in ("output_tokens", "total_tokens"):
             try:
                 value = int((usage or {}).get(key, 0) or 0)
             except (TypeError, ValueError):
@@ -362,9 +391,13 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         total = int(self.usage.get("total_tokens", 0) or 0)
         tokens_in = int(self.usage.get("input_tokens", 0) or 0)
         tokens_out = int(self.usage.get("output_tokens", 0) or 0)
+        cached_tokens = int(
+            self.usage.get("cached_input_tokens", 0) or 0)
         return LLMResponse(
             content=text, tool_calls=[], tokens_in=tokens_in,
-            tokens_out=tokens_out, total_tokens=total or tokens_in + tokens_out,
+            tokens_out=tokens_out,
+            total_tokens=(total or tokens_in + cached_tokens + tokens_out),
+            cache_read_tokens=cached_tokens,
             thinking="".join(self.thinking_parts),
             model=self.effective_model,
             raw={

@@ -256,6 +256,7 @@ def test_responses_coordinator_streams_blocks_until_codex_stop(monkeypatch):
             "type": "response.completed",
             "response": {"model": "gpt-test", "usage": {
                 "input_tokens": 10, "output_tokens": 4,
+                "input_tokens_details": {"cached_tokens": 7},
                 "total_tokens": 14}}}},
         {"type": "hook", "hook_event_name": "Stop", "input": {}},
     ])
@@ -272,6 +273,8 @@ def test_responses_coordinator_streams_blocks_until_codex_stop(monkeypatch):
     assert response.thinking == "plan"
     assert response.model == "gpt-test"
     assert response.total_tokens == 14
+    assert response.tokens_in == 3
+    assert response.cache_read_tokens == 7
     assert [kind for kind, _ in blocks] == [
         "tool_use", "tool_result", "text", "thinking_content"]
     assert blocks[0][1]["name"] == "read"

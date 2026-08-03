@@ -141,7 +141,7 @@ def _coordinator(sink):
 
 
 def test_the_gauge_takes_the_last_exchange_not_the_sum_of_the_turn():
-    """Cost accounting sums the turn; the gauge is one prompt's size.
+    """Usage sums the turn; the gauge is one prompt's gross size.
 
     A Codex turn runs several /responses exchanges. Summing their prompts
     would report several times the window on a long turn.
@@ -157,6 +157,37 @@ def test_the_gauge_takes_the_last_exchange_not_the_sum_of_the_turn():
     # Cost accounting keeps summing, untouched.
     assert coord.usage["input_tokens"] == 22_500
     assert coord.usage["output_tokens"] == 300
+
+
+def test_cached_inputs_are_split_without_shrinking_the_context_gauge():
+    """Reproduce the reported 1,455,240 IN footer without shrinking gauge."""
+    measured = []
+    coord = _coordinator(measured)
+
+    exchanges = [
+        (205_879, 204_544, 276),
+        (207_071, 205_568, 310),
+        (207_513, 206_592, 184),
+        (208_183, 206_592, 248),
+        (208_478, 207_616, 188),
+        (208_874, 207_616, 264),
+        (209_242, 208_640, 71),
+    ]
+    for prompt, cached, output in exchanges:
+        coord._merge_usage({
+            "input_tokens": prompt,
+            "input_tokens_details": {"cached_tokens": cached},
+            "output_tokens": output,
+            "total_tokens": prompt + output,
+        })
+
+    assert measured == [row[0] for row in exchanges]
+    assert coord.observed_context_tokens == 209_242
+    assert sum(row[0] for row in exchanges) == 1_455_240
+    assert coord.usage["input_tokens"] == 8_072
+    assert coord.usage["cached_input_tokens"] == 1_447_168
+    assert coord.usage["output_tokens"] == 1_541
+    assert coord.usage["total_tokens"] == 1_456_781
 
 
 def test_a_shrinking_window_is_followed_down():

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.94] — 2026-08-03
+
+### Added
+
+- Added a bundled local PFP catalog with the optional Comfy Cloud MCP connector,
+  plus generic `service_template` package objects that can be installed and
+  removed independently. The Resources UI can search installed templates and
+  use one to prefill the canonical service creation form without creating a
+  service implicitly.
+- Services can now be copied from their context menu into the normal creation
+  form. The copy preserves the service type, description, and configuration,
+  leaves the name empty, and lets the user choose the new service scope before
+  submitting.
+
 ## [1.0.0-beta.93] — 2026-08-03
 
 ### Added

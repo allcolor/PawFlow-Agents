@@ -595,6 +595,24 @@ async function _submitServiceInstall(loginAfterInstall) {
   }
 }
 
+async function showServiceCopyForm(serviceId, scope) {
+  try {
+    const data = await rxjs.firstValueFrom(action$('get_service_detail', {
+      service_id: serviceId,
+      scope,
+      conversation_id: conversationId,
+    }));
+    if (data.error) { addMsg('error', data.error); return; }
+    await showServiceInstallForm({
+      service_type: data.service_type,
+      service_description: data.description || '',
+      config: data.config || {},
+    });
+  } catch (e) {
+    addMsg('error', e.message);
+  }
+}
+
 async function showServiceEditForm(serviceId, scope, readonly) {
   try {
     const data = await rxjs.firstValueFrom(action$('get_service_detail', { service_id: serviceId, scope, conversation_id: conversationId }));

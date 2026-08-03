@@ -150,6 +150,11 @@ catalog. Selecting a template preselects its service type and injects its config
 into the normal form; submission still uses the canonical `service_install`
 action.
 
+An existing service can also seed the same creation form through **Copy** in its
+right-click menu. PawFlow reads the visible service definition and prefills its
+type, description, and configuration. The new service name is deliberately left
+empty, and nothing is created until the user submits the normal form.
+
 Runtime objects can declare required secrets with `secrets`, for example `[{"name": "api_key", "env": "PROVIDER_API_KEY", "required": true}]`. Install requires an explicit binding from package-local secret name to an existing PawFlow secret key via repeated `--secret name=stored_key` flags or `manage_package(..., secret_bindings={"name": "stored_key"})`. PawFlow stores only the binding in package runtime metadata. Secret values are resolved at invocation time and injected into the relay runner environment under the declared `env` name; they are not added to runtime envelopes or install records. For `mcp_server` objects, install recursively rewrites expressions such as `${api_key}` in the MCP definition to the bound stored-secret expression, for example `${provider_key}`; package updates preserve that binding.
 Bindings are validated during install: a required package secret must be bound, and the referenced PawFlow secret key must already exist in conversation, user, or global scope.
 

@@ -89,6 +89,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
   if (_canEditScope(scope)) {
     item('\u270F ' + t('editWithEllipsis'), () => showServiceEditForm(serviceId, scope));
   }
+  item('\u{1F4CB} ' + t('copy'), () => showServiceCopyForm(serviceId, scope));
   item(enabled ? '\u23F8 ' + t('blocked') : '\u25B6 ' + t('enabled'), () => {
     action$('toggle_service', { service_id: serviceId, scope, enabled: !enabled, conversation_id: conversationId }).subscribe(d => {
       if (d.error) addMsg('error', d.error);

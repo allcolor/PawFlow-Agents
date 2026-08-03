@@ -37,6 +37,30 @@ def test_service_parameter_fill_helper_is_wired_in_chat_ui():
     assert "button.svc-param-fill, button.svc-param-fill:hover" in html
 
 
+def test_service_context_menu_can_copy_config_into_unnamed_create_form():
+    menu_js = Path(
+        "tasks/io/chat_ui/resources_service_dialogs.js").read_text(
+            encoding="utf-8")
+    form_js = Path(
+        "tasks/io/chat_ui/resources_service_login.js").read_text(
+            encoding="utf-8")
+
+    assert "t('copy')" in menu_js
+    assert "showServiceCopyForm(serviceId, scope)" in menu_js
+    assert "async function showServiceCopyForm(serviceId, scope)" in form_js
+    assert "action$('get_service_detail'" in form_js
+    assert "service_type: data.service_type" in form_js
+    assert "service_description: data.description || ''" in form_js
+    assert "config: data.config || {}" in form_js
+    assert "document.getElementById('svc-install-name').value" not in (
+        form_js[
+            form_js.index("async function showServiceCopyForm"):
+            form_js.index("async function showServiceEditForm")
+        ]
+    )
+    assert "action$('service_install', _instPayload)" in form_js
+
+
 def test_agent_llm_pickers_list_all_llm_capable_services():
     picker_files = (
         "conversations_io.js",

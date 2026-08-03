@@ -2411,8 +2411,13 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     assert "raise AgentCancelled()" in anthropic_src
     assert "raise AgentCancelled()" in codex_app_src
     assert "emitter.check_cancelled()" in core_src
-    assert core_src.index("emitter.check_cancelled()") < core_src.index("thinking-only live delta")
-    assert core_src.index("thinking-only live delta") < core_src.index("ConversationWriter.for_conversation(conversation_id)")
+    append_src = re.sub(
+        r"\bst\.", "",
+        Path("tasks/ai/_alc_closures1.py").read_text(encoding="utf-8"))
+    assert append_src.index("emitter.check_cancelled()") < append_src.index(
+        "thinking-only live delta")
+    assert append_src.index("thinking-only live delta") < append_src.index(
+        "ConversationWriter.for_conversation(conversation_id)")
     assert "emitter.check_cancelled()\n        _cc_turn_count" in core_src  # reindented by split
 
 

@@ -2,7 +2,7 @@
 // Load order matters: see _JS_MODULES in tasks/io/serve_chat_ui.py.
 
 // ── Resources (services, flows) ──────────────────────────────────
-// Canonical service lister. Pass a `serviceType` filter (e.g. 'llmConnection',
+// Canonical service lister. Pass a `serviceType` filter (e.g. 'llm',
 // 'tool_relay_service') to get a subset. This is the ONLY way the UI should
 // fetch services — never through agent/resource actions.
 function listServices$(serviceType, withView) {

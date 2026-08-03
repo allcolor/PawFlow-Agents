@@ -134,7 +134,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
 
   try {
     var data = await rxjs.firstValueFrom(action$('list_repo_agents', {}));
-    var svcData = await rxjs.firstValueFrom(listServices$('llmConnection'));
+    var svcData = await rxjs.firstValueFrom(listServices$('llm'));
     var definitions = data.agents || [];
     var llmServices = (svcData.services || []).filter(function(s) { return s.enabled; });
     var selectedDef = null;

@@ -172,7 +172,7 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         # Include definition's parameters schema. For the LLM service dropdown,
-        # the UI calls `list_services` with service_type='llmConnection' directly.
+        # the UI calls `list_services` with the `llm` capability filter.
         _cfg = cfgs[aname]
         _def_params_schema = {}
         _def_name = _cfg.get("definition", "")

@@ -245,7 +245,7 @@ async function _pickAgentsForNewConv() {
       agents = d.agents || [];
       check();
     });
-    listServices$('llmConnection').subscribe(d => {
+    listServices$('llm').subscribe(d => {
       llmServices = (d.services || []).filter(s => s.enabled);
       check();
     });

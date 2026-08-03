@@ -505,7 +505,7 @@ function _showAgentConvConfigDialog(agentName) {
   if (!conversationId) { addMsg('error', t('noConv')); return; }
   Promise.all([
     rxjs.firstValueFrom(action$('get_agent_conv_config', { name: agentName, conversation_id: conversationId })),
-    rxjs.firstValueFrom(listServices$('llmConnection')),
+    rxjs.firstValueFrom(listServices$('llm')),
     rxjs.firstValueFrom(action$('list_realtime_services', { conversation_id: conversationId }, { silent: true })).catch(function() { return {}; }),
   ]).then(function(results) {
     var data = results[0], svcData = results[1];

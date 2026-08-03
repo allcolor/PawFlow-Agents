@@ -384,6 +384,18 @@ class TestPawCodeImports:
             create_conversation(API(), requested_agent="assistant",
                                 llm_service="custom_llm", relays=["missing"])
 
+    def test_create_conversation_lists_all_llm_capable_services(self):
+        from pawflow_cli.conversation_bootstrap import create_conversation
+
+        api = _FakeAPI()
+        create_conversation(api, requested_agent="assistant",
+                            llm_service="custom_llm")
+
+        assert ("list_services", {
+            "service_type": "llm",
+            "conversation_id": "",
+        }) in api.sent_actions
+
 
 class _FakeRenderer:
     def __init__(self):

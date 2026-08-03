@@ -45,7 +45,7 @@ def create_conversation(api, requested_agent: str = "", llm_service: str = "",
         agent_def = repo_agents[0]
 
     agent_name = agent_def.get("name", "")
-    svc_data = api.send_action("list_services", service_type="llmConnection",
+    svc_data = api.send_action("list_services", service_type="llm",
                                conversation_id="")
     enabled_services = [s for s in svc_data.get("services", []) if s.get("enabled", True)]
     service_ids = {s.get("service_id", "") for s in enabled_services}

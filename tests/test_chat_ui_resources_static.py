@@ -37,6 +37,20 @@ def test_service_parameter_fill_helper_is_wired_in_chat_ui():
     assert "button.svc-param-fill, button.svc-param-fill:hover" in html
 
 
+def test_agent_llm_pickers_list_all_llm_capable_services():
+    picker_files = (
+        "conversations_io.js",
+        "resources_create_dialogs.js",
+        "resources_menus.js",
+        "state.js",
+    )
+
+    for filename in picker_files:
+        src = Path("tasks/io/chat_ui", filename).read_text(encoding="utf-8")
+        assert "listServices$('llm')" in src
+        assert "listServices$('llmConnection')" not in src
+
+
 def test_admin_settings_menu_exposes_oauth_onboarding_tokens():
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
     admin_js = Path("tasks/io/chat_ui/admin_settings.js").read_text(encoding="utf-8")

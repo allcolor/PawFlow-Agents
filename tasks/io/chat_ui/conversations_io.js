@@ -159,7 +159,7 @@ function _showImportConvDialog(info, fmt) {
   // info: {temp_id, agents: [{name, definition},...], message_count, format}
   Promise.all([
     rxjs.firstValueFrom(action$('list_repo_agents', {})),
-    rxjs.firstValueFrom(listServices$('llmConnection')),
+    rxjs.firstValueFrom(listServices$('llm')),
     rxjs.firstValueFrom(action$('relay_list_available', {})),
   ]).then(results => {
     var repoAgents = results[0].agents || [];

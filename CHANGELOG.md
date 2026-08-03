@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.89] — 2026-08-03
+
 ### Security
 
 - The approval gate now decides on the call that actually runs. Arguments
@@ -23,6 +25,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Added the `llmFailover` service: every logical call starts with its configured
+  main `llmConnection`, then advances through unique ordered fallbacks only on
+  provider failure. Agent handoffs flush durable conversation work and cold-
+  start the next provider from the current persisted context; cancellation and
+  force stop never trigger failover, unresolved tool outcomes are marked for
+  inspection, and exhaustion returns one sanitized error. The service is
+  available in LLM selectors and documented in the README and website.
 - Tool arguments are aligned with their declared schema types before dispatch:
   a JSON-encoded array or object is decoded, `"true"`/`"50"` become a boolean
   or an integer, and a null optional is dropped. Ambiguous shapes are refused
@@ -35,6 +44,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The force-stop writer-ordering invariant test now scopes its source-order
+  checks to the `_append` implementation that owns the barrier. A legitimate
+  conversation-writer flush in another AgentLoop mixin can no longer produce a
+  false CI failure while the cancel-before-persist invariant remains enforced.
 - Three private tool-argument decoders that the earlier parser unification
   missed now use the canonical decoder: `BaseFsHandler._unwrap_json` (19
   filesystem handlers), `RealtimeToolBridge._parse_args` (voice sessions) and

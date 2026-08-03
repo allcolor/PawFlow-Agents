@@ -261,7 +261,7 @@ Advisor contexts are silent and ephemeral. With `enforce_read_only: true` (the d
 
 ### Fault-Tolerant LLM Service
 
-An `llmFailover` service always starts a logical call with its main `llmConnection`, then tries the configured fallbacks in order only when the active provider fails. Each new call starts with the main connection again.
+An `llmFailover` service starts every agent turn with its main `llmConnection`, then tries the configured fallbacks in order only when the active provider fails. After a handoff, that fallback remains active for every later LLM call in the same turn, including calls that consume tool results. If it also fails, PawFlow advances to the next fallback. Only the next user turn retries the main connection.
 
 ```json
 {

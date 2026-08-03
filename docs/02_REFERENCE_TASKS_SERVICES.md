@@ -712,15 +712,17 @@ response metadata and remains tracked by each underlying service.
 ### 12.6. Fault-Tolerant LLM (`llmFailover`)
 
 **File**: `services/llm_failover.py`
-**Description**: Ordered main-to-fallback LLM continuation. Every logical call
+**Description**: Ordered main-to-fallback LLM continuation. Every agent turn
 starts with the main connection. If an AgentLoop provider fails, PawFlow flushes
 the work already persisted by streaming callbacks, rebuilds the canonical
-context as a cold start, and continues with the next connection.
+context as a cold start, and continues with the next connection. The selected
+fallback remains active for all later LLM calls in that turn. If it fails too,
+PawFlow advances again; only the next user turn retries the main connection.
 
 **Parameters**:
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `main_llm_service` | service reference | Yes | - | Primary `llmConnection`, tried first on every logical call |
+| `main_llm_service` | service reference | Yes | - | Primary `llmConnection`, tried first at the start of every agent turn |
 | `fallback_llm_services` | JSON array | Yes | `[]` | Ordered, unique `llmConnection` IDs; at least one is required |
 
 Fallback handoff is control flow, not a user-visible LLM error. Persisted text,

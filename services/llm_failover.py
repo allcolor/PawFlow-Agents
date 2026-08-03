@@ -1,9 +1,11 @@
 """Ordered, fault-tolerant LLM controller service.
 
-The composite always starts a logical call with its main connection and advances
-through the configured fallbacks only after the active connection fails. Agent
-turns use a typed handoff signal so the AgentLoop can rebuild the canonical
-persisted context before the next connection continues.
+The composite starts each agent turn with its main connection and advances
+through the configured fallbacks only after the active connection fails. Once a
+turn selects a fallback, every later LLM call in that turn stays on it unless it
+also fails. Agent turns use a typed handoff signal so the AgentLoop can rebuild
+the canonical persisted context before the next connection continues. A new
+turn retries the main connection.
 """
 
 from __future__ import annotations
@@ -77,7 +79,7 @@ class LLMFailoverExhausted(ServiceError):
 
 
 class FailoverLLMClient:
-    """LLMClient-compatible proxy for one ordered failover call."""
+    """LLMClient-compatible proxy for one ordered, sticky failover turn."""
 
     def __init__(self, service: "LLMFailoverService", attempt: int = 0):
         self._service = service
@@ -458,7 +460,10 @@ class LLMFailoverService(BaseService):
                 "service_type": "llmConnection",
                 "required": True,
                 "default": "",
-                "description": "Primary LLM connection tried first on every call",
+                "description": (
+                    "Primary LLM connection tried first at the start of each "
+                    "agent turn or standalone service call"
+                ),
             },
             "fallback_llm_services": {
                 "type": "json",

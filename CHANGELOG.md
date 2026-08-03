@@ -25,11 +25,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Added the `llmFailover` service: every logical call starts with its configured
+- Added the `llmFailover` service: every agent turn starts with its configured
   main `llmConnection`, then advances through unique ordered fallbacks only on
-  provider failure. Agent handoffs flush durable conversation work and cold-
-  start the next provider from the current persisted context; cancellation and
-  force stop never trigger failover, unresolved tool outcomes are marked for
+  provider failure. The selected fallback stays active for the rest of that
+  turn, including later tool-result calls; only the next user turn retries the
+  main connection. Agent handoffs flush durable conversation work and cold-start
+  the next provider from the current persisted context; cancellation and force
+  stop never trigger failover, unresolved tool outcomes are marked for
   inspection, and exhaustion returns one sanitized error. The service is
   available in LLM selectors and documented in the README and website.
 - Tool arguments are aligned with their declared schema types before dispatch:

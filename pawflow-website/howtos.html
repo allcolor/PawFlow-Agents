@@ -133,9 +133,9 @@
       <article class="recipe process-recipe" id="fault-tolerant-llm" data-reveal>
         <div class="recipe-meta">Agents, provider continuity, ordered fallback</div>
         <h2>Keep an agent turn running when an LLM provider fails</h2>
-        <p><strong>Objective:</strong> start every logical call on a preferred LLM connection, then continue on ordered backups when the active provider returns an error or crashes.</p>
+        <p><strong>Objective:</strong> start every agent turn on a preferred LLM connection, then keep that turn running on ordered backups when the active provider returns an error or crashes.</p>
         <div class="wizard-grid">
-          <div><strong>Main first</strong><span>Every new logical call starts with <code>main_llm_service</code>. A previous fallback does not become the permanent primary.</span></div>
+          <div><strong>Turn-sticky fallback</strong><span>Every new user turn starts with <code>main_llm_service</code>. After a handoff, the selected fallback handles every later LLM and tool-result call until that turn is done. If it fails too, PawFlow advances again; only the next turn retries the main connection.</span></div>
           <div><strong>Current state</strong><span>During AgentLoop work, PawFlow flushes persisted messages and cold-starts the next provider from the latest conversation context.</span></div>
           <div><strong>Safe boundaries</strong><span>Cancel and force stop never trigger a fallback. PawFlow reports one sanitized error only after all candidates fail.</span></div>
         </div>

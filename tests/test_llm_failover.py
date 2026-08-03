@@ -173,7 +173,7 @@ def test_direct_calls_try_candidates_in_definition_order():
             (main, fallback_1, fallback_2)] == [1, 1, 1]
 
 
-def test_each_new_logical_call_starts_with_main_again():
+def test_each_new_standalone_client_starts_with_main_again():
     main = FakeClient("main", [RuntimeError("429"), response("main recovered")])
     fallback_1 = FakeClient("fallback-1", [response("temporary continuation")])
     registry = FakeRegistry({
@@ -192,6 +192,71 @@ def test_each_new_logical_call_starts_with_main_again():
 
     assert len(main.calls) == 2
     assert len(fallback_1.calls) == 1
+
+
+def test_selected_fallback_is_sticky_for_remaining_turn_calls():
+    main = FakeClient("main", [])
+    fallback_1 = FakeClient(
+        "fallback-1",
+        [response("tool request"), response("done")],
+    )
+    registry = FakeRegistry({
+        "main": main,
+        "fallback-1": fallback_1,
+        "fallback-2": FakeClient("fallback-2", []),
+    })
+    # This is the client rebuilt by the AgentLoop handoff. The same clone is
+    # reused for every subsequent LLM call in that external user turn.
+    client = make_service().get_client()
+    client.select_attempt(
+        1,
+        failures=[{"service_id": "main", "error_type": "RuntimeError"}],
+    )
+    client._agent_ctx = {"active_agent_name": "assistant"}
+
+    with patch("core.service_registry.ServiceRegistry.get_instance",
+               return_value=registry):
+        assert client.complete_stream(user_message()).content == "tool request"
+        assert client.complete_stream(user_message()).content == "done"
+
+    assert len(main.calls) == 0
+    assert len(fallback_1.calls) == 2
+    assert client.active_service_id == "fallback-1"
+
+
+def test_sticky_fallback_failure_advances_without_retrying_main():
+    main = FakeClient("main", [])
+    fallback_1 = FakeClient(
+        "fallback-1",
+        [response("tool request"), RuntimeError("fallback went down")],
+    )
+    fallback_2 = FakeClient("fallback-2", [response("must cold-start first")])
+    registry = FakeRegistry({
+        "main": main,
+        "fallback-1": fallback_1,
+        "fallback-2": fallback_2,
+    })
+    client = make_service().get_client()
+    client.select_attempt(
+        1,
+        failures=[{"service_id": "main", "error_type": "RuntimeError"}],
+    )
+    client._agent_ctx = {"active_agent_name": "assistant"}
+
+    with patch("core.service_registry.ServiceRegistry.get_instance",
+               return_value=registry):
+        assert client.complete_stream(user_message()).content == "tool request"
+        with pytest.raises(LLMFailoverRequired) as raised:
+            client.complete_stream(user_message())
+
+    assert raised.value.failed_service_id == "fallback-1"
+    assert raised.value.next_service_id == "fallback-2"
+    assert raised.value.next_attempt == 2
+    assert [item["service_id"] for item in raised.value.failures] == [
+        "main", "fallback-1"]
+    assert len(main.calls) == 0
+    assert len(fallback_1.calls) == 2
+    assert len(fallback_2.calls) == 0
 
 
 def test_agent_call_raises_handoff_instead_of_replaying_stale_messages():

@@ -85,9 +85,12 @@ Built-in direct providers are
 and Anthropic-compatible endpoints use `base_url` on the corresponding direct
 API provider. An `llmAggregator` consults its configured advisor connections in
 parallel and passes their internal plans to its final connection. An
-`llmFailover` always starts with its main connection and cold-starts each
-ordered fallback from PawFlow's latest persisted agent context when the active
-provider fails, so completed messages and tool work remain part of the turn.
+`llmFailover` starts every agent turn with its main connection and cold-starts
+each ordered fallback from PawFlow's latest persisted agent context when the
+active provider fails. The selected fallback stays active through every later
+LLM/tool iteration in that turn, advancing again only if it also fails. The next
+user turn retries the main connection, while completed messages and tool work
+remain part of the prior handoff.
 Expression
 language references like `${llm_default_service}` are resolved at runtime from
 the expression cascade: flow -> conversation -> user -> global.

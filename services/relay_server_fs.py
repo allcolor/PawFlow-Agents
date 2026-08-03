@@ -3,9 +3,9 @@
 Normal direction: server → relay (server asks relay to read/write a host file).
 This module adds the INVERSE: relay → server. The relay (typically its FUSE
 proxy) asks the server to read/write a sandboxed file under the relay
-owner's CLAUDE_SESSIONS_DIR slot. The relay's docker container can then
-bind-mount the FUSE point and see the user's session files (CC spills,
-etc.) at a canonical path identical to what CC itself uses.
+owner's Claude, Codex, and Gemini CLI session slots. The relay's docker
+container can then bind-mount the FUSE point and see every provider's
+session files at the canonical path each CLI uses.
 
 Protocol (over the existing /ws/relay/<id> WebSocket):
 
@@ -27,7 +27,8 @@ Write ops land in phase 1b.
 
 Security invariants:
   1. Each relay is bound to a single owner user_id at registration time.
-     All ops are scoped to `CLAUDE_SESSIONS_DIR / <user_id> /`.
+     All ops are scoped to that user's slots below the Claude, Codex, and
+     Gemini CLI session roots.
   2. Path resolution uses Path.resolve() and re-checks containment after
      symlink expansion — a symlink pointing outside the slot is refused.
   3. Open file descriptors live in a per-relay-instance table; relay
@@ -44,9 +45,9 @@ import stat as _stat
 import threading
 import time as _time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
-from core.paths import CLAUDE_SESSIONS_DIR
+from core import paths as _paths
 from services import cc_memory_mirror
 
 logger = logging.getLogger(__name__)
@@ -102,43 +103,137 @@ class RelayServerFs:
     MAX_READ_CHUNK = 1 * 1024 * 1024  # 1 MB
     MAX_WRITE_CHUNK = 1 * 1024 * 1024  # 1 MB
 
-    def __init__(self, user_id: str, root_dir: Optional[Path] = None):
+    def __init__(self, user_id: str, root_dir: Optional[Path] = None,
+                 root_dirs: Optional[Mapping[str, Path]] = None):
         if not user_id:
             raise ValueError("RelayServerFs requires a non-empty user_id")
         self._user_id = user_id
-        # Lazy mkdir so the slot exists even if the user has no CC session yet
-        self._root = (Path(root_dir) if root_dir else CLAUDE_SESSIONS_DIR) / user_id
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._root_resolved = self._root.resolve()
+        if root_dir is not None and root_dirs is not None:
+            raise ValueError("root_dir and root_dirs are mutually exclusive")
+        if root_dirs is None:
+            if root_dir is not None:
+                roots = {"claude": Path(root_dir)}
+            else:
+                roots = {
+                    "claude": _paths.CLAUDE_SESSIONS_DIR,
+                    "codex": _paths.CODEX_SESSIONS_DIR,
+                    "gemini": _paths.GEMINI_SESSIONS_DIR,
+                }
+        else:
+            roots = {str(name): Path(path) for name, path in root_dirs.items()}
+        if not roots:
+            raise ValueError("RelayServerFs requires at least one session root")
+
+        # The canonical /cc_sessions mount is a union of the provider-specific
+        # runtime trees. Keep the provider name with each resolved user slot so
+        # writes and Claude-only memory hooks remain routed to their owner.
+        self._roots: Dict[str, Tuple[Path, Path]] = {}
+        for provider, base in roots.items():
+            slot = Path(base) / user_id
+            slot.mkdir(parents=True, exist_ok=True)
+            self._roots[provider] = (slot, slot.resolve())
+        # Retained as the default write target for a completely new path and
+        # for compatibility with the single-root test/injection surface.
+        self._root, self._root_resolved = next(iter(self._roots.values()))
         self._fd_lock = threading.Lock()
         self._fds: Dict[int, int] = {}  # fh → real fd
-        # fh → (rel_path, dirty). We track the relay-supplied path so that
-        # post-release mirrors (cc_memory_mirror) can re-read the finished
-        # file without the relay having to re-send it.
-        self._open_meta: Dict[int, Tuple[str, bool]] = {}
+        # fh → (rel_path, dirty, provider). We track the relay-supplied path so
+        # post-release mirrors can re-read the finished Claude file without
+        # the relay having to re-send it.
+        self._open_meta: Dict[int, Tuple[str, bool, str]] = {}
         self._next_fh = 1
 
     # ------------------------------------------------------------------
     # Path resolution
     # ------------------------------------------------------------------
 
-    def _resolve(self, rel_path: str) -> Path:
-        """Resolve a relay-supplied path to an absolute path inside the slot.
-
-        Accepts paths with or without a leading slash. Refuses absolute
-        paths that don't fall under the slot, refuses traversal via `..`,
-        and refuses symlinks pointing outside the slot.
-        """
+    def _candidate_paths(self, rel_path: str):
+        """Return sandboxed provider candidates for a canonical path."""
         if rel_path is None:
             raise _PathEscape("path is required")
-        # Strip leading slash so it joins as relative
-        rel = rel_path.lstrip("/\\")
-        candidate = (self._root / rel).resolve()
+        rel = str(rel_path).lstrip("/\\")
+        candidates = []
+        for provider, (root, root_resolved) in self._roots.items():
+            candidate = (root / rel).resolve()
+            try:
+                candidate.relative_to(root_resolved)
+            except ValueError:
+                raise _PathEscape(f"escape: {rel_path!r} → {candidate}")
+            candidates.append((provider, candidate, root_resolved))
+        return candidates
+
+    @staticmethod
+    def _provider_hint(rel_path: str) -> str:
+        parts = set(str(rel_path).replace("\\", "/").split("/"))
+        if ".claude" in parts:
+            return "claude"
+        if ".codex" in parts:
+            return "codex"
+        if ".gemini" in parts or ".agents" in parts:
+            return "gemini"
+        return ""
+
+    @staticmethod
+    def _mtime_ns(path: Path) -> int:
         try:
-            candidate.relative_to(self._root_resolved)
-        except ValueError:
-            raise _PathEscape(f"escape: {rel_path!r} → {candidate}")
-        return candidate
+            return path.stat().st_mtime_ns
+        except OSError:
+            return -1
+
+    def _resolve_entry(self, rel_path: str, *, for_write: bool = False):
+        """Resolve a canonical path and retain its provider ownership.
+
+        Existing paths win. If several providers contain the same canonical
+        entry, a provider-specific dot-directory wins first, otherwise the
+        most recently modified entry does. A new write follows the provider
+        owning its deepest existing ancestor.
+        """
+        candidates = self._candidate_paths(rel_path)
+        hint = self._provider_hint(rel_path)
+        existing = [entry for entry in candidates if entry[1].exists()]
+        if existing:
+            indexed = {provider: idx for idx, provider in enumerate(self._roots)}
+            return max(
+                existing,
+                key=lambda entry: (
+                    int(entry[0] == hint),
+                    self._mtime_ns(entry[1]),
+                    -indexed[entry[0]],
+                ),
+            )
+        if not for_write:
+            # Return a contained candidate and let the filesystem operation
+            # raise its normal ENOENT.
+            return candidates[0]
+
+        indexed = {provider: idx for idx, provider in enumerate(self._roots)}
+
+        def _write_score(entry):
+            provider, target, root_resolved = entry
+            ancestor = target.parent
+            depth = 0
+            while ancestor != root_resolved and not ancestor.exists():
+                ancestor = ancestor.parent
+                depth += 1
+            existing_depth = len(target.parts) - len(root_resolved.parts) - depth
+            return (
+                int(provider == hint),
+                existing_depth,
+                self._mtime_ns(ancestor),
+                -indexed[provider],
+            )
+
+        return max(candidates, key=_write_score)
+
+    def _resolve(self, rel_path: str) -> Path:
+        """Resolve an existing canonical path inside one provider slot."""
+        return self._resolve_entry(rel_path)[1]
+
+    def _resolve_for_provider(self, provider: str, rel_path: str) -> Path:
+        for name, candidate, _root in self._candidate_paths(rel_path):
+            if name == provider:
+                return candidate
+        raise _PathEscape(f"unknown session provider: {provider!r}")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -197,7 +292,7 @@ class RelayServerFs:
     # ------------------------------------------------------------------
 
     def _op_getattr(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._resolve(args.get("path", ""))
+        _provider, target, root_resolved = self._resolve_entry(args.get("path", ""))
         st = os.lstat(target)
         # Refuse symlinks pointing outside the slot. lstat doesn't follow,
         # so handle the symlink case explicitly.
@@ -205,7 +300,7 @@ class RelayServerFs:
             link_target = os.readlink(target)
             link_abs = (target.parent / link_target).resolve()
             try:
-                link_abs.relative_to(self._root_resolved)
+                link_abs.relative_to(root_resolved)
             except ValueError:
                 raise _PathEscape(f"symlink escapes: {target} → {link_abs}")
             st = os.stat(target)
@@ -221,15 +316,21 @@ class RelayServerFs:
         }}
 
     def _op_readdir(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._resolve(args.get("path", ""))
-        if not target.is_dir():
-            raise NotADirectoryError(str(target))
-        entries = sorted(os.listdir(target))
+        candidates = self._candidate_paths(args.get("path", ""))
+        existing = [target for _provider, target, _root in candidates
+                    if target.exists()]
+        directories = [target for target in existing if target.is_dir()]
+        if not directories:
+            if existing:
+                raise NotADirectoryError(str(existing[0]))
+            raise FileNotFoundError(str(candidates[0][1]))
+        entries = sorted({entry for target in directories
+                          for entry in os.listdir(target)})
         return {"data": {"entries": entries}}
 
     def _op_open(self, args: Dict[str, Any]) -> Dict[str, Any]:
         flags = int(args.get("flags", os.O_RDONLY))
-        target = self._resolve(args.get("path", ""))
+        provider, target, _root = self._resolve_entry(args.get("path", ""))
         if target.is_dir():
             raise IsADirectoryError(str(target))
         # Refuse O_CREAT — callers must use sfs.create explicitly so the
@@ -243,7 +344,7 @@ class RelayServerFs:
             fh = self._next_fh
             self._next_fh += 1
             self._fds[fh] = fd
-            self._open_meta[fh] = (args.get("path", ""), False)
+            self._open_meta[fh] = (args.get("path", ""), False, provider)
         return {"data": {"fh": fh}}
 
     def _op_read(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -275,13 +376,13 @@ class RelayServerFs:
         except OSError as e:
             return _errno_response(e.errno or errno.EIO, str(e))
         if meta is not None:
-            rel_path, dirty = meta
+            rel_path, dirty, provider = meta
             if dirty:
-                self._maybe_mirror_write(rel_path)
+                self._maybe_mirror_write(rel_path, provider)
         return {"data": {}}
 
     def _op_statfs(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._resolve(args.get("path", ""))
+        _provider, target, _root = self._resolve_entry(args.get("path", ""))
         st = os.statvfs(target)
         return {"data": {
             "f_bsize": st.f_bsize,
@@ -300,7 +401,8 @@ class RelayServerFs:
     # ------------------------------------------------------------------
 
     def _op_create(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._resolve(args.get("path", ""))
+        provider, target, _root = self._resolve_entry(
+            args.get("path", ""), for_write=True)
         # Standard create: O_WRONLY|O_CREAT|O_TRUNC, mode 0o600 by default
         flags = int(args.get("flags", os.O_WRONLY | os.O_CREAT | os.O_TRUNC))
         mode = int(args.get("mode", 0o600)) & 0o777
@@ -311,7 +413,7 @@ class RelayServerFs:
             fh = self._next_fh
             self._next_fh += 1
             self._fds[fh] = fd
-            self._open_meta[fh] = (args.get("path", ""), False)
+            self._open_meta[fh] = (args.get("path", ""), False, provider)
         return {"data": {"fh": fh}}
 
     def _op_write(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -333,7 +435,7 @@ class RelayServerFs:
             # racing release can't pop the meta entry before we record it.
             meta = self._open_meta.get(fh)
             if meta is not None:
-                self._open_meta[fh] = (meta[0], True)
+                self._open_meta[fh] = (meta[0], True, meta[2])
         os.lseek(fd, offset, os.SEEK_SET)
         n = os.write(fd, data)
         return {"data": {"bytes_written": n}}
@@ -349,33 +451,35 @@ class RelayServerFs:
                     return _errno_response(errno.EBADF, f"unknown fh {fh}")
                 meta = self._open_meta.get(fh)
                 if meta is not None:
-                    self._open_meta[fh] = (meta[0], True)
+                    self._open_meta[fh] = (meta[0], True, meta[2])
             os.ftruncate(fd, length)
         else:
             rel = args.get("path", "")
-            target = self._resolve(rel)
+            provider, target, _root = self._resolve_entry(rel)
             os.truncate(target, length)
-            self._maybe_mirror_write(rel)
+            self._maybe_mirror_write(rel, provider)
         return {"data": {}}
 
     def _op_unlink(self, args: Dict[str, Any]) -> Dict[str, Any]:
         rel = args.get("path", "")
-        target = self._resolve(rel)
+        provider, target, _root = self._resolve_entry(rel)
         os.unlink(target)
-        try:
-            cc_memory_mirror.mirror_unlink(self._user_id, rel)
-        except Exception:
-            logger.exception("[server-fs] mirror_unlink hook failed")
+        if provider == "claude":
+            try:
+                cc_memory_mirror.mirror_unlink(self._user_id, rel)
+            except Exception:
+                logger.exception("[server-fs] mirror_unlink hook failed")
         return {"data": {}}
 
     def _op_mkdir(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._resolve(args.get("path", ""))
+        _provider, target, _root = self._resolve_entry(
+            args.get("path", ""), for_write=True)
         mode = int(args.get("mode", 0o700)) & 0o777
         os.mkdir(target, mode)
         return {"data": {}}
 
     def _op_rmdir(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._resolve(args.get("path", ""))
+        _provider, target, _root = self._resolve_entry(args.get("path", ""))
         os.rmdir(target)
         return {"data": {}}
 
@@ -384,24 +488,25 @@ class RelayServerFs:
         # used to escape the sandbox in either direction.
         old_rel = args.get("old", "")
         new_rel = args.get("new", "")
-        old = self._resolve(old_rel)
-        new = self._resolve(new_rel)
+        provider, old, _root = self._resolve_entry(old_rel)
+        new = self._resolve_for_provider(provider, new_rel)
         os.rename(old, new)
         new_data: Optional[bytes] = None
-        if cc_memory_mirror.match_memory_path(new_rel):
+        if provider == "claude" and cc_memory_mirror.match_memory_path(new_rel):
             try:
                 new_data = new.read_bytes()
             except OSError:
                 new_data = None
-        try:
-            cc_memory_mirror.mirror_rename(self._user_id, old_rel, new_rel,
-                                            new_data)
-        except Exception:
-            logger.exception("[server-fs] mirror_rename hook failed")
+        if provider == "claude":
+            try:
+                cc_memory_mirror.mirror_rename(self._user_id, old_rel, new_rel,
+                                                new_data)
+            except Exception:
+                logger.exception("[server-fs] mirror_rename hook failed")
         return {"data": {}}
 
     def _op_chmod(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._resolve(args.get("path", ""))
+        _provider, target, _root = self._resolve_entry(args.get("path", ""))
         # Mask out setuid/setgid/sticky — these have no business in a
         # session slot and could be used to harden a foothold.
         mode = int(args.get("mode", 0o600)) & 0o777
@@ -409,7 +514,7 @@ class RelayServerFs:
         return {"data": {}}
 
     def _op_utimens(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._resolve(args.get("path", ""))
+        _provider, target, _root = self._resolve_entry(args.get("path", ""))
         atime = args.get("atime")
         mtime = args.get("mtime")
         if atime is None or mtime is None:
@@ -422,7 +527,7 @@ class RelayServerFs:
     # Mirror hooks
     # ------------------------------------------------------------------
 
-    def _maybe_mirror_write(self, rel_path: str) -> None:
+    def _maybe_mirror_write(self, rel_path: str, provider: str = "claude") -> None:
         """If `rel_path` is a mirrorable CC memory file, re-read it from
         disk and forward the bytes to the mirror. Best-effort — errors
         are logged and swallowed so a failed mirror never breaks the FS
@@ -434,11 +539,13 @@ class RelayServerFs:
         memory-skill file convention between versions, breaking the
         mirror without any other surface signal).
         """
+        if provider != "claude":
+            return
         if not cc_memory_mirror.match_memory_path(rel_path):
             self._maybe_log_layout_drift(rel_path)
             return
         try:
-            data = self._resolve(rel_path).read_bytes()
+            data = self._resolve_for_provider(provider, rel_path).read_bytes()
         except OSError:
             logger.debug("[server-fs] mirror read failed for %s", rel_path,
                          exc_info=True)

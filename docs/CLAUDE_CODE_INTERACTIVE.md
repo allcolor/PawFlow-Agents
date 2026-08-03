@@ -763,12 +763,12 @@ same.
 The blocklist `codex exec` carries (`--disable shell_tool`, `unified_exec`,
 `view_image`, ...) exists to push the agent through the MCP bridge rather than
 the container's own filesystem. Applied to the TUI it removed the only way
-codex had to read the cold-start context PawFlow hands it: the file is local to
-the session workdir, and the MCP `read` resolves against the relay, whose
-server-fs is rooted at `CLAUDE_SESSIONS_DIR` and therefore cannot see a codex
-session at all. The same blocklist removed `view_image`, so the attachments
-`_cci_materialize_images` writes into `.pawflow_vision/` could never be opened —
-app-server passes images natively and never hit this.
+Codex could read the cold-start context PawFlow hands it. Native file tools
+remain available for local CLI state and attachments, while project work is
+steered through PawFlow MCP. The relay server-fs also merges the Claude, Codex,
+and Gemini session roots, so MCP reads of
+`/cc_sessions/<conversation>/<agent>/.pawflow_cci/initial_context.md` resolve to
+the live Codex workdir instead of an empty same-named Claude directory.
 
 Steering the agent toward PawFlow tools for user work stays a prompt concern,
 exactly as it already is for app-server.

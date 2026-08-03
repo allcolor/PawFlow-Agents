@@ -4,15 +4,14 @@ The normal direction of the relay protocol is **server → relay**: the
 PawFlow server asks the connected relay to read/write a file on the
 user's host. This document covers the **inverse direction** (relay →
 server) added to give a remote relay's docker container access to a
-slice of the server's filesystem (typically `CLAUDE_SESSIONS_DIR/<user>/`)
-without opening a second transport.
+slice of the server's filesystem (the union of the user's Claude, Codex, and
+Gemini CLI session slots) without opening a second transport.
 
-The motivating use case: when CC SDK spills a large tool result to its
-local `/workspace/projects/.../tool-results/<f>.txt`, that file lives
-under `CLAUDE_SESSIONS_DIR` on the server. A remote relay needs to
-read it back to feed grep/read tools. With this handler, the relay
-mounts a FUSE proxy backed by these ops; both the CC docker and the
-relay docker see the same canonical paths.
+The motivating use case: when a CLI provider stores bootstrap state, local
+configuration, or a spilled tool result under its session workdir, a remote
+relay needs to read it back through the same canonical path. With this handler,
+the relay mounts a FUSE proxy backed by these ops; the provider container and
+the relay container both see `/cc_sessions/<conversation>/<agent>/...`.
 
 ## Wire format
 
@@ -56,8 +55,9 @@ Failure:
 ## Sandbox
 
 Every `RelayService` carries an owner `user_id` (set by the registry on
-service attach). The handler resolves all paths under
-`CLAUDE_SESSIONS_DIR / <user_id> /` and rejects:
+service attach). The handler resolves all paths under that user's slots in
+`CLAUDE_SESSIONS_DIR`, `CODEX_SESSIONS_DIR`, and `GEMINI_SESSIONS_DIR`, and
+rejects:
 
 - Absolute or `..`-traversal paths that resolve outside the slot (`EACCES`)
 - Symlinks whose target leaves the slot (`EACCES`)
@@ -66,6 +66,25 @@ service attach). The handler resolves all paths under
 A relay registered for user A can never see user B's slot, even if the
 relay forges a `path` argument: resolution always prepends the slot root
 and re-checks containment after `Path.resolve()`.
+
+## Multi-provider view
+
+`/cc_sessions` is a union of the three provider-specific runtime roots. This
+matters when the same canonical agent directory exists in more than one root:
+an empty stale Claude directory must not hide a live Codex
+`.pawflow_cci/initial_context.md`, for example.
+
+- `readdir` returns the sorted union of entries from every matching provider
+  directory.
+- Reads use the provider that owns the requested entry. Provider-specific
+  directories such as `.claude`, `.codex`, and `.gemini` take precedence;
+  otherwise the newest duplicate entry wins.
+- New writes follow a provider-specific directory hint when present, then the
+  provider owning the deepest existing ancestor. A completely new path falls
+  back to the first configured root.
+- Every candidate is resolved and containment-checked inside its own user slot;
+  merging the view does not weaken cross-user or symlink isolation.
+- Claude memory mirroring runs only for files routed to the Claude root.
 
 ## Methods
 
@@ -313,7 +332,7 @@ mount is live alongside `/cc_sessions` and `/filestore`.
 - `services/relay_server_fs.py` — server handler (sfs.*)
 - `services/relay_filestore_fs.py` — server handler (ffs.*, RO virtualized)
 - `services/relay_skills_fs.py` — server handler (skfs.*, RO virtualized)
-- `tests/test_relay_server_fs.py` — 24 sandbox/op tests
+- `tests/test_relay_server_fs.py` — sandbox, union-view, and operation tests
 - `tests/test_relay_filestore_fs.py` — 35 path/op/access-scope tests (incl. per-conv isolation)
 - `tests/test_relay_skills_fs.py` — 20 path/op/access-scope tests
 - `services/filesystem_service.py:_handle_relay_request` — prefix dispatch

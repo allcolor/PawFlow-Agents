@@ -13,7 +13,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from core import paths as _paths
 from services.relay_server_fs import RelayServerFs
 
 
@@ -53,6 +55,86 @@ class TestConstruction(_FsCase):
         fs = RelayServerFs("newuser", root_dir=self.root)
         self.assertTrue((self.root / "newuser").is_dir())
         fs.close()
+
+
+class TestMultiProviderView(unittest.TestCase):
+    """The canonical mount merges Claude, Codex, and Gemini session roots."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.roots = {
+            "claude": base / "claude",
+            "codex": base / "codex",
+            "gemini": base / "gemini",
+        }
+        # This is the production failure shape: the Claude root contains the
+        # canonical agent directory but no files, while the live Codex session
+        # stores its bootstrap below the same canonical path.
+        (self.roots["claude"] / "alice" / "convA" / "assistant").mkdir(
+            parents=True)
+        codex_agent = self.roots["codex"] / "alice" / "convA" / "assistant"
+        codex_agent.mkdir(parents=True)
+        (codex_agent / "initial_context.md").write_text("codex context")
+        gemini_agent = self.roots["gemini"] / "alice" / "convB" / "gemini"
+        gemini_agent.mkdir(parents=True)
+        (gemini_agent / "settings.json").write_text("{}")
+        self.fs = RelayServerFs("alice", root_dirs=self.roots)
+
+    def tearDown(self):
+        self.fs.close()
+        self._tmp.cleanup()
+
+    def test_empty_claude_agent_does_not_hide_codex_session(self):
+        listing = self.fs.handle("sfs.readdir", {"path": "convA/assistant"})
+        self.assertEqual(listing["data"]["entries"], ["initial_context.md"])
+
+        opened = self.fs.handle(
+            "sfs.open",
+            {"path": "convA/assistant/initial_context.md", "flags": os.O_RDONLY},
+        )
+        fh = opened["data"]["fh"]
+        chunk = self.fs.handle("sfs.read", {"fh": fh, "offset": 0, "size": 100})
+        self.assertEqual(
+            base64.b64decode(chunk["data"]["data_b64"]), b"codex context")
+        self.fs.handle("sfs.release", {"fh": fh})
+
+    def test_root_listing_merges_provider_conversations(self):
+        listing = self.fs.handle("sfs.readdir", {"path": "/"})
+        self.assertEqual(listing["data"]["entries"], ["convA", "convB"])
+
+    def test_default_constructor_uses_all_runtime_roots(self):
+        with (
+            mock.patch.object(_paths, "CLAUDE_SESSIONS_DIR", self.roots["claude"]),
+            mock.patch.object(_paths, "CODEX_SESSIONS_DIR", self.roots["codex"]),
+            mock.patch.object(_paths, "GEMINI_SESSIONS_DIR", self.roots["gemini"]),
+        ):
+            default_fs = RelayServerFs("alice")
+        try:
+            listing = default_fs.handle(
+                "sfs.readdir", {"path": "convA/assistant"})
+            self.assertEqual(
+                listing["data"]["entries"], ["initial_context.md"])
+        finally:
+            default_fs.close()
+
+    def test_provider_specific_write_stays_in_codex_root(self):
+        rel = "convA/assistant/.codex/state.json"
+        (self.roots["codex"] / "alice" / "convA" / "assistant" / ".codex").mkdir()
+        created = self.fs.handle("sfs.create", {"path": rel})
+        fh = created["data"]["fh"]
+        payload = b'{"ready": true}'
+        self.fs.handle("sfs.write", {
+            "fh": fh,
+            "offset": 0,
+            "data_b64": base64.b64encode(payload).decode("ascii"),
+        })
+        self.fs.handle("sfs.release", {"fh": fh})
+
+        codex_file = self.roots["codex"] / "alice" / rel
+        claude_file = self.roots["claude"] / "alice" / rel
+        self.assertEqual(codex_file.read_bytes(), payload)
+        self.assertFalse(claude_file.exists())
 
 
 class TestSandbox(_FsCase):

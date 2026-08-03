@@ -158,8 +158,10 @@ run, so read/search-style calls do not restat or decrypt secrets repeatedly.
 |---|---|
 | `openaiImageGeneration` | OpenAI-backed image generation. |
 | `codexImageGeneration` | Codex CLI `$imagegen` generation/editing through a codex-app-server LLM service. |
+| `comfyUIImageGeneration` | Self-hosted ComfyUI image generation/editing through trusted API-format workflow presets. |
 | `grokImageGeneration` | Grok/xAI-backed image generation and editing. |
 | `grokVideoGeneration` | Grok/xAI-backed video generation and editing. |
+| `comfyUIVideoGeneration` | Self-hosted ComfyUI video operations through trusted API-format workflow presets. |
 | `xaiTTS` | xAI-backed text-to-speech. |
 | `xaiSTT` | xAI-backed speech-to-text. |
 | `klingVideoGeneration` | Kling video generation. |
@@ -186,7 +188,7 @@ run, so read/search-style calls do not restat or decrypt secrets repeatedly.
 | `elevenLabsVoiceClone` | ElevenLabs voice clone/TTS. |
 | `wavespeedVoiceClone` | WaveSpeedAI zero-shot voice clone/TTS. |
 
-See [Media Tools](media_tools.md), [Voice Clone](voice_clone.md), [Pixazo](pixazo.md), and [WaveSpeedAI](wavespeed.md).
+See [Media Tools](media_tools.md), [ComfyUI](comfyui.md), [Voice Clone](voice_clone.md), [Pixazo](pixazo.md), and [WaveSpeedAI](wavespeed.md).
 
 ## Server Configuration
 

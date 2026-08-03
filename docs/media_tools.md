@@ -213,6 +213,15 @@ the `relay://&#36;{conv.relay}` URL form for local relay endpoints; set
 `allow_private_base_url=true` only when the endpoint is trusted and must be
 reached directly from the PawFlow server.
 
+`comfyUIImageGeneration` and `comfyUIVideoGeneration` run administrator-configured
+ComfyUI Server API workflows. Workflows must be exported in API format and stored
+as trusted service presets with explicit PawFlow-to-node bindings and an explicit
+history output node. Agents cannot submit workflows at call time. Relay URLs can
+target either the relay host (`relay_local=true`) or relay container
+(`relay_local=false`); downloaded outputs are streamed to temporary files and
+removed after the media handler persists them. See the complete [ComfyUI install
+and configuration guide](comfyui.md).
+
 `openaiCompatibleImageGeneration` and `openaiCompatibleVideoGeneration` reuse an
 existing `llmConnection` whose provider is `openai`. Configure that LLM service
 with a bare OpenAI base URL such as `https://api.openai.com/v1`, or an

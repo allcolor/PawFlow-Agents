@@ -157,7 +157,7 @@ def _h_list_terminals(ctx, msg, on_output=None):
 def _h_http_proxy(ctx, msg, on_output=None):
     if not ctx.allow_exec:
         return _EXEC_DENIED
-    return _act_http_proxy(msg)
+    return _act_http_proxy(msg, on_output=on_output)
 
 
 def _h_start_code_server(ctx, msg, on_output=None):

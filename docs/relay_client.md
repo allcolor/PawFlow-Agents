@@ -24,6 +24,21 @@ and uninstall the old relay explicitly when its workspace is no longer needed.
 
 Server-side relay sessions track in-flight reverse filesystem requests per WebSocket connection. When a relay disconnects or is removed from the pool, those pending request tasks are cancelled so stale connections cannot retain writers, loops, or queued FUSE work.
 
+## Admin-controlled server-local execution
+
+Managed server relays execute in their own isolated workspace by default. An
+administrator can open **Server settings → Server Relays** and enable
+server-local execution for one managed relay. When enabled, filesystem and shell
+tools sent to that relay with `local=true` run inside the PawFlow server
+container instead of the relay container. This gives access to server logs and
+to the Docker socket mounted in the PawFlow container.
+
+The switch is disabled by default, persists with the relay service definition,
+and applies immediately without restarting the relay. Only the dedicated admin
+API may change it; normal service updates reject the internal
+`server_local_exec` field. Standalone relays keep their existing semantics:
+`local=true` uses their authenticated local host-helper path when configured.
+
 ## A managed container that dies is respawned
 
 The container of a managed server relay is started once, from
@@ -38,11 +53,12 @@ service calls `ensure_managed_relay_alive()`:
 - **Unmanaged relays are never touched.** An operator-run relay is theirs to
   restart; PawFlow owns no container for it.
 - **A live WebSocket is the health signal.** A connected relay is left strictly
-  alone. A container that is still running but has no relay WebSocket is wedged
-  from the service's perspective (for example, failed authentication or a stuck
-  client) and is replaced. The managed spawn path removes the derived container
-  name before `docker run`, so a live-but-disconnected container cannot block
-  recovery. Container inspection remains diagnostic; it is not health.
+  alone, and a container that is actually gone is respawned immediately. A
+  running container receives a 15-second grace period for the relay worker's own
+  reconnect loop. PawFlow rechecks the WebSocket after Docker inspection and
+  again immediately before replacement, so it cannot kill a relay that
+  reconnected while recovery was being decided. Only a continuously
+  disconnected running process past the grace is treated as wedged.
 - **One respawn per cooldown window** (60 s), so a burst of failing tool calls
   asks for one container start rather than one per call.
 - **A failed respawn is logged, not raised.** The caller is a transport retry

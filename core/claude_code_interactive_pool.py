@@ -59,6 +59,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     # runs in the background.  Codex overrides this because its event receipt is
     # the only trustworthy proof that the TUI accepted the interrupted prompt.
     _VERIFY_INTERRUPT_SYNCHRONOUS = False
+    _PREPARE_INTERRUPT_BEFORE_PASTE = False
 
     @classmethod
     def instance(cls) -> "InteractiveClaudeCodePool":
@@ -392,6 +393,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                     "%s; submitting best-effort%s",
                     state.name, self._pane_diagnostic(state.name))
         self._cancel_copy_mode(state)
+        if not self._prepare_prompt_input(state):
+            return False
         # Once, not once per attempt: the guard that keeps hooks from filing
         # our own paste as a user message counts tickets, and a second record
         # for the same text would leave one unspent to swallow the next thing
@@ -893,6 +896,14 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
+    def _prepare_prompt_input(self, state: InteractiveContainer) -> bool:
+        """Prepare the TUI before pasting a prompt.
+
+        Claude Code needs no extra key sequence. Provider-specific pools may
+        override this hook when their TUI requires one.
+        """
+        return True
+
     def _load_buffer(self, state: InteractiveContainer, text: str) -> bool:
         cmd = docker_cmd() + [
             "exec", "-i", "--user", self._user_spec(), state.name,
@@ -956,6 +967,9 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             state.last_error = f"Container {state.name} is not running"
             return False
         self._cancel_copy_mode(state)
+        canonical_input = self._PREPARE_INTERRUPT_BEFORE_PASTE
+        if canonical_input and not self._prepare_prompt_input(state):
+            return False
         self._remember_injected_prompt(state, text)
         event_service = self._remember_injected_prompt_for_event_service(
             state, text)
@@ -970,20 +984,16 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 event_service = None
         if not (self._load_buffer(state, text) and self._paste_buffer(state)):
             return False
-        if not self.send_keys(state, ["Escape"]):
+        if not canonical_input and not self.send_keys(state, ["Escape"]):
             return False
-        # The Escape interrupts the running turn and triggers a TUI
-        # re-render; an Enter pressed during it is dropped or inserted as a
-        # newline, stranding the message in the input box. Settle first,
-        # then verify (the verifier re-presses Enter if it was swallowed).
+        # Codex has already performed Esc, Esc before the paste. Claude Code
+        # keeps its historical paste, Escape, settle, Enter sequence.
         settle = self._paste_settle_seconds()
         if settle > 0:
             time.sleep(settle)
         if not self.send_keys(state, ["Enter"]):
             return False
-        if settle > 0:
-            # Let the interrupted turn's running marker leave the pane so
-            # the verifier doesn't mistake the OLD turn for the new one.
+        if not canonical_input and settle > 0:
             time.sleep(settle)
         # _verify_submitted polls the tmux pane / submission receipts for up to
         # PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS (default 6s) and only re-presses
@@ -1000,7 +1010,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             verified = self._verify_submitted(
                 state, text, event_service=event_service,
                 submit_marker=submit_marker)
-            if verified is not True:
+            if verified is False:
                 if not state.last_error:
                     state.last_error = "interrupt prompt submission was not confirmed"
                 return False

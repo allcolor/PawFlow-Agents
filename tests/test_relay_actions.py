@@ -29,10 +29,17 @@ def http_backend():
 
 
 def test_http_proxy_roundtrip(http_backend):
-    res = ra.http_proxy({"port": http_backend, "method": "GET", "req_path": "/"})
+    emitted = []
+    res = ra.http_proxy(
+        {"port": http_backend, "method": "GET", "req_path": "/"},
+        on_output=lambda kind, data: emitted.append((kind, data)))
     assert res["ok"] is True
     assert res["data"]["status"] == 200
-    assert base64.b64decode(res["data"]["body"]) == b"hello-proxy"
+    assert emitted[0][0] == "start"
+    assert b"".join(
+        base64.b64decode(data) for kind, data in emitted if kind == "chunk"
+    ) == b"hello-proxy"
+    assert emitted[-1] == ("end", None)
 
 
 def test_http_proxy_missing_port():
@@ -41,7 +48,9 @@ def test_http_proxy_missing_port():
 
 def test_http_proxy_connection_error():
     # nothing listening on this port -> error result, not raise
-    res = ra.http_proxy({"port": 1, "req_path": "/"})
+    res = ra.http_proxy(
+        {"port": 1, "req_path": "/"},
+        on_output=lambda _kind, _data: None)
     assert res["ok"] is False and "Proxy error" in res["error"]
 
 

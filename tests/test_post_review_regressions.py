@@ -10,7 +10,35 @@
     be registered (P0 #1).
 """
 
+import base64
 import json
+
+
+class _StreamingProxyRelay:
+    """Adapt legacy inline fixtures to the chunked relay contract."""
+
+    def http_proxy_stream(self, *, port, method, req_path, req_headers,
+                          body, timeout, on_output):
+        result = self._request(
+            "http_proxy", port=port, method=method, req_path=req_path,
+            req_headers=req_headers,
+            req_body=base64.b64encode(body).decode("ascii") if body else "",
+            timeout=timeout)
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result = result["data"]
+        if not isinstance(result, dict) or result.get("ok") is False:
+            raise RuntimeError(
+                str((result or {}).get("error") if isinstance(result, dict)
+                    else result))
+        on_output("start", {
+            "status": int(result.get("status", 200)),
+            "headers": result.get("headers") or {},
+        })
+        encoded = result.get("body") or ""
+        if encoded:
+            on_output("chunk", encoded)
+        on_output("end", None)
+        return {"ok": True}
 
 
 
@@ -230,7 +258,7 @@ def test_code_server_ws_registers_browser_socket_under_session_id(tmp_path, monk
         def close(self):
             self.closed = True
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def _request(self, action, **kwargs):
             assert action == "cs_ws_open"
             return {"ok": True}
@@ -277,7 +305,7 @@ def test_code_server_ws_forwards_selected_subprotocol(tmp_path, monkeypatch):
         def close(self):
             pass
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def __init__(self):
             self.headers = None
 
@@ -317,7 +345,7 @@ def test_code_server_http_proxy_strips_public_prefix_by_default(tmp_path):
 
     init_db(tmp_path / "capabilities.json")
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def __init__(self):
             self.kwargs = None
 
@@ -344,6 +372,11 @@ def test_code_server_http_proxy_strips_public_prefix_by_default(tmp_path):
             self.headers = headers
             self.body = body
 
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
+
     with csp._lock:
         csp._sessions.clear()
         csp._relay_to_session.clear()
@@ -369,7 +402,7 @@ def test_code_server_http_proxy_accepts_public_capability_url(tmp_path):
 
     init_db(tmp_path / "capabilities.json")
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def __init__(self):
             self.called = False
 
@@ -391,6 +424,11 @@ def test_code_server_http_proxy_accepts_public_capability_url(tmp_path):
             self.status = status
             self.headers = headers
             self.body = body
+
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
 
     with csp._lock:
         csp._sessions.clear()
@@ -415,7 +453,7 @@ def test_code_server_proxy_strips_public_prefix_for_root_upstream(tmp_path):
 
     init_db(tmp_path / "capabilities.json")
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def __init__(self):
             self.kwargs = None
 
@@ -437,6 +475,11 @@ def test_code_server_proxy_strips_public_prefix_for_root_upstream(tmp_path):
             self.status = status
             self.headers = headers
             self.body = body
+
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
 
     with csp._lock:
         csp._sessions.clear()
@@ -465,7 +508,7 @@ def test_code_server_http_proxy_recomputes_binary_content_length(tmp_path):
 
     png = b"\x89PNG\r\n\x1a\nfake"
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def _request(self, action, **kwargs):
             assert action == "http_proxy"
             return {
@@ -492,6 +535,11 @@ def test_code_server_http_proxy_recomputes_binary_content_length(tmp_path):
             self.headers = headers
             self.body = body
 
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
+
     with csp._lock:
         csp._sessions.clear()
         csp._relay_to_session.clear()
@@ -505,7 +553,7 @@ def test_code_server_http_proxy_recomputes_binary_content_length(tmp_path):
 
     assert req.status == 200
     assert req.headers["Content-Type"] == "image/png"
-    assert req.headers["Content-Length"] == str(len(png))
+    assert "Content-Length" not in req.headers
     assert "Transfer-Encoding" not in req.headers
     assert req.body == png
 
@@ -516,7 +564,7 @@ def test_code_server_http_proxy_sets_webview_csp(tmp_path):
 
     init_db(tmp_path / "capabilities.json")
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def _request(self, action, **kwargs):
             assert action == "http_proxy"
             return {
@@ -538,6 +586,11 @@ def test_code_server_http_proxy_sets_webview_csp(tmp_path):
             self.status = status
             self.headers = headers
             self.body = body
+
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
 
     with csp._lock:
         csp._sessions.clear()
@@ -565,7 +618,7 @@ def test_code_server_http_proxy_accepts_tokenless_static_asset(tmp_path):
 
     init_db(tmp_path / "capabilities.json")
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def __init__(self):
             self.kwargs = None
 
@@ -585,6 +638,11 @@ def test_code_server_http_proxy_accepts_tokenless_static_asset(tmp_path):
             self.status = status
             self.headers = headers
             self.body = body
+
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
 
     with csp._lock:
         csp._sessions.clear()
@@ -615,7 +673,7 @@ def test_code_server_http_proxy_falls_back_for_missing_seti_font(tmp_path):
 
     init_db(tmp_path / "capabilities.json")
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def _request(self, action, **kwargs):
             assert action == "http_proxy"
             return {
@@ -637,6 +695,11 @@ def test_code_server_http_proxy_falls_back_for_missing_seti_font(tmp_path):
             self.status = status
             self.headers = headers
             self.body = body
+
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
 
     with csp._lock:
         csp._sessions.clear()
@@ -664,7 +727,7 @@ def test_code_server_http_proxy_restarts_dead_upstream_once(tmp_path):
 
     init_db(tmp_path / "capabilities.json")
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def __init__(self):
             self.calls = []
 
@@ -692,6 +755,11 @@ def test_code_server_http_proxy_restarts_dead_upstream_once(tmp_path):
             self.headers = headers
             self.body = body
 
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
+
     with csp._lock:
         csp._sessions.clear()
         csp._relay_to_session.clear()
@@ -718,7 +786,7 @@ def test_code_server_http_proxy_restarts_after_proxy_exception(tmp_path):
 
     init_db(tmp_path / "capabilities.json")
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def __init__(self):
             self.calls = []
 
@@ -746,6 +814,11 @@ def test_code_server_http_proxy_restarts_after_proxy_exception(tmp_path):
             self.headers = headers
             self.body = body
 
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
+
     with csp._lock:
         csp._sessions.clear()
         csp._relay_to_session.clear()
@@ -771,7 +844,7 @@ def test_code_server_http_proxy_waits_after_restart_refusal(tmp_path, monkeypatc
     init_db(tmp_path / "capabilities.json")
     monkeypatch.setattr(csp.time, "sleep", lambda _seconds: None)
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def __init__(self):
             self.calls = []
             self.new_port_attempts = 0
@@ -803,6 +876,11 @@ def test_code_server_http_proxy_waits_after_restart_refusal(tmp_path, monkeypatc
             self.headers = headers
             self.body = body
 
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
+
     with csp._lock:
         csp._sessions.clear()
         csp._relay_to_session.clear()
@@ -828,7 +906,7 @@ def test_code_server_ws_open_retries_connection_refused(tmp_path, monkeypatch):
     init_db(tmp_path / "capabilities.json")
     monkeypatch.setattr(csp.time, "sleep", lambda _seconds: None)
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def __init__(self):
             self.calls = []
 
@@ -876,7 +954,7 @@ def test_code_server_proxy_serves_missing_vsda_assets_without_upstream(tmp_path)
 
     init_db(tmp_path / "capabilities.json")
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         def _request(self, action, **kwargs):
             raise AssertionError("VSDA compatibility assets must not hit upstream")
 
@@ -893,6 +971,11 @@ def test_code_server_proxy_serves_missing_vsda_assets_without_upstream(tmp_path)
             self.status = status
             self.headers = headers
             self.body = body
+
+        def complete_stream(self, status, headers, stream):
+            self.status = status
+            self.headers = headers
+            self.body = b"".join(stream)
 
     with csp._lock:
         csp._sessions.clear()
@@ -958,7 +1041,7 @@ def test_code_server_command_send_uses_relay_ws_frame(monkeypatch):
         lambda coro, target_loop: FakeFuture(coro),
     )
 
-    class FakeRelay:
+    class FakeRelay(_StreamingProxyRelay):
         _connection = BadListener()
         _relay_pool_lock = FakeLock()
         _relay_pool = [{"writer": "writer-1", "loop": loop}]

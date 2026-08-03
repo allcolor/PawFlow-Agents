@@ -284,79 +284,67 @@ def code_http_proxy(pending_req):
     fwd_headers["Host"] = f"127.0.0.1:{port}"
 
     try:
+        from services._relay_http_response import RelayHttpResponseStream
+
         def _proxy_once(target_port: int):
             fwd_headers["Host"] = f"127.0.0.1:{target_port}"
-            return relay_service._request(
-                "http_proxy",
+            stream = RelayHttpResponseStream.for_local_port(
+                relay_service,
                 port=target_port,
                 method=pending_req.method,
                 req_path=proxied_path,
-                req_headers=fwd_headers,
-                req_body=base64.b64encode(pending_req.body).decode("ascii") if pending_req.body else "",
-            )
+                headers=fwd_headers,
+                body=pending_req.body,
+                label=f"code-http-{session_id[:8]}",
+            ).start()
+            stream.wait_ready()
+            return stream
 
         def _proxy_until_ready(target_port: int, wait_seconds: float = 8.0):
             deadline = time.time() + wait_seconds
-            last_result = None
             while True:
-                try:
-                    last_result = _proxy_result_payload(_proxy_once(target_port))
-                except Exception as exc:
-                    if not _proxy_connection_refused(exc) or time.time() >= deadline:
-                        raise
-                    time.sleep(0.2)
-                    continue
-                if not _proxy_connection_refused(last_result) or time.time() >= deadline:
-                    return last_result
+                stream = _proxy_once(target_port)
+                if (not stream.error
+                        or not _proxy_connection_refused(stream.error)
+                        or time.time() >= deadline):
+                    return stream
+                stream.discard()
                 time.sleep(0.2)
 
-        try:
-            result = _proxy_result_payload(_proxy_once(port))
-        except Exception as first_error:
-            if not _proxy_connection_refused(first_error):
-                raise
+        stream = _proxy_once(port)
+        if stream.error and _proxy_connection_refused(stream.error):
+            stream.discard()
             restarted_port = _restart_code_server_session(
                 session_id, relay_service, base_path)
             if not restarted_port:
-                raise
+                raise RuntimeError(stream.error)
             port = restarted_port
-            result = _proxy_until_ready(port)
+            stream = _proxy_until_ready(port)
 
-        if _proxy_connection_refused(result):
-            restarted_port = _restart_code_server_session(
-                session_id, relay_service, base_path)
-            if restarted_port:
-                port = restarted_port
-                result = _proxy_until_ready(port)
-
-        if not isinstance(result, dict) or "status" not in result:
+        if stream.error:
+            stream.discard()
             pending_req.complete(502, {"Content-Type": "text/plain"},
-                                 f"Bad proxy response: {result}".encode())
+                                 stream.error.encode())
             return
 
-        status = result["status"]
-        resp_headers = result.get("headers", {})
-        resp_body = base64.b64decode(result.get("body", "")) if result.get("body") else b""
-
-        try:
-            status_int = int(status)
-        except (TypeError, ValueError):
-            status_int = 0
+        status = stream.status
+        resp_headers = dict(stream.headers)
+        status_int = int(status)
         if status_int == 404:
             fallback_asset = _code_server_builtin_asset(sub_path)
             if fallback_asset is not None:
+                stream.discard()
                 content_type, resp_body = fallback_asset
-                status = 200
-                resp_headers = {"Content-Type": content_type}
+                pending_req.complete(
+                    200,
+                    {"Content-Type": content_type,
+                     "Content-Security-Policy": _CODE_SERVER_CSP,
+                     "Content-Length": str(len(resp_body))},
+                    resp_body)
+                return
 
-        for k in list(resp_headers):
-            if k.lower() in ("transfer-encoding", "connection", "keep-alive",
-                             "content-length"):
-                del resp_headers[k]
         resp_headers["Content-Security-Policy"] = _CODE_SERVER_CSP
-        resp_headers["Content-Length"] = str(len(resp_body))
-
-        pending_req.complete(status, resp_headers, resp_body)
+        pending_req.complete_stream(status, resp_headers, stream.iter_bytes())
     except Exception as e:
         logger.warning("Code proxy HTTP error for %s: %s", relay_id, e)
         pending_req.complete(502, {"Content-Type": "application/json"},

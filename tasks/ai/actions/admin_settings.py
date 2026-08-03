@@ -78,6 +78,35 @@ def _users_with_identities():
     return users
 
 
+def _managed_server_relays():
+    """Return every managed relay with its admin-controlled local flag."""
+    from core import admin_scope
+    from core.service_registry import ServiceRegistry
+
+    registry = ServiceRegistry.get_instance()
+    conv_index = admin_scope.conv_index()
+    conv_pairs = [(item.get("owner", ""), conv_id)
+                  for conv_id, item in conv_index.items() if item.get("owner")]
+    relays = []
+    for scope, scope_id, owner_id, conv_id in registry.iter_all_scopes(
+            conv_pairs=conv_pairs):
+        for service_id, sdef in sorted(registry.get_all(scope, scope_id).items()):
+            config = sdef.config or {}
+            if sdef.service_type != "relay" or not config.get("server_managed"):
+                continue
+            relays.append({
+                "service_id": service_id,
+                "scope": scope,
+                "scope_id": scope_id,
+                "owner_id": owner_id,
+                "conversation_id": conv_id,
+                "conversation_title": conv_index.get(conv_id, {}).get("title", ""),
+                "connected": registry.is_connected(scope, scope_id, service_id),
+                "server_local_exec": bool(config.get("server_local_exec")),
+            })
+    return relays
+
+
 def _set_global_param(key: str, value: Any):
     from core.config_store import ConfigStore
     from core.config_value import ConfigValue
@@ -469,6 +498,40 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
             return _json(flowfile, {"error": f"Unsupported system parameter '{key}'"}, "400")
         _set_global_param(key, body.get("value", ""))
         return _json(flowfile, {"ok": True})
+
+    if action == "admin_server_relays_list":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        return _json(flowfile, {"relays": _managed_server_relays()})
+
+    if action == "admin_server_relay_local_exec_set":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        service_id = str(body.get("service_id", "") or "").strip()
+        scope = str(body.get("scope", "") or "").strip()
+        scope_id = str(body.get("scope_id", "") or "")
+        if (not service_id or scope not in {"global", "user", "conv"}
+                or (scope != "global" and not scope_id)):
+            return _json(
+                flowfile,
+                {"error": "service_id, a valid scope, and its scope_id are required"},
+                "400")
+        if "enabled" not in body or not isinstance(body.get("enabled"), bool):
+            return _json(flowfile, {"error": "enabled must be a boolean"}, "400")
+        enabled = body["enabled"]
+        try:
+            from core.service_registry import ServiceRegistry
+            ServiceRegistry.get_instance().set_managed_relay_server_local_exec(
+                scope, scope_id, service_id, enabled)
+        except (KeyError, ValueError) as exc:
+            return _json(flowfile, {"error": str(exc)}, "400")
+        return _json(flowfile, {
+            "ok": True,
+            "service_id": service_id,
+            "server_local_exec": enabled,
+        })
 
     if action == "admin_check_updates":
         denied = _require_admin(flowfile)

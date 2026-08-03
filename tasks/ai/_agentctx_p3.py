@@ -223,6 +223,11 @@ class _PACPhase3Mixin:
                             st._parts.append(f"  local_root: `{st._ri['host_root']}`")
                         if st._ri.get('allow_local'):
                             st._parts.append("  allow_local: true")
+                        if (st._sdef is not None and
+                                (st._sdef.config or {}).get('server_local_exec')):
+                            st._parts.append(
+                                "  server_local_exec: true "
+                                "(local=true runs inside the PawFlow server container)")
                         st._relay_lines.append("\n".join(st._parts))
                     st.system_prompt += (
                         "\n\n## Connected Relays\n"
@@ -230,8 +235,9 @@ class _PACPhase3Mixin:
                         + "\n\nWhen using filesystem-backed tools (read, write, grep, glob, bash, screen, etc.):\n"
                         "- `relay`: relay/filesystem service ID (optional if a default relay is set)\n"
                         "- `local`: false/omitted = execute in the relay Docker container (default)\n"
-                        "- `local`: true = execute through the relay host helper on the user's host; requires allow_local=true\n"
-                        "  Use local=true only when you specifically need host files, host screen, or host clipboard"
+                        "- `local`: true = execute through the relay host helper when `allow_local: true`, "
+                        "or inside the PawFlow server container when `server_local_exec: true`\n"
+                        "  Use local=true only when you specifically need the named local surface"
                     )
                     # FileStore FUSE hint — every connected relay container
                     # has /filestore mounted read-only with the conv-first

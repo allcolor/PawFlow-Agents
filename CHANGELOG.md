@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.93] — 2026-08-03
+
+### Added
+
+- Added built-in ComfyUI image and video services. Administrators configure
+  trusted API-format workflow presets with explicit argument bindings and output
+  nodes; agents can invoke only those operations. Direct and relay-aware
+  endpoints are supported, and media inputs and outputs are transferred with
+  bounded, file-backed streaming.
+- Administrators can enable server-local filesystem and command execution per
+  managed relay from **Server settings → Server Relays**. The capability is off
+  by default, enforced by a dedicated admin-only API, applies without restarting
+  the relay, and routes `local=true` into the PawFlow server container.
+
+### Fixed
+
+- Managed relays now receive a reconnect grace period before PawFlow replaces a
+  still-running container. Connection state is rechecked after Docker inspection
+  and immediately before replacement, preventing a transient WebSocket closure
+  from becoming a destructive stop and an exit code 137 interruption.
+- Relay HTTP proxying for code-server, port forwards, and provider traffic now
+  streams bounded chunks through disk-backed responses instead of buffering and
+  base64-encoding complete bodies. Command timeout and transport wait timeout are
+  also separated so long-running streams are not cancelled prematurely.
+- Codex interactive live submission now uses one canonical
+  `Escape, Escape, paste, Enter` sequence. Receipt and tmux verification are
+  observation-only and never inject blind extra Enter keys, preventing slow or
+  multi-chip prompts from being unfolded or duplicated.
+
 ## [1.0.0-beta.92] — 2026-08-03
 
 ### Added

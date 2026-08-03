@@ -232,7 +232,8 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
                             agent_name: str = "",
                             allow_private: bool = False,
                             service_name: str = "provider endpoint",
-                            transform_relay: bool = True) -> str:
+                            transform_relay: bool = True,
+                            relay_local: Optional[bool] = None) -> str:
     """Resolve and validate a provider URL, including PawFlow relay URLs.
 
     Relay-shaped URLs are always treated as relay URLs. Normal URLs go through
@@ -253,7 +254,8 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
         if not transform_relay:
             return resolved.rstrip("/")
         proxy = maybe_transform_relay_proxy_url(
-            resolved, user_id=user_id, conv_id=conversation_id)
+            resolved, user_id=user_id, conv_id=conversation_id,
+            relay_local=relay_local)
         if not proxy:
             raise _service_error(
                 f"could not create relay-proxy route for {service_name}; user_id and HTTP listener are required")

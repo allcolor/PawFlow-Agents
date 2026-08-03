@@ -344,6 +344,26 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         if svc_def.enabled:
             self._connect_one(sid, service_id)
 
+    def set_managed_relay_server_local_exec(
+        self, scope: str, scope_id: str, service_id: str, enabled: bool,
+    ) -> None:
+        """Persist the admin-only server-local flag without reconnecting relay."""
+        sid = self._resolve_scope_id(scope, scope_id)
+        self._ensure_loaded(scope, scope_id)
+        value = bool(enabled)
+        with self._data_lock:
+            svc_def = self._definitions.get(sid, {}).get(service_id)
+            if not svc_def:
+                raise KeyError(
+                    f"Service '{service_id}' not found (scope={scope}, id={sid[:8]})")
+            if svc_def.service_type != "relay" or not svc_def.config.get("server_managed"):
+                raise ValueError("Server-local execution is only available for managed server relays")
+            svc_def.config["server_local_exec"] = value
+            live = self._live_instances.get(sid, {}).get(service_id)
+            if live is not None:
+                live.config["server_local_exec"] = value
+        self._save(scope, sid)
+
     def rename(self, scope: str, scope_id: str, old_id: str, new_id: str) -> None:
         """Rename a service."""
         sid = self._resolve_scope_id(scope, scope_id)

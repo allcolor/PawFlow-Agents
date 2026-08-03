@@ -93,10 +93,12 @@ class RelayService(_RelayConnMixin, _RelayFsOpsMixin, BaseService):
         self._relay_pool: List[Dict] = []  # [{"reader", "writer", "loop"}]
         self._relay_pool_lock = threading.Lock()
         self._managed_container_started = False
-        # Guards ensure_managed_relay_alive(): one respawn per cooldown window,
-        # whatever number of requests fail at once. 0.0 means "never yet", so
-        # the very first disconnect can act immediately.
+        # Guards ensure_managed_relay_alive(): missing containers respawn at
+        # once; running containers get a reconnect grace before replacement.
+        # One respawn is allowed per cooldown window regardless of how many
+        # requests fail concurrently.
         self._managed_respawn_at = 0.0
+        self._managed_disconnected_at = 0.0
         self._managed_respawn_lock = threading.Lock()
 
         # Pending requests: {request_id: (Event, result_holder)}

@@ -321,6 +321,12 @@ def _handle_sf_k2(self, action, body, store, user_id, flowfile, _helpers):
             flowfile.set_content(json.dumps({"error": "Only admin can modify global services"}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
+        if "server_local_exec" in config:
+            flowfile.set_content(json.dumps({
+                "error": "server_local_exec is admin-only; use Server settings > Server relays"
+            }).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
         try:
             from core.service_registry import ServiceRegistry
             registry = ServiceRegistry.get_instance()

@@ -28,6 +28,20 @@ logger = logging.getLogger(__name__)
 class _RelayFsOpsMixin:
     """Request transport + filesystem/git/exec/http operations for RelayService."""
 
+    def _server_local_requested(self, kwargs: Dict[str, Any]) -> bool:
+        return bool(kwargs.get("local") and self.config.get("server_managed"))
+
+    def _request_server_local(self, action: str, path: str,
+                              on_output=None, **kwargs) -> Any:
+        if not self.config.get("server_local_exec"):
+            raise PermissionError(
+                "Server-local execution is disabled for this managed relay. "
+                "An administrator can enable it in Server settings > Server relays.")
+        kwargs.pop("_request_timeout", None)
+        kwargs.pop("_retry_on_disconnect", None)
+        from services._server_local_exec import execute_server_local
+        return execute_server_local(action, path, kwargs, on_output=on_output)
+
     def _send_to_pool(self, pool: List[Dict], payload: bytes,
                       request_id: str = ""):
         """Send `payload` over the WS pool, most-recently-connected first.
@@ -109,6 +123,9 @@ class _RelayFsOpsMixin:
     def _request_once(self, action: str, path: str = ".", **kwargs) -> Any:
         wait_timeout = kwargs.pop("_request_timeout", None)
         request_id = kwargs.pop("_request_id", "") or uuid.uuid4().hex[:12]
+        if self._server_local_requested(kwargs):
+            kwargs["request_id"] = request_id
+            return self._request_server_local(action, path, **kwargs)
         with self._relay_pool_lock:
             pool = self._relay_pool[:]
         if not pool:
@@ -231,6 +248,10 @@ class _RelayFsOpsMixin:
         exec_output messages arriving before the final result are dispatched
         to on_output(stream, data) via _dispatch_exec_output.
         """
+        wait_timeout = kwargs.pop("_request_timeout", None)
+        if self._server_local_requested(kwargs):
+            return self._request_server_local(
+                action, path, on_output=on_output, **kwargs)
         with self._relay_pool_lock:
             pool = self._relay_pool[:]
         if not pool:
@@ -268,9 +289,10 @@ class _RelayFsOpsMixin:
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
-        # Wait for relay response — no limit unless timeout explicitly given
-        _wait_timeout = kwargs.get("timeout")
-        if not evt.wait(timeout=_wait_timeout):
+        # Command-level timeout belongs to the relay action (for example socket
+        # inactivity or subprocess execution). Only the private transport
+        # timeout limits how long the server waits for that action to report.
+        if not evt.wait(timeout=wait_timeout):
             self.cancel_pending(request_id)
             raise Exception(f"Relay timeout for {action} on {self._service_id}")
 
@@ -526,6 +548,27 @@ class _RelayFsOpsMixin:
             headers=headers or {},
             body=_b64.b64encode(bytes(_body)).decode("ascii") if _body else "",
             timeout=timeout,
+        )
+
+    def http_proxy_stream(self, port: int, method: str = "GET",
+                          req_path: str = "/", req_headers: dict = None,
+                          body: bytes = b"", timeout: int = 300,
+                          on_output=None):
+        """Stream one relay-container localhost HTTP response.
+
+        This is used for code-server and capability port forwards. Unlike the
+        removed inline ``http_proxy`` contract, no complete response body is
+        materialized or base64-encoded as one JSON value.
+        """
+        import base64 as _b64
+        _body = body if isinstance(body, (bytes, bytearray)) else (body or b"")
+        return self._request_stream(
+            "http_proxy", ".", on_output=on_output,
+            port=int(port), method=method, req_path=req_path,
+            req_headers=req_headers or {},
+            req_body=_b64.b64encode(bytes(_body)).decode("ascii")
+            if _body else "",
+            timeout=int(timeout),
         )
 
     # ── Git ──

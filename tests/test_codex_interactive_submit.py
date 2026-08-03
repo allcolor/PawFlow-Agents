@@ -135,24 +135,24 @@ def test_the_composer_is_still_found_when_it_is_on_screen():
     assert pool._composer_text(SUBMITTED_PANE).startswith("> Ask Codex")
 
 
-def test_verify_presses_enter_again_while_the_chip_is_in_the_composer(monkeypatch):
-    """The bug: this returned immediately having sent nothing."""
+def test_verify_never_mutates_an_unsent_composer(monkeypatch):
+    """Verification observes; only the canonical send path may press Enter."""
     pool = CodexInteractivePool()
     sent = _harness(pool, [UNSENT_PANE], monkeypatch)
-    assert sent == [["Enter"]] * 3
+    assert sent == []
 
 
-def test_verify_presses_enter_when_boxed_composer_cannot_be_located(monkeypatch):
+def test_verify_never_guesses_with_enter_for_unknown_codex_chrome(monkeypatch):
     """Unknown Codex chrome is not proof that its pasted chip was submitted."""
     pool = CodexInteractivePool()
     sent = _harness(pool, [BOXED_UNSENT_PANE], monkeypatch)
-    assert sent == [["Enter"]] * 3
+    assert sent == []
 
 
-def test_verify_stops_as_soon_as_the_composer_clears(monkeypatch):
+def test_verify_only_observes_until_the_composer_clears(monkeypatch):
     pool = CodexInteractivePool()
     sent = _harness(pool, [UNSENT_PANE, SUBMITTED_PANE], monkeypatch)
-    assert sent == [["Enter"]]
+    assert sent == []
 
 
 def test_verify_never_presses_enter_while_a_turn_runs(monkeypatch):
@@ -412,6 +412,7 @@ def test_a_paste_that_never_arrives_is_still_the_refusal(monkeypatch):
                         lambda _state, _text: None)
     monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
     monkeypatch.setattr(pool, "_paste_buffer", lambda _state: True)
+    monkeypatch.setattr(pool, "send_keys", lambda _state, _keys: True)
     monkeypatch.setattr(pool, "_pane_text", lambda _name: IDLE_PANE)
     monkeypatch.setattr(type(pool), "_PASTE_LANDED_SECONDS", 0.0)
     monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
@@ -442,8 +443,7 @@ def test_the_prompt_is_pasted_once_when_the_screen_reacts(monkeypatch):
     state.prompt_ready = True
     state.last_error = ""
     panes = [IDLE_PANE]
-    pastes = []
-    keys = []
+    events = []
 
     monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
     monkeypatch.setattr(pool, "_cancel_copy_mode", lambda _state: None)
@@ -457,18 +457,22 @@ def test_the_prompt_is_pasted_once_when_the_screen_reacts(monkeypatch):
     monkeypatch.setattr(pool, "_pane_text", lambda _name: panes[-1])
 
     def _paste(_state):
-        pastes.append(1)
+        events.append(("paste", PROMPT))
         panes.append(BOXED_UNSENT_PANE)
         return True
 
     monkeypatch.setattr(pool, "_paste_buffer", _paste)
     monkeypatch.setattr(pool, "send_keys",
-                        lambda _state, batch: keys.append(list(batch)) or True)
+                        lambda _state, batch: events.append(
+                            ("keys", list(batch))) or True)
     monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
 
     assert pool.send_text(state, PROMPT) is True
-    assert len(pastes) == 1
-    assert keys == [["Enter"]]
+    assert events == [
+        ("keys", ["Escape", "Escape"]),
+        ("paste", PROMPT),
+        ("keys", ["Enter"]),
+    ]
 
 
 class _SubmissionSignals:
@@ -484,7 +488,7 @@ class _SubmissionSignals:
         return (8, 12)
 
 
-def _verify_with_signals(monkeypatch, *proofs):
+def _verify_with_signals(monkeypatch, *proofs, pane=""):
     pool = CodexInteractivePool()
     state = _State()
     state.last_error = ""
@@ -493,12 +497,13 @@ def _verify_with_signals(monkeypatch, *proofs):
     monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "1.2")
     monkeypatch.setattr(
         pool, "send_keys", lambda _state, batch: keys.append(list(batch)) or True)
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: pane)
     result = pool._verify_submitted(
         state, PROMPT, event_service=service, submit_marker=(7, 11))
     return result, state, service, keys
 
 
-def test_exact_hook_ack_stops_codex_enter_retries(monkeypatch):
+def test_exact_hook_ack_confirms_the_canonical_enter(monkeypatch):
     result, _state, service, keys = _verify_with_signals(monkeypatch, "hook")
     assert result is True
     assert keys == []
@@ -506,19 +511,37 @@ def test_exact_hook_ack_stops_codex_enter_retries(monkeypatch):
     assert service.calls[0][2]["after_request"] == 11
 
 
-def test_mitm_ack_stops_codex_enter_retries(monkeypatch):
+def test_mitm_ack_confirms_the_canonical_enter(monkeypatch):
     result, _state, _service, keys = _verify_with_signals(monkeypatch, "request")
     assert result is True
     assert keys == []
 
 
-def test_missing_ack_retries_enter_three_times_then_fails(monkeypatch):
+def test_missing_ack_never_adds_enter_and_stays_inconclusive(monkeypatch):
     result, state, service, keys = _verify_with_signals(
-        monkeypatch, "", "", "", "")
+        monkeypatch, "")
+    assert result is None
+    assert keys == []
+    assert len(service.calls) == 1
+    assert state.last_error == ""
+
+
+def test_missing_ack_accepts_a_pane_that_confirms_submission(monkeypatch):
+    result, state, service, keys = _verify_with_signals(
+        monkeypatch, "", pane=SUBMITTED_PANE)
+    assert result is True
+    assert keys == []
+    assert len(service.calls) == 1
+    assert state.last_error == ""
+
+
+def test_missing_ack_refuses_a_prompt_still_in_the_composer(monkeypatch):
+    result, state, service, keys = _verify_with_signals(
+        monkeypatch, "", pane=UNSENT_PANE)
     assert result is False
-    assert keys == [["Enter"]] * 3
-    assert len(service.calls) == 4
-    assert "not acknowledged" in state.last_error
+    assert keys == []
+    assert len(service.calls) == 1
+    assert "remains in the composer" in state.last_error
 
 
 def test_other_submit_gets_a_fresh_window_for_the_expected_prompt(monkeypatch):
@@ -536,7 +559,7 @@ def test_codex_interrupt_waits_for_receipt_before_reporting_success(monkeypatch)
     state = _State()
     state.last_error = ""
     service = _SubmissionSignals("hook")
-    calls = []
+    events = []
 
     monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "1.2")
     monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
@@ -546,21 +569,29 @@ def test_codex_interrupt_waits_for_receipt_before_reporting_success(monkeypatch)
     monkeypatch.setattr(pool, "_remember_injected_prompt_for_event_service",
                         lambda _state, _text: service)
     monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
-    monkeypatch.setattr(pool, "_paste_buffer", lambda _state: True)
+    monkeypatch.setattr(
+        pool, "_paste_buffer",
+        lambda _state: events.append(("paste", PROMPT)) or True)
     monkeypatch.setattr(pool, "send_keys",
-                        lambda _state, keys: calls.append(list(keys)) or True)
+                        lambda _state, keys: events.append(
+                            ("keys", list(keys))) or True)
     monkeypatch.setattr(ccip.time, "sleep", lambda _seconds: None)
 
     assert pool.send_interrupt(state, PROMPT) is True
-    assert calls == [["Escape"], ["Enter"]]
+    assert events == [
+        ("keys", ["Escape", "Escape"]),
+        ("paste", PROMPT),
+        ("keys", ["Enter"]),
+    ]
     assert len(service.calls) == 1
 
 
-def test_codex_interrupt_refuses_without_submission_receipt(monkeypatch):
+def test_codex_interrupt_continues_when_receipt_and_pane_are_inconclusive(
+        monkeypatch):
     pool = CodexInteractivePool()
     state = _State()
     state.last_error = ""
-    service = _SubmissionSignals("", "", "", "")
+    service = _SubmissionSignals("")
 
     monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "0.01")
     monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
@@ -572,10 +603,11 @@ def test_codex_interrupt_refuses_without_submission_receipt(monkeypatch):
     monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
     monkeypatch.setattr(pool, "_paste_buffer", lambda _state: True)
     monkeypatch.setattr(pool, "send_keys", lambda _state, _keys: True)
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: "")
     monkeypatch.setattr(ccip.time, "sleep", lambda _seconds: None)
 
-    assert pool.send_interrupt(state, PROMPT) is False
-    assert "expected Codex prompt" in state.last_error
+    assert pool.send_interrupt(state, PROMPT) is True
+    assert state.last_error == ""
 
 
 def test_fragmented_submit_fails_without_another_enter(monkeypatch):

@@ -1,3 +1,5 @@
+import base64
+
 from tasks.io import relay_proxy
 
 
@@ -28,7 +30,8 @@ class _Pending:
 class _Relay:
     calls = []
 
-    def http_fetch_stream(self, *, url, method, headers, body, local, on_output):
+    def http_fetch_stream(self, *, url, method, headers, body, local,
+                          timeout, on_output):
         self.calls.append({"url": url, "local": local})
         assert url == "http://localhost:11434/v1/chat/completions"
         assert method == "POST"
@@ -42,7 +45,8 @@ class _Relay:
                 "X-Model": "local",
             },
         })
-        on_output("chunk", b"data: ok\n\n")
+        on_output(
+            "chunk", base64.b64encode(b"data: ok\n\n").decode("ascii"))
         on_output("end", {})
 
 

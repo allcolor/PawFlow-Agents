@@ -6,7 +6,6 @@ decides who can hit the URL. The internal routing (relay_id, int_port)
 is kept server-side and never exposed in the URL.
 """
 
-import base64
 import json
 import logging
 import threading
@@ -194,28 +193,24 @@ def fwd_http_proxy(pending_req):
     fwd_headers["Host"] = f"127.0.0.1:{int_port}"
 
     try:
-        result = relay_service._request(
-            "http_proxy",
+        from services._relay_http_response import RelayHttpResponseStream
+        stream = RelayHttpResponseStream.for_local_port(
+            relay_service,
             port=int_port,
             method=pending_req.method,
             req_path=proxied_path,
-            req_headers=fwd_headers,
-            req_body=base64.b64encode(pending_req.body).decode("ascii") if pending_req.body else "",
-        )
-        if not isinstance(result, dict) or "status" not in result:
+            headers=fwd_headers,
+            body=pending_req.body,
+            label=f"port-forward-{forward_id[:8]}",
+        ).start()
+        stream.wait_ready()
+        if stream.error:
+            stream.discard()
             pending_req.complete(502, {"Content-Type": "text/plain"},
-                                 f"Bad proxy response: {result}".encode())
+                                 stream.error.encode())
             return
-
-        status = result["status"]
-        resp_headers = result.get("headers", {})
-        resp_body = base64.b64decode(result.get("body", "")) if result.get("body") else b""
-
-        for k in list(resp_headers):
-            if k.lower() in ("transfer-encoding", "connection", "keep-alive"):
-                del resp_headers[k]
-
-        pending_req.complete(status, resp_headers, resp_body)
+        pending_req.complete_stream(
+            stream.status, stream.headers, stream.iter_bytes())
     except Exception as e:
         logger.warning(
             "Port forward proxy error for %s (relay=%s int=%d): %s",

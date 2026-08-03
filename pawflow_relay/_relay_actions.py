@@ -34,8 +34,14 @@ def _script_dir():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def http_proxy(msg):
-    """Proxy one HTTP request to a localhost port. Returns a result dict."""
+def http_proxy(msg, on_output=None):
+    """Proxy one HTTP request without retaining its response in memory.
+
+    Response metadata and body chunks are emitted through ``on_output`` using
+    the same start/chunk/end protocol as ``http_fetch``. Inline mode is
+    deliberately rejected: a JSON/base64 response would necessarily buffer
+    the complete upstream body and multiplies its peak memory cost.
+    """
     import http.client
     _target_port = msg.get("port", 0)
     _method = msg.get("method", "GET")
@@ -44,22 +50,41 @@ def http_proxy(msg):
     _req_body = msg.get("req_body", "")  # base64
     if not _target_port:
         return {"ok": False, "error": "Missing port"}
+    if on_output is None:
+        return {
+            "ok": False,
+            "error": "http_proxy requires the streaming response transport",
+        }
+    conn = None
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", _target_port, timeout=30)
+        _timeout = int(msg.get("timeout") or 300)
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", _target_port, timeout=_timeout)
         _body_bytes = base64.b64decode(_req_body) if _req_body else None
         conn.request(_method, _req_path, body=_body_bytes, headers=_req_headers)
         resp = conn.getresponse()
-        _resp_body = resp.read()
         _resp_headers = dict(resp.getheaders())
-        conn.close()
+        on_output("start", {
+            "status": resp.status,
+            "reason": resp.reason,
+            "headers": _resp_headers,
+        })
+        while True:
+            _chunk = resp.read(64 * 1024)
+            if not _chunk:
+                break
+            on_output("chunk", base64.b64encode(_chunk).decode("ascii"))
+        on_output("end", None)
         return {"ok": True, "data": {
             "status": resp.status,
             "reason": resp.reason,
             "headers": _resp_headers,
-            "body": base64.b64encode(_resp_body).decode("ascii"),
         }}
     except Exception as e:
         return {"ok": False, "error": f"Proxy error: {e}"}
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def script_hash():

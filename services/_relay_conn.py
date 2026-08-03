@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 #: respawn per window, so a burst of failing tool calls asks for one container
 #: start rather than one per call.
 _MANAGED_RESPAWN_COOLDOWN_SECONDS = 60.0
+#: A managed relay worker owns its own reconnect loop. Replacing a container on
+#: the first missing WebSocket races that loop: the worker can reconnect while
+#: ``docker stop`` is already in progress, then get killed by PawFlow seconds
+#: later. Only a continuously disconnected *running* container past this grace
+#: is considered wedged. A container that is actually gone is still respawned
+#: immediately.
+_MANAGED_RECONNECT_GRACE_SECONDS = 15.0
 
 
 class _RelayConnMixin:
@@ -86,24 +93,23 @@ class _RelayConnMixin:
         Only for `server_managed` services: an operator-run relay has no
         container PawFlow owns, and restarting it is the operator's call.
 
-        A connected WebSocket is healthy and is left strictly alone. Container
-        state is diagnostic only: a process that is still running but has no
-        relay connection is wedged from the service's perspective and is
-        replaced through the same managed spawn path as a missing container.
+        A connected WebSocket is healthy and is left strictly alone. A missing
+        container is respawned immediately. A running container gets a bounded
+        grace period for its worker's own reconnect loop; only a continuously
+        disconnected process is then considered wedged and replaced.
 
         Returns True when a respawn was launched.
         """
         if not self.config.get("server_managed"):
             return False
-        # A live relay WebSocket is the health signal. A container can remain
-        # running while its client is wedged or can no longer authenticate; in
-        # that state it must be replaced, not mistaken for a healthy relay.
         if self.is_connected():
+            self._managed_disconnected_at = 0.0
             return False
         with self._managed_respawn_lock:
             # A concurrent reconnect or respawn may have repaired it while this
             # caller waited for the lock.
             if self.is_connected():
+                self._managed_disconnected_at = 0.0
                 return False
             now = time.monotonic()
             since = now - self._managed_respawn_at
@@ -119,12 +125,39 @@ class _RelayConnMixin:
                 logger.debug("RelayService %s: could not inspect the managed container",
                              self._service_id, exc_info=True)
                 return False
+
+            if running:
+                # Inspecting Docker is not atomic with WS registration. The
+                # relay may have reconnected while that subprocess was running.
+                if self.is_connected():
+                    self._managed_disconnected_at = 0.0
+                    return False
+                if not self._managed_disconnected_at:
+                    self._managed_disconnected_at = now
+                    logger.warning(
+                        "RelayService %s: managed relay is running but disconnected; "
+                        "allowing %.0fs for its reconnect loop",
+                        self._service_id, _MANAGED_RECONNECT_GRACE_SECONDS)
+                    return False
+                disconnected_for = now - self._managed_disconnected_at
+                if disconnected_for < _MANAGED_RECONNECT_GRACE_SECONDS:
+                    return False
+            else:
+                disconnected_for = 0.0
+
+            # Final destructive-action guard: a registration can land after the
+            # container inspection or grace calculation.
+            if self.is_connected():
+                self._managed_disconnected_at = 0.0
+                return False
             logger.warning(
-                "RelayService %s: managed relay is %s but disconnected — respawning it",
-                self._service_id, "running" if running else "gone")
+                "RelayService %s: managed relay is %s%s — respawning it",
+                self._service_id, "running but disconnected" if running else "gone",
+                (f" for {disconnected_for:.1f}s" if running else ""))
             # Charge the cooldown only when an actual spawn is attempted. An
             # inspection failure or healthy reconnect must not delay recovery.
             self._managed_respawn_at = time.monotonic()
+            self._managed_disconnected_at = 0.0
             try:
                 self._start_managed_server_relay()
             except Exception:
@@ -581,6 +614,9 @@ class _RelayConnMixin:
                                       "loop": loop, "send_lock": send_lock,
                                       "tasks": relay_tasks})
             count = len(self._relay_pool)
+        # Registration is the definitive recovery signal. Clear any grace
+        # started by transport retries before they can replace this connection.
+        self._managed_disconnected_at = 0.0
         logger.debug("Relay pool: %d connection(s) for '%s'", count, self._service_id)
         _invalidate_tool_relay_registry_cache()
         self.push_remote_fs_manifest()

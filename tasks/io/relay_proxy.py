@@ -15,10 +15,8 @@ Security:
     and server-side providers have no HTTP session to carry cookies.
 """
 
-import base64
 import json
 import logging
-import threading
 from typing import Any, Dict, List
 
 from core import FlowFile, TaskFactory
@@ -27,11 +25,6 @@ from core.base_task import BaseTask
 logger = logging.getLogger(__name__)
 
 _ROUTE_OWNER = "_relay_proxy"
-_RESPONSE_HOP_BY_HOP_HEADERS = {
-    "connection", "keep-alive", "proxy-authenticate",
-    "proxy-authorization", "te", "trailer", "transfer-encoding",
-    "upgrade", "content-length",
-}
 
 
 def _get_http_listener():
@@ -152,106 +145,25 @@ def _relay_proxy_handler(pending_req):
     fwd_headers = {k: v for k, v in pending_req.headers.items()
                    if k.lower() not in _drop}
 
-    # Streaming state
-    _started = threading.Event()
-    _state = {"status": 502, "headers": {}, "error": ""}
-    _queue = []  # list of bytes chunks
-    _queue_lock = threading.Lock()
-    _queue_event = threading.Event()
-    _done = threading.Event()
-    _stats = {"bytes": 0, "chunks": 0, "t0": 0.0}
-
-    def _on_chunk(kind: str, data: Any):
-        if kind == "start":
-            _state["status"] = int(data.get("status", 200))
-            _state["headers"] = {
-                k: v for k, v in dict(data.get("headers") or {}).items()
-                if str(k).lower() not in _RESPONSE_HOP_BY_HOP_HEADERS
-            }
-            import time as _t
-            _stats["t0"] = _t.monotonic()
-            _started.set()
-        elif kind == "chunk":
-            try:
-                raw = base64.b64decode(data) if isinstance(data, str) else data
-            except Exception:
-                raw = b""
-            _stats["bytes"] += len(raw)
-            _stats["chunks"] += 1
-            with _queue_lock:
-                _queue.append(raw)
-            _queue_event.set()
-        elif kind == "end":
-            import time as _t
-            _elapsed = _t.monotonic() - _stats["t0"] if _stats["t0"] else 0.0
-            # Summary line at INFO only for error statuses or WARN
-            # worthy conditions; otherwise DEBUG. Success + streaming
-            # bodies are the common case and don't need to spam the log.
-            _log = (logger.warning
-                    if _state["status"] >= 400 or _stats["bytes"] == 0
-                    else logger.debug)
-            _log("%s END bytes=%d chunks=%d elapsed=%.2fs status=%d",
-                 _log_tag, _stats["bytes"], _stats["chunks"],
-                 _elapsed, _state["status"])
-            _done.set()
-            _queue_event.set()
-
-    # Run the fetch in a background thread so we can start streaming
-    # the response back as soon as the first chunk arrives.
-    def _run_fetch():
-        try:
-            svc.http_fetch_stream(
-                url=target_url, method=method,
-                headers=fwd_headers, body=pending_req.body,
-                local=target_local,
-                on_output=_on_chunk,
-            )
-        except Exception as e:
-            logger.warning("relay-proxy fetch failed: %s", e)
-            _state["error"] = str(e)
-            _done.set()
-            _queue_event.set()
-        finally:
-            _started.set()  # ensure we unblock the main thread
-
-    threading.Thread(target=_run_fetch, daemon=True,
-                      name=f"relay-proxy-{relay_id[:8]}").start()
-
-    # Wait for the first chunk (or error). NO timeout — the only
-    # legitimate end conditions are the WS layer signalling _done
-    # (relay disconnect, fetch error) or a normal first chunk. Any
-    # arbitrary timeout here would silently break long prompt
-    # processing on slow LLM backends.
-    _started.wait()
-    if _state["error"] and not _state["headers"]:
+    from services._relay_http_response import RelayHttpResponseStream
+    stream = RelayHttpResponseStream.for_fetch(
+        svc, url=target_url, method=method, headers=fwd_headers,
+        body=pending_req.body, local=target_local,
+        label=f"relay-proxy-{relay_id[:8]}",
+    ).start()
+    # No arbitrary response timeout: long-running local model requests are
+    # legitimate. The relay transport itself reports disconnects and errors.
+    stream.wait_ready()
+    if stream.error:
+        stream.discard()
+        logger.warning("relay-proxy fetch failed: %s", stream.error)
         pending_req.complete(502,
                              {"Content-Type": "application/json"},
-                             json.dumps({"error": _state["error"]}).encode())
+                             json.dumps({"error": stream.error}).encode())
         return
-
-    # Generator that yields queued chunks until end
-    def _stream():
-        while True:
-            with _queue_lock:
-                chunks = _queue[:]
-                _queue.clear()
-            for c in chunks:
-                yield c
-            if _done.is_set():
-                with _queue_lock:
-                    chunks = _queue[:]
-                    _queue.clear()
-                for c in chunks:
-                    yield c
-                return
-            _queue_event.clear()
-            # No inter-chunk timeout. We block until either a new chunk
-            # arrives (event set by _on_chunk) or the relay signals end
-            # (_done set, which also wakes us via _queue_event.set()
-            # in the 'end' / error branches of _on_chunk / _run_fetch).
-            _queue_event.wait()
-
-    pending_req.complete_stream(_state["status"], _state["headers"], _stream())
+    logger.debug("%s upstream response started status=%d", _log_tag, stream.status)
+    pending_req.complete_stream(
+        stream.status, stream.headers, stream.iter_bytes())
 
 
 def _register_routes(http_svc) -> None:

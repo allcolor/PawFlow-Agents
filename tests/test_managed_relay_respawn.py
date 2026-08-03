@@ -90,13 +90,53 @@ def test_a_connected_relay_is_left_alone_without_spending_cooldown(manager):
     assert svc._managed_respawn_at == 0.0
 
 
-def test_a_running_but_disconnected_relay_is_replaced(manager):
+def test_a_running_but_disconnected_relay_gets_reconnect_grace(manager):
     mgr = manager(running=True)
     svc = _managed_service()
 
-    assert svc.ensure_managed_relay_alive() is True
+    assert svc.ensure_managed_relay_alive() is False
     assert mgr.asked == [("MyWorkspace", "workspace")]
+    assert mgr.spawned == []
+    assert svc._managed_disconnected_at > 0.0
+    assert svc._managed_respawn_at == 0.0
+
+
+def test_a_persistently_disconnected_running_relay_is_replaced(
+        manager, monkeypatch):
+    from services import _relay_conn as conn_mod
+
+    now = [100.0]
+    monkeypatch.setattr(conn_mod.time, "monotonic", lambda: now[0])
+    mgr = manager(running=True)
+    svc = _managed_service()
+
+    assert svc.ensure_managed_relay_alive() is False
+    now[0] += conn_mod._MANAGED_RECONNECT_GRACE_SECONDS - 0.1
+    assert svc.ensure_managed_relay_alive() is False
+    now[0] += 0.2
+    assert svc.ensure_managed_relay_alive() is True
     assert len(mgr.spawned) == 1
+
+
+def test_a_reconnect_during_container_inspection_cancels_respawn(
+        manager, monkeypatch):
+    from services import _relay_conn as conn_mod
+
+    monkeypatch.setattr(conn_mod.time, "monotonic", lambda: 200.0)
+    mgr = manager(running=True)
+    svc = _managed_service()
+    svc._managed_disconnected_at = 100.0
+
+    def _inspect_then_reconnect(relay_id, kind="workspace"):
+        mgr.asked.append((relay_id, kind))
+        with svc._relay_pool_lock:
+            svc._relay_pool.append({"writer": object()})
+        return True
+
+    mgr.service_relay_running = _inspect_then_reconnect
+    assert svc.ensure_managed_relay_alive() is False
+    assert mgr.spawned == []
+    assert svc._managed_disconnected_at == 0.0
 
 
 def test_an_operator_run_relay_is_never_touched(manager):

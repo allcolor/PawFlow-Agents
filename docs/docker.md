@@ -375,9 +375,12 @@ after the operator's first install keeps the old copy there for good:
 reported an empty published version forever. Shipped, versioned data comes from
 the image; `/app/config` stays for what the operator edits.
 
-The same dialog rebuilds the agent CLI tools image. This affects only the next
-CLI pool spawn — no running relay, conversation, or user data is touched. Two
-modes:
+The same dialog rebuilds the agent CLI tools image. A successful build launches
+a detached restart-only helper, then the page waits until a different PawFlow
+process answers `/health` before it reloads. This clears every warm CLI
+container so the next session cannot keep using the previous image. The
+confirmation reports how many agent turns are running because the PawFlow
+restart kills them. Two modes:
 
 - **Rebuild** — same resolution as `build.sh`: a CLI is reinstalled only if npm
   published a new version.
@@ -386,10 +389,11 @@ modes:
   all: forcing is the *only* way to pick up a new Antigravity build. It also
   recovers from a poisoned layer cache.
 
-Both require the `admin` role, run in a background thread, and stream progress
-to the dialog over the `cli_image_build` SSE event. One rebuild runs at a time;
-a concurrent request is refused with HTTP 409 rather than starting a second
-`docker build` on the same tag. Every trigger is logged with the requesting
+Both require the `admin` role, run in a background thread, and stream the full
+build → restart progression to a dedicated dialog over the `cli_image_build`
+SSE event. One rebuild runs at a time; a concurrent request is refused with HTTP
+409 rather than starting a second `docker build` on the same tag. A failed build
+never starts the restart helper. Every trigger is logged with the requesting
 user, since `docker build` against the host socket is effectively root on the
 machine.
 
@@ -490,13 +494,15 @@ and aborts before `docker build` if generation fails. The tag built is the one
 `global_parameters.json` names for that relay kind — a rebuild can never land on
 a tag nothing spawns.
 
-**Building changes nothing for the relays already running.** A container keeps
-the image it was started from. **Restart server relays** moves them onto the new
-image: each container is replaced in turn by `ServerRelayManager.recreate()`,
-which stops and removes the container *only*. The workspace directory, the kind
-volume, the `pawflow_home_<relay_id>` volume, the relay id, the registered relay
-service and the conversation bindings all survive — unlike `destroy()`, which
-deletes the volume and the workspace and would take the user's work with it. A
+**Building alone changes nothing for relays already running.** The admin rebuild
+therefore continues automatically: each managed relay is replaced in turn by
+`ServerRelayManager.recreate()`, then PawFlow itself is restarted by a detached
+restart-only helper. The page shows every phase and waits for a different
+`/health` instance before reloading. The workspace directory, the kind volume,
+the `pawflow_home_<relay_id>` volume, the relay id, the registered relay service
+and the conversation bindings all survive — unlike `destroy()`, which deletes
+the volume and the workspace and would take the user's work with it. A failed
+build or relay recreation stops the workflow before the PawFlow restart, and a
 failed respawn puts the previous metadata back instead of dropping the relay
 from the store.
 
@@ -504,10 +510,12 @@ The sweep is sequential (each relay can carry gigabytes) and does not stop on a
 failure: the remaining relays are still moved and the failures are reported per
 relay. Each relay is briefly unavailable while its container is replaced.
 
-Both actions require the `admin` role, run in background threads, and stream
+The actions require the `admin` role, run in background threads, and stream
 progress over the `relay_image_build` and `relay_restart` SSE events. One relay
 build and one restart at a time; concurrent requests get HTTP 409. Triggers are
-logged with the requesting user.
+logged with the requesting user. The standalone **Restart server relays** action
+remains available for recovery, without rebuilding an image or restarting
+PawFlow.
 
 Actions: `admin_rebuild_relay_image` (`image: relay-dev|relay-minimal`,
 `force: bool`) and `admin_restart_relays`, implemented in

@@ -512,6 +512,64 @@ def test_restart_is_refused_while_one_runs(monkeypatch):
     assert update_manager.relay_restart_running() is False
 
 
+# -- restart-only helper ------------------------------------------------
+
+
+def test_server_restart_preflight_resolves_the_current_compose_container(monkeypatch):
+    from core import compose_deployment, installer_deployment
+
+    monkeypatch.setattr(compose_deployment, "compose_info",
+                        lambda: {"container_name": "pawflow-server"})
+    monkeypatch.setattr(installer_deployment, "installer_info", lambda: {})
+    monkeypatch.setattr(update_manager, "running_agent_count", lambda: 3)
+    commands = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="Docker version", stderr="")
+
+    monkeypatch.setattr(update_manager.subprocess, "run", fake_run)
+
+    result = update_manager.server_restart_preflight()
+
+    assert result["ok"] is True
+    assert result["container"] == "pawflow-server"
+    assert result["running_agents"] == 3
+    assert "--entrypoint" in commands[0]
+    assert "docker" in commands[0]
+
+
+def test_restart_server_launches_a_detached_restart_only_helper(monkeypatch):
+    monkeypatch.setattr(update_manager, "server_restart_preflight", lambda: {
+        "ok": True, "container": "pawflow-server", "updater_image": "docker:cli",
+        "deployment": "installer",
+    })
+    commands = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="helper-id", stderr="")
+
+    monkeypatch.setattr(update_manager.subprocess, "run", fake_run)
+
+    result = update_manager.restart_server()
+
+    assert result["ok"] is True
+    assert result["container"] == update_manager.RESTARTER_CONTAINER
+    launch = commands[-1]
+    assert "--detach" in launch
+    assert "/var/run/docker.sock:/var/run/docker.sock" in launch
+    assert "sleep 5; docker restart --time 30 pawflow-server" in launch[-1]
+
+
+def test_restart_server_refuses_without_a_docker_identity(monkeypatch):
+    monkeypatch.setattr(update_manager, "server_restart_preflight",
+                        lambda: {"ok": False, "reason": "no container"})
+
+    assert update_manager.restart_server() == {
+        "ok": False, "started": False, "reason": "no container"}
+
+
 # -- admin actions -----------------------------------------------------
 
 
@@ -519,6 +577,7 @@ def test_update_actions_require_admin():
     from tasks.ai.actions.admin_settings import _handle_admin_settings
 
     for action in ("admin_check_updates", "admin_rebuild_cli_image",
+                   "admin_server_restart_check",
                    "admin_rebuild_relay_image", "admin_restart_relays"):
         ff = FlowFile(content=b"{}", attributes={"http.auth.roles": "user"})
         result = _handle_admin_settings(None, action, {}, None, "bob", ff)
@@ -547,34 +606,53 @@ def test_admin_rebuild_starts_a_background_build_and_forwards_force(monkeypatch)
     started = {}
     monkeypatch.setattr(
         admin_settings, "_start_cli_image_rebuild",
-        lambda force, conv, user: started.update(force=force, conv=conv, user=user))
-    monkeypatch.setattr(update_manager, "cli_build_running", lambda: False)
+        lambda force, conv, user, workflow_claimed=False: started.update(
+            force=force, conv=conv, user=user, claimed=workflow_claimed))
+    monkeypatch.setattr(update_manager, "server_restart_preflight", lambda: {"ok": True})
 
     ff = _admin_flowfile()
     result = admin_settings._handle_admin_settings(
         None, "admin_rebuild_cli_image",
         {"force": True, "conversation_id": "conv-1"}, None, "admin", ff)
     payload = json.loads(result[0].get_content().decode("utf-8"))
+    if admin_settings._IMAGE_UPDATE_LOCK.locked():
+        admin_settings._IMAGE_UPDATE_LOCK.release()
 
     assert payload["started"] is True
     assert payload["forced"] is True
-    assert started == {"force": True, "conv": "conv-1", "user": "admin"}
+    assert started == {"force": True, "conv": "conv-1", "user": "admin", "claimed": True}
 
 
-def test_admin_rebuild_refuses_while_a_build_runs(monkeypatch):
+def test_admin_rebuild_refuses_while_an_image_workflow_runs(monkeypatch):
     from tasks.ai.actions import admin_settings
 
-    monkeypatch.setattr(update_manager, "cli_build_running", lambda: True)
     called = []
     monkeypatch.setattr(admin_settings, "_start_cli_image_rebuild",
                         lambda *a: called.append(a))
 
-    ff = _admin_flowfile()
-    result = admin_settings._handle_admin_settings(
-        None, "admin_rebuild_cli_image", {}, None, "admin", ff)
+    admin_settings._IMAGE_UPDATE_LOCK.acquire()
+    try:
+        ff = _admin_flowfile()
+        result = admin_settings._handle_admin_settings(
+            None, "admin_rebuild_cli_image", {}, None, "admin", ff)
+    finally:
+        admin_settings._IMAGE_UPDATE_LOCK.release()
 
     assert result[0].get_attribute("http.response.status") == "409"
     assert called == []
+
+
+def test_failed_restart_preflight_releases_the_image_workflow_lock(monkeypatch):
+    from tasks.ai.actions import admin_settings
+
+    monkeypatch.setattr(update_manager, "server_restart_preflight",
+                        lambda: {"ok": False, "reason": "no restarter"})
+
+    result = admin_settings._handle_admin_settings(
+        None, "admin_rebuild_cli_image", {}, None, "admin", _admin_flowfile())
+
+    assert result[0].get_attribute("http.response.status") == "409"
+    assert admin_settings._IMAGE_UPDATE_LOCK.locked() is False
 
 
 def test_admin_rebuild_relay_image_starts_a_background_build(monkeypatch):
@@ -583,20 +661,23 @@ def test_admin_rebuild_relay_image_starts_a_background_build(monkeypatch):
     started = {}
     monkeypatch.setattr(
         admin_settings, "_start_relay_image_rebuild",
-        lambda key, force, conv, user: started.update(
-            key=key, force=force, conv=conv, user=user))
-    monkeypatch.setattr(update_manager, "relay_build_running", lambda: False)
+        lambda key, force, conv, user, workflow_claimed=False: started.update(
+            key=key, force=force, conv=conv, user=user, claimed=workflow_claimed))
     monkeypatch.setattr(update_manager, "relay_image_name", lambda key: "img:" + key)
+    monkeypatch.setattr(update_manager, "server_restart_preflight", lambda: {"ok": True})
 
     result = admin_settings._handle_admin_settings(
         None, "admin_rebuild_relay_image",
         {"image": "relay-dev", "force": True, "conversation_id": "conv-1"},
         None, "admin", _admin_flowfile())
     payload = json.loads(result[0].get_content().decode("utf-8"))
+    if admin_settings._IMAGE_UPDATE_LOCK.locked():
+        admin_settings._IMAGE_UPDATE_LOCK.release()
 
     assert payload["started"] is True
     assert payload["image"] == "img:relay-dev"
-    assert started == {"key": "relay-dev", "force": True, "conv": "conv-1", "user": "admin"}
+    assert started == {"key": "relay-dev", "force": True, "conv": "conv-1",
+                       "user": "admin", "claimed": True}
 
 
 def test_admin_rebuild_relay_image_rejects_an_unknown_image(monkeypatch):
@@ -649,6 +730,115 @@ def test_admin_restart_relays_starts_the_sweep(monkeypatch):
     assert started == {"conv": "conv-1", "user": "admin"}
 
 
+def test_cli_rebuild_worker_continues_through_server_restart(monkeypatch):
+    import threading
+    from tasks.ai.actions import admin_settings
+
+    class ImmediateThread:
+        def __init__(self, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    events = []
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(admin_settings, "_publish_build_event",
+                        lambda conv, payload: events.append(payload))
+    monkeypatch.setattr(update_manager, "rebuild_cli_image", lambda **kwargs: {
+        "ok": True, "image": "cli:new", "exit_code": 0, "output": "built"})
+    monkeypatch.setattr(update_manager, "restart_server", lambda: {
+        "ok": True, "started": True, "container": "pawflow-restarter"})
+
+    admin_settings._start_cli_image_rebuild(False, "conv-1", "admin")
+
+    assert [event["status"] for event in events] == ["started", "built", "restarting"]
+
+
+def test_image_workflow_lock_is_released_when_the_worker_finishes(monkeypatch):
+    import threading
+    from tasks.ai.actions import admin_settings
+
+    class ImmediateThread:
+        def __init__(self, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(admin_settings, "_publish_build_event", lambda *args: None)
+    monkeypatch.setattr(update_manager, "rebuild_cli_image", lambda **kwargs: {
+        "ok": True, "image": "cli:new", "exit_code": 0, "output": "built"})
+    monkeypatch.setattr(update_manager, "restart_server",
+                        lambda: {"ok": True, "started": True})
+    assert admin_settings._IMAGE_UPDATE_LOCK.acquire(blocking=False)
+
+    admin_settings._start_cli_image_rebuild(
+        False, "conv-1", "admin", workflow_claimed=True)
+
+    assert admin_settings._IMAGE_UPDATE_LOCK.locked() is False
+
+
+def test_failed_cli_rebuild_never_restarts_the_server(monkeypatch):
+    import threading
+    from tasks.ai.actions import admin_settings
+
+    class ImmediateThread:
+        def __init__(self, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    restarted = []
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(admin_settings, "_publish_build_event", lambda *args: None)
+    monkeypatch.setattr(update_manager, "rebuild_cli_image", lambda **kwargs: {
+        "ok": False, "image": "cli:new", "exit_code": 1, "output": "boom"})
+    monkeypatch.setattr(update_manager, "restart_server",
+                        lambda: restarted.append(True) or {"ok": True})
+
+    admin_settings._start_cli_image_rebuild(False, "conv-1", "admin")
+
+    assert restarted == []
+
+
+def test_relay_rebuild_worker_restarts_relays_then_pawflow(monkeypatch):
+    import threading
+    from tasks.ai.actions import admin_settings
+
+    class ImmediateThread:
+        def __init__(self, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    events = []
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(admin_settings, "_publish_conv_event",
+                        lambda conv, event, payload: events.append(payload))
+    monkeypatch.setattr(update_manager, "rebuild_relay_image", lambda *args, **kwargs: {
+        "ok": True, "image": "relay:new", "exit_code": 0, "output": "built"})
+
+    def restart_relays(on_progress):
+        on_progress({"index": 1, "total": 1, "conv_id": "c1",
+                     "kind": "workspace", "ok": True, "error": ""})
+        return {"ok": True, "total": 1, "restarted": 1, "failed": []}
+
+    monkeypatch.setattr(update_manager, "restart_server_relays", restart_relays)
+    monkeypatch.setattr(update_manager, "restart_server", lambda: {
+        "ok": True, "started": True, "container": "pawflow-restarter"})
+
+    admin_settings._start_relay_image_rebuild(
+        "relay-dev", False, "conv-1", "admin")
+
+    assert [event["status"] for event in events] == [
+        "started", "built", "relay_restart_started", "relay_restart_progress",
+        "relays_restarted", "restarting"]
+
+
 # -- UI wiring ---------------------------------------------------------
 
 
@@ -662,6 +852,8 @@ def test_updates_dialog_is_wired_into_the_gear_menu_and_sse():
     assert re.search(r"function openUpdatesDialog\(", admin_js)
     assert "admin_check_updates" in admin_js
     assert "admin_rebuild_cli_image" in admin_js
+    assert "admin_server_restart_check" in admin_js
+    assert "Rebuild and restart" in admin_js
     assert "cli_image_build" in sse_js
     assert "adminBuildProgress" in sse_js
     assert "admin_rebuild_relay_image" in admin_js

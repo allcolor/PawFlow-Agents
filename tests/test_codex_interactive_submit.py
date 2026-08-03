@@ -480,6 +480,9 @@ class _SubmissionSignals:
         self.calls.append((session_token, prompt, kwargs))
         return self.proofs.pop(0) if self.proofs else ""
 
+    def submission_marker(self, _session_token):
+        return (8, 12)
+
 
 def _verify_with_signals(monkeypatch, *proofs):
     pool = CodexInteractivePool()
@@ -516,6 +519,63 @@ def test_missing_ack_retries_enter_three_times_then_fails(monkeypatch):
     assert keys == [["Enter"]] * 3
     assert len(service.calls) == 4
     assert "not acknowledged" in state.last_error
+
+
+def test_other_submit_gets_a_fresh_window_for_the_expected_prompt(monkeypatch):
+    result, state, service, keys = _verify_with_signals(
+        monkeypatch, "other", "hook")
+    assert result is True
+    assert state.last_error == ""
+    assert keys == []
+    assert len(service.calls) == 2
+    assert service.calls[1][2]["after_submit"] == 8
+
+
+def test_codex_interrupt_waits_for_receipt_before_reporting_success(monkeypatch):
+    pool = CodexInteractivePool()
+    state = _State()
+    state.last_error = ""
+    service = _SubmissionSignals("hook")
+    calls = []
+
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "1.2")
+    monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
+    monkeypatch.setattr(pool, "_cancel_copy_mode", lambda _state: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt",
+                        lambda _state, _text: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt_for_event_service",
+                        lambda _state, _text: service)
+    monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
+    monkeypatch.setattr(pool, "_paste_buffer", lambda _state: True)
+    monkeypatch.setattr(pool, "send_keys",
+                        lambda _state, keys: calls.append(list(keys)) or True)
+    monkeypatch.setattr(ccip.time, "sleep", lambda _seconds: None)
+
+    assert pool.send_interrupt(state, PROMPT) is True
+    assert calls == [["Escape"], ["Enter"]]
+    assert len(service.calls) == 1
+
+
+def test_codex_interrupt_refuses_without_submission_receipt(monkeypatch):
+    pool = CodexInteractivePool()
+    state = _State()
+    state.last_error = ""
+    service = _SubmissionSignals("", "", "", "")
+
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "0.01")
+    monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
+    monkeypatch.setattr(pool, "_cancel_copy_mode", lambda _state: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt",
+                        lambda _state, _text: None)
+    monkeypatch.setattr(pool, "_remember_injected_prompt_for_event_service",
+                        lambda _state, _text: service)
+    monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
+    monkeypatch.setattr(pool, "_paste_buffer", lambda _state: True)
+    monkeypatch.setattr(pool, "send_keys", lambda _state, _keys: True)
+    monkeypatch.setattr(ccip.time, "sleep", lambda _seconds: None)
+
+    assert pool.send_interrupt(state, PROMPT) is False
+    assert "expected Codex prompt" in state.last_error
 
 
 def test_fragmented_submit_fails_without_another_enter(monkeypatch):

@@ -55,6 +55,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     _instance_lock = threading.Lock()
     _REQUIRE_PROMPT_READY = False
     _INITIAL_SUBMIT_ENTERS = 2
+    # Claude Code keeps the historical low-latency preempt: its pane verifier
+    # runs in the background.  Codex overrides this because its event receipt is
+    # the only trustworthy proof that the TUI accepted the interrupted prompt.
+    _VERIFY_INTERRUPT_SYNCHRONOUS = False
 
     @classmethod
     def instance(cls) -> "InteractiveClaudeCodePool":
@@ -953,7 +957,17 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return False
         self._cancel_copy_mode(state)
         self._remember_injected_prompt(state, text)
-        self._remember_injected_prompt_for_event_service(state, text)
+        event_service = self._remember_injected_prompt_for_event_service(
+            state, text)
+        submit_marker = (0, 0)
+        if event_service is not None:
+            try:
+                submit_marker = event_service.submission_marker(
+                    state.session_token)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Could not mark CCI interrupt submission", exc_info=True)
+                event_service = None
         if not (self._load_buffer(state, text) and self._paste_buffer(state)):
             return False
         if not self.send_keys(state, ["Escape"]):
@@ -971,16 +985,30 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             # Let the interrupted turn's running marker leave the pane so
             # the verifier doesn't mistake the OLD turn for the new one.
             time.sleep(settle)
-        # _verify_submitted polls the tmux pane for up to
+        # _verify_submitted polls the tmux pane / submission receipts for up to
         # PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS (default 6s) and only re-presses
         # Enter if the paste was swallowed. It is best-effort and its result
         # is unused, yet send_interrupt runs on the HTTP request thread
         # (POST /api/agent -> send_user_message -> send_interrupt), so running
         # it inline made every preempt block ~6-8s before the ack returned.
-        # The Escape+Enter above already submitted in the normal case; run the
-        # verification/retry in the background so the request returns at once.
+        # Codex must prove the preempt before the caller marks its rescue as
+        # handled.  Otherwise a swallowed Enter returns True, `_had_preempts`
+        # suppresses the rescue at final drain, and the message appears only
+        # after the old turn's done (or is lost).  Claude Code retains the
+        # background verifier to preserve its existing HTTP latency.
+        if self._VERIFY_INTERRUPT_SYNCHRONOUS:
+            verified = self._verify_submitted(
+                state, text, event_service=event_service,
+                submit_marker=submit_marker)
+            if verified is not True:
+                if not state.last_error:
+                    state.last_error = "interrupt prompt submission was not confirmed"
+                return False
+            return True
         threading.Thread(
             target=self._verify_submitted, args=(state, text),
+            kwargs={"event_service": event_service,
+                    "submit_marker": submit_marker},
             name="cci-verify-submit", daemon=True,
         ).start()
         return True

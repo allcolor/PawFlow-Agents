@@ -7,9 +7,9 @@ Two levels, deliberately separated:
   container that outlives the call, writes nothing, and is safe to run from the
   admin gear menu at any time.
 * **CLI tools image rebuild.** :func:`rebuild_cli_image` rebuilds the image that
-  hosts the agent CLIs (Claude Code, Codex, Gemini, Antigravity). It touches
-  neither the server process nor any relay nor any user data — only the *next*
-  CLI pool spawn sees the new image.
+  hosts the agent CLIs (Claude Code, Codex, Gemini, Antigravity). The admin
+  workflow then restarts the PawFlow container so every subsequent CLI session
+  starts from the rebuilt image.
 * **Relay images.** :func:`rebuild_relay_image` rebuilds the workspace and
   minimal relay images from the sources shipped in the server image, and
   :func:`restart_server_relays` moves the running relay containers onto the
@@ -128,6 +128,10 @@ PRUNABLE_REPOSITORIES = (
 #: Name of the throwaway container that restarts the stack. Kept (not --rm) so
 #: `docker logs pawflow-updater` still explains a failed update afterwards.
 UPDATER_CONTAINER = "pawflow-updater"
+
+#: Detached helper used for a restart-only operation. Like the updater, it is
+#: kept after exit so an operator can inspect why a restart did not complete.
+RESTARTER_CONTAINER = "pawflow-restarter"
 
 #: Image the updater runs in. The server image ships only the static docker
 #: CLI — no compose plugin — so compose has to come from somewhere else.
@@ -673,6 +677,94 @@ def updater_image() -> str:
             logger.debug("Could not read server_update_image", exc_info=True)
             configured = ""
     return configured or DEFAULT_UPDATER_IMAGE
+
+
+def server_restart_preflight() -> Dict[str, Any]:
+    """Return the current Docker container identity needed for restart-only.
+
+    Restarting from inside the PawFlow container is impossible: stopping the
+    container kills the process issuing the command. A detached Docker CLI
+    helper performs the restart, so this preflight proves both the current
+    container identity and the helper's access to the host daemon before a
+    multi-minute image build starts.
+    """
+    from core.compose_deployment import compose_info
+    from core.installer_deployment import installer_info
+
+    deployment = "compose"
+    info = compose_info()
+    if not info:
+        deployment = "installer"
+        info = installer_info()
+    container = str((info or {}).get("container_name", "") or "").strip()
+    if not container:
+        return {"ok": False, "reason": "This server is not running in an identifiable Docker container."}
+
+    image = updater_image()
+    try:
+        probe = subprocess.run(  # nosec B603
+            docker_cmd() + [
+                "run", "--rm",
+                "--volume", "/var/run/docker.sock:/var/run/docker.sock",
+                "--entrypoint", "docker", image, "version",
+            ], capture_output=True, text=True, timeout=300)
+    except Exception as exc:
+        return {"ok": False, "reason": f"Could not run the restart helper '{image}': {exc}"}
+    if probe.returncode != 0:
+        return {"ok": False, "reason": "Restart helper could not reach Docker: "
+                + (probe.stderr or probe.stdout or "unknown error").strip()[:300]}
+    return {
+        "ok": True,
+        "deployment": deployment,
+        "container": container,
+        "updater_image": image,
+        "running_agents": running_agent_count(),
+    }
+
+
+def restart_server() -> Dict[str, Any]:
+    """Launch a detached helper that restarts this exact PawFlow container."""
+    check = server_restart_preflight()
+    if not check.get("ok"):
+        return {"ok": False, "started": False, "reason": check.get("reason", "")}
+
+    image = check["updater_image"]
+    container = check["container"]
+    # Leave enough time for the `restarting` SSE event to cross the event bus
+    # and reach the browser before this helper stops the server.
+    script = "sleep 5; docker restart --time 30 " + shlex.quote(container)
+    try:
+        subprocess.run(  # nosec B603
+            docker_cmd() + ["rm", "-f", RESTARTER_CONTAINER],
+            capture_output=True, timeout=30)
+    except Exception:
+        logger.debug("Could not remove the previous restarter", exc_info=True)
+
+    args = [
+        "run", "--detach", "--name", RESTARTER_CONTAINER, "--restart", "no",
+        "--volume", "/var/run/docker.sock:/var/run/docker.sock",
+        "--entrypoint", "sh", image, "-c", script,
+    ]
+    try:
+        result = subprocess.run(  # nosec B603
+            docker_cmd() + args, capture_output=True, text=True, timeout=60)
+    except Exception as exc:
+        return {"ok": False, "started": False,
+                "reason": f"Could not start the restart helper: {exc}"}
+    if result.returncode != 0:
+        return {"ok": False, "started": False,
+                "reason": f"Restart helper refused to start: {result.stderr.strip()[:300]}"}
+
+    logger.warning("[update] Restart helper launched (%s) for %s",
+                   RESTARTER_CONTAINER, container)
+    return {
+        "ok": True,
+        "started": True,
+        "container": RESTARTER_CONTAINER,
+        "target_container": container,
+        "updater_image": image,
+        "deployment": check.get("deployment", ""),
+    }
 
 
 def _updater_script(working_dir: str, pull_source: bool,

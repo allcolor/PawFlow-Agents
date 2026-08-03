@@ -397,7 +397,8 @@ class CCInteractiveEventService(BaseService):
 
         Returns ``hook`` for the exact ``UserPromptSubmit``, ``request`` when
         the provider MITM has already seen the model request, ``fragment`` when
-        Codex submitted only a piece of PawFlow's paste, or ``""`` on timeout.
+        Codex submitted only a piece of PawFlow's paste, ``other`` when a
+        different prompt was submitted after the marker, or ``""`` on timeout.
         """
         state = self.session_state(session_token)
         if state is None:
@@ -406,15 +407,23 @@ class CCInteractiveEventService(BaseService):
         deadline = time.monotonic() + max(0.0, timeout)
         with state.stream_condition:
             while True:
+                saw_fragment = False
+                saw_other = False
                 for seq, digest, kind in state.prompt_submit_receipts:
                     if seq <= after_submit:
                         continue
-                    if kind == "fragment":
-                        return "fragment"
-                    if digest in digests:
+                    if kind == "exact" and digest in digests:
                         return "hook"
+                    if kind == "fragment":
+                        saw_fragment = True
+                    else:
+                        saw_other = True
                 if state.provider_request_seq > after_request:
                     return "request"
+                if saw_fragment:
+                    return "fragment"
+                if saw_other:
+                    return "other"
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return ""
@@ -665,7 +674,10 @@ class CCInteractiveEventService(BaseService):
                     if self._is_fragment_of_injection(state, prompt) is not None:
                         kind = "fragment"
         if not kind:
-            return
+            # Still record the fact that Enter produced a UserPromptSubmit.
+            # Receipt waiters must distinguish "nothing was submitted" from
+            # "a stale/manual prompt was submitted instead of mine".
+            kind = "other"
         with state.stream_condition:
             state.prompt_submit_seq += 1
             state.prompt_submit_receipts.append(

@@ -36,7 +36,7 @@ class _Pool:
     def find_live_by_conv_agent(self, _conv, _agent):
         return self.container
 
-    def send_text(self, state, text):
+    def send_interrupt(self, state, text):
         self.typed.append((state, text))
         return True
 
@@ -92,10 +92,26 @@ def test_dead_container_falls_back_to_the_queue(wired):
 def test_refused_send_falls_back_to_the_queue(wired):
     holder, pool = wired
     holder["live"] = object()
-    pool.send_text = lambda _s, _t: False
+    pool.send_interrupt = lambda _s, _t: False
 
     assert AgentStreamingMixin._deliver_to_captured_tmux(
         "80c37670", "claude", "hello") is False
+
+
+def test_codex_captured_turn_uses_the_codex_pool_and_preempts(wired, monkeypatch):
+    holder, claude_pool = wired
+    import core.codex_interactive_pool as codex_poolmod
+
+    live = type("Live", (), {"provider": "codex-interactive"})()
+    holder["live"] = live
+    codex_pool = _Pool(_Container())
+    monkeypatch.setattr(codex_poolmod.CodexInteractivePool, "instance",
+                        classmethod(lambda cls: codex_pool))
+
+    assert AgentStreamingMixin._deliver_to_captured_tmux(
+        "80c37670", "assistant", "preempt now") is True
+    assert codex_pool.typed == [(codex_pool.container, "preempt now")]
+    assert claude_pool.typed == []
 
 
 @pytest.mark.parametrize("text", ["", "   ", "\n"])

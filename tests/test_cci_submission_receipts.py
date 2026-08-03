@@ -74,3 +74,13 @@ def test_mitm_responses_request_proves_submission_without_consuming_it():
         "sess", PROMPT, after_submit=marker[0], after_request=marker[1],
         timeout=0) == "request"
     assert service.wait_event("sess", timeout=0) == event
+
+
+def test_a_different_submit_is_reported_instead_of_called_no_ack():
+    service = _service()
+    marker = service.submission_marker("sess")
+    service.publish_event("sess", _hook("an older queued prompt", injected=True))
+
+    assert service.wait_for_prompt_submission(
+        "sess", PROMPT, after_submit=marker[0], after_request=marker[1],
+        timeout=0) == "other"

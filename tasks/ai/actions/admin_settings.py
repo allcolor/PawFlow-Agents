@@ -1,6 +1,7 @@
 """AgentLoopTask actions - admin settings."""
 
 import json
+import threading
 from typing import Any, Dict, List
 
 from core import FlowFile
@@ -31,6 +32,11 @@ SYSTEM_PARAM_MANIFEST: List[Dict[str, Any]] = [
 ]
 
 _MANIFEST_BY_KEY = {item["key"]: item for item in SYSTEM_PARAM_MANIFEST}
+
+# One admin image workflow at a time across CLI and relay images. Their own
+# build locks protect individual Docker commands; this lock covers the full
+# build → relay recreation → PawFlow restart chain.
+_IMAGE_UPDATE_LOCK = threading.Lock()
 
 
 def _is_admin(flowfile: FlowFile) -> bool:
@@ -113,13 +119,14 @@ def _throttled(emit, interval: float = 0.5):
     return _emit
 
 
-def _start_cli_image_rebuild(force: bool, conversation_id: str, user_id: str):
+def _start_cli_image_rebuild(force: bool, conversation_id: str, user_id: str,
+                             workflow_claimed: bool = False):
     """Run the CLI tools image rebuild in a background thread.
 
     The build outlives the action call (minutes), so the action acks immediately
     and progress arrives on the conversation's SSE channel as `cli_image_build`
-    events. Rebuilding this image affects only the next CLI pool spawn — no
-    running relay, conversation or user data is touched.
+    events. A successful build launches the detached PawFlow restarter so stale
+    warm CLI containers cannot keep serving the previous image.
     """
     import logging
     import threading
@@ -146,22 +153,40 @@ def _start_cli_image_rebuild(force: bool, conversation_id: str, user_id: str):
         logger.info("[update] CLI image rebuild finished by %s: ok=%s exit=%s",
                     user_id or "?", result.get("ok"), result.get("exit_code"))
         _publish_build_event(conversation_id, {
-            "status": "done" if result.get("ok") else "error",
+            "status": "built" if result.get("ok") else "error",
             "forced": force,
             "image": result.get("image", ""),
             "exit_code": result.get("exit_code"),
             "output": result.get("output", ""),
         })
+        if not result.get("ok"):
+            return
+        restart = update_manager.restart_server()
+        if not restart.get("ok"):
+            _publish_build_event(conversation_id, {
+                "status": "error", "phase": "restart",
+                "error": restart.get("reason", "Server restart failed"),
+            })
+            return
+        _publish_build_event(conversation_id, {"status": "restarting", **restart})
 
-    threading.Thread(target=_run, name="cli-image-rebuild", daemon=True).start()
+    def _guarded_run():
+        try:
+            _run()
+        finally:
+            if workflow_claimed:
+                _IMAGE_UPDATE_LOCK.release()
+
+    threading.Thread(target=_guarded_run, name="cli-image-rebuild", daemon=True).start()
 
 
-def _start_relay_image_rebuild(key: str, force: bool, conversation_id: str, user_id: str):
+def _start_relay_image_rebuild(key: str, force: bool, conversation_id: str, user_id: str,
+                               workflow_claimed: bool = False):
     """Rebuild a relay image in a background thread.
 
-    Progress arrives as `relay_image_build` events. Building changes nothing for
-    the relays already running: they keep the image they were started from until
-    an explicit restart recreates their containers.
+    Progress arrives as `relay_image_build` events. After a successful build the
+    same workflow recreates every managed relay, then restarts PawFlow so the UI
+    has one terminal outcome instead of two disconnected admin operations.
     """
     import logging
     import threading
@@ -187,14 +212,44 @@ def _start_relay_image_rebuild(key: str, force: bool, conversation_id: str, user
         logger.info("[update] Relay image rebuild finished by %s: image=%s ok=%s exit=%s",
                     user_id or "?", key, result.get("ok"), result.get("exit_code"))
         _emit({
-            "status": "done" if result.get("ok") else "error",
+            "status": "built" if result.get("ok") else "error",
             "forced": force,
             "image": result.get("image", ""),
             "exit_code": result.get("exit_code"),
             "output": result.get("output", ""),
         })
+        if not result.get("ok"):
+            return
+        _emit({"status": "relay_restart_started"})
+        try:
+            relays = update_manager.restart_server_relays(
+                on_progress=lambda p: _emit({"status": "relay_restart_progress", **p}))
+        except Exception as exc:
+            logger.error("[update] Relay restart after rebuild crashed: %s", exc,
+                         exc_info=True)
+            _emit({"status": "error", "phase": "relay_restart", "error": str(exc)})
+            return
+        if not relays.get("ok"):
+            _emit({"status": "error", "phase": "relay_restart",
+                   "error": "One or more relays could not be recreated",
+                   **relays})
+            return
+        _emit({"status": "relays_restarted", **relays})
+        restart = update_manager.restart_server()
+        if not restart.get("ok"):
+            _emit({"status": "error", "phase": "restart",
+                   "error": restart.get("reason", "Server restart failed")})
+            return
+        _emit({"status": "restarting", **restart})
 
-    threading.Thread(target=_run, name="relay-image-rebuild", daemon=True).start()
+    def _guarded_run():
+        try:
+            _run()
+        finally:
+            if workflow_claimed:
+                _IMAGE_UPDATE_LOCK.release()
+
+    threading.Thread(target=_guarded_run, name="relay-image-rebuild", daemon=True).start()
 
 
 def _start_relay_restart(conversation_id: str, user_id: str):
@@ -435,11 +490,23 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
         if denied:
             return denied
         from core import update_manager
-        if update_manager.cli_build_running():
-            return _json(flowfile, {"error": "A rebuild is already running"}, "409")
+        if not _IMAGE_UPDATE_LOCK.acquire(blocking=False):
+            return _json(flowfile, {"error": "An image update workflow is already running"}, "409")
+        try:
+            restart = update_manager.server_restart_preflight()
+        except Exception:
+            _IMAGE_UPDATE_LOCK.release()
+            raise
+        if not restart.get("ok"):
+            _IMAGE_UPDATE_LOCK.release()
+            return _json(flowfile, {"error": restart.get("reason", "Server restart is unavailable")}, "409")
         force = bool(body.get("force"))
         conversation_id = str(body.get("conversation_id", "") or "")
-        _start_cli_image_rebuild(force, conversation_id, user_id)
+        try:
+            _start_cli_image_rebuild(force, conversation_id, user_id, workflow_claimed=True)
+        except Exception:
+            _IMAGE_UPDATE_LOCK.release()
+            raise
         return _json(flowfile, {"ok": True, "started": True, "forced": force,
                                "image": update_manager.cli_image_name()})
 
@@ -453,11 +520,24 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
             update_manager.relay_build_target(key)
         except ValueError as exc:
             return _json(flowfile, {"error": str(exc)}, "400")
-        if update_manager.relay_build_running():
-            return _json(flowfile, {"error": "A relay image rebuild is already running"}, "409")
+        if not _IMAGE_UPDATE_LOCK.acquire(blocking=False):
+            return _json(flowfile, {"error": "An image update workflow is already running"}, "409")
+        try:
+            restart = update_manager.server_restart_preflight()
+        except Exception:
+            _IMAGE_UPDATE_LOCK.release()
+            raise
+        if not restart.get("ok"):
+            _IMAGE_UPDATE_LOCK.release()
+            return _json(flowfile, {"error": restart.get("reason", "Server restart is unavailable")}, "409")
         force = bool(body.get("force"))
         conversation_id = str(body.get("conversation_id", "") or "")
-        _start_relay_image_rebuild(key, force, conversation_id, user_id)
+        try:
+            _start_relay_image_rebuild(
+                key, force, conversation_id, user_id, workflow_claimed=True)
+        except Exception:
+            _IMAGE_UPDATE_LOCK.release()
+            raise
         return _json(flowfile, {"ok": True, "started": True, "forced": force,
                                "image_key": key,
                                "image": update_manager.relay_image_name(key)})
@@ -468,6 +548,13 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
             return denied
         from core import update_manager
         return _json(flowfile, update_manager.server_update_preflight())
+
+    if action == "admin_server_restart_check":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        from core import update_manager
+        return _json(flowfile, update_manager.server_restart_preflight())
 
     if action == "admin_update_server":
         denied = _require_admin(flowfile)

@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.92] — 2026-08-03
+
+### Added
+
+- Admin CLI and relay image rebuilds now continue through a guarded restart
+  workflow: preflight validates a detached Docker helper, relay builds recreate
+  managed relays, PawFlow restarts, and the UI streams every phase before
+  reloading once a new server process is healthy.
+
+### Fixed
+
+- Codex interactive messages now preempt immediately even while the active turn
+  is represented only by a captured tmux marker; delivery selects the Codex pool
+  instead of incorrectly falling back to Claude or PendingQueue.
+- Codex live preemption now waits for an exact UserPromptSubmit or MITM receipt
+  before marking a rescue handled. Failed preempts retain the active owner and
+  queued message, and diagnostics distinguish a different stale prompt from no
+  acknowledgement.
+- Failed image builds or managed-relay recreation no longer proceed to a PawFlow
+  restart, and a shared workflow lock prevents concurrent image update chains.
+
 ## [1.0.0-beta.91] — 2026-08-03
 
 ### Added

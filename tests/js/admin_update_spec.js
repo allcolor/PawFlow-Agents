@@ -126,6 +126,33 @@ async function main() {
     assert(/never came back/.test(last), 'a dead new container reads as an untouched one');
   });
 
+  await test('CLI image progress reaches the restart wait state', async () => {
+    const s = env(() => RUNNING);
+    s.ctx._admImageBuildBefore = RUNNING;
+    s.ctx.adminBuildProgress({ status: 'started', forced: false });
+    assert(/Rebuild in progress/.test(s.ctx.document._nodes['adm-image-stage'].innerHTML),
+           'build stage was not rendered');
+    s.ctx.adminBuildProgress({ status: 'built', output: 'image ready' });
+    assert(/Restarting PawFlow/.test(s.ctx.document._nodes['adm-image-stage'].innerHTML),
+           'restart stage was not rendered');
+    let wait = null;
+    s.ctx._admWaitForServer = (...args) => { wait = args; };
+    s.ctx.adminBuildProgress({ status: 'restarting', container: 'pawflow-restarter' });
+    assert(wait && wait[1].instance === RUNNING.instance,
+           'restart polling did not keep the original server instance');
+  });
+
+  await test('relay workflow reports each failed recreation', async () => {
+    const s = env(() => RUNNING);
+    s.ctx.adminRelayBuildProgress({
+      status: 'error',
+      error: 'One or more relays could not be recreated',
+      failed: [{ kind: 'workspace', conv_id: 'conv-1', error: 'boom' }],
+    });
+    const log = s.ctx.document._nodes['adm-image-progress'].textContent;
+    assert(/conv-1: boom/.test(log), 'failed relay details were hidden');
+  });
+
   console.log(passed + ' passing');
   if (failures.length) {
     console.error(failures.length + ' failing');

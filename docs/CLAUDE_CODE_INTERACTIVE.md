@@ -244,13 +244,18 @@ has no owner to drain it, so messages sent from the webchat used to sit there
 until a force stop discarded them — while the UI showed the agent up. Two
 rules close that:
 
-- **Type into the live tmux.** `_deliver_to_captured_tmux` sends the text
-  through the pool rather than queuing it. Whether there is anywhere to deliver
-  is decided by `CCInteractiveEventService.live_session`, which looks for a
-  *connected* proxy session. The MITM WebSocket is up exactly while a container
-  lives and every observed event arrived through it, so it proves a live tmux
-  independently of the turn bookkeeping that went stale. No connected session
-  means no container, and the message falls back to the queue.
+- **Preempt the live tmux through its own provider pool.**
+  `_deliver_to_captured_tmux` selects the Claude Code or Codex pool from the
+  connected event session, then uses `send_interrupt` rather than a normal
+  `send_text`. This matters during the transient/captured shape where there is
+  an `_active_turns` marker but no published provider client: looking only in
+  the Claude pool made Codex messages wait in `PendingQueue` until `done`, which
+  made live preemption appear intermittent. Whether there is anywhere to
+  deliver is decided by `CCInteractiveEventService.live_session`. The MITM
+  WebSocket is up exactly while a container lives and every observed event
+  arrived through it, so it proves a live tmux independently of stale turn
+  bookkeeping. No connected session means no container, and the message falls
+  back to the queue.
 - **Hand the queue back on release.** When a capture releases the turn it wakes
   the agent if anything is queued, so a message that could not be typed is
   still processed instead of being discarded by the next force stop.
@@ -714,6 +719,14 @@ of the injected text is never accepted as proof because Codex renders pastes as
 attachment chips. If the composer layout is unknown and no running marker is
 visible, PawFlow retries `Enter` up to three times; an extra `Enter` in an empty
 composer is harmless, while omitting it leaves the prompt waiting for a human.
+The same receipt rule applies synchronously to live preemption: Codex does not
+report the preempt handled, set `_had_preempts_this_turn`, or suppress its
+PendingQueue rescue until an exact `UserPromptSubmit` or a subsequent MITM
+request proves submission. A different post-marker submit is tracked separately
+from no submit at all; it grants the expected prompt another acknowledgement
+window and produces an accurate diagnostic if the expected digest never lands.
+If a receipt-verified preempt fails without killing the CLI, the current turn
+keeps ownership and the message stays queued for the next drain.
 
 Each live session remains scoped by `(user, conversation, agent, LLM service)`.
 The provider shares the OAuth credential pool used by `codex-app-server`:

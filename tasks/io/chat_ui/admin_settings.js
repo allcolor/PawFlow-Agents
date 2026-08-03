@@ -260,10 +260,10 @@ function openUpdatesDialog() {
       + '</tr></thead><tbody>' + rows + '</tbody></table>'
       + '<div style="border-top:1px solid var(--pf-border);padding-top:10px;">'
       + '<strong>Agent CLI tools image</strong> &mdash; <code>' + adminEsc(data.cli_image || '') + '</code>'
-      + '<div style="color:var(--pf-muted);font-size:11px;margin:4px 0 8px;">Rebuilding affects only the next CLI pool spawn. '
+      + '<div style="color:var(--pf-muted);font-size:11px;margin:4px 0 8px;">After a successful rebuild PawFlow restarts, so every new CLI session uses the image. '
       + 'Force ignores the Docker layer cache: it is the only way to pick up a new Antigravity build, and it takes several minutes.</div>'
       + '<label style="font-size:12px;"><input type="checkbox" id="adm-upd-force"> Force (--no-cache)</label> '
-      + '<button id="adm-upd-rebuild" onclick="adminRebuildCliImage()"' + (data.build_running ? ' disabled' : '') + '>Rebuild image</button>'
+      + '<button id="adm-upd-rebuild" onclick="adminRebuildCliImage()"' + (data.build_running ? ' disabled' : '') + '>Rebuild and restart\u2026</button>'
       + '<pre id="adm-upd-log" style="display:none;margin-top:8px;max-height:180px;overflow:auto;font-size:11px;white-space:pre-wrap;"></pre>'
       + '</div>'
       + _admRelaySection(data)
@@ -280,13 +280,13 @@ function _admRelaySection(data) {
   var buttons = (data.relay_images || []).map(function(img) {
     return '<button class="adm-relay-build" data-image="' + adminEsc(img.key) + '"'
       + ' onclick="adminRebuildRelayImage(\'' + adminEsc(img.key) + '\')"' + (busy ? ' disabled' : '') + '>'
-      + 'Rebuild ' + adminEsc(img.label) + '</button> <code style="font-size:11px;">'
+      + 'Rebuild &amp; restart ' + adminEsc(img.label) + '</button> <code style="font-size:11px;">'
       + adminEsc(img.image) + '</code><br>';
   }).join('');
   return '<div style="border-top:1px solid var(--pf-border);padding-top:10px;margin-top:10px;">'
     + '<strong>Relay images</strong>'
     + '<div style="color:var(--pf-muted);font-size:11px;margin:4px 0 8px;">Rebuilding changes nothing for the relays already running: '
-    + 'they keep the image they were started from until you restart them. Restarting replaces each container in turn &mdash; '
+    + 'they keep the image they were started from until they are restarted. A successful rebuild now replaces each container in turn and restarts PawFlow &mdash; '
     + 'workspaces, volumes and relay identities are preserved, but every relay is briefly unavailable.</div>'
     + '<label style="font-size:12px;"><input type="checkbox" id="adm-relay-force"> Force (--no-cache)</label><br>'
     + buttons
@@ -394,16 +394,17 @@ var ADM_UPDATE_TIMEOUT_S = 600;
 // served by the old one. Waiting for any answer at all ended on the first poll
 // whenever the updater failed before stopping anything: the page reloaded
 // immediately, onto the version it started from, reporting success.
-function _admWaitForServer(info, before) {
+function _admWaitForServer(info, before, dialogTitle) {
   var started = Date.now();
   var wasInstance = (before || {}).instance || '';
   var wentDown = false;
   var body = '<div style="font-size:12px;line-height:1.7;">'
-    + '<p><strong>Restarting.</strong> Updater container: <code>' + adminEsc(info.container || '') + '</code></p>'
+    + '<p><strong>Restarting.</strong> Helper container: <code>' + adminEsc(info.container || '') + '</code></p>'
     + '<p id="adm-server-wait" style="color:var(--pf-muted);">Waiting for the server to restart\u2026</p>'
     + '<p style="color:var(--pf-muted);font-size:11px;">If it does not return, the updater kept its logs: '
     + '<code>docker logs ' + adminEsc(info.container || '') + '</code></p></div>';
-  _adminOverlay('Update server', body, '');
+  document.querySelectorAll('.exec-overlay').forEach(function(el) { el.remove(); });
+  _adminOverlay(dialogTitle || 'Update server', body, '');
 
   var poll = setInterval(function() {
     var waited = Math.round((Date.now() - started) / 1000);
@@ -414,7 +415,7 @@ function _admWaitForServer(info, before) {
     }
     if (waited > ADM_UPDATE_TIMEOUT_S) {
       clearInterval(poll);
-      _admUpdateStalled(info, wentDown);
+      _admUpdateStalled(info, wentDown, dialogTitle);
       return;
     }
     fetch('/health', { cache: 'no-store' }).then(function(r) {
@@ -433,8 +434,8 @@ function _admWaitForServer(info, before) {
 
 // The server never restarted. Say so, and name the one command that explains
 // why: the updater keeps its logs until the next update replaces it.
-function _admUpdateStalled(info, wentDown) {
-  _adminOverlay('Update server',
+function _admUpdateStalled(info, wentDown, dialogTitle) {
+  _adminOverlay(dialogTitle || 'Update server',
     '<div style="font-size:12px;line-height:1.7;">'
     + '<p><strong>The server did not restart.</strong> '
     + (wentDown
@@ -451,16 +452,70 @@ function _admRelayButtons() {
   return Array.from(document.querySelectorAll('.adm-relay-build'));
 }
 
+var _admImageBuildBefore = {};
+
+function _admImageBuildOverlay(title, stage) {
+  document.querySelectorAll('.exec-overlay').forEach(function(el) { el.remove(); });
+  return _adminOverlay(title,
+    '<div style="font-size:12px;line-height:1.6;">'
+    + '<p id="adm-image-stage"><strong>' + adminEsc(stage) + '</strong></p>'
+    + '<pre id="adm-image-progress" style="margin-top:8px;max-height:300px;overflow:auto;font-size:11px;white-space:pre-wrap;"></pre>'
+    + '<p style="color:var(--pf-muted);font-size:11px;">Keep this page open. After the build, PawFlow will restart and this dialog will wait for a new server instance.</p>'
+    + '</div>', '');
+}
+
+function _admAppendImageProgress(line) {
+  var log = document.getElementById('adm-image-progress');
+  if (!log || !line) return;
+  log.textContent += (log.textContent ? '\n' : '') + String(line);
+  var lines = log.textContent.split('\n');
+  if (lines.length > 250) log.textContent = lines.slice(-250).join('\n');
+  log.scrollTop = log.scrollHeight;
+}
+
+function _admSetImageStage(text) {
+  var stage = document.getElementById('adm-image-stage');
+  if (stage) stage.innerHTML = '<strong>' + adminEsc(text) + '</strong>';
+}
+
+function _admConfirmImageBuild(kind, key, forced, info) {
+  var label = kind === 'cli' ? 'CLI tools image' : key;
+  var body = '<div style="font-size:12px;line-height:1.6;">'
+    + '<p>This rebuild is followed automatically by a PawFlow restart. Every running agent turn will be killed.</p>'
+    + '<p>Image: <strong>' + adminEsc(label) + '</strong></p>'
+    + '<p>Agent turns running: <strong>' + (info.running_agents || 0) + '</strong></p>'
+    + '<button onclick="adminConfirmImageBuild(' + jsStringArg(kind) + ',' + jsStringArg(key || '') + ',' + (forced ? 'true' : 'false') + ')" '
+    + 'style="background:#c0392b;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Rebuild and restart</button>'
+    + '</div>';
+  _adminOverlay('Rebuild ' + label, body, '');
+}
+
+function adminConfirmImageBuild(kind, key, forced) {
+  fetch('/health', { cache: 'no-store' }).then(function(r) { return r.json(); })
+    .catch(function() { return {}; })
+    .then(function(before) {
+      _admImageBuildBefore = before || {};
+      var title = kind === 'cli' ? 'Rebuild CLI tools image' : 'Rebuild relay image';
+      _admImageBuildOverlay(title, 'Starting build\u2026');
+      var action = kind === 'cli' ? 'admin_rebuild_cli_image' : 'admin_rebuild_relay_image';
+      var args = kind === 'cli' ? { force: forced } : { image: key, force: forced };
+      action$(action, args).subscribe(function(d) {
+        if (d.error) {
+          _admSetImageStage('Could not start');
+          _admAppendImageProgress(d.error);
+          return;
+        }
+        if (kind === 'cli') adminBuildProgress({ status: 'started', forced: forced });
+        else adminRelayBuildProgress({ status: 'started', image_key: key, forced: forced });
+      });
+    });
+}
+
 function adminRebuildRelayImage(key) {
   var forced = !!(document.getElementById('adm-relay-force') || {}).checked;
-  _admRelayButtons().forEach(function(b) { b.disabled = true; });
-  action$('admin_rebuild_relay_image', { image: key, force: forced }).subscribe(function(d) {
-    if (d.error) {
-      addMsg('error', d.error);
-      _admRelayButtons().forEach(function(b) { b.disabled = false; });
-      return;
-    }
-    adminRelayBuildProgress({ status: 'started', image_key: key, forced: forced });
+  action$('admin_server_restart_check').subscribe(function(info) {
+    if (info.error || !info.ok) { addMsg('error', info.error || info.reason); return; }
+    _admConfirmImageBuild('relay', key, forced, info);
   });
 }
 
@@ -479,24 +534,37 @@ function adminRestartRelays() {
 
 // Fed by the `relay_image_build` SSE event while a relay image builds.
 function adminRelayBuildProgress(data) {
-  var log = document.getElementById('adm-relay-log');
-  if (!log) return;
-  log.style.display = '';
   var status = (data || {}).status || '';
   var key = (data || {}).image_key || '';
   if (status === 'started') {
-    log.textContent = (data.forced ? 'Forced rebuild' : 'Rebuild') + ' of ' + key + ' started\u2026';
+    _admSetImageStage((data.forced ? 'Forced rebuild' : 'Rebuild') + ' of ' + key + '\u2026');
     return;
   }
-  if (status === 'progress') { log.textContent = String(data.line || ''); return; }
-  _admRelayButtons().forEach(function(b) { b.disabled = false; });
-  if (status === 'done') {
-    log.textContent = 'Rebuild finished: ' + (data.image || '') + '\n\n' + String(data.output || '');
-    addMsg('system', 'Relay image ' + key + ' rebuilt. Restart the relays to use it.');
+  if (status === 'progress') { _admAppendImageProgress(data.line || ''); return; }
+  if (status === 'built') {
+    _admSetImageStage('Image built. Restarting managed relays\u2026');
+    _admAppendImageProgress(data.output || '');
     return;
   }
-  log.textContent = 'Rebuild failed (exit ' + (data.exit_code == null ? '?' : data.exit_code) + ')\n\n'
-    + String(data.error || data.output || '');
+  if (status === 'relay_restart_started') { _admSetImageStage('Restarting managed relays\u2026'); return; }
+  if (status === 'relay_restart_progress') {
+    _admAppendImageProgress('Relay ' + data.index + '/' + data.total + ' \u2014 ' + (data.kind || '') + ' '
+      + (data.conv_id || '') + (data.ok ? ' recreated' : ' FAILED: ' + String(data.error || '')));
+    return;
+  }
+  if (status === 'relays_restarted') {
+    _admSetImageStage('Relays restarted. Restarting PawFlow\u2026');
+    return;
+  }
+  if (status === 'restarting') {
+    _admWaitForServer(data, _admImageBuildBefore, 'Rebuild relay image');
+    return;
+  }
+  _admSetImageStage('Failed');
+  _admAppendImageProgress(data.error || data.output || 'Unknown error');
+  (data.failed || []).forEach(function(f) {
+    _admAppendImageProgress((f.kind || '') + ' ' + (f.conv_id || '') + ': ' + (f.error || 'unknown error'));
+  });
 }
 
 // Fed by the `relay_restart` SSE event, one progress entry per relay.
@@ -532,38 +600,31 @@ function adminRelayRestartProgress(data) {
 
 function adminRebuildCliImage() {
   var forced = !!(document.getElementById('adm-upd-force') || {}).checked;
-  var btn = document.getElementById('adm-upd-rebuild');
-  if (btn) btn.disabled = true;
-  action$('admin_rebuild_cli_image', { force: forced }).subscribe(function(d) {
-    if (d.error) {
-      addMsg('error', d.error);
-      if (btn) btn.disabled = false;
-      return;
-    }
-    adminBuildProgress({ status: 'started', forced: forced });
+  action$('admin_server_restart_check').subscribe(function(info) {
+    if (info.error || !info.ok) { addMsg('error', info.error || info.reason); return; }
+    _admConfirmImageBuild('cli', '', forced, info);
   });
 }
 
 // Fed by the `cli_image_build` SSE event while a rebuild runs.
 function adminBuildProgress(data) {
-  var log = document.getElementById('adm-upd-log');
-  if (!log) return;
-  log.style.display = '';
   var status = (data || {}).status || '';
   if (status === 'started') {
-    log.textContent = (data.forced ? 'Forced rebuild' : 'Rebuild') + ' started\u2026';
+    _admSetImageStage((data.forced ? 'Forced rebuild' : 'Rebuild') + ' in progress\u2026');
     return;
   }
-  if (status === 'progress') { log.textContent = String(data.line || ''); return; }
-  var btn = document.getElementById('adm-upd-rebuild');
-  if (btn) btn.disabled = false;
-  if (status === 'done') {
-    log.textContent = 'Rebuild finished: ' + (data.image || '') + '\n\n' + String(data.output || '');
-    addMsg('system', 'CLI tools image rebuilt.');
+  if (status === 'progress') { _admAppendImageProgress(data.line || ''); return; }
+  if (status === 'built') {
+    _admSetImageStage('Image built. Restarting PawFlow\u2026');
+    _admAppendImageProgress(data.output || '');
     return;
   }
-  log.textContent = 'Rebuild failed (exit ' + (data.exit_code == null ? '?' : data.exit_code) + ')\n\n'
-    + String(data.error || data.output || '');
+  if (status === 'restarting') {
+    _admWaitForServer(data, _admImageBuildBefore, 'Rebuild CLI tools image');
+    return;
+  }
+  _admSetImageStage('Failed');
+  _admAppendImageProgress(data.error || data.output || 'Unknown error');
 }
 
 function adminSaveSystemParams() {

@@ -71,21 +71,28 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         try:
             from services.cc_interactive_event_service import (
                 CCInteractiveEventService)
-            if CCInteractiveEventService.live_session(
-                    conversation_id, agent_name or "") is None:
+            live = CCInteractiveEventService.live_session(
+                conversation_id, agent_name or "")
+            if live is None:
                 return False
-            from core.claude_code_interactive_pool import (
-                InteractiveClaudeCodePool)
-            pool = InteractiveClaudeCodePool.instance()
+            if getattr(live, "provider", "") == "codex-interactive":
+                from core.codex_interactive_pool import CodexInteractivePool
+                pool = CodexInteractivePool.instance()
+            else:
+                from core.claude_code_interactive_pool import (
+                    InteractiveClaudeCodePool)
+                pool = InteractiveClaudeCodePool.instance()
             state = pool.find_live_by_conv_agent(
                 conversation_id, agent_name or "")
-            if state is None or not pool.send_text(state, text):
+            # This tmux is visibly running: a normal send waits behind that turn.
+            # Escape + receipt-verified Enter is the live-preempt path.
+            if state is None or not pool.send_interrupt(state, text):
                 return False
         except Exception:
             logger.debug("captured-tmux delivery failed", exc_info=True)
             return False
         logger.info(
-            "[agent:%s] typed message into captured tmux turn agent=%s",
+            "[agent:%s] preempted captured tmux turn agent=%s",
             conversation_id[:8], agent_name or "default")
         return True
 
@@ -423,11 +430,16 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                         logger.info(
                             "[agent:%s] preempt killed provider CLI — fast-restarting %s",
                             conversation_id[:8], _target or "default")
-                    _already_active = False
-                    with self._active_contexts_lock:
-                        self._active_claude_client.pop(_agent_key, None)
-                        if _preempt_killed:
+                    if _preempt_killed:
+                        _already_active = False
+                        with self._active_contexts_lock:
+                            self._active_claude_client.pop(_agent_key, None)
                             self._active_contexts.pop(_agent_key, None)
+                    else:
+                        logger.warning(
+                            "[agent:%s] live preempt was not acknowledged; "
+                            "keeping active turn and queuing message",
+                            conversation_id[:8])
 
             if (not _active_client and _active_turn and _user_text
                     and _modes_match):

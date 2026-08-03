@@ -359,6 +359,11 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     # A second blind Enter is precisely what unfolds a slow, multi-chip paste.
     # Further Enters are driven by an exact hook/MITM acknowledgement below.
     _INITIAL_SUBMIT_ENTERS = 1
+    # A Codex live preempt is not accepted until UserPromptSubmit or the MITM
+    # proves that this exact paste left the composer.  The generic pool's
+    # background verifier is too late: its caller has already suppressed the
+    # PendingQueue rescue by then.
+    _VERIFY_INTERRUPT_SYNCHRONOUS = True
 
     # `>_ OpenAI Codex (v...)` is the pane's PERMANENT header: it is drawn the
     # instant the TUI starts, long before the input box is interactive. Used as
@@ -440,6 +445,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         if event_service is not None:
             after_submit, after_request = submit_marker
             retries = 0
+            saw_other_submit = False
             per_attempt = window / 4.0
             while True:
                 proof = event_service.wait_for_prompt_submission(
@@ -459,17 +465,44 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                         "[codex-interactive] fragmented prompt submission for "
                         "%s; refusing further Enter retries", state.name)
                     return False
+                if proof == "other":
+                    # Enter did submit something, but not the prompt whose
+                    # receipt we are waiting for (typically a stale preempt
+                    # stranded in the composer).  Advance past that receipt and
+                    # give the expected prompt one full acknowledgement window;
+                    # do not claim that no UserPromptSubmit happened.
+                    if saw_other_submit:
+                        state.last_error = (
+                            "A different Codex prompt was submitted while the "
+                            "expected prompt remained unacknowledged")
+                        return False
+                    saw_other_submit = True
+                    try:
+                        after_submit, after_request = (
+                            event_service.submission_marker(state.session_token))
+                    except Exception:
+                        pass
+                    logger.warning(
+                        "[codex-interactive] a different prompt was submitted "
+                        "for %s; still waiting for the expected prompt",
+                        state.name)
+                    continue
                 if retries >= 3:
-                    state.last_error = (
-                        "Codex prompt submission was not acknowledged by "
-                        "UserPromptSubmit or the MITM after 3 Enter retries")
+                    if saw_other_submit:
+                        state.last_error = (
+                            "A different Codex prompt was submitted, but the "
+                            "expected prompt was not acknowledged after 3 Enter retries")
+                    else:
+                        state.last_error = (
+                            "The expected Codex prompt was not acknowledged by "
+                            "UserPromptSubmit or the MITM after 3 Enter retries")
                     logger.error(
                         "[codex-interactive] prompt submission failed for %s "
                         "after %d Enter retries", state.name, retries)
                     return False
                 retries += 1
                 logger.warning(
-                    "[codex-interactive] no UserPromptSubmit/MITM request for "
+                    "[codex-interactive] no matching UserPromptSubmit/MITM request for "
                     "%s; pressing Enter again (retry %d)",
                     state.name, retries)
                 if not self.send_keys(state, ["Enter"]):

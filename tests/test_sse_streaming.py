@@ -1169,6 +1169,86 @@ class TestAgentLoopStreaming(unittest.TestCase):
 
         PendingQueue.drop_cache()
 
+    def test_unacknowledged_live_preempt_keeps_owner_and_queues(self):
+        """A failed Codex receipt is not permission to start a second turn."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        from core.pending_queue import PendingQueue
+
+        conversation_id = "test-conv-live-preempt-refused"
+        agent_name = "assistant"
+        agent_key = f"{conversation_id}:{agent_name}"
+        started_threads = []
+
+        class _FakeStore:
+            def __init__(self, root):
+                self._store_dir = root / "convs"
+
+            def _conv_dir(self, cid, user_id=""):
+                path = self._store_dir / "u" / cid
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+            def resolve_owner(self, _cid):
+                return ""
+
+            def message_count(self, _cid):
+                return 0
+
+        class _ExistingThread:
+            name = f"agent-stream-{agent_key}"
+
+            def is_alive(self):
+                return True
+
+        class _NewThread:
+            def __init__(self, target, daemon=False, name=""):
+                self.target = target
+                self.daemon = daemon
+                self.name = name
+
+            def start(self):
+                started_threads.append(self)
+
+        class _LiveClient:
+            supports_live_preempt = True
+
+            def send_user_message(self, _text, **_kwargs):
+                return False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_store = _FakeStore(Path(tmp))
+            live_client = _LiveClient()
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=fake_store), \
+                    patch("core.conversation_writer.ConversationWriter.for_conversation") as writer_for_conv, \
+                    patch("tasks.ai.agent_streaming.threading.enumerate",
+                          return_value=[_ExistingThread()]), \
+                    patch("tasks.ai.agent_streaming.threading.Thread", _NewThread):
+                writer_for_conv.return_value.enqueue_message = MagicMock()
+                PendingQueue.drop_cache()
+                task = AgentLoopTask({"api_key": "k", "streaming": True})
+                with task._active_contexts_lock:
+                    task._active_claude_client[agent_key] = live_client
+                    task._active_contexts[agent_key] = {
+                        "_turn_mode": {"type": "user", "source_agent": None},
+                    }
+
+                ff = FlowFile(content=json.dumps({
+                    "message": "must remain durable",
+                    "conversation_id": conversation_id,
+                    "target_agent": agent_name,
+                    "msg_id": "m-refused-preempt",
+                }).encode())
+                result = task._execute_streaming(ff)
+
+                assert json.loads(result[0].get_content())["status"] == "queued"
+                assert task._active_claude_client[agent_key] is live_client
+                assert PendingQueue.for_agent(
+                    conversation_id, agent_name).peek_count() == 1
+                assert started_threads == []
+
+        PendingQueue.drop_cache()
+
     def test_interrupt_live_preempt_passes_active_context_user_id(self):
         from tasks.ai.agent_loop import AgentLoopTask, SOFT_INTERRUPT_USER_COMMAND
 

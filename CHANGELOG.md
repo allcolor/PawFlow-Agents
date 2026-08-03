@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.90] — 2026-08-03
+
+### Added
+
+- Added implementation-ready plans for remote CLI compute pools, relay enrollment
+  and storage, and resource ACL sharing.
+- Added WIP PFP package prototypes for a legal assistant, document templates, and
+  encrypted incremental backups, including their flows and template assets.
+
+### Fixed
+
+- `/cc_sessions` now exposes a merged Claude, Codex, and Gemini session view and
+  routes reads and writes to the owning provider root while preserving user
+  isolation.
+- LLM failover is sticky for the complete agent turn: after a provider failure,
+  later tool-result calls stay on the selected fallback, advance to the next
+  fallback if needed, and retry the main connection only on the next user turn.
+- PawCode and webchat conversation/agent selectors now list every LLM-capable
+  service, including `llmAggregator` and `llmFailover`, instead of only direct
+  `llmConnection` services.
+
 ## [1.0.0-beta.89] — 2026-08-03
 
 ### Security

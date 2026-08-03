@@ -43,6 +43,7 @@ def _register_all_services():
     import services.oauth_provider_service   # noqa: F401
     import services.auth_gateway_service    # noqa: F401
     import services.telegram_bot_service    # noqa: F401
+    import services.google_chat_service     # noqa: F401
     try:
         import services.discord_bot_service   # noqa: F401
     except ImportError:
@@ -246,6 +247,10 @@ def register_all_tasks():
     from tasks.io.telegram_api import TelegramApiTask
     from tasks.io.telegram_agent_client import (
         TelegramAgentClientTask, TelegramConversationBridgeTask)
+
+    # Google Chat
+    from tasks.io.google_chat import (
+        GoogleChatWebhookTask, GoogleChatAgentClientTask)
 
     # Discord
     from tasks.io.discord_receiver import DiscordReceiverTask

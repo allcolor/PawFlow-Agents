@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pawflow"
-version = "1.0.0b96"
+version = "1.0.0b97"
 description = "Self-hosted AI agent orchestration platform — Apache NiFi meets Claude Code"
 readme = "README.md"
 license = {text = "MIT"}
@@ -46,6 +46,7 @@ dependencies = [
     # Authentication
     "pyjwt>=2.8.0",
     "cryptography>=41.0.0",
+    "google-auth>=2.0.0",
     # Git integration
     "GitPython>=3.1.0",
     # Token counting

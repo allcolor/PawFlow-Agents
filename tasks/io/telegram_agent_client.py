@@ -144,11 +144,38 @@ class TelegramAgentClientTask(BaseTask):
             text = transcribed
 
         attachments = []
-        image_base64 = flowfile.get_attribute("telegram.image_base64") or ""
-        if image_base64:
+        message_type = flowfile.get_attribute("telegram.message_type") or ""
+        image_rows = []
+        if message_type == "photo_album":
+            try:
+                album = json.loads(text) if text else {}
+            except json.JSONDecodeError:
+                album = {}
+            if isinstance(album, dict) and album.get("type") == "photo_album":
+                image_rows = [
+                    row for row in album.get("photos") or []
+                    if isinstance(row, dict) and row.get("data_base64")
+                ]
+                caption = str(album.get("caption") or "").strip()
+                text = caption or f"[{len(image_rows)} photos attached]"
+        else:
+            image_base64 = flowfile.get_attribute("telegram.image_base64") or ""
+            if image_base64:
+                image_rows = [{
+                    "filename": "telegram_photo.jpg",
+                    "mime_type": "image/jpeg",
+                    "data_base64": image_base64,
+                }]
+
+        for index, image_row in enumerate(image_rows, 1):
+            image_base64 = str(image_row.get("data_base64") or "")
+            filename = str(
+                image_row.get("filename")
+                or f"telegram_photo_{index}.jpg")
+            mime_type = str(image_row.get("mime_type") or "image/jpeg")
             attachment = {
-                "filename": "telegram_photo.jpg",
-                "mime_type": "image/jpeg",
+                "filename": filename,
+                "mime_type": mime_type,
                 "data": image_base64,
             }
             try:
@@ -162,7 +189,7 @@ class TelegramAgentClientTask(BaseTask):
                     default=86400,
                 )
                 file_id = FileStore.instance().store(
-                    "telegram_photo.jpg", raw, "image/jpeg",
+                    filename, raw, mime_type,
                     conversation_id=conversation_id,
                     user_id=user_id,
                     agent_name=target_agent,
@@ -170,7 +197,7 @@ class TelegramAgentClientTask(BaseTask):
                     category="attachment",
                 )
                 attachment["file_id"] = file_id
-                attachment["url"] = f"/files/{file_id}/telegram_photo.jpg"
+                attachment["url"] = f"/files/{file_id}/{filename}"
             except Exception as exc:
                 logger.warning("Telegram image FileStore materialization failed: %s", exc, exc_info=True)
             attachments.append(attachment)

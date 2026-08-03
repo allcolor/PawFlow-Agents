@@ -19,12 +19,66 @@ import json
 import logging
 import mimetypes
 import queue
+import threading
 from typing import Any, Dict, List, Optional
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
 
 logger = logging.getLogger(__name__)
+
+_MEDIA_GROUP_DEBOUNCE_SECONDS = 0.5
+
+
+def _rich_inline_text(value: Any) -> str:
+    """Flatten inline rich-message fragments without losing their spacing."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(_rich_inline_text(item) for item in value)
+    if isinstance(value, dict):
+        if "text" in value:
+            return _rich_inline_text(value["text"])
+        if "content" in value:
+            return _rich_inline_text(value["content"])
+    return ""
+
+
+def _rich_blocks_text(blocks: Any) -> str:
+    """Render Telegram rich-message blocks as readable plain text."""
+    if not isinstance(blocks, list):
+        return ""
+    rendered: List[str] = []
+    for block in blocks:
+        if isinstance(block, str):
+            text = block
+        elif not isinstance(block, dict):
+            continue
+        elif block.get("type") == "list":
+            lines = []
+            for item in block.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                label = _rich_inline_text(item.get("label")).strip()
+                body = _rich_blocks_text(item.get("blocks")).strip()
+                line = " ".join(part for part in (label, body) if part)
+                if line:
+                    lines.append(line)
+            text = "\n".join(lines)
+        else:
+            text = _rich_inline_text(block.get("text"))
+            if not text:
+                text = _rich_blocks_text(block.get("blocks"))
+        text = text.strip()
+        if text:
+            rendered.append(text)
+    return "\n\n".join(rendered)
+
+
+def _rich_message_text(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return _rich_blocks_text(value.get("blocks"))
 
 
 class TelegramReceiverTask(BaseTask):
@@ -60,6 +114,8 @@ class TelegramReceiverTask(BaseTask):
         self._registered = False
         self._owner_id: Optional[str] = None
         self._pool_registered = False
+        self._media_group_lock = threading.Lock()
+        self._media_groups: Dict[tuple, Dict[str, Any]] = {}
 
     def initialize(self):
         self._ensure_registered()
@@ -141,11 +197,15 @@ class TelegramReceiverTask(BaseTask):
         bot_token = str(update.get("_bot_token") or "")
 
         # Determine content and type; download media files
+        rich_text = _rich_message_text(msg.get("rich_message"))
         if callback:
             content = str(callback.get("data") or "").encode("utf-8")
             msg_type = "callback_query"
         elif "text" in msg:
             content = msg["text"].encode("utf-8")
+            msg_type = "text"
+        elif rich_text:
+            content = rich_text.encode("utf-8")
             msg_type = "text"
         elif "document" in msg:
             caption = msg.get("caption", "")
@@ -170,7 +230,11 @@ class TelegramReceiverTask(BaseTask):
             largest = photos[-1] if photos else {}
             caption = msg.get("caption", "")
             file_id = largest.get("file_id", "")
-            file_data = self._try_download(file_id, bot_token=bot_token)
+            # Album downloads happen only after the debounce window closes.
+            # Keeping this callback fast lets every update in the group reach
+            # the buffer before its timer can fire.
+            file_data = "" if msg.get("media_group_id") else self._try_download(
+                file_id, bot_token=bot_token)
             content_text = caption or "(photo)"
             content = content_text.encode("utf-8")
             msg_type = "photo"
@@ -222,10 +286,92 @@ class TelegramReceiverTask(BaseTask):
 
         self._enrich_message_attributes(ff, update, msg)
 
+        media_group_id = str(msg.get("media_group_id") or "")
+        if msg_type == "photo" and media_group_id:
+            ff.set_attribute("telegram.media_group_id", media_group_id)
+            self._buffer_photo_group(
+                ff, media_group_id, file_id, file_data, str(caption or ""))
+            return
+
         try:
             self._queue.put_nowait(ff)
         except queue.Full:
             logger.warning("telegramReceiver queue full, dropping message")
+
+    def _buffer_photo_group(self, ff: FlowFile, media_group_id: str,
+                            file_id: str, data_base64: str,
+                            caption: str) -> None:
+        """Debounce Telegram album updates into one multi-photo FlowFile."""
+        source_id = ff.get_attribute("telegram.bot_token") or str(
+            self.config.get("service_id") or "")
+        key = (source_id, ff.get_attribute("telegram.chat_id") or "",
+               media_group_id)
+        with self._media_group_lock:
+            group = self._media_groups.get(key)
+            if group is None:
+                group = {
+                    "flowfile": ff,
+                    "photos": [],
+                    "caption": "",
+                    "bot_token": ff.get_attribute("telegram.bot_token") or "",
+                    "generation": 0,
+                    "timer": None,
+                }
+                self._media_groups[key] = group
+            group["photos"].append({
+                "file_id": file_id,
+                "data_base64": data_base64,
+                "mime_type": "image/jpeg",
+            })
+            if caption and not group["caption"]:
+                group["caption"] = caption
+            previous = group.get("timer")
+            if previous is not None:
+                previous.cancel()
+            group["generation"] += 1
+            generation = group["generation"]
+            timer = threading.Timer(
+                _MEDIA_GROUP_DEBOUNCE_SECONDS,
+                self._flush_media_group,
+                args=(key, generation),
+            )
+            timer.daemon = True
+            group["timer"] = timer
+            timer.start()
+
+    def _flush_media_group(self, key: tuple,
+                           generation: Optional[int] = None) -> None:
+        with self._media_group_lock:
+            group = self._media_groups.get(key)
+            if group is None:
+                return
+            if generation is not None and group["generation"] != generation:
+                return
+            self._media_groups.pop(key, None)
+            timer = group.get("timer")
+            if timer is not None:
+                timer.cancel()
+
+        ff = group["flowfile"]
+        photos = group["photos"]
+        caption = group["caption"]
+        for index, photo in enumerate(photos, 1):
+            photo["filename"] = f"telegram_photo_{index}.jpg"
+            if not photo["data_base64"]:
+                photo["data_base64"] = self._try_download(
+                    photo["file_id"], bot_token=group["bot_token"])
+        ff.set_content(json.dumps({
+            "type": "photo_album",
+            "caption": caption,
+            "photos": photos,
+        }, ensure_ascii=False).encode("utf-8"))
+        ff.set_attribute("telegram.message_type", "photo_album")
+        ff.delete_attribute("telegram.image_base64")
+        ff.delete_attribute("telegram.image_file_id")
+        try:
+            self._queue.put_nowait(ff)
+        except queue.Full:
+            logger.warning("telegramReceiver queue full, dropping photo album")
 
     def _enrich_message_attributes(self, ff: FlowFile, update: dict,
                                    msg: dict) -> None:
@@ -338,6 +484,13 @@ class TelegramReceiverTask(BaseTask):
             return []
 
     def cleanup(self):
+        with self._media_group_lock:
+            groups = list(self._media_groups.values())
+            self._media_groups.clear()
+        for group in groups:
+            timer = group.get("timer")
+            if timer is not None:
+                timer.cancel()
         if self._registered and self._owner_id:
             service_id = self.config.get("service_id", "")
             svc = self.get_service(service_id)

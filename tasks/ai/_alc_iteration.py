@@ -526,7 +526,9 @@ class _ALCIterationMixin:
             conversation_id=st.conversation_id, user_id=st.user_id,
             is_claude_code=st._is_claude_code,
             cancel_check=st.emitter.check_cancelled,
-            event_cid=st.ctx.get("_event_cid", ""))
+            event_cid=st.ctx.get("_event_cid", ""),
+            permission_mode_override=st.ctx.get(
+                "permission_mode_override", ""))
 
         # Another agent may have changed a file this one had read, while
         # these tools were running. Deliver the notice inside this turn

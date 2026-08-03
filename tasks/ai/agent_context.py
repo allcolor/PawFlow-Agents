@@ -153,6 +153,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
             ),
             "channel": st.channel,
             "request_msg_id": st.flowfile.get_attribute("agent.request_msg_id") or "",
+            "permission_mode_override": (
+                st.flowfile.get_attribute("agent.permission_mode") or ""),
             "active_agent_name": st._active_agent_name,  # MUST be non-empty — see _ensure_active_agent
             "active_llm_service": st._active_llm_service,
             "_llm_failover_attempt": st.failover_attempt,

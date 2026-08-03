@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.97] — 2026-08-03
+
+### Added
+
+- Added a deployable, owner-scoped Google Chat agent flow with Google-signed
+  webhook verification, deny-by-default space authorization, per-space
+  conversation bindings, threaded live replies, attachment ingestion, and
+  transport-enforced read-only turns by default.
+
+### Fixed
+
+- Telegram now renders structured `rich_message` payloads as readable text
+  instead of forwarding their raw JSON representation.
+- Telegram photo albums now debounce updates sharing a `media_group_id` into a
+  single agent turn and materialize every photo as its own FileStore attachment.
+  Album downloads run after grouping so network latency cannot split the album.
+
 ## [1.0.0-beta.96] — 2026-08-03
 
 ### Fixed

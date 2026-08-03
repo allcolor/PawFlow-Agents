@@ -31,7 +31,8 @@ class AgentToolExecMixin:
                             conversation_id: str = "", user_id: str = "",
                             is_claude_code: bool = False,
                             cancel_check: callable = None,
-                            event_cid: str = ""):
+                            event_cid: str = "",
+                            permission_mode_override: str = ""):
         """Execute tool calls with consecutive-call limiting + approval gate.
 
         Returns list of (tool_call, result_text) in original order.
@@ -142,6 +143,16 @@ class AgentToolExecMixin:
                 Extracted so it can run again on a call that changed after it
                 was approved (pre_tool_call hooks, $VAR resolution).
                 """
+                # A transport-scoped restriction is stronger than persistent
+                # conversation permissions.  It is stamped by AgentRuntimeAPI,
+                # not accepted from the external webhook payload.
+                if permission_mode_override == "read_only" and not _always_allow_plumbing:
+                    from core.tool_approval import ToolApprovalGate as _TurnGate
+                    if not _TurnGate.is_read_only_allowed(_eff_name, _eff_args):
+                        return (
+                            f"Error: Tool '{_eff_name}' is blocked for this "
+                            "read-only external turn."
+                        )
                 # Fine-grained tool permissions (override global mode)
                 _tool_perm = ""
                 _perm_mode = ""

@@ -28,6 +28,7 @@ _RESERVED_REQUEST_ATTRIBUTES = frozenset({
     "http.auth.principal",
     "agent.client_channel",
     "agent.request_msg_id",
+    "agent.permission_mode",
 })
 
 
@@ -41,6 +42,7 @@ class AgentRequest:
     msg_id: str = ""
     channel: str = "web"
     runtime_port: str = ""
+    permission_mode: str = ""
     source_attributes: Dict[str, str] = field(default_factory=dict)
     live_callback: Optional[Callable[[str, str, Any], None]] = None
 
@@ -219,6 +221,10 @@ class AgentRuntimeAPI:
         ff.set_attribute("http.auth.principal", request.user_id)
         ff.set_attribute("agent.client_channel", request.channel or "web")
         ff.set_attribute("agent.request_msg_id", turn_id)
+        if request.permission_mode:
+            if request.permission_mode not in {"read_only", "default"}:
+                raise ValueError("AgentRequest.permission_mode must be read_only or default")
+            ff.set_attribute("agent.permission_mode", request.permission_mode)
         # Provenance the flow wants carried, never identity. This is the one
         # place a bot's turn gets its authenticated principal -- every ACL gate
         # downstream reads it -- and source_attributes is the field a flow is

@@ -59,6 +59,8 @@ code duplication.
 | `getGCS` | Download an object from Google Cloud Storage |
 | `getS3` | Download an object from AWS S3 or compatible storage |
 | `getSFTP` | Download a file from an SFTP server |
+| `googleChatAgentClient` | Enforce owner/space policy and submit Google Chat messages to the shared agent runtime |
+| `googleChatWebhook` | Verify Google-signed Chat interactions and acknowledge them immediately |
 | `handleHTTPResponse` | Send an HTTP response back through the HTTP listener |
 | `httpReceiver` | Receive HTTP requests from a shared HTTP listener service |
 | `listSFTP` | List files on an SFTP server with filtering and tracking |
@@ -123,7 +125,12 @@ parameter resolves at execution time to a running flow port such as
 `agentRuntime` input port. When the parameter is empty, both regular messages
 and slash commands fall back to the live `agentLoop` instance. Command-handling
 failures are reported back to the Telegram chat as `Command failed: ...` instead
-of silently dropping the message. `telegramSend` retries once as plain text when
+of silently dropping the message. Incoming `rich_message` payloads are flattened
+to readable plain text before submission: inline fragments retain their spacing,
+paragraphs remain separated, and list labels are preserved instead of exposing
+the raw Telegram message JSON. Photos sharing a Telegram `media_group_id` are
+debounced into one album turn so every image reaches the selected agent as a
+separate attachment. `telegramSend` retries once as plain text when
 Telegram rejects the configured `parse_mode` with a 400 entity-parse error
 (unbalanced `_`/`*` in command names or code), so the reply is delivered
 unformatted instead of lost. The Telegram client task is concurrent so a second

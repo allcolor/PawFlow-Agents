@@ -244,6 +244,77 @@ class TestTelegramReceiverTask(unittest.TestCase):
         assert ff.get_attribute("telegram.message_id") == "42"
         assert ff.get_attribute("telegram.message_type") == "text"
 
+    def test_rich_message_to_flowfile_uses_readable_text(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        task = TelegramReceiverTask({"service_id": "tg"})
+        task._registered = True
+
+        task._on_update({
+            "update_id": 2,
+            "message": {
+                "message_id": 73747,
+                "from": {"id": 1725865697, "first_name": "Bilbo"},
+                "chat": {"id": 1725865697, "type": "private"},
+                "rich_message": {
+                    "blocks": [
+                        {
+                            "type": "paragraph",
+                            "text": (
+                                "INFERX SERVERLESSActive compute onlyAttach GPU "
+                                "capacity for inference, then release it when the "
+                                "workload is idle."
+                            ),
+                        },
+                        {
+                            "type": "paragraph",
+                            "text": [
+                                {"type": "bold", "text": "~$220"},
+                                " / month",
+                            ],
+                        },
+                        {
+                            "type": "list",
+                            "items": [
+                                {
+                                    "label": "•",
+                                    "blocks": [{
+                                        "type": "paragraph",
+                                        "text": "Pay for active GPU time",
+                                    }],
+                                },
+                                {
+                                    "label": "•",
+                                    "blocks": [{
+                                        "type": "paragraph",
+                                        "text": "Scale to zero between requests",
+                                    }],
+                                },
+                                {
+                                    "label": "•",
+                                    "blocks": [{
+                                        "type": "paragraph",
+                                        "text": "Reference serverless workload",
+                                    }],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            },
+        })
+
+        ff = task.execute()[0]
+        assert ff.get_content().decode("utf-8") == (
+            "INFERX SERVERLESSActive compute onlyAttach GPU capacity for "
+            "inference, then release it when the workload is idle.\n\n"
+            "~$220 / month\n\n"
+            "• Pay for active GPU time\n"
+            "• Scale to zero between requests\n"
+            "• Reference serverless workload"
+        )
+        assert ff.get_attribute("telegram.message_type") == "text"
+        assert "message_id" not in ff.get_content().decode("utf-8")
+
     def test_document_message(self):
         from tasks.io.telegram_receiver import TelegramReceiverTask
         task = TelegramReceiverTask({"service_id": "tg"})
@@ -296,6 +367,49 @@ class TestTelegramReceiverTask(unittest.TestCase):
         assert ff.get_content() == b"A photo"
         assert ff.get_attribute("telegram.message_type") == "photo"
         # image_base64/image_file_id only set when download succeeds (no service in test)
+
+    def test_photo_album_is_emitted_as_one_flowfile_with_every_image(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+
+        task = TelegramReceiverTask({"service_id": "tg"})
+        task._registered = True
+        downloaded = []
+
+        def download(file_id, bot_token=None):
+            downloaded.append(file_id)
+            return base64.b64encode(file_id.encode("utf-8")).decode("ascii")
+
+        task._try_download = download
+
+        for message_id, file_id, caption in (
+                (44, "photo_a", "Two photos"),
+                (45, "photo_b", "")):
+            task._on_update({
+                "update_id": message_id,
+                "message": {
+                    "message_id": message_id,
+                    "media_group_id": "album-1",
+                    "from": {"id": 123, "username": "testuser"},
+                    "chat": {"id": 456},
+                    "photo": [{"file_id": file_id, "width": 800, "height": 800}],
+                    "caption": caption,
+                },
+            })
+
+        assert task.has_pending_input() is False
+        assert downloaded == []
+        task._flush_media_group(("tg", "456", "album-1"))
+        album_ff = task.execute()[0]
+        payload = json.loads(album_ff.get_content().decode("utf-8"))
+
+        assert album_ff.get_attribute("telegram.message_type") == "photo_album"
+        assert album_ff.get_attribute("telegram.media_group_id") == "album-1"
+        assert payload["caption"] == "Two photos"
+        assert [row["file_id"] for row in payload["photos"]] == [
+            "photo_a", "photo_b"]
+        assert downloaded == ["photo_a", "photo_b"]
+        assert len(payload["photos"]) == 2
+        assert task.execute() == []
 
     def test_voice_download_uses_personal_bot_token(self):
         from tasks.io.telegram_receiver import TelegramReceiverTask
@@ -1108,6 +1222,83 @@ class TestTelegramAgentClientTask(unittest.TestCase):
             assert captured["attachments"][0]["url"] == "/files/file123/telegram_photo.jpg"
             assert captured["attachments"][0]["data"]
             fs.store.assert_called_once()
+        finally:
+            IdentityService.reset()
+            _p.USER_CONFIG_DIR = orig_ucd
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_agent_client_materializes_every_photo_in_telegram_album(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+
+        from core.identity_service import IdentityService
+        from core.agent_runtime_api import AgentFinalResult
+        from tasks.io.telegram_agent_client import TelegramAgentClientTask
+
+        tmp = tempfile.mkdtemp()
+        IdentityService.reset()
+        import core.paths as _p
+        orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(tmp) / "users"
+        try:
+            ids = IdentityService()
+            IdentityService._instance = ids
+            ids.link("alice", "telegram", "111111")
+            ids.set_active_conv("alice", "telegram", "conv1")
+            captured = {}
+
+            def submit(req):
+                captured["message"] = req.message
+                captured["attachments"] = req.attachments
+                return type("Submission", (), {
+                    "conversation_id": "conv1",
+                    "turn_id": "telegram:111111:m1",
+                    "wait_for_done": True,
+                    "status": "accepted",
+                })()
+
+            photos = [{
+                "filename": f"telegram_photo_{index}.jpg",
+                "mime_type": "image/jpeg",
+                "data_base64": base64.b64encode(data).decode("ascii"),
+            } for index, data in enumerate((b"image-one", b"image-two"), 1)]
+            ff = FlowFile(content=json.dumps({
+                "type": "photo_album",
+                "caption": "Compare these",
+                "photos": photos,
+            }).encode("utf-8"))
+            ff.set_attribute("telegram.user_id", "111111")
+            ff.set_attribute("telegram.chat_id", "111111")
+            ff.set_attribute("telegram.message_id", "m1")
+            ff.set_attribute("telegram.message_type", "photo_album")
+
+            task = TelegramAgentClientTask({
+                "agent_runtime_port": "pawflow_agent.agent_runtime_in"})
+            with patch.object(
+                    TelegramAgentClientTask,
+                    "_selected_agent_for_conversation",
+                    return_value="assistant"), \
+                    patch("core.file_store.FileStore.instance") as fs_instance, \
+                    patch(
+                        "core.agent_runtime_api.AgentRuntimeAPI.submit_message",
+                        side_effect=submit), \
+                    patch(
+                        "core.agent_runtime_api.AgentRuntimeAPI.wait_for_done",
+                        return_value=AgentFinalResult(
+                            "conv1", "telegram:111111:m1", response="ok")):
+                fs = MagicMock()
+                fs.store.side_effect = ["file-one", "file-two"]
+                fs_instance.return_value = fs
+                task.execute(ff)
+
+            assert captured["message"] == "Compare these"
+            assert len(captured["attachments"]) == 2
+            assert [row["file_id"] for row in captured["attachments"]] == [
+                "file-one", "file-two"]
+            assert [row["filename"] for row in captured["attachments"]] == [
+                "telegram_photo_1.jpg", "telegram_photo_2.jpg"]
+            assert fs.store.call_count == 2
         finally:
             IdentityService.reset()
             _p.USER_CONFIG_DIR = orig_ucd

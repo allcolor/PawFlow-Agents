@@ -1216,7 +1216,7 @@ class TestAgentServiceActions:
         assert by_id["db1"]["description"] == "Main DB"
         assert by_id["db2"]["enabled"] is False
 
-    def test_service_list_llm_capability_includes_direct_and_aggregator(self):
+    def test_service_list_llm_capability_includes_all_llm_services(self):
         self.reg.install(
             self.SCOPE, "testuser", "direct_llm", "llmConnection",
             config={"provider": "openai", "api_key": "test-key"})
@@ -1225,6 +1225,12 @@ class TestAgentServiceActions:
             config={
                 "aggregator_llm_service": "direct_llm",
                 "advisor_llm_services": ["advisor_llm"],
+            })
+        self.reg.install(
+            self.SCOPE, "testuser", "resilient", "llmFailover",
+            config={
+                "main_llm_service": "direct_llm",
+                "fallback_llm_services": ["backup_llm"],
             })
         self.reg.install(self.SCOPE, "testuser", "db1", SVC_TYPE)
 
@@ -1240,6 +1246,7 @@ class TestAgentServiceActions:
 
         assert by_id["direct_llm"]["service_type"] == "llmConnection"
         assert by_id["council"]["service_type"] == "llmAggregator"
+        assert by_id["resilient"]["service_type"] == "llmFailover"
         assert "db1" not in by_id
 
     def test_service_list_marks_stateless_tts_started_when_enabled(self):

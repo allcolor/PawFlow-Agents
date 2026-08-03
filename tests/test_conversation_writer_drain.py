@@ -120,6 +120,17 @@ def test_shutdown_all_handles_multiple_conversations(fake_store):
     assert len(fake_store.routed) == 5
 
 
+def test_flush_reports_whether_fifo_barrier_completed(fake_store, monkeypatch):
+    writer = ConversationWriter.for_conversation("conv-flush-result")
+    writer.enqueue_message(_msg(content="durable"))
+
+    assert writer.flush(timeout=5.0) is True
+    assert [item[2]["content"] for item in fake_store.routed] == ["durable"]
+
+    monkeypatch.setattr(writer, "_drain", lambda _timeout: False)
+    assert writer.flush(timeout=0.01) is False
+
+
 def test_enqueue_message_routes_through_append_message(fake_store):
     """enqueue_message dispatches to store.append_message with agent_name,
     user_id, ttl forwarded verbatim. One call = one routed message."""

@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 def _cli_service_id(st) -> str:
     """Return the same logical service id stamped on the provider client."""
+    physical = str(
+        getattr(getattr(st, "client", None), "active_service_id", "")
+        or "").strip()
+    if physical:
+        return physical
     active = str(getattr(st, "_active_llm_service", "") or "").strip()
     if active:
         return active
@@ -385,6 +390,24 @@ class _PACPhase1Mixin:
             raise ValueError(
                 f"No LLM service resolved for agent '{st._active_agent_name or '?'}'. "
                 f"Set llm_service in the conversation agent config.")
+
+        # A failover rebuild resolves the same logical composite service, then
+        # selects the physical child that must receive this cold context. Do it
+        # before provider/session detection so every derived decision describes
+        # that child rather than the main connection.
+        if hasattr(st.client, "select_attempt"):
+            st.client.select_attempt(
+                getattr(st, "failover_attempt", 0),
+                failures=getattr(st, "failover_failures", []),
+            )
+
+        # Per-agent resolution above may replace the task-level client after the
+        # initial wiring. Composite clients need the final resolver to reach
+        # flow-local children as well as registry-backed services.
+        if hasattr(st.client, "set_llm_resolver"):
+            st.client.set_llm_resolver(_client_resolver)
+        if hasattr(st.client, "set_tool_registry"):
+            st.client.set_tool_registry(st.registry)
 
         # Re-wire memory embeddings now that the conversation id and the final
         # active agent client are known. This enables conv-scoped

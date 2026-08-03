@@ -35,6 +35,7 @@ def _register_all_services():
     import services.distributed_cache        # noqa: F401
     import services.llm_connection           # noqa: F401
     import services.llm_aggregator            # noqa: F401
+    import services.llm_failover              # noqa: F401
     import services.summarizer_service       # noqa: F401
     import services.private_gateway          # noqa: F401
     import services.package_runtime_service  # noqa: F401

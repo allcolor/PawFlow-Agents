@@ -169,12 +169,10 @@ class ConversationWriter:
             evt.wait(timeout=30)
         return evt
 
-    def flush(self, timeout: float = 10.0):
-        """Block until all queued messages are written."""
+    def flush(self, timeout: float = 10.0) -> bool:
+        """Return whether all queued messages were written before timeout."""
         self._ensure_can_accept_writes()
-        evt = threading.Event()
-        self._queue.put({"_flush": True, "_done_event": evt})
-        evt.wait(timeout=timeout)
+        return self._drain(timeout)
 
     def enqueue_sse_events(self, sse_events: List[Dict],
                            wait: bool = False) -> Optional[threading.Event]:

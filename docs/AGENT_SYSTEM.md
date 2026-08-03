@@ -76,14 +76,19 @@ Agents can be created through:
 
 ### LLM Service Reference
 
-The `llm_service` field points to an LLM-capable service: either a direct
-`llmConnection` or a composite `llmAggregator`. Built-in direct providers are
+The `llm_service` field points to an LLM-capable service: a direct
+`llmConnection`, a composite `llmAggregator`, or an ordered `llmFailover`.
+Built-in direct providers are
 `openai`, `openai-responses`, `anthropic`, `claude-code`,
 `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`,
 `codex-interactive`, and `gemini`; OpenAI-compatible
 and Anthropic-compatible endpoints use `base_url` on the corresponding direct
 API provider. An `llmAggregator` consults its configured advisor connections in
-parallel and passes their internal plans to its final connection. Expression
+parallel and passes their internal plans to its final connection. An
+`llmFailover` always starts with its main connection and cold-starts each
+ordered fallback from PawFlow's latest persisted agent context when the active
+provider fails, so completed messages and tool work remain part of the turn.
+Expression
 language references like `${llm_default_service}` are resolved at runtime from
 the expression cascade: flow -> conversation -> user -> global.
 

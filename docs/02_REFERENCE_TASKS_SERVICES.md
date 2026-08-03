@@ -709,7 +709,29 @@ final LLM consumes tool results. Only final-LLM tokens populate the main
 `LLMResponse` counters; advisor usage is attached separately to internal raw
 response metadata and remains tracked by each underlying service.
 
-### 12.6. Distributed Map Cache Client (`distributedMapCache`)
+### 12.6. Fault-Tolerant LLM (`llmFailover`)
+
+**File**: `services/llm_failover.py`
+**Description**: Ordered main-to-fallback LLM continuation. Every logical call
+starts with the main connection. If an AgentLoop provider fails, PawFlow flushes
+the work already persisted by streaming callbacks, rebuilds the canonical
+context as a cold start, and continues with the next connection.
+
+**Parameters**:
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `main_llm_service` | service reference | Yes | - | Primary `llmConnection`, tried first on every logical call |
+| `fallback_llm_services` | JSON array | Yes | `[]` | Ordered, unique `llmConnection` IDs; at least one is required |
+
+Fallback handoff is control flow, not a user-visible LLM error. Persisted text,
+tool calls, and tool results remain visible and enter the next provider's cold
+context. A tool call that has no persisted result is represented to the next
+provider as an unknown outcome and must be inspected before it is retried.
+Cancellation and force stop never advance to another candidate. If all
+candidates fail, PawFlow returns one sanitized exhaustion error while retaining
+the work already completed in the conversation.
+
+### 12.7. Distributed Map Cache Client (`distributedMapCache`)
 
 **File**: `services/distributed_cache.py`
 **Description**: Distributed cache compatible with NiFi DistributedMapCacheClient

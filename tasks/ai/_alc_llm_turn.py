@@ -6,7 +6,9 @@ from core.llm_client import (
     CCCompactDetected,
     ColdStartRequired,
     DeltaContextRequired,
+    LLMMessage,
 )
+from services.llm_failover import LLMFailoverRequired
 from tasks.ai.agent_exceptions import AgentCancelled
 from tasks.ai.agent_compaction import COMPACT_TAIL_MESSAGES
 
@@ -19,6 +21,84 @@ logger = logging.getLogger(__name__)
 
 
 class _ALCLlmTurnMixin:
+    @staticmethod
+    def _alc_failover_context_messages(messages, conversation_id, handoff):
+        """Close ambiguous tool blocks and add one ephemeral resume directive."""
+        completed_tool_ids = {
+            getattr(message, "tool_call_id", "")
+            for message in messages
+            if getattr(message, "role", "") == "tool"
+            and getattr(message, "tool_call_id", "")
+        }
+        rebuilt = []
+        for message in messages:
+            rebuilt.append(message)
+            if getattr(message, "role", "") != "assistant":
+                continue
+            for tool_call in getattr(message, "tool_calls", None) or []:
+                tool_call_id = getattr(tool_call, "id", "") or ""
+                if not tool_call_id or tool_call_id in completed_tool_ids:
+                    continue
+                rebuilt.append(LLMMessage(
+                    role="tool",
+                    content=(
+                        "Provider handoff: this tool call has no persisted "
+                        "result, so its execution outcome is unknown. Inspect "
+                        "the current state before deciding whether to retry it."
+                    ),
+                    tool_call_id=tool_call_id,
+                    source={"type": "context", "name": "pawflow"},
+                    conversation_id=conversation_id,
+                ))
+                completed_tool_ids.add(tool_call_id)
+        rebuilt.append(LLMMessage(
+            role="system",
+            content=(
+                "The previous LLM provider became unavailable while working "
+                "on this turn. Continue from the current persisted state. Do "
+                "not restart completed work. Treat persisted tool results and "
+                "the current external state as authoritative; inspect any "
+                "operation whose outcome is marked unknown before retrying it."
+            ),
+            source={"type": "context", "name": "pawflow"},
+            conversation_id=conversation_id,
+        ))
+        return rebuilt
+
+    def _alc_handoff_to_fallback(self, st, handoff):
+        """Flush durable work, cold-rebuild, and continue on the next child."""
+        st.emitter.check_cancelled()
+        rebuild_args = dict(st.ctx.get("_context_rebuild_args") or {})
+        flowfile = rebuild_args.pop("flowfile", None)
+        if flowfile is None:
+            raise handoff
+
+        from core.conversation_writer import ConversationWriter
+
+        if not ConversationWriter.for_conversation(st.conversation_id).flush(
+                timeout=15.0):
+            raise RuntimeError(
+                "LLM fallback handoff stopped because persisted conversation "
+                "writes could not be confirmed")
+        logger.warning(
+            "[agent:%s] LLM provider handoff %s -> %s; rebuilding the "
+            "current persisted context as a cold start",
+            st.conversation_id[:8], handoff.failed_service_id,
+            handoff.next_service_id,
+        )
+        new_ctx = self._prepare_agent_context(
+            flowfile,
+            force_cold=True,
+            failover_attempt=handoff.next_attempt,
+            failover_failures=handoff.failures,
+            resume_checkpoint=st.ctx.get("_consumed_cancel_checkpoint"),
+            **rebuild_args,
+        )
+        new_ctx["messages"] = self._alc_failover_context_messages(
+            list(new_ctx.get("messages") or []), st.conversation_id, handoff)
+        self._alc_rebind_context(st, new_ctx)
+        return _ALC_CONTINUE
+
     def _alc_llm_turn(self, st):
         try:
             if not st._budget_precheck_done:
@@ -360,6 +440,8 @@ class _ALCLlmTurnMixin:
             st.iteration = max(0, st.iteration - 1)
             st.ctx["_iteration"] = st.iteration
             return _ALC_CONTINUE
+        except LLMFailoverRequired as handoff:
+            return self._alc_handoff_to_fallback(st, handoff)
         except Exception as llm_err:
             st.err_str = str(llm_err)
             # AgentCancelled may be wrapped in LLMClientError

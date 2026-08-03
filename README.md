@@ -259,6 +259,20 @@ An `llmAggregator` consults several direct `llmConnection` services in parallel 
 
 Advisor contexts are silent and ephemeral. With `enforce_read_only: true` (the default), advisors receive a fail-closed read-only tool set, including through CLI-backed providers; the final LLM keeps the conversation's normal tools and approval policy. Advisor usage is tracked separately so it does not inflate the main context gauge. See the [multi-LLM aggregator how-to](https://pawflow.allcolor.org/howtos.html#multi-llm-aggregator) and [technical guide](docs/llm_aggregator.md).
 
+### Fault-Tolerant LLM Service
+
+An `llmFailover` service always starts a logical call with its main `llmConnection`, then tries the configured fallbacks in order only when the active provider fails. Each new call starts with the main connection again.
+
+```json
+{
+  "type": "llmFailover",
+  "main_llm_service": "llm_primary",
+  "fallback_llm_services": ["llm_backup_1", "llm_backup_2"]
+}
+```
+
+During an agent turn, PawFlow flushes the work already persisted in the conversation and cold-starts the next provider from that current context. Completed text, tool calls, and tool results remain visible and are not replayed as if the turn had restarted. An unresolved tool call is marked with an unknown outcome so the fallback inspects state before retrying it. Cancellation and force stop never trigger failover; the user sees an error only when every configured connection has failed or PawFlow cannot confirm a safe handoff. See the [fault-tolerant LLM how-to](https://pawflow.allcolor.org/howtos.html#fault-tolerant-llm) and [technical service reference](docs/02_REFERENCE_TASKS_SERVICES.md#126-fault-tolerant-llm-llmfailover).
+
 ### Delegated Vision for Text-Only Models
 
 An LLM service with `supports_vision: false` can delegate every incoming image to another vision-enabled `llmConnection`. PawFlow asks that service for visible text, layout, UI controls, states, and approximate pixel coordinates, then replaces the image with that description only for the text model's outbound call. The stored conversation retains the original image.

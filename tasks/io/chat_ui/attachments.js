@@ -534,12 +534,7 @@ async function _openSkillAutocomplete(input) {
   return true;
 }
 
-/** Insert a newline at the caret, as Shift+Enter does natively.
- *
- * Ctrl+Enter is the newline in both CLI TUIs, and the webchat only ever
- * honoured Shift+Enter — so Ctrl+Enter did nothing at all here. Both work
- * now, grabbed or not.
- */
+/** Insert a newline at the caret, as Shift+Enter does natively. */
 function _composerInsertNewline(input) {
   const start = input.selectionStart;
   const end = input.selectionEnd;
@@ -551,16 +546,14 @@ function _composerInsertNewline(input) {
 
 function handleKey(e) {
   const input = e.target;
-  // Newline is a composer operation in both modes. Handle it before Grab so a
-  // held/releasing terminal session cannot reinterpret Ctrl+Enter as submit.
-  // The complete multiline value is sent later as one bracketed paste.
+  // Grab gets first refusal: there Shift+Enter is translated to the TUI's
+  // Ctrl+Enter. When Grab is inactive, modified Enter stays a local newline.
+  if (typeof grabHandleKey === 'function' && grabHandleKey(e)) return;
   if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)) {
     e.preventDefault();
     _composerInsertNewline(input);
     return;
   }
-  // Grab takes the keys it needs (Esc, Enter, Ctrl+C) before anything here.
-  if (typeof grabHandleKey === 'function' && grabHandleKey(e)) return;
   if (_skillAutocomplete.open) {
     if (e.key === 'Escape') { e.preventDefault(); _hideSkillAutocomplete(); return; }
     if (e.key === 'Enter') {

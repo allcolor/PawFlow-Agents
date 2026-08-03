@@ -310,9 +310,15 @@ Timing controls are read once when the provider modules are imported:
   failed. Default: `300` seconds.
 - `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS` is the millisecond alias for the same
   value. The seconds variable wins if both are set.
-- `PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` sets the delay between tmux paste-buffer and
-  the final `Enter` key. Default: `1.0` second, which avoids submitting before
-  the pasted prompt is fully present in slower terminal sessions.
+- `PAWFLOW_CCI_PASTE_SETTLE_SECONDS` sets the delay after `paste-buffer` and
+  before the first `Enter`. Claude Code defaults to `0.2` seconds. Codex uses
+  at most `0.2` seconds even when a larger inherited override is configured.
+- `PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` sets the delay between repeated submit
+  keys. Claude Code defaults to `1.0` second. Codex uses at most `0.2`
+  seconds and submits both normal prompts and live preempts with the fixed
+  sequence `Escape`, `Escape`, paste, 200ms, `Enter`, 200ms, `Enter`.
+  Codex submission verification is observation-only and never appends another
+  key after this sequence.
 - `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls idle container eviction. Default:
   `1800` seconds. A service request timeout can only extend this process-wide
   TTL, never shorten an explicitly configured or already larger value.
@@ -527,11 +533,11 @@ write into a terminal:
   mirrors it as a `channel="tmux"` user message and the MITM captures the
   answer, so the turn appears in the chat by the same route as a prompt typed
   at the tmux. Nothing is echoed locally, or the hook's copy would double it.
-- **A typed newline stays in the webchat composer.** `Ctrl+Enter` and
-  `Shift+Enter` insert it locally before Grab sees the key. The real tmux path
-  normalizes the otherwise-correct CSI-u modified Enter sequence into a plain
-  submit, so forwarding it cannot preserve the user's intent. The multiline
-  draft crosses the terminal only when the user finally submits it.
+- **A typed newline is created by the grabbed TUI.** Browsers reliably expose
+  `Shift+Enter`, so Grab flushes the current line and translates that chord to
+  the CSI-u `Ctrl+Enter` sequence (`ESC[13;5u`) understood by Codex, Claude
+  Code and Antigravity. Outside Grab, `Shift+Enter` remains a local webchat
+  newline and never submits the prompt.
 - **A block that is already multiline was pasted, not typed**, and goes as one
   bracketed paste (`ESC[200~` ... `ESC[201~`). Every non-empty terminal write,
   including a one-line prompt, then gets the bounded settle delay before its
@@ -544,13 +550,13 @@ pair in place instead of dropping the final event as a duplicate, and the
 capture verifies on exit that the coordinator's final text has a persisted row
 before publishing `active_released`.
 
-Keys, grabbed: `Enter` submits to the TUI; `Ctrl+Enter` and `Shift+Enter` insert
-a newline locally, exactly as they do ungrabbed. The complete multiline draft
-is sent later as one bracketed paste, because CSI-u modified Enter is normalized
-into a submit key by the real tmux path. `Esc` passes through, which
+Keys, grabbed: unmodified `Enter` submits to the TUI; `Shift+Enter` sends
+`Ctrl+Enter` to the tmux and therefore creates a newline in the TUI composer
+without submitting. `Esc` passes through, which
 is what Codex's *Esc to interrupt* needs; `Ctrl+C` passes through as `0x03`
 unless there is a selection, where it stays a copy. `Enter` on an empty
-composer still submits — that is how lines broken with `Ctrl+Enter` are sent.
+webchat composer still submits — that is how lines already held by the TUI are
+sent.
 Typing while a turn runs is allowed and queues in the TUI, exactly as it would
 for a human attached to the same tmux.
 

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.95] — 2026-08-03
+
+### Fixed
+
+- Codex interactive prompt injection now sends the exact
+  `Escape, Escape, paste, 200 ms, Enter, 200 ms, Enter` sequence for both
+  regular delivery and live interruption. Codex-specific timing is capped at
+  200 ms even when stale environment overrides request longer delays.
+- In Grab mode, `Shift+Enter` now flushes the current webchat line and sends
+  the CSI-u `Ctrl+Enter` sequence to the tmux, inserting a newline in Codex,
+  Claude Code, and Antigravity without submitting. Outside Grab it remains a
+  local webchat newline.
+
 ## [1.0.0-beta.94] — 2026-08-03
 
 ### Added

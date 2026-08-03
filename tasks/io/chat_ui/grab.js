@@ -29,6 +29,10 @@ const _GRAB_OPEN_ACTIONS = {
   'codex-interactive': 'open_cc_interactive_terminal',
   'antigravity-interactive': 'open_antigravity_interactive_terminal',
 };
+// Browsers reliably expose Shift+Enter, while the interactive TUIs use the
+// CSI-u Ctrl+Enter sequence for a newline in their own composer. Grab translates
+// between those two chords instead of creating the newline in the web textarea.
+const _GRAB_CTRL_ENTER = '\x1b[13;5u';
 // A block that arrives already multiline did not come from the keyboard -- it
 // was pasted into the composer. Bracketed paste is how a terminal says "this
 // is one paste", so the TUI collapses it into a chip instead of reading each
@@ -268,7 +272,17 @@ function grabHandleKey(e) {
     _grabWrite('\x1b');
     return true;
   }
-  if (e.key === 'Enter') {
+  // Shift+Enter never submits. Flush the line being typed, then ask Codex,
+  // Claude Code or Antigravity to create the newline in its own composer.
+  if (e.key === 'Enter' && e.shiftKey) {
+    e.preventDefault();
+    _grabFlush(input);
+    _grabWrite(_GRAB_CTRL_ENTER);
+    return true;
+  }
+  // Only an unmodified Enter submits. Other modified Enter chords fall back to
+  // the webchat newline handler when the browser reports their modifiers.
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     grabSend();
     return true;

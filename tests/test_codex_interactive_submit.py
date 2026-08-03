@@ -174,15 +174,15 @@ def test_claude_code_verify_returns_when_its_text_left_the_box(monkeypatch):
     assert _harness(pool, [pane], monkeypatch) == []
 
 
-def test_paste_settle_is_longer_for_codex_than_for_claude_code(monkeypatch):
+def test_codex_paste_settle_defaults_to_200ms(monkeypatch):
     monkeypatch.delenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", raising=False)
-    assert CodexInteractivePool()._paste_settle_seconds() == 1.0
+    assert CodexInteractivePool()._paste_settle_seconds() == 0.2
     assert InteractiveClaudeCodePool()._paste_settle_seconds() == 0.2
 
 
-def test_paste_settle_env_override_still_wins(monkeypatch):
+def test_codex_paste_settle_caps_stale_env_override_at_200ms(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "2.5")
-    assert CodexInteractivePool()._paste_settle_seconds() == 2.5
+    assert CodexInteractivePool()._paste_settle_seconds() == 0.2
     assert InteractiveClaudeCodePool()._paste_settle_seconds() == 2.5
 
 
@@ -432,8 +432,9 @@ def test_successful_codex_paste_latches_readiness(monkeypatch):
     assert state.prompt_ready is True
 
 
-def test_the_prompt_is_pasted_once_when_the_screen_reacts(monkeypatch):
-    """The user's report, end to end: one paste, then Enter.
+def test_the_prompt_is_pasted_once_then_submitted_with_two_spaced_enters(
+        monkeypatch):
+    """The canonical Codex transport uses one paste and two spaced Enters.
 
     Before the comparison this pasted the prompt three times and then failed
     the send, leaving a composer holding it four chips deep.
@@ -465,12 +466,20 @@ def test_the_prompt_is_pasted_once_when_the_screen_reacts(monkeypatch):
     monkeypatch.setattr(pool, "send_keys",
                         lambda _state, batch: events.append(
                             ("keys", list(batch))) or True)
-    monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
+    # Stale deployment overrides must not push Codex above the 200ms cap.
+    monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "1.0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "1.0")
+    monkeypatch.setattr(
+        ccip.time, "sleep",
+        lambda seconds: events.append(("sleep", seconds)))
 
     assert pool.send_text(state, PROMPT) is True
     assert events == [
         ("keys", ["Escape", "Escape"]),
         ("paste", PROMPT),
+        ("sleep", 0.2),
+        ("keys", ["Enter"]),
+        ("sleep", 0.2),
         ("keys", ["Enter"]),
     ]
 
@@ -575,12 +584,19 @@ def test_codex_interrupt_waits_for_receipt_before_reporting_success(monkeypatch)
     monkeypatch.setattr(pool, "send_keys",
                         lambda _state, keys: events.append(
                             ("keys", list(keys))) or True)
-    monkeypatch.setattr(ccip.time, "sleep", lambda _seconds: None)
+    monkeypatch.setenv("PAWFLOW_CCI_PASTE_SETTLE_SECONDS", "1.0")
+    monkeypatch.setenv("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "1.0")
+    monkeypatch.setattr(
+        ccip.time, "sleep",
+        lambda seconds: events.append(("sleep", seconds)))
 
     assert pool.send_interrupt(state, PROMPT) is True
     assert events == [
         ("keys", ["Escape", "Escape"]),
         ("paste", PROMPT),
+        ("sleep", 0.2),
+        ("keys", ["Enter"]),
+        ("sleep", 0.2),
         ("keys", ["Enter"]),
     ]
     assert len(service.calls) == 1

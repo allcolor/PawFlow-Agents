@@ -55,6 +55,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     _instance_lock = threading.Lock()
     _REQUIRE_PROMPT_READY = False
     _INITIAL_SUBMIT_ENTERS = 2
+    _SUBMIT_DELAY_DEFAULT = 1.0
     # Claude Code keeps the historical low-latency preempt: its pane verifier
     # runs in the background.  Codex overrides this because its event receipt is
     # the only trustworthy proof that the TUI accepted the interrupted prompt.
@@ -454,10 +455,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 f"prompt never reached the composer after "
                 f"{self._PASTE_ATTEMPTS} paste attempts")
             return False
-        try:
-            delay = float(os.environ.get("PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "1.0") or "1.0")
-        except ValueError:
-            delay = 1.0
+        delay = self._submit_delay_seconds()
         # Claude submits with a double Enter separated by a short wait. At container
         # restart the Claude Code TUI can drop the first Enter before its input
         # box is focused, leaving the pasted prompt unsent. The first Enter
@@ -569,6 +567,14 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 or self._PASTE_SETTLE_DEFAULT))
         except ValueError:
             return self._PASTE_SETTLE_DEFAULT
+
+    def _submit_delay_seconds(self) -> float:
+        try:
+            return max(0.0, float(os.environ.get(
+                "PAWFLOW_CCI_SUBMIT_DELAY_SECONDS", "")
+                or self._SUBMIT_DELAY_DEFAULT))
+        except ValueError:
+            return self._SUBMIT_DELAY_DEFAULT
 
     # A TUI that collapses pasted text into a placeholder chip
     # ("[Pasted Content 24470 chars]") never shows the text itself, so the
@@ -991,8 +997,14 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         settle = self._paste_settle_seconds()
         if settle > 0:
             time.sleep(settle)
-        if not self.send_keys(state, ["Enter"]):
-            return False
+        enter_count = (max(1, int(self._INITIAL_SUBMIT_ENTERS))
+                       if canonical_input else 1)
+        delay = self._submit_delay_seconds()
+        for index in range(enter_count):
+            if not self.send_keys(state, ["Enter"]):
+                return False
+            if index + 1 < enter_count and delay > 0:
+                time.sleep(delay)
         if not canonical_input and settle > 0:
             time.sleep(settle)
         # _verify_submitted polls the tmux pane / submission receipts for up to

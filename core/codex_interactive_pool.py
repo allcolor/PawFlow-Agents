@@ -356,9 +356,11 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     # when it never announces itself. Claude Code keeps its own 45s: its
     # markers are dependable, and nothing here changes that pool.
     _PROMPT_READY_SECONDS = 12.0
-    # Exactly one Enter follows the paste. Verification is observation-only;
-    # side-channel timing must never inject another key into the live TUI.
-    _INITIAL_SUBMIT_ENTERS = 1
+    # Codex can drop the first Enter after a pasted prompt. The transport sends
+    # two Enters 200ms apart; verification remains observation-only and never
+    # injects any additional key into the live TUI.
+    _INITIAL_SUBMIT_ENTERS = 2
+    _SUBMIT_DELAY_DEFAULT = 0.2
     # A Codex live preempt is not accepted until UserPromptSubmit or the MITM
     # proves that this exact paste left the composer.  The generic pool's
     # background verifier is too late: its caller has already suppressed the
@@ -381,10 +383,13 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     # reported success. The chip is the signal instead.
     _PASTE_CHIP_MARKERS = ("[pasted content", "[image ")
     _COMPOSER_PROMPT_PREFIX = ">"
-    # A multi-kilobyte paste takes the Codex TUI longer to ingest than the
-    # 0.2s that suits Claude Code; an Enter landing inside that window is
-    # swallowed into the attachment as a newline instead of submitting.
-    _PASTE_SETTLE_DEFAULT = 1.0
+    _PASTE_SETTLE_DEFAULT = 0.2
+
+    def _paste_settle_seconds(self) -> float:
+        return min(0.2, super()._paste_settle_seconds())
+
+    def _submit_delay_seconds(self) -> float:
+        return min(0.2, super()._submit_delay_seconds())
 
     def _wait_for_prompt_ready(self, name: str, *,
                                timeout: Optional[float] = None) -> bool:
@@ -413,18 +418,13 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         return ""
 
     def _prepare_prompt_input(self, state: InteractiveContainer) -> bool:
-        """Put Codex in its canonical input state: Esc, Esc, then paste.
+        """Put Codex in its canonical input state before the paste.
 
         The two Esc keys stop or dismiss any active TUI mode before PawFlow
-        touches the composer. Waiting for the redraw here keeps the subsequent
-        paste and its single Enter out of Codex's transition window.
+        touches the composer. The shared send path waits after the paste, where
+        the delay prevents Enter from being swallowed into the attachment.
         """
-        if not self.send_keys(state, ["Escape", "Escape"]):
-            return False
-        settle = self._paste_settle_seconds()
-        if settle > 0:
-            time.sleep(settle)
-        return True
+        return self.send_keys(state, ["Escape", "Escape"])
 
     def _paste_landed(self, state: InteractiveContainer, text: str,
                       before_pane: str = "") -> bool:
@@ -439,14 +439,15 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     def _verify_submitted(self, state: InteractiveContainer, text: str, *,
                           event_service=None,
                           submit_marker=(0, 0)):
-        """Observe whether the canonical single Enter submitted the prompt.
+        """Observe whether the canonical double Enter submitted the prompt.
 
         Codex collapses pasted text into a chip, so the inherited
         ``fragment absent == submitted`` rule is never valid here.  When a new
         Codex release boxes the composer and the chip probe cannot locate it,
         absence of a running marker is deliberately treated as inconclusive.
         Verification never sends keys: the transport sequence is exactly
-        Esc, Esc, paste, Enter, and side-channel timing must not mutate it.
+        Esc, Esc, paste, 200ms, Enter, 200ms, Enter, and side-channel timing
+        must not mutate it.
         """
         configured = os.environ.get("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "")
         try:
@@ -513,7 +514,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                 if holds is True:
                     state.last_error = (
                         "The expected Codex prompt remains in the composer "
-                        "after the canonical Enter")
+                        "after the canonical Enter sequence")
                     logger.error(
                         "[codex-interactive] prompt remains unsubmitted for %s",
                         state.name)
@@ -543,7 +544,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         if last_holds is True:
             state.last_error = (
                 "The expected Codex prompt remains in the composer after the "
-                "canonical Enter")
+                "canonical Enter sequence")
             return False
         logger.warning(
             "[codex-interactive] submit verification inconclusive for %s",

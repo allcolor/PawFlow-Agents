@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cabinet — Tableau de bord</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Cabinet — Tableau de bord</h1>
+  <p class="subtitle">Rappel automatique, jamais un fait acquis — à vérifier avant toute action.</p>
+</header>
+
+<main>
+  <section class="agents" aria-label="Agents">
+    <h2>Parler à un agent</h2>
+    <div class="agent-grid" id="agent-grid"></div>
+  </section>
+
+  <section class="panel" aria-label="Échéances">
+    <h2>Échéances actives</h2>
+    <div id="delais-status" class="status"></div>
+    <table id="delais-table" class="data-table" hidden>
+      <thead>
+        <tr><th>Urgence</th><th>Dossier</th><th>Acte</th><th>Échéance</th><th>Confirmé</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel" aria-label="Dossiers">
+    <h2>Dossiers</h2>
+    <table id="dossiers-table" class="data-table" hidden>
+      <thead>
+        <tr><th>Client</th><th>Statut</th><th>Dernière activité</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel" aria-label="Réglages">
+    <h2>Écran par défaut</h2>
+    <p class="muted">Choisissez la conversation qui s'ouvre automatiquement à la connexion.</p>
+    <div class="default-row">
+      <input id="conv-input" type="text" placeholder="ID de conversation">
+      <button id="set-default-btn">Définir comme défaut</button>
+    </div>
+    <div id="default-status" class="status"></div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

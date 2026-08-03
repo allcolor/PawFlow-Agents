@@ -1,0 +1,29 @@
+:root { color-scheme: light dark; }
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  background: Canvas;
+  color: CanvasText;
+}
+.topbar { padding: 16px 24px; border-bottom: 1px solid #8884; }
+.topbar h1 { margin: 0 0 4px; font-size: 20px; }
+.subtitle { margin: 0; color: #888; font-size: 13px; }
+main { max-width: 900px; margin: 0 auto; padding: 16px 24px 48px; }
+section.panel, section.agents { margin-top: 28px; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.agent-card { border: 1px solid #8884; border-radius: 10px; padding: 12px; }
+.agent-name { font-weight: 600; }
+.agent-tag { color: #888; font-size: 12px; margin: 4px 0 10px; }
+.agent-card button, .default-row button {
+  border: 1px solid #8886; border-radius: 8px; background: transparent;
+  color: inherit; padding: 6px 10px; cursor: pointer; font-size: 13px;
+}
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th, .data-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #8883; }
+.urg-high { background: rgba(220, 50, 50, 0.12); }
+.urg-mid { background: rgba(220, 160, 30, 0.12); }
+.status { color: #888; font-size: 13px; margin-bottom: 6px; }
+.muted { color: #888; font-size: 13px; }
+.default-row { display: flex; gap: 8px; margin-top: 6px; }
+#conv-input { flex: 1; padding: 6px 8px; border-radius: 8px; border: 1px solid #8886; background: transparent; color: inherit; }

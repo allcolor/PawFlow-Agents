@@ -1,0 +1,57 @@
+{
+  "id": "deadline-watch",
+  "name": "deadline_watch",
+  "version": "0.1.0",
+  "description": "Daily CRON: reads active procedural deadlines due within 30 days from the legal.db SQLite table, builds a J-1/J-7/J-30 digest, emails it to the firm's own inbox as an internal reminder. Never creates/updates calendar events automatically and never emails a third party (guardrail 7.2) — calendar sync stays a deliberate human/agent action.",
+  "parameters": {
+    "db_path": "/workspace/legal.db",
+    "cron_schedule": "0 7 * * *",
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "reminder_email": "CHANGE_ME@example.com"
+  },
+  "tasks": {
+    "trigger": {
+      "type": "cronTrigger",
+      "parameters": {
+        "schedule": "${cron_schedule}"
+      }
+    },
+    "scan_deadlines": {
+      "type": "executeSQL",
+      "parameters": {
+        "db_path": "${db_path}",
+        "sql_query": "SELECT d.id, d.dossier_id, do.client, d.type_acte, d.date_butoir, d.confirme_par_avocate, CAST(julianday(d.date_butoir) - julianday('now') AS INTEGER) AS jours_restants FROM delais d JOIN dossiers do ON do.id = d.dossier_id WHERE d.statut = 'actif' AND date(d.date_butoir) <= date('now', '+30 days') ORDER BY d.date_butoir"
+      }
+    },
+    "build_digest": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "import json\nrows = json.loads(flow_file.content.decode('utf-8'))\n\ndef bucket(j):\n    if j <= 1:\n        return 'J-1 (URGENT)'\n    if j <= 7:\n        return 'J-7'\n    return 'J-30'\n\ngroups = {'J-1 (URGENT)': [], 'J-7': [], 'J-30': []}\nfor r in rows:\n    j = r.get('jours_restants')\n    j = 0 if j is None else int(j)\n    groups[bucket(j)].append(r)\n\nlines = []\nlines.append('Bonjour,')\nlines.append('')\nlines.append(\"Voici le point sur les echeances de procedure a moins de 30 jours (rappel automatique, a verifier par vous avant toute action - aucun delai ci-dessous n'est un fait acquis) :\")\nlines.append('')\nany_row = False\nfor label in ('J-1 (URGENT)', 'J-7', 'J-30'):\n    items = groups[label]\n    if not items:\n        continue\n    any_row = True\n    lines.append(f'== {label} ==')\n    for r in items:\n        confirme = 'confirme' if r.get('confirme_par_avocate') else 'NON CONFIRME PAR L AVOCATE'\n        lines.append(f\"- Dossier {r.get('client')} (id {r.get('dossier_id')}) - {r.get('type_acte')} - echeance {r.get('date_butoir')} ({confirme})\")\n    lines.append('')\nif not any_row:\n    lines.append('Aucune echeance active a moins de 30 jours.')\nlines.append('')\nlines.append('Ce message est un rappel interne automatique. Aucun evenement de calendrier ni email tiers n a ete cree ou envoye par ce flow.')\n\nflow_file.content = '\\n'.join(lines).encode('utf-8')\nflow_file.set_attribute('digest.deadline_count', str(len(rows)))\n"
+      }
+    },
+    "send_digest_email": {
+      "type": "sendEmail",
+      "parameters": {
+        "smtp_host": "${smtp_host}",
+        "smtp_port": "${smtp_port}",
+        "use_tls": true,
+        "auth_type": "oauth2",
+        "oauth2_client_id": "${anonymous.legal_assistant_gmail_client_id}",
+        "oauth2_client_secret": "${anonymous.legal_assistant_gmail_client_secret}",
+        "oauth2_refresh_token": "${anonymous.legal_assistant_gmail_refresh_token}",
+        "from": "${reminder_email}",
+        "to": "${reminder_email}",
+        "subject": "Echeances de procedure - rappel quotidien"
+      }
+    }
+  },
+  "relations": [
+    {"from": "trigger", "to": "scan_deadlines", "type": "success"},
+    {"from": "scan_deadlines", "to": "build_digest", "type": "success"},
+    {"from": "build_digest", "to": "send_digest_email", "type": "success"}
+  ],
+  "entries": ["trigger"],
+  "fqn": "firm.legal-assistant.deadline-watch:0.1.0",
+  "package": "firm.legal-assistant"
+}

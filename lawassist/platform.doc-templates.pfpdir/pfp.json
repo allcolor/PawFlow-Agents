@@ -1,0 +1,33 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "platform.doc-templates",
+  "version": "0.1.0",
+  "description": "Generic document templating: ${...} placeholder substitution with an explicit missing marker (never a guessed value), plus a starter set of legal letter templates. Independent of any legal-specific package.",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": "ed25519:REPLACE_WITH_PUBLIC_KEY"
+  },
+  "origin": {"source": "/workspace/lawassist/platform.doc-templates.pfpdir"},
+  "objects": [
+    {
+      "id": "tool:render_template",
+      "type": "tool",
+      "name": "render_template",
+      "path": "content/tools/render_template/main.py",
+      "runner": "python",
+      "description": "Substitutes ${path.to.var} placeholders in a template text from a JSON variables object. Missing variables are left as an explicit [var missing] marker, never guessed. Pure function: no filesystem or host tool/service calls.",
+      "parameters": {
+        "template": {"type": "string", "required": true, "description": "Template text containing ${...} placeholders"},
+        "variables": {"type": "object", "required": false, "description": "Nested JSON object resolved by dotted path, e.g. {\"dossier\": {\"client\": \"...\"}}"}
+      },
+      "allowed_tools": [],
+      "allowed_services": []
+    },
+    {
+      "id": "skill:doc-templates",
+      "type": "skill",
+      "name": "doc-templates",
+      "path": "content/skills/doc-templates/SKILL.md"
+    }
+  ]
+}

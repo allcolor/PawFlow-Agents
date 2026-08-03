@@ -1,0 +1,76 @@
+{
+  "id": "weekly-digest",
+  "name": "weekly_digest",
+  "version": "0.1.0",
+  "description": "Weekly CRON (Monday morning): active matters count, deadlines at 7/14/30 days, and matters with no recent activity (a point the daily deadline-watch digest does not cover). Emailed to the firm's own inbox.",
+  "parameters": {
+    "db_path": "/workspace/legal.db",
+    "cron_schedule": "0 8 * * 1",
+    "stale_after_days": 21,
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "reminder_email": "CHANGE_ME@example.com"
+  },
+  "tasks": {
+    "trigger": {
+      "type": "cronTrigger",
+      "parameters": {
+        "schedule": "${cron_schedule}"
+      }
+    },
+    "scan_deadlines_upcoming": {
+      "type": "executeSQL",
+      "parameters": {
+        "db_path": "${db_path}",
+        "sql_query": "SELECT do.client, d.type_acte, d.date_butoir, CAST(julianday(d.date_butoir) - julianday('now') AS INTEGER) AS jours_restants FROM delais d JOIN dossiers do ON do.id = d.dossier_id WHERE d.statut = 'actif' AND date(d.date_butoir) <= date('now', '+30 days') ORDER BY d.date_butoir"
+      }
+    },
+    "scan_stale_matters": {
+      "type": "executeSQL",
+      "parameters": {
+        "db_path": "${db_path}",
+        "params": "{\"stale_days\": \"${stale_after_days}\"}",
+        "sql_query": "SELECT client, type_affaire, derniere_activite, CAST(julianday('now') - julianday(derniere_activite) AS INTEGER) AS jours_inactif FROM dossiers WHERE statut = 'actif' AND julianday('now') - julianday(derniere_activite) >= :stale_days ORDER BY jours_inactif DESC"
+      }
+    },
+    "merge_parts": {
+      "type": "mergeContent",
+      "parameters": {
+        "separator": "\n\n===STALE===\n\n",
+        "min_entries": 2
+      }
+    },
+    "build_digest": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "import json\ntext = flow_file.content.decode('utf-8', errors='replace')\nsep = '\\n\\n===STALE===\\n\\n'\nif sep not in text:\n    raise Exception('Separateur STALE absent du contenu fusionne.')\npart_a, part_b = text.split(sep, 1)\ntry:\n    deadlines = json.loads(part_a)\n    stale = json.loads(part_b)\nexcept Exception:\n    deadlines = json.loads(part_b)\n    stale = json.loads(part_a)\n\nlines = []\nlines.append('Digest hebdomadaire du cabinet - lundi matin.')\nlines.append('')\nlines.append(f'Dossiers actifs avec echeance a moins de 30 jours : {len(deadlines)}')\nfor r in deadlines:\n    j = r.get('jours_restants')\n    lines.append(f\"  - {r.get('client')} - {r.get('type_acte')} - {r.get('date_butoir')} (J{'-' if (j or 0) >= 0 else '+'}{abs(j or 0)})\")\nlines.append('')\nlines.append(f\"Dossiers actifs sans activite recente (seuil configure) : {len(stale)}\")\nfor r in stale:\n    lines.append(f\"  - {r.get('client')} - {r.get('type_affaire')} - derniere activite {r.get('derniere_activite')} ({r.get('jours_inactif')} j)\")\nlines.append('')\nlines.append('Rappel interne automatique - aucune action n a ete prise pour vous, ceci est un etat des lieux a verifier.')\n\nflow_file.content = '\\n'.join(lines).encode('utf-8')\n"
+      }
+    },
+    "send_digest_email": {
+      "type": "sendEmail",
+      "parameters": {
+        "smtp_host": "${smtp_host}",
+        "smtp_port": "${smtp_port}",
+        "use_tls": true,
+        "auth_type": "oauth2",
+        "oauth2_client_id": "${anonymous.legal_assistant_gmail_client_id}",
+        "oauth2_client_secret": "${anonymous.legal_assistant_gmail_client_secret}",
+        "oauth2_refresh_token": "${anonymous.legal_assistant_gmail_refresh_token}",
+        "from": "${reminder_email}",
+        "to": "${reminder_email}",
+        "subject": "Digest hebdomadaire du cabinet"
+      }
+    }
+  },
+  "relations": [
+    {"from": "trigger", "to": "scan_deadlines_upcoming", "type": "success"},
+    {"from": "trigger", "to": "scan_stale_matters", "type": "success"},
+    {"from": "scan_deadlines_upcoming", "to": "merge_parts", "type": "success"},
+    {"from": "scan_stale_matters", "to": "merge_parts", "type": "success"},
+    {"from": "merge_parts", "to": "build_digest", "type": "success"},
+    {"from": "build_digest", "to": "send_digest_email", "type": "success"}
+  ],
+  "entries": ["trigger"],
+  "fqn": "firm.legal-assistant.weekly-digest:0.1.0",
+  "package": "firm.legal-assistant"
+}

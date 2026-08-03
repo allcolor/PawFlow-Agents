@@ -1,0 +1,54 @@
+{
+  "id": "legal-db-init",
+  "name": "legal_db_init",
+  "version": "0.1.0",
+  "description": "One-shot: creates the dossiers/delais/pieces SQLite tables if they do not exist yet. Run once manually after install, then never again (idempotent CREATE TABLE IF NOT EXISTS).",
+  "parameters": {
+    "db_path": "/workspace/legal.db"
+  },
+  "tasks": {
+    "trigger": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content": "init"
+      }
+    },
+    "create_dossiers": {
+      "type": "executeSQL",
+      "parameters": {
+        "db_path": "${db_path}",
+        "sql_query": "CREATE TABLE IF NOT EXISTS dossiers (id INTEGER PRIMARY KEY AUTOINCREMENT, client TEXT NOT NULL, type_affaire TEXT, statut TEXT NOT NULL DEFAULT 'actif', date_ouverture TEXT NOT NULL DEFAULT (date('now')), derniere_activite TEXT NOT NULL DEFAULT (date('now')))"
+      }
+    },
+    "create_delais": {
+      "type": "executeSQL",
+      "parameters": {
+        "db_path": "${db_path}",
+        "sql_query": "CREATE TABLE IF NOT EXISTS delais (id INTEGER PRIMARY KEY AUTOINCREMENT, dossier_id INTEGER NOT NULL REFERENCES dossiers(id), type_acte TEXT NOT NULL, date_declenchement TEXT, duree_legale TEXT, date_butoir TEXT NOT NULL, statut TEXT NOT NULL DEFAULT 'actif', confirme_par_avocate INTEGER NOT NULL DEFAULT 0)"
+      }
+    },
+    "create_delais_index": {
+      "type": "executeSQL",
+      "parameters": {
+        "db_path": "${db_path}",
+        "sql_query": "CREATE INDEX IF NOT EXISTS idx_delais_butoir ON delais (date_butoir, statut)"
+      }
+    },
+    "create_pieces": {
+      "type": "executeSQL",
+      "parameters": {
+        "db_path": "${db_path}",
+        "sql_query": "CREATE TABLE IF NOT EXISTS pieces (id INTEGER PRIMARY KEY AUTOINCREMENT, dossier_id INTEGER NOT NULL REFERENCES dossiers(id), chemin_filestore TEXT NOT NULL, nom TEXT NOT NULL, date_ajout TEXT NOT NULL DEFAULT (date('now')))"
+      }
+    }
+  },
+  "relations": [
+    {"from": "trigger", "to": "create_dossiers", "type": "success"},
+    {"from": "create_dossiers", "to": "create_delais", "type": "success"},
+    {"from": "create_delais", "to": "create_delais_index", "type": "success"},
+    {"from": "create_delais_index", "to": "create_pieces", "type": "success"}
+  ],
+  "entries": ["trigger"],
+  "fqn": "firm.legal-assistant.legal-db-init:0.1.0",
+  "package": "firm.legal-assistant"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "nightly-backup",
+  "description": "Nightly encrypted incremental backup of /workspace to the configured destination filesystem service",
+  "prompt": "Call the incremental_backup tool with fixed parameters: source_path='/workspace', destination_service='<CONFIGURE_ME - e.g. a googleDrive or rcloneFilesystem service id already set up on this instance>', destination_root='_backup', exclude=['.git','node_modules','__pycache__','.venv']. This is a mechanical call with fixed arguments, not a judgment call - do not improvise source_path or destination_service, and do not skip the call. Report the tool's result (files_total/files_uploaded/files_unchanged/errors) as your completion summary. If the tool call fails (e.g. missing BACKUP_PASSPHRASE secret binding, or the destination service not configured), report the exact error rather than retrying silently.",
+  "criteria": "incremental_backup tool was called exactly once with the configured parameters, and its result (success or the exact error) is reported verbatim.",
+  "default_interval": "1/1d"
+}

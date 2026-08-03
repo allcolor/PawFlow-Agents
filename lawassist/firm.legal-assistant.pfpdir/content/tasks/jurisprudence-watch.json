@@ -1,0 +1,7 @@
+{
+  "name": "jurisprudence-watch",
+  "description": "Veille jurisprudentielle periodique sur le MCP legal-kb (justicelibre.org) a partir des mots-cles/articles suivis par le cabinet",
+  "prompt": "Interroge le MCP legal-kb (search_all / search_admin / search_judiciaire_libre / search_cedh / search_cjue selon pertinence) pour les mots-cles et articles de loi suivis par ce cabinet (a demander a l'avocate si la liste n'est pas encore connue, et a memoriser une fois obtenue). Compare aux dernieres decisions deja notifiees pour ne pas repeter une alerte deja envoyee. Pour chaque nouvelle decision pertinente : notifie sans jamais resumer sans citer la reference exacte de la decision et sa source (garde-fou de citation, skill legal-citations) - un simple lien plus reference suffit, la synthese ne se fait qu'a la demande explicite de l'avocate. Si le MCP legal-kb n'est pas disponible dans cette conversation, signale-le clairement et n'invente aucune decision.",
+  "criteria": "Au moins une recherche effectuee sur le MCP legal-kb pour chaque mot-cle/article suivi, avec soit une notification de nouvelle decision (reference + source, jamais un resume non sollicite), soit une confirmation explicite qu'aucune nouvelle decision pertinente n'a ete trouvee.",
+  "default_interval": "1/1d"
+}

@@ -1,0 +1,135 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "firm.legal-assistant",
+  "version": "0.1.0",
+  "description": "Assistant IA pour cabinet d'avocat : 4 agents (assistant/collègue/secrétaire/expert), discipline de citation, base structurée légère (SQLite), suivi des échéances et digest hebdomadaire. RAG juridique via le MCP externe justicelibre.org, installé directement comme ressource mcp:legal-kb (cf. README pour l'étape d'activation, distincte de l'install).",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": "ed25519:REPLACE_WITH_PUBLIC_KEY"
+  },
+  "origin": {"source": "/workspace/lawassist/firm.legal-assistant.pfpdir"},
+  "objects": [
+    {
+      "id": "skill:legal-citations",
+      "type": "skill",
+      "name": "legal-citations",
+      "path": "content/skills/legal-citations/SKILL.md"
+    },
+    {
+      "id": "skill:legal-workflows",
+      "type": "skill",
+      "name": "legal-workflows",
+      "path": "content/skills/legal-workflows/SKILL.md"
+    },
+    {
+      "id": "agent:assistant",
+      "type": "agent",
+      "name": "assistant",
+      "path": "content/agents/assistant.json"
+    },
+    {
+      "id": "agent:collegue",
+      "type": "agent",
+      "name": "collegue",
+      "path": "content/agents/collegue.json"
+    },
+    {
+      "id": "agent:secretaire",
+      "type": "agent",
+      "name": "secretaire",
+      "path": "content/agents/secretaire.json"
+    },
+    {
+      "id": "agent:expert",
+      "type": "agent",
+      "name": "expert",
+      "path": "content/agents/expert.json"
+    },
+    {
+      "id": "flow:legal-db-init",
+      "type": "flow",
+      "name": "firm.legal-assistant.legal-db-init:0.1.0",
+      "fqn": "firm.legal-assistant.legal-db-init:0.1.0",
+      "path": "content/flows/legal-db-init.json"
+    },
+    {
+      "id": "flow:deadline-watch",
+      "type": "flow",
+      "name": "firm.legal-assistant.deadline-watch:0.1.0",
+      "fqn": "firm.legal-assistant.deadline-watch:0.1.0",
+      "path": "content/flows/deadline-watch.json"
+    },
+    {
+      "id": "flow:weekly-digest",
+      "type": "flow",
+      "name": "firm.legal-assistant.weekly-digest:0.1.0",
+      "fqn": "firm.legal-assistant.weekly-digest:0.1.0",
+      "path": "content/flows/weekly-digest.json"
+    },
+    {
+      "id": "task_def:jurisprudence-watch",
+      "type": "task_def",
+      "name": "jurisprudence-watch",
+      "path": "content/tasks/jurisprudence-watch.json"
+    },
+    {
+      "id": "mcp_server:legal-kb",
+      "type": "mcp_server",
+      "name": "legal-kb",
+      "path": "content/mcp/legal-kb.json",
+      "description": "justicelibre.org — ~3M décisions + 1,75M articles versionnés, Streamable HTTP, gratuit, sans auth."
+    },
+    {
+      "id": "ui_extension:legal-shell",
+      "type": "ui_extension",
+      "name": "legal-shell",
+      "version_compat": "ui.v1",
+      "assets": {
+        "scripts": ["content/ui/legal_shell.js"],
+        "styles": []
+      },
+      "slots": [
+        {"slot": "resources_panel", "id": "legal.section", "label_key": "legal.section"}
+      ],
+      "hooks": [],
+      "handlers": [
+        {
+          "action": "legal.list_dossiers",
+          "path": "content/handlers/list_dossiers.py",
+          "runner": "python",
+          "description": "Lit dossiers/delais depuis legal.db (SQLite relay-local) pour le tableau de bord.",
+          "allowed_tools": [],
+          "allowed_services": []
+        },
+        {
+          "action": "legal.get_default",
+          "path": "content/handlers/get_default.py",
+          "runner": "python",
+          "description": "Lit la conversation par defaut de l'utilisateur (ecran par defaut apres connexion).",
+          "allowed_tools": [],
+          "allowed_services": []
+        },
+        {
+          "action": "legal.set_default",
+          "path": "content/handlers/set_default.py",
+          "runner": "python",
+          "description": "Enregistre la conversation par defaut de l'utilisateur.",
+          "allowed_tools": [],
+          "allowed_services": []
+        }
+      ]
+    },
+    {
+      "id": "web_app:legal-shell",
+      "type": "web_app",
+      "name": "legal-shell",
+      "version_compat": "webapp.v1",
+      "entry": "content/webapp/index.html",
+      "assets": [
+        "content/webapp/index.html",
+        "content/webapp/app.js",
+        "content/webapp/style.css"
+      ]
+    }
+  ]
+}

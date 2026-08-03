@@ -1,0 +1,77 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "platform.incremental-backup",
+  "version": "0.1.0",
+  "description": "Generic encrypted incremental backup to a remote filesystem service (googleDrive, rcloneFilesystem, or any other filesystem-tool-compatible destination already configured on this PawFlow instance). Independent of any business package.",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": "ed25519:REPLACE_WITH_PUBLIC_KEY"
+  },
+  "origin": {"source": "/workspace/lawassist/platform.incremental-backup.pfpdir"},
+  "objects": [
+    {
+      "id": "tool:incremental_backup",
+      "type": "tool",
+      "name": "incremental_backup",
+      "path": "content/tools/incremental_backup/main.py",
+      "runner": "python",
+      "description": "Diffs a relay-local source root against the last known encrypted manifest at a destination filesystem service, uploads only new/changed files (encrypted, opaque blob names), and writes a new manifest. Encryption is always on; never optional.",
+      "parameters": {
+        "source_path": {"type": "string", "required": true, "description": "Relay-local root directory to back up"},
+        "destination_service": {"type": "string", "required": true, "description": "Filesystem service id at the destination (e.g. a configured googleDrive or rcloneFilesystem service name)"},
+        "destination_root": {"type": "string", "required": false, "default": "_backup", "description": "Root path at the destination under which manifests/blobs are written"},
+        "exclude": {"type": "array", "required": false, "description": "Path segment names to skip anywhere in the tree (e.g. ['.git', 'node_modules', '__pycache__', '.venv'])"},
+        "keep_manifests": {"type": "integer", "required": false, "default": 30, "description": "How many timestamped manifests to retain (retention/purge)"}
+      },
+      "secrets": [
+        {"name": "backup_passphrase", "env": "BACKUP_PASSPHRASE", "required": true}
+      ],
+      "allowed_tools": [
+        {"name": "read"},
+        {"name": "write"},
+        {"name": "list_dir"},
+        {"name": "mkdir"},
+        {"name": "exists"},
+        {"name": "delete"}
+      ],
+      "allowed_services": []
+    },
+    {
+      "id": "tool:restore_from_backup",
+      "type": "tool",
+      "name": "restore_from_backup",
+      "path": "content/tools/restore_from_backup/main.py",
+      "runner": "python",
+      "description": "Reads a chosen (or latest) encrypted manifest from the destination and downloads+decrypts every referenced file into a relay-local target root. Requires the same passphrase used for the backup.",
+      "parameters": {
+        "destination_service": {"type": "string", "required": true, "description": "Filesystem service id the backup was written to"},
+        "destination_root": {"type": "string", "required": false, "default": "_backup", "description": "Root path at the destination the backup was written under"},
+        "manifest_timestamp": {"type": "string", "required": false, "description": "Timestamped manifest to restore from (omit for the latest known state)"},
+        "target_path": {"type": "string", "required": true, "description": "Relay-local root directory to restore into"}
+      },
+      "secrets": [
+        {"name": "backup_passphrase", "env": "BACKUP_PASSPHRASE", "required": true}
+      ],
+      "allowed_tools": [
+        {"name": "read"},
+        {"name": "write"},
+        {"name": "list_dir"},
+        {"name": "mkdir"},
+        {"name": "exists"}
+      ],
+      "allowed_services": []
+    },
+    {
+      "id": "task_def:nightly-backup",
+      "type": "task_def",
+      "name": "nightly-backup",
+      "path": "content/tasks/nightly-backup.json"
+    },
+    {
+      "id": "skill:backup-operations",
+      "type": "skill",
+      "name": "backup-operations",
+      "path": "content/skills/backup-operations/SKILL.md"
+    }
+  ]
+}

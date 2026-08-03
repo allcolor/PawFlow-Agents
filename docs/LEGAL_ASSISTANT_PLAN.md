@@ -477,6 +477,52 @@ prévu en §3.2/§9.4 comme *premier* réflexe) :**
    interne clarifié — lui seul justifie un éventuel auto-hébergement dédié
    (section 11) puisqu'il touche des pièces client non publiques.
 
+### 14bis. PageIndex — moteur de retrieval pour l'index RAG interne (2026-07-24)
+
+Point soulevé en discussion : [PageIndex](https://github.com/VectifyAI/PageIndex)
+(VectifyAI), un moteur de RAG "vectorless" — pas de base vectorielle ni de
+chunking, un arbre hiérarchique du document (façon table des matières) sur
+lequel un LLM navigue par raisonnement plutôt que par similarité cosinus.
+Vérifié directement sur le dépôt (README + LICENSE, 2026-07-24) : MIT,
+auto-hébergeable tel quel, offre cloud/MCP séparée et non requise.
+
+**Ce que ça change concrètement ici : rien pour le point 1 de la section 14
+(justicelibre.org couvre déjà codes/jurisprudence versionnés avec citation
+exacte, pas de raison de dupliquer), tout pour le point 3 — l'index RAG
+interne au cabinet** (dossiers passés, conclusions, mémos internes) qui
+reste, comme noté plus haut, la seule partie sans équivalent public et la
+seule qui doit rester sur l'infrastructure du cabinet.
+
+- **Pourquoi ça fait mieux que le plan embeddings+KG d'origine sur ce
+  périmètre précis** : une conclusion ou un mémo est structuré (parties,
+  moyens numérotés, sections) de la même façon qu'un code de loi l'est —
+  exactement le profil de document où PageIndex est conçu pour surpasser le
+  découpage par chunks (leur repère chiffré, non ré-audité indépendamment
+  ici : 98.7% sur FinanceBench, un benchmark de documents longs structurés).
+  Un chunk vectoriel coupé au milieu d'un moyen de droit produit une citation
+  interne incomplète ; un nœud d'arbre qui s'arrête à la section/l'article
+  du mémo ne le fait pas — même logique que le garde-fou §7.1, appliqué ici
+  aux pièces internes plutôt qu'au droit positif.
+- **Ne remplace pas la Knowledge Graph** (section 2/19) : la KG reste la
+  source des faits/relations du dossier (parties, dates, entités délai),
+  PageIndex ne sert que la recherche documentaire dans le corpus texte —
+  les deux se complètent, aucun chevauchement à arbitrer.
+- **Confidentialité (garde-fou §7.4, section 11)** : self-host uniquement
+  pour ce périmètre — utiliser le même LLM local/non-rétentif que le reste
+  (option 1 du menu confidentialité, section 11) pour la construction de
+  l'arbre et la navigation, jamais chat.pageindex.ai ni leur API/MCP cloud,
+  qui enverrait le contenu de pièces client non publiques à un tiers.
+- **Coût à chiffrer avant d'en faire un défaut** : la navigation d'arbre
+  fait plusieurs appels LLM successifs par requête (raisonnement à chaque
+  niveau), contre un lookup vectoriel quasi gratuit — à instrumenter via le
+  ledger d'usage (`core/usage_ledger.py`, section 11) pendant le mois pilote
+  déjà prévu, pas à estimer a priori.
+- **Intégration** : moteur candidat derrière le `service_definition` de
+  l'index interne (section 9.4, la partie de `legal-kb` qui n'est plus
+  couverte par le MCP justicelibre.org), reconstruit à chaque nouvelle pièce
+  versée plutôt que par le CRON périodique pensé pour un corpus public qui
+  change rarement — un dossier reçoit des pièces au fil de l'eau.
+
 ### 15. Modèle économique — comment vendre, quel prix
 
 **Ce que la recherche confirme sur le marché du haut de gamme** : Harvey AI
@@ -1146,3 +1192,9 @@ Knowledge Graph ne sert pas naturellement. Aucune de ces additions ne
 demande de nouvelle capacité plateforme — le socle déjà en place absorbe
 tout, ce qui confirme le diagnostic de départ : l'effort restant est
 l'assemblage et la discipline, pas l'infrastructure.
+
+La section 14bis affine ce même diagnostic sur le seul morceau du RAG qui
+n'a pas d'équivalent public (l'index interne au cabinet, point 3 de la
+section 14) : PageIndex (MIT, self-host) y remplace avantageusement le plan
+embeddings+KG d'origine sur ce périmètre précis, sans rien changer au reste
+de l'architecture ni au garde-fou de confidentialité déjà posé.

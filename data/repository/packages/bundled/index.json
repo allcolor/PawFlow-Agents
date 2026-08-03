@@ -1,0 +1,26 @@
+{
+  "format": "pawflow.bundled-packages.v1",
+  "packages": [
+    {
+      "package": "pawflow.comfy-cloud-mcp",
+      "version": "1.0.0",
+      "description": "Official Comfy Cloud MCP connection for image, video, audio, and 3D workflows.",
+      "artifact": "pawflow.comfy-cloud-mcp-1.0.0.pfp",
+      "sha256": "sha256:56a4eb43a1a5aab3c1247324bff7432bcc44c0540eb01d16203e5db52f3cc290",
+      "package_size": 1329,
+      "developer_key": "ed25519:Fk712SCmg3qvXOZ8FUEuT4DbFIhY1BC+96DSslF7H1w=",
+      "tags": [
+        "comfy",
+        "mcp",
+        "image",
+        "video",
+        "audio",
+        "3d",
+        "cloud"
+      ],
+      "objects": [
+        "mcp_server:comfy-cloud"
+      ]
+    }
+  ]
+}

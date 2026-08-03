@@ -230,3 +230,68 @@ def test_mcp_resource_form_exposes_http_and_stdio_configuration():
     assert "['args','json']" in src
     assert "['env','json']" in src
     assert "_showToolMcpFilterDialog" in src
+
+
+def test_comfy_cloud_mcp_secret_is_resolved_into_request_headers(monkeypatch):
+    from core.config_value import ConfigValue
+    from core.resource_store import ResourceStore
+    from services.tool_relay_service import ToolRelayService
+
+    marker = "$" + "{comfy_api_key}"
+
+    class FakeStore:
+        def list_all(self, resource_type, user_id, conversation_id=""):
+            assert (resource_type, user_id, conversation_id) == (
+                "mcp", "alice", "conv1")
+            return [{"name": "comfy_cloud"}]
+
+        def get_any(self, resource_type, name, user_id, conversation_id=""):
+            assert (resource_type, name, user_id, conversation_id) == (
+                "mcp", "comfy_cloud", "alice", "conv1")
+            return {
+                "name": "comfy_cloud",
+                "transport": "http",
+                "via": "direct",
+                "url": "https://cloud.comfy.org/mcp",
+                "auth": {"X-API-Key": marker},
+            }
+
+    class FakeRegistry:
+        def __init__(self):
+            self.handlers = []
+
+        def register(self, handler):
+            self.handlers.append(handler)
+
+    discovered = {}
+
+    def fake_discover(url, headers=None, timeout=0):
+        discovered.update(url=url, headers=headers, timeout=timeout)
+        return [{
+            "name": "generate_media",
+            "description": "",
+            "inputSchema": {"type": "object", "properties": {}},
+        }]
+
+    monkeypatch.setattr(ResourceStore, "instance", classmethod(
+        lambda cls: FakeStore()))
+    monkeypatch.setattr("core.tool_mcp_filters.is_enabled",
+                        lambda *args, **kwargs: True)
+    monkeypatch.setattr("core.expression._load_user_secrets", lambda user_id: {
+        "comfy_api_key": ConfigValue(value="comfy-secret"),
+    })
+    monkeypatch.setattr("core.tool_registry.discover_mcp_tools", fake_discover)
+
+    registry = FakeRegistry()
+    ToolRelayService({})._load_mcp_tools(
+        registry, "alice", "conv1", "assistant")
+
+    assert discovered == {
+        "url": "https://cloud.comfy.org/mcp",
+        "headers": {"X-API-Key": "comfy-secret"},
+        "timeout": 10,
+    }
+    assert len(registry.handlers) == 1
+    assert registry.handlers[0]._headers == {
+        "X-API-Key": "comfy-secret",
+    }

@@ -196,6 +196,70 @@ def test_mcp_server_stdio_install_carries_command_and_args(tmp_path, keypair):
     assert stored["env"] == {"EXAMPLE_MODE": "prod"}
 
 
+def test_mcp_server_install_binds_declared_secret_placeholders(tmp_path, keypair):
+    from core.config_store import ConfigStore
+    from core.config_value import ConfigValue
+    from core.paths import user_secrets_path
+
+    ConfigStore.save_secrets(user_secrets_path("alice"), {
+        "stored_comfy_key": ConfigValue(value="comfy-secret"),
+    })
+    pkgdir = _write_mcp_pkg(
+        tmp_path,
+        keypair,
+        mcp_data={
+            "transport": "http",
+            "url": "https://cloud.comfy.org/mcp",
+            "auth": {"X-API-Key": "${comfy_api_key}"},
+        },
+        secrets=[{
+            "name": "comfy_api_key",
+            "env": "COMFY_API_KEY",
+            "required": True,
+        }],
+    )
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+
+    installed = pfp_package.install_pfp(
+        built["path"],
+        user_id="alice",
+        include=["mcp_server:justicelibre"],
+        secret_bindings={"comfy_api_key": "stored_comfy_key"},
+    )
+
+    assert installed["ok"] is True
+    from core.resource_store import ResourceStore
+    stored = ResourceStore.instance().get("mcp", "justicelibre", "alice")
+    assert stored["auth"] == {"X-API-Key": "${stored_comfy_key}"}
+    assert installed["installed"][0]["secret_bindings"] == {
+        "comfy_api_key": "stored_comfy_key",
+    }
+
+    v2_pkgdir = _write_mcp_pkg(
+        tmp_path / "v2",
+        keypair,
+        version="1.1.0",
+        mcp_data={
+            "transport": "http",
+            "url": "https://cloud.comfy.org/mcp",
+            "auth": {"X-API-Key": "${comfy_api_key}"},
+        },
+        secrets=[{
+            "name": "comfy_api_key",
+            "env": "COMFY_API_KEY",
+            "required": True,
+        }],
+    )
+    v2 = pfp_package.build_pfp(
+        str(v2_pkgdir), private_key=keypair["private_key"])
+    updated = pfp_package.update_pfp(v2["path"], user_id="alice")
+
+    assert updated["ok"] is True
+    stored = ResourceStore.instance().get("mcp", "justicelibre", "alice")
+    assert stored["auth"] == {"X-API-Key": "${stored_comfy_key}"}
+
+
 def test_mcp_server_uninstall_removes_resource(tmp_path, keypair):
     _install_mcp_pkg(tmp_path, keypair)
     from core.resource_store import ResourceStore

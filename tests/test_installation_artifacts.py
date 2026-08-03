@@ -58,6 +58,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
         "agents/global",
         "configs",
         "flows/global/default",
+        "packages/bundled",
         "private_gateway_skin/global",
         "prompts/global",
         "skills/global",
@@ -77,6 +78,7 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     assert "stat -c '%g' /var/run/docker.sock" in entrypoint
     assert "usermod -aG" in entrypoint
     assert "exec gosu pawflow" in entrypoint
+
 
     relay_dev = Path("docker/relay-dev/Dockerfile").read_text(encoding="utf-8")
     assert "tini" in relay_dev
@@ -139,6 +141,37 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     relay_build = Path("docker/relay-dev/build.sh").read_text(encoding="utf-8")
     assert "-f \"$SCRIPT_DIR/Dockerfile\"" in relay_build
     assert '"$REPO_DIR"' in relay_build
+
+
+def test_comfy_cloud_mcp_is_a_bundled_uninstalled_pfp():
+    import hashlib
+    import json
+
+    from core import pfp_package
+
+    bundled = Path("data/repository/packages/bundled")
+    artifact = bundled / "pawflow.comfy-cloud-mcp-1.0.0.pfp"
+    index = json.loads((bundled / "index.json").read_text(encoding="utf-8"))
+    row = next(item for item in index["packages"]
+               if item["package"] == "pawflow.comfy-cloud-mcp")
+
+    assert artifact.is_file()
+    assert row["artifact"] == artifact.name
+    assert row["package_size"] == artifact.stat().st_size
+    assert row["sha256"] == "sha256:" + hashlib.sha256(
+        artifact.read_bytes()).hexdigest()
+    plan = pfp_package.inspect_pfp(str(artifact))
+    assert plan["verified"] is True
+    assert plan["package"] == "pawflow.comfy-cloud-mcp"
+    assert [obj["id"] for obj in plan["objects"]] == [
+        "mcp_server:comfy-cloud"]
+
+    dialogs = Path("tasks/io/chat_ui/resources_create_dialogs.js").read_text(
+        encoding="utf-8")
+    render = Path("tasks/io/chat_ui/resources_render.js").read_text(
+        encoding="utf-8")
+    assert "showComfyCloudConnector" not in dialogs
+    assert "showComfyCloudConnector" not in render
 
 
 def test_the_installer_refuses_a_runtime_dir_it_does_not_own(tmp_path):

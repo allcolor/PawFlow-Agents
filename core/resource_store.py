@@ -11,6 +11,7 @@ Resource types:
 - theme:    directory resource with theme.json, CSS files, and optional assets
 - private_gateway_skin: directory resource with skin.json and template.html
 - agent_hook: runtime hook selected by conversation bindings
+- service_template: preset values for the existing service creation form
 """
 
 import logging
@@ -55,6 +56,7 @@ _TYPE_MAP = {
     "agent_hook": "agent_hooks",
     "theme": "theme",
     "private_gateway_skin": "private_gateway_skin",
+    "service_template": "service_templates",
 }
 
 
@@ -71,6 +73,7 @@ _REQUIRED_FIELDS = {
     "agent_hook": (),
     "theme": (),
     "private_gateway_skin": (),
+    "service_template": ("service_type", "config"),
 }
 
 # Default values per type
@@ -130,6 +133,15 @@ _DEFAULTS = {
         "title": "",
         "description": "",
         "template": "",
+    },
+    "service_template": {
+        "format": "pawflow.service-template.v1",
+        "title": "",
+        "description": "",
+        "category": "Other",
+        "tags": [],
+        "service_description": "",
+        "config": {},
     },
 }
 

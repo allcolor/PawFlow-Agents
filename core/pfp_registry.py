@@ -21,6 +21,8 @@ import core.paths as _paths
 
 
 REGISTRY_FORMAT = "pawflow.package.registry.v1"
+BUNDLED_FORMAT = "pawflow.bundled-packages.v1"
+BUNDLED_REGISTRY_NAME = "PawFlow bundled"
 MAX_INDEX_BYTES = 1_000_000
 MAX_REGISTRY_PACKAGES = 500
 MAX_SEARCH_RESULTS = 50
@@ -82,6 +84,12 @@ def search_registries(query: str = "", *, user_id: str,
     limit = max(1, min(int(limit or 20), MAX_SEARCH_RESULTS))
     rows = []
     errors = []
+    try:
+        for row in _bundled_package_rows():
+            if _matches(query, row):
+                rows.append(row)
+    except Exception as exc:
+        errors.append({"registry": BUNDLED_REGISTRY_NAME, "error": str(exc)})
     for reg in _read_registries(user_id).get("registries", []):
         try:
             index = fetch_registry_index(reg.get("url", ""))
@@ -122,6 +130,9 @@ def expected_sha_for_ref(ref: str, *, user_id: str) -> str:
     ref = (ref or "").strip()
     if not ref:
         return ""
+    bundled = _bundled_row_for_ref(ref)
+    if bundled:
+        return bundled.get("sha256", "")
     for reg in _read_registries(user_id).get("registries", []):
         index = None
         try:
@@ -142,6 +153,9 @@ def url_for_ref(ref: str, *, user_id: str) -> str:
     ref = (ref or "").strip()
     if _is_http_url(ref):
         return ref
+    bundled = _bundled_row_for_ref(ref)
+    if bundled:
+        return bundled.get("path", "")
     for reg in _read_registries(user_id).get("registries", []):
         index = fetch_registry_index(reg.get("url", ""))
         for item in index.get("packages") or []:
@@ -193,6 +207,9 @@ def resolve_package_path(ref: str, *, user_id: str,
     local = Path(value).expanduser()
     if local.exists():
         return {"path": str(local), "downloaded": False, "sha256": "", "url": ""}
+    bundled = _bundled_row_for_ref(value)
+    if bundled:
+        return _resolve_bundled_artifact(bundled)
     preview = preview_package_download(
         value, user_id=user_id, expected_sha256=expected_sha256)
     if preview["remote"] and not confirm_download:
@@ -217,6 +234,9 @@ def preview_package_download(ref: str, *, user_id: str,
     value = str(ref or "").strip()
     if not value:
         raise PfpRegistryError("package path or ref is required")
+    bundled = _bundled_row_for_ref(value)
+    if bundled:
+        return _resolve_bundled_artifact(bundled)
     if _is_http_url(value):
         size = _head_package_size(value)
         sha = _normalize_sha(expected_sha256) if expected_sha256 else ""
@@ -279,6 +299,86 @@ def _normalize_package_row(item: Dict[str, Any], reg: Dict[str, Any],
         "developer_key": str(item.get("developer_key") or ""),
         "tags": item.get("tags") if isinstance(item.get("tags"), list) else [],
         "objects": item.get("objects") if isinstance(item.get("objects"), list) else [],
+    }
+
+
+def _bundled_package_rows() -> List[Dict[str, Any]]:
+    root = _paths.REPOSITORY_DIR / "packages" / "bundled"
+    index_path = root / "index.json"
+    if not index_path.exists():
+        return []
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise PfpRegistryError("Bundled package index is not valid JSON") from exc
+    if not isinstance(data, dict) or data.get("format") != BUNDLED_FORMAT:
+        raise PfpRegistryError("Unsupported bundled package index format")
+    packages = data.get("packages")
+    if not isinstance(packages, list):
+        raise PfpRegistryError("Bundled package index requires a packages list")
+    if len(packages) > MAX_REGISTRY_PACKAGES:
+        raise PfpRegistryError("Bundled package index contains too many packages")
+    rows = []
+    for item in packages:
+        if not isinstance(item, dict):
+            raise PfpRegistryError("Bundled package entries must be objects")
+        package = str(item.get("package") or "")
+        version = str(item.get("version") or "")
+        artifact = str(item.get("artifact") or "")
+        if not package or not version or not artifact:
+            raise PfpRegistryError(
+                "Bundled package entries require package, version, and artifact")
+        if Path(artifact).name != artifact or not artifact.endswith(".pfp"):
+            raise PfpRegistryError("Bundled package artifact must be a .pfp filename")
+        package_size = _package_size_from_item(item)
+        sha256 = _normalize_sha(str(item.get("sha256") or ""))
+        if not sha256:
+            raise PfpRegistryError("Bundled package entries require sha256")
+        path = root / artifact
+        rows.append({
+            "registry": BUNDLED_REGISTRY_NAME,
+            "registry_url": "",
+            "registry_trusted": True,
+            "package": package,
+            "version": version,
+            "ref": f"{package}@{version}",
+            "description": str(item.get("description") or ""),
+            "url": str(path),
+            "path": str(path),
+            "sha256": sha256,
+            "package_size": package_size,
+            "size_display": _format_bytes(package_size),
+            "developer_key": str(item.get("developer_key") or ""),
+            "tags": item.get("tags") if isinstance(item.get("tags"), list) else [],
+            "objects": item.get("objects") if isinstance(item.get("objects"), list) else [],
+        })
+    return rows
+
+
+def _bundled_row_for_ref(ref: str) -> Dict[str, Any]:
+    value = str(ref or "").strip()
+    for row in _bundled_package_rows():
+        if value in {row.get("ref"), row.get("package"), row.get("path")}:
+            return row
+    return {}
+
+
+def _resolve_bundled_artifact(row: Dict[str, Any]) -> Dict[str, Any]:
+    path = Path(str(row.get("path") or ""))
+    if not path.is_file():
+        raise PfpRegistryError(f"Bundled package artifact is missing: {path.name}")
+    package_size = int(row.get("package_size") or 0)
+    if path.stat().st_size != package_size:
+        raise PfpRegistryError("Bundled package size does not match index")
+    digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != row.get("sha256"):
+        raise PfpRegistryError("Bundled package SHA-256 does not match index")
+    return {
+        "path": str(path),
+        "downloaded": False,
+        "sha256": digest,
+        "url": "",
+        "source": "bundled",
     }
 
 

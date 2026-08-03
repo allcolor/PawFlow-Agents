@@ -455,7 +455,8 @@ async function _fetchServiceSchema(serviceType) {
   } catch (e) { addMsg('error', e.message); return {parameters: {}, rules: [], actions: []}; }
 }
 
-async function showServiceInstallForm() {
+async function showServiceInstallForm(template) {
+  template = template || null;
   let serviceTypes = [];
   try {
     const data = await rxjs.firstValueFrom(action$('list_service_types', {}));
@@ -501,6 +502,17 @@ async function showServiceInstallForm() {
   _populateTargetOwnerField('svc-install-target-owner');
 
   const typeSelect = document.getElementById('svc-install-type');
+  let activeTemplate = template;
+  if (activeTemplate) {
+    typeSelect.value = activeTemplate.service_type || '';
+    if (!typeSelect.value) {
+      addMsg('error', 'Unknown service type: ' + (activeTemplate.service_type || ''));
+      overlay.remove();
+      return;
+    }
+    document.getElementById('svc-install-desc').value =
+      activeTemplate.service_description || '';
+  }
   const loadParams = async () => {
     const paramsDiv = document.getElementById('svc-install-params');
     paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('loadingParameters')) + '</div>';
@@ -516,12 +528,19 @@ async function showServiceInstallForm() {
       paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('parameters')) + '</div>'
         + _renderSchemaFields(params, {});
       _applyRules(paramsDiv, schemaData.rules || [], schemaData.actions || [], '');
+      if (activeTemplate && activeTemplate.service_type === typeSelect.value) {
+        _applyServiceTemplateValues(paramsDiv, activeTemplate.config || {});
+      }
       _populateServiceRefs(paramsDiv);
       paramsDiv.addEventListener('change', _updateServiceInstallLoginButton);
     }
     _updateServiceInstallLoginButton();
   };
-  typeSelect.addEventListener('change', async () => { await loadParams(); _updateServiceInstallLoginButton(); });
+  typeSelect.addEventListener('change', async () => {
+    activeTemplate = null;
+    await loadParams();
+    _updateServiceInstallLoginButton();
+  });
   await loadParams();
   document.getElementById('svc-install-name').focus();
 }

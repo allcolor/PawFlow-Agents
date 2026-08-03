@@ -40,6 +40,7 @@ managed_roots = [
     "flows/global/github",
     "flows/global/cryptos",
     "flows/global/http_bots",
+    "packages/bundled",
     "private_gateway_skin/global",
     "prompts/global",
     "skills/global",

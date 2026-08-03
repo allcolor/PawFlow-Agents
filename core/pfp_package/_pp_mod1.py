@@ -180,6 +180,8 @@ def _merge_record_secret_bindings(record: Dict[str, Any], selected: set,
             continue
         runtime = obj.get("package_runtime") or {}
         bindings = runtime.get("secret_bindings") or {}
+        if not bindings:
+            bindings = obj.get("secret_bindings") or {}
         if isinstance(bindings, dict):
             for name, key in bindings.items():
                 if str(name or "") and str(key or ""):

@@ -1,0 +1,29 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.comfy-cloud-mcp",
+  "version": "1.0.0",
+  "description": "Official Comfy Cloud MCP connection for image, video, audio, and 3D workflows. Installation requires a stored Comfy Cloud API key and does not enable the MCP for any conversation automatically.",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": ""
+  },
+  "origin": {
+    "source": "packages/pawflow.comfy-cloud-mcp.pfpdir"
+  },
+  "objects": [
+    {
+      "id": "mcp_server:comfy-cloud",
+      "type": "mcp_server",
+      "name": "comfy-cloud",
+      "path": "content/mcp/comfy-cloud.json",
+      "description": "Official hosted Comfy Cloud MCP endpoint.",
+      "secrets": [
+        {
+          "name": "comfy_api_key",
+          "env": "COMFY_API_KEY",
+          "required": true
+        }
+      ]
+    }
+  ]
+}

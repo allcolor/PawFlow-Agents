@@ -239,6 +239,17 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
         flowfile.set_content(json.dumps({"service_types": types}).encode())
         return [flowfile]
 
+    if action == "list_service_templates":
+        from core.resource_store import ResourceStore
+        conv_id = (body.get("conversation_id", "")
+                   or flowfile.get_attribute("http.conversation_id") or "")
+        templates = ResourceStore.instance().list_all(
+            "service_template", user_id, conversation_id=conv_id)
+        flowfile.set_content(json.dumps({
+            "service_templates": templates,
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
     if action == "get_service_schema":
         svc_type = body.get("service_type", "")
         if not svc_type:

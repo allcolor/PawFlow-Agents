@@ -14,13 +14,32 @@ from core.pfp_package._pp_base import (  # noqa: F401
 from core.pfp_package._pp_mod1 import (  # noqa: F401
     _canonical_json, _file_sha256, _files_size, _format_dependency, _install_default_relay_id, _load_json_bytes, _make_lock, _name_from_id, _normalize_scope, _provenance, _public_key_text, _read_json_file, _register_flow_task_proxy, _safe_relpath, _validate_package_id, _validate_runtime_object, _verify_lock, _write_flow, _write_json_file, _write_resource, _write_service)
 from core.pfp_package._pp_mod2 import (  # noqa: F401
-    _collect_source_files, _existing_status_name, _load_private_key, _load_resource_data, _manifest_object_hash, _mcp_server_risk, _object_capabilities, _read_pfp_zip, _signature_payload, _validate_mcp_server_object, _validate_ui_extension_object, _validate_web_app_object)
+    _collect_source_files, _existing_status_name, _load_private_key, _load_resource_data, _manifest_object_hash, _mcp_server_risk, _object_capabilities, _read_pfp_zip, _signature_payload, _validate_mcp_server_object, _validate_service_template_object, _validate_ui_extension_object, _validate_web_app_object)
 from core.pfp_package._pp_mod3 import (  # noqa: F401
     _declared_secret_requirements, _inject_package_flow_task_relays, _install_record_path, _missing_agent_assigned_skills, _ui_extension_manifest, _uninstall_object, _verify_signature, _web_app_manifest)
 from core.pfp_package._pp_mod4 import (  # noqa: F401
     _declared_package_dependencies, _dependent_packages, _existing_status, _missing_package_dependencies, _pinned_developer_key, _record_is_locally_modified, _refresh_runtime, _remove_package_content_store, _validate_allowed_refs, _validate_dependency_list)
 
 logger = logging.getLogger(__name__)
+
+
+def _bind_secret_placeholders(value: Any,
+                              secret_bindings: Dict[str, str]) -> Any:
+    """Rewrite package-local secret expressions to installed secret keys."""
+    if isinstance(value, dict):
+        return {
+            key: _bind_secret_placeholders(item, secret_bindings)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_bind_secret_placeholders(item, secret_bindings) for item in value]
+    if isinstance(value, str):
+        result = value
+        for logical_name, stored_key in secret_bindings.items():
+            result = result.replace(
+                "${" + logical_name + "}", "${" + stored_key + "}")
+        return result
+    return value
 
 
 def uninstall_pfp(package_id: str, *, user_id: str, conversation_id: str = "",
@@ -103,6 +122,10 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         _mcp_err = _validate_mcp_server_object(obj, package)
         if _mcp_err:
             status, reason, installable = "blocked", _mcp_err, False
+    elif obj_type == "service_template":
+        _template_err = _validate_service_template_object(obj, package)
+        if _template_err:
+            status, reason, installable = "blocked", _template_err, False
     elif missing_dependencies:
         status = "missing_dependency"
         reason = "missing package dependency: " + ", ".join(
@@ -562,6 +585,8 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
     if obj_type in _RESOURCE_TYPES:
         rtype = _RESOURCE_TYPES[obj_type]
         data = _load_resource_data(package, rel, rtype, name)
+        if rtype == "mcp":
+            data = _bind_secret_placeholders(data, secret_bindings or {})
         data["installed_from"] = provenance
         if rtype == "skill" and obj.get("_review"):
             from core.review_bindings import attach_review_metadata
@@ -576,7 +601,7 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         if rtype == "skill" and existing_skill and conversation_id:
             from core.skill_lifecycle import notify_skill_updated
             notify_skill_updated(name, data, user_id, conversation_id)
-        return {
+        result = {
             "kind": "resource",
             "object_id": obj_id,
             "resource_type": rtype,
@@ -584,6 +609,9 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
             "hash": provenance["hash"],
             "dependencies": dependencies,
         }
+        if rtype == "mcp":
+            result["secret_bindings"] = dict(secret_bindings or {})
+        return result
     if obj_type == "flow":
         data = _load_json_bytes(package["files"][rel])
         _inject_package_flow_task_relays(

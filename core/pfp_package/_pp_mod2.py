@@ -558,6 +558,30 @@ def _validate_mcp_server_object(obj: Dict[str, Any], package: Dict[str, Any]) ->
     return ""
 
 
+def _validate_service_template_object(obj: Dict[str, Any],
+                                      package: Dict[str, Any]) -> str:
+    """Validate a preset consumed by the existing service creation form."""
+    path = str(obj.get("path") or "").strip()
+    rel = _safe_relpath(path) if path else ""
+    if not rel or rel not in (package.get("files") or {}):
+        return f"service_template is missing package file: {path}"
+    name = str(obj.get("name") or _name_from_id(str(obj.get("id") or "")) or "")
+    try:
+        data = _load_resource_data(package, rel, "service_template", name)
+    except Exception as exc:
+        return str(exc)
+    if data.get("format") != "pawflow.service-template.v1":
+        return "service_template format must be 'pawflow.service-template.v1'"
+    if not str(data.get("service_type") or "").strip():
+        return "service_template service_type is required"
+    if not isinstance(data.get("config"), dict):
+        return "service_template config must be a JSON object"
+    tags = data.get("tags", [])
+    if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+        return "service_template tags must be a list of strings"
+    return ""
+
+
 def _mcp_server_risk(obj: Dict[str, Any], package: Dict[str, Any]) -> str:
     """stdio mcp_server objects run an arbitrary command on the relay host
     once enabled, the same risk profile as a package tool/service_provider.

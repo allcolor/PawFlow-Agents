@@ -3,7 +3,7 @@
 
 async function showResourceCreator(rtype) {
   if (rtype === '_flow') { showDeployFlowDialog(); return; }
-  if (rtype === '_svc') { showServiceInstallForm(); return; }
+  if (rtype === '_svc') { showServiceCreateDialog(); return; }
   if (rtype === 'mcp') await _loadResourceRelayOptions();
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();

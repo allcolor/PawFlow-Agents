@@ -5380,6 +5380,47 @@ def test_pfp_registry_search_and_install_ref(tmp_path, monkeypatch):
     assert installed["ok"] is True
 
 
+def test_pfp_bundled_registry_search_resolves_local_artifact(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path / "source", keypair)
+    bundled_dir = tmp_path / "repository" / "packages" / "bundled"
+    bundled_dir.mkdir(parents=True)
+    artifact = bundled_dir / "community.wavespeed-1.0.0.pfp"
+    built = pfp_package.build_pfp(
+        str(pkgdir), str(artifact), private_key=keypair["private_key"])
+    (bundled_dir / "index.json").write_text(json.dumps({
+        "format": "pawflow.bundled-packages.v1",
+        "packages": [{
+            "package": "community.wavespeed",
+            "version": "1.0.0",
+            "description": "Bundled WaveSpeed fixture",
+            "artifact": artifact.name,
+            "sha256": built["sha256"],
+            "package_size": built["package_size"],
+            "objects": ["skill:pkg-skill"],
+            "tags": ["media", "image"],
+        }],
+    }), encoding="utf-8")
+
+    search = pfp_registry.search_registries(
+        "wavespeed image", user_id="alice")
+
+    assert search["count"] == 1
+    assert search["results"][0]["registry"] == "PawFlow bundled"
+    assert search["results"][0]["registry_trusted"] is True
+    assert search["results"][0]["ref"] == "community.wavespeed@1.0.0"
+    resolved = pfp_registry.resolve_package_path(
+        "community.wavespeed@1.0.0", user_id="alice")
+    assert resolved == {
+        "path": str(artifact),
+        "downloaded": False,
+        "sha256": built["sha256"],
+        "url": "",
+        "source": "bundled",
+    }
+
+
 def test_pfp_direct_url_requires_size_confirmation_before_download(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()

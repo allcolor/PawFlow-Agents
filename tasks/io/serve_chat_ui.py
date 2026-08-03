@@ -63,6 +63,7 @@ _JS_MODULES = [
     "resources_render.js", "resources_menus.js", "resources_flow_dialogs.js",
     "resources_resource_dialogs.js", "resources_create_dialogs.js",
     "resources_service_dialogs.js", "resources_service_login.js",
+    "resources_service_templates.js",
     "services.js", "file_viewer.js", "file_explorer.js",
     "tabs.js",
     # terminal.js = xterm engine; terminal_commands.js = /terminal,/code,

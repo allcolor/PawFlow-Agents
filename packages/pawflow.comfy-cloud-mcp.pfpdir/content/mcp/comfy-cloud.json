@@ -1,0 +1,9 @@
+{
+  "url": "https://cloud.comfy.org/mcp",
+  "transport": "http",
+  "via": "direct",
+  "auth": {
+    "X-API-Key": "${comfy_api_key}"
+  },
+  "description": "Official Comfy Cloud MCP connector"
+}

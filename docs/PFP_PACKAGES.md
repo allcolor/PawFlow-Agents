@@ -136,7 +136,21 @@ The `manage_package` agent tool exposes the same actions: `key_create`, `build`,
 
 The web Resources sidebar exposes installed packages in a dedicated Packages section. Its install dialog calls the same inspect/install/update actions, shows selectable package objects, aggregate capabilities, required secret bindings, and update diffs before applying the selected plan. The same dialog can list/add/remove the user's configured registries, search them, show each result's source URL, package size, SHA-256 pin, and developer key metadata, then ask for explicit download confirmation before fetching a selected remote `.pfp`. Installed package rows can be uninstalled from the sidebar; regular uninstall keeps dependency protection, while force uninstall uses the same explicit override as `/pfp uninstall --force`.
 
-Runtime objects can declare required secrets with `secrets`, for example `[{"name": "api_key", "env": "PROVIDER_API_KEY", "required": true}]`. Install requires an explicit binding from package-local secret name to an existing PawFlow secret key via repeated `--secret name=stored_key` flags or `manage_package(..., secret_bindings={"name": "stored_key"})`. PawFlow stores only the binding in package runtime metadata. Secret values are resolved at invocation time and injected into the relay runner environment under the declared `env` name; they are not added to runtime envelopes or install records.
+### Service templates
+
+A `service_template` object installs preset values for the existing service
+creation form. Its JSON file uses format `pawflow.service-template.v1` and
+requires `service_type` plus a `config` object; optional catalog metadata
+includes `title`, `description`, `category`, `tags`, and
+`service_description`. Installing the package stores only the template. It
+never creates, connects, or enables a service.
+
+The Resources service creator offers a blank form or the installed template
+catalog. Selecting a template preselects its service type and injects its config
+into the normal form; submission still uses the canonical `service_install`
+action.
+
+Runtime objects can declare required secrets with `secrets`, for example `[{"name": "api_key", "env": "PROVIDER_API_KEY", "required": true}]`. Install requires an explicit binding from package-local secret name to an existing PawFlow secret key via repeated `--secret name=stored_key` flags or `manage_package(..., secret_bindings={"name": "stored_key"})`. PawFlow stores only the binding in package runtime metadata. Secret values are resolved at invocation time and injected into the relay runner environment under the declared `env` name; they are not added to runtime envelopes or install records. For `mcp_server` objects, install recursively rewrites expressions such as `${api_key}` in the MCP definition to the bound stored-secret expression, for example `${provider_key}`; package updates preserve that binding.
 Bindings are validated during install: a required package secret must be bound, and the referenced PawFlow secret key must already exist in conversation, user, or global scope.
 
 Use `private_key_env`/`--key-env` for signing in normal workflows so private key material does not appear in chat history. `private_key` exists for direct programmatic tests and local automation only.
@@ -166,6 +180,24 @@ A registry is a static JSON index hosted by any developer or community:
 ```
 
 Registry metadata is not trusted as executable authority. It is used for discovery, pre-download size disclosure, and optional SHA-256 pinning only. `package_size` is required so PawFlow can show the user the artifact size before downloading; the first remote inspect/install/update returns `requires_confirmation` with the size, URL, and hash, and the caller must repeat the action with `confirm_download=true` or `--confirm-download` to fetch the `.pfp`. The downloaded `.pfp` must still pass size match, registry SHA-256 match when present, signature verification, and file-hash validation before install. Marking a registry as `trusted` is user-facing provenance metadata for review surfaces; it does not bypass package verification or install consent.
+
+## Bundled Package Catalog
+
+A PawFlow release may ship optional signed packages under
+`data/repository/packages/bundled/`. These packages are discoverable in the same
+Packages search as remote-registry entries, but they are not installed or enabled
+automatically. The directory contains the `.pfp` artifacts and an `index.json`
+with format `pawflow.bundled-packages.v1`; each entry declares `package`,
+`version`, `artifact`, `package_size`, and `sha256`, plus optional description,
+developer key, tags, and object ids.
+
+Bundled refs resolve directly to the local artifact and therefore require no
+download confirmation. PawFlow still verifies the indexed size and SHA-256 before
+inspection, then applies the normal Ed25519 signature, lock-file, risk review,
+object selection, secret binding, and explicit install checks. Docker and the
+standalone installer synchronize this directory as a managed release default so
+new optional packages appear after upgrades without touching installed-package
+records.
 
 ## Security Model
 

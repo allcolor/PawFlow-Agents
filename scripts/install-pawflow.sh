@@ -733,6 +733,7 @@ managed_roots = [
     "agents/global", "configs", "flows/global/default",
     "flows/global/telegram", "flows/global/github",
     "flows/global/cryptos", "flows/global/http_bots",
+    "packages/bundled",
     "private_gateway_skin/global", "prompts/global", "skills/global",
     "tasks/global", "theme/global",
 ]

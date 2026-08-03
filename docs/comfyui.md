@@ -18,6 +18,41 @@ FileStore or the requested relay filesystem and removes the temporary file.
 This integration targets the self-hosted ComfyUI Server API. It is not the Comfy
 Cloud API v2.
 
+## Optional Comfy Cloud MCP package
+
+PawFlow can also connect to the official hosted
+[Comfy Cloud MCP](https://docs.comfy.org/agent-tools/cloud). This is separate from
+the self-hosted workflow services documented below: Comfy Cloud supplies and
+updates its own image, video, audio, and 3D workflows, and exposes them as MCP
+tools at `https://cloud.comfy.org/mcp`.
+
+PawFlow releases include the signed `pawflow.comfy-cloud-mcp` package in the
+local package catalog. It is available for installation but is not installed or
+enabled automatically.
+
+To connect it:
+
+1. Create a Comfy Cloud account and generate an API key in the Comfy Cloud API
+   settings.
+2. Store the API key in **Resources -> Secrets** at the intended user or
+   conversation scope.
+3. Open **Resources -> PawFlow Packages**, select **Install package**, search for
+   `Comfy Cloud`, and inspect `pawflow.comfy-cloud-mcp@1.0.0`.
+4. Choose the installation scope and bind the package's `comfy_api_key` requirement
+   to the stored secret name created in the previous step, then install it.
+5. Open **Configure availability** in the MCP Repository if the conversation or a
+   specific agent restricts which MCP servers or tools are available.
+
+The package contains no API key. Installation rewrites its logical
+`${comfy_api_key}` placeholder to the selected stored-secret name, and the MCP
+runtime resolves that expression into the `X-API-Key` request header. User and
+conversation secrets override a same-named global secret according to the normal
+expression-resolution cascade.
+
+The connector uses direct Streamable HTTP from the PawFlow server. It does not
+require a relay, a local ComfyUI installation, or a PawFlow ComfyUI generation
+service. The account's Comfy Cloud usage and billing rules still apply.
+
 ## 1. Install and start ComfyUI
 
 Choose one of the installation methods in the

@@ -36,7 +36,7 @@ Practical web UI for creating and editing flows without hand-writing JSON. First
 Add package-backed media providers for image, video, audio, 3D, lipsync, and upscaling services. Providers should use the PFP service-provider runtime, declared secret bindings, and file-backed artifact output instead of JSON/base64 media payloads.
 
 ### Git worktree isolation for agents
-Each sub-agent works in its own git worktree so parallel coding tasks don't collide. Changes are merged on completion. A `/batch` command to fan out N tasks across N isolated agents.
+Each sub-agent works in its own git worktree so parallel coding tasks don't collide. Changes are merged on completion. A `/batch` command to fan out N tasks across N isolated agents. See [docs/GIT_WORKTREE_ISOLATION_PLAN.md](docs/GIT_WORKTREE_ISOLATION_PLAN.md).
 
 ### MCP elicitation
 MCP servers can request user input during tool execution. The web chat shows a dialog, the user responds, and the tool continues.

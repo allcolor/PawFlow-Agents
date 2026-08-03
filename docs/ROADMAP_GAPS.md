@@ -64,26 +64,22 @@ A2b (PawCode CLI voice), A2c (additional STT providers), VS Code plugin voice.
 
 ---
 
-### A3. Git worktrees isolation for agents
+### A3. Git worktree isolation for agents
 **Priority:** P1 — critical for parallel coding
-**Effort:** Medium (2-3 days)
-**Dependencies:** Relay bash execution (already works)
+**Dependencies:** a writable Git-capable workspace relay, task-scoped filesystem
+routing, durable lease state, and relay-side lifecycle operations.
 
-**What:** Each sub-agent works in its own git worktree. Changes are isolated. Merge on completion.
+**What:** Each write-capable spawned coding task receives a fenced Git worktree
+lease. Candidates are sealed, reviewed, validated, and integrated deterministically
+without exposing worktree-management commands to the model or mutating a dirty or
+moved target workspace.
 
-**Plan:**
-1. New tool `worktree_create(branch, agent_name)`:
-   - `bash("git worktree add .worktrees/{agent_name} -b {branch}")`
-   - Set the agent's filesystem root to the worktree path
-2. New tool `worktree_merge(agent_name)`:
-   - `bash("git merge .worktrees/{agent_name}")` from main
-   - `bash("git worktree remove .worktrees/{agent_name}")`
-3. `delegate` option `isolation: "worktree"`:
-   - Auto-create worktree per sub-agent
-   - Auto-merge on completion
-4. `/batch` command:
-   - Takes N tasks, creates N worktrees, spawns N agents
-   - Each works in isolation, results merged sequentially
+**Authoritative plan:** [GIT_WORKTREE_ISOLATION_PLAN.md](GIT_WORKTREE_ISOLATION_PLAN.md).
+
+The former sketch based on `worktree_create(agent_name)`, raw shell interpolation,
+and unconditional merge-on-response is superseded. Worktrees are task-owned,
+physical paths and refs are relay-generated, `/batch` is durable orchestration,
+and integration is receipt-driven and fail-closed.
 
 ---
 

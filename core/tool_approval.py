@@ -116,8 +116,31 @@ class ToolApprovalGate:
         return str(tool_name or "").strip().casefold()
 
     @classmethod
+    def escalated_policy_name(cls, tool_name: str) -> str:
+        """Return the name whose severity governs this call.
+
+        `shell`, `exec`, `run`, `terminal`, `run_command` and `execute` are
+        executable aliases of `bash` (core/_llm_types.py:93). Judged on their
+        own spelling they miss ALWAYS_ASK and the command-bearing content
+        scan, so one session approval covered every later call - including a
+        destructive one. An alias must never be judged more leniently than
+        the tool it actually runs.
+
+        Escalation only: an alias whose target is not ALWAYS_ASK keeps its own
+        classification, so `create_file` (-> write) stays EXEMPT and no
+        existing decision is tightened as a side effect.
+        """
+        policy = cls.normalize_tool_name(tool_name)
+        try:
+            from core._llm_types import _TOOL_ALIASES
+        except Exception:
+            return policy
+        target = cls.normalize_tool_name(_TOOL_ALIASES.get(policy, policy))
+        return target if target in cls.ALWAYS_ASK else policy
+
+    @classmethod
     def is_command_bearing_tool(cls, tool_name: str) -> bool:
-        return cls.normalize_tool_name(tool_name) in cls.COMMAND_BEARING_TOOLS
+        return cls.escalated_policy_name(tool_name) in cls.COMMAND_BEARING_TOOLS
 
     # ── Dangerous bash/exec patterns (like Claude Code) ──────────────
     # Even if bash has session_allow, these patterns force re-approval.
@@ -185,7 +208,7 @@ class ToolApprovalGate:
         Users can always override with "always_allow" — even for dangerous tools.
         """
         # Determine effective approval level
-        policy_name = cls.normalize_tool_name(tool_name)
+        policy_name = cls.escalated_policy_name(tool_name)
         effective_name = tool_name
         is_exempt = policy_name in cls.EXEMPT_TOOLS
         needs_ask = not is_exempt  # all non-exempt tools need approval

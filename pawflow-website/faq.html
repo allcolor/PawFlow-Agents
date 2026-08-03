@@ -203,6 +203,14 @@
         "@type": "Answer",
         "text": "New conversations are created in auto permission mode, which approves the tools the mode allows without prompting. Existing conversations keep the mode they were running under. Change it per conversation from the permission selector in the web chat; use default or read_only when agents work against production systems or untrusted input."
       }
+    },
+    {
+      "@type": "Question",
+      "name": "When I approve a tool call, what exactly am I approving?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The call that runs. Arguments are decoded and wrapper tool names are resolved to the inner tool before the approval dialog is built, so the dangerous-command scan reads the real command. Tool names that execute as bash, such as shell, exec and run, are classified as bash for approval. If a conversation hook or variable resolution changes the call after you approved it, it is re-authorized; an unchanged call never prompts twice. Regression tests cover each of these properties."
+      }
     }
   ]
 }
@@ -240,6 +248,7 @@
       <details data-reveal><summary>Is PawFlow production-ready?</summary><p>It is beta software with a substantial runtime, docs, tests, and deployment path. Treat internet-facing deployments carefully: use production env settings, HTTPS, strong secrets, restricted tools, budget caps, and reviewed OAuth redirects.</p></details>
       <details data-reveal><summary>How do I update a Docker install?</summary><p>From the browser: <strong>Admin &rarr; Update server</strong> pulls the release and recreates the server container from a throw-away <code>pawflow-updater</code> container, keeping bind-mounted persistent data. The page waits for a <em>different</em> server process to answer <code>/health</code> before reloading, so a failed update reports the failure and points at <code>docker logs pawflow-updater</code> instead of looking finished. From the command line: <code>bash scripts/install-pawflow.sh --check-updates</code>, then <code>--version NEW_VERSION --port PORT --pull-images</code>. Do not delete <code>~/pawflow</code> data unless you explicitly want a fresh install. See the <a href="howtos.html#server-update">update how-to</a>.</p></details>
       <details data-reveal><summary>What permissions does a new conversation start with?</summary><p>New conversations are created in <strong>auto</strong> permission mode: the tools the mode allows run without prompting. Conversations created before this default keep the mode they were running under. Change it per conversation from the permission selector in the web chat &mdash; use <code>default</code> or <code>read_only</code> when agents work against production systems or untrusted input. See the <a href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/security_model.md">security model</a>.</p></details>
+      <details data-reveal><summary>When I approve a tool call, what exactly am I approving?</summary><p>The call that runs. Arguments are decoded and wrapper tool names are resolved to the inner tool <em>before</em> the dialog is built, so the dangerous-command scan reads the real command rather than an empty payload. Tool names that execute as <code>bash</code> &mdash; <code>shell</code>, <code>exec</code>, <code>run</code> and friends &mdash; are classified as <code>bash</code> for approval. If a conversation hook or variable resolution changes the call after you approved it, it is re-authorized; an unchanged call never prompts twice. See the <a href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/security_model.md">security model</a>.</p></details>
     </div></section>
     <section class="section"><div class="container cta-panel" data-reveal><div><p class="eyebrow">Ready enough to try</p><h2>The fastest answer is still the quickstart.</h2><p>Install locally, open the wizard, configure one provider, and test a relay-backed conversation.</p></div><a class="button button-primary" href="quickstart.html">Install PawFlow</a></div></section>
   </main>

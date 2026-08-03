@@ -44,6 +44,37 @@ agents run against production systems or untrusted input, set the conversation
 back to `default` or `read_only` before giving it work — `auto` approves every
 tool the mode allows, without asking.
 
+### What the approval decision applies to
+
+An approval is only meaningful if the call that runs is the call that was
+approved. Four properties enforce that, each covered by regression tests in
+`tests/test_tool_call_security_ordering.py`:
+
+- **Canonical before decided.** Arguments are decoded and wrapper tool names
+  (`use_tool`) are resolved to the inner tool *before* the gate is consulted,
+  on both the main and the sub-agent path. Arguments delivered as a JSON string
+  used to reach the gate as no arguments at all, so the dangerous- and
+  catastrophic-command scans inspected nothing while the registry decoded the
+  same string and ran the real command.
+- **Aliases inherit severity.** `shell`, `exec`, `run`, `terminal`,
+  `run_command` and `execute` execute as `bash`, so they are classified as
+  `bash` for approval and their command is scanned like a `bash` command.
+  Escalation is one-way: an alias whose target is not in `ALWAYS_ASK` keeps its
+  own classification, so nothing is tightened as a side effect.
+- **Nothing rewrites an approved call.** A `pre_tool_call` hook may replace the
+  tool name and arguments (`decision: "replace"`), and `$VAR` resolution
+  rewrites values. Both run after the gate, so the call is re-authorized when —
+  and only when — its name or arguments actually changed. An unchanged call
+  never prompts twice.
+- **Undecodable is refused, not emptied.** A payload that cannot be parsed is
+  rejected with a diagnostic instead of degrading to `{}` and executing.
+
+One gap remains: filesystem handlers resolve the expression language
+(`${scope.key}`) on their own arguments at handler entry, after the gate. A
+path approved as literal text can therefore still resolve to a different
+concrete target. The test covering this is marked `xfail` until argument
+freezing lands.
+
 ## Identity, Groups and Roles
 
 Authentication is delegated to the identity provider. PawFlow speaks generic

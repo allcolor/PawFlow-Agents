@@ -202,12 +202,28 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         read_only: bool = False,
     ) -> str:
         """Execute a single tool call with per-agent approval gate."""
+        # Canonicalize BEFORE any decision: the gate must judge the tool that
+        # actually runs, with the arguments that actually run. Two ways this
+        # used to diverge here: a wrapper name (use_tool) reached the policy
+        # tables instead of its inner tool, and JSON-string arguments reached
+        # them as no arguments at all - the content-aware checks then scanned
+        # nothing while registry.execute parsed the same string and ran the
+        # real command.
+        from core.llm_client import unwrap_mcp_tool
+        from core.tool_json import (
+            parse_tool_arguments, tool_argument_parse_error)
+        if isinstance(tc.arguments, str):
+            _parsed = parse_tool_arguments(
+                tc.arguments, tool_name=tc.name, provider="subagent-gate")
+            _parse_err = tool_argument_parse_error(_parsed)
+            if _parse_err:
+                return _parse_err
+            tc.arguments = _parsed
+        tool_name, arguments = unwrap_mcp_tool(tc.name, tc.arguments or {})
+        if not isinstance(arguments, dict):
+            arguments = tc.arguments if isinstance(tc.arguments, dict) else {}
         if read_only:
-            from core.llm_client import unwrap_mcp_tool
             from core.tool_approval import ToolApprovalGate
-
-            tool_name, arguments = unwrap_mcp_tool(
-                tc.name, tc.arguments or {})
             if not ToolApprovalGate.is_advisor_read_only_allowed(
                     tool_name, arguments):
                 return (f"Error: Tool '{tool_name}' is blocked for this "
@@ -229,16 +245,17 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
                     conversation_id, "permission_mode") or "default"
                 if _perm_mode != "auto":
                     from core.tool_approval import ToolApprovalGate
-                    if tc.name not in ToolApprovalGate.EXEMPT_TOOLS:
+                    if (ToolApprovalGate.normalize_tool_name(tool_name)
+                            not in ToolApprovalGate.EXEMPT_TOOLS):
                         approval = ToolApprovalGate.check(
-                            tc.name,
-                            f"{tc.name}({json.dumps(tc.arguments)[:200]})",
+                            tool_name,
+                            f"{tool_name}({json.dumps(arguments)[:200]})",
                             conversation_id, user_id,
-                            arguments=tc.arguments,
+                            arguments=arguments,
                             agent_name=agent_name,
                         )
                         if approval != "approved":
-                            return f"Error: Tool '{tc.name}' was {approval} by the user."
+                            return f"Error: Tool '{tool_name}' was {approval} by the user."
             except Exception as e:
                 logger.debug("Sub-agent approval check failed: %s", e)
         return self._registry.execute(tc.name, tc.arguments)

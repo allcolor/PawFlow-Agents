@@ -4,6 +4,52 @@ PawFlow exposes tools to agents through `ToolHandler` classes. Most tools are al
 
 This catalog is grouped by purpose. Use `get_tool_schema(tool_name)` at runtime for the exact JSON schema of a tool.
 
+## Argument Handling
+
+Every tool call is decoded and checked at one place, `core/tool_json.py`, before
+a handler sees it. No module decodes tool arguments on its own — that property
+is enforced by a test (`tests/test_tool_json_single_seam.py`), because private
+copies drift and the same payload then succeeds on one route and fails on
+another.
+
+**Decoding.** `parse_tool_arguments` decides whether the argument blob is JSON
+at all. It unwraps double encoding, recovers a payload truncated at EOF, and
+repairs an invalid escape or a raw control character inside a string — but only
+after strict parsing has already failed, so a valid payload is never rewritten.
+When a payload genuinely cannot be read, the call is refused with the parse
+error and a window of characters around the failure. It is never silently
+replaced with empty arguments.
+
+**Type coercion.** Values are then aligned with the type each property declares.
+The rules are deliberately narrow — unambiguous fixes only:
+
+| Sent | Declared | Result |
+|---|---|---|
+| `"[{...}]"` | `array` / `object` | decoded; refused if it decodes to another type |
+| `"true"`, `"1"`, `"false"`, `"0"` | `boolean` | converted |
+| `"50"`, `50.0` | `integer` | converted |
+| `"1.5"` | `number` | converted (finite only) |
+| `null` on an optional property | any | dropped, as if omitted |
+| `null` on a required property | any | refused |
+| a value already of the declared type | any | untouched |
+
+Anything else is refused with a message naming the property. In particular:
+
+- A **bare** string is never wrapped or split into an array. Deciding what
+  `tags="a,b"` means belongs to the handler
+  (`core/handlers/_arg_normalize.py`), not to a guess made here.
+- A boolean never satisfies `integer` or `number`, so `limit=true` is an error
+  rather than `1`.
+- An unrecognized boolean string (`"maybe"`) is an error, not `false`.
+
+**Names and aliases.** Claude Code spellings (`file_path` → `path`,
+`include` → `glob`) and common aliases (`cmd` → `command`) are mapped to the
+PawFlow names. The caller's argument object is never modified in place: the
+call recorded in the transcript stays the call that was approved.
+
+**Unknown arguments** are rejected with the list of valid ones rather than
+ignored, so the next attempt can be correct.
+
 ## Filesystem and Editing
 
 Filesystem-backed tools accept two routing controls in their runtime schema:
@@ -94,7 +140,7 @@ either way.
 | `bash` | Run a shell command through the relay. Accepts `command` or `cmd`. |
 | `Monitor` | Run a command and return early on exit or regex match. |
 | `execute_script` | Execute a script/tool-backed snippet. |
-| `run_tests` | Run tests through the project environment; accepts `max_output` to cap returned output. |
+| `run_tests` | Run tests through the project environment; accepts `maxfail` (default 1, fail fast — pass `0` to run the whole selection and report every failure in one call) and `max_output` to cap returned output. |
 | `security_scan` | Run security checks. |
 | `screen` | Screenshot/click/type/key/scroll/mouse-position against local or Docker desktop. |
 | `browser` | Browser automation action through the browser service. |

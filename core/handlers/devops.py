@@ -44,7 +44,11 @@ class RunTestsHandler(BaseFsHandler):
     def description(self) -> str:
         return (
             "Run pytest on test files. Returns pass/fail summary with first failure details. "
-            "Parameters: test_files (list), test_pattern (string, e.g. 'test_foo'), timeout (int, optional — no timeout by default), max_output (int, optional)."
+            "Parameters: test_files (list), test_pattern (string, e.g. 'test_foo'), "
+            "maxfail (int, default 1 — stop after N failures; pass 0 to run the whole "
+            "selection and get EVERY failure in one call, which is what you want when "
+            "characterizing a batch of known-red tests), "
+            "timeout (int, optional — no timeout by default), max_output (int, optional)."
         )
 
     @property
@@ -60,6 +64,10 @@ class RunTestsHandler(BaseFsHandler):
                 "test_pattern": {
                     "type": "string",
                     "description": "Pattern to match test functions (e.g. 'test_foo')",
+                },
+                "maxfail": {
+                    "type": "integer",
+                    "description": "Stop after this many failures (default: 1, i.e. fail fast). Pass 0 for no limit: the whole selection runs and every failure is reported, so a batch of red tests takes one call instead of one call per test.",
                 },
                 "timeout": {
                     "type": "integer",
@@ -147,6 +155,16 @@ class RunTestsHandler(BaseFsHandler):
         from core.handlers._arg_normalize import normalize_string_list
         test_files = normalize_string_list(arguments.get("test_files"))
         test_pattern = arguments.get("test_pattern", "")
+        raw_maxfail = arguments.get("maxfail", 1)
+        if raw_maxfail is None:
+            raw_maxfail = 1
+        try:
+            maxfail = int(raw_maxfail)
+        except (TypeError, ValueError):
+            return (f"Error: 'maxfail' must be an integer, got {raw_maxfail!r}. "
+                    "Use 0 to report every failure.")
+        if maxfail < 0:
+            return "Error: 'maxfail' must be >= 0 (0 means no limit)."
         timeout = arguments.get("timeout")
         if timeout is not None:
             try:
@@ -171,7 +189,8 @@ class RunTestsHandler(BaseFsHandler):
 
         # Build pytest command
         files_str = " ".join(f'"{f}"' for f in test_files)
-        cmd = f"python -m pytest {files_str} -x -q --tb=short --no-header"
+        maxfail_flag = f" --maxfail={maxfail}" if maxfail else ""
+        cmd = f"python -m pytest {files_str}{maxfail_flag} -q --tb=short --no-header"
         if test_pattern:
             cmd += f" -k \"{test_pattern}\""
 

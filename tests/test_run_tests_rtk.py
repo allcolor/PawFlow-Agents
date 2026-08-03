@@ -43,7 +43,7 @@ def test_run_tests_does_not_use_rtk_without_env(monkeypatch):
 
     assert "Tests PASSED" in result
     assert len(relay.calls) == 1
-    assert relay.calls[0][1] == 'python -m pytest "tests/test_example.py" -x -q --tb=short --no-header'
+    assert relay.calls[0][1] == 'python -m pytest "tests/test_example.py" --maxfail=1 -q --tb=short --no-header'
     assert relay.calls[0][2] == ()
 
 

@@ -139,12 +139,19 @@ def extract_tool_activity(
                 args = tc.get("arguments") or tc.get("function", {}).get(
                     "arguments") or {}
                 if not isinstance(args, dict):
-                    # Some providers serialize arguments as a JSON string
-                    try:
-                        import json as _json
-                        args = _json.loads(args) if isinstance(args, str) else {}
-                    except Exception:
-                        args = {}
+                    # Some providers serialize arguments as a JSON string.
+                    # Use the canonical decoder so the digest recovers the
+                    # same payloads the execution path recovers (truncated at
+                    # EOF, invalid escape); a private json.loads here reported
+                    # "no arguments" for calls that actually ran fine.
+                    # Display degrades to {} rather than raising: an
+                    # unreadable historical message must not break the digest.
+                    from core.tool_json import (
+                        parse_tool_arguments, tool_argument_parse_error)
+                    parsed = parse_tool_arguments(args, tool_name=name,
+                                                  provider="digest")
+                    args = ({} if tool_argument_parse_error(parsed)
+                            else parsed)
 
                 tc_id = tc.get("id") or ""
                 pending_calls[tc_id] = (name, args)

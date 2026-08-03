@@ -249,7 +249,14 @@ class BashHandler(BaseFsHandler):
         command = arguments.get("command", "")
         if not command:
             logger.warning("[bash] called with empty command. raw args: %s", repr(arguments)[:300])
-            return "(no command provided — ignored)"
+            # Must start with "Error:" — ToolRegistry.execute only records a
+            # failed metric for results with that prefix, so the previous
+            # "(no command provided)" wording made every malformed bash call
+            # look like a success in the tool metrics. Echo the keys we did
+            # get: the usual cause is an alias or a misspelled parameter.
+            _seen = sorted(k for k in arguments if not str(k).startswith("_"))
+            return ("Error: 'command' is required and was empty. "
+                    f"Received argument(s): {_seen}.")
 
         # Log description if provided (CC UI metadata)
         desc = arguments.get("description", "")

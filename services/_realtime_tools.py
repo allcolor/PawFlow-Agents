@@ -112,13 +112,23 @@ class RealtimeToolBridge:
 
     @staticmethod
     def _parse_args(arguments) -> dict:
+        """Decode provider-emitted arguments through the canonical parser.
+
+        Another private decode loop the u1/u2 unification missed: it answered
+        any failure with {}, so a payload the canonical parser repairs
+        (truncated at EOF, invalid escape) reached both the approval check and
+        the execution as no arguments at all, and the caller could not tell an
+        empty call from an undecodable one.
+        """
         if isinstance(arguments, dict):
             return arguments
-        try:
-            parsed = json.loads(arguments or "{}")
-            return parsed if isinstance(parsed, dict) else {}
-        except (ValueError, TypeError):
-            return {}
+        from core.tool_json import (
+            ToolArgumentError, parse_tool_arguments, tool_argument_parse_error)
+        parsed = parse_tool_arguments(arguments, provider="realtime")
+        error = tool_argument_parse_error(parsed)
+        if error:
+            raise ToolArgumentError(error)
+        return parsed if isinstance(parsed, dict) else {}
 
     @staticmethod
     def _clip(text: str) -> str:
@@ -137,7 +147,14 @@ class RealtimeToolBridge:
         one when it lands. Returns 'done' | 'background' | 'denied' |
         'unavailable' | 'error' for UI status events.
         """
-        args = self._parse_args(arguments)
+        from core.tool_json import ToolArgumentError
+        try:
+            args = self._parse_args(arguments)
+        except ToolArgumentError as exc:
+            logger.warning("[realtime] undecodable arguments for '%s' conv=%s",
+                           name, self._cid[:8])
+            send_result(call_id, str(exc))
+            return "error"
         if not any(h.name == name for h in self._registry.list_tools()):
             send_result(call_id, f"Error: tool '{name}' is not available in "
                                  "this voice session.")

@@ -23,6 +23,7 @@ from typing import Dict, Any, List, Optional
 
 # ToolHandler base class — in separate module to avoid circular imports
 from core.tool_handler import ToolHandler  # noqa: F401
+from core.tool_json import ToolArgumentError
 
 logger = logging.getLogger(__name__)
 
@@ -276,10 +277,20 @@ class ToolRegistry:
                 _schema_props = set()
                 if hasattr(handler, 'parameters_schema'):
                     _schema_props = set((handler.parameters_schema.get("properties") or {}).keys())
-                for _cc_name, _pf_name in _CC_ALIASES.items():
-                    if _cc_name in args and _pf_name not in args:
-                        if _cc_name not in _schema_props:
-                            args[_pf_name] = args.pop(_cc_name)
+                _to_rename = [
+                    (_cc, _pf) for _cc, _pf in _CC_ALIASES.items()
+                    if _cc in args and _pf not in args
+                    and _cc not in _schema_props
+                ]
+                if _to_rename:
+                    # Copy first: `args` is still the caller's dict here. The
+                    # agent executor keeps that reference for re-authorization,
+                    # for the post_tool_call hook and for the transcript, so
+                    # renaming keys in place made the recorded call differ from
+                    # the one the user approved.
+                    args = dict(args)
+                    for _cc_name, _pf_name in _to_rename:
+                        args[_pf_name] = args.pop(_cc_name)
                 try:
                     from core.handlers.meta_tools import _normalize_tool_args, _schema_with_local
                     args = _normalize_tool_args(name, args, _schema_with_local(handler))
@@ -299,6 +310,19 @@ class ToolRegistry:
                     _schema = _schema_with_local(handler)
                 except Exception:
                     _schema = handler.parameters_schema
+                # Align values with their declared types before validating.
+                # parse_tool_arguments repairs the argument blob; nothing
+                # repaired an individual field, so a JSON-encoded array or a
+                # "false" string reached the handler as-is and each handler
+                # improvised its own conversion.
+                from core.tool_json import coerce_to_schema
+                args, _repairs, _coerce_error = coerce_to_schema(
+                    args, _schema, tool_name=name)
+                if _coerce_error:
+                    return _fail(_coerce_error)
+                if _repairs:
+                    logger.warning("[%s] repaired tool arguments: %s",
+                                   name, "; ".join(_repairs))
                 from core.tool_json import missing_required_arguments
                 _known = set((_schema.get("properties") or {}).keys())
                 if _known:
@@ -352,6 +376,14 @@ class ToolRegistry:
             else:
                 ok = True
             return result
+        except ToolArgumentError as e:
+            # Already a full diagnostic ("Error: failed to decode tool
+            # arguments. ... Window around char N: ...") — returning it raw
+            # keeps the position window the model needs, instead of burying
+            # it under a second "Error executing tool" prefix.
+            metric_error = str(e)
+            logger.error("Tool '%s' received undecodable arguments: %s", name, e)
+            return metric_error
         except Exception as e:
             metric_error = f"Error executing tool '{name}': {e}"
             logger.error(f"Tool '{name}' execution failed: {e}")

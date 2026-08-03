@@ -722,12 +722,21 @@ class BaseFsHandler(ToolHandler):
 
     @staticmethod
     def _unwrap_json(arguments) -> Dict[str, Any]:
-        """Unwrap arguments that arrive as JSON string (MCP bridge double-encoding)."""
-        for _ in range(3):
-            if not isinstance(arguments, str):
-                break
-            try:
-                arguments = json.loads(arguments)
-            except (json.JSONDecodeError, TypeError):
-                return {}
-        return arguments if isinstance(arguments, dict) else {}
+        """Unwrap arguments that arrive as JSON string (MCP bridge double-encoding).
+
+        Delegates to the canonical decoder (u1/u2 unification): this copy had
+        its own inline loop, which returned {} on any decode failure. Every
+        filesystem handler calls this, so a near-valid payload the canonical
+        parser repairs was silently emptied here instead — surfacing as
+        "missing required argument", or for bash as a result that did not even
+        start with "Error:" and was therefore recorded as a success.
+        """
+        if isinstance(arguments, dict):
+            return arguments
+        from core.tool_json import (
+            ToolArgumentError, parse_tool_arguments, tool_argument_parse_error)
+        parsed = parse_tool_arguments(arguments, provider="fs-handler")
+        error = tool_argument_parse_error(parsed)
+        if error:
+            raise ToolArgumentError(error)
+        return parsed if isinstance(parsed, dict) else {}

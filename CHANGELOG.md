@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- The approval gate now decides on the call that actually runs. Arguments
+  delivered as a JSON string reached it as empty arguments, so the dangerous-
+  and catastrophic-command scans inspected nothing while the registry decoded
+  the same string and executed the real command; both the main and sub-agent
+  paths now canonicalize name and arguments before any decision.
+- `shell`, `exec`, `run`, `terminal`, `run_command` and `execute` execute as
+  `bash` and are now classified as `bash` for approval, instead of falling to
+  the session-scoped default and escaping the command-content scan. Escalation
+  is one-way, so tools like `create_file` keep their existing classification.
+- A `pre_tool_call` hook replacing a call, and `$VAR` resolution rewriting its
+  values, both ran after approval and executed without a second prompt. The
+  call is now re-authorized when — and only when — it changed.
+
+### Added
+
+- Tool arguments are aligned with their declared schema types before dispatch:
+  a JSON-encoded array or object is decoded, `"true"`/`"50"` become a boolean
+  or an integer, and a null optional is dropped. Ambiguous shapes are refused
+  with a message naming the property rather than guessed — a bare string is
+  never split or wrapped into an array, and a boolean never satisfies
+  `integer`. Values already matching their type are untouched.
+- `run_tests` accepts `maxfail` (default 1, unchanged fail-fast). `maxfail=0`
+  runs the whole selection and reports every failure in one call instead of one
+  call per failing test.
+
+### Fixed
+
+- Three private tool-argument decoders that the earlier parser unification
+  missed now use the canonical decoder: `BaseFsHandler._unwrap_json` (19
+  filesystem handlers), `RealtimeToolBridge._parse_args` (voice sessions) and
+  the tool activity digest. All three answered a decode failure with empty
+  arguments, discarding a diagnostic the canonical parser produces and, in the
+  digest, reporting "no arguments" for calls that had run correctly. A test now
+  enforces that no module outside `core/tool_json.py` decodes tool arguments.
+- `bash` answered an empty command with a result that did not start with
+  `Error:`, so every malformed `bash` call was recorded as a success in the
+  tool metrics. It now reports the error and echoes the argument names it did
+  receive.
+- The Claude Code argument aliases (`file_path` → `path`, ...) renamed keys in
+  the caller's own dictionary, so the call kept for re-authorization, for the
+  `post_tool_call` hook and for the transcript no longer matched the one the
+  user approved.
+
 ## [1.0.0-beta.88] — 2026-08-03
 
 ### Added

@@ -106,61 +106,63 @@ class AgentToolExecMixin:
                 unwrap_mcp_tool as _unwrap_perm,
                 _MCP_SCHEMA_WRAPPERS as _SCHEMA_WRAPPERS,
             )
+            # Arguments delivered as a JSON string reached the gate as {} --
+            # unwrap_mcp_tool returns a non-wrapper payload untouched, so the
+            # content-aware checks scanned nothing while registry.execute
+            # parsed the same string and ran the real command. Canonicalize
+            # before any decision, and refuse a call we cannot read.
+            if isinstance(tc.arguments, str):
+                from core.tool_json import parse_tool_arguments
+                _parsed = parse_tool_arguments(
+                    tc.arguments, tool_name=tc.name, provider="approval-gate")
+                _parsed_error = tool_argument_parse_error(_parsed)
+                if _parsed_error:
+                    logger.error(
+                        "Rejecting unreadable tool arguments before approval: "
+                        "tool=%s", tc.name)
+                    return tc, _parsed_error
+                tc.arguments = _parsed
             _always_allow_plumbing = tc.name in _SCHEMA_WRAPPERS
-            if _always_allow_plumbing:
-                _eff_name, _eff_args = tc.name, tc.arguments
-            else:
-                _eff_name, _eff_args = _unwrap_perm(tc.name, tc.arguments)
-                if not isinstance(_eff_args, dict):
-                    _eff_args = tc.arguments if isinstance(tc.arguments, dict) else {}
 
-            # Fine-grained tool permissions (override global mode)
-            _tool_perm = ""
-            _perm_mode = ""
-            _perm_cid = event_cid or conversation_id
-            try:
-                from core.conversation_store import ConversationStore
-                _cs = ConversationStore.instance()
-                _perm_mode = _cs.get_extra(conversation_id, "permission_mode") or "default"
-                from core.tool_approval import ToolApprovalGate as _TAG
-                _tperms = _TAG._get_permissions(_perm_cid, _agent_key)
-                _tool_perm = _tperms.get(_eff_name, "")
-            except Exception:
-                logger.debug("exception suppressed", exc_info=True)
-            if _always_allow_plumbing:
-                _tool_perm = "allow"  # get_tool_schema: introspection only
-            if _tool_perm == "deny":
-                return tc, f"Error: Tool '{_eff_name}' is denied by permission settings."
-            elif _tool_perm == "allow":
-                pass  # explicitly allowed — skip all further permission checks
-            elif _tool_perm == "confirm":
-                # Force user confirmation regardless of global mode (even auto)
-                from core.tool_approval import ToolApprovalGate
-                _approval_cid = event_cid or conversation_id
-                approval = ToolApprovalGate.check(
-                    _eff_name, f"{_eff_name}({json.dumps(_eff_args)[:200]})",
-                    _approval_cid, user_id,
-                    arguments=_eff_args,
-                    agent_name=_agent_key,
-                )
-                if approval != "approved":
-                    return tc, f"Error: Tool '{_eff_name}' was {approval} by the user."
-            else:
-                # No per-tool override — use global permission_mode
-                if _perm_mode == "read_only":
-                    _write_tools = {"write", "edit", "batch_edit", "apply_patch", "find_replace",
-                                    "delete", "mkdir", "bash", "notebook_edit"}
-                    if _eff_name in _write_tools:
-                        return tc, "Error: write operations blocked (read-only mode). Change permission mode to allow writes."
-                    # Also block filesystem write actions
-                    if _eff_name == "filesystem" and _eff_args.get("action", "") not in (
-                            "list_dir", "read_file", "stat", "exists", "search", "grep",
-                            "git_status", "git_log", "git_diff", ""):
-                        return tc, "Error: write operations blocked (read-only mode). Change permission mode to allow writes."
-                elif _perm_mode == "auto":
-                    pass  # skip approval gate entirely — auto-approve all tools
-                else:
-                    # default / approve_edits — use normal approval gate
+            def _effective(call):
+                """Return the (tool, arguments) pair a decision must apply to."""
+                if _always_allow_plumbing:
+                    return call.name, call.arguments
+                _n, _a = _unwrap_perm(call.name, call.arguments)
+                if not isinstance(_a, dict):
+                    _a = call.arguments if isinstance(call.arguments, dict) else {}
+                return _n, _a
+
+            def _shape(eff_name, eff_args):
+                return eff_name, json.dumps(eff_args, sort_keys=True, default=str)
+
+            def _authorize(_eff_name, _eff_args):
+                """Return an error string when the call must not run, else "".
+
+                Extracted so it can run again on a call that changed after it
+                was approved (pre_tool_call hooks, $VAR resolution).
+                """
+                # Fine-grained tool permissions (override global mode)
+                _tool_perm = ""
+                _perm_mode = ""
+                _perm_cid = event_cid or conversation_id
+                try:
+                    from core.conversation_store import ConversationStore
+                    _cs = ConversationStore.instance()
+                    _perm_mode = _cs.get_extra(conversation_id, "permission_mode") or "default"
+                    from core.tool_approval import ToolApprovalGate as _TAG
+                    _tperms = _TAG._get_permissions(_perm_cid, _agent_key)
+                    _tool_perm = _tperms.get(_eff_name, "")
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
+                if _always_allow_plumbing:
+                    _tool_perm = "allow"  # get_tool_schema: introspection only
+                if _tool_perm == "deny":
+                    return f"Error: Tool '{_eff_name}' is denied by permission settings."
+                elif _tool_perm == "allow":
+                    return ""  # explicitly allowed — skip all further checks
+                elif _tool_perm == "confirm":
+                    # Force user confirmation regardless of global mode (even auto)
                     from core.tool_approval import ToolApprovalGate
                     _approval_cid = event_cid or conversation_id
                     approval = ToolApprovalGate.check(
@@ -170,7 +172,40 @@ class AgentToolExecMixin:
                         agent_name=_agent_key,
                     )
                     if approval != "approved":
-                        return tc, f"Error: Tool '{_eff_name}' was {approval} by the user."
+                        return f"Error: Tool '{_eff_name}' was {approval} by the user."
+                else:
+                    # No per-tool override — use global permission_mode
+                    if _perm_mode == "read_only":
+                        _write_tools = {"write", "edit", "batch_edit", "apply_patch", "find_replace",
+                                        "delete", "mkdir", "bash", "notebook_edit"}
+                        if _eff_name in _write_tools:
+                            return "Error: write operations blocked (read-only mode). Change permission mode to allow writes."
+                        # Also block filesystem write actions
+                        if _eff_name == "filesystem" and _eff_args.get("action", "") not in (
+                                "list_dir", "read_file", "stat", "exists", "search", "grep",
+                                "git_status", "git_log", "git_diff", ""):
+                            return "Error: write operations blocked (read-only mode). Change permission mode to allow writes."
+                    elif _perm_mode == "auto":
+                        pass  # skip approval gate entirely — auto-approve all tools
+                    else:
+                        # default / approve_edits — use normal approval gate
+                        from core.tool_approval import ToolApprovalGate
+                        _approval_cid = event_cid or conversation_id
+                        approval = ToolApprovalGate.check(
+                            _eff_name, f"{_eff_name}({json.dumps(_eff_args)[:200]})",
+                            _approval_cid, user_id,
+                            arguments=_eff_args,
+                            agent_name=_agent_key,
+                        )
+                        if approval != "approved":
+                            return f"Error: Tool '{_eff_name}' was {approval} by the user."
+                return ""
+
+            _eff_name, _eff_args = _effective(tc)
+            _denied = _authorize(_eff_name, _eff_args)
+            if _denied:
+                return tc, _denied
+            _approved_shape = _shape(_eff_name, _eff_args)
             # Re-inject thread-local source agent + delegate tc_id (needed in pool threads)
             from core.tool_registry import SpawnAgentsHandler
             for h in registry.list_tools():
@@ -239,6 +274,22 @@ class AgentToolExecMixin:
                     elif tc.name == "execute_script":
                         _skip = {"code"}
                     _resolve_vars_in_args(tc.arguments, _all_env, skip_keys=_skip)
+                # Approval must be the LAST step that can change what runs.
+                # A pre_tool_call hook may replace both name and arguments
+                # (decision="replace", core/agent_hooks.py:110) and $VAR
+                # resolution rewrites values -- both after the gate said yes,
+                # and the call below then executed the replacement with no
+                # second prompt. Re-authorize only when the call actually
+                # changed, so an unchanged call never prompts twice.
+                _eff_name, _eff_args = _effective(tc)
+                if _shape(_eff_name, _eff_args) != _approved_shape:
+                    logger.info(
+                        "Tool call changed after approval (%s -> %s); "
+                        "re-authorizing", _approved_shape[0], _eff_name)
+                    _denied = _authorize(_eff_name, _eff_args)
+                    if _denied:
+                        return tc, _denied
+                    _approved_shape = _shape(_eff_name, _eff_args)
                 logger.info("Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
                 result = registry.execute(tc.name, tc.arguments) or ""
                 # Redact secrets from tool output

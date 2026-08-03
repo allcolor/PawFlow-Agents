@@ -154,13 +154,32 @@ class TestRealtimeToolBridge:
         assert len(sent[0][1]) < 5000
         assert "truncated" in sent[0][1]
 
-    def test_malformed_arguments_become_empty_dict(self):
+    def test_undecodable_arguments_are_reported_not_run_as_empty(self):
+        # Previously this ran the tool with {}: the decode failure was
+        # swallowed and a call nobody could read executed anyway, with no
+        # way for the model to learn what was wrong with its output.
         registry = _FakeRegistry()
         bridge = _bridge(registry)
         bridge._authorize = lambda name, args: "approved"
-        bridge.handle_call("c6", "echo", "{not json",
+        sent = []
+        status = bridge.handle_call(
+            "c6", "echo", "{not json",
+            send_result=lambda cid, r: sent.append((cid, r)))
+
+        assert status == "error"
+        assert registry.executed == []
+        assert sent[0][0] == "c6"
+        assert "failed to decode tool arguments" in sent[0][1]
+
+    def test_repairable_arguments_still_run(self):
+        # The canonical parser autocloses an EOF truncation, so a call the
+        # old private json.loads emptied now executes with its real payload.
+        registry = _FakeRegistry()
+        bridge = _bridge(registry)
+        bridge._authorize = lambda name, args: "approved"
+        bridge.handle_call("c7", "echo", '{"text": "hi',
                            send_result=lambda cid, r: None)
-        assert registry.executed == [("echo", {})]
+        assert registry.executed == [("echo", {"text": "hi"})]
 
 
 class TestToolBridgeAuthorize:

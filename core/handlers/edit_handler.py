@@ -70,7 +70,7 @@ class EditHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         if "old_string" not in arguments and "old" in arguments:
             arguments["old_string"] = arguments.get("old", "")
         if "new_string" not in arguments and "new" in arguments:

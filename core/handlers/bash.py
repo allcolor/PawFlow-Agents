@@ -242,7 +242,7 @@ class BashHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         if "command" not in arguments and "cmd" in arguments:
             arguments = dict(arguments)
             arguments["command"] = arguments.pop("cmd")

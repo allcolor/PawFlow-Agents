@@ -246,6 +246,8 @@ def list_available_relays(user_id: str = "", conv_id: str = "") -> List[Dict[str
                 "host_root": _ri.get("host_root", ""),
                 "allow_local": bool(_ri.get('allow_local', False)),
                 "allow_local_screen": bool(_ri.get('allow_local_screen', False)),
+                "server_local_exec": bool(
+                    (sdef.config or {}).get("server_local_exec")),
             })
     except Exception:
         logging.getLogger(__name__).debug("Ignored exception", exc_info=True)

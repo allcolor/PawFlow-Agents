@@ -76,8 +76,15 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
             if not svc:
                 flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
                 return [flowfile]
-            _term_action = "open_local_terminal" if local else "open_terminal"
+            _server_local = bool(
+                local and svc.config.get("server_managed")
+                and svc.config.get("server_local_exec"))
+            _term_action = (
+                "open_terminal" if _server_local
+                else "open_local_terminal" if local else "open_terminal")
             terminal_kwargs = {"shell": shell} if shell else {}
+            if _server_local:
+                terminal_kwargs["local"] = True
             result = svc._request(_term_action, cols=cols, rows=rows,
                                   **terminal_kwargs)
             session_id = result.get("session_id", "") if isinstance(result, dict) else str(result)
@@ -89,7 +96,8 @@ def _handle_sf_k6(self, action, body, store, user_id, flowfile, _helpers):
             _term_token = register_terminal(
                 session_id, relay_id, relay_service=svc,
                 owner_user_id=user_id,
-                login_session_id=flowfile.get_attribute("auth.session_id") or "")
+                login_session_id=flowfile.get_attribute("auth.session_id") or "",
+                server_local=_server_local)
 
             _ensure_terminal_routes(flowfile)
 

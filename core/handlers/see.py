@@ -57,7 +57,7 @@ class SeeHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         path = arguments.get("path", "")
         if not path:
             return "Error: 'path' is required"

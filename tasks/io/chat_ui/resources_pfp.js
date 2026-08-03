@@ -180,6 +180,121 @@ function _renderPfpRegistries(data) {
     + '</div>').join('');
 }
 
+async function togglePfpDepot() {
+  const content = document.getElementById('pfpDepotContent');
+  const arrow = document.getElementById('pfpDepotArrow');
+  if (!content) return;
+  const opening = content.style.display === 'none';
+  content.style.display = opening ? 'block' : 'none';
+  if (arrow) arrow.textContent = opening ? '\u25BC' : '\u25B6';
+  if (opening) await loadPfpDepot();
+}
+
+async function loadPfpDepot() {
+  const content = document.getElementById('pfpDepotContent');
+  if (!content) return;
+  content.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('loading')) + '</div>';
+  try {
+    const data = await rxjs.firstValueFrom(action$('pfp_depot_list', {}, {
+      skipConversationId: true,
+    }));
+    if (data.error) throw new Error(data.error);
+    _renderPfpDepot(content, data);
+  } catch (e) {
+    content.innerHTML = '<div style="color:var(--pf-danger);font-size:11px;">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function _renderPfpDepot(content, data) {
+  const packages = (data && data.packages) || [];
+  const errors = (data && data.errors) || [];
+  let html = '<div style="display:flex;gap:5px;margin-bottom:7px;">'
+    + '<button id="pfp-depot-upload" style="flex:1;background:var(--pf-accent);color:var(--pf-bg);border:none;padding:5px 7px;border-radius:4px;cursor:pointer;font-size:10px;">' + escapeHtml(t('pfpDepotUpload')) + '</button>'
+    + '<button id="pfp-depot-refresh" title="' + _pfpAttr(t('refresh')) + '" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:5px 7px;border-radius:4px;cursor:pointer;font-size:10px;">\u21BB</button>'
+    + '</div>';
+  if (!packages.length) {
+    html += '<div style="color:var(--pf-muted);font-size:10px;">' + escapeHtml(t('pfpDepotEmpty')) + '</div>';
+  } else {
+    html += packages.map(row => {
+      const sourceKey = row.source === 'uploaded' ? 'pfpDepotUploaded' : 'pfpDepotBundled';
+      const objects = (row.objects || []).map(obj => typeof obj === 'string' ? obj : (obj.id || obj.type || '')).filter(Boolean);
+      return '<div class="pfp-depot-row" style="border:1px solid var(--pf-border);border-radius:4px;padding:6px;margin-bottom:5px;">'
+        + '<div style="display:flex;align-items:center;gap:5px;">'
+        + '<div style="flex:1;min-width:0;">'
+        + '<div style="color:var(--pf-text);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + _pfpAttr((row.package || '') + '@' + (row.version || '')) + '">' + escapeHtml(row.package || '') + '</div>'
+        + '<div style="color:var(--pf-muted);font-size:9px;">v' + escapeHtml(row.version || '') + ' · ' + escapeHtml(t(sourceKey)) + ' · ' + escapeHtml(_formatFileSize(row.package_size || 0)) + '</div>'
+        + '</div>'
+        + '<button class="pfp-depot-install" data-ref="' + _pfpAttr(row.ref || '') + '" title="' + _pfpAttr(t('pfpInstallPackage')) + '" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:3px 6px;border-radius:3px;cursor:pointer;font-size:10px;">' + escapeHtml(t('install')) + '</button>'
+        + (row.deletable ? '<button class="pfp-depot-delete" data-depot-id="' + _pfpAttr(row.depot_id || '') + '" data-package="' + _pfpAttr(row.package || '') + '" title="' + _pfpAttr(t('delete')) + '" style="background:none;color:var(--pf-danger);border:1px solid var(--pf-border);padding:3px 6px;border-radius:3px;cursor:pointer;font-size:10px;">&times;</button>' : '')
+        + '</div>'
+        + (row.description ? '<div style="color:var(--pf-muted);font-size:10px;margin-top:4px;">' + escapeHtml(row.description) + '</div>' : '')
+        + (objects.length ? '<div style="color:var(--pf-muted);font-size:9px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + _pfpAttr(objects.join(', ')) + '">' + escapeHtml(objects.join(', ')) + '</div>' : '')
+        + '</div>';
+    }).join('');
+  }
+  if (errors.length) {
+    html += '<div style="color:var(--pf-warning);font-size:9px;margin-top:5px;">'
+      + errors.map(err => escapeHtml(err.error || '')).join('<br/>') + '</div>';
+  }
+  content.innerHTML = html;
+  const upload = content.querySelector('#pfp-depot-upload');
+  const refresh = content.querySelector('#pfp-depot-refresh');
+  if (upload) upload.addEventListener('click', _uploadPfpToDepot);
+  if (refresh) refresh.addEventListener('click', loadPfpDepot);
+  content.querySelectorAll('.pfp-depot-install').forEach(btn => {
+    btn.addEventListener('click', () => _showPfpInstallDialog(btn.dataset.ref || ''));
+  });
+  content.querySelectorAll('.pfp-depot-delete').forEach(btn => {
+    btn.addEventListener('click', () => _deletePfpFromDepot(
+      btn.dataset.depotId || '', btn.dataset.package || ''));
+  });
+}
+
+function _uploadPfpToDepot() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.pfp,application/octet-stream';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.pfp')) {
+      addMsg('error', t('pfpDepotPfpRequired'));
+      return;
+    }
+    const content = document.getElementById('pfpDepotContent');
+    if (content) content.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('pfpDepotUploading')) + '</div>';
+    try {
+      const uploaded = await uploadFileToStore(file);
+      const result = await rxjs.firstValueFrom(action$('pfp_depot_add', {
+        file_id: uploaded.file_id,
+      }, { skipConversationId: true }));
+      if (result.error) throw new Error(result.error);
+      addMsg('system', t(result.already_present ? 'pfpDepotAlreadyPresent' : 'pfpDepotAdded', {
+        package: ((result.package || {}).package || file.name),
+      }));
+      await loadPfpDepot();
+    } catch (e) {
+      addMsg('error', e.message);
+      await loadPfpDepot();
+    }
+  };
+  input.click();
+}
+
+async function _deletePfpFromDepot(depotId, packageName) {
+  if (!depotId || !confirm(t('pfpDepotDeleteConfirm', { package: packageName || depotId }))) return;
+  try {
+    const result = await rxjs.firstValueFrom(action$('pfp_depot_delete', {
+      depot_id: depotId,
+    }, { skipConversationId: true }));
+    if (result.error) throw new Error(result.error);
+    addMsg('system', t('pfpDepotDeleted', { package: packageName || depotId }));
+  } catch (e) {
+    addMsg('error', e.message);
+  }
+  await loadPfpDepot();
+}
+
 function _findPfpInstalledPackage(packageId, scope) {
   const packages = (_lastResourcesData && _lastResourcesData.pfp_packages) || [];
   return packages.find(pkg => (pkg.package || '') === packageId && ((pkg._scope || pkg.scope || 'user') === scope)) || null;

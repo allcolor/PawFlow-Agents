@@ -49,7 +49,7 @@ class SearchHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         pattern = arguments.get("pattern") or arguments.get("query") or ""
         if not pattern:
             return "Error: 'pattern' is required"

@@ -30,6 +30,8 @@ except ImportError:  # pragma: no cover - depends on the relay's environment
 _CATN_PREFIX_RE = re.compile(r"^\s*\d+\t")
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P, _DKLEN = 2 ** 14, 8, 1, 32
 _NONCE_LEN = 12
+_SALT_LEN = 16
+_ENVELOPE_MAGIC = b"PFBK1"
 
 
 def _require_aesgcm() -> None:
@@ -49,10 +51,18 @@ def _derive_key(passphrase: str, salt: bytes) -> bytes:
     )
 
 
-def _decrypt(key: bytes, blob: bytes) -> bytes:
+def _decrypt(passphrase: str, blob: bytes) -> bytes:
     _require_aesgcm()
-    nonce, ciphertext = blob[:_NONCE_LEN], blob[_NONCE_LEN:]
-    return AESGCM(key).decrypt(nonce, ciphertext, None)
+    header_len = len(_ENVELOPE_MAGIC) + _SALT_LEN + _NONCE_LEN
+    if len(blob) <= header_len or not blob.startswith(_ENVELOPE_MAGIC):
+        raise ValueError("unsupported encrypted-backup envelope")
+    offset = len(_ENVELOPE_MAGIC)
+    salt = blob[offset:offset + _SALT_LEN]
+    offset += _SALT_LEN
+    nonce = blob[offset:offset + _NONCE_LEN]
+    key = _derive_key(passphrase, salt)
+    return AESGCM(key).decrypt(
+        nonce, blob[offset + _NONCE_LEN:], _ENVELOPE_MAGIC)
 
 
 def _b64_decode_read_result(raw) -> bytes:
@@ -92,12 +102,6 @@ def main() -> None:
         pfp.error("BACKUP_PASSPHRASE secret is not bound (declare it at install/dev-load time)")
         raise SystemExit(1)
 
-    salt = _dest_read(destination_service, f"{destination_root}/salt.bin")
-    if not salt:
-        pfp.error(f"no salt found at {destination_root}/salt.bin — is there a backup here at all?")
-        raise SystemExit(1)
-    key = _derive_key(passphrase, salt)
-
     if manifest_timestamp:
         manifest_path = f"{destination_root}/manifests/{manifest_timestamp}"
     else:
@@ -109,7 +113,8 @@ def main() -> None:
         raise SystemExit(1)
 
     try:
-        manifest = json.loads(_decrypt(key, enc_manifest).decode("utf-8"))
+        manifest = json.loads(
+            _decrypt(passphrase, enc_manifest).decode("utf-8"))
     except Exception as exc:
         pfp.error(
             "failed to decrypt manifest — wrong passphrase, or the backup at "
@@ -131,7 +136,7 @@ def main() -> None:
             failed.append(rel)
             continue
         try:
-            plaintext = _decrypt(key, blob)
+            plaintext = _decrypt(passphrase, blob)
         except Exception:
             failed.append(rel)
             continue

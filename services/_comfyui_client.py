@@ -22,6 +22,18 @@ from core.relay_proxy_url import relay_proxy_ssl_context, resolve_relay_aware_ur
 logger = logging.getLogger(__name__)
 
 
+class _ValidatedInputRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Revalidate every media redirect before urllib follows it."""
+
+    def __init__(self, validate):
+        super().__init__()
+        self._validate = validate
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self._validate(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def raw_config(config: dict, key: str, default=None):
     """Read a LazyResolveDict value without resolving its template early."""
     try:
@@ -310,10 +322,16 @@ class ComfyUIClient:
         parsed = urllib.parse.urlparse(ref)
         if parsed.scheme not in {"http", "https"}:
             raise ServiceError("ComfyUI inputs must use HTTP(S) or fs://filestore")
+        ref = self._validate_input_url(ref)
+        parsed = urllib.parse.urlparse(ref)
         req = urllib.request.Request(
             ref, headers={"User-Agent": "PawFlow-Agent/1.0"})
+        opener = urllib.request.build_opener(
+            _ValidatedInputRedirectHandler(self._validate_input_url),
+            urllib.request.HTTPSHandler(context=relay_proxy_ssl_context(ref)),
+        )
         try:
-            with urllib.request.urlopen(req, timeout=self.request_timeout) as resp:  # nosec B310 - user-selected media input.
+            with opener.open(req, timeout=self.request_timeout) as resp:
                 length = int(resp.headers.get("Content-Length", "0") or 0)
                 if length:
                     self._check_input_size(length)
@@ -333,6 +351,18 @@ class ComfyUIClient:
             raise ServiceError(f"Could not load ComfyUI input {ref}: {exc}") from exc
         filename = os.path.basename(parsed.path) or f"input-{index}.bin"
         return filename, payload, content_type
+
+    def _validate_input_url(self, url: str) -> str:
+        """Reject direct or redirected media URLs that cross the SSRF boundary."""
+        return resolve_relay_aware_url(
+            url,
+            user_id=self._runtime_user_id,
+            conversation_id=self._runtime_conversation_id,
+            agent_name=self._runtime_agent_name,
+            allow_private=False,
+            service_name="ComfyUI input",
+            transform_relay=False,
+        )
 
     def _check_input_size(self, size: int) -> None:
         if size > self.max_input_bytes:

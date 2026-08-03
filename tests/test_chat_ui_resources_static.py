@@ -391,3 +391,20 @@ def test_resource_panel_renders_with_no_conversation_selected():
     empty_state = conversations_js[conversations_js.index("function renderEmptyState()"):]
     empty_state = empty_state[:empty_state.index("\n}")]
     assert "if (typeof loadResources === 'function') loadResources();" in empty_state
+
+
+def test_pfp_depot_is_a_permanent_left_sidebar_panel():
+    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    js = Path("tasks/io/chat_ui/resources_pfp.js").read_text(encoding="utf-8")
+
+    assert 'id="pfpDepotPanel"' in template
+    assert 'id="pfpDepotContent"' in template
+    assert 'onclick="togglePfpDepot()"' in template
+    assert "async function loadPfpDepot()" in js
+    assert "action$('pfp_depot_list', {}, {" in js
+    assert js.count("skipConversationId: true") >= 3
+    assert "uploadFileToStore(file)" in js
+    assert "action$('pfp_depot_add'" in js
+    assert "action$('pfp_depot_delete'" in js
+    assert "_showPfpInstallDialog(btn.dataset.ref || '')" in js
+    assert "row.deletable ?" in js

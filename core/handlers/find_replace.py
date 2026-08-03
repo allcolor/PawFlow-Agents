@@ -33,7 +33,7 @@ class FindReplaceHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         path = arguments.get("path", "")
         pattern = arguments.get("pattern", "")
         replacement = arguments.get("replacement", "")

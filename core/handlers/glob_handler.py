@@ -39,7 +39,7 @@ class GlobHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         pattern = arguments.get("pattern", "*")
         path = arguments.get("path", ".")
         recursive = arguments.get("recursive", True)

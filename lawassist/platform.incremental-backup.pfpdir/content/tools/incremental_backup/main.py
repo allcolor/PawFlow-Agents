@@ -4,13 +4,10 @@ rcloneFilesystem, or any other service the generic read/write/list_dir/
 mkdir/exists/delete tools can target via source=/destination=<service_id>).
 
 Encryption is never optional (see the plan's guardrail 16.2bis): every blob
-and the manifest itself are AES-256-GCM encrypted before leaving the relay,
-with a key derived from the bound `backup_passphrase` secret via scrypt. The
-salt is generated once and persisted at the destination (`<root>/salt.bin`,
-unencrypted — a salt is not a secret) so the derived key stays IDENTICAL
-across runs; a key that changed every run would defeat the whole point of an
-incremental diff (every file would look "new" and get re-uploaded every
-time).
+and the manifest itself are AES-256-GCM encrypted before leaving the relay.
+Each self-describing envelope carries its own random scrypt salt and nonce,
+so concurrent initial backups never race on mutable global encryption
+metadata. Plaintext hashes still provide stable incremental comparison.
 
 Content hashing (sha256) is computed on the PLAINTEXT before encryption, for
 the same reason: comparing ciphertext hashes across two runs of a
@@ -52,6 +49,8 @@ _DEFAULT_EXCLUDE = {".git", "node_modules", "__pycache__", ".venv"}
 _CATN_PREFIX_RE = re.compile(r"^\s*\d+\t")
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P, _DKLEN = 2 ** 14, 8, 1, 32
 _NONCE_LEN = 12
+_SALT_LEN = 16
+_ENVELOPE_MAGIC = b"PFBK1"
 
 
 def _require_aesgcm() -> None:
@@ -71,16 +70,29 @@ def _derive_key(passphrase: str, salt: bytes) -> bytes:
     )
 
 
-def _encrypt(key: bytes, plaintext: bytes) -> bytes:
+def _encrypt(passphrase: str, plaintext: bytes) -> bytes:
     _require_aesgcm()
+    salt = secrets.token_bytes(_SALT_LEN)
+    key = _derive_key(passphrase, salt)
     nonce = secrets.token_bytes(_NONCE_LEN)
-    return nonce + AESGCM(key).encrypt(nonce, plaintext, None)
+    return (
+        _ENVELOPE_MAGIC + salt + nonce
+        + AESGCM(key).encrypt(nonce, plaintext, _ENVELOPE_MAGIC)
+    )
 
 
-def _decrypt(key: bytes, blob: bytes) -> bytes:
+def _decrypt(passphrase: str, blob: bytes) -> bytes:
     _require_aesgcm()
-    nonce, ciphertext = blob[:_NONCE_LEN], blob[_NONCE_LEN:]
-    return AESGCM(key).decrypt(nonce, ciphertext, None)
+    header_len = len(_ENVELOPE_MAGIC) + _SALT_LEN + _NONCE_LEN
+    if len(blob) <= header_len or not blob.startswith(_ENVELOPE_MAGIC):
+        raise ValueError("unsupported encrypted-backup envelope")
+    offset = len(_ENVELOPE_MAGIC)
+    salt = blob[offset:offset + _SALT_LEN]
+    offset += _SALT_LEN
+    nonce = blob[offset:offset + _NONCE_LEN]
+    key = _derive_key(passphrase, salt)
+    return AESGCM(key).decrypt(
+        nonce, blob[offset + _NONCE_LEN:], _ENVELOPE_MAGIC)
 
 
 def _b64_encode(data: bytes) -> str:
@@ -177,20 +189,15 @@ def main() -> None:
         pfp.error(f"source_path does not exist or is not a directory: {source_path}")
         raise SystemExit(1)
 
-    salt_path = f"{destination_root}/salt.bin"
-    salt = _dest_read(destination_service, salt_path)
-    if not salt:
-        salt = secrets.token_bytes(16)
-        _dest_mkdir(destination_service, destination_root)
-        _dest_write(destination_service, salt_path, salt)
-    key = _derive_key(passphrase, salt)
+    _dest_mkdir(destination_service, destination_root)
 
     manifest_pointer = f"{destination_root}/manifest.json.enc"
     last_manifest = {}
     enc_prior = _dest_read(destination_service, manifest_pointer)
     if enc_prior:
         try:
-            last_manifest = json.loads(_decrypt(key, enc_prior).decode("utf-8"))
+            last_manifest = json.loads(
+                _decrypt(passphrase, enc_prior).decode("utf-8"))
         except Exception:
             last_manifest = {}
     last_files = last_manifest.get("files", {}) if isinstance(last_manifest, dict) else {}
@@ -214,7 +221,8 @@ def main() -> None:
         with open(full, "rb") as f:
             plaintext = f.read()
         blob_path = f"{destination_root}/blobs/{digest}"
-        _dest_write(destination_service, blob_path, _encrypt(key, plaintext))
+        _dest_write(
+            destination_service, blob_path, _encrypt(passphrase, plaintext))
         uploaded += 1
 
     counter = int(last_manifest.get("_counter", 0)) + 1
@@ -223,7 +231,8 @@ def main() -> None:
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "files": current_files,
     }
-    enc_manifest = _encrypt(key, json.dumps(manifest, ensure_ascii=False).encode("utf-8"))
+    enc_manifest = _encrypt(
+        passphrase, json.dumps(manifest, ensure_ascii=False).encode("utf-8"))
     _dest_write(destination_service, manifest_pointer, enc_manifest)
     _dest_write(destination_service, f"{destination_root}/manifests/{counter:012d}.json.enc", enc_manifest)
     _prune_old_manifests(destination_service, destination_root, keep_manifests)

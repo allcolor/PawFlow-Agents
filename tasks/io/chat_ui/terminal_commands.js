@@ -41,7 +41,7 @@ async function cmdTerminal(text, parts) {
   if (!localMode && sub !== 'docker') {
     if (!allRelays.length) try { allRelays = await _getRelays(); } catch(e) {}
     var relay = allRelays.find(r => r.id === relayId);
-    if (relay && relay.allow_local) {
+    if (_relaySupportsLocal(relay)) {
       var mode = await _pickMode(relayId);
       if (mode === null) return true;
       localMode = mode === 'local';
@@ -309,7 +309,7 @@ async function cmdDesktop(text, parts) {
     var _dRelays = [];
     try { _dRelays = await _getRelays(); } catch(e) {}
     var _dRelay = _dRelays.find(r => r.id === relayId);
-    if (_dRelay && _dRelay.allow_local) {
+    if (_relaySupportsLocal(_dRelay)) {
       var _dMode = await _pickMode(relayId);
       if (_dMode === null) return true;
       localScreen = _dMode === 'local';

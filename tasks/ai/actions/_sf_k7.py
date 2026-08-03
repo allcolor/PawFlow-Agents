@@ -51,25 +51,40 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                 flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
                 return [flowfile]
 
-            _action_start = "start_local_desktop" if local_screen else "start_desktop"
-            _action_status_key = "local_screen_running" if local_screen else "running"
+            _server_local = bool(
+                local_screen and svc.config.get("server_managed")
+                and svc.config.get("server_local_exec"))
+            _action_start = (
+                "start_desktop" if _server_local
+                else "start_local_desktop" if local_screen else "start_desktop")
+            _action_status_key = (
+                "running" if _server_local or not local_screen
+                else "local_screen_running")
             _session_prefix = "local_desktop" if local_screen else "desktop"
+            _local_kwargs = {"local": True} if _server_local else {}
 
             # Check if already running (idempotent)
-            status = svc._request("desktop_status")
+            status = svc._request("desktop_status", **_local_kwargs)
             logger.info("[open_desktop] desktop_status for %s: %s (key=%s)", relay_id, status, _action_status_key)
             if isinstance(status, dict) and status.get(_action_status_key):
                 _login_sid = flowfile.get_attribute("auth.session_id") or ""
                 if local_screen:
-                    _novnc_port = status.get("local_screen_novnc_port")
+                    _novnc_port = status.get(
+                        "novnc_port" if _server_local
+                        else "local_screen_novnc_port")
                     if _novnc_port:
-                        _relay_addr = getattr(svc, '_relay_addr', None) or '127.0.0.1'
+                        _relay_addr = (
+                            "127.0.0.1" if _server_local
+                            else getattr(svc, '_relay_addr', None) or '127.0.0.1')
                         if not _novnc_backend_http_ready(_relay_addr, _novnc_port):
                             logger.warning(
                                 "[open_desktop] already-running local noVNC is not reachable at %s:%s; restarting %s",
                                 _relay_addr, _novnc_port, relay_id)
                             try:
-                                svc._request("stop_local_desktop")
+                                svc._request(
+                                    "stop_desktop" if _server_local
+                                    else "stop_local_desktop",
+                                    **_local_kwargs)
                             except Exception:
                                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                             _novnc_port = 0
@@ -79,13 +94,16 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         _vtok = register_session(
                             _sid, _novnc_port,
                             owner_user_id=user_id,
-                            login_session_id=_login_sid)
+                            login_session_id=_login_sid,
+                            host=_relay_addr)
                         _ensure_vnc_routes(flowfile)
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
                         try:
                             from services.audio_proxy import register_audio_source
-                            _audio_port = status.get("local_screen_audio_port")
+                            _audio_port = status.get(
+                                "audio_port" if _server_local
+                                else "local_screen_audio_port")
                             if _audio_port:
                                 _audio_token = register_audio_source(_sid, _relay_addr, _audio_port,
                                                                      owner_user_id=user_id,
@@ -149,7 +167,7 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         return [flowfile]
 
             logger.info("[open_desktop] Starting %s on relay %s", _action_start, relay_id)
-            result = svc._request(_action_start)
+            result = svc._request(_action_start, **_local_kwargs)
             logger.debug("[open_desktop] %s result: %s", _action_start, result)
             # _request() unwraps the relay response — result is the inner data dict directly
             novnc_port = result.get("novnc_port") if isinstance(result, dict) else None
@@ -162,7 +180,9 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                 # Local screen: the relay runs VNC+websockify on its own machine.
                 # The novnc_port is directly on the relay's host (not in Docker).
                 # Use the relay's address to proxy.
-                _relay_addr = getattr(svc, '_relay_addr', None) or '127.0.0.1'
+                _relay_addr = (
+                    "127.0.0.1" if _server_local
+                    else getattr(svc, '_relay_addr', None) or '127.0.0.1')
                 host_port = novnc_port
                 # For local relays connecting from the same machine, use the port directly
                 session_id = f"{_session_prefix}_{relay_id}"
@@ -232,7 +252,13 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
         try:
             svc = _find_relay_svc(relay_id)
             if svc:
-                svc._request("stop_local_desktop" if local_screen else "stop_desktop")
+                _server_local = bool(
+                    local_screen and svc.config.get("server_managed")
+                    and svc.config.get("server_local_exec"))
+                svc._request(
+                    "stop_desktop" if _server_local or not local_screen
+                    else "stop_local_desktop",
+                    **({"local": True} if _server_local else {}))
             from services.vnc_proxy import unregister_session
             _prefix = "local_desktop" if local_screen else "desktop"
             _session_id = f"{_prefix}_{relay_id}"

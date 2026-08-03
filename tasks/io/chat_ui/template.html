@@ -848,6 +848,13 @@ if (typeof hljs !== 'undefined') {
     <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:var(--pf-muted);"></div>
     <div data-pf-slot="resources_panel_ext"></div>
   </div>
+  <div class="sidebar-settings" id="pfpDepotPanel">
+    <label style="cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;" onclick="togglePfpDepot()">
+      <span id="pfpDepotArrow">&#x25B6;</span>
+      <span data-i18n="pfpDepot">PFP Depot</span>
+    </label>
+    <div id="pfpDepotContent" style="display:none;margin-top:6px;max-height:35vh;overflow-y:auto;font-size:12px;color:var(--pf-muted);"></div>
+  </div>
   <div class="sidebar-settings" data-pf-slot="sidebar_bottom_ext"></div>
   <div class="sidebar-settings" data-pf-slot="sidebar_top_ext" style="order:-1"></div>
 </div>

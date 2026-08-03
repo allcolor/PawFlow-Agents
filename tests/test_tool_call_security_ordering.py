@@ -5,8 +5,8 @@ the shape changes before execution. The approval gate must be the LAST step that
 can alter the meaning of a call; today four things run after it and one runs
 before the arguments are even canonical.
 
-No fix is applied in this file. Each test states the invariant that must hold
-and fails against current code, so the fix has a red to turn green.
+Each test states the invariant that the preparation and authorization seam
+must preserve.
 """
 
 from pathlib import Path
@@ -150,7 +150,7 @@ def test_pre_tool_call_hooks_run_before_the_approval_gate():
 
     i_hook = src.index('run("pre_tool_call"')
     i_gate = src.rindex("_authorize(")
-    i_exec = src.index("registry.execute(tc.name, tc.arguments)")
+    i_exec = src.index("registry.execute_prepared(_prepared)")
 
     # INVARIANT: hook, then gate, then execute - nothing rewrites in between.
     assert i_hook < i_gate < i_exec
@@ -174,10 +174,6 @@ def test_variable_resolution_happens_before_the_approval_gate():
 
 # -- 5. Handlers re-resolve the expression language after the gate -----
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Deferred to the PreparedToolCall seam: moving expression resolution out "
-    "of 18 handlers also changes the relay, realtime and use_tool paths that "
-    "rely on it, which is out of scope for the security hotfix."))
 def test_no_handler_rewrites_its_arguments_after_the_gate():
     """core/handlers/_fs_base.py:715-719.
 
@@ -199,3 +195,58 @@ def test_no_handler_rewrites_its_arguments_after_the_gate():
     # INVARIANT: arguments are frozen once approved.
     assert rewriters == [], (
         "handlers rewriting approved arguments: " + ", ".join(rewriters))
+
+
+def test_gate_and_handler_receive_the_same_prepared_arguments(monkeypatch):
+    from core.llm_client import LLMToolCall
+    from core.tool_handler import ToolHandler
+    from core.tool_registry import ToolRegistry
+    from tasks.ai.agent_tool_exec import AgentToolExecMixin
+
+    executed = []
+    prepared_count = []
+    approved = []
+
+    class Handler(ToolHandler):
+        name = "prepared_read"
+        description = "test"
+        parameters_schema = {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        }
+
+        def prepare_arguments(self, arguments):
+            prepared_count.append(dict(arguments))
+            return {"path": "/resolved/target"}
+
+        def execute(self, arguments):
+            executed.append(dict(arguments))
+            return "ok"
+
+    registry = ToolRegistry()
+    registry.register(Handler())
+
+    def approve(_name, _display, _cid, _uid, **kwargs):
+        approved.append(dict(kwargs["arguments"]))
+        return "approved"
+
+    monkeypatch.setattr(Gate, "check", approve)
+    result = AgentToolExecMixin()._execute_tool_calls(
+        [LLMToolCall(
+            id="prepared-1",
+            name="prepared_read",
+            arguments={"path": "${scope.target}"},
+        )],
+        registry,
+        {},
+        10,
+        conversation_id="conv-prepared",
+        user_id="owner",
+        parallel=False,
+    )
+
+    assert result[0][1] == "ok"
+    assert len(prepared_count) == 1
+    assert approved == [{"path": "/resolved/target"}]
+    assert executed == approved

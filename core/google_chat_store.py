@@ -77,6 +77,8 @@ class GoogleChatSpaceStore:
             row.setdefault("status", "pending")
             row.setdefault("conversation_id", "")
             row.setdefault("permission_mode", "read_only")
+            if row["permission_mode"] != "read_only":
+                row["permission_mode"] = "read_only"
             row.setdefault("invocation_mode", "mention_only")
             row.setdefault("created_at", now)
             row["updated_at"] = now
@@ -90,8 +92,8 @@ class GoogleChatSpaceStore:
                     permission_mode: str = "read_only") -> Dict[str, Any]:
         if not conversation_id:
             raise ValueError("conversation_id is required")
-        if permission_mode not in {"read_only", "default"}:
-            raise ValueError("permission_mode must be read_only or default")
+        if permission_mode != "read_only":
+            raise ValueError("Google Chat spaces only support read_only permissions")
         with _LOCK:
             data = self._load()
             row = dict(data["spaces"].get(space_id) or {})

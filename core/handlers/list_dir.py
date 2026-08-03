@@ -28,7 +28,7 @@ class ListDirHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         path = arguments.get("path", ".")
         source = arguments.get("source", "")
         recursive = bool(arguments.get("recursive", False))

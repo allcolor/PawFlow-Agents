@@ -50,6 +50,7 @@ function _getRelays() {
               root: det.root || '',
               host_root: det.host_root || '',
               allow_local: det.allow_local || false,
+              server_local_exec: det.server_local_exec || false,
             });
           });
         });
@@ -58,6 +59,11 @@ function _getRelays() {
       error: e => reject(e),
     });
   });
+}
+
+/** Whether a relay offers a second execution surface to terminal/desktop UI. */
+function _relaySupportsLocal(relay) {
+  return !!(relay && (relay.allow_local || relay.server_local_exec));
 }
 
 /** Pick a relay: auto if 1, dialog if multiple, null if none. */

@@ -212,11 +212,6 @@ class AgentToolExecMixin:
                             return f"Error: Tool '{_eff_name}' was {approval} by the user."
                 return ""
 
-            _eff_name, _eff_args = _effective(tc)
-            _denied = _authorize(_eff_name, _eff_args)
-            if _denied:
-                return tc, _denied
-            _approved_shape = _shape(_eff_name, _eff_args)
             # Re-inject thread-local source agent + delegate tc_id (needed in pool threads)
             from core.tool_registry import SpawnAgentsHandler
             for h in registry.list_tools():
@@ -285,24 +280,30 @@ class AgentToolExecMixin:
                     elif tc.name == "execute_script":
                         _skip = {"code"}
                     _resolve_vars_in_args(tc.arguments, _all_env, skip_keys=_skip)
-                # Approval must be the LAST step that can change what runs.
-                # A pre_tool_call hook may replace both name and arguments
-                # (decision="replace", core/agent_hooks.py:110) and $VAR
-                # resolution rewrites values -- both after the gate said yes,
-                # and the call below then executed the replacement with no
-                # second prompt. Re-authorize only when the call actually
-                # changed, so an unchanged call never prompts twice.
+                # Prepare only after hooks and environment substitution. The
+                # registry now performs aliases, schema coercion, pre-hooks, and
+                # filesystem expression resolution here. Authorization sees
+                # that immutable result, and execute_prepared runs it verbatim.
                 _eff_name, _eff_args = _effective(tc)
-                if _shape(_eff_name, _eff_args) != _approved_shape:
-                    logger.info(
-                        "Tool call changed after approval (%s -> %s); "
-                        "re-authorizing", _approved_shape[0], _eff_name)
-                    _denied = _authorize(_eff_name, _eff_args)
-                    if _denied:
-                        return tc, _denied
-                    _approved_shape = _shape(_eff_name, _eff_args)
-                logger.info("Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
-                result = registry.execute(tc.name, tc.arguments) or ""
+                _prepare = getattr(registry, "prepare", None)
+                _prepared = (
+                    _prepare(_eff_name, _eff_args)
+                    if callable(_prepare) else None)
+                if isinstance(_prepared, str):
+                    return tc, _prepared
+                if _prepared is not None:
+                    _eff_name = _prepared.name
+                    _eff_args = _prepared.arguments
+                _denied = _authorize(_eff_name, _eff_args)
+                if _denied:
+                    return tc, _denied
+                logger.info(
+                    "Agent calling tool '%s' with args: %s",
+                    _eff_name, _eff_args)
+                if _prepared is not None:
+                    result = registry.execute_prepared(_prepared) or ""
+                else:
+                    result = registry.execute(_eff_name, _eff_args) or ""
                 # Redact secrets from tool output
                 if _secret_values and isinstance(result, str):
                     result = _redact_secrets(result, _secret_values,
@@ -310,8 +311,8 @@ class AgentToolExecMixin:
                 try:
                     _post = _hook_runner.run("post_tool_call", {
                         "tool_call_id": tc.id,
-                        "tool_name": tc.name,
-                        "arguments": tc.arguments if isinstance(tc.arguments, dict) else {},
+                        "tool_name": _eff_name,
+                        "arguments": _eff_args,
                         "result": result,
                     })
                     if _post.get("decision") == "replace":
@@ -329,15 +330,15 @@ class AgentToolExecMixin:
                     # Strip the prefix — the question text becomes the tool result
                     result = result[len("__ASK_USER__:"):]
                 # Hint: prefer write() over share_file when FS is available
-                if tc.name == "share_file":
+                if _eff_name == "share_file":
                     from core.handlers._fs_base import BaseFsHandler as _BFH
                     for _h in registry.list_tools():
                         if isinstance(_h, _BFH) and _h._find_service():
                             result += "\n[Hint: a filesystem service is available — use write(path=..., content=...) to write directly to the user's machine instead of share_file]"
                             break
                 # Auto-suggest related tests after file modifications
-                if tc.name in ("write", "edit"):
-                    modified_path = tc.arguments.get("path", "")
+                if _eff_name in ("write", "edit"):
+                    modified_path = _eff_args.get("path", "")
                     if modified_path and modified_path.endswith(".py"):
                         from core.handlers.devops import _detect_related_tests
                         candidates = _detect_related_tests(modified_path)

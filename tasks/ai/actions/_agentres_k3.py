@@ -338,6 +338,9 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                             "platform": _ri2.get("platform", ""),
                             "containerized": _ri2.get("containerized", False),
                             "allow_local": _ri2.get("allow_local", False),
+                            "server_local_exec": bool(
+                                (_sdef.config or {}).get("server_local_exec"))
+                            if _sdef is not None else False,
                             "connected": _connected,
                             "connecting": _connecting,
                         }

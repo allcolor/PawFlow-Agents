@@ -462,6 +462,21 @@ def _handle_agentres_k2(self, action, body, store, user_id, flowfile):
             pfp_action = action[4:]
             if pfp_action == "error":
                 result = {"error": body.get("error", "Invalid /pfp command")}
+            elif pfp_action == "depot_list":
+                from core import pfp_depot
+                result = pfp_depot.list_packages(user_id=user_id)
+            elif pfp_action == "depot_add":
+                from core import pfp_depot
+                result = pfp_depot.add_upload(
+                    body.get("file_id") or "",
+                    user_id=user_id,
+                )
+            elif pfp_action == "depot_delete":
+                from core import pfp_depot
+                result = pfp_depot.delete_package(
+                    body.get("depot_id") or body.get("ref") or "",
+                    user_id=user_id,
+                )
             elif pfp_action == "list_installed" and not _has_pfp_install_records(
                     user_id,
                     body.get("conversation_id", "") or "",

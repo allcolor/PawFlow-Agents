@@ -19,14 +19,15 @@ ID as `pending`. In that space, the configured owner can run:
 
 ```text
 /gchat status
-/gchat allow <conversation_id> [read_only|default]
+/gchat allow <conversation_id>
 /gchat deny
 ```
 
-`read_only` is the default and is enforced per turn, independently of the
+`read_only` is mandatory for collective spaces and is enforced per turn, independently of the
 conversation's webchat permission mode. It uses a fail-closed tool allowlist and
-also blocks delegation. `default` must be selected explicitly by the real Google
-owner. Direct messages are owner-only and require `direct_conversation_id`.
+also blocks delegation. Direct messages are owner-only and require a
+`direct_conversation_id` that belongs to the configuring PawFlow owner and has a
+selected agent.
 
 For every accepted group message, PawFlow stores the real Google actor, space,
 thread, and message IDs as provenance while authorizing the turn as the flow

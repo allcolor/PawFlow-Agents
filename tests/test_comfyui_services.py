@@ -227,6 +227,37 @@ def test_download_artifact_removes_partial_file_when_limit_is_exceeded(
     assert not target.exists()
 
 
+def test_input_source_rejects_private_url_before_open(monkeypatch):
+    client = ComfyUIClient(_config("edit_image"), media_kind="image")
+    opened = []
+    monkeypatch.setattr(
+        "services._comfyui_client.urllib.request.build_opener",
+        lambda *_args: opened.append(True))
+
+    with pytest.raises(ServiceError, match="private/local network"):
+        client._load_source("http://127.0.0.1/private.png", index=0)
+
+    assert opened == []
+
+
+def test_input_redirect_is_revalidated():
+    from services._comfyui_client import _ValidatedInputRedirectHandler
+
+    checked = []
+
+    def validate(url):
+        checked.append(url)
+        raise ServiceError("redirect blocked")
+
+    handler = _ValidatedInputRedirectHandler(validate)
+    with pytest.raises(ServiceError, match="redirect blocked"):
+        handler.redirect_request(
+            object(), None, 302, "Found", {},
+            "http://169.254.169.254/latest/meta-data")
+
+    assert checked == ["http://169.254.169.254/latest/meta-data"]
+
+
 def test_media_defaults_match_service_schemas():
     image = ComfyUIImageService(_config("generate"))
     video = ComfyUIVideoService(_config("generate", media_kind="video"))

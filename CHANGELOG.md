@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.98] — 2026-08-03
+
+### Added
+
+- Added a permanent **PFP Depot** in the left sidebar. It lists the bundled
+  catalog and each user's validated uploads, supports local `.pfp` upload,
+  inspection and installation, and lets owners delete uploaded artifacts.
+- Server-managed relays with server-local execution enabled now expose the
+  Local/Remote chooser for Terminal and Desktop, with local PTY, noVNC, audio,
+  lifecycle, and authenticated proxy routing handled inside PawFlow.
+
+### Fixed
+
+- Incremental backup encryption now uses self-describing AES-GCM envelopes with
+  a fresh embedded scrypt salt, removing the shared `salt.bin` overwrite race
+  and keeping concurrent or partially unreadable backups independently
+  decryptable.
+- Google Chat direct messages now validate that their configured conversation
+  belongs to the bot owner, and collective spaces are restricted to
+  transport-enforced read-only turns.
+
+### Security
+
+- ComfyUI validates every external media input URL, including redirect targets,
+  against the relay-aware SSRF boundary before downloading it.
+- Tool calls are normalized and expression-resolved once before authorization,
+  then executed from the frozen prepared arguments so approved filesystem
+  targets cannot change between approval and execution.
+
 ## [1.0.0-beta.97] — 2026-08-03
 
 ### Added

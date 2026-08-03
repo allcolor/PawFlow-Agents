@@ -202,6 +202,11 @@ class GoogleChatAgentClientTask(BaseTask):
             if not conversation_id:
                 self._send(service, space_id, "No direct-message conversation is configured.", thread_name)
                 return []
+            try:
+                self._require_owned_conversation(conversation_id)
+            except ValueError as exc:
+                self._send(service, space_id, str(exc), thread_name)
+                return []
         else:
             row = store.observe_space(space_id, display_name)
             if row.get("status") != "allowed":
@@ -210,7 +215,7 @@ class GoogleChatAgentClientTask(BaseTask):
                            thread_name)
                 return []
             conversation_id = str(row.get("conversation_id") or "")
-            permission_mode = str(row.get("permission_mode") or "read_only")
+            permission_mode = "read_only"
 
         target_agent = self._selected_agent(conversation_id)
         if not target_agent:
@@ -294,7 +299,7 @@ class GoogleChatAgentClientTask(BaseTask):
             return "This space is now denied."
         if action == "allow":
             if len(parts) < 3:
-                return "Usage: /gchat allow <conversation_id> [read_only|default]"
+                return "Usage: /gchat allow <conversation_id>"
             conversation_id = parts[2]
             permission_mode = parts[3].lower() if len(parts) > 3 else "read_only"
             try:
@@ -306,7 +311,7 @@ class GoogleChatAgentClientTask(BaseTask):
                 f"This space is authorized for conversation {conversation_id} "
                 f"with {permission_mode} permissions."
             )
-        return "Usage: /gchat status | allow <conversation_id> [read_only|default] | deny"
+        return "Usage: /gchat status | allow <conversation_id> | deny"
 
     def _require_owned_conversation(self, conversation_id: str) -> None:
         from core.conversation_store import ConversationStore

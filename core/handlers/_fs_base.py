@@ -718,6 +718,15 @@ class BaseFsHandler(ToolHandler):
         return resolve_value(arguments, owner=self._user_id,
                              conversation_id=self._conversation_id)
 
+    def prepare_arguments(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve filesystem arguments once, before authorization."""
+        from core.expression import resolve_value
+        return resolve_value(
+            self._unwrap_json(arguments),
+            owner=self._user_id,
+            conversation_id=self._conversation_id,
+        )
+
     # ── JSON unwrapping ──
 
     @staticmethod

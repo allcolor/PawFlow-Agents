@@ -64,7 +64,7 @@ class BatchEditHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         from core.handlers._arg_normalize import validate_object_list
         edits, _err = validate_object_list(
             arguments.get("edits"),

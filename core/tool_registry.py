@@ -19,6 +19,7 @@ import json
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
 
 # ToolHandler base class — in separate module to avoid circular imports
@@ -26,6 +27,16 @@ from core.tool_handler import ToolHandler  # noqa: F401
 from core.tool_json import ToolArgumentError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PreparedToolCall:
+    """The exact handler arguments approved for one dispatch."""
+
+    name: str
+    arguments: Dict[str, Any]
+    handler: ToolHandler
+
 
 # Handler classes live in per-feature submodules under core/handlers/.
 # Imported here so callers can resolve them off the registry module.
@@ -229,6 +240,160 @@ class ToolRegistry:
             for h in self._handlers.values()
         ]
 
+    def prepare(self, name: str, arguments: Dict[str, Any]):
+        """Return the exact normalized arguments that a gate must authorize."""
+        handler = self._handlers.get(name)
+        if not handler:
+            return f"Error: unknown tool '{name}'"
+        args = arguments
+        for hook in (
+                self._hooks.get(f"pre:{name}", [])
+                + self._hooks.get("pre:*", [])):
+            args = hook(name, args)
+            if args is None:
+                return f"Error: tool '{name}' blocked by pre-hook"
+        if isinstance(args, str):
+            from core.tool_json import parse_tool_arguments
+            args = parse_tool_arguments(
+                args, tool_name=name, provider="tool_registry", log=logger)
+        from core.tool_json import tool_argument_parse_error
+        parse_error = tool_argument_parse_error(args)
+        if parse_error:
+            return parse_error
+        if isinstance(args, dict):
+            aliases = {
+                "file_path": "path",
+                "include": "glob",
+                "notebook_path": "path",
+                "edit_mode": "operation",
+                "filesystem": "source",
+            }
+            schema_props = set()
+            if hasattr(handler, "parameters_schema"):
+                schema_props = set(
+                    (handler.parameters_schema.get("properties") or {}).keys())
+            renames = [
+                (source, target) for source, target in aliases.items()
+                if source in args and target not in args
+                and source not in schema_props
+            ]
+            if renames:
+                args = dict(args)
+                for source, target in renames:
+                    args[target] = args.pop(source)
+            try:
+                from core.handlers.meta_tools import (
+                    _normalize_tool_args, _schema_with_local)
+                args = _normalize_tool_args(
+                    name, args, _schema_with_local(handler))
+            except Exception:
+                logger.debug("Tool argument normalization failed", exc_info=True)
+        if (name == "use_tool" and isinstance(args, dict)
+                and "arguments" in args and "arguments_json" not in args):
+            args = dict(args)
+            raw = args.pop("arguments")
+            args["arguments_json"] = (
+                raw if isinstance(raw, str) else json.dumps(raw))
+        if isinstance(args, dict) and hasattr(handler, "parameters_schema"):
+            try:
+                from core.handlers.meta_tools import _schema_with_local
+                schema = _schema_with_local(handler)
+            except Exception:
+                schema = handler.parameters_schema
+            from core.tool_json import coerce_to_schema
+            args, repairs, coerce_error = coerce_to_schema(
+                args, schema, tool_name=name)
+            if coerce_error:
+                return coerce_error
+            if repairs:
+                logger.warning("[%s] repaired tool arguments: %s",
+                               name, "; ".join(repairs))
+            from core.tool_json import missing_required_arguments
+            known = set((schema.get("properties") or {}).keys())
+            unknown = [
+                key for key in args
+                if known and key not in known and not key.startswith("_")
+            ]
+            if unknown:
+                return (
+                    f"Error: unknown argument(s) {unknown} for tool '{name}'. "
+                    f"Valid arguments: {sorted(known)}")
+            missing = missing_required_arguments(schema, args)
+            if missing:
+                return (
+                    f"Error: missing required argument(s) {missing} for tool "
+                    f"'{name}'. Valid arguments: {sorted(known)}")
+        if not isinstance(args, dict):
+            return f"Error: arguments for tool '{name}' must be a JSON object"
+        prepare_arguments = getattr(handler, "prepare_arguments", None)
+        if callable(prepare_arguments):
+            args = prepare_arguments(args)
+        return PreparedToolCall(name, args, handler)
+
+    def execute_prepared(self, prepared: PreparedToolCall) -> str:
+        """Execute a prepared call without any argument rewrite."""
+        if not isinstance(prepared, PreparedToolCall):
+            raise TypeError("execute_prepared requires PreparedToolCall")
+        name = prepared.name
+        args = prepared.arguments
+        handler = prepared.handler
+        started = time.time()
+        ok = False
+        metric_error = ""
+        try:
+            result = handler.execute(args)
+            for hook in (
+                    self._hooks.get(f"post:{name}", [])
+                    + self._hooks.get("post:*", [])):
+                result = hook(name, args, result)
+            max_chars = getattr(handler, "_tool_result_max_chars", 50000)
+            has_image = (
+                getattr(handler, "_returns_images", False)
+                and isinstance(result, str)
+                and "__image_data__:" in result
+            )
+            if (isinstance(result, str) and len(result) > max_chars
+                    and not has_image):
+                try:
+                    from core.file_store import FileStore
+                    file_id = FileStore.instance().store(
+                        f"tool_result_{name}.txt",
+                        result.encode("utf-8"),
+                        "text/plain",
+                        category="tool_result",
+                        user_id=getattr(handler, "_user_id", "") or "",
+                        conversation_id=(
+                            getattr(handler, "_conversation_id", "") or ""),
+                        ttl=4 * 3600,
+                    )
+                    result = (
+                        f"[Result cleared — {len(result):,} chars. "
+                        f"Full output: read(path=\"{file_id}\", "
+                        'source="filestore")]'
+                    )
+                except Exception:
+                    result = (
+                        result[:max_chars]
+                        + f"\n\n[... truncated — {len(result):,} chars total]")
+            if isinstance(result, str) and result.startswith("Error:"):
+                metric_error = result
+            else:
+                ok = True
+            return result
+        except ToolArgumentError as exc:
+            metric_error = str(exc)
+            logger.error(
+                "Tool '%s' received undecodable arguments: %s", name, exc)
+            return metric_error
+        except Exception as exc:
+            metric_error = f"Error executing tool '{name}': {exc}"
+            logger.error("Tool '%s' execution failed: %s", name, exc)
+            return metric_error
+        finally:
+            self._record_metric(
+                name, ok, (time.time() - started) * 1000,
+                error=metric_error)
+
     def execute(self, name: str, arguments: Dict[str, Any]) -> str:
         """Execute a tool by name. Returns result text or error."""
         start = time.time()
@@ -336,6 +501,9 @@ class ToolRegistry:
                     return _fail(
                         f"Error: missing required argument(s) {_missing} for tool '{name}'. "
                         f"Valid arguments: {sorted(_known)}")
+            prepare_arguments = getattr(handler, "prepare_arguments", None)
+            if callable(prepare_arguments):
+                args = prepare_arguments(args)
             # Execute
             result = handler.execute(args)
             # Run post-hooks (specific then wildcard)

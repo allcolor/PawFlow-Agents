@@ -136,6 +136,8 @@ The `manage_package` agent tool exposes the same actions: `key_create`, `build`,
 
 The web Resources sidebar exposes installed packages in a dedicated Packages section. Its install dialog calls the same inspect/install/update actions, shows selectable package objects, aggregate capabilities, required secret bindings, and update diffs before applying the selected plan. The same dialog can list/add/remove the user's configured registries, search them, show each result's source URL, package size, SHA-256 pin, and developer key metadata, then ask for explicit download confirmation before fetching a selected remote `.pfp`. Installed package rows can be uninstalled from the sidebar; regular uninstall keeps dependency protection, while force uninstall uses the same explicit override as `/pfp uninstall --force`.
 
+The permanent **PFP Depot** section in the left sidebar lists the validated bundled catalog together with the current user's uploaded artifacts. Uploads first pass through the authenticated FileStore endpoint, then the server verifies the `.pfp` signature and lock before atomically adding the artifact to the user's repository depot. Depot references are opaque (`depot:<id>`) and resolve only for their owner. Bundled entries are read-only; uploaded entries can be inspected/installed or deleted. Deleting a depot artifact does not uninstall resources that were previously installed from it.
+
 ### Service templates
 
 A `service_template` object installs preset values for the existing service

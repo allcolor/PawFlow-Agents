@@ -19,6 +19,8 @@ def test_google_chat_space_store_defaults_denied_and_deduplicates(tmp_path, monk
     allowed = store.allow_space("spaces/AAA", "conv-1")
     assert allowed["status"] == "allowed"
     assert allowed["conversation_id"] == "conv-1"
+    with pytest.raises(ValueError, match="only support read_only"):
+        store.allow_space("spaces/AAA", "conv-1", "default")
 
 
 def test_google_chat_webhook_acks_before_downstream_processing():
@@ -90,6 +92,74 @@ def test_google_chat_non_owner_cannot_allow_space(tmp_path, monkeypatch):
         "/gchat allow conv-1", store, "spaces/A", "users/intruder", "users/owner")
     assert "only the configured bot owner" in reply
     assert store.get_space("spaces/A") == {}
+
+
+def test_google_chat_group_rejects_default_permission_mode(tmp_path, monkeypatch):
+    from core import paths
+    from core.google_chat_store import GoogleChatSpaceStore
+    from tasks.io.google_chat import GoogleChatAgentClientTask
+
+    monkeypatch.setattr(paths, "RUNTIME_DIR", tmp_path)
+    task = GoogleChatAgentClientTask({
+        "service_id": "chat", "owner_google_user_id": "users/owner"})
+    task._owner_user_id = "owner"
+    monkeypatch.setattr(
+        task, "_require_owned_conversation", lambda _conversation_id: None)
+    store = GoogleChatSpaceStore("owner", "chat")
+
+    reply = task._handle_admin(
+        "/gchat allow conv-1 default", store, "spaces/A",
+        "users/owner", "users/owner")
+
+    assert "only support read_only" in reply
+    assert store.get_space("spaces/A") == {}
+
+
+def test_google_chat_dm_requires_owned_configured_conversation(
+        tmp_path, monkeypatch):
+    from core import paths
+    from core.agent_runtime_api import AgentRuntimeAPI
+    from tasks.io.google_chat import GoogleChatAgentClientTask
+
+    monkeypatch.setattr(paths, "RUNTIME_DIR", tmp_path)
+    submitted = []
+    monkeypatch.setattr(
+        AgentRuntimeAPI, "submit_message",
+        lambda request: submitted.append(request))
+    sent = []
+
+    class Chat:
+        def send_message(self, space_id, text, thread_name=""):
+            sent.append(text)
+
+    task = GoogleChatAgentClientTask({
+        "service_id": "chat",
+        "owner_google_user_id": "users/owner",
+        "direct_conversation_id": "foreign-conversation",
+    })
+    task.set_runtime_context(user_id="paw-owner")
+    task.set_services({"chat": Chat()})
+    monkeypatch.setattr(
+        task, "_require_owned_conversation",
+        lambda _conversation_id: (_ for _ in ()).throw(
+            ValueError("Conversation not found for the configured PawFlow owner.")))
+    event = {
+        "type": "MESSAGE",
+        "space": {"name": "spaces/DM", "type": "DIRECT_MESSAGE"},
+        "message": {
+            "name": "spaces/DM/messages/1",
+            "text": "hello",
+            "sender": {"name": "users/owner", "type": "HUMAN"},
+        },
+    }
+    ff = FlowFile(attributes={
+        "google_chat.event_json": json.dumps(event),
+    })
+
+    assert task.execute(ff) == []
+    assert submitted == []
+    assert sent == [
+        "Conversation not found for the configured PawFlow owner."]
 
 
 def test_google_chat_allowed_group_runs_as_owner_with_actor_provenance(

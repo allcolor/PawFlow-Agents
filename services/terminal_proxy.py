@@ -194,6 +194,7 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         return
 
     logger.info("Terminal proxy: session %s connected (relay mode)", session_id)
+    server_local = bool(sess.get("server_local"))
 
     try:
         while True:
@@ -210,18 +211,28 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
             msg_type = msg.get("type", "")
 
             if msg_type == "terminal_input":
-                _send_command_to_relay(relay_service, {
+                command = {
                     "action": "write_terminal",
                     "session_id": session_id,
                     "data": msg.get("data", ""),
-                })
+                }
+                if server_local:
+                    relay_service._request(
+                        command.pop("action"), local=True, **command)
+                else:
+                    _send_command_to_relay(relay_service, command)
             elif msg_type == "terminal_resize":
-                _send_command_to_relay(relay_service, {
+                command = {
                     "action": "resize_terminal",
                     "session_id": session_id,
                     "cols": msg.get("cols", 80),
                     "rows": msg.get("rows", 24),
-                })
+                }
+                if server_local:
+                    relay_service._request(
+                        command.pop("action"), local=True, **command)
+                else:
+                    _send_command_to_relay(relay_service, command)
     except Exception as e:
         if "0 bytes" not in str(e) and "Connection" not in str(e):
             logger.warning("Terminal proxy error: %s", e)

@@ -105,6 +105,11 @@ def search_registries(query: str = "", *, user_id: str,
     return {"ok": True, "query": query, "count": min(len(rows), limit), "results": rows[:limit], "errors": errors}
 
 
+def list_bundled_packages() -> List[Dict[str, Any]]:
+    """Return the validated built-in package catalog."""
+    return _bundled_package_rows()
+
+
 def fetch_registry_index(url: str) -> Dict[str, Any]:
     clean_url = _validate_registry_url(url)
     response = requests.get(
@@ -204,6 +209,9 @@ def resolve_package_path(ref: str, *, user_id: str,
     value = str(ref or "").strip()
     if not value:
         raise PfpRegistryError("package path or ref is required")
+    if value.startswith("depot:"):
+        from core import pfp_depot
+        return pfp_depot.resolve_ref(value, user_id=user_id)
     local = Path(value).expanduser()
     if local.exists():
         return {"path": str(local), "downloaded": False, "sha256": "", "url": ""}

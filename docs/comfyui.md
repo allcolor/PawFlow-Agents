@@ -251,6 +251,11 @@ exported `workflow` in the `edit_image` preset. PawFlow uploads each FileStore o
 HTTP(S) source to ComfyUI first, then places the returned ComfyUI filename in the
 bound input.
 
+Direct HTTP(S) media inputs are restricted to public addresses. PawFlow validates
+the original host and every redirect target before downloading, so loopback,
+private, link-local, metadata-service, reserved, and DNS-resolved private
+addresses cannot be used as media sources. Use FileStore for private media.
+
 ## 5. Configure a video service
 
 Create a **ComfyUI Video Generation** service. Every configured operation is a

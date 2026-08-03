@@ -58,7 +58,7 @@ class CopyHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         source_path = arguments.get("source_path", "")
         dest_path = arguments.get("dest_path", "") or source_path
         if not source_path:

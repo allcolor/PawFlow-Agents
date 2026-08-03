@@ -27,7 +27,7 @@ class DeleteHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-        arguments = self._resolve_expressions(arguments)
+
         path = arguments.get("path", "")
         file_id = arguments.get("file_id", "")
         fs = arguments.get("filesystem", "")

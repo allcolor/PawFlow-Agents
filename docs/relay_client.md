@@ -38,6 +38,10 @@ and applies immediately without restarting the relay. Only the dedicated admin
 API may change it; normal service updates reject the internal
 `server_local_exec` field. Standalone relays keep their existing semantics:
 `local=true` uses their authenticated local host-helper path when configured.
+The webchat Terminal and Desktop commands offer the same container/local mode
+picker for an enabled managed relay. In that case, local means the PawFlow
+server container; terminal I/O and the noVNC proxy remain bound to the normal
+authenticated browser-session routes.
 
 ## A managed container that dies is respawned
 

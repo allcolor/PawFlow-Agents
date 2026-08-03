@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.96] — 2026-08-03
+
+### Fixed
+
+- Grab now mirrors `Shift+Enter` in both places: it sends CSI-u
+  `Ctrl+Enter` to the interactive tmux and inserts the same visible newline
+  into the webchat draft. PawFlow tracks the already mirrored prefix so final
+  submission sends only the remaining suffix and never duplicates prior lines.
+
 ## [1.0.0-beta.95] — 2026-08-03
 
 ### Fixed

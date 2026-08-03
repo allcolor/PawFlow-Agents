@@ -536,8 +536,10 @@ write into a terminal:
 - **A typed newline is created by the grabbed TUI.** Browsers reliably expose
   `Shift+Enter`, so Grab flushes the current line and translates that chord to
   the CSI-u `Ctrl+Enter` sequence (`ESC[13;5u`) understood by Codex, Claude
-  Code and Antigravity. Outside Grab, `Shift+Enter` remains a local webchat
-  newline and never submits the prompt.
+  Code and Antigravity. The same newline is inserted into the visible webchat
+  draft, while a mirrored-prefix cursor ensures final `Enter` sends only the
+  remaining suffix instead of duplicating earlier lines. Outside Grab,
+  `Shift+Enter` remains a local webchat newline and never submits the prompt.
 - **A block that is already multiline was pasted, not typed**, and goes as one
   bracketed paste (`ESC[200~` ... `ESC[201~`). Every non-empty terminal write,
   including a one-line prompt, then gets the bounded settle delay before its
@@ -552,7 +554,8 @@ before publishing `active_released`.
 
 Keys, grabbed: unmodified `Enter` submits to the TUI; `Shift+Enter` sends
 `Ctrl+Enter` to the tmux and therefore creates a newline in the TUI composer
-without submitting. `Esc` passes through, which
+without submitting, while inserting the matching newline in the webchat
+composer for readability. `Esc` passes through, which
 is what Codex's *Esc to interrupt* needs; `Ctrl+C` passes through as `0x03`
 unless there is a selection, where it stays a copy. `Enter` on an empty
 webchat composer still submits — that is how lines already held by the TUI are

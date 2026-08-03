@@ -53,6 +53,7 @@ let _grab = {
   sessionId: '',
   agent: '',
   provider: '',
+  sentDraft: '',
   connecting: false,
   liveAgents: {},      // agent name → provider, from list_cc_interactive_terminals
   liveCheckedAt: 0,
@@ -170,6 +171,7 @@ function _grabOpenSocket(agent, provider, sessionId, token) {
   _grab.sessionId = sessionId;
   _grab.agent = agent;
   _grab.provider = provider;
+  _grab.sentDraft = '';
   ws.onopen = () => {
     _grab.on = true;
     _grabRenderButton();
@@ -198,6 +200,7 @@ function releaseGrab(silent) {
   _grab.sessionId = '';
   _grab.agent = '';
   _grab.provider = '';
+  _grab.sentDraft = '';
   _grabRenderButton();
   if (was && !silent) addMsg('system', t('grabOff', { agent: agent }));
 }
@@ -211,6 +214,35 @@ function _grabWrite(data) {
   return true;
 }
 
+/** Composer text that has not already been mirrored into the grabbed TUI. */
+function _grabUnsentText(input) {
+  const box = input || document.getElementById('input');
+  if (!box) return '';
+  const full = box.value;
+  if (_grab.sentDraft && full.startsWith(_grab.sentDraft)) {
+    return full.slice(_grab.sentDraft.length).replace(/\s+$/, '');
+  }
+  if (_grab.sentDraft) {
+    // Earlier mirrored lines cannot be retracted from the TUI. If the visible
+    // prefix was edited, send only the current line instead of duplicating the
+    // whole prompt there.
+    const lastBreak = full.lastIndexOf('\n');
+    return full.slice(lastBreak + 1).replace(/\s+$/, '');
+  }
+  return full.replace(/\s+$/, '');
+}
+
+/** Write composer text without turning embedded newlines into submissions. */
+function _grabWriteComposerText(text) {
+  if (!text) return false;
+  if (text.indexOf('\n') !== -1) {
+    _grabWrite(_GRAB_PASTE_START + text + _GRAB_PASTE_END);
+  } else {
+    _grabWrite(text);
+  }
+  return true;
+}
+
 /** Push what is in the composer into the TUI and clear it.
  *
  * Returns true when the text went over as a paste, which the TUI needs a
@@ -219,20 +251,13 @@ function _grabWrite(data) {
 function _grabFlush(input) {
   const box = input || document.getElementById('input');
   if (!box) return false;
-  // Trailing whitespace only; leading whitespace can be meaningful in a shell.
-  const text = box.value.replace(/\s+$/, '');
+  const text = _grabUnsentText(box);
   box.value = '';
   box.style.height = 'auto';
+  _grab.sentDraft = '';
   if (!text) return false;
   const pasted = text.indexOf('\n') !== -1;
-  if (pasted) {
-    // Already multiline, so it was pasted in rather than typed. One bracketed
-    // paste: raw newlines would each read as a submission and the prompt would
-    // arrive in pieces.
-    _grabWrite(_GRAB_PASTE_START + text + _GRAB_PASTE_END);
-  } else {
-    _grabWrite(text);
-  }
+  _grabWriteComposerText(text);
   return pasted;
 }
 
@@ -248,7 +273,8 @@ function grabSend() {
                          JSON.stringify(messageHistory.slice(0, 50)));
   }
   if (typeof historyIndex !== 'undefined') historyIndex = -1;
-  const hadText = !!text;
+  const pending = _grabUnsentText(input);
+  const hadText = !!pending;
   _grabFlush(input);
   // Enter on an empty composer is still meaningful when the TUI already holds
   // lines the user broke with Ctrl+Enter -- that is what submits them. Any text
@@ -276,8 +302,10 @@ function grabHandleKey(e) {
   // Claude Code or Antigravity to create the newline in its own composer.
   if (e.key === 'Enter' && e.shiftKey) {
     e.preventDefault();
-    _grabFlush(input);
+    _grabWriteComposerText(_grabUnsentText(input));
     _grabWrite(_GRAB_CTRL_ENTER);
+    _composerInsertNewline(input);
+    _grab.sentDraft = input.value;
     return true;
   }
   // Only an unmodified Enter submits. Other modified Enter chords fall back to

@@ -58,8 +58,8 @@ def test_grab_never_routes_through_the_pool_send_path():
     assert "addMsg('user'" not in src
 
 
-def test_shift_enter_reaches_the_grabbed_tui_as_ctrl_enter():
-    """The browser's reliable newline chord drives the TUI's newline chord."""
+def test_shift_enter_mirrors_the_newline_locally_and_in_the_grabbed_tui():
+    """The browser draft stays readable while the TUI receives Ctrl+Enter."""
     grab = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
     assert "const _GRAB_CTRL_ENTER = '\\x1b[13;5u'" in grab
     key = grab[grab.index("function grabHandleKey"):]
@@ -68,6 +68,13 @@ def test_shift_enter_reaches_the_grabbed_tui_as_ctrl_enter():
     plain_enter = "e.key === 'Enter' && !e.shiftKey"
     assert shift_enter in key
     assert "_grabWrite(_GRAB_CTRL_ENTER)" in key
+    assert "_composerInsertNewline(input)" in key
+    assert "_grab.sentDraft = input.value" in key
+    shift_block = key[key.index(shift_enter):key.index(plain_enter)]
+    assert "_grabFlush(input)" not in shift_block
+    assert shift_block.index("_grabWrite(_GRAB_CTRL_ENTER)") < shift_block.index(
+        "_composerInsertNewline(input)"
+    )
     assert plain_enter in key
     assert key.index(shift_enter) < key.index(plain_enter)
 
@@ -82,10 +89,14 @@ def test_a_pasted_block_still_goes_as_one_bracketed_paste():
     src = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
     assert "_GRAB_PASTE_START = '\\x1b[200~'" in src
     assert "_GRAB_PASTE_END = '\\x1b[201~'" in src
+    writer = src[src.index("function _grabWriteComposerText"):]
+    writer = writer[:writer.index("\n/** Push what is in the composer")]
+    assert "text.indexOf('\\n') !== -1" in writer
+    assert "_GRAB_PASTE_START + text + _GRAB_PASTE_END" in writer
     flush = src[src.index("function _grabFlush"):]
     flush = flush[:flush.index("\n/** Send the composer")]
-    assert "text.indexOf('\\n') !== -1" in flush
-    assert "_GRAB_PASTE_START + text + _GRAB_PASTE_END" in flush
+    assert "const text = _grabUnsentText(box)" in flush
+    assert "_grabWriteComposerText(text)" in flush
     # Every non-empty terminal write needs a settle before Enter. WebSocket
     # frame ordering does not mean the TUI has ingested the first frame yet.
     send = src[src.index("function grabSend"):]
@@ -100,8 +111,22 @@ def test_single_line_grab_also_settles_before_its_only_enter():
     src = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
     send = src[src.index("function grabSend"):]
     send = send[:send.index("\n/** Composer keys")]
-    assert "const hadText = !!text" in send
+    assert "const pending = _grabUnsentText(input)" in send
+    assert "const hadText = !!pending" in send
     assert "const pasted = _grabFlush" not in send
+
+
+def test_final_grab_submit_sends_only_text_not_already_mirrored_to_the_tui():
+    """Visible earlier lines must not be duplicated when plain Enter submits."""
+    src = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
+    assert "sentDraft: ''" in src
+    pending = src[src.index("function _grabUnsentText"):]
+    pending = pending[:pending.index("\n/** Push what is in the composer")]
+    assert "full.startsWith(_grab.sentDraft)" in pending
+    assert "full.slice(_grab.sentDraft.length)" in pending
+    flush = src[src.index("function _grabFlush"):]
+    flush = flush[:flush.index("\n/** Send the composer")]
+    assert "_grab.sentDraft = ''" in flush
 
 
 def test_durable_grab_response_reconciles_its_token_bubble():

@@ -108,6 +108,23 @@ both the actor and the target owner.
 IdP group names are stored on Session and transported for display/audit. They
 are not currently a durable authorization identity.
 
+Two existing modules already cover part of this ground and must be treated as
+prior art rather than reimplemented:
+
+- `core/auth_groups.py` maps IdP group claims to PawFlow roles under an
+  operator-written mapping. Its stated rules are that an unmapped group grants
+  nothing, that the locally stored role wins by default
+  (`auth.role_precedence`), and that group names never reach
+  `http.auth.roles`.
+- `core/admin_scope.py` already performs an exact, comma-split check for the
+  specific `admin` role, but it is not a general role parser or ACL API.
+
+Roughly 29 call sites still test authority with `"admin" in roles`, a substring
+test (`tasks/ai/actions/usage.py`, `tasks/ai/actions/secrets_variables.py:12`,
+`tasks/ai/actions/_sf_base.py:22`, `tasks/ai/actions/admin_settings.py:37`, and
+others). `core/auth_groups.py` keeps group names out of that attribute
+specifically so those sites stay safe without being rewritten.
+
 ### 3.4 Secret resolution
 
 Expression resolution currently checks:
@@ -263,6 +280,58 @@ Document the IdP freshness boundary: an external removal becomes effective when
 PawFlow next refreshes or receives that user's claims. Provide an admin
 operation to remove membership immediately.
 
+### 6.4 Operator mapping is required for group subjects
+
+Making an external group a first-class ACL subject would otherwise invert the
+existing `core/auth_groups.py` invariant: an administrator of the identity
+provider could create a group, add themselves to it, and obtain PawFlow
+resource access without any operator action inside PawFlow. Group name
+squatting would become a privilege escalation path.
+
+Therefore an external group becomes eligible as an ACL subject only after an
+operator registers it. Registration is the same act of operator intent that
+`core/auth_groups.py` already requires for role mapping, extended to carry an
+ACL-subject eligibility flag:
+
+- an unregistered external group is never a valid ACL subject, and a policy
+  referencing one fails validation;
+- registration is an admin operation, is audited, and records the issuer,
+  external ID, canonical `group_id`, and eligibility;
+- registering a group for ACL use does not grant it any PawFlow role, and
+  mapping a group to a role does not make it ACL-eligible; the two decisions
+  stay separate;
+- locally defined PawFlow groups are ACL-eligible by construction because an
+  operator created them;
+- deregistration invalidates matching grants through the normal revocation
+  path in section 15.
+
+Reuse the claim parsing and precedence logic in `core/auth_groups.py`. Do not
+add a second, parallel group resolution path.
+
+### 6.5 Exact role matching is a prerequisite, not a consequence
+
+The invariant "roles are exact values, never substring-matched" is not true of
+the current codebase and does not become true by writing new code alongside the
+old. Before any ACL evaluation ships:
+
+1. add one canonical role parser in the authorization layer that converts the
+   authenticated role attribute into an immutable set of validated PawFlow role
+   IDs;
+2. store that set on `PrincipalContext` and make the ACL evaluator compare exact
+   set members without depending on `FlowFile` or `core/admin_scope.py`;
+3. make `core/admin_scope.is_admin()` delegate to the same parser;
+4. migrate every substring-based admin gate to that helper;
+5. reconcile `docs/ADMIN_CROSS_USER_SCOPES_PLAN.md`, whose documented `_is_admin`
+   gate still uses a substring test.
+
+Tests must cover whitespace, duplicate roles, `admin-readonly`, `non-admin`, an
+unknown role, and a real `admin` member. Add a focused source audit for the known
+substring gate forms, but do not treat a brittle repository-wide text search as
+the authorization proof; runtime tests at every privileged ingress remain the
+release gate.
+
+This work is listed in Phase 1 and is a release gate, not cleanup.
+
 ## 7. Stable resource identity and revisions
 
 ### 7.1 Stored identity
@@ -402,7 +471,10 @@ valid grant or explicit confirmation that it becomes admin-only.
 - no deny entries;
 - owner rights are evaluated before grants;
 - explicit admin override is evaluated separately and audited;
-- disabled/deleted users and groups never match.
+- disabled/deleted users and groups never match;
+- unregistered external groups never match (section 6.4);
+- role comparison uses the canonical immutable role set on `PrincipalContext`,
+  never a substring test or a `FlowFile`-specific helper (section 6.5).
 
 Policy validation rejects unknown users, groups, roles, permissions, duplicate
 grant IDs, malformed UUIDs, and grants on unsupported conversation resources.
@@ -724,9 +796,28 @@ For cross-user bindings:
 7. binding atomically updates accepted_revision and review metadata;
 8. affected caches and live registries are invalidated.
 
-The first implementation may pause use while update_pending instead of retaining
-old content. If uninterrupted use is required, add immutable revision snapshots
-before enabling live shared updates. Never silently run N+1.
+Immutable revision snapshots are part of v1, not a later addition. Without
+them, a publisher editing a skill or prompt breaks every consumer runtime
+mid-conversation: the accepted revision is no longer retrievable, so
+`update_pending` degrades from "keep using N until you review N+1" to "stop
+working now". That is a publisher unilaterally interrupting other users' work,
+which no consumer consented to.
+
+Required v1 behavior:
+
+- accepting revision N retains an immutable, content-addressed snapshot of N;
+- the runtime continues to resolve N while the binding is `update_pending`;
+- snapshots use reference counts and are released only after the last binding
+  advances or is removed;
+- capacity is reserved and charged to the consumer scope when a binding accepts
+  a revision;
+- insufficient capacity rejects that new acceptance before the binding changes;
+- an existing accepted snapshot remains readable until its binding advances,
+  is removed, or loses authorization;
+- publisher updates never depend on a consumer's remaining quota and cannot be
+  blocked by a consumer retaining an older accepted revision.
+
+Never silently run N+1.
 
 ## 15. Revocation semantics
 
@@ -1054,7 +1145,13 @@ Implement:
 
 - PrincipalContext;
 - canonical group records and membership revisions;
-- OAuth-to-canonical-group mapping;
+- OAuth-to-canonical-group mapping, extending `core/auth_groups.py` rather than
+  duplicating it;
+- operator registration of ACL-eligible groups (section 6.4);
+- canonical immutable role parsing on `PrincipalContext`;
+- migration of every substring-based admin gate to the shared exact-role helper,
+  including reconciliation with `docs/ADMIN_CROSS_USER_SCOPES_PLAN.md`
+  (section 6.5);
 - propagation through UI, agent loop, relay, schedulers, Telegram, and PFP;
 - identity-bound internal tokens;
 - exact role matching.
@@ -1065,7 +1162,11 @@ Tests:
 - stale/spoofed bridge identity is rejected;
 - scheduled execution receives durable membership;
 - membership removal increments revision and invalidates access;
-- missing principal fails closed.
+- missing principal fails closed;
+- an unregistered IdP group never matches a grant;
+- confusing role strings such as `admin-readonly` and `non-admin` never grant
+  administrative or ACL authority;
+- every privileged ingress uses the canonical role set or its shared helper.
 
 No resource visibility changes in this phase.
 
@@ -1370,7 +1471,30 @@ Tests:
 - updates to existing resource, security scope, conversation sharing, skill,
   MCP, tool, hook, CLI provider, Telegram, PFP, and UI static tests.
 
-## 27. Final architectural rule
+## 27. Delivery order and intermediate value
+
+This plan must not be executed as a single all-or-nothing project. Each of the
+following stops is a shippable state with stated user-visible value, so the
+work can be paused after any of them without leaving a half-built
+authorization layer.
+
+| Stop | Phases | What users get | What is still absent |
+|---|---|---|---|
+| S1 | 0-1 | Exact roles, durable groups, principal at every ingress. No visibility change. | No sharing at all. |
+| S2 | 2-3 | An admin can restrict a global resource to selected users, groups, or roles. | No user-to-user sharing. |
+| S3 | 4 | Users see another user's shared resources and bind them by ID. | Nothing executable can run. |
+| S4 | 5-6 | Prompts, task defs, agents, and asset-free skills usable across users. | No shared skill assets, MCPs, tools, hooks, themes. |
+| S5 | 7-9 | Executable and asset-backed sharing. | - |
+
+S2 is the first stop that satisfies goal 1 of section 1 and is the recommended
+initial commitment. Do not start Phase 4 before S2 is in production.
+
+Scale note for planning: Phase 1 touches every authenticated ingress path, and
+Phase 2 rewrites persistent references across conversations, agent configs,
+schedules, and package records. Neither is a single-sprint item; size them
+before committing to a date.
+
+## 28. Final architectural rule
 
 The implementation must preserve this separation:
 

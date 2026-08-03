@@ -48,7 +48,7 @@ The first implementation covers:
 - authorization and identity propagation for normal relay operations;
 - safe restrictions for inverse server filesystem, FileStore, and skills
   mounts;
-- audit, revocation, cache invalidation, migration, and compatibility.
+- audit, revocation, cache invalidation, and one-shot migration.
 
 ## 3. Non-goals for the first release
 
@@ -141,6 +141,40 @@ user. The remote-FS manifest also derives an owner from this mutable field.
 Adding ACL filtering only to relay listings would leave a cross-user race and
 possible data exposure. Removing this mutable request identity is a release
 blocker for shared relays.
+
+Confirmed in the current code: `services/_relay_conn.py:463` assigns the shared
+`_user_id`, and `_get_server_fs()`, `_get_filestore_fs()`, and
+`_get_skills_fs()` (`services/_relay_conn.py:466-498`) instantiate their
+handler once and cache it. The cached handler keeps whichever user ID arrived
+first, for the lifetime of the service instance. This is a present-day defect
+on any shared relay service instance, not a hypothetical consequence of
+sharing.
+
+### 4.7 Standalone fail-closed mitigation
+
+The current inverse request envelope carries no principal, binding, or channel
+identity. Keying cached handlers by user would therefore create several handlers
+without providing a trustworthy way to select one when a callback arrives. Safe
+multi-user inverse mounts require the identity-bound channels and leases designed
+later in this plan.
+
+Before that protocol exists, ship a smaller mitigation independently:
+
+- derive one immutable owner from the private user-scoped relay definition when
+  the service instance is created;
+- stop mutating relay service identity from per-request filesystem resolution;
+- permit `sfs.*`, `ffs.*`, and `skfs.*` only when that immutable owner exists and
+  the relay is private and user-scoped;
+- reject every inverse request on a global, conversation-scoped, shared, or
+  ownerless relay, regardless of the most recent caller;
+- add a concurrency test in which Alice and Bob resolve the same global service
+  and all inverse callbacks fail closed without constructing either user's
+  handler;
+- retain the existing private single-owner behavior and root-confinement tests.
+
+WP5 removes mutable request identity from normal operations. WP8 introduces
+identity-bound inverse channels and is the first work package allowed to enable
+inverse mounts for more than one principal.
 
 ## 5. Design axes
 
@@ -550,13 +584,16 @@ Introduce one centrally registered versioned route, for example:
 This avoids creating an authentication route before the service definition
 exists and separates network identity from a display/service name.
 
-The legacy `/ws/relay/<service_id>` routes remain during migration.
+The one-shot cutover removes `/ws/relay/<service_id>` when the v3 route ships.
+Operators must upgrade remote relay daemons before upgrading the server. Startup
+and the admin preflight report incompatible connected or registered relays before
+the migration is applied; there is no runtime dual-route fallback.
 
 ### 10.3 WebSocket authentication
 
-Prefer an `Authorization` header or secure cookie supported by the client
-transport. Query-string tokens remain a deprecated compatibility path because
-URLs are more likely to be logged.
+Use an `Authorization` header or a secure cookie supported by the client
+transport. Query-string runtime credentials are rejected because URLs are more
+likely to be logged.
 
 After upgrade, registration includes only server-issued IDs and a runtime proof:
 
@@ -610,11 +647,11 @@ channel credential and for local auditing.
 
 ### 10.6 Protocol negotiation
 
-- protocol v2 means legacy, single-user semantics;
-- protocol v3 is required for ACL-shared use;
-- unsupported required capabilities fail closed;
-- a v2 connection cannot back an ACL-shared endpoint;
-- version and feature flags are visible to admins.
+- protocol v3 is the only accepted protocol after the one-shot migration;
+- unsupported versions and required capabilities fail closed;
+- version and feature flags are visible to admins;
+- no v2 route, message adapter, or compatibility projection remains in runtime
+  code after cutover.
 
 ## 11. Relay access service
 
@@ -659,6 +696,24 @@ Requirements:
 - explicit grants for host-local and desktop operations;
 - no personal PawFlow inverse mounts in v1;
 - no automatic consumer secret injection.
+
+### 12.1 Requirements validation gate
+
+`shared_workspace` is the only sharing mode this plan delivers before R5, and
+it means every authorized principal reads and writes the same files and can
+observe each other's processes. It is deliberately not isolation.
+
+Confirm with the requester, before starting R0, which sentence describes the
+actual need:
+
+- "Several people should share one machine and one workspace" — this plan as
+  written delivers it at R4.
+- "Several people should use one machine without seeing each other's work" —
+  that is endpoint-isolated mode (R5) or tenant-dynamic mode (deferred), and
+  R0-R4 would deliver something other than what was asked.
+
+Record the answer in this document. Building four phases toward the wrong
+sharing semantics is the most expensive failure available in this plan.
 
 This is the first supported sharing mode because its data-sharing semantics are
 honest and implementable without pretending one root is tenant-isolated.
@@ -750,7 +805,7 @@ visible candidate.
 ### 16.2 Stable references
 
 - persistent bindings store `endpoint_id` and `binding_id`;
-- service aliases are display and compatibility fields;
+- service aliases are non-authoritative display metadata only;
 - direct tool parameters may accept an alias only after resolving it within the
   principal's authorized catalog;
 - ambiguous aliases fail rather than select by scope accident.
@@ -762,11 +817,12 @@ ACL-shared global endpoints:
 - appear in a shared/available catalog;
 - are not automatically linked;
 - are not automatically made default;
-- are excluded from "any filesystem service" fallback unless an explicit
-  compatibility flag is enabled by an administrator;
+- are always excluded from "any filesystem service" fallback;
 - require explicit conversation or agent binding.
 
-Own-user legacy relays retain their current behavior during migration.
+Private user-scoped endpoints created by the one-shot migration require an
+explicit stable binding just like newly enrolled endpoints. No legacy resolution
+path survives cutover.
 
 ## 17. Secrets and variables
 
@@ -925,7 +981,7 @@ and is never the policy source of truth.
 - approve or reject pending endpoints;
 - update endpoint ACLs and capability ceilings;
 - force disconnect or rotate runtime credentials;
-- inspect audit history and protocol compatibility.
+- inspect audit history and protocol/capability versions.
 
 Only one-time credential creation returns raw secret material.
 
@@ -956,33 +1012,44 @@ The desktop client stores credentials in the OS keychain before this feature is
 declared stable. Local JSON may contain only non-secret metadata and keychain
 references.
 
-## 24. Compatibility and migration
+## 24. One-shot migration
 
-### 24.1 Existing relays
+### 24.1 Preflight and cutover
 
-For every existing relay definition:
+This plan follows the project rule: migration is one-shot and old runtime code
+is deleted. Before applying the server migration:
 
-- generate an endpoint UUID;
-- preserve the service ID as alias;
-- classify it as `legacy_user`, `legacy_global`, or `server_managed`;
-- retain the existing connection token during the compatibility window;
-- create a policy matching current visibility;
-- mark protocol v2 and prohibit cross-user sharing until upgraded;
-- migrate bindings from relay name to endpoint ID when unambiguous.
+- inventory persisted relay definitions, bindings, defaults, and registered
+  daemon versions;
+- require every remote daemon to support protocol v3; the migration preflight
+  fails with the exact incompatible node IDs while any v2 daemon remains;
+- stop new relay operations and drain or force-stop active relay work;
+- snapshot the server-owned relay/service records for migration rollback;
+- generate endpoint UUIDs, policies, and runtime credentials transactionally;
+- rewrite every unambiguous name binding to an endpoint UUID;
+- reject ambiguous or ownerless records for explicit administrator resolution;
+- switch the schema marker only after validation succeeds;
+- remove v2 routes, messages, static connection tokens, name-only resolution,
+  and compatibility projections in the same release.
 
-Existing global relays may receive an authenticated-user compatibility policy
-to avoid silent breakage, but must be visibly marked legacy/open. New
-machine-created global endpoints default to restricted or pending.
+Rollback restores the pre-migration server snapshot and the old server build as
+one deployment operation. The new build never runs a v2 compatibility path.
 
-### 24.2 Dual protocol
+### 24.2 Existing visibility
 
-- v2 routes and messages remain for personal relays;
-- v3 connection and request envelopes are used for enrolled/shared endpoints;
-- the registry exposes a compatibility projection so existing filesystem tool
-  handlers can resolve an endpoint transport;
-- new bindings always use endpoint IDs;
-- old name bindings are rewritten lazily and transactionally;
-- rollback leaves v2 personal relay behavior intact.
+Migration must not silently convert today's effectively global relay into a new
+cross-user shared endpoint. For each migrated definition:
+
+- a user-scoped relay becomes a private endpoint owned by that user;
+- a server-managed relay keeps its administrative owner but defaults to
+  restricted/admin-only until an explicit policy is created;
+- a legacy global relay becomes restricted/admin-only and requires explicit
+  grants before users regain access;
+- the old service ID may be retained as display metadata or an audited alias,
+  but never as an authorization or binding key.
+
+The migration report lists every visibility reduction for administrator review.
+Security takes precedence over preserving implicit global access.
 
 ### 24.3 Service registry
 
@@ -991,6 +1058,13 @@ endpoint. The live transport belongs to an endpoint ID. Authorization occurs in
 `RelayAccessService`, and request context is passed separately.
 
 ## 25. Implementation work packages
+
+### WP-A. Standalone prerequisite
+
+- apply the fail-closed inverse-mount mitigation described in section 4.7;
+- add private-owner regression tests and the global two-user concurrency test.
+
+This work package has no dependency on WP0 and should ship first, on its own.
 
 ### WP0. Authorization dependency
 
@@ -1016,8 +1090,8 @@ Exit gate: no relay sharing code accepts a raw user ID as sufficient proof.
 - add node/endpoint stores and stable UUID indexes;
 - implement idempotent enrollment and approval;
 - implement capability ceilings and root fingerprint review;
-- project enrolled endpoints into service lifecycle where compatibility needs
-  it;
+- integrate enrolled endpoints into the service lifecycle through endpoint IDs,
+  without a legacy service-name projection;
 - enforce alias and route uniqueness.
 
 ### WP3. Protocol v3 and runtime credentials
@@ -1073,19 +1147,17 @@ Exit gate: no relay sharing code accepts a raw user ID as sufficient proof.
 - add channel IDs to every inverse callback;
 - create per-principal or per-conversation virtual roots;
 - revoke and unmount on policy, membership, connection, or lease changes;
-- retain fail-closed behavior for legacy protocol messages.
+- retain fail-closed behavior for missing, expired, or mismatched channel IDs.
 
 This work package may ship after the rest and is not required for shared remote
 workspace use.
 
 ### WP9. Hardening and cleanup
 
-- rotate or migrate legacy static tokens;
+- verify the one-shot migration removed legacy static tokens;
 - remove plaintext relay credentials from service-detail surfaces;
-- remove deprecated query-string auth after telemetry confirms no clients need
-  it;
-- remove name-only bindings;
-- remove v2 cross-user code paths;
+- verify query-string auth, name-only bindings, v2 routes/messages, and
+  compatibility projections are absent;
 - update security, deployment, relay client, and administrator documentation.
 
 ## 26. Test plan
@@ -1157,8 +1229,9 @@ workspace use.
 - user without a grant receives not-found behavior;
 - one daemon exports a shared endpoint and two private endpoints;
 - CLI/Desktop restart preserves node identity and reconnects safely;
-- legacy browser-authenticated relay remains functional;
-- mixed v2/v3 deployments fail closed for cross-user use.
+- migration preflight rejects any registered v2 daemon;
+- after cutover, v2 routes, messages, static tokens, and name bindings are
+  rejected rather than adapted.
 
 ### 26.8 Security tests
 
@@ -1182,7 +1255,7 @@ workspace use.
 | R4 | Restricted global shared-workspace endpoints | Yes | No personal inverse mounts; capability tests pass |
 | R5 | Multiple isolated endpoints per daemon | Yes | Root/process isolation tests pass |
 | R6 | Tenant-aware inverse mount channels | Yes | Adversarial FUSE and revocation review |
-| R7 | Legacy cleanup and default hardening | Yes | Migration telemetry and rollback window complete |
+| R7 | Post-cutover hardening and migration verification | Yes | No legacy route/token/binding remains |
 
 Do not enable cross-user sharing through a feature flag before R3 is complete.
 

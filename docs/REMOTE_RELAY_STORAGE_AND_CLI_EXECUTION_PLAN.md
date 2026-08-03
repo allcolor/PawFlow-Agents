@@ -17,6 +17,10 @@ into the server's local stores.
 
 The plan depends on:
 
+- `docs/REMOTE_CLI_COMPUTE_POOL_PLAN.md` for the authoritative, standalone v1
+  design of remote CLI Docker endpoints, pools, PawFlow/Relay Desktop UI, runtime
+  lifecycle, and credential custody; where its CLI details differ from this
+  broader plan, the compute-pool plan wins;
 - `docs/REMOTE_RELAY_ENROLLMENT_SHARING_PLAN.md` for node/endpoint identity,
   enrollment credentials, ACLs, leases, capabilities, and revocation;
 - `docs/RESOURCE_ACL_SHARING_PLAN.md` for stable resource identity,
@@ -47,6 +51,18 @@ Concrete target scenarios:
    execution together so the data and Docker containers stay co-located.
 5. Different relays provide different planes, with explicit routing and no
    accidental fallback to local storage or execution.
+
+### 1.1 Known limitation to state up front
+
+Conversations with encryption at rest enabled cannot use a remote home until
+the DEK/storage mode of section 29.2 is implemented and audited, which is phase
+D11 — the last one. Every earlier phase delivers remote storage only for
+unencrypted conversations.
+
+Raise this with product before D1, not at D11. If the deployments motivating
+this work have encryption enabled, the entire conversation-storage half of this
+plan delivers nothing to them until its final phase, and the CLI execution half
+(D7-D8) may be the only part worth building.
 
 ## 2. Meaning of remote, merge, and disappear
 
@@ -126,7 +142,8 @@ The first release does not provide:
 - interactive CLI providers in the first compute milestone;
 - cross-source distributed transactions involving several relays;
 - hiding the fact that the relay operator can inspect data and secrets processed
-  on their machine.
+  on their machine;
+- remote homes for conversations encrypted at rest (see section 1.1 and 29.2).
 
 ## 5. Existing architecture and why a mount is insufficient
 
@@ -149,6 +166,31 @@ The first release does not provide:
 its current background loop logs write failures and still releases wait events.
 Remote storage requires explicit success/error receipts so callers never mistake
 a failed remote write for durable persistence.
+
+Confirmed in the current code: `core/conversation_writer.py:419-422` catches
+the write exception, logs it, and advances the loop; the batch completion block
+at `core/conversation_writer.py:438-447` then calls `evt.set()` on every queued
+item unconditionally. A caller waiting on that event cannot distinguish a
+durable write from a failed one.
+
+### 5.1.1 Prerequisite fix, independent of this plan
+
+This is a present-day local defect. It silently loses messages on any write
+error today, with no relay involved, and it must be fixed on its own schedule
+rather than as part of a remote-storage programme.
+
+Minimum standalone correction:
+
+- record per-item success or failure during the batch;
+- attach the outcome to the item before releasing its wait event;
+- propagate failure to the caller and to the active turn instead of returning
+  as if persisted;
+- do not publish SSE for an item that failed to persist;
+- add a test in which the backend write raises and the caller observes an
+  error.
+
+WP3 later extends this into operation IDs, receipts, fencing, and unknown
+outcomes. The correction above does not depend on WP3 and should ship first.
 
 ### 5.2 Conversation search is a local derived database
 
@@ -1266,6 +1308,12 @@ to an opaque credential profile ID and never receives the secret.
 
 Use when the remote machine owns the subscription/login.
 
+This is a post-v1 option. The v1 remote CLI compute implementation in
+`REMOTE_CLI_COMPUTE_POOL_PLAN.md` uses PawFlow-owned credential selection plus a
+runtime-bound credential/egress broker and does not expose relay-local credential
+profiles in either UI. Adding this mode later requires its own explicitly selected
+custody mode and provider/security matrix; it is never a fallback.
+
 ### 24.2 PawFlow-delegated credential
 
 PawFlow sends only the selected credential material under a runtime-bound,
@@ -1458,7 +1506,8 @@ encryption, backup, and secure deletion. PawFlow should expose that trust state.
 ### 29.2 PawFlow encrypted conversations
 
 Do not silently disable existing conversation encryption when moving a
-conversation.
+conversation. This limitation is surfaced in section 1.1 because it constrains
+who can use this feature at all, not merely how.
 
 A remote conversation source claiming `storage.conversation.encrypted` must
 support one reviewed mode:
@@ -1550,7 +1599,7 @@ Desktop UI must clearly separate:
 - directories exported for storage;
 - workspaces exposed to agents;
 - Docker execution permission;
-- local credential profiles;
+- local credential profiles (post-v1 only; absent from the v1 compute UI);
 - connected PawFlow servers and active runtimes.
 
 ## 32. Cache and event invalidation
@@ -1647,13 +1696,22 @@ local adapter. Then enable the relay adapter. Suggested order:
 5. Claude Code interactive;
 6. Antigravity/observer variants.
 
-### 34.5 Legacy relay protocol
+### 34.5 Relay protocol cutover
 
-Storage and remote Docker require the versioned relay protocol and leases from
-the relay enrollment plan. Legacy v2 relays remain workspace/filesystem relays
-only and cannot advertise data-plane sources.
+Storage and remote Docker require the v3 protocol and leases from the relay
+enrollment plan. Its one-shot migration removes v2 before any data-plane source
+is enabled. This plan adds no adapter, compatibility projection, or legacy
+fallback: every source and runtime target uses stable v3 endpoint IDs from its
+first release.
 
 ## 35. Implementation work packages
+
+### WP-A. Standalone prerequisite
+
+- fix the `ConversationWriter` failure-propagation defect of section 5.1.1;
+- add the failing-write test.
+
+No dependency on WP0 or on either ACL plan. Ship first, on its own.
 
 ### WP0. Dependencies and architecture gates
 
@@ -1684,6 +1742,11 @@ exist.
 - route list/read/write/extras/context/Git APIs through locators;
 - preserve existing local tests and performance;
 - make unsupported remote operations explicit.
+
+Scale: roughly 120 files under `core/`, `tasks/`, and `services/` reference
+`ConversationStore` today. This work package is a multi-week refactor of a
+central subsystem, not a single item in a list. Produce the caller inventory of
+section 34.3 and size WP2 before committing to any date for D2 or later.
 
 ### WP3. Reliable ConversationWriter
 
@@ -1739,6 +1802,12 @@ This is required even before remote writes are enabled.
 - refactor provider and live-registry code away from local container assumptions;
 - unify common pool lifecycle and status concepts;
 - retain byte-for-byte equivalent local behavior before remote enablement.
+
+Scale: the CLI pools and LLM providers total roughly 20,000 lines across
+`core/*_pool.py` and `core/llm_providers/`, each with its own container,
+session, and process assumptions. Like WP2, size this separately; refactor one
+batch provider end to end first (section 34.4) and re-estimate from the actual
+cost of the first one.
 
 ### WP9. Relay Docker runtime
 
@@ -1922,6 +1991,41 @@ Run the same provider lifecycle suite against local and fake remote adapters:
 
 Do not combine D4, D6, and D8 into one release. Each introduces an independent
 durability or execution trust boundary.
+
+### 37.1 Dependency reality and recommended commitment
+
+The remote data planes have integration gates across three plans:
+
+~~~text
+Resource ACL S2 ──> Relay enrollment R0-R3 ──> D1+ catalog/data-plane enablement
+
+WP2/WP3 local backend + Relay R3 ──> WP4 remote conversation backend
+WP8 local CLI runtime + Relay R3 ──> WP9 remote Docker runtime
+~~~
+
+D0 is an architecture and dependency gate, so its analysis may start
+immediately. Enabling D1 or any remote catalog requires the relevant stable IDs,
+`PrincipalContext`, and relay authorization foundations to be complete. D4, the
+first writable remote-conversation release, additionally requires the local
+backend seam and reliable writer from WP2/WP3 plus relay R3. These are integration
+dependencies, not thirty sequential phases; independent local refactors may run
+in parallel and converge at their stated release gates.
+
+Recommended commitment, rather than adopting the plan whole:
+
+1. ship WP-A here and the fail-closed WP-A mitigation of the enrollment plan
+   immediately; neither enables new sharing or remote storage;
+2. ship WP2 and WP3 next. They improve the local product on their own —
+   reliable write outcomes and a routable backend seam — and are the only parts
+   of this plan that pay off even if remote storage is never built;
+3. treat everything from WP4 onward as a separate decision, taken after the
+   dependency plans have reached production and after the encryption question
+   of section 1.1 has an answer.
+
+The local runtime abstraction in WP8 can proceed independently of the
+conversation-storage packages. WP9 then requires WP8 and relay R3, but not the
+conversation backend, so remote batch execution may still be prioritized ahead
+of remote conversation homes.
 
 ## 38. Acceptance criteria
 

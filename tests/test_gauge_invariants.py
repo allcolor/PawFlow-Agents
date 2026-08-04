@@ -855,6 +855,9 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     assert "_copyTerminalSelection(term)" in terminal_src
     assert "_pasteClipboardToTerminal(ws)" in terminal_src
     assert "container.addEventListener('paste'" in terminal_src
+    assert "_sendTerminalInput(container._ws, text)" in terminal_src
+    assert "_sendTerminalInput(ws, text)" not in terminal_src
+    assert terminal_src.count("_pasteClipboardToTerminal(container._ws)") == 2
     assert "function _estimateTerminalSize()" in terminal_src
     assert "cols: termSize.cols" in terminal_cmds_src
     assert "rows: termSize.rows" in terminal_cmds_src

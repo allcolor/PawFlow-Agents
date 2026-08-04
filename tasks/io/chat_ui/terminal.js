@@ -364,7 +364,7 @@ function _initXterm(container, sessionId, token, sizing) {
     const text = ev.clipboardData && ev.clipboardData.getData('text/plain');
     if (text) {
       ev.preventDefault();
-      _sendTerminalInput(ws, text);
+      _sendTerminalInput(container._ws, text);
     }
   });
 
@@ -375,7 +375,7 @@ function _initXterm(container, sessionId, token, sizing) {
     }
     if (navigator.clipboard && navigator.clipboard.readText) {
       ev.preventDefault();
-      _pasteClipboardToTerminal(ws);
+      _pasteClipboardToTerminal(container._ws);
     }
   });
 

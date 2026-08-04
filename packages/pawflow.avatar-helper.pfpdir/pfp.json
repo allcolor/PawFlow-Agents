@@ -1,0 +1,86 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.avatar-helper",
+  "version": "0.1.0",
+  "description": "Non-destructive PawFlow interface guidance coordinated with the installed realtime avatar runtime.",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": ""
+  },
+  "origin": {
+    "source": "packages/pawflow.avatar-helper.pfpdir"
+  },
+  "dependencies": [
+    {
+      "package": "pawflow.avatar-runtime",
+      "version": ">=0.1.0,<1.0.0"
+    }
+  ],
+  "objects": [
+    {
+      "id": "skill:pawflow-helper",
+      "type": "skill",
+      "name": "pawflow-helper",
+      "path": "content/skills/pawflow-helper/SKILL.md"
+    },
+    {
+      "id": "agent:pawflow-helper",
+      "type": "agent",
+      "name": "pawflow-helper",
+      "path": "content/agents/pawflow-helper.json"
+    },
+    {
+      "id": "ui_extension:avatar-helper",
+      "type": "ui_extension",
+      "name": "avatar-helper",
+      "version_compat": "ui.v1",
+      "assets": {
+        "scripts": ["content/ui/extension.js"],
+        "styles": ["content/ui/extension.css"]
+      },
+      "slots": [
+        {
+          "slot": "header_actions",
+          "id": "helper.guide",
+          "icon": "?",
+          "label_key": "helper.guide"
+        }
+      ],
+      "hooks": [
+        "shutdown",
+        "conversation_changed",
+        "agent_changed"
+      ]
+    },
+    {
+      "id": "tool:pawflow-ui",
+      "type": "tool",
+      "name": "pawflow-ui",
+      "path": "content/tools/pawflow-ui/main.py",
+      "runner": "python",
+      "description": "Describe, open, or highlight a fixed non-destructive PawFlow interface target in the active browser tab.",
+      "parameters": {
+        "operation": {
+          "type": "string",
+          "required": true,
+          "enum": ["list", "get", "invoke"]
+        },
+        "action": {"type": "string"},
+        "arguments": {"type": "object"}
+      },
+      "allowed_tools": [],
+      "allowed_services": [],
+      "permissions": {
+        "browser": {
+          "semantic": [
+            {
+              "package": "pawflow.avatar-helper",
+              "operations": ["list", "get", "invoke"],
+              "nodes": ["pawflow.avatar-helper:ui.guide"]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

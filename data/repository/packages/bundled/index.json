@@ -29,9 +29,9 @@
       "description": "Installable avatar repository, TalkingHead renderer, realtime lip sync, motion, and semantic browser controls.",
       "category": "Media & AI",
       "artifact": "pawflow.avatar-runtime-0.1.0.pfp",
-      "sha256": "sha256:35a8e665b872b609d2d20deea0ccb93f00dc811ed5e63ea856a62464dddc5a94",
+      "sha256": "sha256:24ede86a881430eec9d824276c72774c9a9601552565bfc822be53587020be29",
       "package_size": 254622,
-      "developer_key": "ed25519:Jnpk9Z5LvWIU3o1brUhHNTbwubahyGlheZCU1PHKKnM=",
+      "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
       "tags": [
         "avatar",
         "realtime",
@@ -46,14 +46,36 @@
       ]
     },
     {
+      "package": "pawflow.avatar-helper",
+      "version": "0.1.0",
+      "description": "Non-destructive PawFlow interface guidance coordinated with the installed realtime avatar runtime.",
+      "category": "Media & AI",
+      "artifact": "pawflow.avatar-helper-0.1.0.pfp",
+      "sha256": "sha256:9f94a4b4f754deffb6053fcf8bc4d8904d6c582ceb65bda49f6d131e38bcf52d",
+      "package_size": 7022,
+      "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
+      "tags": [
+        "avatar",
+        "helper",
+        "ui",
+        "agent"
+      ],
+      "objects": [
+        "skill:pawflow-helper",
+        "agent:pawflow-helper",
+        "ui_extension:avatar-helper",
+        "tool:pawflow-ui"
+      ]
+    },
+    {
       "package": "pawflow.avatar-pack.starter",
       "version": "0.1.0",
       "description": "Independent PawFlow-authored starter avatar model pack.",
       "category": "Media & AI",
       "artifact": "pawflow.avatar-pack.starter-0.1.0.pfp",
-      "sha256": "sha256:cae6c69508c38e66bf3047441c04887282c48adb89c8ff95443f67a1d1a79dd7",
-      "package_size": 5589,
-      "developer_key": "ed25519:Jnpk9Z5LvWIU3o1brUhHNTbwubahyGlheZCU1PHKKnM=",
+      "sha256": "sha256:f049ae087f9c5014382574dce86812d6ad6e9e4e42862920dc676ea2ffe233ee",
+      "package_size": 5591,
+      "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
       "tags": [
         "avatar",
         "starter",

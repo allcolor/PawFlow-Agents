@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.102] — 2026-08-04
+
+### Added
+
+- Added the installable `pawflow.avatar-helper` package with a dedicated helper
+  agent and skill, a fixed-target `pawflow-ui` semantic tool, and a
+  non-destructive browser overlay that can describe, open, scroll to, and
+  highlight PawFlow interface surfaces without submitting forms or accepting
+  arbitrary selectors.
+
+### Fixed
+
+- Restored terminal paste from the browser clipboard with `Ctrl+V` and the
+  right-click action by routing both handlers to the terminal's active WebSocket.
+
 ## [1.0.0-beta.101] — 2026-08-04
 
 ### Added

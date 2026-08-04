@@ -82,6 +82,7 @@ def test_bundled_avatar_catalog_build_is_signed_and_reproducible(
     assert [row["package"] for row in first["packages"]] == [
         "keep.example",
         "pawflow.avatar-runtime",
+        "pawflow.avatar-helper",
         "pawflow.avatar-pack.starter",
     ]
     for row in first["packages"][1:]:

@@ -29,6 +29,11 @@ PACKAGE_SPECS = (
         "tags": ["avatar", "realtime", "voice", "3d"],
     },
     {
+        "source": ROOT / "packages" / "pawflow.avatar-helper.pfpdir",
+        "category": "Media & AI",
+        "tags": ["avatar", "helper", "ui", "agent"],
+    },
+    {
         "source": ROOT / "packages" / "pawflow.avatar-pack.starter.pfpdir",
         "category": "Media & AI",
         "tags": ["avatar", "starter", "3d", "model"],

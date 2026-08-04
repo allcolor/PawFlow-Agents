@@ -1,0 +1,41 @@
+.pf-avatar-helper-button {
+  align-items: center;
+  background: var(--pf-user, #0f3460);
+  border: 1px solid var(--pf-accent-2, #536dfe);
+  border-radius: 50%;
+  color: var(--pf-text, #e0e0e0);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 700;
+  height: 26px;
+  justify-content: center;
+  margin: 0 3px;
+  padding: 0;
+  width: 26px;
+}
+
+.pf-avatar-helper-focus {
+  border-radius: 6px !important;
+  box-shadow: 0 0 0 4px rgba(83, 109, 254, 0.45),
+    0 0 22px rgba(83, 109, 254, 0.7) !important;
+  outline: 2px solid var(--pf-accent-2, #536dfe) !important;
+  outline-offset: 3px !important;
+  position: relative;
+  z-index: 10010 !important;
+}
+
+.pf-avatar-helper-callout {
+  background: var(--pf-panel, #16213e);
+  border: 1px solid var(--pf-accent-2, #536dfe);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--pf-shadow, rgba(0, 0, 0, 0.55));
+  color: var(--pf-text, #e0e0e0);
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 9px 11px;
+  pointer-events: none;
+  position: fixed;
+  z-index: 10020;
+}

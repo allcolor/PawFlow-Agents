@@ -72,6 +72,9 @@ _UI_KNOWN_HOOKS = {
     "agent_changed", "theme_changed",
     "tab_switched", "permission_mode_changed",
     "sse_event", "resource_changed",
+    "realtime_state_changed",
+    "media_track_subscribed", "media_track_unsubscribed",
+    "media_audio_frame",
 }
 # `.html` is intentionally absent: a same-origin HTML page served from
 # `/chat/ext/...` could run inline <script> blocks under the user's session

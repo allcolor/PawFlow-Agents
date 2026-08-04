@@ -329,7 +329,7 @@ Exit gate: a signed test package can define a new logical repository type and a 
 
 Exit gate: a test extension loads a large inert model asset by logical ID while undeclared/tampered/disabled assets remain inaccessible.
 
-### Phase 3 — realtime media contract
+### Phase 3 — realtime media contract (complete)
 
 - emit generic LiveKit and PCM media lifecycle events;
 - expose read-only track/element/frame descriptors;

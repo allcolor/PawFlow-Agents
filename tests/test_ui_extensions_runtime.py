@@ -1,4 +1,4 @@
-"""Structural tests for the PawFlow UI extension runtime (ui.v1).
+"""Structural and behavioral tests for the PawFlow UI extension runtime.
 
 Phase 1 ships the browser-side plumbing only: a `pawflow` API surface,
 slot containers in the HTML template, hook firing points in existing JS
@@ -6,6 +6,8 @@ modules, and an empty bootstrap manifest. PFP integration (object type,
 asset serving, server handlers) lands in phase 2.
 """
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -79,6 +81,9 @@ KNOWN_HOOKS = [
     "tab_switched", "permission_mode_changed",
     "sse_event",
     "resource_changed",
+    "realtime_state_changed",
+    "media_track_subscribed", "media_track_unsubscribed",
+    "media_audio_frame",
 ]
 
 
@@ -114,6 +119,33 @@ def test_ext_runtime_context_is_a_frozen_snapshot(ext_runtime_src):
 def test_ext_runtime_subscriptions_return_unsubscribe_functions(ext_runtime_src):
     assert "return function unsubscribeHook()" in ext_runtime_src
     assert "return function unsubscribeLocal()" in ext_runtime_src
+
+
+@pytest.mark.skipif(shutil.which("node") is None,
+                    reason="node is not available to run the JS suite")
+def test_ext_runtime_media_lifecycle_behaviour():
+    proc = subprocess.run(
+        ["node", "tests/js/pfp_media_runtime_spec.js"],
+        capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, (
+        "JS suite failed:\n" + proc.stdout + proc.stderr)
+
+
+def test_realtime_media_paths_publish_generic_lifecycle_events():
+    voice = (_CHAT_UI / "conversation_voice.js").read_text(encoding="utf-8")
+    livekit = (_CHAT_UI / "conversation_livekit.js").read_text(
+        encoding="utf-8")
+    conversations = (_CHAT_UI / "conversations.js").read_text(
+        encoding="utf-8")
+
+    for needle in ("mediaTrackSubscribed", "mediaAudioFrame",
+                   "mediaTrackUnsubscribed", "mediaStateChanged"):
+        assert needle in voice
+    for needle in ("mediaTrackSubscribed", "mediaTrackUnsubscribed",
+                   "TrackUnsubscribed"):
+        assert needle in livekit
+    assert "stopRealtimeMediaForConversationChange()" in conversations
+    assert "resetMedia('conversation_changed')" in voice
 
 
 def test_ext_runtime_inert_assets_are_resolved_not_auto_loaded(ext_runtime_src):

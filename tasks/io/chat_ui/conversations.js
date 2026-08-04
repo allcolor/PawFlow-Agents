@@ -142,6 +142,11 @@ function renameConvInline(e, cid) {
 // Clears the webchat DOM and every conv-scoped global. Caller sets
 // `conversationId` afterwards (to a cid or null).
 function _clearConvState() {
+  // Realtime media is conversation-scoped. Stop both transports before
+  // resetting selectedAgent or delivering conversation_changed to extensions.
+  if (typeof stopRealtimeMediaForConversationChange === 'function') {
+    stopRealtimeMediaForConversationChange();
+  }
   // Resource panel: reset all sections to initial state (only Agents
   // open). See resources.js — user-facing rule: switching conv must
   // always reopen the panel in the same predictable layout.

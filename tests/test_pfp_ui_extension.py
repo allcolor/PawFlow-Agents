@@ -194,6 +194,24 @@ def test_ui_extension_rejects_unknown_hook(tmp_path, keypair):
     assert "not_a_hook" in row["reason"]
 
 
+@pytest.mark.parametrize("hook", [
+    "realtime_state_changed",
+    "media_track_subscribed",
+    "media_track_unsubscribed",
+    "media_audio_frame",
+])
+def test_ui_extension_accepts_realtime_media_hooks(
+        tmp_path, keypair, hook):
+    pkgdir = _write_ui_extension_pkg(
+        tmp_path, keypair, extra_hook=hook)
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["installable"] is True
+    assert hook in row["capabilities"]["ui_extension"]["hooks"]
+
+
 def test_ui_extension_rejects_disallowed_asset_extension(tmp_path, keypair):
     pkgdir = _write_ui_extension_pkg(
         tmp_path, keypair, invalid_ext_path="content/ui/payload.exe")

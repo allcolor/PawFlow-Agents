@@ -29,6 +29,47 @@ var _voiceState = 'idle';
 // and wreck transcription).
 var _VOICE_UPLINK_RATE = 24000;   // PCM16 mono sent to the bridge
 var _VOICE_DOWNLINK_RATE = 24000; // PCM16 mono received from the bridge
+var _VOICE_MEDIA_SOURCE_ID = 'pcm:agent';
+
+function _voiceMediaRuntime() {
+  return window._pawflowExtRuntime || null;
+}
+
+function _voiceMediaAttach() {
+  const runtime = _voiceMediaRuntime();
+  if (!runtime || typeof runtime.mediaTrackSubscribed !== 'function') return;
+  runtime.mediaTrackSubscribed({
+    id: _VOICE_MEDIA_SOURCE_ID,
+    transport: 'pcm',
+    kind: 'audio',
+    direction: 'agent_downlink',
+    conversation: _voiceConversationId(),
+    format: 'pcm16le',
+    sample_rate: _VOICE_DOWNLINK_RATE,
+    channels: 1,
+  });
+}
+
+function _voiceMediaDetach(reason) {
+  const runtime = _voiceMediaRuntime();
+  if (runtime && typeof runtime.mediaTrackUnsubscribed === 'function') {
+    runtime.mediaTrackUnsubscribed(
+      _VOICE_MEDIA_SOURCE_ID, reason || 'session_stopped');
+  }
+}
+
+function stopRealtimeMediaForConversationChange() {
+  if (typeof stopLiveKitVoiceMode === 'function'
+      && ((typeof _lkActive !== 'undefined' && _lkActive)
+          || (typeof _lkRoom !== 'undefined' && _lkRoom))) {
+    stopLiveKitVoiceMode('conversation_changed');
+  }
+  if (_voiceActive || _voiceWs) stopVoiceMode('conversation_changed');
+  const runtime = _voiceMediaRuntime();
+  if (runtime && typeof runtime.resetMedia === 'function') {
+    runtime.resetMedia('conversation_changed');
+  }
+}
 
 function _voiceConversationId() {
   return (typeof conversationId !== 'undefined' && conversationId) ? conversationId : '';
@@ -182,6 +223,15 @@ function _voiceToggleMute() {
 
 function _voiceSetState(state) {
   _voiceState = state;
+  const runtime = _voiceMediaRuntime();
+  if (runtime && typeof runtime.mediaStateChanged === 'function') {
+    runtime.mediaStateChanged({
+      state: state,
+      transport: (typeof _lkActive !== 'undefined' && _lkActive)
+        ? 'livekit' : (_voiceActive ? 'pcm' : ''),
+      conversation: _voiceConversationId(),
+    });
+  }
   const ov = document.getElementById('voiceOverlay');
   if (!ov) return;
   ov.className = 'vs-' + state;
@@ -275,6 +325,17 @@ function _voicePlayChunk(buf) {
   _voiceOrbLevel(Math.sqrt(sum / pcm.length));
   const audioBuf = _voicePlayCtx.createBuffer(1, f32.length, _VOICE_DOWNLINK_RATE);
   audioBuf.getChannelData(0).set(f32);
+  const runtime = _voiceMediaRuntime();
+  if (runtime && typeof runtime.mediaAudioFrame === 'function') {
+    runtime.mediaAudioFrame(_VOICE_MEDIA_SOURCE_ID, {
+      format: 'f32',
+      sample_rate: _VOICE_DOWNLINK_RATE,
+      channels: 1,
+      frame_count: f32.length,
+      duration_ms: (f32.length / _VOICE_DOWNLINK_RATE) * 1000,
+      samples: f32,
+    });
+  }
   const src = _voicePlayCtx.createBufferSource();
   src.buffer = audioBuf;
   src.connect(_voicePlayCtx.destination);
@@ -396,6 +457,7 @@ async function _toggleVoiceModeStart(cid) {
   ws.binaryType = 'arraybuffer';
   _voiceWs = ws;
   _voiceActive = true;
+  _voiceMediaAttach();
   _voiceMuted = false;
   _voiceUpdateButton();
   _voiceShowOverlay();
@@ -427,6 +489,8 @@ async function _toggleVoiceModeStart(cid) {
 
 function stopVoiceMode(reason) {
   if (!_voiceActive && !_voiceWs) return;
+  _voiceSetState('idle');
+  _voiceMediaDetach(reason || 'session_stopped');
   _voiceActive = false;
   _voiceMuted = false;
   const ws = _voiceWs;
@@ -440,7 +504,6 @@ function stopVoiceMode(reason) {
   if (_voicePlayCtx) { try { _voicePlayCtx.close(); } catch (_err) {} _voicePlayCtx = null; }
   _voiceRemoveCaptions();
   _voiceHideOverlay();
-  _voiceState = 'idle';
   _voiceUpdateButton();
 }
 

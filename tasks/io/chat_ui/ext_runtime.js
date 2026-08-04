@@ -54,6 +54,9 @@
     'agent_changed', 'theme_changed',
     'tab_switched', 'permission_mode_changed',
     'sse_event', 'resource_changed',
+    'realtime_state_changed',
+    'media_track_subscribed', 'media_track_unsubscribed',
+    'media_audio_frame',
   ];
 
   // Registered packages: id -> { ready: bool, callback, pfp, slots: [], hooks: {}, commands: [], localBus: {} }
@@ -65,6 +68,9 @@
   // Per-extension slash commands: name -> {pkg, spec}
   var _commands = Object.create(null);
   var _unregisteredPackages = Object.create(null);
+  // Active agent-downlink media sources. Descriptors are shallow-frozen
+  // snapshots; browser track/element references remain observation handles.
+  var _mediaSources = Object.create(null);
   // Last `boot` payload — replayed for packages that load late.
   var _bootPayload = null;
   var _booted = false;
@@ -158,6 +164,10 @@
     snapshot.forEach(function (entry) {
       // Async-fire so a slow listener cannot freeze the caller.
       setTimeout(function () {
+        // unregister() removes this exact entry from the live listener list.
+        // Re-check at delivery time so a disabled extension cannot receive an
+        // event that was queued just before teardown.
+        if ((_hookListeners[hookName] || []).indexOf(entry) < 0) return;
         try { entry.cb(payload); }
         catch (err) { _logExtError(entry.pkg, 'hook(' + hookName + ')', err); }
       }, 0);
@@ -179,6 +189,74 @@
       }
     });
     return current;
+  }
+
+  // ── Realtime media observations ────────────────────────────────────
+  function _frozenMediaPayload(payload) {
+    return Object.freeze(Object.assign({}, payload || {}));
+  }
+
+  function _mediaTrackSubscribed(descriptor) {
+    if (!descriptor || !_isString(descriptor.id)) return null;
+    var id = descriptor.id;
+    if (_mediaSources[id]) _mediaTrackUnsubscribed(id, 'replaced');
+    var source = _frozenMediaPayload(descriptor);
+    _mediaSources[id] = source;
+    _fireHook('media_track_subscribed', source);
+    return source;
+  }
+
+  function _mediaTrackUnsubscribed(sourceId, reason) {
+    var source = _mediaSources[sourceId];
+    if (!source) return false;
+    delete _mediaSources[sourceId];
+    _fireHook('media_track_unsubscribed', _frozenMediaPayload({
+      id: sourceId,
+      source: source,
+      reason: String(reason || 'detached'),
+      timestamp: Date.now(),
+    }));
+    return true;
+  }
+
+  function _copyMediaSamples(samples) {
+    if (!samples) return samples;
+    if (typeof samples.slice === 'function') {
+      try { return samples.slice(0); } catch (_err) {}
+    }
+    if (typeof ArrayBuffer !== 'undefined' && samples instanceof ArrayBuffer) {
+      return samples.slice(0);
+    }
+    return samples;
+  }
+
+  function _mediaAudioFrame(sourceId, frame) {
+    var source = _mediaSources[sourceId];
+    if (!source || !frame) return false;
+    var payload = Object.assign({}, frame, {
+      source: source,
+      source_id: sourceId,
+      timestamp: frame.timestamp || Date.now(),
+    });
+    if (Object.prototype.hasOwnProperty.call(payload, 'samples')) {
+      payload.samples = _copyMediaSamples(payload.samples);
+    }
+    _fireHook('media_audio_frame', _frozenMediaPayload(payload));
+    return true;
+  }
+
+  function _mediaStateChanged(state) {
+    if (!state || !_isString(state.state)) return false;
+    _fireHook('realtime_state_changed', _frozenMediaPayload(Object.assign({
+      timestamp: Date.now(),
+    }, state)));
+    return true;
+  }
+
+  function _resetMedia(reason) {
+    Object.keys(_mediaSources).forEach(function (sourceId) {
+      _mediaTrackUnsubscribed(sourceId, reason || 'reset');
+    });
   }
 
   // ── Per-package pfp API ────────────────────────────────────────────
@@ -527,6 +605,11 @@
     renderAllSlots: _renderAllSlots,
     syncConditionalSlots: _syncConditionalSlots,
     contextSnapshot: _contextSnapshot,
+    mediaTrackSubscribed: _mediaTrackSubscribed,
+    mediaTrackUnsubscribed: _mediaTrackUnsubscribed,
+    mediaAudioFrame: _mediaAudioFrame,
+    mediaStateChanged: _mediaStateChanged,
+    resetMedia: _resetMedia,
     markBooted: function (payload) {
       _bootPayload = payload || {};
       _booted = true;

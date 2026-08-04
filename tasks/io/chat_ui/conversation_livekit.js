@@ -17,6 +17,80 @@ var _lkCamOn = false;
 var _lkScreenOn = false;
 var _lkAudioEls = [];
 var _lkSseWired = false;
+var _lkMediaSeq = 0;
+
+function _lkMediaRuntime() {
+  return window._pawflowExtRuntime || null;
+}
+
+function _lkTrackSourceId(track, publication) {
+  const raw = (publication && publication.trackSid)
+    || (track && track.sid)
+    || (track && track.mediaStreamTrack && track.mediaStreamTrack.id)
+    || ('anonymous-' + (++_lkMediaSeq));
+  return 'livekit:' + String(raw);
+}
+
+function _lkAttachAudioTrack(track, publication, participant) {
+  if (!track || track.kind !== 'audio') return;
+  if (_lkAudioEls.some(function(rec) { return rec.track === track; })) return;
+  const el = track.attach();
+  el.autoplay = true;
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  const sourceId = _lkTrackSourceId(track, publication);
+  _lkAudioEls.push({ sourceId: sourceId, element: el, track: track });
+  const runtime = _lkMediaRuntime();
+  if (runtime && typeof runtime.mediaTrackSubscribed === 'function') {
+    runtime.mediaTrackSubscribed({
+      id: sourceId,
+      transport: 'livekit',
+      kind: 'audio',
+      direction: 'agent_downlink',
+      conversation: _voiceConversationId(),
+      session_id: (_lkSession && _lkSession.session_id) || '',
+      participant: (participant && (participant.identity || participant.sid)) || '',
+      track: track,
+      element: el,
+    });
+  }
+}
+
+function _lkDetachAudioRecord(rec, reason) {
+  const runtime = _lkMediaRuntime();
+  if (runtime && typeof runtime.mediaTrackUnsubscribed === 'function') {
+    runtime.mediaTrackUnsubscribed(rec.sourceId, reason || 'track_unsubscribed');
+  }
+  try { if (rec.track && rec.track.detach) rec.track.detach(rec.element); } catch (_err) {}
+  try { rec.element.remove(); } catch (_err) {}
+}
+
+function _lkDetachAudioTrack(track, reason) {
+  const keep = [];
+  _lkAudioEls.forEach(function(rec) {
+    if (rec.track === track) _lkDetachAudioRecord(rec, reason);
+    else keep.push(rec);
+  });
+  _lkAudioEls = keep;
+}
+
+function _lkDetachAllAudio(reason) {
+  _lkAudioEls.forEach(function(rec) { _lkDetachAudioRecord(rec, reason); });
+  _lkAudioEls = [];
+}
+
+function _lkRestoreRemoteAudio(room) {
+  if (!room || !room.remoteParticipants) return;
+  room.remoteParticipants.forEach(function(participant) {
+    const publications = participant.trackPublications;
+    if (!publications || !publications.forEach) return;
+    publications.forEach(function(publication) {
+      if (publication && publication.track) {
+        _lkAttachAudioTrack(publication.track, publication, participant);
+      }
+    });
+  });
+}
 
 function _lkAuthHeaders() {
   const headers = { 'Content-Type': 'application/json' };
@@ -167,14 +241,17 @@ async function startLiveKitVoiceMode(cid, svc) {
     const LK = window.LivekitClient;
     const room = new LK.Room({ adaptiveStream: true, dynacast: true });
     _lkRoom = room;
-    room.on(LK.RoomEvent.TrackSubscribed, function(track) {
-      if (track.kind === 'audio') {
-        const el = track.attach();
-        el.autoplay = true;
-        el.style.display = 'none';
-        document.body.appendChild(el);
-        _lkAudioEls.push(el);
-      }
+    room.on(LK.RoomEvent.TrackSubscribed, function(track, publication, participant) {
+      _lkAttachAudioTrack(track, publication, participant);
+    });
+    room.on(LK.RoomEvent.TrackUnsubscribed, function(track) {
+      _lkDetachAudioTrack(track, 'track_unsubscribed');
+    });
+    room.on(LK.RoomEvent.Reconnecting, function() {
+      _lkDetachAllAudio('reconnecting');
+    });
+    room.on(LK.RoomEvent.Reconnected, function() {
+      _lkRestoreRemoteAudio(room);
     });
     room.on(LK.RoomEvent.Disconnected, function() {
       if (_lkActive) stopLiveKitVoiceMode('disconnected');
@@ -204,14 +281,14 @@ async function startLiveKitVoiceMode(cid, svc) {
 
 function stopLiveKitVoiceMode(reason) {
   if (!_lkActive && !_lkRoom) return;
+  _voiceSetState('idle');
   _lkActive = false;
   const room = _lkRoom;
   _lkRoom = null;
   const session = _lkSession;
   _lkSession = null;
+  _lkDetachAllAudio(reason || 'session_stopped');
   if (room) { try { room.disconnect(); } catch (_err) {} }
-  _lkAudioEls.forEach(function(el) { try { el.remove(); } catch (_err) {} });
-  _lkAudioEls = [];
   if (session && reason !== 'closed') {
     // Tell PawFlow to end the session server-side (worker shutdown, token
     // invalidation). 'closed' means the server already did.

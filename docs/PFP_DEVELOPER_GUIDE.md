@@ -538,7 +538,9 @@ Hooks accepted in `ui.v1`: `boot`, `shutdown`, `conversation_changed`,
 `message_streaming`, `tool_call_started`, `tool_call_completed`,
 `command_submitted`, `command_result`, `before_send`, `agent_changed`,
 `theme_changed`, `tab_switched`, `permission_mode_changed`, `sse_event`, and
-`resource_changed`. Successful built-in resource create/update/copy/delete
+`resource_changed`, plus the realtime media hooks `realtime_state_changed`,
+`media_track_subscribed`, `media_track_unsubscribed`, and
+`media_audio_frame`. Successful built-in resource create/update/copy/delete
 operations emit `resource_changed` with `resource_type`, `operation`, `name`,
 and scope metadata.
 
@@ -591,6 +593,36 @@ mutable references to PawFlow state. Package teardown fires `shutdown`, removes
 hook/local-bus subscriptions, slots and commands, and closes package-owned
 panels/dialogs. `window.pawflow.unregister(packageId)` exposes the same cleanup
 path to the host runtime.
+
+### Realtime media observations
+
+The media hooks expose only the agent downlink; microphone capture and desktop
+relay audio are not part of this contract.
+
+- `realtime_state_changed` carries `state`, `transport`, `conversation`, and a
+  millisecond `timestamp`. States include `connecting`, `listening`,
+  `thinking`, `speaking`, `tool`, and `idle`.
+- `media_track_subscribed` carries a frozen source descriptor. Legacy
+  websocket audio uses `transport: "pcm"`, `format: "pcm16le"`, a sample
+  rate, and channel count. LiveKit uses `transport: "livekit"` and also
+  exposes the remote `track` and attached `element`.
+- `media_audio_frame` is available for the legacy PCM transport and carries a
+  frozen descriptor with copied `Float32Array` samples, `sample_rate`,
+  `channels`, `frame_count`, and `duration_ms`. Mutating the copy cannot alter
+  PawFlow playback.
+- `media_track_unsubscribed` carries the prior frozen `source`, its `id`, and a
+  reason such as `track_unsubscribed`, `reconnecting`,
+  `conversation_changed`, or `session_stopped`.
+
+Descriptors are shallow-frozen. LiveKit's embedded track and media element are
+shared same-origin browser references, so extensions must treat them as
+read-only observations. This is an API contract, not a browser security
+boundary; the shared trust-domain rules below still apply.
+
+Every media hook uses the normal `pfp.on(...)` unsubscribe contract. Disabling
+an extension removes its listeners before queued callbacks run. Session stop,
+LiveKit track unsubscribe/reconnect, and conversation switch detach sources
+deterministically before the next conversation context is delivered.
 
 UI extensions live in the user's own browser tab, same origin as the page.
 They have full DOM access; PawFlow scans the JS files at install time for

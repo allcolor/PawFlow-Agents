@@ -374,6 +374,114 @@ requested by the tool, for example `remove_background` does not satisfy
 
 Package-qualified grants are also supported for inter-PFP dependencies. The referenced package and object must already be installed before the dependent object can be selected. Native grants such as `{ "name": "read" }` authorize only unqualified host calls like `pfp.call_tool("read")`; they do not authorize `other.pkg/tool:read`. If a grant contains a package version or version constraint, that constraint is checked against the installed object and carried into the final tool/service dispatch so an older installed object with the same name cannot satisfy the call.
 
+## Extension-defined repositories
+
+Use `repository_type` and `repository_resource` when a feature needs its own
+repository without becoming a built-in PawFlow resource type.
+
+Owner manifest objects:
+
+```json
+[
+  {
+    "id": "repository_type:avatar",
+    "type": "repository_type",
+    "name": "avatar",
+    "resource_type": "example.avatar",
+    "schema_version": "1",
+    "schema": "content/repository/avatar.schema.json",
+    "contributions": "dependencies",
+    "mutable": true,
+    "asset_extensions": [".vrm", ".webp"]
+  },
+  {
+    "id": "repository_resource:luna",
+    "type": "repository_resource",
+    "name": "luna",
+    "resource_type": "example.avatar",
+    "schema_version": "1",
+    "path": "content/avatars/luna.json",
+    "assets": [
+      {"id": "model", "path": "content/avatars/luna.vrm"},
+      {"id": "preview", "path": "content/avatars/luna.webp"}
+    ]
+  }
+]
+```
+
+`resource_type` must be a lowercase dotted or dashed identifier and is owned
+by one accessible installed package. `schema_version` is required on both
+objects and must match exactly. `schema` must be a valid, self-contained Draft
+2020-12 JSON Schema; `$ref` values may use only local `#` fragments. The schema
+and each resource document must be JSON objects.
+
+`contributions` is required:
+
+- `owner` accepts resources only from the package declaring the type;
+- `dependencies` also accepts a resource from a package that explicitly
+  depends on the owner package.
+
+`mutable` is required. When true, Python runtime objects from the owner package
+may mutate scoped JSON resources. It does not grant contributor packages
+write access. The declared `asset_extensions` must be a subset of PawFlow's
+inert repository allow-list. Scripts, HTML, Python, WebAssembly, and external
+URLs do not become repository assets through this object.
+
+A pack that contributes resources declares the normal package dependency:
+
+```json
+{
+  "package": "example.avatar-pack",
+  "version": "1.0.0",
+  "dependencies": [
+    {"package": "example.avatar-runtime", "version": "^1.0.0"}
+  ],
+  "objects": [
+    {
+      "id": "repository_resource:nova",
+      "type": "repository_resource",
+      "name": "nova",
+      "resource_type": "example.avatar",
+      "schema_version": "1",
+      "path": "content/avatars/nova.json",
+      "assets": [{"id": "model", "path": "content/avatars/nova.vrm"}]
+    }
+  ]
+}
+```
+
+Selecting a new `repository_resource` from the same owner package without also
+selecting its new `repository_type` is reported as a missing dependency.
+Contributors cannot satisfy ownership merely by spelling the same logical type
+in their own package.
+
+Owner runtime code uses the brokered SDK:
+
+```python
+from pawflow import pfp
+
+rows = pfp.repository.list("example.avatar")
+current = pfp.repository.get("example.avatar", "luna")
+created = pfp.repository.create(
+    "example.avatar",
+    "custom-luna",
+    {"format": "example.avatar.v1", "title": "Custom Luna"},
+)
+updated = pfp.repository.update(
+    "example.avatar",
+    "custom-luna",
+    {"format": "example.avatar.v1", "title": "Renamed Luna"},
+)
+deleted = pfp.repository.delete("example.avatar", "custom-luna")
+```
+
+The host accepts no missing parameter and supplies no implicit type, name, or
+document. It derives package/user/conversation/scope from the verified runtime
+request, verifies owner and `mutable`, validates every document against the
+installed schema, and audit-logs the operation. Runtime CRUD is JSON-only;
+packaged binary assets stay immutable and hash-addressed in their PFP content
+store until the generic upload/asset-serving contract is enabled.
+
 ## UI Extensions (ui.v1)
 
 A package can ship a `ui_extension` object that injects JS / CSS into the

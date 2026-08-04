@@ -12,11 +12,36 @@ from core.pfp_package._pp_mod2 import (  # noqa: F401
 from core.pfp_package._pp_mod3 import (  # noqa: F401
     _install_record_path, _remove_package_content_path, _review_object_for_install)
 from core.pfp_package._pp_mod4 import (  # noqa: F401
-    _package_update_diff, _record_is_locally_modified, _refresh_runtime, _selected_agent_missing_skills, _version_blocking_dependents, _write_install_record, _write_package_content_store)
+    _package_update_diff, _record_is_locally_modified, _refresh_runtime, _selected_agent_missing_skills, _version_blocking_dependents, _write_install_record, _write_package_content_store, resolve_repository_type)
 from core.pfp_package._pp_mod5 import (  # noqa: F401
     _install_object, _load_package, _object_plan, _remove_obsolete_update_objects, _verify_pinned_developer_key, uninstall_pfp)
 
 logger = logging.getLogger(__name__)
+
+
+def _missing_selected_repository_type(
+        row: Dict[str, Any], package: Dict[str, Any], selected: set,
+        user_id: str, conversation_id: str, scope: str) -> str:
+    if str(row.get("type") or "") != "repository_resource":
+        return ""
+    from core.pfp_extension_contracts import package_repository_type
+
+    resource_type = str(
+        (row.get("object") or {}).get("resource_type") or "")
+    descriptor = package_repository_type(package, resource_type)
+    if not descriptor:
+        return ""
+    descriptor_id = str(descriptor.get("object_id") or "")
+    if descriptor_id in selected:
+        return ""
+    installed = resolve_repository_type(
+        resource_type, user_id=user_id, conversation_id=conversation_id,
+        scope=scope)
+    package_id = str(package["manifest"].get("package") or "")
+    installed_owner = str(
+        (installed or {}).get("owner_package")
+        or (installed or {}).get("package") or "")
+    return "" if installed_owner == package_id else descriptor_id
 
 
 def inspect_pfp(path: str, *, user_id: str = "", conversation_id: str = "",
@@ -98,6 +123,15 @@ def install_pfp(path: str, *, user_id: str, conversation_id: str = "",
                 "id": obj_id,
                 "reason": "missing_dependency",
                 "missing_assigned_skills": selected_missing_skills,
+            })
+            continue
+        missing_repository_type = _missing_selected_repository_type(
+            row, package, selected, user_id, conversation_id, scope)
+        if missing_repository_type:
+            skipped.append({
+                "id": obj_id,
+                "reason": "missing_dependency",
+                "missing_repository_type": missing_repository_type,
             })
             continue
         missing_secret_bindings = _missing_secret_bindings(row, secret_bindings)
@@ -196,6 +230,15 @@ def dev_load_pfp(source_dir: str, *, user_id: str, conversation_id: str = "",
                 "id": obj_id,
                 "reason": "missing_dependency",
                 "missing_assigned_skills": selected_missing_skills,
+            })
+            continue
+        missing_repository_type = _missing_selected_repository_type(
+            row, package, selected, user_id, conversation_id, scope)
+        if missing_repository_type:
+            skipped.append({
+                "id": obj_id,
+                "reason": "missing_dependency",
+                "missing_repository_type": missing_repository_type,
             })
             continue
         missing_secret_bindings = _missing_secret_bindings(row, secret_bindings)

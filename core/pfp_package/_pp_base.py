@@ -47,6 +47,7 @@ _INSTALLABLE_TYPES = set(_RESOURCE_TYPES) | {"flow", "service", "service_definit
 _INSTALLABLE_TYPES.update({"tool", "agent_hook", "service_provider", "flow_task", "task_provider"})
 _INSTALLABLE_TYPES.add("ui_extension")
 _INSTALLABLE_TYPES.add("web_app")
+_INSTALLABLE_TYPES.update({"repository_type", "repository_resource"})
 
 _RUNTIME_OBJECT_TYPES = {"tool", "agent_hook", "service_provider", "flow_task", "task_provider"}
 _SUPPORTED_RUNTIME_RUNNERS = {"python"}

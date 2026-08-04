@@ -273,11 +273,43 @@ _PFP_RESULT_FORMAT = "pawflow.package.runtime.result.v1"
 _PFP_HOST_CALL_FORMAT = "pawflow.package.runtime.host_call.v1"
 
 
+class _PfpRepository:
+    """Package-owned repository access through the authorized host broker."""
+
+    def __init__(self, runtime):
+        self._runtime = runtime
+
+    def list(self, resource_type: str):
+        return self._runtime._host_call(
+            "repository", resource_type, operation="list")
+
+    def get(self, resource_type: str, name: str):
+        return self._runtime._host_call(
+            "repository", resource_type, operation="get",
+            arguments={"name": name})
+
+    def create(self, resource_type: str, name: str, document: dict):
+        return self._runtime._host_call(
+            "repository", resource_type, operation="create",
+            arguments={"name": name, "document": document})
+
+    def update(self, resource_type: str, name: str, document: dict):
+        return self._runtime._host_call(
+            "repository", resource_type, operation="update",
+            arguments={"name": name, "document": document})
+
+    def delete(self, resource_type: str, name: str):
+        return self._runtime._host_call(
+            "repository", resource_type, operation="delete",
+            arguments={"name": name})
+
+
 class _PfpRuntime:
     """Small runtime helper for PawFlow Package entrypoints."""
 
     def __init__(self):
         self._request = None
+        self.repository = _PfpRepository(self)
         # Bind the protocol streams ONCE, at import time, before any wrapper
         # redirects sys.stdout to capture user print() output. The host-call
         # protocol (and the final result envelope) must always travel on the

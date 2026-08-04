@@ -205,6 +205,91 @@ class PackageRuntimeHost:
         return self._dispatch_service_operation(
             service, call["operation"], call["arguments"], call["target"])
 
+    def execute_repository_call(
+            self, resource_type: str, operation: str,
+            arguments: Dict[str, Any] | None = None) -> Any:
+        """Execute package-owned scoped repository CRUD."""
+        from core import pfp_package
+        from core.extension_repository import (
+            ExtensionRepository, validate_document, validate_resource_name,
+            validate_resource_type)
+
+        resource_type = validate_resource_type(resource_type)
+        arguments = arguments or {}
+        if not isinstance(arguments, dict):
+            raise PackageRuntimeError(
+                "PFP repository host-call arguments must be an object")
+        descriptor = pfp_package.resolve_repository_type(
+            resource_type, user_id=self.user_id,
+            conversation_id=self.conversation_id, scope=self.scope)
+        if not descriptor:
+            raise PackageRuntimeError(
+                f"PFP repository type is not installed: {resource_type}")
+        caller_package = str(self.caller_runtime.get("package") or "")
+        owner_package = str(
+            descriptor.get("owner_package")
+            or descriptor.get("package") or "")
+        if not caller_package or caller_package != owner_package:
+            raise PackageRuntimeError(
+                f"PFP package does not own repository type: {resource_type}")
+        store = ExtensionRepository.instance()
+        scope_args = {
+            "user_id": self.user_id,
+            "scope": self.scope,
+            "conversation_id": (
+                self.conversation_id
+                if self.scope == "conversation" else ""),
+        }
+        if operation == "list":
+            result = store.list_available(
+                resource_type, user_id=self.user_id,
+                conversation_id=(
+                    self.conversation_id
+                    if self.scope == "conversation" else ""))
+        else:
+            name = validate_resource_name(arguments.get("name", ""))
+            if operation == "get":
+                result = store.get_available(
+                    resource_type, name, user_id=self.user_id,
+                    conversation_id=(
+                        self.conversation_id
+                        if self.scope == "conversation" else ""))
+            elif operation in {"create", "update", "delete"}:
+                if descriptor.get("mutable") is not True:
+                    raise PackageRuntimeError(
+                        f"PFP repository type is immutable: {resource_type}")
+                if operation == "delete":
+                    result = store.delete(
+                        resource_type, name, **scope_args)
+                else:
+                    document = validate_document(
+                        arguments.get("document"), descriptor["schema"])
+                    mutation_args = {
+                        **scope_args,
+                        "document": document,
+                        "schema_version": descriptor["schema_version"],
+                        "owner_package": owner_package,
+                        "contributor_package": caller_package,
+                        "installed_from": {},
+                        "source": "user",
+                    }
+                    if operation == "create":
+                        result = store.create(
+                            resource_type, name, assets=[],
+                            **mutation_args)
+                    else:
+                        result = store.update(
+                            resource_type, name, **mutation_args)
+            else:
+                raise PackageRuntimeError(
+                    f"unsupported PFP repository operation: {operation}")
+        logger.info(
+            "PFP repository host call: package=%s type=%s operation=%s "
+            "user=%s conv=%s",
+            caller_package, resource_type, operation, self.user_id,
+            self.conversation_id or "-")
+        return result
+
     def _dispatch_service_operation(self, service: Any, operation: str,
                                     arguments: Dict[str, Any],
                                     target: Dict[str, str]) -> Any:
@@ -246,13 +331,20 @@ class PackageRuntimeHost:
         if not isinstance(request, dict) or request.get("format") != HOST_CALL_FORMAT:
             raise PackageRuntimeError("invalid PFP host-call envelope")
         kind = str(request.get("kind") or "")
-        target_ref = _target_ref(request.get("target") or request.get("target_ref"))
         arguments = request.get("arguments") or {}
         if kind == "tool":
+            target_ref = _target_ref(
+                request.get("target") or request.get("target_ref"))
             return self.execute_tool_call(target_ref, arguments)
         if kind == "service":
+            target_ref = _target_ref(
+                request.get("target") or request.get("target_ref"))
             operation = str(request.get("operation") or "")
             return self.execute_service_call(target_ref, operation, arguments)
+        if kind == "repository":
+            operation = str(request.get("operation") or "")
+            return self.execute_repository_call(
+                str(request.get("target") or ""), operation, arguments)
         raise PackageRuntimeError(f"unsupported PFP host-call kind: {kind}")
 
     def _resolve_tool(self, target: Dict[str, str]) -> Any:

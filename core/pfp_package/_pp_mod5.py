@@ -18,9 +18,49 @@ from core.pfp_package._pp_mod2 import (  # noqa: F401
 from core.pfp_package._pp_mod3 import (  # noqa: F401
     _declared_secret_requirements, _inject_package_flow_task_relays, _install_record_path, _missing_agent_assigned_skills, _ui_extension_manifest, _uninstall_object, _verify_signature, _web_app_manifest)
 from core.pfp_package._pp_mod4 import (  # noqa: F401
-    _declared_package_dependencies, _dependent_packages, _existing_status, _missing_package_dependencies, _pinned_developer_key, _record_is_locally_modified, _refresh_runtime, _remove_package_content_store, _validate_allowed_refs, _validate_dependency_list)
+    _declared_package_dependencies, _dependent_packages, _existing_repository_resource_status, _existing_status, _missing_package_dependencies, _pinned_developer_key, _record_is_locally_modified, _refresh_runtime, _remove_package_content_store, _validate_allowed_refs, _validate_dependency_list, resolve_repository_type)
 
 logger = logging.getLogger(__name__)
+
+
+def _repository_descriptor_for_object(
+        obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
+        conversation_id: str, scope: str) -> Dict[str, Any]:
+    from core.extension_repository import validate_resource_type
+    from core.pfp_extension_contracts import (
+        package_depends_on, package_repository_type)
+
+    resource_type = validate_resource_type(obj.get("resource_type", ""))
+    package_id = str(package["manifest"].get("package") or "")
+    packaged = package_repository_type(package, resource_type)
+    installed = resolve_repository_type(
+        resource_type, user_id=user_id, conversation_id=conversation_id,
+        scope=scope) if user_id else None
+    if packaged:
+        installed_owner = str(
+            (installed or {}).get("owner_package")
+            or (installed or {}).get("package") or "")
+        if installed_owner and installed_owner != package_id:
+            raise PfpError(
+                f"repository_type {resource_type} is owned by "
+                f"{installed_owner}")
+        return packaged
+    if not installed:
+        raise PfpError(
+            f"repository_resource requires installed repository_type: "
+            f"{resource_type}")
+    owner_package = str(
+        installed.get("owner_package") or installed.get("package") or "")
+    if owner_package != package_id:
+        if installed.get("contributions") != "dependencies":
+            raise PfpError(
+                f"repository_type {resource_type} does not accept "
+                "dependent package contributions")
+        if not package_depends_on(package["manifest"], owner_package, obj):
+            raise PfpError(
+                f"repository_resource must depend on owner package: "
+                f"{owner_package}")
+    return installed
 
 
 def _bind_secret_placeholders(value: Any,
@@ -63,7 +103,13 @@ def uninstall_pfp(package_id: str, *, user_id: str, conversation_id: str = "",
         }
     removed = []
     kept = []
-    for obj in record.get("objects") or []:
+    # Repository descriptors are lifecycle roots. Remove concrete resources
+    # first so a descriptor can accurately refuse uninstall when a locally
+    # modified or user-created resource remains.
+    ordered_objects = sorted(
+        record.get("objects") or [],
+        key=lambda item: item.get("kind") == "repository_type")
+    for obj in ordered_objects:
         try:
             if _uninstall_object(obj, user_id, conversation_id, scope, force):
                 removed.append(obj)
@@ -126,7 +172,35 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         _template_err = _validate_service_template_object(obj, package)
         if _template_err:
             status, reason, installable = "blocked", _template_err, False
-    elif missing_dependencies:
+    elif obj_type == "repository_type":
+        try:
+            from core.pfp_extension_contracts import repository_type_descriptor
+            repository_type_descriptor(obj, package)
+            existing_descriptor = resolve_repository_type(
+                str(obj.get("resource_type") or ""), user_id=user_id,
+                conversation_id=conversation_id,
+                scope=scope) if user_id else None
+            existing_owner = str(
+                (existing_descriptor or {}).get("owner_package")
+                or (existing_descriptor or {}).get("package") or "")
+            package_id = str(package["manifest"].get("package") or "")
+            if existing_owner and existing_owner != package_id:
+                raise PfpError(
+                    f"repository_type {obj.get('resource_type', '')} is "
+                    f"owned by {existing_owner}")
+        except Exception as exc:
+            status, reason, installable = "blocked", str(exc), False
+    elif obj_type == "repository_resource":
+        if not missing_dependencies:
+            try:
+                from core.pfp_extension_contracts import (
+                    repository_resource_payload)
+                descriptor = _repository_descriptor_for_object(
+                    obj, package, user_id, conversation_id, scope)
+                repository_resource_payload(obj, package, descriptor)
+            except Exception as exc:
+                status, reason, installable = "blocked", str(exc), False
+    if installable and status == "new" and missing_dependencies:
         status = "missing_dependency"
         reason = "missing package dependency: " + ", ".join(
             _format_dependency(dep) for dep in missing_dependencies)
@@ -151,9 +225,21 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         except Exception as exc:
             status, reason, installable = "blocked", str(exc), False
     if installable and status == "new":
-        status = _existing_status(
-            obj_type, _existing_status_name(obj_type, obj, package, path, name),
-            user_id, conversation_id, scope)
+        if obj_type == "repository_type":
+            existing = resolve_repository_type(
+                str(obj.get("resource_type") or ""), user_id=user_id,
+                conversation_id=conversation_id, scope=scope) if user_id else None
+            status = "conflict" if existing else "new"
+        elif obj_type == "repository_resource":
+            status = _existing_repository_resource_status(
+                str(obj.get("resource_type") or ""), name, user_id,
+                conversation_id, scope) if user_id else "new"
+        else:
+            status = _existing_status(
+                obj_type,
+                _existing_status_name(
+                    obj_type, obj, package, path, name),
+                user_id, conversation_id, scope)
     if obj_type in {"service", "service_definition"}:
         risk = "medium"
     if obj_type in {"tool", "service_provider", "flow_task", "task_provider"}:
@@ -429,6 +515,7 @@ def _validate_manifest(manifest: Dict[str, Any]) -> None:
     objects = manifest.get("objects")
     if not isinstance(objects, list):
         raise PfpError("objects must be a list")
+    repository_types = set()
     for obj in objects:
         if not isinstance(obj, dict):
             raise PfpError("objects must contain JSON objects")
@@ -436,6 +523,13 @@ def _validate_manifest(manifest: Dict[str, Any]) -> None:
         _validate_dependency_list(obj.get("requires") or [], "object requires")
         _validate_allowed_refs(obj.get("allowed_tools") or [], "allowed_tools")
         _validate_allowed_refs(obj.get("allowed_services") or [], "allowed_services")
+        if str(obj.get("type") or "") == "repository_type":
+            resource_type = str(obj.get("resource_type") or "")
+            if resource_type in repository_types:
+                raise PfpError(
+                    f"repository_type is declared more than once: "
+                    f"{resource_type}")
+            repository_types.add(resource_type)
 
 
 def build_pfp(source_dir: str, output_path: str = "", *,
@@ -561,6 +655,79 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
                            if f != rel and f.startswith(_skill_dir)]
     provenance = _provenance(package, obj_id, rel, extra_rels=_extra_rels)
     dependencies = _declared_package_dependencies(package["manifest"], obj)
+    if obj_type == "repository_type":
+        from core.pfp_extension_contracts import (
+            repository_object_hash, repository_type_descriptor)
+        descriptor = repository_type_descriptor(obj, package)
+        existing_descriptor = resolve_repository_type(
+            descriptor["resource_type"], user_id=user_id,
+            conversation_id=conversation_id, scope=scope)
+        existing_owner = str(
+            (existing_descriptor or {}).get("owner_package")
+            or (existing_descriptor or {}).get("package") or "")
+        package_id = str(package["manifest"].get("package") or "")
+        if existing_owner and existing_owner != package_id:
+            raise PfpError(
+                f"repository_type {descriptor['resource_type']} is owned by "
+                f"{existing_owner}")
+        object_hash = repository_object_hash(obj, package)
+        return {
+            "kind": "repository_type",
+            "object_id": obj_id,
+            "name": name,
+            **descriptor,
+            "dependencies": dependencies,
+            "hash": object_hash,
+        }
+    if obj_type == "repository_resource":
+        from core.extension_repository import ExtensionRepository
+        from core.pfp_extension_contracts import (
+            repository_object_hash, repository_resource_payload)
+        descriptor = _repository_descriptor_for_object(
+            obj, package, user_id, conversation_id, scope)
+        payload = repository_resource_payload(obj, package, descriptor)
+        object_hash = repository_object_hash(obj, package)
+        provenance["hash"] = object_hash
+        store = ExtensionRepository.instance()
+        existing = store.get(
+            payload["resource_type"], name, user_id=user_id, scope=scope,
+            conversation_id=(
+                conversation_id if scope == "conversation" else ""))
+        kwargs = {
+            "user_id": user_id,
+            "scope": scope,
+            "conversation_id": (
+                conversation_id if scope == "conversation" else ""),
+            "document": payload["document"],
+            "schema_version": payload["schema_version"],
+            "owner_package": str(
+                descriptor.get("owner_package")
+                or descriptor.get("package") or ""),
+            "contributor_package": str(
+                package["manifest"].get("package") or ""),
+            "assets": payload["assets"],
+            "installed_from": provenance,
+            "source": "package",
+        }
+        if existing:
+            if not replace:
+                raise PfpError(
+                    f"Extension resource {payload['resource_type']}/{name} "
+                    "already exists")
+            store.update(payload["resource_type"], name, **kwargs)
+        else:
+            store.create(payload["resource_type"], name, **kwargs)
+        return {
+            "kind": "repository_resource",
+            "object_id": obj_id,
+            "resource_type": payload["resource_type"],
+            "schema_version": payload["schema_version"],
+            "name": name,
+            "owner_package": kwargs["owner_package"],
+            "assets": payload["assets"],
+            "hash": object_hash,
+            "dependencies": dependencies,
+        }
     if obj_type == "tool":
         data = _load_tool_proxy_data(obj, package, rel, provenance, secret_bindings)
         _write_resource("tool", name, data, user_id, conversation_id, scope, replace)

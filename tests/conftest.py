@@ -133,6 +133,9 @@ def _isolate_data_dir(tmp_path_factory):
         lambda: __import__('core.deployment_registry', fromlist=['DeploymentRegistry']).DeploymentRegistry.reset(),
         lambda: __import__('core.file_store', fromlist=['FileStore']).FileStore.reset(),
         lambda: __import__('core.resource_store', fromlist=['ResourceStore']).ResourceStore.reset(),
+        lambda: __import__(
+            'core.extension_repository',
+            fromlist=['ExtensionRepository']).ExtensionRepository.reset(),
         lambda: __import__('core.poll_scheduler', fromlist=['PollScheduler']).PollScheduler.reset(),
     ]:
         try:

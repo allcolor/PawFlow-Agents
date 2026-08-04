@@ -284,6 +284,10 @@ def _existing_status_name(obj_type: str, obj: Dict[str, Any], package: Dict[str,
 
 
 def _manifest_object_hash(obj: Dict[str, Any], package: Dict[str, Any]) -> str:
+    if str(obj.get("type") or "") in {
+            "repository_type", "repository_resource"}:
+        from core.pfp_extension_contracts import repository_object_hash
+        return repository_object_hash(obj, package)
     rel = str(obj.get("path") or "").strip()
     if not rel:
         return ""
@@ -330,6 +334,25 @@ def _object_capabilities(obj_type: str, obj: Dict[str, Any],
             "version_compat": str(obj.get("version_compat") or ""),
             "entry": str(obj.get("entry") or ""),
             "asset_count": len(assets),
+        }
+    if obj_type == "repository_type":
+        resource_type = str(obj.get("resource_type") or "")
+        schema_version = str(obj.get("schema_version") or "")
+        caps["repository_type"] = {
+            "resource_type": resource_type,
+            "schema_version": schema_version,
+            "mutable": obj.get("mutable"),
+            "contributions": str(obj.get("contributions") or ""),
+            "asset_extensions": list(obj.get("asset_extensions") or []),
+        }
+        if resource_type and schema_version:
+            caps["provides"].append(
+                f"repository.type:{resource_type}@{schema_version}")
+    if obj_type == "repository_resource":
+        caps["repository_resource"] = {
+            "resource_type": str(obj.get("resource_type") or ""),
+            "schema_version": str(obj.get("schema_version") or ""),
+            "asset_count": len(obj.get("assets") or []),
         }
     return caps
 

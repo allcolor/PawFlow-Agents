@@ -461,6 +461,32 @@ def _review_object_for_install(row: Dict[str, Any], package: Dict[str, Any],
 def _uninstall_object(record: Dict[str, Any], user_id: str, conversation_id: str,
                       scope: str, force: bool) -> bool:
     kind = record.get("kind")
+    if kind == "repository_resource":
+        from core.extension_repository import ExtensionRepository
+        store = ExtensionRepository.instance()
+        resource_type = str(record.get("resource_type") or "")
+        name = str(record.get("name") or "")
+        conv = conversation_id if scope == "conversation" else ""
+        current = store.get(
+            resource_type, name, user_id=user_id, scope=scope,
+            conversation_id=conv)
+        if current is None:
+            return True
+        if current and not force:
+            installed_from = current.get("installed_from") or {}
+            if installed_from.get("hash") != record.get("hash"):
+                return False
+        return store.delete(
+            resource_type, name, user_id=user_id, scope=scope,
+            conversation_id=conv)
+    if kind == "repository_type":
+        from core.extension_repository import ExtensionRepository
+        remaining = ExtensionRepository.instance().list(
+            str(record.get("resource_type") or ""), user_id=user_id,
+            scope=scope,
+            conversation_id=(
+                conversation_id if scope == "conversation" else ""))
+        return force or not remaining
     if kind == "resource":
         from core.resource_store import ResourceStore
         store = ResourceStore.instance()

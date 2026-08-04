@@ -79,6 +79,62 @@ def list_installed_packages(*, user_id: str, conversation_id: str = "",
     return {"ok": True, "scope": scope, "packages": packages}
 
 
+def resolve_repository_type(resource_type: str, *, user_id: str,
+                            conversation_id: str = "",
+                            scope: str = "user") -> Optional[Dict[str, Any]]:
+    """Resolve one installed PFP repository type in the accessible scope."""
+    from core.extension_repository import validate_resource_type
+
+    resource_type = validate_resource_type(resource_type)
+    if not user_id:
+        raise PfpError("user_id is required")
+    scope = _normalize_scope(scope, conversation_id)
+    candidates = []
+    if scope == "conversation":
+        candidates.append(("conversation", conversation_id))
+    candidates.append(("user", ""))
+    for candidate_scope, candidate_conversation in candidates:
+        root = _install_scope_dir(
+            user_id, candidate_conversation, candidate_scope)
+        matches = []
+        if root.exists():
+            for path in sorted(root.glob("*.json")):
+                try:
+                    record = _read_json_file(path)
+                except Exception as exc:
+                    logger.debug(
+                        "Skipping unreadable package install record %s: %s",
+                        path, exc)
+                    continue
+                for obj in record.get("objects") or []:
+                    if (obj.get("kind") == "repository_type"
+                            and obj.get("resource_type") == resource_type):
+                        matches.append({
+                            **obj,
+                            "package": record.get("package", ""),
+                            "version": record.get("version", ""),
+                            "scope": candidate_scope,
+                        })
+        if len(matches) > 1:
+            raise PfpError(
+                f"PFP repository type is ambiguous in {candidate_scope} "
+                f"scope: {resource_type}")
+        if matches:
+            return matches[0]
+    return None
+
+
+def _existing_repository_resource_status(
+        resource_type: str, name: str, user_id: str,
+        conversation_id: str, scope: str) -> str:
+    from core.extension_repository import ExtensionRepository
+
+    current = ExtensionRepository.instance().get(
+        resource_type, name, user_id=user_id, scope=scope,
+        conversation_id=conversation_id if scope == "conversation" else "")
+    return "conflict" if current else "new"
+
+
 def _selected_agent_missing_skills(row: Dict[str, Any], package: Dict[str, Any],
                                    selected_ids: set, user_id: str,
                                    conversation_id: str, scope: str) -> List[str]:
@@ -206,6 +262,17 @@ def resolve_ui_handler(package_id: str, action: str, *,
 def _record_is_locally_modified(record: Dict[str, Any], user_id: str,
                                 conversation_id: str, scope: str) -> bool:
     kind = record.get("kind")
+    if kind == "repository_resource":
+        from core.extension_repository import ExtensionRepository
+        current = ExtensionRepository.instance().get(
+            record.get("resource_type", ""), record.get("name", ""),
+            user_id=user_id, scope=scope,
+            conversation_id=(
+                conversation_id if scope == "conversation" else ""))
+        if not current:
+            return False
+        installed_from = current.get("installed_from") or {}
+        return installed_from.get("hash") != record.get("hash")
     if kind == "resource":
         from core.resource_store import ResourceStore
         conv = conversation_id if scope == "conversation" else ""

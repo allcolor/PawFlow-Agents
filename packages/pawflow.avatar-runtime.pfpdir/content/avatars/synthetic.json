@@ -1,0 +1,21 @@
+{
+  "format": "pawflow.avatar.v1",
+  "title": "Synthetic test avatar",
+  "description": "Package-owned procedural fixture for lifecycle, media, and semantic tests. It contains no third-party model asset.",
+  "renderer": "synthetic",
+  "animation": {
+    "idle": "natural",
+    "lip_sync": "audio",
+    "motion_profile": "synthetic"
+  },
+  "renderer_options": {
+    "synthetic": {
+      "accent": "#6c8cff"
+    }
+  },
+  "metadata": {
+    "author": "PawFlow contributors",
+    "license": "MIT",
+    "source": "Procedural CSS fixture in pawflow.avatar-runtime"
+  }
+}

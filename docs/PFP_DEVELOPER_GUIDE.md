@@ -489,6 +489,15 @@ content hash, package kill switch, and per-conversation enable state. Assets
 from dependent packs use the pack's content store; the owner runtime never
 needs direct filesystem access.
 
+The reference implementation is
+`packages/pawflow.avatar-runtime.pfpdir`. It demonstrates a repository owner,
+a package-owned Python repository handler, authenticated model URLs, a lazy
+browser renderer, generic realtime-media subscriptions, semantic nodes, and
+complete shutdown/GPU cleanup. Avatar packs depend on
+`pawflow.avatar-runtime` and contribute only `repository_resource` objects;
+they do not patch core or bundle renderer code again. The package README records
+the authoring shape, model licensing rule, and reproducible vendor build.
+
 ## UI Extensions (ui.v1)
 
 A package can ship a `ui_extension` object that injects JS / CSS into the

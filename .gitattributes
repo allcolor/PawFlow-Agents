@@ -13,6 +13,10 @@
 *.yaml text eol=lf
 *.sh text eol=lf
 
+# Reviewed generated sources preserve upstream bytes and unified-diff context.
+packages/pawflow.avatar-runtime.pfpdir/content/ui/avatar-vendor.js whitespace=-trailing-space
+scripts/avatar_vendor/*.patch whitespace=-trailing-space
+
 # Binary files
 *.png binary
 *.mp4 binary

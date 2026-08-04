@@ -1,0 +1,51 @@
+diff --git a/src/MotionEngine.js b/src/MotionEngine.js
+index 4245315..e50ddeb 100644
+--- a/src/MotionEngine.js
++++ b/src/MotionEngine.js
+@@ -14,7 +14,6 @@
+  */
+ 
+ import { OverlayManager } from './OverlayManager.js';
+-import { FaceMirror } from './FaceMirror.js';
+ import { extractBaseline, EMPATHIC_PREFIX, SKIP_KEYS } from './utils.js';
+ 
+ /** Default timing options (ms) */
+@@ -56,7 +55,6 @@ export class MotionEngine {
+ 
+     this._motions = {};
+     this._overlays = new OverlayManager(talkingHead);
+-    /** @type {FaceMirror|null} */
+     this._mirror = null;
+ 
+     /** @type {function(string):void|null} */
+@@ -408,28 +406,8 @@ export class MotionEngine {
+    * @returns {Promise<void>}
+    */
+   async startMirror(videoEl, options = {}) {
+-    if (this._mirror) this.stopMirror();
+-
+-    const opts = { mode: 'mirror', headPose: true, ...options };
+-    this._mirror = new FaceMirror(opts);
+-    this._mirror.loadMotions(this._motions);
+-    await this._mirror.init();
+-
+-    if (opts.mode === 'empathic') {
+-      this._mirror.onReaction = (reactionMood, intensity, gesture) => {
+-        this.playMoodAttenuated(reactionMood, intensity);
+-        if (gesture && this._motions[gesture]) this.play(gesture);
+-      };
+-      this._mirror.onValues = (_, headPose) => {
+-        if (opts.headPose && !this.tracks.action.active) {
+-          this.setHeadPose(headPose.pitch, headPose.yaw, headPose.roll);
+-        }
+-      };
+-    } else {
+-      this._mirror.onMood = (mood) => this.play(mood);
+-    }
+-
+-    this._mirror.start(videoEl);
++    throw new Error(
++      'FaceMirror is not bundled in PawFlow avatar-runtime; install an adapter package');
+   }
+ 
+   /**

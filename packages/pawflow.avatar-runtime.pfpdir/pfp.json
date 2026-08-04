@@ -1,0 +1,172 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.avatar-runtime",
+  "version": "0.1.0",
+  "description": "Installable avatar repository, TalkingHead renderer, realtime lip sync, motion, and semantic browser controls.",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": ""
+  },
+  "origin": {
+    "source": "packages/pawflow.avatar-runtime.pfpdir"
+  },
+  "objects": [
+    {
+      "id": "repository_type:avatar",
+      "type": "repository_type",
+      "name": "avatar",
+      "resource_type": "pawflow.avatar",
+      "schema_version": "1",
+      "schema": "content/repository/avatar.schema.json",
+      "title_key": "avatar.repository.title",
+      "contributions": "dependencies",
+      "mutable": true,
+      "asset_extensions": [".vrm", ".glb", ".gltf", ".bin", ".png", ".jpg", ".jpeg", ".webp"]
+    },
+    {
+      "id": "repository_resource:synthetic",
+      "type": "repository_resource",
+      "name": "synthetic",
+      "resource_type": "pawflow.avatar",
+      "schema_version": "1",
+      "path": "content/avatars/synthetic.json",
+      "assets": []
+    },
+    {
+      "id": "ui_extension:avatar-runtime",
+      "type": "ui_extension",
+      "name": "avatar-runtime",
+      "version_compat": "ui.v1",
+      "assets": {
+        "scripts": [
+          "content/ui/avatar-vendor.js",
+          "content/ui/extension.js"
+        ],
+        "styles": ["content/ui/extension.css"],
+        "files": [
+          {
+            "id": "head-audio-model",
+            "path": "content/ui/model-en-mixed.bin"
+          }
+        ],
+        "worklets": [
+          {
+            "id": "head-audio-worklet",
+            "path": "content/ui/headworklet.min.js"
+          }
+        ]
+      },
+      "slots": [
+        {
+          "slot": "header_actions",
+          "id": "avatar.toggle",
+          "icon": "A",
+          "label_key": "avatar.stage.open"
+        },
+        {
+          "slot": "action_menu",
+          "id": "avatar.repository",
+          "icon": "A",
+          "label_key": "avatar.repository.title"
+        },
+        {
+          "slot": "conversation_stage",
+          "id": "avatar.stage"
+        },
+        {
+          "slot": "resources_collection",
+          "id": "avatar.repository"
+        },
+        {
+          "slot": "composer_accessory",
+          "id": "avatar.toggle"
+        }
+      ],
+      "hooks": [
+        "boot",
+        "shutdown",
+        "conversation_changed",
+        "agent_changed",
+        "message_streaming",
+        "resource_changed",
+        "realtime_state_changed",
+        "media_track_subscribed",
+        "media_track_unsubscribed",
+        "media_audio_frame"
+      ],
+      "handlers": [
+        {
+          "action": "avatar.list",
+          "path": "content/handlers/avatar.py",
+          "runner": "python",
+          "description": "List installed avatar repository resources.",
+          "allowed_tools": [],
+          "allowed_services": []
+        },
+        {
+          "action": "avatar.get",
+          "path": "content/handlers/avatar.py",
+          "runner": "python",
+          "description": "Read one installed avatar repository resource.",
+          "allowed_tools": [],
+          "allowed_services": []
+        },
+        {
+          "action": "avatar.create",
+          "path": "content/handlers/avatar.py",
+          "runner": "python",
+          "description": "Create a schema-validated JSON avatar resource.",
+          "allowed_tools": [],
+          "allowed_services": []
+        },
+        {
+          "action": "avatar.update",
+          "path": "content/handlers/avatar.py",
+          "runner": "python",
+          "description": "Update a mutable schema-validated avatar resource.",
+          "allowed_tools": [],
+          "allowed_services": []
+        },
+        {
+          "action": "avatar.delete",
+          "path": "content/handlers/avatar.py",
+          "runner": "python",
+          "description": "Delete a mutable user-created avatar resource.",
+          "allowed_tools": [],
+          "allowed_services": []
+        }
+      ]
+    },
+    {
+      "id": "tool:avatar-ui",
+      "type": "tool",
+      "name": "avatar-ui",
+      "path": "content/tools/avatar-ui/main.py",
+      "runner": "python",
+      "description": "List, inspect, or invoke the installed avatar runtime in the active PawFlow browser.",
+      "parameters": {
+        "operation": {
+          "type": "string",
+          "required": true,
+          "enum": ["list", "get", "invoke"]
+        },
+        "node": {"type": "string"},
+        "action": {"type": "string"},
+        "arguments": {"type": "object"}
+      },
+      "allowed_tools": [],
+      "allowed_services": [],
+      "permissions": {
+        "browser": {
+          "semantic": [
+            {
+              "package": "pawflow.avatar-runtime",
+              "operations": ["list", "get", "invoke"],
+              "nodes": ["pawflow.avatar-runtime:stage.avatar"]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

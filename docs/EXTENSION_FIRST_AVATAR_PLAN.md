@@ -348,7 +348,7 @@ Exit gate: a minimal test extension receives agent audio activity and frames/tra
 
 Exit gate: an installed PFP tool can list and invoke a test extension node in the correct conversation, while cross-user, cross-conversation, undeclared-package, disabled-extension, and stale-tab attempts fail.
 
-### Phase 5 — avatar runtime package
+### Phase 5 — avatar runtime package (complete)
 
 - create the avatar schema and repository UI in `pawflow.avatar-runtime.pfp`;
 - vendor and pin TalkingHead, HeadAudio, and MotionEngine with licenses;
@@ -358,6 +358,14 @@ Exit gate: an installed PFP tool can list and invoke a test extension node in th
 - add a small redistributable test avatar or synthetic fixture with explicit license.
 
 Exit gate: installing the package adds the entire feature; selecting an avatar animates it in text/TTS realtime; disabling or uninstalling removes the feature and releases media/GPU resources.
+
+Implemented in `packages/pawflow.avatar-runtime.pfpdir`. The package includes
+the `pawflow.avatar` schema/repository, a procedural MIT lifecycle fixture,
+lazy TalkingHead/HeadAudio/MotionEngine integration, repository controls,
+per-conversation/agent selection, generic realtime-media bindings, semantic
+actions/tooling, explicit teardown, pinned licenses, and a hash-verifying
+reproducible vendor build recipe. A redistributable real model remains an
+independent phase-6 avatar pack.
 
 ### Phase 6 — voice bindings and avatar packs
 

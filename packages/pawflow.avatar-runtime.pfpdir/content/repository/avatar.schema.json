@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pawflow.avatar.v1",
+  "title": "PawFlow avatar",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "title",
+    "description",
+    "renderer",
+    "animation",
+    "metadata"
+  ],
+  "properties": {
+    "format": {"const": "pawflow.avatar.v1"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 160},
+    "description": {"type": "string", "maxLength": 2000},
+    "renderer": {
+      "type": "string",
+      "enum": ["talkinghead", "synthetic"]
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset", "format"],
+      "properties": {
+        "asset": {"type": "string", "minLength": 1, "maxLength": 128},
+        "format": {"type": "string", "enum": ["vrm", "glb", "gltf"]},
+        "body": {"type": "string", "enum": ["F", "M"]}
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset"],
+      "properties": {
+        "asset": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "voice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^voice:[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+        }
+      }
+    },
+    "animation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idle", "lip_sync", "motion_profile"],
+      "properties": {
+        "idle": {"type": "string", "enum": ["natural", "still"]},
+        "lip_sync": {"type": "string", "enum": ["audio", "state", "none"]},
+        "motion_profile": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "renderer_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "talkinghead": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "camera_view": {
+              "type": "string",
+              "enum": ["full", "mid", "upper", "head"]
+            },
+            "background": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            }
+          }
+        },
+        "synthetic": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "accent": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            }
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["author", "license", "source"],
+      "properties": {
+        "author": {"type": "string", "maxLength": 200},
+        "license": {"type": "string", "maxLength": 200},
+        "source": {"type": "string", "maxLength": 1000}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"renderer": {"const": "talkinghead"}},
+        "required": ["renderer"]
+      },
+      "then": {"required": ["model"]}
+    },
+    {
+      "if": {
+        "properties": {"renderer": {"const": "synthetic"}},
+        "required": ["renderer"]
+      },
+      "then": {"not": {"required": ["model"]}}
+    }
+  ]
+}

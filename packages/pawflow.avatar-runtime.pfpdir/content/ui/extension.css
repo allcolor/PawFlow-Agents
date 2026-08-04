@@ -1,0 +1,268 @@
+.pf-avatar-stage {
+  position: relative;
+  min-height: 260px;
+  max-height: 46vh;
+  margin: 8px 12px;
+  overflow: hidden;
+  border: 1px solid var(--pf-border, #334155);
+  border-radius: 12px;
+  background: var(--pf-panel, #111827);
+  color: var(--pf-text, #e5e7eb);
+}
+
+.pf-avatar-stage[hidden] {
+  display: none;
+}
+
+.pf-avatar-toolbar {
+  position: absolute;
+  z-index: 2;
+  inset: 8px 8px auto 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.76);
+  backdrop-filter: blur(8px);
+}
+
+.pf-avatar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-avatar-surface {
+  width: 100%;
+  height: 320px;
+  max-height: 42vh;
+}
+
+.pf-avatar-surface canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pf-avatar-status {
+  padding: 8px 10px;
+  color: var(--pf-muted, #94a3b8);
+  font-size: 12px;
+}
+
+.pf-avatar-stage > .pf-avatar-status {
+  position: absolute;
+  z-index: 2;
+  right: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.76);
+}
+
+.pf-avatar-button,
+.pf-avatar-toggle,
+.pf-avatar-menu-item {
+  border: 1px solid var(--pf-border, #475569);
+  border-radius: 7px;
+  background: var(--pf-panel, #1e293b);
+  color: var(--pf-text, #e5e7eb);
+  cursor: pointer;
+  font: inherit;
+}
+
+.pf-avatar-button {
+  padding: 5px 9px;
+}
+
+.pf-avatar-toggle {
+  padding: 5px 8px;
+}
+
+.pf-avatar-toggle-compact {
+  font-size: 12px;
+}
+
+.pf-avatar-menu-item {
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.pf-avatar-button:hover,
+.pf-avatar-toggle:hover,
+.pf-avatar-menu-item:hover {
+  border-color: var(--pf-accent, #6c8cff);
+}
+
+.pf-avatar-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.pf-avatar-danger {
+  color: #fca5a5;
+}
+
+.pf-avatar-synthetic {
+  --pf-avatar-accent: #6c8cff;
+  --pf-avatar-mouth: 0;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150px;
+  height: 190px;
+  transform: translate(-50%, -47%);
+  border: 4px solid var(--pf-avatar-accent);
+  border-radius: 48% 48% 44% 44%;
+  background:
+    radial-gradient(circle at 50% 25%, rgba(255, 255, 255, 0.2), transparent 38%),
+    color-mix(in srgb, var(--pf-avatar-accent) 25%, #0f172a);
+  box-shadow: 0 0 45px color-mix(in srgb, var(--pf-avatar-accent) 35%, transparent);
+  animation: pf-avatar-idle 4s ease-in-out infinite;
+}
+
+.pf-avatar-synthetic-eyes {
+  position: absolute;
+  top: 64px;
+  left: 34px;
+  right: 34px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.pf-avatar-synthetic-eye {
+  width: 18px;
+  height: 24px;
+  border-radius: 50%;
+  background: #f8fafc;
+  animation: pf-avatar-blink 5s infinite;
+}
+
+.pf-avatar-synthetic-mouth {
+  position: absolute;
+  top: 125px;
+  left: 50%;
+  width: 42px;
+  height: calc(5px + var(--pf-avatar-mouth) * 36px);
+  transform: translateX(-50%);
+  border: 3px solid #f8fafc;
+  border-radius: 50%;
+  transition: height 70ms linear;
+}
+
+.pf-avatar-synthetic.is-speaking {
+  animation-duration: 2.1s;
+}
+
+.pf-avatar-error {
+  margin: 10px;
+  padding: 10px;
+  border: 1px solid #b91c1c;
+  border-radius: 7px;
+  background: rgba(127, 29, 29, 0.24);
+  color: #fecaca;
+  font-size: 12px;
+}
+
+.pf-avatar-repository {
+  min-width: min(680px, 72vw);
+}
+
+.pf-avatar-repository-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.pf-avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.pf-avatar-card {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--pf-border, #334155);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--pf-panel, #1e293b) 88%, transparent);
+}
+
+.pf-avatar-card-preview {
+  width: 76px;
+  height: 76px;
+  grid-row: span 2;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.pf-avatar-card-placeholder {
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--pf-border, #475569);
+  color: var(--pf-muted, #94a3b8);
+  font-size: 11px;
+}
+
+.pf-avatar-card-copy {
+  min-width: 0;
+}
+
+.pf-avatar-card-copy p {
+  margin: 4px 0;
+  color: var(--pf-muted, #94a3b8);
+  font-size: 12px;
+}
+
+.pf-avatar-card-copy small {
+  color: var(--pf-muted, #94a3b8);
+}
+
+.pf-avatar-card-actions {
+  display: flex;
+  grid-column: 2;
+  gap: 6px;
+}
+
+.pf-avatar-resource-entry {
+  padding: 4px 0;
+}
+
+.pf-avatar-empty {
+  color: var(--pf-muted, #94a3b8);
+}
+
+@keyframes pf-avatar-idle {
+  0%, 100% { transform: translate(-50%, -47%) rotate(-1deg); }
+  50% { transform: translate(-50%, -50%) rotate(1deg); }
+}
+
+@keyframes pf-avatar-blink {
+  0%, 46%, 50%, 100% { transform: scaleY(1); }
+  48% { transform: scaleY(0.08); }
+}
+
+@media (max-width: 680px) {
+  .pf-avatar-stage {
+    margin: 6px;
+  }
+
+  .pf-avatar-surface {
+    height: 260px;
+  }
+
+  .pf-avatar-repository {
+    min-width: 0;
+  }
+
+  .pf-avatar-grid {
+    grid-template-columns: 1fr;
+  }
+}

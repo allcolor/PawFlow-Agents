@@ -176,7 +176,7 @@ def test_cold_start_context_file_does_not_embed_its_own_previous_copy(tmp_path):
 
     _client()._cci_prompt(
         messages, None, str(tmp_path), "/cc_sessions/u/conv/a", "u", "conv",
-        initial_context=True)
+        initial_context=True, agent_name="a")
     written = (tmp_path / ".pawflow_cci" / "initial_context.md").read_text()
 
     # Exactly one header: its own. A nested copy would add more.

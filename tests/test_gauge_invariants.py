@@ -1325,7 +1325,7 @@ def test_cli_bootstrap_tokens_survive_actual_agent_setup_clone(tmp_path):
     st.client._build_cli_initial_context_prompt(
         messages, system_prompt="", user_text="real cold start",
         workdir=str(tmp_path), provider_workdir="/provider",
-        conversation_id="c", agent_name="assistant")
+        user_id="u", conversation_id="c", agent_name="assistant")
 
     assert (st.client._cli_bootstrap_tokens_by_stream
             is original._cli_bootstrap_tokens_by_stream)

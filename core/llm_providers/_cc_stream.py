@@ -344,6 +344,7 @@ class _CCStreamMixin:
                 user_text=user_text,
                 workdir=st.workdir,
                 provider_workdir=st._provider_workdir,
+                user_id=st.user_id,
                 conversation_id=st.conv_id,
                 agent_name=st.agent_name,
             )

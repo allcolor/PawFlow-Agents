@@ -172,6 +172,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 user_text=user_text,
                 workdir=workdir,
                 provider_workdir=container_workdir,
+                user_id=user_id,
                 rel_path=".pawflow_cci/initial_context.md",
                 conversation_id=conversation_id,
                 agent_name=agent_name,

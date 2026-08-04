@@ -738,6 +738,11 @@ If a receipt-verified preempt fails without killing the CLI, the current turn
 keeps ownership and the message stays queued for the next drain.
 
 Each live session remains scoped by `(user, conversation, agent, LLM service)`.
+PawFlow validates both the Docker container and its `pawflow` tmux session before
+reuse. If the CLI or tmux is terminated while the container remains alive (for
+example by pressing `Ctrl-C` in an attached terminal), PawFlow evicts that stale
+container, rebuilds the turn as a cold start with full context, launches a fresh
+interactive session, and submits the same user turn automatically.
 The provider shares the OAuth credential pool used by `codex-app-server`:
 
 - one OAuth credential may back any number of concurrent agents and containers;

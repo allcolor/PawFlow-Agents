@@ -552,3 +552,19 @@ class _InteractiveContainerSpawnMixin:
             return result.stdout.strip() == "true"
         except Exception:
             return False
+
+    def _tmux_is_alive(self, name: str) -> bool:
+        """Return whether the interactive ``pawflow`` tmux session exists.
+
+        The container can remain healthy after Ctrl-C terminates the CLI and
+        its tmux server. Container liveness alone must therefore never qualify
+        an interactive session for reuse.
+        """
+        try:
+            result = subprocess.run(  # nosec B603
+                docker_cmd() + ["exec", "--user", self._user_spec(), name,
+                                "tmux", "has-session", "-t", "pawflow"],
+                capture_output=True, text=True, timeout=5)
+            return result.returncode == 0
+        except Exception:
+            return False

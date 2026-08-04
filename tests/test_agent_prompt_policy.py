@@ -19,14 +19,22 @@ def _agent_context_src():
     return re.sub(r"\bst\.", "", raw)
 
 
-def test_common_agent_prompt_contains_four_operating_points_without_mcp():
+def test_common_agent_prompt_contains_all_operating_points_without_mcp():
     for title in (
         "Think Before Coding",
         "Simplicity First",
         "Surgical Changes",
         "Goal-Driven Execution",
+        "Parallel Flash Agents",
+        "Durable Work Tracking",
+        "Passive Long-Running Work",
     ):
         assert title in COMMON_AGENT_SYSTEM_PROMPT
+    assert "Use `todolist` proactively" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "mark the current item `in_progress`" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "more than about 60 seconds" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "call `schedule_continuation`" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "Never keep the conversation alive" in COMMON_AGENT_SYSTEM_PROMPT
     assert "MCP" not in COMMON_AGENT_SYSTEM_PROMPT
     assert "PawFlow" not in COMMON_AGENT_SYSTEM_PROMPT
 

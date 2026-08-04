@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.101] — 2026-08-04
+
+### Added
+
+- Added the universal durable `todolist` tool, scoped per user, conversation,
+  and agent, with live API context injection, cold CLI bootstrap injection, and
+  successful `TaskCreate`/`TaskUpdate` mirroring for Claude Code interactive.
+  The common agent policy now proactively uses it for multi-step and deferred
+  work and hands operations longer than about one minute to a passive
+  `schedule_continuation` instead of polling.
+
+### Fixed
+
+- Retried Codex interactive prompt submission with `Enter` until a matching
+  hook, provider request, or terminal state proves delivery, and failed
+  explicitly instead of leaving pasted text waiting for manual submission.
+- Recreated interactive CLI containers whose tmux session died while Docker
+  still reported the container healthy.
+- Reset a stale Codex interactive context gauge during post-restart page
+  hydration instead of displaying the dead provider session at 100% until the
+  next user turn.
+
 ## [1.0.0-beta.100] — 2026-08-04
 
 ### Fixed

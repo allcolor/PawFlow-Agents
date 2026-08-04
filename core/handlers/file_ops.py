@@ -128,8 +128,11 @@ class ScheduleContinuationHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Schedule a continuation of your work. Call this when you have more "
-            "research or tasks to do but want to deliver intermediate findings first. "
+            "Schedule a persistent, passive continuation of your work. Use this "
+            "instead of polling or repeated waits whenever background work, an "
+            "external operation, or a delayed verification will take about a minute "
+            "or more. Also use it when you have more research or tasks to do but want "
+            "to deliver intermediate findings first. "
             "After your current response, the system will automatically resume your work. "
             "Include a clear plan of what you'll do next."
         )

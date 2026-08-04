@@ -212,10 +212,10 @@ class LLMCodexInteractiveMixin:
             consumer_epoch=consumer_epoch,
             context_tokens_callback=lambda tokens: (
                 self.record_observed_cli_context(
-                    state.conversation_id, state.agent_name, tokens)))
+                    conversation_id, agent_name, tokens)))
         response = coord.run(getattr(self, "_abort", None))
         self.record_codex_context_window(
-            pool, state, state.conversation_id, state.agent_name,
+            pool, state, conversation_id, agent_name,
             coord.observed_context_tokens)
         response.model = response.model or model or self.default_model
         return response

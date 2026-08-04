@@ -451,6 +451,21 @@ class _PACPhase3Mixin:
             else:
                 st.system_prompt += f"\n\n## {title}\n{body}"
 
+        # API/stream providers receive the live list on every prepared turn.
+        # CLI cold starts read the same store directly in cli_shared.py so the
+        # block is placed before their Bootstrap Contract without duplication.
+        if not st._is_cli_provider:
+            try:
+                from core.todo_store import TodoStore
+                _add_digest(
+                    "Durable Todo List",
+                    TodoStore.instance().context_text(
+                        st.user_id, st.conversation_id,
+                        st._active_agent_name))
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Failed to build durable todo context", exc_info=True)
+
         if st._cli_has_session:
             logger.info(
                 "[context:%s] CLI session active — skipping provider prompt decoration",
@@ -581,13 +596,12 @@ class _PACPhase3Mixin:
                 "\n  - Use ; only when you don't care if earlier commands fail"
                 "\n  - Run tests: Use `run_tests` (NOT bash pytest)"
                 "\n  - Scan Python for vulnerabilities: Use `security_scan` (NOT bash bandit)"
-                "\n- Long-running commands (builds, test suites, deploys) — NEVER poll with sleep:"
-                "\n  - Use `Monitor`: it blocks until the command exits, returns early when a"
-                " regex matches (e.g. 'FAILED', 'listening on'), and is capped at 10 minutes."
-                "\n  - Beyond 10 minutes: `bash(run_in_background=true)` writing to a log file,"
-                " then `read` that file — one read per checkpoint, never a sleep loop."
-                "\n  - A blocking call is fine: a slow tool call is moved to the background"
-                " automatically and you are notified with its real result."
+                "\n- Long-running commands (builds, full test suites, deploys) use passive continuation:"
+                "\n  - If expected to finish within 60 seconds, `Monitor` may block until exit"
+                " or an immediate success/failure regex."
+                "\n  - Otherwise use `bash(run_in_background=true)` with durable output, update"
+                " `todolist`, call `schedule_continuation`, report status, and end the turn."
+                "\n  - Do not repeatedly wait, poll, or read the log before the continuation wakes you."
                 "\n  - `sleep N; tail log` is the anti-pattern: it burns a turn per poll and"
                 " tells you about the sleep instead of the command."
                 "\n  - Do not sleep between commands that can run immediately"

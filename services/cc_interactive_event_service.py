@@ -28,6 +28,44 @@ from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
+
+def _native_task_id(value: Any) -> str:
+    """Extract Claude Code's task id from JSON or its stable text forms."""
+    if isinstance(value, dict):
+        for key in ("id", "taskId", "task_id"):
+            if value.get(key) is not None:
+                return str(value[key]).strip()
+        for key in ("task", "result", "data", "content"):
+            found = _native_task_id(value.get(key))
+            if found:
+                return found
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            found = _native_task_id(item)
+            if found:
+                return found
+        return ""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is not None and parsed != text:
+        found = _native_task_id(parsed)
+        if found:
+            return found
+    for pattern in (
+        r"\btask\s+#([A-Za-z0-9_.:-]+)",
+        r"\btask(?:\s+id)?\s*[:#]\s*([A-Za-z0-9_.:-]+)",
+    ):
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return ""
+
 _SENSITIVE_HEADER_RE = re.compile(
     rb"(?im)^(authorization|cookie|proxy-authorization|set-cookie|x-api-key|anthropic-api-key):[^\r\n]*"
 )
@@ -177,6 +215,11 @@ class CCInteractiveSessionEvents:
     prompt_submit_seq: int = 0
     prompt_submit_receipts: list = field(default_factory=list)
     provider_request_seq: int = 0
+    # Compatibility mirror for Claude Code's native TaskCreate/TaskUpdate.
+    # PawFlow's TodoStore remains authoritative; these fields only correlate
+    # an observed native tool_use with its later successful tool_result.
+    pending_todo_calls: dict = field(default_factory=dict)
+    mirrored_todo_call_ids: set = field(default_factory=set)
 
 
 class CCInteractiveEventService(BaseService):
@@ -630,6 +673,7 @@ class CCInteractiveEventService(BaseService):
         self._log_event_summary(session_token, event)
         if event.get("type") == "wire":
             return
+        self._mirror_native_todo_event(state, event)
         self._track_turn_boundary(state, event)
         self._maybe_ingest_manual_prompt(state, event)
         self._maybe_adopt_orphan_turn(state, event)
@@ -648,6 +692,130 @@ class CCInteractiveEventService(BaseService):
                 state.oldest_pending_at = time.time()
             state.stream_condition.notify_all()
         self._adopt_if_undelivered(state)
+
+    def _mirror_native_todo_event(self, state: CCInteractiveSessionEvents,
+                                  event: dict) -> None:
+        """Mirror successful Claude native task mutations into TodoStore."""
+        if state.provider != "claude-code-interactive":
+            return
+        event_type = event.get("type")
+        tool_id = str(event.get("tool_use_id") or "")
+        if not tool_id:
+            return
+        if event_type == "tool_use":
+            name = str(event.get("name") or "")
+            if name not in {"TaskCreate", "TaskUpdate"}:
+                return
+            arguments = event.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                return
+            ids = {tool_id}
+            ids.update(str(item) for item in (event.get("alias_ids") or []) if item)
+            record = {
+                "call_id": tool_id,
+                "ids": ids,
+                "name": name,
+                "arguments": dict(arguments),
+            }
+            with state.stream_condition:
+                if ids & state.mirrored_todo_call_ids:
+                    return
+                for call_id in ids:
+                    state.pending_todo_calls[call_id] = record
+            return
+        if event_type != "tool_result":
+            return
+        with state.stream_condition:
+            record = state.pending_todo_calls.get(tool_id)
+            if record is None:
+                return
+            ids = set(record["ids"])
+            for call_id in ids:
+                state.pending_todo_calls.pop(call_id, None)
+            if ids & state.mirrored_todo_call_ids:
+                return
+        if event.get("is_error"):
+            with state.stream_condition:
+                state.mirrored_todo_call_ids.update(ids)
+            return
+        try:
+            self._apply_native_todo_result(state, record, event.get("content"))
+        except Exception:
+            # Observation must never break the provider stream. Do not mark the
+            # call mirrored: a replay can retry the store mutation.
+            logger.error(
+                "[cci-todolist] failed to mirror %s call=%s session=%s",
+                record["name"], record["call_id"], state.session_token[:8],
+                exc_info=True)
+            return
+        with state.stream_condition:
+            state.mirrored_todo_call_ids.update(ids)
+
+    @staticmethod
+    def _apply_native_todo_result(state: CCInteractiveSessionEvents,
+                                  record: dict, result: Any) -> None:
+        from core.todo_store import TODO_STATUSES, TodoStore
+
+        if not state.user_id or not state.conversation_id or not state.agent_name:
+            raise ValueError("CCI todo mirror requires complete session identity")
+        store = TodoStore.instance()
+        args = record["arguments"]
+        if record["name"] == "TaskCreate":
+            external_id = _native_task_id(result)
+            store.create(
+                state.user_id, state.conversation_id, state.agent_name,
+                subject=args.get("subject", ""),
+                description=args.get("description", ""),
+                active_form=args.get("activeForm", args.get("active_form", "")),
+                owner=args.get("owner", ""),
+                blocks=args.get("blocks"),
+                blocked_by=args.get("blockedBy", args.get("blocked_by")),
+                metadata=args.get("metadata"),
+                external_id=external_id,
+                source_call_id=record["call_id"],
+            )
+            if not external_id:
+                logger.warning(
+                    "[cci-todolist] TaskCreate call=%s returned no native task id",
+                    record["call_id"])
+            return
+
+        task_id = str(
+            args.get("taskId") or args.get("task_id") or args.get("id") or "")
+        if not task_id:
+            raise ValueError("TaskUpdate did not include a task id")
+        changes = {}
+        for native, field in (
+            ("subject", "subject"), ("description", "description"),
+            ("activeForm", "active_form"), ("active_form", "active_form"),
+            ("owner", "owner"), ("metadata", "metadata"),
+            ("blocks", "blocks"), ("blockedBy", "blocked_by"),
+            ("blocked_by", "blocked_by"),
+        ):
+            if native in args:
+                changes[field] = args[native]
+        status = args.get("status")
+        if status in TODO_STATUSES:
+            changes["status"] = status
+        elif status:
+            raise ValueError(f"unsupported native task status: {status}")
+        existing = store.get(
+            state.user_id, state.conversation_id, state.agent_name, task_id)
+        if existing is None:
+            raise ValueError(f"native todo task not found: {task_id}")
+        for native, field in (("addBlocks", "blocks"),
+                              ("addBlockedBy", "blocked_by")):
+            if native in args:
+                current = list(existing.get(field) or [])
+                for item in args.get(native) or []:
+                    value = str(item)
+                    if value not in current:
+                        current.append(value)
+                changes[field] = current
+        if changes:
+            store.update(
+                state.user_id, state.conversation_id, state.agent_name,
+                task_id, **changes)
 
     def _record_submission_signal(self, state: CCInteractiveSessionEvents,
                                   event: dict) -> None:

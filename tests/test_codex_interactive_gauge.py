@@ -53,7 +53,7 @@ def _active_ctx(client, **overrides):
     return ctx
 
 
-def _compute(active_ctx, client, conv="conv-codex"):
+def _compute(active_ctx, client, conv="conv-codex", store=None):
     fake_exec = SimpleNamespace(
         _active_contexts=({f"{conv}:assistant": active_ctx}
                           if active_ctx else {}),
@@ -74,7 +74,7 @@ def _compute(active_ctx, client, conv="conv-codex"):
             patch("core.service_registry.ServiceRegistry.get_instance",
                   return_value=registry):
         return compute_context_usage(
-            conv, "assistant", user_id="user", store=_Store(),
+            conv, "assistant", user_id="user", store=store or _Store(),
             source="test")
 
 
@@ -101,6 +101,38 @@ def test_gauge_survives_a_conversation_switch():
     usage = _compute(None, client)
 
     assert usage["used"] == 96_000
+
+
+def test_server_restart_discards_the_dead_codex_gauge_before_next_turn():
+    """A fresh server has neither a live turn nor a wire measurement.
+
+    The persisted value describes the TUI process killed by the restart and
+    must not be rebuilt from PawFlow's externalized stored context.
+    """
+    class _RestartStore(_Store):
+        def load_agent_context(self, *_args, **_kwargs):
+            return [{"role": "user", "content": "externalized context"}]
+
+        def get_extra_snapshot(self, *_args, **_kwargs):
+            return {"assistant": {
+                "used": 400_000,
+                "max": 400_000,
+                "pct": 1.0,
+                "source": "message_meta",
+                "updated_at": 1.0,
+                "message_count": 1,
+                "cli_context_state": "active",
+            }}
+
+    client = _client({})
+    with patch("core.token_counter.count_messages_tokens", return_value=0) as count:
+        usage = _compute(None, client, store=_RestartStore())
+
+    count.assert_called_once_with([], multiplier=1.0)
+    assert usage["used"] == 0
+    assert usage["pct"] == 0.0
+    assert usage["message_count"] == 0
+    assert usage["cli_context_state"] == "cold"
 
 
 def test_no_measurement_yet_leaves_the_cold_gauge_alone():

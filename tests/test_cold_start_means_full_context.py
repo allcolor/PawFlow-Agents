@@ -181,6 +181,7 @@ def test_a_pool_asks_only_when_it_is_really_going_to_launch():
     pool._reserved_slots = set()
     pool.ensure_sweeper = lambda **_kw: None
     pool._is_alive = lambda _name: True
+    pool._tmux_is_alive = lambda _name: True
 
     live = SimpleNamespace(name="cci-live", last_used=0.0)
     pool._sessions[("u", "c", "a", "svc")] = live
@@ -192,6 +193,41 @@ def test_a_pool_asks_only_when_it_is_really_going_to_launch():
 
     assert got is live
     assert asked == [], "a reused session must not be asked to restart"
+
+
+def test_a_live_container_with_a_dead_tmux_is_recreated_as_a_cold_start():
+    """Ctrl-C can kill the CLI and tmux while Docker keeps running."""
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    pool = InteractiveClaudeCodePool.__new__(InteractiveClaudeCodePool)
+    pool._lock = threading.RLock()
+    pool._sessions = {}
+    pool._reserved_slots = set()
+    pool.ensure_sweeper = lambda **_kw: None
+    pool._is_alive = lambda _name: True
+    pool._tmux_is_alive = lambda _name: False
+
+    key = ("u", "c", "a", "svc")
+    stale = SimpleNamespace(name="cci-stale", key=key)
+    replacement = SimpleNamespace(name="cci-new", key=key)
+    pool._sessions[key] = stale
+    recovered = []
+    killed = []
+    asked = []
+    pool._recover_container_tokens = lambda state: recovered.append(state)
+    pool._kill_container = lambda name: killed.append(name)
+    pool._claim_pool_slot_locked = lambda *_args: 0
+    pool._start_new = lambda *_args, **_kwargs: replacement
+    client = SimpleNamespace(timeout=None, _agent_service="svc", api_key="")
+
+    got = pool.ensure_started(
+        client, "m", "u", "c", "a", before_launch=lambda: asked.append(True))
+
+    assert got is replacement
+    assert recovered == [stale]
+    assert killed == ["cci-stale"]
+    assert asked == [True]
+    assert pool._sessions[key] is replacement
 
 
 def test_a_pool_refusal_stops_the_launch_before_anything_is_claimed():

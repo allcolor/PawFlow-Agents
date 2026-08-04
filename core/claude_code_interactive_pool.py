@@ -174,11 +174,19 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         key = (user_id, conversation_id, agent_name, service_id)
         with self._lock:
             existing = self._sessions.get(key)
-            if existing and self._is_alive(existing.name):
+            container_alive = bool(existing and self._is_alive(existing.name))
+            if (existing and container_alive
+                    and self._tmux_is_alive(existing.name)):
                 existing.last_used = time.time()
                 return existing
             if existing:
                 self._sessions.pop(key, None)
+                if container_alive:
+                    logger.warning(
+                        "[cci-live] tmux session died inside live container %s; "
+                        "recreating the interactive session", existing.name)
+                    self._recover_container_tokens(existing)
+                    self._kill_container(existing.name)
             # About to launch. Ask before claiming a credential slot, so a
             # refusal costs nothing and releases nothing.
             if before_launch is not None:

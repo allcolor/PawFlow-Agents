@@ -312,6 +312,15 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
         _observed_cli_context_tokens(
             conversation_id, agent_name, user_id, active_ctx)
         if is_cli else 0)
+    # Codex interactive records every live session's prompt size on the
+    # long-lived service client.  No active turn and no such measurement means
+    # the process restarted and the old persisted snapshot describes a dead
+    # TUI window.  Treat it as cold immediately so page hydration does not
+    # redisplay that stale percentage until the next user turn resets it.
+    cold_codex_restart = (
+        provider == "codex-interactive"
+        and active_ctx is None
+        and observed_tokens <= 0)
     cli_context_state = ""
     if is_cli:
         if observed_tokens > 0:
@@ -319,6 +328,8 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
             # about session/bootstrap state, that window is demonstrably full
             # of something and the gauge is no longer an estimate.
             cli_context_state = "active"
+        elif cold_codex_restart:
+            cli_context_state = "cold"
         elif (active_ctx and not active_ctx.get("_cli_has_session")
                 and not active_ctx.get("_cli_bootstrap_read_seen")):
             cli_context_state = (
@@ -328,6 +339,15 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     configured = int(svc_cfg.get("max_context_size", 0) or 0)
     if active_ctx and int(active_ctx.get("max_context_size") or 0) > 0:
         configured = int(active_ctx.get("max_context_size") or 0)
+
+    if cold_codex_restart:
+        cfg_for_count = dict(svc_cfg)
+        if configured > 0:
+            cfg_for_count["max_context_size"] = configured
+        return context_usage_for_messages(
+            conversation_id, agent_name, [], svc_cfg=cfg_for_count,
+            real_window=real_window, provider=provider, source=source,
+            cli_context_state="cold")
 
     raw_messages, cache, _already_deserialized = _context_messages(
         conversation_id, agent_name, user_id, store, active_ctx)

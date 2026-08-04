@@ -439,15 +439,15 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     def _verify_submitted(self, state: InteractiveContainer, text: str, *,
                           event_service=None,
                           submit_marker=(0, 0)):
-        """Observe whether the canonical double Enter submitted the prompt.
+        """Prove submission, retrying Enter when no proof arrives.
 
         Codex collapses pasted text into a chip, so the inherited
         ``fragment absent == submitted`` rule is never valid here.  When a new
         Codex release boxes the composer and the chip probe cannot locate it,
-        absence of a running marker is deliberately treated as inconclusive.
-        Verification never sends keys: the transport sequence is exactly
-        Esc, Esc, paste, 200ms, Enter, 200ms, Enter, and side-channel timing
-        must not mutate it.
+        absence of a running marker is inconclusive. In that case the pasted
+        prompt may still be waiting in a composer whose current layout PawFlow
+        cannot recognise, so retry Enter up to three times and require proof.
+        A silent verifier is never accepted as a successful submission.
         """
         configured = os.environ.get("PAWFLOW_CCI_SUBMIT_VERIFY_SECONDS", "")
         try:
@@ -458,15 +458,18 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             window = 6.0
         if window <= 0:
             return True
+        max_enter_retries = 3
+        proof_window = window / (max_enter_retries + 1)
         if event_service is not None:
             after_submit, after_request = submit_marker
             saw_other_submit = False
+            enter_retries = 0
             while True:
                 proof = event_service.wait_for_prompt_submission(
                     state.session_token, text,
                     after_submit=after_submit,
                     after_request=after_request,
-                    timeout=window)
+                    timeout=proof_window)
                 if proof in {"hook", "request"}:
                     logger.debug(
                         "[codex-interactive] prompt submission confirmed for "
@@ -512,44 +515,47 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                         "the tmux pane confirms submission", state.name)
                     return True
                 if holds is True:
+                    reason = "the prompt remains in the composer"
+                else:
+                    reason = "the submission pane is inconclusive"
+                if enter_retries >= max_enter_retries:
                     state.last_error = (
-                        "The expected Codex prompt remains in the composer "
-                        "after the canonical Enter sequence")
+                        "Codex prompt submission was not confirmed after "
+                        f"{max_enter_retries} Enter retries ({reason})")
                     logger.error(
-                        "[codex-interactive] prompt remains unsubmitted for %s",
-                        state.name)
+                        "[codex-interactive] prompt unsubmitted for %s after "
+                        "%d Enter retries (%s)", state.name,
+                        enter_retries, reason)
                     return False
-                # A receipt timeout proves only that the side channels were
-                # silent. Codex changes its composer rendering frequently, so
-                # an unrecognised (or momentarily unreadable) live pane cannot
-                # prove Enter failed. Let the coordinator observe the stream.
+                enter_retries += 1
                 logger.warning(
-                    "[codex-interactive] no hook/MITM receipt for %s; live "
-                    "tmux pane is inconclusive, continuing with stream "
-                    "observation", state.name)
-                return None
+                    "[codex-interactive] no submission proof for %s (%s); "
+                    "pressing Enter again (retry %d/%d)", state.name, reason,
+                    enter_retries, max_enter_retries)
+                if not self.send_keys(state, ["Enter"]):
+                    if not state.last_error:
+                        state.last_error = "failed to retry Codex prompt submission"
+                    return False
 
         # No event service is available only in isolated diagnostics/tests.
         # Observe the pane without ever mutating the send sequence.
         interval = 0.3
-        polls = max(1, int(window / interval))
-        last_holds = None
-        for _ in range(polls):
-            pane = self._pane_text(state.name)
-            holds = self._pane_holds_unsent_paste(pane) if pane else None
-            if holds is False or (pane and self._pane_shows_running(pane)):
-                return True
-            last_holds = holds
-            time.sleep(interval)
-        if last_holds is True:
-            state.last_error = (
-                "The expected Codex prompt remains in the composer after the "
-                "canonical Enter sequence")
-            return False
-        logger.warning(
-            "[codex-interactive] submit verification inconclusive for %s",
-            state.name)
-        return None
+        polls = max(1, int(proof_window / interval))
+        for retry in range(max_enter_retries + 1):
+            for _ in range(polls):
+                pane = self._pane_text(state.name)
+                holds = self._pane_holds_unsent_paste(pane) if pane else None
+                if holds is False or (pane and self._pane_shows_running(pane)):
+                    return True
+                time.sleep(interval)
+            if retry == max_enter_retries:
+                break
+            if not self.send_keys(state, ["Enter"]):
+                return False
+        state.last_error = (
+            "Codex prompt submission was not confirmed after "
+            f"{max_enter_retries} Enter retries")
+        return False
 
     def __init__(self):
         super().__init__()
@@ -567,11 +573,20 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
         key = (user_id, conversation_id, agent_name, service_id)
         with self._lock:
             existing = self._sessions.get(key)
-            if existing and self._is_alive(existing.name):
+            container_alive = bool(existing and self._is_alive(existing.name))
+            if (existing and container_alive
+                    and self._tmux_is_alive(existing.name)):
                 existing.last_used = time.time()
                 return existing
             if existing:
                 self._sessions.pop(key, None)
+                if container_alive:
+                    logger.warning(
+                        "[codex-interactive] tmux session died inside live "
+                        "container %s; recreating the interactive session",
+                        existing.name)
+                    self._recover_container_tokens(existing)
+                    self._kill_container(existing.name)
             if before_launch is not None:
                 before_launch()
         state = self._start_new(

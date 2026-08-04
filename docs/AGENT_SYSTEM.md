@@ -189,7 +189,7 @@ them**. On a long conversation that is the difference between paying for a few
 hundred tokens and re-reading the whole history.
 
 The rule is therefore: **anything that can change between two turns of the same
-conversation must not be in the prefix.** Two such things exist, and both are
+conversation must not be in the prefix.** Three such things exist, and all are
 merged into the *last user message* by `_alc_inject_dynamic_metadata()`, after
 all cache breakpoints:
 
@@ -197,10 +197,50 @@ all cache breakpoints:
 - the cognitive digests (memory, diary, KG, project structure), which are
   rebuilt from live stores and therefore move on any `remember`,
   `diary_write`, `kg_add` or graph rebuild.
+- the active durable todo list, which changes on each `todolist` mutation.
 
-CLI providers keep the digests in the system prompt: their prompt goes through
-the cold-start bootstrap file, the same text would also be echoed in the prompt
-handed to the CLI binary, and those runtimes manage their own caching.
+CLI providers keep the digests and todo state in the cold-start bootstrap file;
+the same text would otherwise be echoed in the prompt handed to the CLI binary,
+and those runtimes manage their own caching.
+
+### Durable Todo Lists
+
+`todolist` is the universal lightweight work-state tool. It supports
+`create`, `update`, `list`, and `get`, with `pending`, `in_progress`,
+and `completed` statuses. Each list is scoped by the required
+`(user_id, conversation_id, agent_name)` tuple and stored as one atomically
+replaced JSON document under `data/runtime/todolists/`. It is separate from
+memories and orchestrated plans.
+
+Every prepared API/stream turn receives all active items plus the five most
+recently completed items in dynamic context. A cold CLI session receives the
+same block in `initial_context.md` before the Bootstrap Contract. A warm CLI
+session is not reprompted solely because todo state changed; the agent can query
+the authoritative store through the tool.
+
+Claude Code interactive may use its native `TaskCreate` and `TaskUpdate`
+tools. The event service records the native call, waits for its successful
+`tool_result`, then mirrors the mutation into the same `TodoStore`.
+`tool_use_id` makes replay idempotent, while the native task ID is retained as
+`external_id` so later `TaskUpdate` calls resolve the same PawFlow item.
+Failed native calls never mutate the store.
+
+The common agent policy tells every agent to create and maintain this list
+proactively for multi-step, compaction-prone, deferred, or background work. The
+current item is marked `in_progress` before substantial work and completed as
+soon as its outcome is verified. Trivial one-step answers do not create noise in
+the store.
+
+### Passive Continuations
+
+Long operations must not keep an agent turn alive through repeated waits or log
+polling. Work expected to take more than about 60 seconds is started in the
+background with durable output; the agent records the pending verification in
+`todolist`, calls `schedule_continuation` with a precise resume plan, reports
+status to the user, and ends the current turn. The persisted continuation wakes
+the same conversation later and survives a server restart. Blocking `Monitor`
+is reserved for operations expected to finish within 60 seconds or for a useful
+immediate success/failure pattern.
 
 What stays stable, deliberately: the tool list is exactly two meta-tools
 (`get_tool_schema`, `use_tool`) regardless of what is installed, so tool
@@ -291,7 +331,7 @@ their SSE handlers, including authoritative `cold` zero after compaction.
 
 The latest value is persisted under the conversation `context_usage` extra as a dict keyed by agent instance name: `{"<agent>": {"used": int, "max": int, "pct": float, "updated_at": float}}`. Persistence is per-agent and keyed on the instance name (not the definition), which means each Resource Panel agent card shows its own gauge and the header badge shows the gauge for `selectedAgent`.
 
-The persisted entry is what `compute_context_usage` returns while no agent is running, so it must be invalidated whenever the thing it describes disappears. A CLI session dies with the server: `_prepare_agent_context` therefore calls `reset_cli_context_usage` as soon as it finds a CLI provider with no live session, persists the zeroed entry, and publishes it. Without that, a restart redisplays the dead session's percentage against a provider window nothing has filled yet.
+The persisted entry is what `compute_context_usage` returns while no agent is running, so it must be invalidated whenever the thing it describes disappears. A CLI session dies with the server: `_prepare_agent_context` therefore calls `reset_cli_context_usage` as soon as it finds a CLI provider with no live session, persists the zeroed entry, and publishes it. Codex interactive can detect the same condition during page hydration because every warm session has a wire measurement on the service client; no active turn and no measurement means a cold post-restart process, so `list_context_usage` returns and persists zero before the next turn. Without these resets, a restart redisplays the dead session's percentage against a provider window nothing has filled yet.
 
 **Two different quantities drive compaction, at two different moments, and both are correct where they apply.** While a CLI session is live, `_alc_maybe_auto_compact_after_append` evaluates `compact_threshold_pct` against `compute_context_usage` — the gauge itself. The provider window is what can overflow, so the provider window is what is watched, and a gauge reading below the threshold means no compaction will fire.
 

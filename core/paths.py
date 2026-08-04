@@ -139,6 +139,9 @@ KNOWLEDGE_GRAPHS_DIR = RUNTIME_DIR / "knowledge_graphs"
 # Plans
 PLANS_DIR = RUNTIME_DIR / "plans"
 
+# Durable per-agent todo lists
+TODOLISTS_DIR = RUNTIME_DIR / "todolists"
+
 # Claude Code sessions
 CLAUDE_SESSIONS_DIR = RUNTIME_DIR / "sessions" / "claude"
 

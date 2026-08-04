@@ -616,6 +616,8 @@ def create_default_registry() -> ToolRegistry:
     from core.handlers.diary import DiaryWriteHandler, DiaryReadHandler
     registry.register(DiaryWriteHandler())
     registry.register(DiaryReadHandler())
+    from core.handlers.todolist import TodoListHandler
+    registry.register(TodoListHandler())
     from core.handlers.learn import LearnHandler
     registry.register(LearnHandler())
     from core.handlers.conversation_search import ConversationSearchHandler

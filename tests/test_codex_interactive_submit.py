@@ -135,24 +135,24 @@ def test_the_composer_is_still_found_when_it_is_on_screen():
     assert pool._composer_text(SUBMITTED_PANE).startswith("> Ask Codex")
 
 
-def test_verify_never_mutates_an_unsent_composer(monkeypatch):
-    """Verification observes; only the canonical send path may press Enter."""
+def test_verify_represses_enter_for_an_unsent_composer(monkeypatch):
+    """A visible pasted chip is retried instead of waiting for a human."""
     pool = CodexInteractivePool()
     sent = _harness(pool, [UNSENT_PANE], monkeypatch)
-    assert sent == []
+    assert sent == [["Enter"], ["Enter"], ["Enter"]]
 
 
-def test_verify_never_guesses_with_enter_for_unknown_codex_chrome(monkeypatch):
-    """Unknown Codex chrome is not proof that its pasted chip was submitted."""
+def test_verify_represses_enter_when_codex_chrome_is_unknown(monkeypatch):
+    """Unknown chrome cannot turn missing submission proof into success."""
     pool = CodexInteractivePool()
     sent = _harness(pool, [BOXED_UNSENT_PANE], monkeypatch)
-    assert sent == []
+    assert sent == [["Enter"], ["Enter"], ["Enter"]]
 
 
-def test_verify_only_observes_until_the_composer_clears(monkeypatch):
+def test_verify_stops_retrying_as_soon_as_the_composer_clears(monkeypatch):
     pool = CodexInteractivePool()
     sent = _harness(pool, [UNSENT_PANE, SUBMITTED_PANE], monkeypatch)
-    assert sent == []
+    assert sent == [["Enter"]]
 
 
 def test_verify_never_presses_enter_while_a_turn_runs(monkeypatch):
@@ -526,13 +526,13 @@ def test_mitm_ack_confirms_the_canonical_enter(monkeypatch):
     assert keys == []
 
 
-def test_missing_ack_never_adds_enter_and_stays_inconclusive(monkeypatch):
+def test_missing_ack_retries_enter_then_fails_explicitly(monkeypatch):
     result, state, service, keys = _verify_with_signals(
         monkeypatch, "")
-    assert result is None
-    assert keys == []
-    assert len(service.calls) == 1
-    assert state.last_error == ""
+    assert result is False
+    assert keys == [["Enter"], ["Enter"], ["Enter"]]
+    assert len(service.calls) == 4
+    assert "not confirmed" in state.last_error
 
 
 def test_missing_ack_accepts_a_pane_that_confirms_submission(monkeypatch):
@@ -548,9 +548,9 @@ def test_missing_ack_refuses_a_prompt_still_in_the_composer(monkeypatch):
     result, state, service, keys = _verify_with_signals(
         monkeypatch, "", pane=UNSENT_PANE)
     assert result is False
-    assert keys == []
-    assert len(service.calls) == 1
-    assert "remains in the composer" in state.last_error
+    assert keys == [["Enter"], ["Enter"], ["Enter"]]
+    assert len(service.calls) == 4
+    assert "not confirmed" in state.last_error
 
 
 def test_other_submit_gets_a_fresh_window_for_the_expected_prompt(monkeypatch):
@@ -602,7 +602,7 @@ def test_codex_interrupt_waits_for_receipt_before_reporting_success(monkeypatch)
     assert len(service.calls) == 1
 
 
-def test_codex_interrupt_continues_when_receipt_and_pane_are_inconclusive(
+def test_codex_interrupt_fails_when_receipt_and_pane_stay_inconclusive(
         monkeypatch):
     pool = CodexInteractivePool()
     state = _State()
@@ -618,12 +618,18 @@ def test_codex_interrupt_continues_when_receipt_and_pane_are_inconclusive(
                         lambda _state, _text: service)
     monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
     monkeypatch.setattr(pool, "_paste_buffer", lambda _state: True)
-    monkeypatch.setattr(pool, "send_keys", lambda _state, _keys: True)
+    keys = []
+    monkeypatch.setattr(
+        pool, "send_keys", lambda _state, batch: keys.append(list(batch)) or True)
     monkeypatch.setattr(pool, "_pane_text", lambda _name: "")
     monkeypatch.setattr(ccip.time, "sleep", lambda _seconds: None)
 
-    assert pool.send_interrupt(state, PROMPT) is True
-    assert state.last_error == ""
+    assert pool.send_interrupt(state, PROMPT) is False
+    assert keys == [
+        ["Escape", "Escape"], ["Enter"], ["Enter"],
+        ["Enter"], ["Enter"], ["Enter"],
+    ]
+    assert "not confirmed" in state.last_error
 
 
 def test_fragmented_submit_fails_without_another_enter(monkeypatch):

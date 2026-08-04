@@ -1,0 +1,136 @@
+import json
+
+import pytest
+
+import core.paths as paths
+from core.handlers.todolist import TodoListHandler
+from core.llm_client import LLMClient, LLMMessage
+from core.todo_store import TodoStore
+from core.tool_registry import create_default_registry
+
+
+@pytest.fixture
+def store(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "TODOLISTS_DIR", tmp_path / "todolists")
+    TodoStore._instance = None
+    yield TodoStore.instance()
+    TodoStore._instance = None
+
+
+def test_create_update_list_get_and_atomic_document(store):
+    task = store.create(
+        "user", "conv", "agent", subject="Implement durable todos",
+        active_form="Implementing durable todos")
+    assert task["id"].startswith("td_")
+    assert task["status"] == "pending"
+
+    updated = store.update(
+        "user", "conv", "agent", task["id"], status="in_progress")
+    assert updated["status"] == "in_progress"
+    assert store.get("user", "conv", "agent", task["id"]) == updated
+    assert store.list_tasks(
+        "user", "conv", "agent", status="in_progress") == [updated]
+
+    document = json.loads(next((tmp_path for tmp_path in paths.TODOLISTS_DIR.rglob("*.json"))).read_text())
+    assert document["version"] == 1
+    assert document["tasks"][0]["id"] == task["id"]
+    assert list(paths.TODOLISTS_DIR.rglob("*.tmp")) == []
+
+
+def test_scope_isolated_by_user_conversation_and_agent(store):
+    store.create("u1", "c1", "a1", subject="one")
+    assert store.list_tasks("u1", "c1", "a1")
+    assert store.list_tasks("u2", "c1", "a1") == []
+    assert store.list_tasks("u1", "c2", "a1") == []
+    assert store.list_tasks("u1", "c1", "a2") == []
+
+
+def test_scope_encoding_does_not_alias_distinct_identifiers(store):
+    first = store.create("u/a", "c:a", "agent/name", subject="slash")
+    second = store.create("u_a", "c_a", "agent_name", subject="underscore")
+
+    assert store.list_tasks("u/a", "c:a", "agent/name") == [first]
+    assert store.list_tasks("u_a", "c_a", "agent_name") == [second]
+
+
+@pytest.mark.parametrize("field", ["blocks", "blocked_by"])
+def test_create_rejects_non_array_dependencies(store, field):
+    with pytest.raises(ValueError, match=f"{field} must be an array"):
+        store.create("u", "c", "a", subject="invalid", **{field: "task-1"})
+
+
+def test_source_call_replay_upserts_and_external_id_resolves(store):
+    first = store.create(
+        "u", "c", "a", subject="first", external_id="native-7",
+        source_call_id="call-1")
+    replay = store.create(
+        "u", "c", "a", subject="corrected", external_id="native-7",
+        source_call_id="call-1")
+    assert replay["id"] == first["id"]
+    assert replay["subject"] == "corrected"
+    assert len(store.list_tasks("u", "c", "a")) == 1
+    assert store.update(
+        "u", "c", "a", "native-7", status="completed")["id"] == first["id"]
+
+
+def test_context_has_all_active_and_only_five_recent_completed(store, monkeypatch):
+    now = iter(range(1, 30))
+    monkeypatch.setattr("core.todo_store.time.time", lambda: float(next(now)))
+    pending = store.create("u", "c", "a", subject="pending")
+    active = store.create("u", "c", "a", subject="active")
+    store.update("u", "c", "a", active["id"], status="in_progress")
+    completed = []
+    for index in range(6):
+        task = store.create("u", "c", "a", subject=f"done-{index}")
+        store.update("u", "c", "a", task["id"], status="completed")
+        completed.append(task)
+
+    text = store.context_text("u", "c", "a")
+    assert pending["id"] in text
+    assert active["id"] in text
+    assert completed[0]["id"] not in text
+    for task in completed[1:]:
+        assert task["id"] in text
+
+
+def test_handler_is_universal_and_uses_runtime_scope(store):
+    handler = TodoListHandler()
+    handler.set_user_id("u")
+    handler.set_conversation_id("c")
+    handler.set_agent_name("a")
+    created = json.loads(handler.execute({
+        "action": "create", "subject": "Ship it"}))
+    updated = json.loads(handler.execute({
+        "action": "update", "task_id": created["id"],
+        "status": "completed"}))
+    listed = json.loads(handler.execute({"action": "list"}))
+    assert updated["status"] == "completed"
+    assert listed["tasks"][0]["id"] == created["id"]
+
+
+def test_default_registry_exposes_todolist():
+    assert create_default_registry().get("todolist") is not None
+
+
+def test_cli_cold_context_injects_todos_before_bootstrap_contract(store, tmp_path):
+    task = store.create("u", "c", "assistant", subject="Survive compaction")
+    client = LLMClient("claude-code")
+    messages = [
+        LLMMessage(role="user", content="continue", conversation_id="c")]
+
+    client._build_cli_initial_context_prompt(
+        messages, system_prompt="rules", user_text="continue",
+        workdir=str(tmp_path), provider_workdir="/provider",
+        user_id="u", conversation_id="c", agent_name="assistant")
+
+    body = (tmp_path / ".pawflow_cli" / "initial_context.md").read_text()
+    assert "## Durable Todo List" in body
+    assert task["id"] in body
+    assert body.index("## Durable Todo List") < body.index("## Bootstrap Contract")
+
+
+@pytest.mark.parametrize("scope", [
+    ("", "c", "a"), ("u", "", "a"), ("u", "c", "")])
+def test_missing_scope_is_rejected(store, scope):
+    with pytest.raises(ValueError):
+        store.list_tasks(*scope)

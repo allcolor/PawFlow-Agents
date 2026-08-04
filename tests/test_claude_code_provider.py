@@ -139,6 +139,7 @@ class TestSerializeMessages(unittest.TestCase):
                 user_text=user_text,
                 workdir=tmp,
                 provider_workdir="/cc_sessions/u/c/a",
+                user_id="test_user",
                 conversation_id="test_conv",
                 agent_name="assistant",
             )
@@ -167,6 +168,7 @@ class TestSerializeMessages(unittest.TestCase):
                 user_text=user_text,
                 workdir=tmp,
                 provider_workdir="/cc_sessions/u/c/a",
+                user_id="test_user",
                 conversation_id="test_conv",
                 agent_name="assistant",
             )
@@ -189,6 +191,7 @@ class TestSerializeMessages(unittest.TestCase):
                 user_text=user_text,
                 workdir=tmp,
                 provider_workdir="/cc_sessions/u/c/a",
+                user_id="test_user",
                 conversation_id="test_conv",
                 agent_name="assistant",
             )
@@ -231,6 +234,9 @@ class TestSerializeMessages(unittest.TestCase):
                 user_text=user_text,
                 workdir=tmp,
                 provider_workdir="/cc_sessions/u/c/a",
+                user_id="test_user",
+                conversation_id="test_conv",
+                agent_name="assistant",
             )
             with open(f"{tmp}/.pawflow_cli/initial_context.md", encoding="utf-8") as fh:
                 body = fh.read()
@@ -257,6 +263,9 @@ class TestSerializeMessages(unittest.TestCase):
                 user_text=user_text,
                 workdir=tmp,
                 provider_workdir="/cc_sessions/u/c/a",
+                user_id="test_user",
+                conversation_id="test_conv",
+                agent_name="assistant",
             )
             with open(f"{tmp}/.pawflow_cli/initial_context.md", encoding="utf-8") as fh:
                 body = fh.read()

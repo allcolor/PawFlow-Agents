@@ -80,7 +80,10 @@ def test_cc_native_monitor_stays_blocked_so_the_pawflow_one_is_used():
 def test_guidance_names_the_tools_instead_of_a_vague_background_hint():
     src = (ROOT / "tasks" / "ai" / "_agentctx_p3.py").read_text(encoding="utf-8")
 
-    assert "Use `Monitor`" in src
+    assert "`Monitor` may block" in src
+    assert "within 60 seconds" in src
+    assert "`bash(run_in_background=true)`" in src
+    assert "`schedule_continuation`" in src
     assert "run_tests" in src
     assert "security_scan" in src
 
@@ -88,7 +91,9 @@ def test_guidance_names_the_tools_instead_of_a_vague_background_hint():
 def test_guidance_forbids_the_sleep_poll_pattern_by_name():
     src = (ROOT / "tasks" / "ai" / "_agentctx_p3.py").read_text(encoding="utf-8")
 
-    assert "NEVER poll with sleep" in src
+    assert "use passive continuation" in src
+    assert "schedule_continuation" in src
+    assert "Do not repeatedly wait, poll" in src
     assert "sleep N; tail log" in src
 
 

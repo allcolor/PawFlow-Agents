@@ -52,6 +52,7 @@ def test_pool_does_not_reserve_oauth_credential_between_agents(monkeypatch):
     pool = CodexInteractivePool()
     monkeypatch.setattr(pool, "ensure_sweeper", lambda **_kwargs: None)
     monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
+    monkeypatch.setattr(pool, "_tmux_is_alive", lambda _name: True)
     calls = []
 
     def _start(_client, _model, user, conv, agent, key, pool_index=-99):
@@ -67,6 +68,37 @@ def test_pool_does_not_reserve_oauth_credential_between_agents(monkeypatch):
     assert first.svc_pool_idx == second.svc_pool_idx == 0
     assert [call[-1] for call in calls] == [-1, -1]
     assert len(pool._sessions) == 2
+
+
+def test_pool_restarts_when_container_lives_but_tmux_was_killed(monkeypatch):
+    pool = CodexInteractivePool()
+    monkeypatch.setattr(pool, "ensure_sweeper", lambda **_kwargs: None)
+    monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
+    monkeypatch.setattr(pool, "_tmux_is_alive", lambda _name: False)
+
+    key = ("user", "conv", "agent", "service")
+    stale = _state(key)
+    replacement = _state(key)
+    replacement.name = "replacement"
+    pool._sessions[key] = stale
+    recovered = []
+    killed = []
+    launched = []
+    monkeypatch.setattr(
+        pool, "_recover_container_tokens", lambda state: recovered.append(state))
+    monkeypatch.setattr(pool, "_kill_container", lambda name: killed.append(name))
+    monkeypatch.setattr(
+        pool, "_start_new",
+        lambda *_args, **_kwargs: launched.append(True) or replacement)
+    client = SimpleNamespace(timeout=None, _agent_service="service")
+
+    got = pool.ensure_started(client, "model", "user", "conv", "agent")
+
+    assert got is replacement
+    assert recovered == [stale]
+    assert killed == [stale.name]
+    assert launched == [True]
+    assert pool._sessions[key] is replacement
 
 
 def test_endpoint_uses_custom_base_url_or_official_auth_endpoint():

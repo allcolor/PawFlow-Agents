@@ -485,6 +485,7 @@ class LLMCliSharedMixin:
         user_text: str,
         workdir: str,
         provider_workdir: str,
+        user_id: str,
         rel_path: str = ".pawflow_cli/initial_context.md",
         conversation_id: str = "",
         agent_name: str = "",
@@ -502,6 +503,11 @@ class LLMCliSharedMixin:
             body.extend(["## Serialized Conversation Context", "", prior_context.strip(), ""])
         elif user_text and not latest:
             body.extend(["## Serialized Conversation Context", "", user_text.strip(), ""])
+        from core.todo_store import TodoStore
+        todo_context = TodoStore.instance().context_text(
+            user_id, conversation_id, agent_name)
+        if todo_context:
+            body.extend(["## Durable Todo List", "", todo_context, ""])
         body.extend([
             "## Bootstrap Contract",
             "",

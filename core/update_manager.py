@@ -661,7 +661,7 @@ def restart_server_relays(
 # ── server self-update ───────────────────────────────────────────────
 
 
-def updater_image() -> str:
+def updater_image(default: str = DEFAULT_UPDATER_IMAGE) -> str:
     """Image the updater container runs in.
 
     ``PAWFLOW_SERVER_UPDATE_IMAGE`` first, then ``server_update_image`` in
@@ -676,7 +676,58 @@ def updater_image() -> str:
         except Exception:
             logger.debug("Could not read server_update_image", exc_info=True)
             configured = ""
-    return configured or DEFAULT_UPDATER_IMAGE
+    return configured or default
+
+
+def server_updater_status() -> Dict[str, Any]:
+    """Return bounded state for the fixed self-update helper container.
+
+    The browser polls this while the original server still answers. Without it,
+    a helper that dies before touching the server stays invisible until the
+    generic ten-minute restart deadline expires.
+    """
+    try:
+        inspect = subprocess.run(  # nosec B603
+            docker_cmd() + ["inspect", "--format", "{{json .State}}",
+                            UPDATER_CONTAINER],
+            capture_output=True, text=True, timeout=15)
+    except Exception as exc:
+        return {"ok": False, "exists": False, "status": "unknown",
+                "reason": f"Could not inspect the updater: {exc}"}
+    if inspect.returncode != 0:
+        return {"ok": False, "exists": False, "status": "missing",
+                "reason": (inspect.stderr or inspect.stdout
+                           or "Updater container was not found").strip()[:500]}
+    try:
+        state = json.loads((inspect.stdout or "").strip())
+    except (TypeError, ValueError) as exc:
+        return {"ok": False, "exists": True, "status": "unknown",
+                "reason": f"Could not decode updater state: {exc}"}
+
+    status = str(state.get("Status") or "unknown")
+    exit_code = int(state.get("ExitCode") or 0)
+    finished = status in {"exited", "dead"}
+    result: Dict[str, Any] = {
+        "ok": True,
+        "exists": True,
+        "status": status,
+        "running": status == "running",
+        "finished": finished,
+        "failed": finished and exit_code != 0,
+        "exit_code": exit_code,
+    }
+    if not finished:
+        return result
+
+    try:
+        logs = subprocess.run(  # nosec B603
+            docker_cmd() + ["logs", "--tail", "200", UPDATER_CONTAINER],
+            capture_output=True, text=True, timeout=15)
+        output = "\n".join(part for part in (logs.stdout, logs.stderr) if part)
+        result["logs"] = output.strip()[-8000:]
+    except Exception as exc:
+        result["logs"] = f"Could not read updater logs: {exc}"
+    return result
 
 
 def server_restart_preflight() -> Dict[str, Any]:
@@ -1130,9 +1181,6 @@ def _installer_updater_script(info: Dict[str, Any], image: str,
         and not (artifact_dir and k == "PAWFLOW_SOURCE_DIR"))
     lines = [
         "set -eu",
-        # The updater image is docker:cli, which is Alpine and ships ash; the
-        # start script is bash (arrays, [[ ]]).
-        "command -v bash >/dev/null 2>&1 || apk add --no-cache bash",
         f"cd {shlex.quote(info.get('host_app_dir', ''))}",
     ]
     if pull_source:
@@ -1265,7 +1313,11 @@ def _installer_preflight(installer: Dict[str, Any]) -> Dict[str, Any]:
     from core.installer_deployment import artifact_dir_for_update
 
     app_dir = installer.get("host_app_dir", "")
-    image = updater_image()
+    # The running PawFlow image is already local and carries Bash plus the
+    # static Docker CLI. Using docker:cli here required a runtime `apk add bash`,
+    # so a transient Alpine DNS failure killed the helper before the real image
+    # pull even started. Explicit updater-image configuration still wins.
+    image = updater_image(installer.get("image", ""))
     target = published_server_image(installer.get("image", ""))
     if not target:
         return {"ok": False, "installer": installer,
@@ -1300,6 +1352,8 @@ def _installer_preflight(installer: Dict[str, Any]) -> Dict[str, Any]:
     mount_dir = _artifact_mount_dir(app_dir, artifact_dir)
     probe_script = (
         "set -e\n"
+        "command -v bash >/dev/null\n"
+        "docker version >/dev/null\n"
         f"test -f {shlex.quote(app_dir)}/scripts/run-pawflow-docker.sh\n"
         f"test -w {shlex.quote(mount_dir)}\n"
         f"test -d {shlex.quote(app_dir)}/.git && echo PAWFLOW_GIT=1 || true\n"
@@ -1311,8 +1365,9 @@ def _installer_preflight(installer: Dict[str, Any]) -> Dict[str, Any]:
                 "reason": f"Could not run the updater image '{image}': {exc}"}
     if probe.returncode != 0:
         return {"ok": False, "installer": installer,
-                "reason": f"The install directory '{app_dir}' does not carry "
-                          "scripts/run-pawflow-docker.sh, or "
+                "reason": f"The updater image '{image}' does not provide Bash "
+                          "and a working Docker CLI, the install directory "
+                          f"'{app_dir}' does not carry scripts/run-pawflow-docker.sh, or "
                           f"'{mount_dir}' is not writable, so the update "
                           "cannot start the server the way the installer did: "
                           f"{(probe.stderr or probe.stdout).strip()[:200]}"}

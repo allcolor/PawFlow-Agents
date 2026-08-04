@@ -612,6 +612,13 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
         from core import update_manager
         return _json(flowfile, update_manager.server_update_preflight())
 
+    if action == "admin_server_update_status":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        from core import update_manager
+        return _json(flowfile, update_manager.server_updater_status())
+
     if action == "admin_server_restart_check":
         denied = _require_admin(flowfile)
         if denied:

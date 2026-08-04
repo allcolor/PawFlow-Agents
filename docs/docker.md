@@ -561,11 +561,16 @@ the common case — is not a compose stack at all: the installer ends on
 `scripts/run-pawflow-docker.sh`, a plain `docker run`. It runs:
 
 ```bash
-command -v bash || apk add --no-cache bash   # docker:cli is Alpine, the script is bash
 git pull --ff-only                           # only when asked, and only fast-forward
 docker pull ghcr.io/allcolor/pawflow:<latest release>
 PAWFLOW_IMAGE=… PAWFLOW_PORT=… bash scripts/run-pawflow-docker.sh
 ```
+
+The helper for this path runs in the currently installed PawFlow image, which
+is already local and contains Bash plus the static Docker CLI. It therefore has
+no package-manager bootstrap and does not depend on Alpine package-repository
+DNS before the real image pull. A configured `PAWFLOW_SERVER_UPDATE_IMAGE` (or
+`server_update_image`) still overrides that image for custom deployments.
 
 The start script is the source of truth for how a PawFlow container is started
 and already recreates an existing container in place
@@ -653,7 +658,8 @@ produce wrong bind mounts.
 
 Before anything is launched, a preflight runs the updater image once: it proves
 the image exists, that it carries what the update needs (`docker compose`, or
-`scripts/run-pawflow-docker.sh` in the install directory), and that the
+Bash plus a working Docker CLI and `scripts/run-pawflow-docker.sh` in the install
+directory), and that the
 directory really is where the container says it is — the server cannot stat a
 host path itself. It also reports whether the directory is a git checkout, which
 is what gates the optional `git pull` checkbox.
@@ -670,7 +676,10 @@ different `instance` answers and only then reloads — the page it is running wa
 served by the old process. Waiting for any answer at all ended on the first
 poll whenever the updater failed before stopping anything: the server never went
 away, the page reloaded onto the version it started from, and nothing said the
-update had not happened. After ten minutes the panel gives up and names which
+update had not happened. While the original server still answers, the panel also
+polls the fixed `pawflow-updater` container; a non-zero exit is shown immediately
+with its bounded log instead of being hidden until the deadline. After ten
+minutes the panel gives up and names which
 of the two failures occurred — the server stopped answering and never came back
 (the new container failed to start), or it never stopped answering (the updater
 failed before touching it) — and prints `docker logs pawflow-updater`.

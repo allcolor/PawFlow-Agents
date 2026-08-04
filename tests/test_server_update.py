@@ -560,7 +560,13 @@ def test_installer_preflight_reports_the_image_it_would_move_to(monkeypatch):
                                    "port": "19990",
                                    "image": "ghcr.io/allcolor/pawflow:1.0.0-beta.40"})
     monkeypatch.setattr(update_manager, "latest_server_release", lambda: "1.0.0-beta.41")
-    monkeypatch.setattr(update_manager, "_probe", lambda *a, **k: _completed(""))
+    probed = {}
+
+    def fake_probe(image, host_dir, script):
+        probed.update(image=image, host_dir=host_dir, script=script)
+        return _completed("")
+
+    monkeypatch.setattr(update_manager, "_probe", fake_probe)
     monkeypatch.setattr(update_manager, "running_agent_count", lambda: 2)
 
     check = update_manager.server_update_preflight()
@@ -568,8 +574,12 @@ def test_installer_preflight_reports_the_image_it_would_move_to(monkeypatch):
     assert check["ok"] is True
     assert check["deployment"] == "installer"
     assert check["target_image"] == "ghcr.io/allcolor/pawflow:1.0.0-beta.41"
+    assert check["updater_image"] == "ghcr.io/allcolor/pawflow:1.0.0-beta.40"
     assert check["working_dir"] == APP_DIR
     assert check["running_agents"] == 2
+    assert probed["image"] == "ghcr.io/allcolor/pawflow:1.0.0-beta.40"
+    assert "command -v bash" in probed["script"]
+    assert "docker version" in probed["script"]
 
 
 def test_an_unresolvable_published_image_stops_the_update(monkeypatch):
@@ -635,8 +645,10 @@ def test_the_installer_script_pulls_before_it_touches_the_server(monkeypatch):
 
     lines = script.splitlines()
     assert lines[0] == "set -eu"
-    # docker:cli is Alpine and ships ash; the start script is bash.
-    assert "apk add --no-cache bash" in script
+    # The installer updater runs in the already-local PawFlow image, which
+    # carries both Bash and the Docker CLI. Bootstrap must not depend on Alpine
+    # package repositories before it can even report an update failure.
+    assert "apk" not in script
     # A failed pull must leave the server running, so it comes first.
     assert script.index("docker pull") < script.index("run-pawflow-docker.sh")
     # Restarting the server is the last step that touches it; the image
@@ -691,13 +703,54 @@ def test_update_server_runs_the_installer_script_for_an_installer_deployment(mon
     assert f"{APP_DIR}:{APP_DIR}" in run_cmd
 
 
+def test_updater_status_reports_an_early_failure_with_bounded_logs(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "inspect" in cmd:
+            return _completed('{"Status":"exited","ExitCode":2}\n')
+        return _completed("first line\n" + ("x" * 9000) + "\napk failed\n")
+
+    monkeypatch.setattr(update_manager.subprocess, "run", fake_run)
+
+    status = update_manager.server_updater_status()
+
+    assert status["ok"] is True
+    assert status["finished"] is True
+    assert status["failed"] is True
+    assert status["exit_code"] == 2
+    assert status["logs"].endswith("apk failed")
+    assert len(status["logs"]) <= 8000
+    assert calls[0][-1] == update_manager.UPDATER_CONTAINER
+    assert calls[1][-1] == update_manager.UPDATER_CONTAINER
+
+
+def test_updater_status_does_not_fetch_logs_while_running(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _completed('{"Status":"running","ExitCode":0}\n')
+
+    monkeypatch.setattr(update_manager.subprocess, "run", fake_run)
+
+    status = update_manager.server_updater_status()
+
+    assert status["running"] is True
+    assert status["finished"] is False
+    assert "logs" not in status
+    assert len(calls) == 1
+
+
 # -- admin actions -----------------------------------------------------
 
 
 def test_server_update_actions_require_admin():
     from tasks.ai.actions.admin_settings import _handle_admin_settings
 
-    for action in ("admin_server_update_check", "admin_update_server"):
+    for action in ("admin_server_update_check", "admin_server_update_status",
+                   "admin_update_server"):
         ff = FlowFile(content=b"{}", attributes={"http.auth.roles": "user"})
         result = _handle_admin_settings(None, action, {}, None, "bob", ff)
         assert result[0].get_attribute("http.response.status") == "403"
@@ -741,6 +794,23 @@ def test_update_action_reports_a_refusal_as_409(monkeypatch):
     assert result[0].get_attribute("http.response.status") == "409"
 
 
+def test_update_status_action_returns_the_fixed_updater_status(monkeypatch):
+    from tasks.ai.actions import admin_settings
+
+    monkeypatch.setattr(update_manager, "server_updater_status", lambda: {
+        "ok": True, "finished": True, "failed": True, "exit_code": 2,
+        "logs": "bootstrap failed",
+    })
+
+    result = admin_settings._handle_admin_settings(
+        None, "admin_server_update_status", {"container": "not-allowed"},
+        None, "admin", _admin_flowfile())
+    payload = json.loads(result[0].get_content().decode("utf-8"))
+
+    assert payload["failed"] is True
+    assert payload["logs"] == "bootstrap failed"
+
+
 # -- UI wiring ---------------------------------------------------------
 
 
@@ -755,6 +825,8 @@ def test_update_dialog_confirms_then_waits_for_health():
     # project, the directory and the running-agent count first.
     assert js.index("admin_server_update_check") < js.index("'admin_update_server'")
     assert "running_agents" in js
+    assert "admin_server_update_status" in js
+    assert "_admUpdateFailed" in js
     assert "/health" in js
     assert "location.reload()" in js
 

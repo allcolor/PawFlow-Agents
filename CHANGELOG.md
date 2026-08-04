@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.103] — 2026-08-04
+
+### Fixed
+
+- Removed the installer updater's runtime `apk add bash` bootstrap by running it
+  in the already-local PawFlow server image, and made the admin update dialog
+  report an exited `pawflow-updater` with its bounded logs immediately instead
+  of waiting for the ten-minute restart timeout.
+
 ## [1.0.0-beta.102] — 2026-08-04
 
 ### Added

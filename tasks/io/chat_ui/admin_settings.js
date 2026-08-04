@@ -443,6 +443,8 @@ function _admWaitForServer(info, before, dialogTitle) {
   var started = Date.now();
   var wasInstance = (before || {}).instance || '';
   var wentDown = false;
+  var settled = false;
+  var statusPending = false;
   var body = '<div style="font-size:12px;line-height:1.7;">'
     + '<p><strong>Restarting.</strong> Helper container: <code>' + adminEsc(info.container || '') + '</code></p>'
     + '<p id="adm-server-wait" style="color:var(--pf-muted);">Waiting for the server to restart\u2026</p>'
@@ -459,9 +461,22 @@ function _admWaitForServer(info, before, dialogTitle) {
                                    : 'Waiting for the server to restart\u2026 (') + waited + 's)';
     }
     if (waited > ADM_UPDATE_TIMEOUT_S) {
+      settled = true;
       clearInterval(poll);
       _admUpdateStalled(info, wentDown, dialogTitle);
       return;
+    }
+    // While the original server still answers, it can inspect the detached
+    // helper. Surface an early failure instead of waiting for the deadline.
+    if (!wentDown && !statusPending) {
+      statusPending = true;
+      action$('admin_server_update_status').subscribe(function(status) {
+        statusPending = false;
+        if (settled || wentDown || !status || !status.finished || !status.failed) return;
+        settled = true;
+        clearInterval(poll);
+        _admUpdateFailed(info, status, dialogTitle);
+      });
     }
     fetch('/health', { cache: 'no-store' }).then(function(r) {
       if (!r.ok) return null;
@@ -469,12 +484,28 @@ function _admWaitForServer(info, before, dialogTitle) {
     }).then(function(now) {
       // The same process answering means nothing has restarted yet, however
       // healthy it is.
-      if (!now || (wasInstance && now.instance === wasInstance)) return;
+      if (settled || !now || (wasInstance && now.instance === wasInstance)) return;
+      settled = true;
       clearInterval(poll);
       if (note) note.textContent = 'Back up on ' + (now.version || '?') + '. Reloading\u2026';
       setTimeout(function() { location.reload(); }, 800);
     }).catch(function() { wentDown = true; /* still down — expected */ });
   }, 2000);
+}
+
+function _admUpdateFailed(info, status, dialogTitle) {
+  var logs = String((status || {}).logs || '').trim();
+  _adminOverlay(dialogTitle || 'Update server',
+    '<div style="font-size:12px;line-height:1.7;">'
+    + '<p><strong>The updater failed before the server restarted.</strong> '
+    + 'The existing server is still running. Exit code: <code>'
+    + adminEsc((status || {}).exit_code) + '</code>.</p>'
+    + (logs ? '<p>Updater log:</p><pre style="user-select:text;max-height:260px;overflow:auto;">'
+        + adminEsc(logs) + '</pre>' : '')
+    + '<p>Full log: <code>docker logs '
+    + adminEsc(info.container || 'pawflow-updater') + '</code></p>'
+    + '<button onclick="location.reload()" style="padding:6px 12px;border-radius:4px;cursor:pointer;">Close</button>'
+    + '</div>', '');
 }
 
 // The server never restarted. Say so, and name the one command that explains

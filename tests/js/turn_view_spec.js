@@ -452,6 +452,25 @@ test('a reloaded turn shows only the user message, the block and the answer', ()
   eq(topLevelIds(e).join(','), 'u1,BLOCK,a2');
 });
 
+test('the newest historical turn is completed when no runtime turn exists', () => {
+  const e = env('simplified');
+  const user = e.row('u1');
+  user.dataset.messageRole = 'user';
+  user.dataset.turnId = 'u1';
+  const answer = e.row('a1');
+  answer.dataset.messageRole = 'assistant';
+  answer.dataset.rawText = 'already finished';
+
+  e.ctx.turnViewSetRuntimeTurns([]);
+  e.ctx.turnViewReconcile();
+
+  const block = e.block();
+  assert(block, 'history still gets its detail block');
+  assert(!block.classList.contains('turn-working'),
+         'the last replayed block does not invent live work');
+  eq(block.querySelector('.simple-turn-status').textContent, 'Completed');
+});
+
 // The runtime snapshot says what was running when the page was built. It keeps
 // the live turn open -- no promotion, no closing -- and stops being true the
 // moment that turn ends. Left behind, it would hold a finished turn open and
@@ -568,7 +587,7 @@ test('a load-more page starting mid-turn does not feed the live turn', () => {
 // ends mid-transcript, its last turn followed by the mid-turn head of the page
 // below, so nothing closed it. Observed as a finished turn keeping a ticking
 // clock and a rain surface, one more of them per page loaded.
-test('load more leaves exactly one working turn: the newest', () => {
+test('load more leaves exactly one working turn: the live-fed newest', () => {
   const e = env('simplified');
   startTurn(e, 'u1');
   const live = e.row('a1');

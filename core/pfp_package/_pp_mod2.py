@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -225,6 +226,37 @@ def create_signing_key() -> Dict[str, str]:
     }
 
 
+def create_stored_signing_key(secret_name: str, user_id: str) -> Dict[str, str]:
+    """Create a signing key in the user's encrypted secret store.
+
+    The private half never appears in the return value. Refusing replacement is
+    deliberate: silently rotating a publisher key makes package updates fail
+    trust-on-first-use checks for every existing installation.
+    """
+    name = str(secret_name or "").strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise PfpError(
+            "Signing-key secret name must be an environment-variable name")
+    if not user_id:
+        raise PfpError("user_id is required to store a signing key")
+
+    from core.config_store import ConfigStore
+    from core.config_value import ConfigValue
+
+    path = _paths.user_secrets_path(user_id)
+    secrets = ConfigStore.load_secrets(path)
+    if name in secrets:
+        raise PfpError(f"Secret '{name}' already exists; refusing key rotation")
+    keypair = create_signing_key()
+    secrets[name] = ConfigValue(value=keypair["private_key"])
+    ConfigStore.save_secrets(path, secrets)
+    return {
+        "ok": True,
+        "secret_name": name,
+        "public_key": keypair["public_key"],
+    }
+
+
 def _package_skill_names(package: Dict[str, Any]) -> set:
     names = set()
     for obj in (package.get("manifest") or {}).get("objects") or []:
@@ -261,7 +293,11 @@ def _collect_source_files(root: Path) -> Dict[str, bytes]:
         if not path.is_file():
             continue
         rel = _safe_relpath(path.relative_to(root).as_posix())
-        if rel in {MANIFEST_FILE, LOCK_FILE, SIGNATURE_FILE} or rel.startswith("dist/"):
+        parts = Path(rel).parts
+        if (rel in {MANIFEST_FILE, LOCK_FILE, SIGNATURE_FILE}
+                or rel.startswith("dist/")
+                or "__pycache__" in parts
+                or path.suffix in {".pyc", ".pyo"}):
             continue
         data = path.read_bytes()
         files[rel] = data

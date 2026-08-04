@@ -572,12 +572,25 @@ def build_pfp(source_dir: str, output_path: str = "", *,
     out = Path(output_path).expanduser() if output_path else root / "dist" / f"{package}-{version}.pfp"
     out = out.resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(MANIFEST_FILE, files[MANIFEST_FILE])
-        zf.writestr(LOCK_FILE, _canonical_json(lock))
-        zf.writestr(SIGNATURE_FILE, base64.b64encode(signature).decode("ascii"))
+    def _write_entry(zf: zipfile.ZipFile, name: str, data: Any) -> None:
+        # ZipInfo otherwise records the build clock, so identical signed inputs
+        # produce different release artifacts. Keep metadata fixed as well as
+        # content; CI can then rebuild and compare official packages bytewise.
+        info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.create_system = 3
+        info.external_attr = 0o100644 << 16
+        zf.writestr(info, data)
+
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED,
+                         compresslevel=9) as zf:
+        _write_entry(zf, MANIFEST_FILE, files[MANIFEST_FILE])
+        _write_entry(zf, LOCK_FILE, _canonical_json(lock))
+        _write_entry(
+            zf, SIGNATURE_FILE,
+            base64.b64encode(signature).decode("ascii"))
         for rel in sorted(p for p in files if p != MANIFEST_FILE):
-            zf.writestr(rel, files[rel])
+            _write_entry(zf, rel, files[rel])
     return {
         "ok": True,
         "path": str(out),

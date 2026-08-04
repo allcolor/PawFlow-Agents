@@ -281,13 +281,16 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert "['agent_delegate', 'tool', 'tool_call', 'tool_result', 'system', 'user'].includes(src.type)" in CONVERSATION_TTS_JS
 
 
-def test_files_panel_supports_batch_delete_clear_and_upload_ttl():
+def test_files_panel_batch_actions_and_attachment_upload_ttl_are_owned_locally():
     assert "var _convFilesSelected = new Set();" in FILES_PANEL_JS
     assert "function deleteSelectedFiles()" in FILES_PANEL_JS
     assert "action$('delete_files'" in FILES_PANEL_JS
     assert "function clearAllConversationFiles()" in FILES_PANEL_JS
     assert "action$('clear_store'" in FILES_PANEL_JS
-    assert "fd.append('ttl', String(ttlVal));" in FILES_PANEL_JS
+    assert "fd.append('ttl', String(ttlVal));" in ATTACHMENTS_JS
+    assert "function uploadFileToStore(file)" in ATTACHMENTS_JS
+    assert "function handleFiles(fileList)" in ATTACHMENTS_JS
+    assert "function handleFiles(fileList)" not in FILES_PANEL_JS
     assert "handleFileRowSelection(e, f.file_id)" in SECRETS_JS
     assert "id=\"fileSelectBar\"" in SECRETS_JS
     assert "clearFileStore" in SECRETS_JS

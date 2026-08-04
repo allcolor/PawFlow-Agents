@@ -594,6 +594,17 @@ class TestChatUISidebar(unittest.TestCase):
         # Actions are now in external JS files loaded via script tags
         assert 'conversations.js' in html
 
+    def test_chat_asset_failure_reloads_the_ordered_module_set(self):
+        from tasks.io.serve_chat_ui import ServeChatUITask
+        task = ServeChatUITask({})
+        ff = FlowFile(content=b"")
+
+        html = task.execute(ff)[0].get_content().decode()
+
+        assert "window.__pawflowAssetLoadFailed" in html
+        assert "window.location.reload()" in html
+        assert html.count('onerror="window.__pawflowAssetLoadFailed()"') >= 1
+
 
 # ── i18n keys ───────────────────────────────────────────────────────
 

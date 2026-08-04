@@ -268,6 +268,26 @@ standalone installer synchronize this directory as a managed release default so
 new optional packages appear after upgrades without touching installed-package
 records.
 
+Official bundled artifacts are built by
+`python scripts/build-bundled-pfps.py --build --key-env PAWFLOW_PFP_SIGNING_KEY`.
+The private Ed25519 key belongs in the `PAWFLOW_PFP_SIGNING_KEY` GitHub Actions
+secret and never in the repository. The release workflow reconstructs the
+packages with that secret and compares them byte-for-byte with the committed
+artifacts. If the secret has not been provisioned yet, the workflow still
+checks the committed signatures, indexed sizes, SHA-256 values, developer keys,
+and object lists, but emits a warning that reproducibility was not authenticated.
+PFP archives use fixed ZIP metadata so identical sources and signing key produce
+identical bytes. Their lock timestamp follows the standard `SOURCE_DATE_EPOCH`
+environment variable and defaults to zero; release builders that set it must use
+the same value for generation and verification.
+
+Create the publisher key without exposing its private half by calling
+`manage_package` with `action=key_create` and
+`name=PAWFLOW_PFP_SIGNING_KEY`. PawFlow stores it in the current user's encrypted
+secret store, returns only the public key, and refuses to overwrite that secret.
+The unnamed `key_create` form still returns a development keypair and must not be
+used for an official release identity.
+
 ## Security Model
 
 - `.pfp` install requires a valid Ed25519 signature.

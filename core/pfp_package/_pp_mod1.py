@@ -61,9 +61,12 @@ def _format_bytes(size: int) -> str:
 
 
 def _make_lock(files: Dict[str, bytes]) -> Dict[str, Any]:
+    # Reproducible-build convention: release builders may provide a stable
+    # source epoch, while ordinary builds default to zero instead of wall time.
+    generated_at = int(os.environ.get("SOURCE_DATE_EPOCH") or "0")
     return {
         "format": LOCK_VERSION,
-        "generated_at": int(time.time()),
+        "generated_at": generated_at,
         "files": {
             rel: "sha256:" + hashlib.sha256(data).hexdigest()
             for rel, data in sorted(files.items())

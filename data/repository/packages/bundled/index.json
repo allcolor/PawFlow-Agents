@@ -22,6 +22,47 @@
       "objects": [
         "mcp_server:comfy-cloud"
       ]
+    },
+    {
+      "package": "pawflow.avatar-runtime",
+      "version": "0.1.0",
+      "description": "Installable avatar repository, TalkingHead renderer, realtime lip sync, motion, and semantic browser controls.",
+      "category": "Media & AI",
+      "artifact": "pawflow.avatar-runtime-0.1.0.pfp",
+      "sha256": "sha256:35a8e665b872b609d2d20deea0ccb93f00dc811ed5e63ea856a62464dddc5a94",
+      "package_size": 254622,
+      "developer_key": "ed25519:Jnpk9Z5LvWIU3o1brUhHNTbwubahyGlheZCU1PHKKnM=",
+      "tags": [
+        "avatar",
+        "realtime",
+        "voice",
+        "3d"
+      ],
+      "objects": [
+        "repository_type:avatar",
+        "repository_resource:synthetic",
+        "ui_extension:avatar-runtime",
+        "tool:avatar-ui"
+      ]
+    },
+    {
+      "package": "pawflow.avatar-pack.starter",
+      "version": "0.1.0",
+      "description": "Independent PawFlow-authored starter avatar model pack.",
+      "category": "Media & AI",
+      "artifact": "pawflow.avatar-pack.starter-0.1.0.pfp",
+      "sha256": "sha256:cae6c69508c38e66bf3047441c04887282c48adb89c8ff95443f67a1d1a79dd7",
+      "package_size": 5589,
+      "developer_key": "ed25519:Jnpk9Z5LvWIU3o1brUhHNTbwubahyGlheZCU1PHKKnM=",
+      "tags": [
+        "avatar",
+        "starter",
+        "3d",
+        "model"
+      ],
+      "objects": [
+        "repository_resource:pawflow-bot"
+      ]
     }
   ]
 }

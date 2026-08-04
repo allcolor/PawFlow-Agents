@@ -39,6 +39,66 @@ function renderUserAttachments(attachments) {
   return html;
 }
 
+// Upload a file via multipart to /api/upload, returns
+// {file_id, filename, mime_type, size, url}. Keep the upload path beside the
+// attachment entry points: a transient failure in an unrelated sidebar module
+// must not disable paste or drag-and-drop for the whole page.
+async function uploadFileToStore(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  if (typeof currentConvId !== 'undefined' && currentConvId) fd.append('conversation_id', currentConvId);
+  const ttlSelect = document.getElementById('ttlSelect');
+  const ttlVal = ttlSelect ? parseInt(ttlSelect.value, 10) : 0;
+  if (ttlVal > 0) fd.append('ttl', String(ttlVal));
+  const resp = await fetch('/api/upload', { method: 'POST', body: fd, headers: {'Authorization': getAuthHeaders()['Authorization'] || ''}, credentials: 'same-origin' });
+  const data = await resp.json();
+  if (!data.ok || !data.files || !data.files.length) throw new Error(data.error || t('uploadFailed'));
+  return data.files[0];
+}
+
+function handleFiles(fileList) {
+  for (const file of fileList) {
+    // .py files → offer to install as dynamic tool
+    if (file.name.endsWith('.py')) {
+      const textReader = new FileReader();
+      textReader.onload = (e) => {
+        const source = e.target.result;
+        addMsg('system', t('installingToolFrom', { file: file.name }));
+        action$('install_tool', { filename: file.name, source }).subscribe(data => {
+          if (data.error) { addMsg('error', t('installFailed', { error: data.error })); }
+          else { addMsg('system', t('toolInstalled', { tool: data.tool_name, description: data.description })); }
+        });
+      };
+      textReader.readAsText(file);
+      continue;
+    }
+    // Upload via multipart (no size limit, no base64 OOM)
+    const mime = file.type || 'application/octet-stream';
+    const isImage = mime.startsWith('image/');
+    const placeholder = { filename: file.name, mime_type: mime, uploading: true };
+    if (isImage) placeholder.dataUrl = URL.createObjectURL(file);
+    pendingFiles.push(placeholder);
+    renderAttachments();
+    uploadFileToStore(file).then(info => {
+      const entry = pendingFiles.find(f => f === placeholder);
+      if (entry) {
+        entry.file_id = info.file_id;
+        entry.url = info.url;
+        entry.size = info.size;
+        entry.uploading = false;
+        if (isImage && !entry.dataUrl) entry.dataUrl = info.url;
+        renderAttachments();
+      }
+    }).catch(err => {
+      addMsg('error', t('uploadFailedFor', { file: file.name, error: err.message }));
+      const i = pendingFiles.indexOf(placeholder);
+      if (i >= 0) { pendingFiles.splice(i, 1); renderAttachments(); }
+    });
+  }
+  // Reset file input so same file can be re-selected
+  document.getElementById('fileInput').value = '';
+}
+
 // Drag and drop support
 document.addEventListener('DOMContentLoaded', () => {
   const main = document.querySelector('.main');

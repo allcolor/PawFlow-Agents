@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.100] — 2026-08-04
+
+### Fixed
+
+- Recovered the webchat automatically when an update briefly returns 502 for a
+  deferred JavaScript module, and kept image paste/drop upload handling inside
+  the attachment module so an unrelated Files-panel load failure cannot leave
+  `handleFiles` undefined.
+- Stopped the newest historical conversation detail block from appearing as
+  running after reload unless the server reports a live turn or the live stream
+  has actually fed that block.
+- Added deterministic official PFP builds and a GitHub release gate that verifies
+  bundled signatures unconditionally and reconstructs artifacts byte-for-byte
+  when `PAWFLOW_PFP_SIGNING_KEY` is configured.
+- Excluded Python bytecode caches from signed PFP source collection so local
+  imports cannot change package bytes or ship stale executable bytecode.
+
 ## [1.0.0-beta.99] — 2026-08-04
 
 ### Added

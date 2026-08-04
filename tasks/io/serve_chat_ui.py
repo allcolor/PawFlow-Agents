@@ -299,13 +299,25 @@ def _load_html() -> str:
         template = (_CHAT_UI_DIR / "template.html").read_text(encoding="utf-8")
 
         # Build <script defer> tags — all load in parallel, execute in order,
-        # only AFTER HTML is fully parsed (no HTTP slot contention)
+        # only AFTER HTML is fully parsed (no HTTP slot contention). During an
+        # update a page can arrive just before the server restarts, then receive
+        # a transient 502 for one module. Browsers do not retry failed scripts;
+        # reload the whole ordered module set once the server is back instead of
+        # leaving a permanently half-initialized page.
         script_tags = []
         for mod in _JS_MODULES:
             if (_CHAT_UI_DIR / mod).exists():
-                script_tags.append(f'<script defer src="/chat/js/{mod}?v={v}"></script>')
+                script_tags.append(
+                    f'<script defer src="/chat/js/{mod}?v={v}" '
+                    'onerror="window.__pawflowAssetLoadFailed()"></script>')
         scripts_html = (
-            f'<script>window.PAWFLOW_ASSET_VERSION={json.dumps(v)};</script>\n'
+            f'<script>window.PAWFLOW_ASSET_VERSION={json.dumps(v)};'
+            'window.__pawflowAssetReloadScheduled=false;'
+            'window.__pawflowAssetLoadFailed=function(){'
+            'if(window.__pawflowAssetReloadScheduled)return;'
+            'window.__pawflowAssetReloadScheduled=true;'
+            'setTimeout(function(){window.location.reload();},1500);'
+            '};</script>\n'
             + _initial_i18n_block()
             + _EXTENSIONS_PLACEHOLDER
             + "\n".join(script_tags)

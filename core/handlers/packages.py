@@ -76,7 +76,12 @@ class ManagePackageHandler(ToolHandler):
         action = str(arguments.get("action") or "")
         try:
             if action == "key_create":
-                result = pfp_package.create_signing_key()
+                secret_name = str(arguments.get("name") or "").strip()
+                if secret_name:
+                    result = pfp_package.create_stored_signing_key(
+                        secret_name, self._user_id)
+                else:
+                    result = pfp_package.create_signing_key()
             elif action == "build":
                 result = pfp_package.build_pfp(
                     arguments.get("source_dir") or arguments.get("path") or "",

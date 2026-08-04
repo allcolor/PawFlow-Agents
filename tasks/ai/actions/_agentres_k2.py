@@ -489,7 +489,12 @@ def _handle_agentres_k2(self, action, body, store, user_id, flowfile):
                 result = {"ok": True, "scope": _scope, "packages": []}
             elif pfp_action == "key_create":
                 from core import pfp_package
-                result = pfp_package.create_signing_key()
+                secret_name = str(body.get("name") or "").strip()
+                if secret_name:
+                    result = pfp_package.create_stored_signing_key(
+                        secret_name, user_id)
+                else:
+                    result = pfp_package.create_signing_key()
             elif pfp_action == "build":
                 from core import pfp_package
                 result = pfp_package.build_pfp(

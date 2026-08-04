@@ -4,7 +4,7 @@
 import re
 import subprocess  # nosec B404
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from _fs_paths import _is_host_absolute_path, _resolve_tool_path, _rel
 
@@ -585,29 +585,47 @@ def _apply_openai_patch(root_dir: str, patch: str, *,
     sections = _parse_openai_patch_sections(patch)
     if not sections:
         raise ValueError("Patch did not contain any applicable hunks")
+
+    # Build the complete post-patch state in memory first. A later invalid
+    # section must not leave earlier files changed while the tool reports an
+    # error for the overall call.
+    pending: Dict[Path, Optional[str]] = {}
     files_modified = []
     hunks_applied = 0
+
+    def _exists(target: Path) -> bool:
+        return pending[target] is not None if target in pending else target.exists()
+
+    def _read(target: Path) -> str:
+        if target in pending:
+            value = pending[target]
+            if value is None:
+                raise ValueError(f"Patch target does not exist: {target}")
+            return value
+        return target.read_text(encoding="utf-8")
+
     for action, raw_path, payload, move_to in sections:
         target, rel = _patch_target(
             root_dir, raw_path, allow_host_absolute=allow_host_absolute)
         if action == "add":
-            if target.exists():
+            if _exists(target):
                 raise ValueError(f"Add File target already exists: {rel}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text("".join(payload), encoding="utf-8")
-            files_modified.append(rel)
+            pending[target] = "".join(payload)
+            if rel not in files_modified:
+                files_modified.append(rel)
             hunks_applied += 1
         elif action == "delete":
-            if not target.exists():
+            if not _exists(target):
                 raise ValueError(f"Delete File target does not exist: {rel}")
-            target.unlink()
-            files_modified.append(rel)
+            pending[target] = None
+            if rel not in files_modified:
+                files_modified.append(rel)
             hunks_applied += 1
         elif action == "update":
-            if not target.exists():
+            if not _exists(target):
                 raise ValueError(f"Update File target does not exist: {rel}")
-            content = target.read_text(encoding="utf-8")
-            new_content, applied = _apply_patch_hunks(content, payload, rel)
+            new_content, applied = _apply_patch_hunks(
+                _read(target), payload, rel)
             if applied == 0 and not move_to:
                 raise ValueError(f"Patch did not contain applicable hunks for {rel}")
             dest = target
@@ -615,14 +633,36 @@ def _apply_openai_patch(root_dir: str, patch: str, *,
             if move_to:
                 dest, dest_rel = _patch_target(
                     root_dir, move_to, allow_host_absolute=allow_host_absolute)
-                dest.parent.mkdir(parents=True, exist_ok=True)
                 if dest != target:
-                    target.unlink()
-            dest.write_text(new_content, encoding="utf-8")
-            files_modified.append(dest_rel)
+                    pending[target] = None
+            pending[dest] = new_content
+            if dest_rel not in files_modified:
+                files_modified.append(dest_rel)
             hunks_applied += applied or 1
+
     if not files_modified or hunks_applied <= 0:
         raise ValueError("Patch did not modify any files")
+
+    originals = {
+        target: target.read_bytes() if target.exists() else None
+        for target in pending
+    }
+    try:
+        for target, content in pending.items():
+            if content is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+    except Exception:
+        for target, original in originals.items():
+            if original is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(original)
+        raise
+
     return {
         "method": "openai_apply_patch",
         "files_modified": files_modified,

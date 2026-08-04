@@ -62,6 +62,31 @@ def test_openai_apply_patch_adds_file(tmp_path: Path):
     assert (tmp_path / "added.txt").read_text(encoding="utf-8") == "hello\nworld\n"
 
 
+def test_openai_apply_patch_is_atomic_across_files(tmp_path: Path):
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("old first\n", encoding="utf-8")
+    second.write_text("old second\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Patch context not found"):
+        action_apply_patch(str(tmp_path), str(tmp_path), {
+            "patch": """*** Begin Patch
+*** Update File: first.txt
+@@
+-old first
++new first
+*** Update File: second.txt
+@@
+-not present
++new second
+*** End Patch
+"""
+        })
+
+    assert first.read_text(encoding="utf-8") == "old first\n"
+    assert second.read_text(encoding="utf-8") == "old second\n"
+
+
 def test_apply_patch_rejects_zero_hunk_patch(tmp_path: Path):
     with pytest.raises(ValueError, match="applicable hunks|applicable"):
         action_apply_patch(str(tmp_path), str(tmp_path), {

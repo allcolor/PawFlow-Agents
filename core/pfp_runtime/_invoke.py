@@ -326,6 +326,44 @@ class PackageRuntimeHost:
             return with_repository_asset_urls(result)
         return result
 
+    def execute_resource_query(self, resource_type: str,
+                               operation: str) -> Any:
+        """Return projected fields from a granted scoped resource type."""
+        if operation != "list":
+            raise PackageRuntimeError(
+                f"unsupported PFP resource query operation: {operation}")
+        grants = ((self.caller_runtime.get("permissions") or {})
+                  .get("resources") or {}).get("read") or []
+        grant = next((
+            item for item in grants
+            if isinstance(item, dict)
+            and str(item.get("type") or "") == resource_type
+        ), None)
+        if grant is None:
+            raise PackageRuntimeError(
+                f"PFP resource query is not allowed: {resource_type}")
+        from core.paths import REPO_TYPES
+        if resource_type not in REPO_TYPES:
+            raise PackageRuntimeError(
+                f"PFP resource query type is not available: {resource_type}")
+        fields = list(grant.get("fields") or [])
+        if not fields:
+            raise PackageRuntimeError(
+                f"PFP resource query has no projected fields: {resource_type}")
+        from core.repository import ScopedRepository, SCOPE_USER
+        rows = ScopedRepository.instance().list(
+            resource_type, SCOPE_USER, user_id=self.user_id)
+        projected = []
+        for row in rows:
+            projected.append({
+                field: row[field] for field in fields if field in row
+            })
+        logger.info(
+            "PFP resource query: package=%s type=%s operation=list user=%s",
+            str(self.caller_runtime.get("package") or ""),
+            resource_type, self.user_id)
+        return projected
+
     def _dispatch_service_operation(self, service: Any, operation: str,
                                     arguments: Dict[str, Any],
                                     target: Dict[str, str]) -> Any:
@@ -381,6 +419,10 @@ class PackageRuntimeHost:
             operation = str(request.get("operation") or "")
             return self.execute_repository_call(
                 str(request.get("target") or ""), operation, arguments)
+        if kind == "resources":
+            operation = str(request.get("operation") or "")
+            return self.execute_resource_query(
+                str(request.get("target") or ""), operation)
         if kind == "browser":
             operation = str(request.get("operation") or "")
             return self.execute_browser_call(

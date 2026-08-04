@@ -373,6 +373,74 @@ def test_relay_sdk_repository_facade_emits_repository_host_calls():
     )]
 
 
+def test_relay_sdk_resources_facade_emits_read_only_host_call():
+    sdk_path = (
+        Path(__file__).resolve().parents[1]
+        / "docker" / "pawflow_sdk" / "pawflow.py")
+    spec = importlib.util.spec_from_file_location(
+        "pawflow_sdk_resources_test", sdk_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    calls = []
+    module.pfp._host_call = lambda kind, target, **kwargs: (
+        calls.append((kind, target, kwargs)) or [{"name": "luna"}])
+
+    assert module.pfp.resources.list("voice_clones") == [{"name": "luna"}]
+    assert calls == [(
+        "resources",
+        "voice_clones",
+        {"operation": "list"},
+    )]
+
+
+def test_runtime_resource_query_requires_grant_and_projects_fields():
+    from core import pfp_runtime, voice_clone_cache
+
+    voice_clone_cache.save("alice", {
+        "name": "luna",
+        "provider": "example",
+        "language": "en",
+        "voice_id": "provider-secret",
+        "ref_audio_fid": "private-file",
+    })
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        caller_runtime={
+            "package": "examples.avatar-runtime",
+            "object_id": "ui_extension:avatar",
+            "permissions": {
+                "resources": {
+                    "read": [{
+                        "type": "voice_clones",
+                        "fields": ["name", "provider", "language"],
+                    }],
+                },
+            },
+        })
+
+    assert host.handle_host_call({
+        "format": pfp_runtime.HOST_CALL_FORMAT,
+        "kind": "resources",
+        "target": "voice_clones",
+        "operation": "list",
+        "arguments": {},
+    }) == [{
+        "name": "luna",
+        "provider": "example",
+        "language": "en",
+    }]
+    denied = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        caller_runtime={
+            "package": "examples.other",
+            "object_id": "tool:other",
+        })
+    with pytest.raises(
+            pfp_runtime.PackageRuntimeError, match="not allowed"):
+        denied.execute_resource_query("voice_clones", "list")
+
+
 def test_runtime_repository_assets_have_stable_refs_and_authenticated_urls(
         tmp_path):
     keypair = pfp_package.create_signing_key()

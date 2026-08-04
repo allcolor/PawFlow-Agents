@@ -49,7 +49,11 @@
   pawflow.register(PACKAGE_ID, function (pfp) {
     var state = {
       rows: null,
+      voices: null,
       selected: '',
+      voiceAlias: '',
+      voiceStatus: 'unbound',
+      nativeVoice: null,
       visible: false,
       speaking: false,
       status: 'idle',
@@ -66,6 +70,8 @@
       loadToken: 0,
       destroyed: false,
       syntheticTimer: null,
+      rendererStatus: 'idle',
+      rendererDetail: '',
     };
 
     function call(action, body) {
@@ -97,6 +103,98 @@
       } catch (_error) {
         // Browser storage may be blocked; selection still works for this page.
       }
+    }
+
+    function voiceStorageKey(name) {
+      return storageKey(pfp) + ':voice:' + String(name || '');
+    }
+
+    function voiceAliasFromRef(ref) {
+      var value = String(ref || '');
+      return value.indexOf('voice:') === 0 ? value.slice(6) : '';
+    }
+
+    function readVoiceOverride(row) {
+      try {
+        var stored = localStorage.getItem(voiceStorageKey(row && row.name));
+        if (stored !== null) return stored;
+      } catch (_error) {}
+      return voiceAliasFromRef(
+        row && row.document && row.document.voice
+          ? row.document.voice.ref : '');
+    }
+
+    function writeVoiceOverride(row, alias) {
+      try {
+        localStorage.setItem(
+          voiceStorageKey(row && row.name), String(alias || ''));
+      } catch (_error) {
+        // Browser storage may be blocked; update the active state below.
+      }
+      if (row && row.name === state.selected) {
+        state.voiceAlias = String(alias || '');
+      }
+    }
+
+    function ensureVoices(force) {
+      if (state.voices && !force) return Promise.resolve(state.voices);
+      return call('avatar.voices').then(function (voices) {
+        state.voices = Array.isArray(voices) ? voices : [];
+        return state.voices;
+      });
+    }
+
+    function voiceByAlias(alias) {
+      var voices = state.voices || [];
+      for (var i = 0; i < voices.length; i++) {
+        if (voices[i] && voices[i].name === alias) return voices[i];
+      }
+      return null;
+    }
+
+    function bindingFor(row) {
+      var alias = row ? readVoiceOverride(row) : '';
+      if (!alias) return {alias: '', status: 'unbound', voice: null};
+      var voice = voiceByAlias(alias);
+      if (!voice) return {alias: alias, status: 'missing', voice: null};
+      if (state.nativeVoice && state.nativeVoice.alias !== alias) {
+        return {alias: alias, status: 'incompatible', voice: voice};
+      }
+      return {alias: alias, status: 'ready', voice: voice};
+    }
+
+    function renderStatus() {
+      var status = state.rendererStatus;
+      var detail = state.rendererDetail;
+      var binding = bindingFor(selectedRow());
+      state.voiceAlias = binding.alias;
+      state.voiceStatus = binding.status;
+      if (state.root) {
+        state.root.setAttribute('data-avatar-voice-status', binding.status);
+      }
+      if (status === 'ready' || status === 'degraded') {
+        if (binding.status === 'unbound') {
+          status = 'degraded';
+          detail = 'Missing voice binding. Open Repository to bind a voice.';
+        } else if (binding.status === 'missing') {
+          status = 'degraded';
+          detail = 'Bound voice "' + binding.alias
+            + '" is unavailable. Open Repository to rebind.';
+        } else if (binding.status === 'incompatible') {
+          status = 'degraded';
+          detail = 'Bound voice "' + binding.alias
+            + '" is incompatible with the active native speech transport.';
+        } else {
+          detail += (detail ? ' · ' : '') + 'Voice: ' + binding.alias;
+        }
+      }
+      setStatus(status, detail);
+    }
+
+    function setRendererStatus(status, detail) {
+      state.rendererStatus = status;
+      state.rendererDetail = String(detail || '');
+      renderStatus();
     }
 
     function ensureRows(force) {
@@ -162,7 +260,7 @@
         state.head = null;
       }
       if (state.surface) clear(state.surface);
-      if (reason) setStatus('idle', reason);
+      if (reason) setRendererStatus('idle', reason);
     }
 
     function renderSynthetic(row) {
@@ -178,7 +276,7 @@
       face.appendChild(eyes);
       face.appendChild(el('div', 'pf-avatar-synthetic-mouth'));
       state.surface.appendChild(face);
-      setStatus('ready', 'Synthetic renderer ready');
+      setRendererStatus('ready', 'Synthetic renderer ready');
     }
 
     function updateSyntheticLevel(level) {
@@ -279,7 +377,7 @@
             if (state.headAudio) state.headAudio.update(deltaMs);
             if (state.motion) state.motion.update(deltaMs);
           };
-          setStatus(
+          setRendererStatus(
             state.headAudio ? 'ready' : 'degraded',
             state.headAudio
               ? 'Avatar ready with audio lip sync'
@@ -293,12 +391,13 @@
       teardownRenderer('');
       if (!state.visible) return Promise.resolve();
       if (!row) {
-        setStatus('empty', 'No avatar is installed');
+        setRendererStatus('empty', 'No avatar is installed');
         return Promise.resolve();
       }
       var documentData = row.document || {};
       if (state.titleNode) state.titleNode.textContent = documentData.title || row.name;
-      setStatus('loading', 'Loading ' + (documentData.title || row.name) + '…');
+      setRendererStatus(
+        'loading', 'Loading ' + (documentData.title || row.name) + '...');
       var token = state.loadToken;
       if (documentData.renderer === 'synthetic') {
         renderSynthetic(row);
@@ -309,7 +408,7 @@
       }).catch(function (error) {
         if (token !== state.loadToken) return;
         teardownRenderer('');
-        setStatus('error', errorText(error));
+        setRendererStatus('error', errorText(error));
         if (state.surface) {
           state.surface.appendChild(el(
             'div', 'pf-avatar-error',
@@ -427,10 +526,11 @@
         teardownRenderer('Avatar paused');
         return Promise.resolve({visible: false});
       }
-      return ensureRows(false).then(loadSelected).then(function () {
+      return Promise.all([ensureRows(false), ensureVoices(false)])
+        .then(loadSelected).then(function () {
         return {visible: true, selected: state.selected, status: state.status};
       }).catch(function (error) {
-        setStatus('error', errorText(error));
+        setRendererStatus('error', errorText(error));
         return {visible: true, status: 'error', error: errorText(error)};
       });
     }
@@ -457,6 +557,44 @@
       copy.appendChild(el(
         'small', '',
         (row.source || 'package') + ' · ' + (documentData.renderer || 'unknown')));
+      var binding = bindingFor(row);
+      var voiceControl = el('label', 'pf-avatar-voice-control');
+      voiceControl.appendChild(el('span', '', 'Voice'));
+      var voiceSelect = el('select', 'pf-avatar-voice-select');
+      var none = el('option', '', 'No voice binding');
+      none.value = '';
+      voiceSelect.appendChild(none);
+      (state.voices || []).forEach(function (voice) {
+        var option = el(
+          'option', '',
+          voice.name + (voice.provider ? ' · ' + voice.provider : ''));
+        option.value = voice.name;
+        voiceSelect.appendChild(option);
+      });
+      if (binding.alias && !binding.voice) {
+        var missing = el('option', '', 'Missing: ' + binding.alias);
+        missing.value = binding.alias;
+        voiceSelect.appendChild(missing);
+      }
+      voiceSelect.value = binding.alias;
+      voiceSelect.addEventListener('change', function () {
+        writeVoiceOverride(row, voiceSelect.value);
+        if (row.name === state.selected) renderStatus();
+        openRepository();
+      });
+      voiceControl.appendChild(voiceSelect);
+      voiceControl.appendChild(el(
+        'small',
+        binding.status === 'ready'
+          ? 'pf-avatar-voice-ready' : 'pf-avatar-voice-warning',
+        binding.status === 'ready'
+          ? 'Binding ready for SpeakHandler audio'
+          : (binding.status === 'unbound'
+            ? 'A voice binding is required'
+            : (binding.status === 'missing'
+              ? 'The saved alias no longer exists'
+              : 'The active native transport does not support this alias'))));
+      copy.appendChild(voiceControl);
       card.appendChild(copy);
       var actions = el('div', 'pf-avatar-card-actions');
       var select = el(
@@ -495,7 +633,8 @@
       var body = el('div', 'pf-avatar-repository');
       body.appendChild(el('div', 'pf-avatar-status', 'Loading avatars…'));
       pfp.ui.openDialog('Avatar repository', body);
-      ensureRows(true).then(function (rows) {
+      Promise.all([ensureRows(true), ensureVoices(true)]).then(function (values) {
+        var rows = values[0];
         clear(body);
         var controls = el('div', 'pf-avatar-repository-controls');
         var refresh = el('button', 'pf-avatar-button', 'Refresh');
@@ -568,6 +707,8 @@
             visible: state.visible,
             status: state.status,
             detail: state.detail,
+            voice: state.voiceAlias,
+            voiceStatus: state.voiceStatus,
           };
         },
         actions: {
@@ -589,6 +730,26 @@
               return ensureRows(false).then(function () {
                 return selectAvatar(params.name);
               });
+            },
+          },
+          bindVoice: {
+            parameters: {
+              alias: {type: 'string', required: true},
+            },
+            run: function (params) {
+              var row = selectedRow();
+              if (!row) throw new Error('No avatar is selected');
+              var alias = String(params.alias || '');
+              if (alias && !voiceByAlias(alias)) {
+                throw new Error('Unknown voice alias: ' + alias);
+              }
+              writeVoiceOverride(row, alias);
+              renderStatus();
+              return {
+                avatar: row.name,
+                voice: alias,
+                status: state.voiceStatus,
+              };
             },
           },
           showRepository: {
@@ -641,16 +802,27 @@
       if (state.visible) toggleStage(true);
     });
     pfp.on('resource_changed', function (event) {
+      if (event && (event.resource_type === 'voice'
+          || event.resource_type === 'voice_clones')) {
+        state.voices = null;
+        ensureVoices(true).then(renderStatus).catch(function (error) {
+          setRendererStatus('degraded', errorText(error));
+        });
+        return;
+      }
       if (!event || event.resource_type !== RESOURCE_TYPE) return;
       state.rows = null;
       ensureRows(true).then(function () {
         if (state.visible) return loadSelected();
       }).catch(function (error) {
-        setStatus('error', errorText(error));
+        setRendererStatus('error', errorText(error));
       });
     });
     pfp.on('realtime_state_changed', function (event) {
       var value = event && event.state;
+      state.nativeVoice = event && event.native_speech
+        ? {alias: String(event.voice_alias || '')} : null;
+      renderStatus();
       updateSpeaking(value === 'speaking' || value === 'responding');
       if (value === 'listening' && state.motion) {
         state.motion.play('thinking_face').catch(function () {});

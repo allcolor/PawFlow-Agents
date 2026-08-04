@@ -367,7 +367,7 @@ actions/tooling, explicit teardown, pinned licenses, and a hash-verifying
 reproducible vendor build recipe. A redistributable real model remains an
 independent phase-6 avatar pack.
 
-### Phase 6 — voice bindings and avatar packs
+### Phase 6 — voice bindings and avatar packs (complete)
 
 - add repository voice selection, compatibility checks, missing-binding UI, and change invalidation;
 - publish at least one independent avatar pack package;
@@ -376,13 +376,47 @@ independent phase-6 avatar pack.
 
 Exit gate: a voice alias used by `SpeakHandler` also drives the selected avatar, and avatar packs require no PawFlow core change.
 
-### Phase 7 — release hardening
+Implemented with an explicitly projected read-only `voice_clones` grant,
+repository binding UI and semantic `bindVoice` action, missing/incompatible
+states, resource-change invalidation, and generic outgoing-media lip sync. The
+independent `packages/pawflow.avatar-pack.starter.pfpdir` contributes an
+original deterministic MIT GLB without executable code or core changes.
+Lifecycle coverage verifies missing dependency, install order, protected owner
+uninstall, explicit-replacement update, pack uninstall, copied-artifact
+re-import, and byte-for-byte model rebuild. The developer guide documents both
+declarative model packs and the separate trust/lifecycle boundary for optional
+renderer or host-adapter packages.
+
+### Phase 7 — release hardening (complete)
 
 - full tests, Bandit, package static review, tamper tests, browser tests, and performance profiling;
 - cold-start test with no optional package installed;
 - package size/memory/GPU budgets and degraded-browser behavior;
 - backup/restore and upgrade/uninstall recovery tests;
 - update public PFP developer, package, security, and 1.0 migration documentation.
+
+Release evidence: the complete repository suite collected 7,542 tests and
+finished with 7,539 passed, one skipped, and two expected failures. Recursive
+Bandit scans over every shipped Python surface reported no issues; compileall,
+Ruff fatal-error checks, and diff hygiene also passed. Avatar-specific release
+tests enforce a 2 MiB executable/package budget and evaluate the UI extension in
+a strict cold-boot harness that rejects DOM, storage, network, media, asset
+resolver, dialog, or renderer-vendor access during registration. Existing
+generic PFP suites cover authenticated/range-served assets, tamper rejection,
+per-conversation disable, the global kill switch, uninstall, and recovery; the
+starter-pack suite also verifies copied-artifact re-import and a byte-for-byte
+deterministic model rebuild.
+
+The live relay probe exposed one deployment-only atomicity hazard: staged
+Python bytecode could remain valid by timestamp and size after a source update,
+so a fresh worker displayed the current file while executing an older cached
+function. Relay staging now excludes bytecode and cache directories from both
+the source hash and copied runtime, while script synchronization compiles the
+current source directly and reloads split modules before the fs_actions facade.
+Unit coverage exercises the read-only bind-mount and stale-bytecode paths. A
+managed-relay candidate overlay then repeated the failed multi-file patch probe:
+the later hunk was rejected and both witness files remained byte-for-byte
+unchanged, closing the live atomicity gate.
 
 ## 12. Test matrix
 

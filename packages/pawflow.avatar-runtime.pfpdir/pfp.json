@@ -104,6 +104,24 @@
           "allowed_services": []
         },
         {
+          "action": "avatar.voices",
+          "path": "content/handlers/avatar.py",
+          "runner": "python",
+          "description": "List visible PawFlow voice aliases for avatar bindings.",
+          "allowed_tools": [],
+          "allowed_services": [],
+          "permissions": {
+            "resources": {
+              "read": [
+                {
+                  "type": "voice_clones",
+                  "fields": ["name", "provider", "language"]
+                }
+              ]
+            }
+          }
+        },
+        {
           "action": "avatar.get",
           "path": "content/handlers/avatar.py",
           "runner": "python",

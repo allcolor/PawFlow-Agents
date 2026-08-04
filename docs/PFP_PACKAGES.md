@@ -130,6 +130,13 @@ URL. The asset route resolves the exact scoped repository entry and verifies
 the contributor package, declared path, and SHA-256 before serving, including
 for resources installed by a dependent pack.
 
+Runtime objects that only need selected public fields from a built-in scoped
+repository can declare `permissions.resources.read` entries with a built-in
+`type` and a unique non-empty `fields` list, then call
+`pfp.resources.list(type)`. The host reads the invoking user's scope and returns
+only the declared fields. The grant provides no `get`, mutation, cross-user,
+secret, or extension-repository access.
+
 Package resources participate in conflict, update-diff, local-modification,
 dependency, and uninstall handling. A type descriptor is retained when a
 user-created resource still uses it unless force is explicit. Forced removal

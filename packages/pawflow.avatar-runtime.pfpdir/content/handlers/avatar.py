@@ -12,6 +12,8 @@ action = str(payload.get("action") or "")
 
 if action == "avatar.list":
     result = pfp.repository.list(_RESOURCE_TYPE)
+elif action == "avatar.voices":
+    result = pfp.resources.list("voice_clones")
 elif action == "avatar.get":
     name = str(arguments.get("name") or "").strip()
     if not name:

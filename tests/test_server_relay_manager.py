@@ -126,7 +126,12 @@ def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tm
     sdk.mkdir(parents=True)
     core.mkdir()
     (tools / "pawflow_relay_launcher.py").write_text("launcher", encoding="utf-8")
+    (tools / "__pycache__").mkdir()
+    (tools / "__pycache__" / "stale.pyc").write_bytes(b"stale tools bytecode")
+    (tools / "orphan.pyc").write_bytes(b"orphan bytecode")
     (relay_pkg / "__init__.py").write_text("pkg", encoding="utf-8")
+    (relay_pkg / "__pycache__").mkdir()
+    (relay_pkg / "__pycache__" / "stale.pyo").write_bytes(b"stale package bytecode")
     (sdk / "pawflow.py").write_text("sdk", encoding="utf-8")
     monkeypatch.setattr(_rn, "__file__", str(core / "server_relay_manager.py"))
 
@@ -135,6 +140,9 @@ def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tm
     assert (code_dir / "pawflow_relay_launcher.py").read_text(encoding="utf-8") == "launcher"
     assert (code_dir / "pawflow_relay" / "__init__.py").read_text(encoding="utf-8") == "pkg"
     assert (code_dir / "pawflow.py").read_text(encoding="utf-8") == "sdk"
+    assert not (code_dir / "__pycache__").exists()
+    assert not (code_dir / "orphan.pyc").exists()
+    assert not (code_dir / "pawflow_relay" / "__pycache__").exists()
     marker = json.loads((code_dir / ".pawflow-runtime-source.json").read_text(encoding="utf-8"))
     assert marker["source"] == str(root)
     assert len(marker["source_hash"]) == 64

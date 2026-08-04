@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import runpy
+import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -134,6 +136,83 @@ def test_avatar_vendor_build_recipe_pins_inputs_patches_and_hashes():
     assert "FaceMirror is not bundled" in motion_patch
 
 
+def test_avatar_release_assets_stay_within_cold_start_budgets():
+    manifest = _json(MANIFEST)
+    extension = next(
+        obj for obj in manifest["objects"]
+        if obj["id"] == "ui_extension:avatar-runtime")
+    assets = extension["assets"]
+    executable_paths = (
+        assets["scripts"]
+        + assets["styles"]
+        + [item["path"] for item in assets["worklets"]]
+    )
+    for relpath in executable_paths:
+        assert (ROOT / relpath).stat().st_size <= 2 * 1024 * 1024
+    assert sum(
+        path.stat().st_size for path in ROOT.rglob("*") if path.is_file()
+    ) <= 2 * 1024 * 1024
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_avatar_extension_cold_boot_does_not_touch_dom_media_or_vendor():
+    harness = """
+const fs = require('fs');
+const slots = [];
+const hooks = [];
+let semanticNodes = 0;
+const forbidden = function (name) {
+  return function () { throw new Error(name + ' used during cold boot'); };
+};
+global.window = {pawflow: {
+  register: function (id, factory) {
+    if (id !== 'pawflow.avatar-runtime') throw new Error('wrong package');
+    Object.defineProperty(window, 'PawFlowAvatarVendor', {
+      get: forbidden('vendor')
+    });
+    factory({
+      id: id,
+      asset: forbidden('asset'),
+      context: function () {
+        return {user_id: 'alice', conversation_id: 'conv', agent: 'assistant'};
+      },
+      ui: {
+        slot: function (slot, localId, render) {
+          if (typeof render !== 'function') throw new Error('missing renderer');
+          slots.push(slot + ':' + localId);
+        },
+        openDialog: forbidden('dialog'),
+        closeDialog: forbidden('dialog')
+      },
+      on: function (hook, callback) {
+        if (typeof callback !== 'function') throw new Error('missing callback');
+        hooks.push(hook);
+        return function () {};
+      },
+      semantic: {
+        register: function (spec) {
+          if (spec.id !== 'stage.avatar') throw new Error('wrong semantic node');
+          semanticNodes += 1;
+        }
+      }
+    });
+  }
+}};
+global.pawflow = global.window.pawflow;
+Object.defineProperty(global, 'document', {get: forbidden('document')});
+Object.defineProperty(global, 'localStorage', {get: forbidden('storage')});
+global.fetch = forbidden('fetch');
+eval(fs.readFileSync(process.argv[1], 'utf8'));
+if (slots.length !== 5 || semanticNodes !== 1 || !hooks.includes('shutdown')) {
+  throw new Error('extension contracts were not registered');
+}
+"""
+    completed = subprocess.run(
+        ["node", "-e", harness, str(UI.resolve())],
+        check=False, capture_output=True, text=True, timeout=10)
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_avatar_package_builds_inspects_installs_and_uninstalls(tmp_path):
     keypair = pfp_package.create_signing_key()
     artifact = pfp_package.build_pfp(
@@ -161,6 +240,16 @@ def test_avatar_package_builds_inspects_installs_and_uninstalls(tmp_path):
         user_id="alice", scope="user")
     assert [row["package"] for row in extensions] == [
         "pawflow.avatar-runtime"]
+    voice_handler = pfp_package.resolve_ui_handler(
+        "pawflow.avatar-runtime", "avatar.voices", user_id="alice")
+    assert voice_handler["package_runtime"]["permissions"] == {
+        "resources": {
+            "read": [{
+                "type": "voice_clones",
+                "fields": ["name", "provider", "language"],
+            }],
+        },
+    }
 
     removed = pfp_package.uninstall_pfp(
         "pawflow.avatar-runtime", user_id="alice", scope="user", force=True)
@@ -196,10 +285,20 @@ class _RepositoryFake:
         return {"name": name}
 
 
+class _ResourcesFake:
+    def __init__(self):
+        self.calls = []
+
+    def list(self, resource_type):
+        self.calls.append(("list", resource_type))
+        return [{"name": "luna", "provider": "example", "language": "en"}]
+
+
 class _PfpFake:
     def __init__(self, payload):
         self.payload = payload
         self.repository = _RepositoryFake()
+        self.resources = _ResourcesFake()
         self.results = []
 
     def result(self, value):
@@ -239,6 +338,17 @@ def test_avatar_handler_rejects_missing_required_name(monkeypatch):
     fake = _PfpFake({"action": "avatar.get", "arguments": {}})
     with pytest.raises(ValueError, match="name is required"):
         _run_with_pfp(monkeypatch, HANDLER, fake)
+
+
+def test_avatar_handler_lists_only_granted_voice_metadata(monkeypatch):
+    fake = _PfpFake({"action": "avatar.voices", "arguments": {}})
+    _run_with_pfp(monkeypatch, HANDLER, fake)
+    assert fake.resources.calls == [("list", "voice_clones")]
+    assert fake.results == [[{
+        "name": "luna",
+        "provider": "example",
+        "language": "en",
+    }]]
 
 
 class _SemanticFake:

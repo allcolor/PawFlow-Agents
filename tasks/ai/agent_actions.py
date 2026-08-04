@@ -233,12 +233,12 @@ def _schedule_bg_action(fn) -> None:
         _BG_ACTION_QUEUE_COND.notify()
 
 _ACTION_HANDLERS = [
-    # Browser registration/result actions are short authenticated bookkeeping
-    # and never execute package code.
-    _handle_pfp_semantic,
     # PFP UI extension handlers run first: any body carrying `_ext` is
     # routed to its installed handler before built-in dispatchers see it.
     _handle_pfp_ui,
+    # Browser registration/result actions are short authenticated bookkeeping
+    # and never execute package code.
+    _handle_pfp_semantic,
     _handle_conversation,
     _handle_cancel_interrupt,
     _handle_context_ops,

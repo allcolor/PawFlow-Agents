@@ -186,7 +186,13 @@ def _relay_runtime_source_hash(tools_dir: Path, relay_pkg: Path, sdk_file: Path)
     digest = hashlib.sha256()
     sources = (("tools", tools_dir), ("pawflow_relay", relay_pkg))
     for label, directory in sources:
-        for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+        files = (
+            path for path in directory.rglob("*")
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix not in {".pyc", ".pyo"}
+        )
+        for path in sorted(files):
             rel = f"{label}/{path.relative_to(directory).as_posix()}".encode("utf-8")
             digest.update(rel + b"\0")
             digest.update(path.read_bytes())
@@ -222,8 +228,9 @@ def _prepare_relay_code_dir(runtime_dir: Path) -> Path:
         ):
             return code_dir
         shutil.rmtree(code_dir)
-    shutil.copytree(tools_dir, code_dir)
-    shutil.copytree(relay_pkg, code_dir / "pawflow_relay")
+    ignore_bytecode = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
+    shutil.copytree(tools_dir, code_dir, ignore=ignore_bytecode)
+    shutil.copytree(relay_pkg, code_dir / "pawflow_relay", ignore=ignore_bytecode)
     shutil.copy2(sdk_file, code_dir / "pawflow.py")
     marker_file.write_text(
         json.dumps({"source": str(root), "source_hash": source_hash}, sort_keys=True) + "\n",

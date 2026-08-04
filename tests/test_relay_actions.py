@@ -1,7 +1,11 @@
 """Tests for the extracted leaf relay actions (_relay_actions)."""
 import base64
+import builtins
+import errno
 import http.server
+import sys
 import threading
+import types
 
 import pytest
 
@@ -75,10 +79,49 @@ def test_update_scripts_ignores_unknown_files(monkeypatch, tmp_path):
 
 def test_update_scripts_writes_known_file(monkeypatch, tmp_path):
     monkeypatch.setattr(ra, "_script_dir", lambda: str(tmp_path))
-    # _fs_paths.py is a known relay file NOT in the hot-reload list, so no
-    # import side effects.
     payload = b"# updated fs paths\n"
     res = ra.update_scripts({"scripts": {"_fs_paths.py": base64.b64encode(payload).decode()}})
     assert res["ok"] is True
     assert "_fs_paths.py" in res["data"]["updated"]
     assert (tmp_path / "_fs_paths.py").read_bytes() == payload
+
+
+def test_update_scripts_reloads_readonly_split_module_before_facade(
+        monkeypatch, tmp_path):
+    payload = b"VALUE = 'fresh'\n"
+    target = tmp_path / "_fs_edit.py"
+    target.write_bytes(payload)
+    monkeypatch.setattr(ra, "_script_dir", lambda: str(tmp_path))
+
+    real_open = builtins.open
+
+    def readonly_open(path, mode="r", *args, **kwargs):
+        if str(path) == str(target) and mode == "wb":
+            raise OSError(errno.EROFS, "read-only bind mount")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", readonly_open)
+    edit_module = types.ModuleType("_fs_edit")
+    edit_module.__file__ = str(target)
+    edit_module.VALUE = "stale"
+    facade_module = types.ModuleType("fs_actions")
+    monkeypatch.setitem(sys.modules, "_fs_edit", edit_module)
+    monkeypatch.setitem(sys.modules, "fs_actions", facade_module)
+    reloaded = []
+
+    def reload_facade(module):
+        assert edit_module.VALUE == "fresh"
+        reloaded.append(module.__name__)
+        return module
+
+    monkeypatch.setattr(ra.importlib, "reload", reload_facade)
+
+    res = ra.update_scripts({
+        "scripts": {"_fs_edit.py": base64.b64encode(payload).decode()},
+    })
+
+    assert res["ok"] is True
+    assert res["data"]["updated"] == ["_fs_edit.py"]
+    assert res["data"]["readonly_skipped"] == []
+    assert edit_module.VALUE == "fresh"
+    assert reloaded == ["fs_actions"]

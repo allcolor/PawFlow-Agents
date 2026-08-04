@@ -304,6 +304,17 @@ class _PfpRepository:
             arguments={"name": name})
 
 
+class _PfpResources:
+    """Read-only access to explicitly granted scoped resources."""
+
+    def __init__(self, runtime):
+        self._runtime = runtime
+
+    def list(self, resource_type: str):
+        return self._runtime._host_call(
+            "resources", resource_type, operation="list")
+
+
 class _PfpSemantic:
     """Authorized access to semantic nodes in the active PawFlow browser tab."""
 
@@ -343,6 +354,7 @@ class _PfpRuntime:
     def __init__(self):
         self._request = None
         self.repository = _PfpRepository(self)
+        self.resources = _PfpResources(self)
         self.browser = _PfpBrowser(self)
         # Bind the protocol streams ONCE, at import time, before any wrapper
         # redirects sys.stdout to capture user print() output. The host-call

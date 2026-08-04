@@ -225,6 +225,31 @@
   color: var(--pf-muted, #94a3b8);
 }
 
+.pf-avatar-voice-control {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  color: var(--pf-muted, #94a3b8);
+  font-size: 11px;
+}
+
+.pf-avatar-voice-select {
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--pf-border, #475569);
+  border-radius: 6px;
+  background: var(--pf-panel, #1e293b);
+  color: var(--pf-text, #e5e7eb);
+}
+
+.pf-avatar-voice-ready {
+  color: #86efac;
+}
+
+.pf-avatar-voice-warning {
+  color: #fca5a5;
+}
+
 .pf-avatar-card-actions {
   display: flex;
   grid-column: 2;

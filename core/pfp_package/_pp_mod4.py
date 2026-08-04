@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -242,6 +243,8 @@ def resolve_ui_handler(package_id: str, action: str, *,
                                        or rec.get("allowed_tools") or []),
                 "allowed_services": list(handler.get("allowed_services")
                                           or rec.get("allowed_services") or []),
+                "permissions": dict(handler.get("permissions")
+                                    or rec.get("permissions") or {}),
                 "secrets": list(handler.get("secrets") or []),
                 # Bindings are recorded per handler at install time. Without
                 # this, a handler declaring a required secret would 502 at
@@ -585,6 +588,50 @@ def _browser_semantic_grants(obj: Dict[str, Any]) -> List[Dict[str, Any]]:
             if node != "*" and not node.startswith(package_id + ":"):
                 raise PfpError(
                     "semantic browser node must belong to the granted package")
+    return grants
+
+
+def _resource_read_grants(obj: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Validate read-only scoped-resource grants declared by a runtime object."""
+    from core.paths import REPO_TYPES
+
+    permissions = obj.get("permissions")
+    if permissions is None:
+        return []
+    if not isinstance(permissions, dict):
+        raise PfpError("permissions must be an object")
+    resources = permissions.get("resources")
+    if resources is None:
+        return []
+    if not isinstance(resources, dict):
+        raise PfpError("permissions.resources must be an object")
+    grants = resources.get("read")
+    if grants is None:
+        return []
+    if not isinstance(grants, list):
+        raise PfpError("permissions.resources.read must be a list")
+    for grant in grants:
+        if not isinstance(grant, dict):
+            raise PfpError(
+                "permissions.resources.read entries must be objects")
+        resource_type = str(grant.get("type") or "")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",
+                            resource_type):
+            raise PfpError(
+                "resource read grant type must be a valid resource type")
+        if resource_type not in REPO_TYPES:
+            raise PfpError(
+                f"resource read grant type is not available: {resource_type}")
+        fields = grant.get("fields")
+        if (not isinstance(fields, list) or not fields
+                or any(not isinstance(field, str)
+                       or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}",
+                                           field)
+                       for field in fields)
+                or len(set(fields)) != len(fields)):
+            raise PfpError(
+                "resource read grant fields must be a unique non-empty "
+                "string list")
     return grants
 
 

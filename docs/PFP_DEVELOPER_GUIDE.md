@@ -498,6 +498,88 @@ complete shutdown/GPU cleanup. Avatar packs depend on
 they do not patch core or bundle renderer code again. The package README records
 the authoring shape, model licensing rule, and reproducible vendor build.
 
+### Read-only projections of built-in resources
+
+A Python runtime object can read a deliberately narrow projection of an
+existing built-in scoped repository. Declare every type and field explicitly
+on that runtime object:
+
+```json
+"permissions": {
+  "resources": {
+    "read": [
+      {
+        "type": "voice_clones",
+        "fields": ["name", "provider", "language"]
+      }
+    ]
+  }
+}
+```
+
+The entrypoint can then call `pfp.resources.list("voice_clones")`. Only `list`
+is supported. The host derives the user from the signed invocation, reads user
+scope, and returns only fields named by the matching grant; undeclared types,
+unknown built-in types, empty or duplicate field lists, and other operations
+are rejected. This API does not return secrets or grant mutation access.
+
+### Avatar voice bindings and pack authoring
+
+An avatar document can provide a default binding as
+`"voice": {"ref": "voice:<alias>"}`. The repository UI lists visible PawFlow
+voice aliases and stores a per-user, per-conversation, per-agent override for
+each avatar. The selected alias is the same alias resolved by `SpeakHandler`;
+the resulting agent audio reaches the renderer through the generic realtime
+media hooks. Removing or changing a `voice`/`voice_clones` resource invalidates
+the cached list immediately. Unbound, removed, and incompatible aliases remain
+visible as explicit degraded states instead of silently selecting a fallback.
+
+Native speech-to-speech is compatible only when its realtime state identifies
+the same `voice_alias`; a different alias is reported as incompatible. The
+binding does not synthesize audio itself and cannot make a native provider use
+an alias it does not support.
+
+For a TalkingHead-compatible model pack, use the independent package shape in
+`packages/pawflow.avatar-pack.starter.pfpdir`:
+
+```json
+{
+  "dependencies": [
+    {"package": "pawflow.avatar-runtime", "version": ">=0.1.0,<1.0.0"}
+  ],
+  "objects": [
+    {
+      "id": "repository_resource:my-avatar",
+      "type": "repository_resource",
+      "name": "my-avatar",
+      "resource_type": "pawflow.avatar",
+      "schema_version": "1",
+      "path": "content/avatars/my-avatar.json",
+      "assets": [
+        {"id": "model", "path": "content/models/my-avatar.glb"}
+      ]
+    }
+  ]
+}
+```
+
+The JSON document refers to the model by logical asset ID, not a path. Include
+author, license, and source metadata for every redistributed model and preview,
+plus the corresponding license text. A model pack contains no executable code
+and must not duplicate the runtime renderer. Build/inspect/install the runtime
+first, then the dependent pack; package updates that overwrite an installed
+resource use the normal explicit `replace` path.
+
+An alternative renderer or host adapter is an executable package, not an
+avatar pack. Give it its own `ui_extension` and reviewed scripts/worklets/files,
+or package-owned Python runtime objects with explicit tool/service grants. It
+must lazy-load renderer dependencies, consume the generic media hooks, and
+release listeners, media nodes, animation loops, and GPU resources on shutdown.
+The `pawflow.avatar.v1` schema is intentionally closed to `talkinghead` and
+`synthetic`; a renderer with a different document shape must own a namespaced
+`repository_type` (or introduce a reviewed versioned owner contract) rather
+than smuggling new fields or renderer names into v1.
+
 ## UI Extensions (ui.v1)
 
 A package can ship a `ui_extension` object that injects JS / CSS into the

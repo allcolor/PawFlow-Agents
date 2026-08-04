@@ -1,0 +1,35 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.avatar-pack.starter",
+  "version": "0.1.0",
+  "description": "Independent PawFlow-authored starter avatar model pack.",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": ""
+  },
+  "origin": {
+    "source": "packages/pawflow.avatar-pack.starter.pfpdir"
+  },
+  "dependencies": [
+    {
+      "package": "pawflow.avatar-runtime",
+      "version": ">=0.1.0,<1.0.0"
+    }
+  ],
+  "objects": [
+    {
+      "id": "repository_resource:pawflow-bot",
+      "type": "repository_resource",
+      "name": "pawflow-bot",
+      "resource_type": "pawflow.avatar",
+      "schema_version": "1",
+      "path": "content/avatars/pawflow-bot.json",
+      "assets": [
+        {
+          "id": "model",
+          "path": "content/models/pawflow-bot.glb"
+        }
+      ]
+    }
+  ]
+}

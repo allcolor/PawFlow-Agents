@@ -34,6 +34,18 @@ def _script_dir():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _reload_module(module):
+    """Reload a Python module from source without trusting cached bytecode."""
+    source_path = getattr(module, "__file__", "") or ""
+    if source_path.endswith(".py"):
+        with open(source_path, "rb") as source_file:
+            code = compile(source_file.read(), source_path, "exec")
+        # Only allowlisted relay scripts supplied by PawFlow reach this path.
+        exec(code, module.__dict__)  # nosec B102
+        return module
+    return importlib.reload(module)
+
+
 def http_proxy(msg, on_output=None):
     """Proxy one HTTP request without retaining its response in memory.
 
@@ -131,15 +143,28 @@ def update_scripts(msg):
                         _current = _f.read()
                 except OSError:
                     _current = None
-                if _current != _data:
+                if _current == _data:
+                    # The bind-mounted file already exposes the new bytes, but
+                    # the imported module may still contain the old code.
+                    _updated.append(_fname)
+                else:
                     _readonly_skipped.append(_fname)
             else:
                 raise
-    # Hot-reload importable modules (not the launcher itself)
-    for _mod_name in ["fs_common", "fs_actions", "fs_exec", "fs_screen", "fs_mcp"]:
-        if f"{_mod_name}.py" in _updated and _mod_name in sys.modules:
+    # Reload split dependencies before fs_actions, whose imported bindings
+    # otherwise keep the old functions. Reload the facade whenever a split
+    # action module changed, even if fs_actions.py itself did not.
+    _split_modules = ("_fs_paths", "_fs_read", "_fs_grep", "_fs_edit")
+    _split_updated = any(f"{name}.py" in _updated for name in _split_modules)
+    for _mod_name in (
+            "fs_common", *_split_modules, "fs_actions",
+            "fs_exec", "fs_screen", "fs_mcp"):
+        _should_reload = (
+            f"{_mod_name}.py" in _updated
+            or (_mod_name == "fs_actions" and _split_updated))
+        if _should_reload and _mod_name in sys.modules:
             try:
-                importlib.reload(sys.modules[_mod_name])
+                _reload_module(sys.modules[_mod_name])
             except Exception as _e:
                 sys.stderr.write(f"[FSRelay] Failed to reload {_mod_name}: {_e}\n")
     _needs_restart = "pawflow_relay_launcher.py" in _updated

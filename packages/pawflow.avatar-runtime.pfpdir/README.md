@@ -20,6 +20,16 @@ selection is stored in the browser per user, conversation, and selected agent.
 Packaged model assets remain integrity checked and are fetched through their
 authenticated repository URLs.
 
+## Voice bindings
+
+Each avatar may declare a default `voice:<alias>` reference. The repository UI
+lists visible PawFlow voice aliases and stores an override per user,
+conversation, selected agent, and avatar. The alias used by `SpeakHandler`
+therefore drives the same outgoing audio observed by the renderer. Voice
+resource changes refresh bindings immediately; missing aliases and native
+speech transports reporting a different alias are shown as degraded states,
+with no anonymous or default fallback.
+
 ## Avatar packs
 
 A model pack depends explicitly on `pawflow.avatar-runtime` and contributes
@@ -27,6 +37,11 @@ one or more `repository_resource` objects for `pawflow.avatar`. Each
 TalkingHead document names its model and optional preview by logical asset ID.
 The common document shape is defined in
 `content/repository/avatar.schema.json`.
+
+`packages/pawflow.avatar-pack.starter.pfpdir` is the complete independent
+example. It contains only a repository resource, an original MIT-licensed GLB,
+and an explicit dependency on this runtime. Its deterministic builder is
+`scripts/build-starter-avatar.py`.
 
 The package deliberately does not redistribute the upstream TalkingHead demo
 avatars because their model-specific provenance and redistribution terms are
@@ -54,3 +69,8 @@ adapter patches, uses esbuild 0.25.9 and Three.js 0.180.0, and refuses output
 whose hashes differ from the reviewed release artifacts. FaceMirror and its
 MediaPipe dependency are intentionally excluded; they belong in an optional
 adapter package.
+
+Alternative renderers are separate executable PFP packages with their own
+reviewed UI/runtime assets and lifecycle. The v1 avatar schema accepts only
+`talkinghead` and `synthetic`; other document shapes require a namespaced
+repository type or a reviewed versioned owner contract.

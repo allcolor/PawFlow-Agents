@@ -19,7 +19,7 @@ from core.pfp_package._pp_mod3 import (  # noqa: F401
     _declared_secret_requirements, _inject_package_flow_task_relays, _install_record_path, _missing_agent_assigned_skills, _ui_extension_manifest, _uninstall_object, _verify_signature, _web_app_manifest)
 from core.pfp_package._pp_ui_validation import _validate_ui_extension_object
 from core.pfp_package._pp_mod4 import (  # noqa: F401
-    _browser_semantic_grants, _declared_package_dependencies, _dependent_packages, _existing_repository_resource_status, _existing_status, _missing_package_dependencies, _pinned_developer_key, _record_is_locally_modified, _refresh_runtime, _remove_package_content_store, _validate_allowed_refs, _validate_dependency_list, resolve_repository_type)
+    _browser_semantic_grants, _declared_package_dependencies, _dependent_packages, _existing_repository_resource_status, _existing_status, _missing_package_dependencies, _pinned_developer_key, _record_is_locally_modified, _refresh_runtime, _remove_package_content_store, _resource_read_grants, _validate_allowed_refs, _validate_dependency_list, resolve_repository_type)
 
 logger = logging.getLogger(__name__)
 
@@ -528,6 +528,10 @@ def _validate_manifest(manifest: Dict[str, Any]) -> None:
         _validate_allowed_refs(obj.get("allowed_tools") or [], "allowed_tools")
         _validate_allowed_refs(obj.get("allowed_services") or [], "allowed_services")
         _browser_semantic_grants(obj)
+        _resource_read_grants(obj)
+        if str(obj.get("type") or "") == "ui_extension":
+            for handler in obj.get("handlers") or []:
+                _resource_read_grants(handler)
         if str(obj.get("type") or "") == "repository_type":
             resource_type = str(obj.get("resource_type") or "")
             if resource_type in repository_types:

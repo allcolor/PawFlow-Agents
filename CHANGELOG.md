@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.99] — 2026-08-04
+
+### Added
+
+- Added feature-neutral PFP contracts for extension repositories, immutable
+  authenticated assets, inert AudioWorklets, realtime media lifecycle events,
+  and authorized semantic browser actions.
+- Added the installable `pawflow.avatar-runtime` package with lazy
+  TalkingHead/HeadAudio/MotionEngine rendering, repository controls, semantic
+  actions, voice-alias bindings, explicit teardown, and reproducible vendoring.
+- Added an independent deterministic MIT starter avatar pack plus lifecycle,
+  cold-boot, package-budget, tamper, disable, uninstall, and recovery coverage.
+- Grouped PFP Depot entries by package category for easier catalog navigation.
+
+### Fixed
+
+- Made multi-file `apply_patch` validation atomic so a rejected later hunk never
+  leaves earlier files modified.
+- Relay runtime staging no longer hashes or copies cached Python bytecode, and
+  hot-reload compiles the mounted source directly before refreshing the facade,
+  preventing stale functions after split-module updates.
+- Normalized Voicebox WAV responses to the canonical audio MIME type.
+
 ## [1.0.0-beta.98] — 2026-08-03
 
 ### Added

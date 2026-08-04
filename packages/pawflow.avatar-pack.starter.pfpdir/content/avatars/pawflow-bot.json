@@ -1,0 +1,27 @@
+{
+  "format": "pawflow.avatar.v1",
+  "title": "PawFlow Bot",
+  "description": "A compact PawFlow-authored low-poly robot with TalkingHead-compatible bones and audio visemes.",
+  "renderer": "talkinghead",
+  "model": {
+    "asset": "model",
+    "format": "glb",
+    "body": "F"
+  },
+  "animation": {
+    "idle": "natural",
+    "lip_sync": "audio",
+    "motion_profile": "default"
+  },
+  "renderer_options": {
+    "talkinghead": {
+      "camera_view": "full",
+      "background": "#0F172A"
+    }
+  },
+  "metadata": {
+    "author": "PawFlow contributors",
+    "license": "MIT",
+    "source": "scripts/build-starter-avatar.py"
+  }
+}

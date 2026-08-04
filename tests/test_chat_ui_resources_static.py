@@ -396,10 +396,17 @@ def test_resource_panel_renders_with_no_conversation_selected():
 def test_pfp_depot_is_a_permanent_left_sidebar_panel():
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
     js = Path("tasks/io/chat_ui/resources_pfp.js").read_text(encoding="utf-8")
+    render_js = Path("tasks/io/chat_ui/resources_render.js").read_text(encoding="utf-8")
 
-    assert 'id="pfpDepotPanel"' in template
-    assert 'id="pfpDepotContent"' in template
-    assert 'onclick="togglePfpDepot()"' in template
+    assert 'id="pfpDepotPanel"' not in template
+    assert 'id="pfpDepotPanel"' in js
+    assert 'id="pfpDepotContent"' in js
+    assert "_repoSectionHeader(t('pfpDepot'), '_pfp_depot'" in js
+    assert "createOnclick: '_uploadPfpToDepot()'" in js
+    assert "refreshOnclick: 'event.stopPropagation();loadPfpDepot()'" in js
+    assert 'id="pfp-depot-upload"' not in js
+    assert "repoHtml\n        + _pfpDepotPanelHtml() + (noConv ? '' : linksHtml)" in render_js
+    assert "el.innerHTML = fullHtml;\n        loadPfpDepot();" in render_js
     assert "async function loadPfpDepot()" in js
     assert "action$('pfp_depot_list', {}, {" in js
     assert js.count("skipConversationId: true") >= 3
@@ -408,3 +415,5 @@ def test_pfp_depot_is_a_permanent_left_sidebar_panel():
     assert "action$('pfp_depot_delete'" in js
     assert "_showPfpInstallDialog(btn.dataset.ref || '')" in js
     assert "row.deletable ?" in js
+    assert "class=\"pfp-depot-category\"" in js
+    assert "function _pfpDepotCategory(row)" in js

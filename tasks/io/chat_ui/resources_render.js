@@ -697,10 +697,14 @@ async function _renderResourcesData(data) {
         linksHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noLinkedAccounts')) + '</div>';
       }
       linksHtml += '</div>';
-      // Final assembly: live → variables/secrets → repos → linked accounts
-      const fullHtml = _viewAllBarHtml() + liveHtml + varSecHtml + repoHtml + (noConv ? '' : linksHtml);
+      // Final assembly: live → variables/secrets → repos → PFP depot → linked accounts
+      const fullHtml = _viewAllBarHtml() + liveHtml + varSecHtml + repoHtml
+        + _pfpDepotPanelHtml() + (noConv ? '' : linksHtml);
       // Only update DOM if content actually changed (prevents flash/blink)
-      if (el.innerHTML !== fullHtml) el.innerHTML = fullHtml;
+      if (el.innerHTML !== fullHtml) {
+        el.innerHTML = fullHtml;
+        loadPfpDepot();
+      }
     });
   } catch (e) {
     document.getElementById('resourcesContent').innerHTML = '';

@@ -7,6 +7,7 @@ Bundled artifacts are listed alongside user uploads but remain read-only.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import uuid
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import core.paths as _paths
+
+logger = logging.getLogger(__name__)
 
 MAX_DEPOT_PACKAGE_BYTES = 100 * 1024 * 1024
 _DEPOT_REF_PREFIX = "depot:"
@@ -98,10 +101,14 @@ def add_upload(file_id: str, *, user_id: str) -> Dict[str, Any]:
         for existing in root.glob("*.pfp"):
             if existing == temporary:
                 continue
+            existing_plan = None
             try:
                 existing_plan = pfp_package.inspect_pfp(
                     str(existing), user_id=user_id)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Skipping invalid PFP depot artifact %s: %s",
+                               existing.name, exc)
+            if existing_plan is None:
                 continue
             if (existing_plan.get("package"), existing_plan.get("version")) != (
                     plan.get("package"), plan.get("version")):
@@ -168,6 +175,7 @@ def _uploaded_row(path: Path, plan: Dict[str, Any]) -> Dict[str, Any]:
         "package": plan.get("package", ""),
         "version": plan.get("version", ""),
         "description": plan.get("description", ""),
+        "category": plan.get("category", ""),
         "sha256": plan.get("sha256", ""),
         "package_size": plan.get("package_size", 0),
         "content_size": plan.get("content_size", 0),

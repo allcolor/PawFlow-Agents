@@ -69,6 +69,7 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
         "package": package_id,
         "version": version,
         "description": "WaveSpeed-style provider package",
+        "category": "Media providers",
         "developer": {
             "email": "dev@example.com",
             "public_key": keypair["public_key"],
@@ -198,6 +199,7 @@ def test_pfp_build_inspect_and_selective_install(tmp_path, monkeypatch):
     plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
     assert plan["verified"] is True
     assert plan["package"] == "community.wavespeed"
+    assert plan["category"] == "Media providers"
     tool_row = next(row for row in plan["objects"] if row["id"] == "tool:reader")
     assert tool_row["status"] == "new"
     assert tool_row["selected"] is True

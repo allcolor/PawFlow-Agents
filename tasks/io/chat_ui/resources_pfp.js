@@ -180,14 +180,17 @@ function _renderPfpRegistries(data) {
     + '</div>').join('');
 }
 
-async function togglePfpDepot() {
-  const content = document.getElementById('pfpDepotContent');
-  const arrow = document.getElementById('pfpDepotArrow');
-  if (!content) return;
-  const opening = content.style.display === 'none';
-  content.style.display = opening ? 'block' : 'none';
-  if (arrow) arrow.textContent = opening ? '\u25BC' : '\u25B6';
-  if (opening) await loadPfpDepot();
+function _pfpDepotPanelHtml() {
+  return '<div id="pfpDepotPanel">'
+    + _repoSectionHeader(t('pfpDepot'), '_pfp_depot', {
+      createOnclick: '_uploadPfpToDepot()',
+      createTitle: t('pfpDepotUpload'),
+      refreshOnclick: 'event.stopPropagation();loadPfpDepot()',
+      refreshTitle: t('refresh'),
+    })
+    + '<div id="pfpDepotContent" style="max-height:35vh;overflow-y:auto;font-size:12px;color:var(--pf-muted);"></div>'
+    + _sectionFooter()
+    + '</div>';
 }
 
 async function loadPfpDepot() {
@@ -208,14 +211,61 @@ async function loadPfpDepot() {
 function _renderPfpDepot(content, data) {
   const packages = (data && data.packages) || [];
   const errors = (data && data.errors) || [];
-  let html = '<div style="display:flex;gap:5px;margin-bottom:7px;">'
-    + '<button id="pfp-depot-upload" style="flex:1;background:var(--pf-accent);color:var(--pf-bg);border:none;padding:5px 7px;border-radius:4px;cursor:pointer;font-size:10px;">' + escapeHtml(t('pfpDepotUpload')) + '</button>'
-    + '<button id="pfp-depot-refresh" title="' + _pfpAttr(t('refresh')) + '" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:5px 7px;border-radius:4px;cursor:pointer;font-size:10px;">\u21BB</button>'
-    + '</div>';
+  let html = '';
   if (!packages.length) {
     html += '<div style="color:var(--pf-muted);font-size:10px;">' + escapeHtml(t('pfpDepotEmpty')) + '</div>';
   } else {
-    html += packages.map(row => {
+    const groups = new Map();
+    packages.forEach(row => {
+      const category = _pfpDepotCategory(row);
+      if (!groups.has(category)) groups.set(category, []);
+      groups.get(category).push(row);
+    });
+    html += Array.from(groups.keys()).sort((a, b) => a.localeCompare(b)).map(category => {
+      const rows = groups.get(category).slice().sort((a, b) => {
+        const byName = String(a.package || '').localeCompare(String(b.package || ''));
+        return byName || String(a.version || '').localeCompare(String(b.version || ''));
+      });
+      return '<details class="pfp-depot-category" open style="margin-bottom:5px;">'
+        + '<summary style="cursor:pointer;color:var(--pf-text);font-size:11px;font-weight:600;margin-bottom:4px;">'
+        + escapeHtml(category) + ' <span style="color:var(--pf-muted);font-size:9px;">(' + rows.length + ')</span></summary>'
+        + rows.map(row => _pfpDepotRowHtml(row)).join('')
+        + '</details>';
+    }).join('');
+  }
+  if (errors.length) {
+    html += '<div style="color:var(--pf-warning);font-size:9px;margin-top:5px;">'
+      + errors.map(err => escapeHtml(err.error || '')).join('<br/>') + '</div>';
+  }
+  content.innerHTML = html;
+  content.querySelectorAll('.pfp-depot-install').forEach(btn => {
+    btn.addEventListener('click', () => _showPfpInstallDialog(btn.dataset.ref || ''));
+  });
+  content.querySelectorAll('.pfp-depot-delete').forEach(btn => {
+    btn.addEventListener('click', () => _deletePfpFromDepot(
+      btn.dataset.depotId || '', btn.dataset.package || ''));
+  });
+}
+
+function _pfpDepotCategory(row) {
+  const declared = String((row && row.category) || '').trim();
+  if (declared) return declared;
+  const types = new Set(((row && row.objects) || []).map(obj => {
+    const value = typeof obj === 'string' ? obj : (obj.type || obj.id || '');
+    return String(value).split(':')[0];
+  }).filter(Boolean));
+  const categories = [
+    [['agent', 'prompt', 'skill', 'agent_hook'], 'pfpDepotCategoryAgents'],
+    [['flow', 'flow_task', 'task_provider'], 'pfpDepotCategoryFlows'],
+    [['service_definition', 'service_provider', 'service_template'], 'pfpDepotCategoryServices'],
+    [['tool', 'mcp_server'], 'pfpDepotCategoryToolsMcp'],
+    [['theme', 'ui_extension', 'web_app'], 'pfpDepotCategoryInterface'],
+  ].filter(entry => entry[0].some(type => types.has(type)));
+  if (categories.length > 1) return t('pfpDepotCategoryMixed');
+  return t(categories.length ? categories[0][1] : 'pfpDepotCategoryOther');
+}
+
+function _pfpDepotRowHtml(row) {
       const sourceKey = row.source === 'uploaded' ? 'pfpDepotUploaded' : 'pfpDepotBundled';
       const objects = (row.objects || []).map(obj => typeof obj === 'string' ? obj : (obj.id || obj.type || '')).filter(Boolean);
       return '<div class="pfp-depot-row" style="border:1px solid var(--pf-border);border-radius:4px;padding:6px;margin-bottom:5px;">'
@@ -230,24 +280,6 @@ function _renderPfpDepot(content, data) {
         + (row.description ? '<div style="color:var(--pf-muted);font-size:10px;margin-top:4px;">' + escapeHtml(row.description) + '</div>' : '')
         + (objects.length ? '<div style="color:var(--pf-muted);font-size:9px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + _pfpAttr(objects.join(', ')) + '">' + escapeHtml(objects.join(', ')) + '</div>' : '')
         + '</div>';
-    }).join('');
-  }
-  if (errors.length) {
-    html += '<div style="color:var(--pf-warning);font-size:9px;margin-top:5px;">'
-      + errors.map(err => escapeHtml(err.error || '')).join('<br/>') + '</div>';
-  }
-  content.innerHTML = html;
-  const upload = content.querySelector('#pfp-depot-upload');
-  const refresh = content.querySelector('#pfp-depot-refresh');
-  if (upload) upload.addEventListener('click', _uploadPfpToDepot);
-  if (refresh) refresh.addEventListener('click', loadPfpDepot);
-  content.querySelectorAll('.pfp-depot-install').forEach(btn => {
-    btn.addEventListener('click', () => _showPfpInstallDialog(btn.dataset.ref || ''));
-  });
-  content.querySelectorAll('.pfp-depot-delete').forEach(btn => {
-    btn.addEventListener('click', () => _deletePfpFromDepot(
-      btn.dataset.depotId || '', btn.dataset.package || ''));
-  });
 }
 
 function _uploadPfpToDepot() {

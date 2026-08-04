@@ -58,6 +58,7 @@ def _build_package(root: Path, *, marker: str = "one") -> Path:
         "package": "examples.depot-fixture",
         "version": "1.0.0",
         "description": "Depot fixture " + marker,
+        "category": "Test fixtures",
         "developer": {
             "email": "dev@example.com",
             "public_key": keypair["public_key"],
@@ -90,6 +91,7 @@ def test_add_list_resolve_and_delete_uploaded_package(tmp_path):
     assert added["already_present"] is False
     row = added["package"]
     assert row["package"] == "examples.depot-fixture"
+    assert row["category"] == "Test fixtures"
     assert row["verified"] is True
     assert row["source"] == "uploaded"
     assert row["deletable"] is True

@@ -421,6 +421,10 @@ def _validate_manifest(manifest: Dict[str, Any]) -> None:
     _validate_package_id(str(manifest.get("package") or ""))
     if not str(manifest.get("version") or ""):
         raise PfpError("version is required")
+    if "category" in manifest and (
+            not isinstance(manifest["category"], str)
+            or not manifest["category"].strip()):
+        raise PfpError("category must be a non-empty string")
     _validate_dependency_list(manifest.get("dependencies") or [], "dependencies")
     objects = manifest.get("objects")
     if not isinstance(objects, list):

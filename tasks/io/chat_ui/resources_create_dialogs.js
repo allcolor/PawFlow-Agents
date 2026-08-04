@@ -98,6 +98,7 @@ function _saveResourceCreate(rtype, assignAfterCreate) {
       if (d.error) addMsg('error', d.error);
       else {
         addMsg('system', t('resourceCreated', { type: rtype, name: name }));
+        notifyResourceChanged(rtype, 'create', { name: name, scope: scope });
         document.getElementById('resourceEditorOverlay').remove();
         loadResources();
         if (assignAfterCreate && rtype === 'task_def') {

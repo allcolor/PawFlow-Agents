@@ -22,7 +22,9 @@ from cryptography.hazmat.primitives.serialization import (
 import yaml
 import core.paths as _paths
 from core.pfp_package._pp_base import (  # noqa: F401
-    FORMAT_VERSION, LOCK_FILE, MANIFEST_FILE, PfpError, SIGNATURE_FILE, _RESOURCE_NAME_RE, _RESOURCE_TYPES, _UI_API_VERSION, _UI_ASSET_EXTENSIONS, _UI_HANDLER_ACTION_RE, _UI_KNOWN_HOOKS, _UI_KNOWN_SLOTS, _WEBAPP_API_VERSION, _WEBAPP_ASSET_EXTENSIONS)
+    FORMAT_VERSION, LOCK_FILE, MANIFEST_FILE, PfpError, SIGNATURE_FILE,
+    _RESOURCE_NAME_RE, _RESOURCE_TYPES, _WEBAPP_API_VERSION,
+    _WEBAPP_ASSET_EXTENSIONS)
 from core.pfp_package._pp_mod1 import (  # noqa: F401
     _agent_assigned_skill_names, _append_display_list, _canonical_json, _capability_refs, _caret_upper_bound, _compare_versions, _decode_key_bytes, _dedupe_dependencies, _dedupe_dicts, _format_bytes, _format_dependency, _iter_install_record_paths, _load_json_bytes, _name_from_id, _parse_skill_md, _public_key_text, _read_json_file, _record_dependencies, _register_flow_task_proxy, _safe_component, _safe_relpath, _secret_env_name, _secret_key_exists, _skill_bundled_files, _split_object_ref, _tilde_upper_bound, _ui_extension_asset_list, _validate_package_id, _validate_version_ref, _version_tuple, _web_app_asset_list, _write_json_file)
 
@@ -457,69 +459,6 @@ def _load_resource_data(package: Dict[str, Any], rel: str, rtype: str, name: str
     return loaded
 
 
-def _validate_ui_extension_object(obj: Dict[str, Any], package: Dict[str, Any]) -> str:
-    """Return an empty string when the ui_extension is structurally valid, else a reason."""
-    if str(obj.get("version_compat") or "") != _UI_API_VERSION:
-        return f"ui_extension requires version_compat == {_UI_API_VERSION!r}"
-    assets = obj.get("assets")
-    if not isinstance(assets, dict):
-        return "ui_extension.assets must be an object with scripts/styles"
-    rows = _ui_extension_asset_list(obj)
-    if not rows:
-        return "ui_extension must declare at least one script"
-    files = package.get("files") or {}
-    for row in rows:
-        rel = _safe_relpath(row["path"])
-        if rel not in files:
-            return f"ui_extension asset is missing in package: {row['path']}"
-        ext = Path(rel).suffix.lower()
-        if ext not in _UI_ASSET_EXTENSIONS:
-            return f"ui_extension asset extension is not allowed: {row['path']}"
-    slots = obj.get("slots") if isinstance(obj.get("slots"), list) else []
-    seen_ids = set()
-    for slot in slots:
-        if not isinstance(slot, dict):
-            return "ui_extension.slots entries must be objects"
-        slot_name = str(slot.get("slot") or "")
-        slot_id = str(slot.get("id") or "")
-        if slot_name not in _UI_KNOWN_SLOTS:
-            return f"ui_extension.slots: unknown slot {slot_name!r}"
-        if not slot_id:
-            return "ui_extension.slots entries require a non-empty id"
-        key = (slot_name, slot_id)
-        if key in seen_ids:
-            return f"ui_extension.slots: duplicate id {slot_id!r} in slot {slot_name!r}"
-        seen_ids.add(key)
-    hooks = obj.get("hooks") if isinstance(obj.get("hooks"), list) else []
-    for hook in hooks:
-        if str(hook) not in _UI_KNOWN_HOOKS:
-            return f"ui_extension.hooks: unknown hook {hook!r}"
-    # Server-side handlers: triggered by `pfp.call(action, body)` from the
-    # browser. Each handler runs in the relay subprocess sandbox — same
-    # isolation as PFP tools — with broker-authorized host calls.
-    handlers = obj.get("handlers") if isinstance(obj.get("handlers"), list) else []
-    seen_actions = set()
-    for entry in handlers:
-        if not isinstance(entry, dict):
-            return "ui_extension.handlers entries must be objects"
-        act = str(entry.get("action") or "").strip()
-        if not act or not _UI_HANDLER_ACTION_RE.match(act):
-            return f"ui_extension.handlers: invalid action {act!r}"
-        if act in seen_actions:
-            return f"ui_extension.handlers: duplicate action {act!r}"
-        seen_actions.add(act)
-        runner = str(entry.get("runner") or "")
-        if runner != "python":
-            return f"ui_extension.handlers: only 'python' runner is supported (got {runner!r})"
-        path = str(entry.get("path") or "").strip()
-        if not path:
-            return f"ui_extension.handlers[{act}]: path is required"
-        rel = _safe_relpath(path)
-        if rel not in files:
-            return f"ui_extension.handlers[{act}]: missing package file {path!r}"
-        if Path(rel).suffix.lower() != ".py":
-            return f"ui_extension.handlers[{act}]: handler must be a .py file"
-    return ""
 
 
 def _validate_web_app_object(obj: Dict[str, Any], package: Dict[str, Any]) -> str:

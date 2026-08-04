@@ -20,6 +20,15 @@ function notifyServiceConfigurationChanged() {
   }
 }
 
+function notifyResourceChanged(resourceType, operation, details) {
+  if (!window._pawflowExtRuntime) return;
+  const payload = Object.assign({
+    resource_type: String(resourceType || ''),
+    operation: String(operation || ''),
+  }, details || {});
+  window._pawflowExtRuntime.fireHook('resource_changed', payload);
+}
+
 function cmdServiceList() {
   listServices$().subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }

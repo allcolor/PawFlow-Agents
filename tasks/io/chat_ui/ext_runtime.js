@@ -4,6 +4,8 @@
 //   pawflow.register(packageId, callback)
 //     The callback receives a per-package `pfp` API object:
 //       pfp.id            string  package id
+//       pfp.asset(idOrPath) integrity-addressed URL for an inert package file
+//       pfp.context()      frozen snapshot of current UI context
 //       pfp.t(key)        i18n lookup (namespaced)
 //       pfp.ui.slot(slot, entryId, renderFn)
 //       pfp.ui.openDialog(title, contentNode, opts?)
@@ -35,6 +37,11 @@
     'action_menu', 'gear_menu', 'resources_panel',
     'sidebar_top', 'sidebar_bottom',
     'header_actions', 'tab_bar',
+    'conversation_stage', 'resources_collection', 'composer_accessory',
+  ];
+
+  var CONDITIONAL_SLOTS = [
+    'conversation_stage', 'resources_collection', 'composer_accessory',
   ];
 
   var KNOWN_HOOKS = [
@@ -46,7 +53,7 @@
     'before_send',
     'agent_changed', 'theme_changed',
     'tab_switched', 'permission_mode_changed',
-    'sse_event',
+    'sse_event', 'resource_changed',
   ];
 
   // Registered packages: id -> { ready: bool, callback, pfp, slots: [], hooks: {}, commands: [], localBus: {} }
@@ -57,6 +64,7 @@
   var _slotEntries = Object.create(null);
   // Per-extension slash commands: name -> {pkg, spec}
   var _commands = Object.create(null);
+  var _unregisteredPackages = Object.create(null);
   // Last `boot` payload — replayed for packages that load late.
   var _bootPayload = null;
   var _booted = false;
@@ -65,6 +73,41 @@
   function _isFn(v) { return typeof v === 'function'; }
   function _slotEl(slotName) {
     return document.querySelector('[data-pf-slot="' + slotName + '_ext"]');
+  }
+
+  function _manifestEntry(packageId) {
+    var manifest = window.PAWFLOW_EXTENSIONS || [];
+    for (var i = 0; i < manifest.length; i++) {
+      if (manifest[i] && manifest[i].package === packageId) return manifest[i];
+    }
+    return null;
+  }
+
+  function _syncConditionalSlots() {
+    var declared = Object.create(null);
+    (window.PAWFLOW_EXTENSIONS || []).forEach(function (entry) {
+      if (entry && _unregisteredPackages[entry.package]) return;
+      (entry && entry.slots || []).forEach(function (slot) {
+        if (slot && slot.slot) declared[slot.slot] = true;
+      });
+    });
+    CONDITIONAL_SLOTS.forEach(function (slotName) {
+      var host = _slotEl(slotName);
+      if (host) host.hidden = !declared[slotName];
+    });
+  }
+
+  function _contextSnapshot() {
+    var initial = window.PAWFLOW_EXTENSION_CONTEXT || {};
+    var snapshot = {
+      user: String(window._userId || initial.user || ''),
+      conversation: (typeof conversationId !== 'undefined' && conversationId) ? String(conversationId) : String(initial.conversation || ''),
+      agent: (typeof selectedAgent !== 'undefined' && selectedAgent) ? String(selectedAgent) : '',
+      locale: (typeof getLanguage === 'function') ? String(getLanguage() || '') : String(document.documentElement.lang || ''),
+      theme: (typeof _activeThemeRef !== 'undefined') ? String(_activeThemeRef || '') : '',
+      permission_mode: (typeof permissionMode !== 'undefined') ? String(permissionMode || '') : '',
+    };
+    return Object.freeze(snapshot);
   }
 
   function _logExtError(pkg, where, err) {
@@ -146,6 +189,20 @@
     var api = {
       id: packageId,
       version: UI_API_VERSION,
+      asset: function (pathOrId) {
+        var ref = String(pathOrId || '');
+        var entry = _manifestEntry(packageId);
+        var assets = entry && entry.assets || [];
+        for (var i = 0; i < assets.length; i++) {
+          var asset = assets[i];
+          if (asset && asset.kind === 'file'
+              && (asset.id === ref || asset.path === ref)) {
+            return asset.url || '';
+          }
+        }
+        return '';
+      },
+      context: function () { return _contextSnapshot(); },
       t: function (key, vars) {
         if (typeof t === 'function') {
           var nsKey = i18nNamespace + key;
@@ -273,7 +330,9 @@
             catch (err) { _logExtError(packageId, 'hook(boot, replay)', err); }
           }, 0);
         }
-        return true;
+        return function unsubscribeHook() {
+          api.off(hookName, cb);
+        };
       },
       off: function (hookName, cb) {
         var listeners = _hookListeners[hookName];
@@ -305,7 +364,12 @@
         if (!_isString(localEvent) || !_isFn(cb)) return false;
         if (!localBus[localEvent]) localBus[localEvent] = [];
         localBus[localEvent].push(cb);
-        return true;
+        return function unsubscribeLocal() {
+          var listeners = localBus[localEvent] || [];
+          for (var i = listeners.length - 1; i >= 0; i--) {
+            if (listeners[i] === cb) listeners.splice(i, 1);
+          }
+        };
       },
       call: function (action, body) {
         var payload = Object.assign({}, body || {}, { _ext: packageId });
@@ -367,6 +431,7 @@
       return false;
     }
     var pkg = _ensurePackage(packageId);
+    delete _unregisteredPackages[packageId];
     if (pkg.ready) {
       _logExtError(packageId, 'register', 'duplicate registration');
       return false;
@@ -385,6 +450,40 @@
     } else {
       setTimeout(function () { _runRegistration(packageId); }, 0);
     }
+    return true;
+  }
+
+  function unregister(packageId) {
+    var pkg = _packages[packageId];
+    if (!pkg) return false;
+    (pkg.hooks.shutdown || []).slice().forEach(function (cb) {
+      try { cb({ package: packageId, context: _contextSnapshot() }); }
+      catch (err) { _logExtError(packageId, 'hook(shutdown)', err); }
+    });
+    Object.keys(_hookListeners).forEach(function (hookName) {
+      _hookListeners[hookName] = (_hookListeners[hookName] || []).filter(
+        function (entry) { return entry.pkg !== packageId; });
+    });
+    Object.keys(_slotEntries).forEach(function (slotName) {
+      _slotEntries[slotName] = (_slotEntries[slotName] || []).filter(
+        function (entry) { return entry.pkg !== packageId; });
+      _renderSlot(slotName);
+    });
+    pkg.commands.forEach(function (name) { delete _commands[name]; });
+    var modal = document.getElementById('pf-ext-modal-host');
+    if (modal && modal.querySelector('[data-pf-ext="' + packageId + '"]')) {
+      modal.innerHTML = '';
+    }
+    var panel = document.getElementById('pf-ext-panel-host');
+    if (panel && panel.getAttribute('data-pf-ext') === packageId) {
+      panel.innerHTML = '';
+      panel.style.display = 'none';
+      panel.removeAttribute('data-pf-ext');
+      panel.removeAttribute('data-pf-panel');
+    }
+    delete _packages[packageId];
+    _unregisteredPackages[packageId] = true;
+    _syncConditionalSlots();
     return true;
   }
 
@@ -426,6 +525,8 @@
     fireFilter: _fireFilter,
     renderSlot: _renderSlot,
     renderAllSlots: _renderAllSlots,
+    syncConditionalSlots: _syncConditionalSlots,
+    contextSnapshot: _contextSnapshot,
     markBooted: function (payload) {
       _bootPayload = payload || {};
       _booted = true;
@@ -440,6 +541,7 @@
   window.pawflow = {
     version: UI_API_VERSION,
     register: register,
+    unregister: unregister,
     listPackages: listPackages,
     getCommand: getCommand,
     listCommands: listCommands,
@@ -461,6 +563,7 @@
       asset_version: window.PAWFLOW_ASSET_VERSION || '',
     };
     _internal.markBooted(payload);
+    _syncConditionalSlots();
     _fireHook('boot', payload);
     // Slot containers may exist before any extension registered (the
     // browser receives the page before the bootstrap manifest loads any

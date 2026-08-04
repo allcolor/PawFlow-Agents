@@ -65,6 +65,7 @@ KNOWN_SLOTS = [
     "action_menu", "gear_menu", "resources_panel",
     "sidebar_top", "sidebar_bottom",
     "header_actions", "tab_bar",
+    "conversation_stage", "resources_collection", "composer_accessory",
 ]
 
 KNOWN_HOOKS = [
@@ -77,6 +78,7 @@ KNOWN_HOOKS = [
     "agent_changed", "theme_changed",
     "tab_switched", "permission_mode_changed",
     "sse_event",
+    "resource_changed",
 ]
 
 
@@ -98,6 +100,46 @@ def test_ext_runtime_pfp_api_exposes_slot_on_call_command(ext_runtime_src):
     assert "command: function (name" in ext_runtime_src
     assert "openDialog: function (title" in ext_runtime_src
     assert "openPanel: function (panelId" in ext_runtime_src
+    assert "asset: function (pathOrId" in ext_runtime_src
+    assert "context: function ()" in ext_runtime_src
+
+
+def test_ext_runtime_context_is_a_frozen_snapshot(ext_runtime_src):
+    assert "Object.freeze(snapshot)" in ext_runtime_src
+    assert "window.PAWFLOW_EXTENSION_CONTEXT" in ext_runtime_src
+    for key in ("user", "conversation", "agent", "locale", "theme", "permission_mode"):
+        assert f"{key}:" in ext_runtime_src
+
+
+def test_ext_runtime_subscriptions_return_unsubscribe_functions(ext_runtime_src):
+    assert "return function unsubscribeHook()" in ext_runtime_src
+    assert "return function unsubscribeLocal()" in ext_runtime_src
+
+
+def test_ext_runtime_inert_assets_are_resolved_not_auto_loaded(ext_runtime_src):
+    assert "asset.kind === 'file'" in ext_runtime_src
+    assert "return asset.url" in ext_runtime_src
+    assert "a.kind === 'file'" not in ext_runtime_src.split("function _loadAllExtensions", 1)[1]
+
+
+def test_ext_runtime_conditional_slots_are_manifest_driven(ext_runtime_src, template_src):
+    assert "CONDITIONAL_SLOTS" in ext_runtime_src
+    assert "_syncConditionalSlots" in ext_runtime_src
+    assert "_unregisteredPackages" in ext_runtime_src
+    for slot in ("conversation_stage", "resources_collection", "composer_accessory"):
+        assert f'data-pf-slot="{slot}_ext" hidden' in template_src
+
+
+def test_resource_mutations_emit_resource_changed_hook():
+    resources = (_CHAT_UI / "resources.js").read_text(encoding="utf-8")
+    create = (_CHAT_UI / "resources_create_dialogs.js").read_text(encoding="utf-8")
+    update = (_CHAT_UI / "resources_resource_dialogs.js").read_text(encoding="utf-8")
+    menus = (_CHAT_UI / "resources_menus.js").read_text(encoding="utf-8")
+    assert "fireHook('resource_changed'" in resources
+    assert "notifyResourceChanged(rtype, 'create'" in create
+    assert "notifyResourceChanged(rtype, 'update'" in update
+    assert "notifyResourceChanged(rtype, 'copy'" in menus
+    assert "notifyResourceChanged(rtype, 'delete'" in menus
 
 
 def test_ext_runtime_call_wrapper_injects_ext_field(ext_runtime_src):

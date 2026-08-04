@@ -480,7 +480,7 @@ document. It derives package/user/conversation/scope from the verified runtime
 request, verifies owner and `mutable`, validates every document against the
 installed schema, and audit-logs the operation. Runtime CRUD is JSON-only;
 packaged binary assets stay immutable and hash-addressed in their PFP content
-store until the generic upload/asset-serving contract is enabled.
+store and are resolved through the authenticated extension-asset route.
 
 ## UI Extensions (ui.v1)
 
@@ -500,6 +500,7 @@ my-ui.pfpdir/
       extension.js
       extension.css       (optional)
       i18n/en.json        (optional, served on demand)
+      models/avatar.glb   (optional inert file, served on demand)
 ```
 
 Manifest:
@@ -512,50 +513,84 @@ Manifest:
   "version_compat": "ui.v1",
   "assets": {
     "scripts": ["content/ui/extension.js"],
-    "styles":  ["content/ui/extension.css"]
+    "styles":  ["content/ui/extension.css"],
+    "files": [
+      {"id": "avatar-model", "path": "content/ui/models/avatar.glb"}
+    ]
   },
   "slots": [
     {"slot": "action_menu",     "id": "hello.open", "icon": "👋", "label_key": "hello.menu"},
-    {"slot": "resources_panel", "id": "hello.section"}
+    {"slot": "resources_collection", "id": "hello.section"},
+    {"slot": "conversation_stage", "id": "hello.stage"}
   ],
-  "hooks": ["boot", "conversation_changed"]
+  "hooks": ["boot", "conversation_changed", "resource_changed"]
 }
 ```
 
 Slots accepted in `ui.v1`: `action_menu`, `gear_menu`, `resources_panel`,
-`sidebar_top`, `sidebar_bottom`, `header_actions`, `tab_bar`.
+`sidebar_top`, `sidebar_bottom`, `header_actions`, `tab_bar`,
+`conversation_stage`, `resources_collection`, and `composer_accessory`. The
+last three hosts are hidden unless an enabled installed extension declares a
+contribution, so a base install has no empty extension UI.
 
 Hooks accepted in `ui.v1`: `boot`, `shutdown`, `conversation_changed`,
 `conversation_created`, `conversation_deleted`, `message_appended`,
 `message_streaming`, `tool_call_started`, `tool_call_completed`,
 `command_submitted`, `command_result`, `before_send`, `agent_changed`,
-`theme_changed`, `tab_switched`, `permission_mode_changed`, `sse_event`.
+`theme_changed`, `tab_switched`, `permission_mode_changed`, `sse_event`, and
+`resource_changed`. Successful built-in resource create/update/copy/delete
+operations emit `resource_changed` with `resource_type`, `operation`, `name`,
+and scope metadata.
 
-Assets are restricted to `.js .css .json .svg .png .jpg .jpeg .webp
-.woff .woff2`. `.html` assets are refused because same-origin HTML served
+`scripts` accepts only `.js`, `styles` only `.css`, and i18n catalogs only
+`.json`. `files` accepts inert JSON, SVG, images, fonts, WebAssembly, model,
+texture, binary-buffer, and audio formats: `.json .svg .png .jpg .jpeg .webp
+.woff .woff2 .wasm .glb .gltf .vrm .bin .ktx2 .basis .fbx .mp3 .wav .ogg
+.m4a .aac .flac`. `.html` is always refused because same-origin HTML served
 from `/chat/ext/...` could execute inline scripts under the user's session.
+
+Executable/catalog assets are limited to 2 MiB each, inert files to 256 MiB
+each, one UI object to 256 assets and 512 MiB total. Duplicate paths and
+duplicate logical file IDs are rejected. Inert binaries remain opaque to the
+reviewer and therefore require explicit human confirmation (`force`) at
+install. A logical ID must match `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`.
+
 Each declared script is loaded into the page same-origin from `/chat/ext/...`;
-scripts keep their manifest insertion order, but all installed UI extensions
-share the same browser trust domain.
+scripts keep their manifest insertion order. Inert `files` are listed in the
+boot manifest but never auto-loaded. `pfp.asset(idOrPath)` returns their
+hash-addressed authenticated URL. Asset responses recompute SHA-256, enforce
+content-directory containment, set `nosniff` and immutable caching, expose an
+explicit MIME type, and support one RFC byte range (`206`, `Content-Range`,
+and `Accept-Ranges: bytes`). Malformed, multipart, or unsatisfiable ranges
+return `416`. Undeclared, tampered, disabled, uninstalled, or unauthenticated
+assets return `404`.
 
 The extension JS calls `pawflow.register("<package_id>", function (pfp) {
 ... })` at top level. The `pfp` object exposes:
 
 ```javascript
 pfp.id                   // your package id
+pfp.asset(idOrPath)      // URL for a declared inert assets.files entry
+pfp.context()            // frozen snapshot: user/conversation/agent/locale/theme/permission_mode
 pfp.t(key, vars)         // i18n lookup, namespaced to your package
 pfp.ui.slot(slot, id, render)
 pfp.ui.openDialog(title, contentNode, opts?)
 pfp.ui.closeDialog()
 pfp.ui.openPanel(id, render)
 pfp.ui.closePanel()
-pfp.on(hook, cb)         // subscribe to a ui.v1 hook
+const off = pfp.on(hook, cb) // subscribe; returns an unsubscribe function
 pfp.off(hook, cb)
 pfp.publish(local, data) // inter-extension bus
-pfp.subscribe(local, cb)
+const unsub = pfp.subscribe(local, cb) // also returns an unsubscribe function
 pfp.call(action, body)   // POST to /api/ui with _ext: <package_id>
 pfp.command(name, spec)  // register a slash command
 ```
+
+`pfp.context()` returns a new frozen snapshot on every call; it never exposes
+mutable references to PawFlow state. Package teardown fires `shutdown`, removes
+hook/local-bus subscriptions, slots and commands, and closes package-owned
+panels/dialogs. `window.pawflow.unregister(packageId)` exposes the same cleanup
+path to the host runtime.
 
 UI extensions live in the user's own browser tab, same origin as the page.
 They have full DOM access; PawFlow scans the JS files at install time for

@@ -185,23 +185,32 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
     serve time and logged once on install (where the user can still see them
     in the install plan).
     """
+    context = {"user": user_id, "conversation": conversation_id}
+
+    def _block(entries):
+        context_json = json.dumps(context, ensure_ascii=False).replace("<", "\\u003c")
+        entries_json = json.dumps(entries, ensure_ascii=False).replace("<", "\\u003c")
+        return (
+            "<script>window.PAWFLOW_EXTENSION_CONTEXT=" + context_json
+            + ";window.PAWFLOW_EXTENSIONS=" + entries_json + ";</script>\n")
+
     if not user_id:
-        return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
+        return _block([])
     if not _has_pfp_install_records(user_id, conversation_id):
-        return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
+        return _block([])
     try:
         from core.pfp_package import list_installed_ui_extensions, _UI_API_VERSION
         from core.tool_mcp_filters import (
             _ui_extensions_globally_disabled, is_extension_enabled,
         )
         if _ui_extensions_globally_disabled():
-            return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
+            return _block([])
         scope = "conversation" if conversation_id else "user"
         records = list_installed_ui_extensions(
             user_id=user_id, conversation_id=conversation_id, scope=scope)
     except Exception:
         logger.debug("PFP UI extensions lookup failed", exc_info=True)
-        return "<script>window.PAWFLOW_EXTENSIONS=[];</script>\n"
+        return _block([])
     out = []
     for rec in records:
         if rec.get("version_compat") != _UI_API_VERSION:
@@ -221,6 +230,7 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
             url = f"/chat/ext/{package}/{short}/{asset['path']}"
             assets.append({
                 "kind": asset.get("kind", ""),
+                "id": asset.get("id", ""),
                 "url": url,
                 "path": asset.get("path", ""),
                 "size": int(asset.get("size", 0) or 0),
@@ -237,11 +247,7 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
             "hooks": rec.get("hooks", []),
             "i18n": rec.get("i18n", {}),
         })
-    return (
-        "<script>window.PAWFLOW_EXTENSIONS="
-        + json.dumps(out, ensure_ascii=False)
-        + ";</script>\n"
-    )
+    return _block(out)
 
 
 def _compute_js_version(sig=None) -> str:

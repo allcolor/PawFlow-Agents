@@ -22,10 +22,11 @@ import hashlib
 import logging
 import mimetypes
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
+from core.pfp_package._pp_base import _UI_ASSET_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,20 @@ mimetypes.add_type("application/json", ".json")
 mimetypes.add_type("image/svg+xml", ".svg")
 mimetypes.add_type("font/woff", ".woff")
 mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("model/gltf-binary", ".glb")
+mimetypes.add_type("model/gltf+json", ".gltf")
+mimetypes.add_type("application/octet-stream", ".vrm")
+mimetypes.add_type("application/octet-stream", ".bin")
+mimetypes.add_type("image/ktx2", ".ktx2")
+mimetypes.add_type("application/octet-stream", ".basis")
+mimetypes.add_type("application/octet-stream", ".fbx")
+mimetypes.add_type("audio/mpeg", ".mp3")
+mimetypes.add_type("audio/wav", ".wav")
+mimetypes.add_type("audio/ogg", ".ogg")
+mimetypes.add_type("audio/mp4", ".m4a")
+mimetypes.add_type("audio/aac", ".aac")
+mimetypes.add_type("audio/flac", ".flac")
 
 
 # `.html` removed: a same-origin HTML page served from /chat/ext/... could
@@ -42,10 +57,25 @@ mimetypes.add_type("font/woff2", ".woff2")
 # auto-loader only fetches .js/.css. The matching whitelist in core.pfp_package
 # (_UI_ASSET_EXTENSIONS) refuses to install a package declaring .html assets;
 # this server-side allow-list is the second layer.
-_ALLOWED_EXTENSIONS = {".js", ".css", ".json", ".svg",
-                       ".png", ".jpg", ".jpeg", ".webp",
-                       ".woff", ".woff2"}
+_ALLOWED_EXTENSIONS = _UI_ASSET_EXTENSIONS
 _BASE_PATH = "/chat/ext"
+
+
+class _BoundedReader:
+    """Read at most ``remaining`` bytes from an already-positioned file."""
+
+    def __init__(self, source: BinaryIO, remaining: int):
+        self.source = source
+        self.remaining = remaining
+
+    def read(self, size: int = -1) -> bytes:
+        if self.remaining <= 0:
+            return b""
+        if size < 0 or size > self.remaining:
+            size = self.remaining
+        chunk = self.source.read(size)
+        self.remaining -= len(chunk)
+        return chunk
 
 
 class ServePfpExtensionAssetsTask(BaseTask):
@@ -137,13 +167,19 @@ class ServePfpExtensionAssetsTask(BaseTask):
             return self._not_found(flowfile, "asset missing on disk")
 
         try:
-            content = target.read_bytes()
+            total_size = target.stat().st_size
+            with target.open("rb") as source:
+                flowfile.set_content_from_stream(source, total_size)
         except OSError as err:
             logger.warning("PFP asset read failed: %s", err)
             return self._not_found(flowfile, "asset read failed")
 
         expected = str(asset.get("sha256") or "").lower().replace("sha256:", "")
-        actual = hashlib.sha256(content).hexdigest()
+        actual_hash = hashlib.sha256()
+        with flowfile.get_content_stream() as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                actual_hash.update(chunk)
+        actual = actual_hash.hexdigest()
         if expected and actual != expected:
             logger.warning(
                 "PFP asset hash mismatch %s/%s: expected=%s actual=%s",
@@ -154,15 +190,53 @@ class ServePfpExtensionAssetsTask(BaseTask):
         if not mime_type:
             mime_type = "application/octet-stream"
 
-        flowfile.set_content(content)
-        flowfile.set_attribute("http.response.status", "200")
+        range_header = flowfile.get_attribute("http.header.range") or ""
+        try:
+            byte_range = _parse_byte_range(range_header, total_size)
+        except ValueError:
+            return self._range_not_satisfiable(flowfile, total_size)
+
+        if byte_range is None:
+            start, end = 0, max(total_size - 1, 0)
+            status = "200"
+            response_size = total_size
+        else:
+            start, end = byte_range
+            status = "206"
+            response_size = end - start + 1
+        if byte_range is not None:
+            try:
+                with flowfile.get_content_stream() as source:
+                    source.seek(start)
+                    flowfile.set_content_from_stream(
+                        _BoundedReader(source, response_size), response_size)
+            except OSError as err:
+                logger.warning("PFP asset range stream failed: %s", err)
+                return self._not_found(flowfile, "asset read failed")
+
+        flowfile.set_attribute("http.response.status", status)
         flowfile.set_attribute("http.response.header.Content-Type", mime_type)
+        flowfile.set_attribute("http.response.header.Accept-Ranges", "bytes")
+        flowfile.set_attribute("http.response.header.Content-Length", str(response_size))
+        if byte_range is not None:
+            flowfile.set_attribute(
+                "http.response.header.Content-Range",
+                f"bytes {start}-{end}/{total_size}")
         cache_control = self.config.get("cache_control",
                                          "public, max-age=31536000, immutable")
         if cache_control:
             flowfile.set_attribute("http.response.header.Cache-Control", cache_control)
         # Same-origin only — belt-and-suspenders against accidental embeds.
         flowfile.set_attribute("http.response.header.X-Content-Type-Options", "nosniff")
+        return [flowfile]
+
+    @staticmethod
+    def _range_not_satisfiable(flowfile: FlowFile, size: int) -> List[FlowFile]:
+        flowfile.set_content(b'{"error":"range not satisfiable"}')
+        flowfile.set_attribute("http.response.status", "416")
+        flowfile.set_attribute("http.response.header.Content-Type", "application/json")
+        flowfile.set_attribute("http.response.header.Content-Range", f"bytes */{size}")
+        flowfile.set_attribute("http.response.header.Accept-Ranges", "bytes")
         return [flowfile]
 
     @staticmethod
@@ -183,6 +257,38 @@ def _asset_hash_matches(stored: str, url_value: str) -> bool:
     if len(candidate) < 12 or len(candidate) > len(expected):
         return False
     return expected.startswith(candidate)
+
+
+def _parse_byte_range(value: str, size: int) -> Optional[Tuple[int, int]]:
+    """Parse one RFC 7233 byte range; reject malformed or multipart ranges."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    if not value.startswith("bytes=") or "," in value or size <= 0:
+        raise ValueError("invalid byte range")
+    spec = value[6:].strip()
+    if "-" not in spec:
+        raise ValueError("invalid byte range")
+    start_text, end_text = spec.split("-", 1)
+    if not start_text:
+        if not end_text.isdigit() or int(end_text) <= 0:
+            raise ValueError("invalid suffix range")
+        length = min(int(end_text), size)
+        return size - length, size - 1
+    if not start_text.isdigit():
+        raise ValueError("invalid range start")
+    start = int(start_text)
+    if start >= size:
+        raise ValueError("range starts after content")
+    if end_text:
+        if not end_text.isdigit():
+            raise ValueError("invalid range end")
+        end = min(int(end_text), size - 1)
+        if end < start:
+            raise ValueError("range end precedes start")
+    else:
+        end = size - 1
+    return start, end
 
 
 TaskFactory.register(ServePfpExtensionAssetsTask)

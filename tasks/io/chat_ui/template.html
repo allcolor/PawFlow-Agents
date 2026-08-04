@@ -846,6 +846,7 @@ if (typeof hljs !== 'undefined') {
   <div class="sidebar-settings" id="resourcesPanel" style="display:none">
     <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; <span data-i18n="resources">Resources</span></label>
     <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:var(--pf-muted);"></div>
+    <div data-pf-slot="resources_collection_ext" hidden></div>
     <div data-pf-slot="resources_panel_ext"></div>
   </div>
   <div class="sidebar-settings" data-pf-slot="sidebar_bottom_ext"></div>
@@ -1039,6 +1040,7 @@ if (typeof hljs !== 'undefined') {
   <div class="files-header"><strong data-i18n="files">Files</strong><button class="btn-close-panel" onclick="toggleFilesPanel()">&times;</button></div>
   <div class="files-list" id="filesList"></div>
 </div>
+<div data-pf-slot="conversation_stage_ext" hidden></div>
 <div class="messages-wrap">
   <div class="messages" id="messages"></div>
   <div class="scroll-nav" id="scrollNav">
@@ -1067,6 +1069,7 @@ if (typeof hljs !== 'undefined') {
     <button class="btn-attach" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
     <button class="btn-attach" id="grabBtn" onclick="toggleGrab()" title="Type straight into the agent tmux" data-i18n-title="grabTitle" style="display:none">&#x1F5A5;&#xFE0F;</button>
     <button class="btn-attach" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
+    <div data-pf-slot="composer_accessory_ext" hidden></div>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"
               rows="1" onkeydown="handleKey(event)"></textarea>

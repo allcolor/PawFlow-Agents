@@ -26,7 +26,7 @@ def _write_ui_extension_pkg(root: Path, keypair, *, version: str = "1.0.0",
                             with_i18n: bool = False,
                             version_compat: str = "ui.v1",
                             extra_slot=None, extra_hook=None,
-                            invalid_ext_path: str = ""):
+                            invalid_ext_path: str = "", file_assets=None):
     pkg = root / f"{package_id}.pfpdir"
     ui_dir = pkg / "content" / "ui"
     ui_dir.mkdir(parents=True)
@@ -46,6 +46,20 @@ def _write_ui_extension_pkg(root: Path, keypair, *, version: str = "1.0.0",
         # Write a file with a disallowed extension so the validator can reject it.
         invalid = ui_dir / Path(invalid_ext_path).name
         invalid.write_bytes(b"binary")
+    declared_files = []
+    for entry in file_assets or []:
+        if isinstance(entry, dict):
+            asset_id = entry.get("id", "")
+            path = entry["path"]
+            content = entry.get("content", b"model-data")
+            declared_files.append({"id": asset_id, "path": path})
+        else:
+            path = str(entry)
+            content = b"model-data"
+            declared_files.append(path)
+        target = pkg / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
     assets = {"scripts": ["content/ui/extension.js"]}
     if with_styles:
         assets["styles"] = ["content/ui/extension.css"]
@@ -54,6 +68,8 @@ def _write_ui_extension_pkg(root: Path, keypair, *, version: str = "1.0.0",
     if extra_assets:
         for key, value in extra_assets.items():
             assets[key] = value
+    if declared_files:
+        assets["files"] = declared_files
     if invalid_ext_path:
         assets.setdefault("scripts", []).append(invalid_ext_path)
     slots = [
@@ -189,21 +205,99 @@ def test_ui_extension_rejects_disallowed_asset_extension(tmp_path, keypair):
     assert "payload.exe" in row["reason"] or "not allowed" in row["reason"]
 
 
+def test_ui_extension_accepts_inert_file_with_logical_id(tmp_path, keypair):
+    pkgdir = _write_ui_extension_pkg(
+        tmp_path, keypair,
+        file_assets=[{
+            "id": "avatar-model",
+            "path": "content/ui/models/avatar.glb",
+            "content": b"glTF-model-bytes",
+        }],
+    )
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["installable"] is True
+    assert row["capabilities"]["ui_extension"]["asset_count"] == 3
+
+
+def test_ui_extension_rejects_duplicate_inert_file_id(tmp_path, keypair):
+    pkgdir = _write_ui_extension_pkg(
+        tmp_path, keypair,
+        file_assets=[
+            {"id": "model", "path": "content/ui/a.glb"},
+            {"id": "model", "path": "content/ui/b.glb"},
+        ],
+    )
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["status"] == "blocked"
+    assert "duplicate" in row["reason"] and "model" in row["reason"]
+
+
+def test_ui_extension_rejects_html_as_inert_file(tmp_path, keypair):
+    pkgdir = _write_ui_extension_pkg(
+        tmp_path, keypair,
+        file_assets=[{"id": "page", "path": "content/ui/page.html"}],
+    )
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["status"] == "blocked"
+    assert "page.html" in row["reason"]
+
+
+def test_ui_extension_rejects_non_array_inert_files(tmp_path, keypair):
+    pkgdir = _write_ui_extension_pkg(
+        tmp_path, keypair,
+        extra_assets={"files": {"id": "model", "path": "content/ui/model.glb"}},
+    )
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["status"] == "blocked"
+    assert "assets.files must be an array" in row["reason"]
+
+
+def test_ui_extension_enforces_inert_file_size_limit(
+        tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr(
+        "core.pfp_package._pp_ui_validation._UI_INERT_ASSET_MAX_BYTES", 4)
+    pkgdir = _write_ui_extension_pkg(
+        tmp_path, keypair,
+        file_assets=[{
+            "id": "model", "path": "content/ui/model.glb",
+            "content": b"12345",
+        }],
+    )
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["status"] == "blocked"
+    assert "too large" in row["reason"]
+
+
 # ── Install ────────────────────────────────────────────────────────────────────────────
 
-def _install_ui_pkg(tmp_path, keypair, **kw):
+def _install_ui_pkg(tmp_path, keypair, *, force: bool = False, **kw):
     pkgdir = _write_ui_extension_pkg(tmp_path, keypair, **kw)
     built = pfp_package.build_pfp(
         str(pkgdir), private_key=keypair["private_key"])
     return pfp_package.install_pfp(
         built["path"], user_id="alice",
-        include=["ui_extension:main"]), built
+        include=["ui_extension:main"], force=force), built
 
 
 def test_ui_extension_install_writes_record_with_assets(tmp_path, keypair, monkeypatch):
     monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
     result, _ = _install_ui_pkg(tmp_path, keypair)
-    assert result["ok"] is True, result
+    assert result["ok"] is True, json.dumps(result, indent=2)
     assert any(o["id"] == "ui_extension:main" for o in result["installed"])
     records = pfp_package.list_installed_ui_extensions(
         user_id="alice", scope="user")
@@ -222,6 +316,36 @@ def test_ui_extension_install_writes_record_with_assets(tmp_path, keypair, monke
     assert Path(rec["content_dir"]).is_dir()
     asset_disk = Path(rec["content_dir"]) / "content/ui/extension.js"
     assert asset_disk.is_file()
+
+
+def test_ui_extension_install_records_inert_asset_id(tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    result, _ = _install_ui_pkg(
+        tmp_path, keypair,
+        force=True, file_assets=[{
+            "id": "avatar-model",
+            "path": "content/ui/models/avatar.glb",
+            "content": b"0123456789",
+        }],
+    )
+    assert result["ok"] is True, json.dumps(result, indent=2)
+    rec = pfp_package.list_installed_ui_extensions(
+        user_id="alice", scope="user")[0]
+    asset = next(a for a in rec["assets"] if a.get("id") == "avatar-model")
+    assert asset["kind"] == "file"
+    assert asset["path"] == "content/ui/models/avatar.glb"
+    assert asset["size"] == 10
+
+
+def test_ui_extension_inert_binary_requires_explicit_review_confirmation(
+        tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    result, _ = _install_ui_pkg(
+        tmp_path, keypair,
+        file_assets=[{"id": "model", "path": "content/ui/model.glb"}],
+    )
+    assert result["ok"] is False
+    assert "human review" in result["errors"][0]["error"]
 
 
 def test_ui_extension_uninstall_removes_record_and_content(tmp_path, keypair, monkeypatch):
@@ -250,12 +374,17 @@ def test_ui_extension_dev_load_keeps_source_dir(tmp_path, keypair, monkeypatch):
 
 # ── Asset serving task ─────────────────────────────────────────────────────────────────
 
-def _build_asset_request(http_path: str, *, principal: str = "alice"):
+def _build_asset_request(http_path: str, *, principal: str = "alice",
+                         range_header: str = "", conversation_id: str = ""):
     from core import FlowFile
     ff = FlowFile(content=b"")
     ff.set_attribute("http.path", http_path)
     if principal:
         ff.set_attribute("http.auth.principal", principal)
+    if range_header:
+        ff.set_attribute("http.header.range", range_header)
+    if conversation_id:
+        ff.set_attribute("http.cookie.pawflow_conv", conversation_id)
     return ff
 
 
@@ -265,10 +394,13 @@ def _get_asset_url(rec, file_path: str) -> str:
     return f"/chat/ext/{rec['package']}/{short}/{file_path}"
 
 
-def _serve_asset_task(http_path: str, principal: str = "alice"):
+def _serve_asset_task(http_path: str, principal: str = "alice",
+                      range_header: str = "", conversation_id: str = ""):
     from tasks.io.serve_pfp_ext_assets import ServePfpExtensionAssetsTask
     task = ServePfpExtensionAssetsTask({})
-    ff = _build_asset_request(http_path, principal=principal)
+    ff = _build_asset_request(
+        http_path, principal=principal, range_header=range_header,
+        conversation_id=conversation_id)
     return task.execute(ff)[0]
 
 
@@ -282,6 +414,65 @@ def test_pfp_ext_assets_serves_installed_script(tmp_path, keypair, monkeypatch):
     assert out.get_attribute("http.response.status") == "200"
     assert out.get_attribute("http.response.header.Content-Type").startswith("application/javascript")
     assert b"pawflow.register" in out.get_content()
+
+
+def test_pfp_ext_assets_serves_inert_glb_with_range(tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    _install_ui_pkg(
+        tmp_path, keypair,
+        force=True, file_assets=[{
+            "id": "avatar-model",
+            "path": "content/ui/models/avatar.glb",
+            "content": b"0123456789",
+        }],
+    )
+    rec = pfp_package.list_installed_ui_extensions(
+        user_id="alice", scope="user")[0]
+    url = _get_asset_url(rec, "content/ui/models/avatar.glb")
+    out = _serve_asset_task(url, range_header="bytes=2-5")
+    assert out.get_attribute("http.response.status") == "206"
+    assert out.get_attribute("http.response.header.Content-Type") == "model/gltf-binary"
+    assert out.get_attribute("http.response.header.Accept-Ranges") == "bytes"
+    assert out.get_attribute("http.response.header.Content-Range") == "bytes 2-5/10"
+    assert out.get_attribute("http.response.header.Content-Length") == "4"
+    assert out.get_content() == b"2345"
+
+
+def test_pfp_ext_assets_rejects_unsatisfiable_range(tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    _install_ui_pkg(
+        tmp_path, keypair,
+        force=True, file_assets=[{
+            "id": "avatar-model",
+            "path": "content/ui/models/avatar.glb",
+            "content": b"0123456789",
+        }],
+    )
+    rec = pfp_package.list_installed_ui_extensions(
+        user_id="alice", scope="user")[0]
+    url = _get_asset_url(rec, "content/ui/models/avatar.glb")
+    out = _serve_asset_task(url, range_header="bytes=50-60")
+    assert out.get_attribute("http.response.status") == "416"
+    assert out.get_attribute("http.response.header.Content-Range") == "bytes */10"
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("bytes=7-", (7, 9)),
+        ("bytes=-3", (7, 9)),
+        ("bytes=0-99", (0, 9)),
+    ],
+)
+def test_parse_single_byte_range_forms(header, expected):
+    from tasks.io.serve_pfp_ext_assets import _parse_byte_range
+    assert _parse_byte_range(header, 10) == expected
+
+
+def test_parse_byte_range_rejects_multipart():
+    from tasks.io.serve_pfp_ext_assets import _parse_byte_range
+    with pytest.raises(ValueError):
+        _parse_byte_range("bytes=0-1,4-5", 10)
 
 
 def test_pfp_ext_assets_rejects_unknown_package(tmp_path, monkeypatch):
@@ -338,12 +529,37 @@ def test_pfp_ext_assets_detects_tampered_file(tmp_path, keypair, monkeypatch):
     assert out.get_attribute("http.response.status") == "404"
 
 
+def test_pfp_ext_assets_rejects_disabled_extension(tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    _install_ui_pkg(tmp_path, keypair)
+    rec = pfp_package.list_installed_ui_extensions(
+        user_id="alice", scope="user")[0]
+    url = _get_asset_url(rec, "content/ui/extension.js")
+    monkeypatch.setattr("core.tool_mcp_filters.is_extension_enabled",
+                        lambda _cid, _pkg: False)
+    out = _serve_asset_task(url, conversation_id="conv1")
+    assert out.get_attribute("http.response.status") == "404"
+
+
+def test_pfp_ext_assets_rejects_after_uninstall(tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    _install_ui_pkg(tmp_path, keypair)
+    rec = pfp_package.list_installed_ui_extensions(
+        user_id="alice", scope="user")[0]
+    url = _get_asset_url(rec, "content/ui/extension.js")
+    pfp_package.uninstall_pfp(
+        "examples.ui-hello", user_id="alice", scope="user")
+    out = _serve_asset_task(url)
+    assert out.get_attribute("http.response.status") == "404"
+
+
 # ── Boot block ──────────────────────────────────────────────────────────────────────────
 
 def test_initial_extensions_block_is_empty_without_user():
     from tasks.io.serve_chat_ui import _initial_extensions_block
     out = _initial_extensions_block(user_id="", conversation_id="")
     assert "window.PAWFLOW_EXTENSIONS=[]" in out
+    assert "window.PAWFLOW_EXTENSION_CONTEXT=" in out
 
 
 def test_initial_extensions_block_skips_pfp_import_without_records(tmp_path, monkeypatch):
@@ -369,6 +585,23 @@ def test_initial_extensions_block_emits_installed_packages(tmp_path, keypair, mo
     assert "/chat/ext/examples.ui-hello/" in out
     # The version_compat is exposed for the browser-side filter.
     assert "ui.v1" in out
+    assert '"user": "alice"' in out
+
+
+def test_initial_extensions_block_emits_inert_asset_id_and_url(tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    _install_ui_pkg(
+        tmp_path, keypair,
+        force=True, file_assets=[{
+            "id": "avatar-model",
+            "path": "content/ui/models/avatar.glb",
+        }],
+    )
+    from tasks.io.serve_chat_ui import _initial_extensions_block
+    out = _initial_extensions_block(user_id="alice")
+    assert '"kind": "file"' in out
+    assert '"id": "avatar-model"' in out
+    assert "/content/ui/models/avatar.glb" in out
 
 
 # ── Tests for ext_runtime asset loader (structural) ──────────────────────────────────────────

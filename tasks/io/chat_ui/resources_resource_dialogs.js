@@ -480,7 +480,12 @@ function _saveResourceEdit(rtype, name, scope) {
         return;
       }
       if (d.error) addMsg('error', d.error);
-      else { addMsg('system', t('resourceUpdated', { type: rtype, name: name })); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+      else {
+        addMsg('system', t('resourceUpdated', { type: rtype, name: name }));
+        notifyResourceChanged(rtype, 'update', { name: name, scope: scope });
+        document.getElementById('resourceEditorOverlay').remove();
+        loadResources();
+      }
     });
   }
   _submit(false);

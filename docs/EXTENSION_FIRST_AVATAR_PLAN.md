@@ -320,7 +320,7 @@ The package validates WebGL/WebGPU and required browser APIs at boot. Unsupporte
 
 Exit gate: a signed test package can define a new logical repository type and a dependent signed pack can install/list/update/uninstall resources without adding that type anywhere in core lists.
 
-### Phase 2 — inert assets and browser API
+### Phase 2 — inert assets and browser API (complete)
 
 - add `ui_extension.assets.files`, `pfp.asset()`, MIME mappings, byte ranges, size limits, and boot-manifest URLs;
 - add the new conditional slots and extension context/lifecycle APIs;

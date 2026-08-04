@@ -182,6 +182,8 @@ def _ui_extension_manifest(obj: Dict[str, Any], package: Dict[str, Any],
         }
         if entry.get("lang"):
             record["lang"] = entry["lang"]
+        if entry.get("id"):
+            record["id"] = entry["id"]
         rows.append(record)
     slots = []
     for slot in (obj.get("slots") or []):

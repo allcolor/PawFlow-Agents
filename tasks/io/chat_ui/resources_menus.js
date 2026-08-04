@@ -106,7 +106,12 @@ function _moveResource(rtype, name, fromScope, targetScope, opts) {
   if (opts.target_conversation_id) payload.target_conversation_id = opts.target_conversation_id;
   action$('copy_resource_scope', payload, { skipConversationId: !(fromScope === 'conversation' || targetScope === 'conversation') }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
-    else addMsg('system', t('resourceCopiedToScope', { type: rtype, name: name, scope: targetScope }));
+    else {
+      addMsg('system', t('resourceCopiedToScope', { type: rtype, name: name, scope: targetScope }));
+      notifyResourceChanged(rtype, 'copy', {
+        name: name, from_scope: fromScope, scope: targetScope,
+      });
+    }
     loadResources();
   });
 }
@@ -160,7 +165,12 @@ function _deleteResource(rtype, name, scope) {
   action$('delete_resource', { resource_type: rtype,
     name, scope: scope || 'user' }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
-    else addMsg('system', t('resourceDeleted', { type: rtype, name: name }));
+    else {
+      addMsg('system', t('resourceDeleted', { type: rtype, name: name }));
+      notifyResourceChanged(rtype, 'delete', {
+        name: name, scope: scope || 'user',
+      });
+    }
     loadResources();
   });
 }

@@ -60,6 +60,7 @@ _UI_KNOWN_SLOTS = {
     "action_menu", "gear_menu", "resources_panel",
     "sidebar_top", "sidebar_bottom",
     "header_actions", "tab_bar",
+    "conversation_stage", "resources_collection", "composer_accessory",
 }
 _UI_KNOWN_HOOKS = {
     "boot", "shutdown",
@@ -70,14 +71,27 @@ _UI_KNOWN_HOOKS = {
     "before_send",
     "agent_changed", "theme_changed",
     "tab_switched", "permission_mode_changed",
-    "sse_event",
+    "sse_event", "resource_changed",
 }
 # `.html` is intentionally absent: a same-origin HTML page served from
 # `/chat/ext/...` could run inline <script> blocks under the user's session
 # even though the runtime only auto-loads .js/.css. Extensions that need to
 # build markup do it through DOM APIs (createElement + textContent) from
 # their .js code.
-_UI_ASSET_EXTENSIONS = {".js", ".css", ".json", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".woff", ".woff2"}
+_UI_EXECUTABLE_ASSET_EXTENSIONS = {".js", ".css"}
+_UI_INERT_ASSET_EXTENSIONS = {
+    ".json", ".svg", ".png", ".jpg", ".jpeg", ".webp",
+    ".woff", ".woff2", ".wasm", ".glb", ".gltf", ".vrm",
+    ".bin", ".ktx2", ".basis", ".fbx",
+    ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac",
+}
+_UI_ASSET_EXTENSIONS = (
+    _UI_EXECUTABLE_ASSET_EXTENSIONS | _UI_INERT_ASSET_EXTENSIONS)
+_UI_ASSET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_UI_EXECUTABLE_ASSET_MAX_BYTES = 2 * 1024 * 1024
+_UI_INERT_ASSET_MAX_BYTES = 256 * 1024 * 1024
+_UI_EXTENSION_ASSET_MAX_BYTES = 512 * 1024 * 1024
+_UI_EXTENSION_ASSET_MAX_COUNT = 256
 
 # `web_app` objects serve a standalone page at its own route (`/apps/...`),
 # not injected into the chat page DOM — so unlike ui_extension, `.html` is

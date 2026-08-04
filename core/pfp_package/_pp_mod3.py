@@ -414,10 +414,10 @@ def _review_object_for_install(row: Dict[str, Any], package: Dict[str, Any],
         )
         return
     if obj_type == "ui_extension":
-        # Scan all declared ui_extension files (scripts, styles, i18n,
-        # handlers) through the static+LLM pipeline. Browser-side .js/.css
-        # assets are matched against `_JS_STATIC_PATTERNS`; the .py handlers
-        # fall through to the python pattern set automatically.
+        # Scan all declared ui_extension files (scripts, worklets, styles,
+        # i18n, handlers) through the static+LLM pipeline. Browser-side
+        # .js/.css assets are matched against `_JS_STATIC_PATTERNS`; the .py
+        # handlers fall through to the python pattern set automatically.
         from core.package_review import (
             assert_installable_review, review_hash, review_metadata,
             review_package_object,

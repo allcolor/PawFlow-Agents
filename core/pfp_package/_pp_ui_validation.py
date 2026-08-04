@@ -29,7 +29,7 @@ def _validate_ui_extension_object(
     assets = obj.get("assets")
     if not isinstance(assets, dict):
         return "ui_extension.assets must be an object with scripts/styles"
-    for key in ("scripts", "styles"):
+    for key in ("scripts", "styles", "worklets"):
         if key in assets and not isinstance(assets[key], list):
             return f"ui_extension.assets.{key} must be an array"
     if "i18n" in assets and not isinstance(assets["i18n"], dict):
@@ -48,6 +48,13 @@ def _validate_ui_extension_object(
             return "ui_extension.assets.files object entries require an id"
         if not str(entry.get("path") or "").strip():
             return "ui_extension.assets.files object entries require a path"
+    for entry in assets.get("worklets", []):
+        if not isinstance(entry, dict):
+            return "ui_extension.assets.worklets entries must be objects"
+        if not str(entry.get("id") or "").strip():
+            return "ui_extension.assets.worklets entries require an id"
+        if not str(entry.get("path") or "").strip():
+            return "ui_extension.assets.worklets entries require a path"
     rows = _ui_extension_asset_list(obj)
     if not rows or not any(row["kind"] == "script" for row in rows):
         return "ui_extension must declare at least one script"
@@ -70,15 +77,17 @@ def _validate_ui_extension_object(
         kind = row["kind"]
         if kind == "script" and ext != ".js":
             return f"ui_extension script must be a .js file: {row['path']}"
+        if kind == "worklet" and ext != ".js":
+            return f"ui_extension worklet must be a .js file: {row['path']}"
         if kind == "style" and ext != ".css":
             return f"ui_extension style must be a .css file: {row['path']}"
         if kind == "i18n" and ext != ".json":
             return f"ui_extension i18n catalog must be a .json file: {row['path']}"
         if kind == "file" and ext not in _UI_INERT_ASSET_EXTENSIONS:
             return f"ui_extension asset extension is not allowed: {row['path']}"
-        if ext not in _UI_ASSET_EXTENSIONS:
+        if kind != "worklet" and ext not in _UI_ASSET_EXTENSIONS:
             return f"ui_extension asset extension is not allowed: {row['path']}"
-        if kind == "file":
+        if kind in {"file", "worklet"}:
             asset_id = str(row.get("id") or "")
             if asset_id:
                 if not _UI_ASSET_ID_RE.fullmatch(asset_id):

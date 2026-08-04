@@ -26,7 +26,8 @@ def _write_ui_extension_pkg(root: Path, keypair, *, version: str = "1.0.0",
                             with_i18n: bool = False,
                             version_compat: str = "ui.v1",
                             extra_slot=None, extra_hook=None,
-                            invalid_ext_path: str = "", file_assets=None):
+                            invalid_ext_path: str = "", file_assets=None,
+                            worklet_assets=None):
     pkg = root / f"{package_id}.pfpdir"
     ui_dir = pkg / "content" / "ui"
     ui_dir.mkdir(parents=True)
@@ -70,6 +71,19 @@ def _write_ui_extension_pkg(root: Path, keypair, *, version: str = "1.0.0",
             assets[key] = value
     if declared_files:
         assets["files"] = declared_files
+    declared_worklets = []
+    for entry in worklet_assets or []:
+        path = entry["path"]
+        declared_worklets.append({
+            "id": entry.get("id", ""),
+            "path": path,
+        })
+        target = pkg / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(entry.get(
+            "content", b"registerProcessor('fixture', class {});"))
+    if declared_worklets:
+        assets["worklets"] = declared_worklets
     if invalid_ext_path:
         assets.setdefault("scripts", []).append(invalid_ext_path)
     slots = [
@@ -240,6 +254,37 @@ def test_ui_extension_accepts_inert_file_with_logical_id(tmp_path, keypair):
     assert row["capabilities"]["ui_extension"]["asset_count"] == 3
 
 
+def test_ui_extension_accepts_reviewed_worklet_with_logical_id(
+        tmp_path, keypair):
+    pkgdir = _write_ui_extension_pkg(
+        tmp_path, keypair,
+        worklet_assets=[{
+            "id": "audio-processor",
+            "path": "content/ui/audio-processor.js",
+        }])
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["status"] == "new"
+    assert row["capabilities"]["ui_extension"]["asset_count"] == 3
+
+
+def test_ui_extension_rejects_non_javascript_worklet(tmp_path, keypair):
+    pkgdir = _write_ui_extension_pkg(
+        tmp_path, keypair,
+        worklet_assets=[{
+            "id": "audio-processor",
+            "path": "content/ui/audio-processor.bin",
+        }])
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    row = next(r for r in plan["objects"] if r["type"] == "ui_extension")
+    assert row["status"] == "blocked"
+    assert "worklet must be a .js file" in row["reason"]
+
+
 def test_ui_extension_rejects_duplicate_inert_file_id(tmp_path, keypair):
     pkgdir = _write_ui_extension_pkg(
         tmp_path, keypair,
@@ -353,6 +398,31 @@ def test_ui_extension_install_records_inert_asset_id(tmp_path, keypair, monkeypa
     assert asset["kind"] == "file"
     assert asset["path"] == "content/ui/models/avatar.glb"
     assert asset["size"] == 10
+
+
+def test_ui_extension_worklet_is_resolvable_and_served_on_demand(
+        tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    result, _ = _install_ui_pkg(
+        tmp_path, keypair, force=True,
+        worklet_assets=[{
+            "id": "audio-processor",
+            "path": "content/ui/audio-processor.js",
+            "content": b"registerProcessor('fixture', class {});",
+        }])
+    assert result["ok"] is True
+    rec = pfp_package.list_installed_ui_extensions(
+        user_id="alice", scope="user")[0]
+    asset = next(
+        row for row in rec["assets"] if row.get("id") == "audio-processor")
+    assert asset["kind"] == "worklet"
+    url = _get_asset_url(rec, asset["path"])
+    response = _serve_asset_task(url)
+    assert response.get_attribute("http.response.status") == "200"
+    assert response.get_attribute(
+        "http.response.header.Content-Type") == "application/javascript"
+    assert response.get_content() == (
+        b"registerProcessor('fixture', class {});")
 
 
 def test_ui_extension_inert_binary_requires_explicit_review_confirmation(

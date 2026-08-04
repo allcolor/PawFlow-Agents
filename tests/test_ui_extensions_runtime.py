@@ -148,10 +148,14 @@ def test_realtime_media_paths_publish_generic_lifecycle_events():
     assert "resetMedia('conversation_changed')" in voice
 
 
-def test_ext_runtime_inert_assets_are_resolved_not_auto_loaded(ext_runtime_src):
+def test_ext_runtime_on_demand_assets_are_resolved_not_auto_loaded(
+        ext_runtime_src):
     assert "asset.kind === 'file'" in ext_runtime_src
+    assert "asset.kind === 'worklet'" in ext_runtime_src
     assert "return asset.url" in ext_runtime_src
-    assert "a.kind === 'file'" not in ext_runtime_src.split("function _loadAllExtensions", 1)[1]
+    loader = ext_runtime_src.split("function _loadAllExtensions", 1)[1]
+    assert "a.kind === 'file'" not in loader
+    assert "a.kind === 'worklet'" not in loader
 
 
 def test_ext_runtime_conditional_slots_are_manifest_driven(ext_runtime_src, template_src):

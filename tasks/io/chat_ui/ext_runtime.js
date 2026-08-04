@@ -277,7 +277,7 @@
         var assets = entry && entry.assets || [];
         for (var i = 0; i < assets.length; i++) {
           var asset = assets[i];
-          if (asset && asset.kind === 'file'
+          if (asset && (asset.kind === 'file' || asset.kind === 'worklet')
               && (asset.id === ref || asset.path === ref)) {
             return asset.url || '';
           }

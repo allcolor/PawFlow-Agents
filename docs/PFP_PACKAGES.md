@@ -83,7 +83,7 @@ Supported installable object types are `agent`, `prompt`, `skill`, `theme`, `tas
 
 Dependency `version` accepts exact versions and simple ranges: `>=1.0.0,<2.0.0`, `^1.2.0`, `~1.2.3`, comparison operators (`>`, `>=`, `<`, `<=`, `==`, `!=`), or `*`. Install and runtime checks require the installed package to satisfy the constraint. Updating a package is blocked when an installed dependent would no longer satisfy its declared constraint, unless `force` is explicit.
 
-### UI extension inert assets
+### UI extension on-demand assets
 
 In addition to auto-loaded `scripts` and `styles`, a `ui_extension` may declare
 an `assets.files` array of inert package files. An entry is either a relative
@@ -91,9 +91,14 @@ path or `{"id": "logical-name", "path": "content/ui/model.glb"}`. The signed
 install record stores kind, logical ID, path, SHA-256, and size; the chat boot
 manifest supplies a hash-addressed URL. Extension code resolves it with
 `pfp.asset("logical-name")` or `pfp.asset("content/ui/model.glb")`. Files are
-never auto-executed. The authenticated `/chat/ext/...` route verifies the
-installed whitelist, enablement, path containment, and full file hash before
-streaming, and supports immutable caching plus single byte ranges. See the
+never auto-executed. Reviewed executable AudioWorklet modules use
+`assets.worklets` entries with required `id` and `.js` `path` fields.
+They resolve through the same `pfp.asset()` API and are never auto-loaded;
+extension code must pass the URL explicitly to
+`audioContext.audioWorklet.addModule()`. The authenticated `/chat/ext/...`
+route verifies the installed whitelist, enablement, path containment, and full
+file hash before streaming, and supports immutable caching plus single byte
+ranges. See the
 [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md#ui-extensions-uiv1) for allowed
 formats, limits, slots, context snapshots, events, and teardown semantics.
 

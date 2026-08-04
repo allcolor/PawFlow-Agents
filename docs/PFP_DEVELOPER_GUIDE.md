@@ -523,6 +523,9 @@ Manifest:
     "styles":  ["content/ui/extension.css"],
     "files": [
       {"id": "avatar-model", "path": "content/ui/models/avatar.glb"}
+    ],
+    "worklets": [
+      {"id": "audio-processor", "path": "content/ui/audio-processor.js"}
     ]
   },
   "slots": [
@@ -551,8 +554,10 @@ Hooks accepted in `ui.v1`: `boot`, `shutdown`, `conversation_changed`,
 operations emit `resource_changed` with `resource_type`, `operation`, `name`,
 and scope metadata.
 
-`scripts` accepts only `.js`, `styles` only `.css`, and i18n catalogs only
-`.json`. `files` accepts inert JSON, SVG, images, fonts, WebAssembly, model,
+`scripts` and `worklets` accept only `.js`, `styles` only `.css`, and
+i18n catalogs only `.json`. Each `worklets` entry requires a logical `id`
+and a `path`; it is reviewed as executable code but is never auto-loaded.
+`files` accepts inert JSON, SVG, images, fonts, WebAssembly, model,
 texture, binary-buffer, and audio formats: `.json .svg .png .jpg .jpeg .webp
 .woff .woff2 .wasm .glb .gltf .vrm .bin .ktx2 .basis .fbx .mp3 .wav .ogg
 .m4a .aac .flac`. `.html` is always refused because same-origin HTML served
@@ -565,9 +570,11 @@ reviewer and therefore require explicit human confirmation (`force`) at
 install. A logical ID must match `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`.
 
 Each declared script is loaded into the page same-origin from `/chat/ext/...`;
-scripts keep their manifest insertion order. Inert `files` are listed in the
-boot manifest but never auto-loaded. `pfp.asset(idOrPath)` returns their
-hash-addressed authenticated URL. Asset responses recompute SHA-256, enforce
+scripts keep their manifest insertion order. Inert `files` and executable
+`worklets` are listed in the boot manifest but never auto-loaded.
+`pfp.asset(idOrPath)` returns their hash-addressed authenticated URL, suitable
+for an explicit call such as `audioContext.audioWorklet.addModule(url)`. Asset
+responses recompute SHA-256, enforce
 content-directory containment, set `nosniff` and immutable caching, expose an
 explicit MIME type, and support one RFC byte range (`206`, `Content-Range`,
 and `Accept-Ranges: bytes`). Malformed, multipart, or unsatisfiable ranges
@@ -579,7 +586,7 @@ The extension JS calls `pawflow.register("<package_id>", function (pfp) {
 
 ```javascript
 pfp.id                   // your package id
-pfp.asset(idOrPath)      // URL for a declared inert assets.files entry
+pfp.asset(idOrPath)      // URL for a declared assets.files/worklets entry
 pfp.context()            // frozen snapshot: user/conversation/agent/locale/theme/permission_mode
 pfp.t(key, vars)         // i18n lookup, namespaced to your package
 pfp.ui.slot(slot, id, render)

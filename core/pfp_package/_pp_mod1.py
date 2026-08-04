@@ -251,6 +251,13 @@ def _ui_extension_asset_list(obj: Dict[str, Any]) -> List[Dict[str, str]]:
             path = str(item or "").strip()
             if path:
                 rows.append({"kind": "file", "path": path, "id": ""})
+    for item in raw.get("worklets") or []:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        asset_id = str(item.get("id") or "").strip()
+        if path:
+            rows.append({"kind": "worklet", "path": path, "id": asset_id})
     return rows
 
 

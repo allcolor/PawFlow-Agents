@@ -434,7 +434,11 @@ class VoiceboxService(_VoiceboxBackendMixin, BaseVoiceCloneService, BaseSTTServi
         for candidate in candidates:
             try:
                 if candidate.exists() and candidate.is_file():
-                    content_type = mimetypes.guess_type(candidate.name)[0] or "audio/wav"
+                    content_type = (
+                        "audio/wav" if candidate.suffix.lower() == ".wav"
+                        else mimetypes.guess_type(candidate.name)[0]
+                        or "application/octet-stream"
+                    )
                     return {
                         "audio_bytes": candidate.read_bytes(),
                         "content_type": content_type,

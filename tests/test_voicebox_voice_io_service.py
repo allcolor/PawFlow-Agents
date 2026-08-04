@@ -376,7 +376,7 @@ def test_voicebox_speak_reads_local_audio_when_audio_endpoint_cannot_resolve_pat
     out = svc.speak(text="bonjour")
 
     assert out["audio_bytes"] == b"RIFFlocal"
-    assert out["content_type"] == "audio/x-wav"
+    assert out["content_type"] == "audio/wav"
 
 
 def test_voicebox_speak_auto_creates_preset_default_profile(monkeypatch):

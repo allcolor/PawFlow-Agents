@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from core import pfp_package
+from core import FlowFile, pfp_package
 from core.extension_repository import ExtensionRepository
 
 
@@ -371,6 +371,131 @@ def test_relay_sdk_repository_facade_emits_repository_host_calls():
             },
         },
     )]
+
+
+def test_runtime_repository_assets_have_stable_refs_and_authenticated_urls(
+        tmp_path):
+    keypair = pfp_package.create_signing_key()
+    artifact = _build(_write_owner_package(tmp_path, keypair), keypair)
+    assert pfp_package.install_pfp(
+        artifact, user_id="alice")["ok"] is True
+
+    from core import pfp_runtime
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        caller_runtime={
+            "package": "examples.avatar-runtime",
+            "object_id": "ui_extension:avatar",
+        })
+    row = host.execute_repository_call("example.avatar", "get", {
+        "name": "luna",
+    })
+    asset = row["assets"][0]
+    assert asset["ref"] == "pfp-asset:example.avatar/user/luna/model"
+    assert asset["url"].startswith(
+        "/chat/ext/examples.avatar-runtime/")
+    assert asset["url"].endswith(
+        "/__repository__/example.avatar/user/luna/model.vrm")
+
+    from tasks.io.serve_pfp_ext_assets import ServePfpExtensionAssetsTask
+    request = FlowFile(content=b"")
+    request.set_attribute("http.path", asset["url"])
+    request.set_attribute("http.auth.principal", "alice")
+    response = ServePfpExtensionAssetsTask({}).execute(request)[0]
+    assert response.get_attribute("http.response.status") == "200"
+    assert response.get_content() == b"VRM fixture"
+
+    denied = FlowFile(content=b"")
+    denied.set_attribute("http.path", asset["url"])
+    denied.set_attribute("http.auth.principal", "bob")
+    denied = ServePfpExtensionAssetsTask({}).execute(denied)[0]
+    assert denied.get_attribute("http.response.status") == "404"
+
+    stored = ExtensionRepository.instance().get(
+        "example.avatar", "luna", user_id="alice", scope="user")
+    model = (Path(stored["installed_from"]["content_dir"])
+             / stored["assets"][0]["path"])
+    model.write_bytes(b"tampered")
+    tampered = FlowFile(content=b"")
+    tampered.set_attribute("http.path", asset["url"])
+    tampered.set_attribute("http.auth.principal", "alice")
+    tampered = ServePfpExtensionAssetsTask({}).execute(tampered)[0]
+    assert tampered.get_attribute("http.response.status") == "404"
+
+
+def test_repository_asset_url_is_isolated_to_its_conversation(tmp_path):
+    keypair = pfp_package.create_signing_key()
+    artifact = _build(_write_owner_package(tmp_path, keypair), keypair)
+    assert pfp_package.install_pfp(
+        artifact, user_id="alice", conversation_id="conv-1",
+        scope="conversation")["ok"] is True
+
+    from core import pfp_runtime
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice", conversation_id="conv-1", scope="conversation",
+        caller_runtime={
+            "package": "examples.avatar-runtime",
+            "object_id": "ui_extension:avatar",
+        })
+    asset = host.execute_repository_call(
+        "example.avatar", "get", {"name": "luna"})["assets"][0]
+    assert asset["ref"] == (
+        "pfp-asset:example.avatar/conversation/luna/model")
+
+    from tasks.io.serve_pfp_ext_assets import ServePfpExtensionAssetsTask
+    allowed = FlowFile(content=b"")
+    allowed.set_attribute("http.path", asset["url"])
+    allowed.set_attribute("http.auth.principal", "alice")
+    allowed.set_attribute("http.cookie.pawflow_conv", "conv-1")
+    allowed = ServePfpExtensionAssetsTask({}).execute(allowed)[0]
+    assert allowed.get_attribute("http.response.status") == "200"
+    assert allowed.get_content() == b"VRM fixture"
+
+    denied = FlowFile(content=b"")
+    denied.set_attribute("http.path", asset["url"])
+    denied.set_attribute("http.auth.principal", "alice")
+    denied.set_attribute("http.cookie.pawflow_conv", "conv-2")
+    denied = ServePfpExtensionAssetsTask({}).execute(denied)[0]
+    assert denied.get_attribute("http.response.status") == "404"
+
+
+def test_owner_runtime_can_serve_dependent_pack_assets(tmp_path):
+    owner_key = pfp_package.create_signing_key()
+    owner = _build(_write_owner_package(
+        tmp_path, owner_key, include_resource=False), owner_key)
+    assert pfp_package.install_pfp(owner, user_id="alice")["ok"] is True
+    pack_key = pfp_package.create_signing_key()
+    pack = _build(_write_pack(
+        tmp_path, pack_key,
+        dependencies=["examples.avatar-runtime@1.0.0"]), pack_key)
+    assert pfp_package.install_pfp(pack, user_id="alice")["ok"] is True
+
+    from core import pfp_runtime
+    host = pfp_runtime.PackageRuntimeHost(
+        user_id="alice",
+        caller_runtime={
+            "package": "examples.avatar-runtime",
+            "object_id": "ui_extension:avatar",
+        })
+    rows = host.execute_repository_call("example.avatar", "list", {})
+    asset = rows[0]["assets"][0]
+    assert "/chat/ext/examples.avatar-pack/" in asset["url"]
+
+    from tasks.io.serve_pfp_ext_assets import ServePfpExtensionAssetsTask
+    request = FlowFile(content=b"")
+    request.set_attribute("http.path", asset["url"])
+    request.set_attribute("http.auth.principal", "alice")
+    response = ServePfpExtensionAssetsTask({}).execute(request)[0]
+    assert response.get_attribute("http.response.status") == "200"
+    assert response.get_content() == b"Nova VRM fixture"
+
+    assert pfp_package.uninstall_pfp(
+        "examples.avatar-pack", user_id="alice")["ok"] is True
+    missing = FlowFile(content=b"")
+    missing.set_attribute("http.path", asset["url"])
+    missing.set_attribute("http.auth.principal", "alice")
+    missing = ServePfpExtensionAssetsTask({}).execute(missing)[0]
+    assert missing.get_attribute("http.response.status") == "404"
 
 
 def test_uninstall_keeps_descriptor_while_user_resource_exists(tmp_path):

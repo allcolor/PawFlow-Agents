@@ -119,6 +119,12 @@ conversation, scope, schema, or owner values. Runtime-created resources are
 JSON-only in this contract; authenticated binary upload and browser asset
 delivery are separate contracts.
 
+Repository `list`/`get` responses decorate packaged assets with a stable
+`pfp-asset:<type>/<scope>/<name>/<id>` reference and an authenticated immutable
+URL. The asset route resolves the exact scoped repository entry and verifies
+the contributor package, declared path, and SHA-256 before serving, including
+for resources installed by a dependent pack.
+
 Package resources participate in conflict, update-diff, local-modification,
 dependency, and uninstall handling. A type descriptor is retained when a
 user-created resource still uses it unless force is explicit. Forced removal

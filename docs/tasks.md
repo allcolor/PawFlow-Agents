@@ -85,7 +85,7 @@ code duplication.
 | `serveChatUI` | Serve an HTML chat interface for the agent |
 | `serveFile` | Serve a file from the temporary file store |
 | `serveLogin` | Dynamic login page with multi-provider support |
-| `servePfpExtensionAssets` | Serve JS/CSS assets for installed PFP `ui_extension` objects via `/chat/ext/<package>/<hash>/<file>` |
+| `servePfpExtensionAssets` | Serve hash-verified assets for installed PFP UI extensions and scoped extension-repository resources via `/chat/ext/<package>/<hash>/<file>` |
 | `servePfpWebAppAssets` | Serve the standalone page and assets for installed PFP `web_app` objects via `/apps/<package>/<name>/` |
 | `slackReceiver` | Receive messages from a Slack bot |
 | `slackSend` | Send a message to Slack via Incoming Webhook |

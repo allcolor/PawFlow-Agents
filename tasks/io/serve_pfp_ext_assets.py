@@ -26,6 +26,7 @@ from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
+from core.extension_repository import SAFE_RESOURCE_ASSET_EXTENSIONS
 from core.pfp_package._pp_base import _UI_ASSET_EXTENSIONS
 
 logger = logging.getLogger(__name__)
@@ -57,8 +58,9 @@ mimetypes.add_type("audio/flac", ".flac")
 # auto-loader only fetches .js/.css. The matching whitelist in core.pfp_package
 # (_UI_ASSET_EXTENSIONS) refuses to install a package declaring .html assets;
 # this server-side allow-list is the second layer.
-_ALLOWED_EXTENSIONS = _UI_ASSET_EXTENSIONS
+_ALLOWED_EXTENSIONS = _UI_ASSET_EXTENSIONS | SAFE_RESOURCE_ASSET_EXTENSIONS
 _BASE_PATH = "/chat/ext"
+_REPOSITORY_PREFIX = "__repository__/"
 
 
 class _BoundedReader:
@@ -135,24 +137,29 @@ class ServePfpExtensionAssetsTask(BaseTask):
         if conversation_id and not is_extension_enabled(conversation_id, package_id):
             return self._not_found(flowfile, "extension disabled for this conversation")
 
-        # Look up the asset across user + (optionally) conversation scope.
-        from core.pfp_package import list_installed_ui_extensions
-        scope = "conversation" if conversation_id else "user"
-        records = list_installed_ui_extensions(
-            user_id=user_id, conversation_id=conversation_id, scope=scope)
-        match = None
-        for rec in records:
-            if rec.get("package") != package_id:
-                continue
-            for asset in rec.get("assets") or []:
-                if asset.get("path") != file_path:
+        if file_path.startswith(_REPOSITORY_PREFIX):
+            match = _repository_asset_match(
+                user_id, conversation_id, package_id, asset_hash, file_path)
+        else:
+            # Look up the asset across user + (optionally) conversation scope.
+            from core.pfp_package import list_installed_ui_extensions
+            scope = "conversation" if conversation_id else "user"
+            records = list_installed_ui_extensions(
+                user_id=user_id, conversation_id=conversation_id, scope=scope)
+            match = None
+            for rec in records:
+                if rec.get("package") != package_id:
                     continue
-                if not _asset_hash_matches(asset.get("sha256", ""), asset_hash):
-                    continue
-                match = (rec, asset)
-                break
-            if match:
-                break
+                for asset in rec.get("assets") or []:
+                    if asset.get("path") != file_path:
+                        continue
+                    if not _asset_hash_matches(
+                            asset.get("sha256", ""), asset_hash):
+                        continue
+                    match = (rec, asset)
+                    break
+                if match:
+                    break
         if not match:
             return self._not_found(flowfile, "asset not found")
         rec, asset = match
@@ -257,6 +264,40 @@ def _asset_hash_matches(stored: str, url_value: str) -> bool:
     if len(candidate) < 12 or len(candidate) > len(expected):
         return False
     return expected.startswith(candidate)
+
+
+def _repository_asset_match(
+        user_id: str, conversation_id: str, package_id: str,
+        asset_hash: str, file_path: str):
+    """Resolve one installed repository asset without trusting URL metadata."""
+    parts = file_path[len(_REPOSITORY_PREFIX):].split("/")
+    if len(parts) != 4 or not all(parts):
+        return None
+    resource_type, scope, name, asset_file = parts
+    if scope not in {"user", "conversation"}:
+        return None
+    if scope == "conversation" and not conversation_id:
+        return None
+    from core.extension_repository import ExtensionRepository
+    try:
+        entry = ExtensionRepository.instance().get(
+            resource_type, name, user_id=user_id, scope=scope,
+            conversation_id=conversation_id if scope == "conversation" else "")
+    except ValueError:
+        return None
+    if not entry or str(entry.get("contributor_package") or "") != package_id:
+        return None
+    installed_from = entry.get("installed_from") or {}
+    if str(installed_from.get("package") or "") != package_id:
+        return None
+    for asset in entry.get("assets") or []:
+        token = str(asset.get("id") or "") + str(asset.get("extension") or "")
+        if token != asset_file:
+            continue
+        if not _asset_hash_matches(asset.get("sha256", ""), asset_hash):
+            continue
+        return ({"content_dir": installed_from.get("content_dir", "")}, asset)
+    return None
 
 
 def _parse_byte_range(value: str, size: int) -> Optional[Tuple[int, int]]:

@@ -310,7 +310,7 @@ The package validates WebGL/WebGPU and required browser APIs at boot. Unsupporte
 - commit the two coherent pre-existing lots separately;
 - confirm a clean worktree before architecture changes.
 
-### Phase 1 — extension repository foundation
+### Phase 1 — extension repository foundation (complete)
 
 - implement `repository_type` and `repository_resource` validation, inspection, risk/capability display, install, update diff, conflict detection, local-modification detection, uninstall, and dependency blocking;
 - add the namespaced scoped extension repository and JSON Schema validation;

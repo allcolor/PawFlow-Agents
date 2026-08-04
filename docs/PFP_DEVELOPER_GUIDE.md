@@ -481,7 +481,13 @@ document. It derives package/user/conversation/scope from the verified runtime
 request, verifies owner and `mutable`, validates every document against the
 installed schema, and audit-logs the operation. Runtime CRUD is JSON-only;
 packaged binary assets stay immutable and hash-addressed in their PFP content
-store and are resolved through the authenticated extension-asset route.
+store. `list` and `get` return each packaged asset with a stable
+`pfp-asset:<type>/<scope>/<name>/<id>` reference and a hash-addressed `url`.
+The URL is served through the authenticated extension-asset route, which
+revalidates the user/conversation scope, contributing package, stored path,
+content hash, package kill switch, and per-conversation enable state. Assets
+from dependent packs use the pack's content store; the owner runtime never
+needs direct filesystem access.
 
 ## UI Extensions (ui.v1)
 

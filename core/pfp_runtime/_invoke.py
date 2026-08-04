@@ -244,7 +244,7 @@ class PackageRuntimeHost:
         from core import pfp_package
         from core.extension_repository import (
             ExtensionRepository, validate_document, validate_resource_name,
-            validate_resource_type)
+            validate_resource_type, with_repository_asset_urls)
 
         resource_type = validate_resource_type(resource_type)
         arguments = arguments or {}
@@ -320,6 +320,10 @@ class PackageRuntimeHost:
             "user=%s conv=%s",
             caller_package, resource_type, operation, self.user_id,
             self.conversation_id or "-")
+        if isinstance(result, list):
+            return [with_repository_asset_urls(row) for row in result]
+        if isinstance(result, dict):
+            return with_repository_asset_urls(result)
         return result
 
     def _dispatch_service_operation(self, service: Any, operation: str,

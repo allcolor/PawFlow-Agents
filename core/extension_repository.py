@@ -42,6 +42,33 @@ SAFE_RESOURCE_ASSET_EXTENSIONS = frozenset({
 })
 
 
+def with_repository_asset_urls(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a repository entry with stable refs and authenticated asset URLs."""
+    result = copy.deepcopy(entry)
+    resource_type = str(result.get("resource_type") or "")
+    name = str(result.get("name") or "")
+    scope = str(result.get("_scope") or "")
+    package_id = str(result.get("contributor_package") or "")
+    if scope not in {"user", "conversation"}:
+        return result
+    assets = []
+    for value in result.get("assets") or []:
+        asset = copy.deepcopy(value)
+        asset_id = str(asset.get("id") or "")
+        extension = str(asset.get("extension") or "")
+        digest = str(asset.get("sha256") or "").removeprefix("sha256:")
+        if resource_type and name and package_id and asset_id and digest:
+            token = asset_id + extension
+            asset["ref"] = (
+                f"pfp-asset:{resource_type}/{scope}/{name}/{asset_id}")
+            asset["url"] = (
+                f"/chat/ext/{package_id}/{digest[:16]}/__repository__/"
+                f"{resource_type}/{scope}/{name}/{token}")
+        assets.append(asset)
+    result["assets"] = assets
+    return result
+
+
 def validate_resource_type(value: str) -> str:
     resource_type = str(value or "").strip()
     if not RESOURCE_TYPE_RE.fullmatch(resource_type):

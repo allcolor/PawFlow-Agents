@@ -545,6 +545,49 @@ def _validate_allowed_refs(values: Any, field: str) -> None:
         _allowed_package(item)
 
 
+def _browser_semantic_grants(obj: Dict[str, Any]) -> List[Dict[str, Any]]:
+    permissions = obj.get("permissions")
+    if permissions is None:
+        return []
+    if not isinstance(permissions, dict):
+        raise PfpError("permissions must be an object")
+    browser = permissions.get("browser")
+    if browser is None:
+        return []
+    if not isinstance(browser, dict):
+        raise PfpError("permissions.browser must be an object")
+    grants = browser.get("semantic")
+    if grants is None:
+        return []
+    if not isinstance(grants, list):
+        raise PfpError("permissions.browser.semantic must be a list")
+    allowed_operations = {"list", "get", "invoke"}
+    for grant in grants:
+        if not isinstance(grant, dict):
+            raise PfpError(
+                "permissions.browser.semantic entries must be objects")
+        package_id = str(grant.get("package") or "").strip()
+        _dependency_package({"package": package_id}, strict=True)
+        operations = grant.get("operations")
+        if (not isinstance(operations, list) or not operations
+                or any(str(item) not in allowed_operations
+                       for item in operations)):
+            raise PfpError(
+                "semantic browser operations must be a non-empty subset of "
+                "list, get, invoke")
+        nodes = grant.get("nodes")
+        if (not isinstance(nodes, list) or not nodes
+                or any(not isinstance(item, str) or not item
+                       for item in nodes)):
+            raise PfpError(
+                "semantic browser nodes must be a non-empty string list")
+        for node in nodes:
+            if node != "*" and not node.startswith(package_id + ":"):
+                raise PfpError(
+                    "semantic browser node must belong to the granted package")
+    return grants
+
+
 def _declared_package_dependencies(manifest: Dict[str, Any], obj: Dict[str, Any]) -> List[Dict[str, str]]:
     deps: List[Dict[str, str]] = []
     for item in manifest.get("dependencies") or []:
@@ -563,6 +606,9 @@ def _declared_package_dependencies(manifest: Dict[str, Any], obj: Dict[str, Any]
         dep = _allowed_package(item)
         if dep:
             deps.append(dep)
+    for grant in _browser_semantic_grants(obj):
+        deps.append(_dependency_package(
+            {"package": grant["package"]}, strict=True))
     return _dedupe_dependencies(deps)
 
 

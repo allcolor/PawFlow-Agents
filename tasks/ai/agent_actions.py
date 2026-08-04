@@ -40,6 +40,7 @@ from tasks.ai.actions.gemini_live import _handle_gemini_live
 from tasks.ai.actions.command_dispatch import _handle_command_dispatch
 from tasks.ai.actions._command_result import decorate_command_flowfiles
 from tasks.ai.actions.pfp_ui import _handle_pfp_ui
+from tasks.ai.actions.pfp_semantic import _handle_pfp_semantic
 from tasks.ai._agent_actions_conv import _AgentActionsConvMixin
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,9 @@ def _schedule_bg_action(fn) -> None:
         _BG_ACTION_QUEUE_COND.notify()
 
 _ACTION_HANDLERS = [
+    # Browser registration/result actions are short authenticated bookkeeping
+    # and never execute package code.
+    _handle_pfp_semantic,
     # PFP UI extension handlers run first: any body carrying `_ext` is
     # routed to its installed handler before built-in dispatchers see it.
     _handle_pfp_ui,

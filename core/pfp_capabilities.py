@@ -32,6 +32,56 @@ class PackageCapabilityBroker:
     def authorize_service_call(self, caller_runtime: Dict[str, Any], service_ref: str) -> Dict[str, Any]:
         return self._authorize(caller_runtime, service_ref, "service", "allowed_services")
 
+    def authorize_browser_call(
+            self, caller_runtime: Dict[str, Any], target: str,
+            operation: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Authorize a signed generic browser capability grant."""
+        caller_package = str((caller_runtime or {}).get("package") or "")
+        caller_object = str((caller_runtime or {}).get("object_id") or "")
+        if not caller_package or not caller_object:
+            raise PackageCapabilityError(
+                "caller package runtime identity is required")
+        if str(target or "") != "semantic":
+            raise PackageCapabilityError(
+                f"unsupported PFP browser target: {target}")
+        if not isinstance(arguments, dict):
+            raise PackageCapabilityError(
+                "PFP browser call arguments must be an object")
+        target_package = str(arguments.get("package") or "").strip()
+        node = str(arguments.get("node") or "").strip()
+        permissions = caller_runtime.get("permissions") or {}
+        browser = permissions.get("browser") if isinstance(permissions, dict) else {}
+        grants = browser.get("semantic") if isinstance(browser, dict) else []
+        for grant in grants or []:
+            if not isinstance(grant, dict):
+                continue
+            if str(grant.get("package") or "") != target_package:
+                continue
+            if operation not in (grant.get("operations") or []):
+                continue
+            nodes = grant.get("nodes") or []
+            if operation in {"get", "invoke"} and (
+                    "*" not in nodes and node not in nodes):
+                continue
+            self._require_installed_package(target_package)
+            from core.tool_mcp_filters import (
+                _ui_extensions_globally_disabled, is_extension_enabled)
+            if (_ui_extensions_globally_disabled()
+                    or (self.conversation_id and not is_extension_enabled(
+                        self.conversation_id, target_package))):
+                raise PackageCapabilityError(
+                    f"browser extension is disabled: {target_package}")
+            return {
+                "ok": True,
+                "caller_package": caller_package,
+                "caller_object": caller_object,
+                "target": {"kind": "browser", "name": "semantic"},
+                "grant": grant,
+            }
+        raise PackageCapabilityError(
+            f"{caller_package}:{caller_object} is not allowed to call "
+            f"browser semantic.{operation} for {target_package}")
+
     def _authorize(self, caller_runtime: Dict[str, Any], target_ref: str,
                    target_kind: str, grant_field: str) -> Dict[str, Any]:
         caller_package = str((caller_runtime or {}).get("package") or "")

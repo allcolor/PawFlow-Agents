@@ -89,6 +89,7 @@ The `pawflow` SDK module shipped with package runtimes exposes three symbols: `p
 | `pfp.flowfile(...)`, `pfp.artifact(...)` | Yes | n/a |
 | `pfp.call_tool(name, **args)` | Yes (broker-authorized) | n/a |
 | `pfp.call_service(name, op, **args)` | Yes (broker-authorized) | n/a |
+| `pfp.browser.semantic.list/get/invoke(...)` | Yes (broker-authorized) | Declare `permissions.browser.semantic` for the target package, operations, and nodes |
 | `tools.call(...)`, `tools.get_schema(...)` | **No** — `_ensure_connected()` raises because the relay env scrubs `PAWFLOW_TOOL_RELAY_URL`/`_TOKEN` for PFP runs | Use `pfp.call_tool(...)` with a declared `allowed_tools` grant |
 | `fs.read_file`, `fs.write_file`, `fs.exec`, `fs.list_dir`, `fs.grep`, `fs.stat`, `fs.exists`, `fs.delete_file`, `fs.mkdir`, `fs.edit`, `fs.git_status`, `fs.git_commit` | **No** — same scrubbed-env block | Either open files/spawn binaries directly inside the relay container (no broker needed for relay-local I/O) or use `pfp.call_tool("read", path=...)`, `pfp.call_tool("write", ...)`, `pfp.call_tool("bash", ...)`, etc. with the matching grant |
 
@@ -623,6 +624,82 @@ Every media hook uses the normal `pfp.on(...)` unsubscribe contract. Disabling
 an extension removes its listeners before queued callbacks run. Session stop,
 LiveKit track unsubscribe/reconnect, and conversation switch detach sources
 deterministically before the next conversation context is delivered.
+
+### Semantic browser nodes
+
+An extension can expose bounded JSON state and local actions without adding a
+built-in agent tool:
+
+```javascript
+const id = pfp.semantic.register({
+  id: 'stage.status',
+  role: 'status',
+  label: 'Stage status',
+  parent: 'conversation',
+  state: () => ({ selected: currentSelection }),
+  actions: {
+    select: {
+      parameters: {
+        name: { type: 'string', required: true }
+      },
+      run: args => select(args.name)
+    }
+  }
+});
+```
+
+Node IDs are qualified as `<package>:<local-id>`. The package API can
+`list()`, `get(id)`, `invoke(id, action, arguments)`, and
+`unregister(id)` only for its own nodes. Roles, labels, schemas, arguments,
+state snapshots, and results are validated and bounded; snapshots are deeply
+frozen and may not contain functions, DOM nodes, cycles, or non-JSON values.
+All nodes are removed when the package is disabled or unregistered.
+
+A PFP runtime object reaches an active authorized tab through the SDK:
+
+```python
+nodes = pfp.browser.semantic.list("my.semantic-ui")
+node = pfp.browser.semantic.get(
+    "my.semantic-ui", "my.semantic-ui:stage.status")
+result = pfp.browser.semantic.invoke(
+    "my.semantic-ui",
+    "my.semantic-ui:stage.status",
+    "select",
+    {"name": "primary"},
+)
+```
+
+The runtime object must declare the signed grant below. A target package grant
+also becomes an install dependency; use the caller's own package ID when the UI
+extension and tool ship together.
+
+```json
+{
+  "permissions": {
+    "browser": {
+      "semantic": [
+        {
+          "package": "my.semantic-ui",
+          "operations": ["list", "get", "invoke"],
+          "nodes": ["my.semantic-ui:stage.status"]
+        }
+      ]
+    }
+  }
+}
+```
+
+PawFlow correlates requests through the authenticated per-tab SSE channel. The
+server derives user, conversation, caller package, and grant from the runtime
+envelope; the browser cannot override them. One eligible tab is selected
+directly, or the unique active tab when several are registered. No tab, several
+equally active tabs, a stale/disconnected tab, a disabled or missing extension,
+a mismatched result context, timeout, and payloads above 64 KiB all fail
+explicitly. Requests and results are audit logged.
+
+The complete installable example is
+`docs/examples/pfp/semantic_ui_tool.pfpdir`. It ships one UI node and one PFP
+tool in the same package; no semantic agent tool is built into core.
 
 UI extensions live in the user's own browser tab, same origin as the page.
 They have full DOM access; PawFlow scans the JS files at install time for

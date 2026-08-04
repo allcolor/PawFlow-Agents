@@ -66,6 +66,7 @@ def prepare_runtime_entrypoint(runtime: Dict[str, Any],
         "dependencies": _list_value(runtime.get("dependencies")),
         "allowed_tools": _list_value(runtime.get("allowed_tools")),
         "allowed_services": _list_value(runtime.get("allowed_services")),
+        "permissions": dict(runtime.get("permissions") or {}),
         "provides": _list_value(runtime.get("provides")),
         "secrets": _list_value(runtime.get("secrets")),
         "secret_bindings": dict(runtime.get("secret_bindings") or {}),
@@ -163,6 +164,18 @@ class PackageRuntimeHost:
         )
         return broker.authorize_service_call(self.caller_runtime, service_ref)
 
+    def authorize_browser_call(
+            self, target: str, operation: str,
+            arguments: Dict[str, Any]) -> Dict[str, Any]:
+        from core.pfp_capabilities import PackageCapabilityBroker
+        broker = PackageCapabilityBroker(
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+            scope=self.scope,
+        )
+        return broker.authorize_browser_call(
+            self.caller_runtime, target, operation, arguments)
+
     def build_tool_call(self, tool_ref: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         authorization = self.authorize_tool_call(tool_ref)
         return {
@@ -204,6 +217,25 @@ class PackageRuntimeHost:
             return service.invoke(call["operation"], call["arguments"])
         return self._dispatch_service_operation(
             service, call["operation"], call["arguments"], call["target"])
+
+    def execute_browser_call(
+            self, target: str, operation: str,
+            arguments: Dict[str, Any] | None = None) -> Any:
+        if not self.conversation_id:
+            raise PackageRuntimeError(
+                "PFP browser host call requires conversation_id")
+        arguments = arguments or {}
+        authorization = self.authorize_browser_call(
+            target, operation, arguments)
+        from core.semantic_browser_bridge import SemanticBrowserBridge
+        return SemanticBrowserBridge.instance().call(
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+            caller=_caller_identity(self.caller_runtime),
+            grant=authorization["grant"],
+            operation=operation,
+            arguments=arguments,
+        )
 
     def execute_repository_call(
             self, resource_type: str, operation: str,
@@ -345,6 +377,10 @@ class PackageRuntimeHost:
             operation = str(request.get("operation") or "")
             return self.execute_repository_call(
                 str(request.get("target") or ""), operation, arguments)
+        if kind == "browser":
+            operation = str(request.get("operation") or "")
+            return self.execute_browser_call(
+                str(request.get("target") or ""), operation, arguments)
         raise PackageRuntimeError(f"unsupported PFP host-call kind: {kind}")
 
     def _resolve_tool(self, target: Dict[str, str]) -> Any:
@@ -401,6 +437,7 @@ def runtime_host_from_invocation(request: Dict[str, Any], *,
         "object_id": package_runtime.get("object_id", ""),
         "allowed_tools": package_runtime.get("allowed_tools", []),
         "allowed_services": package_runtime.get("allowed_services", []),
+        "permissions": dict(package_runtime.get("permissions") or {}),
         "agent_name": str(context.get("agent_name") or ""),
     }
     return PackageRuntimeHost(

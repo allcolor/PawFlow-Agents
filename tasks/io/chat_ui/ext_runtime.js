@@ -157,6 +157,10 @@
 
   // ── Hook firing ────────────────────────────────────────────────────
   function _fireHook(hookName, payload) {
+    if (hookName === 'conversation_changed'
+        && window._pawflowSemanticRuntime) {
+      window._pawflowSemanticRuntime.registerTab();
+    }
     var listeners = _hookListeners[hookName];
     if (!listeners || !listeners.length) return;
     // Snapshot to avoid mutation surprises during dispatch.
@@ -281,6 +285,8 @@
         return '';
       },
       context: function () { return _contextSnapshot(); },
+      semantic: window._pawflowSemanticRuntime
+        ? window._pawflowSemanticRuntime.apiFor(packageId) : null,
       t: function (key, vars) {
         if (typeof t === 'function') {
           var nsKey = i18nNamespace + key;
@@ -517,6 +523,9 @@
     pkg.callback = callback;
     pkg.pfp = _makePfpFor(packageId);
     pkg.ready = true;
+    if (window._pawflowSemanticRuntime) {
+      window._pawflowSemanticRuntime.enablePackage(packageId);
+    }
     // Defer the actual callback invocation until the DOM is loaded so
     // slot containers are available. If the DOM is already ready, run
     // on the next microtask to keep ordering deterministic across many
@@ -558,6 +567,9 @@
       panel.style.display = 'none';
       panel.removeAttribute('data-pf-ext');
       panel.removeAttribute('data-pf-panel');
+    }
+    if (window._pawflowSemanticRuntime) {
+      window._pawflowSemanticRuntime.disablePackage(packageId);
     }
     delete _packages[packageId];
     _unregisteredPackages[packageId] = true;

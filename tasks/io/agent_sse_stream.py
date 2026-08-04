@@ -94,6 +94,10 @@ class AgentSSEStreamTask(BaseTask):
                 # but the per-conversation check does not apply.
                 if not requester:
                     raise ConversationAccessError("Unauthenticated")
+                from core.semantic_browser_bridge import SemanticBrowserBridge
+                if not SemanticBrowserBridge.instance().authorize_bus(
+                        requester, conversation_id):
+                    raise ConversationAccessError("UI bus not found")
             else:
                 require_read(conversation_id, requester)
         except ConversationAccessError:

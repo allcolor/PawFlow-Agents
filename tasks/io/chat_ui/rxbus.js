@@ -102,6 +102,14 @@ function _ensureUIActionSSE(force) {
     const data = JSON.parse(e.data || '{}');
     _pushCommandResult(data);
   });
+  _uiActionEventSource.addEventListener('pfp_semantic_request', (e) => {
+    _uiActionLastActivity = Date.now();
+    if (!window._pawflowSemanticRuntime) return;
+    let data = {};
+    try { data = JSON.parse(e.data || '{}'); }
+    catch (_err) { return; }
+    window._pawflowSemanticRuntime.handleRequest(data);
+  });
   _uiActionEventSource.onerror = () => {
     // Browser EventSource can remain half-open across restarts. Recreate the
     // per-tab action stream so context-menu actions do not wait forever on a

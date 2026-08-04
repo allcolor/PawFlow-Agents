@@ -1,0 +1,57 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "examples.semantic-ui",
+  "version": "0.1.0",
+  "description": "Installable semantic UI node and brokered PFP tool example",
+  "developer": {
+    "email": "dev@example.com",
+    "public_key": "ed25519:REPLACE_WITH_PUBLIC_KEY"
+  },
+  "origin": {
+    "source": "docs/examples/pfp/semantic_ui_tool.pfpdir"
+  },
+  "objects": [
+    {
+      "id": "ui_extension:semantic-demo",
+      "type": "ui_extension",
+      "name": "semantic-demo",
+      "version_compat": "ui.v1",
+      "assets": {
+        "scripts": ["content/ui/extension.js"]
+      },
+      "slots": [],
+      "hooks": ["shutdown"]
+    },
+    {
+      "id": "tool:semantic-demo",
+      "type": "tool",
+      "name": "semantic-demo",
+      "path": "content/tools/semantic-demo/main.py",
+      "runner": "python",
+      "description": "List, inspect, or invoke the package-owned semantic demo node",
+      "parameters": {
+        "operation": {
+          "type": "string",
+          "required": true,
+          "enum": ["list", "get", "invoke"]
+        },
+        "node": {"type": "string"},
+        "action": {"type": "string"},
+        "arguments": {"type": "object"}
+      },
+      "allowed_tools": [],
+      "allowed_services": [],
+      "permissions": {
+        "browser": {
+          "semantic": [
+            {
+              "package": "examples.semantic-ui",
+              "operations": ["list", "get", "invoke"],
+              "nodes": ["examples.semantic-ui:demo.status"]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

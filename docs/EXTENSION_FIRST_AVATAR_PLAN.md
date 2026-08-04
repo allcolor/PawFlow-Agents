@@ -338,7 +338,7 @@ Exit gate: a test extension loads a large inert model asset by logical ID while 
 
 Exit gate: a minimal test extension receives agent audio activity and frames/tracks, then stops receiving them immediately when disabled.
 
-### Phase 4 — semantic UI transport
+### Phase 4 — semantic UI transport (complete)
 
 - implement the browser registry, schema validation, qualified IDs, snapshots, and local invocation;
 - implement authenticated server correlation and active-tab selection;

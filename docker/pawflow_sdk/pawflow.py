@@ -304,12 +304,46 @@ class _PfpRepository:
             arguments={"name": name})
 
 
+class _PfpSemantic:
+    """Authorized access to semantic nodes in the active PawFlow browser tab."""
+
+    def __init__(self, runtime):
+        self._runtime = runtime
+
+    def list(self, package: str):
+        return self._runtime._host_call(
+            "browser", "semantic", operation="list",
+            arguments={"package": package})
+
+    def get(self, package: str, node: str):
+        return self._runtime._host_call(
+            "browser", "semantic", operation="get",
+            arguments={"package": package, "node": node})
+
+    def invoke(self, package: str, node: str, action: str,
+               arguments=None):
+        return self._runtime._host_call(
+            "browser", "semantic", operation="invoke",
+            arguments={
+                "package": package,
+                "node": node,
+                "action": action,
+                "arguments": arguments or {},
+            })
+
+
+class _PfpBrowser:
+    def __init__(self, runtime):
+        self.semantic = _PfpSemantic(runtime)
+
+
 class _PfpRuntime:
     """Small runtime helper for PawFlow Package entrypoints."""
 
     def __init__(self):
         self._request = None
         self.repository = _PfpRepository(self)
+        self.browser = _PfpBrowser(self)
         # Bind the protocol streams ONCE, at import time, before any wrapper
         # redirects sys.stdout to capture user print() output. The host-call
         # protocol (and the final result envelope) must always travel on the

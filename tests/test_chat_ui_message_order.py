@@ -325,9 +325,12 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
 def test_action_dock_is_horizontal_and_scrollable():
     # Regression: the former + dropdown could extend beyond a short viewport.
     # The composer dock keeps the same actions in a bounded horizontal strip.
+    # overflow-y stays visible (computed `auto`) so the hover zoom can grow
+    # upward; a transform never triggers a scrollbar, so the horizontal
+    # bounding is unaffected.
     assert ".action-dock-menu { display: flex; position: static;" in TEMPLATE_HTML
     assert "flex-direction: row;" in TEMPLATE_HTML
-    assert "overflow-x: auto; overflow-y: hidden;" in TEMPLATE_HTML
+    assert "overflow-x: auto; overflow-y: visible;" in TEMPLATE_HTML
 
 
 def test_mobile_breakpoints_wrap_header_and_overlay_sidebar():

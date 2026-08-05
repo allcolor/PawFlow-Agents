@@ -115,7 +115,10 @@ def test_control_docks_use_an_external_css_tooltip_without_horizontal_scroll():
 
     assert 'id="pfCssTooltip"' in TEMPLATE_HTML
     assert '.pf-css-tooltip {' in TEMPLATE_HTML
-    assert 'overflow-x: auto; overflow-y: hidden;' in TEMPLATE_HTML
+    # The dock keeps its horizontal scroll (overflow-x: auto) while the
+    # macOS-style hover zoom is allowed to grow upward (overflow-y: visible;
+    # computed as `auto`, and a `transform: scale` never produces a scrollbar).
+    assert 'overflow-x: auto; overflow-y: visible;' in TEMPLATE_HTML
     assert '.action-menu-item:hover > div' not in TEMPLATE_HTML
     assert 'title="Server settings"' not in dock
     assert "_setTitle('#viewMenuToggle'" not in i18n_js

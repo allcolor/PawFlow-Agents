@@ -362,6 +362,23 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
     logger.info("[vision-fallback] proceeding: vision_svc=%s, describing images...",
                 getattr(vision_svc, "_service_id", "") or type(vision_svc).__name__)
 
+    # A — fenetre du tour courant : seules les images du message utilisateur
+    # courant et des messages produits apres lui (tool results du tour) sont
+    # decrites. Les images des messages PLUS ANCIENS ont deja ete decrites —
+    # leur description est PERSISTEE dans le contexte (persistance B plus
+    # bas) — donc les re-decrire re-soumettrait l'image au vision a chaque
+    # tour : ca gonfle le prompt et, apres un redemarrage (cache froid),
+    # refait des appels reseau pour rien. Elles sont remplacees par un
+    # placeholder court SANS aucun appel vision.
+    # Quand aucun message ne porte le marqueur de tour courant (poller,
+    # synthese d'interruption, tests directs), tout est decrit comme avant :
+    # un fallback sans fenetre ne doit jamais perdre d'information.
+    _current_start = -1
+    for _mi, _m in enumerate(messages):
+        if getattr(_m, "_pawflow_current_user_message", False):
+            _current_start = _mi
+            break
+
     # Collect every image part to describe, honouring the per-pass budget.
     # The network calls run in parallel afterwards, so a message carrying
     # several images (video frames, multiple screenshots) is not serialized.
@@ -374,9 +391,15 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
                 isinstance(p, dict) and p.get("type") in ("image_ref", "image_url")
                 for p in content)):
             continue
+        _is_history = _current_start >= 0 and msg_idx < _current_start
         for part_idx, part in enumerate(content):
             if not (isinstance(part, dict)
                     and part.get("type") in ("image_ref", "image_url")):
+                continue
+            if _is_history:
+                # Tour precedent : deja decrit / description persistee — ne
+                # JAMAIS re-soumettre cette image au vision.
+                jobs.append((msg_idx, part_idx, "history"))
                 continue
             if described >= _MAX_DESCRIBE_PER_PASS:
                 truncated = True
@@ -395,6 +418,9 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
     def _describe(job):
         """Describe one collected image; returns (job, outcome)."""
         msg_idx, part_idx, payload = job
+        if payload == "history":
+            # Ancien message du contexte — deja decrit, jamais re-soumis.
+            return job, payload
         if payload is None or payload == "unavailable":
             return job, payload
         mime, b64, label = payload
@@ -411,7 +437,15 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
         return job, ("ok", label, description)
 
     results = {}
-    to_describe = [j for j in jobs if isinstance(j[2], tuple)]
+    to_describe = []
+    for _j in jobs:
+        if isinstance(_j[2], tuple):
+            to_describe.append(_j)
+        else:
+            # Non-network outcomes ("history" placeholder, truncated None,
+            # "unavailable") are resolved directly — the executor only maps
+            # real describe payloads.
+            results[(_j[0], _j[1])] = _j[2]
     with ThreadPoolExecutor(max_workers=min(4, len(to_describe) or 1)) as ex:
         for job, outcome in ex.map(_describe, to_describe):
             results[(job[0], job[1])] = outcome
@@ -419,6 +453,7 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
     # Rebuild messages: replace image parts with their description (or a
     # placeholder) without mutating the stored originals.
     out: List[Any] = []
+    _persist: Dict[int, List[tuple]] = {}  # msg_idx -> [(part_idx, label, desc)]
     for msg_idx, msg in enumerate(messages):
         content = getattr(msg, "content", None)
         if not (isinstance(content, list) and any(
@@ -435,7 +470,15 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
                 continue
             outcome = results.get((msg_idx, part_idx), "unavailable")
             changed = True
-            if outcome is None:
+            if outcome == "history":
+                new_parts.append({
+                    "type": "text",
+                    "text": (
+                        "[Image: previously described in context — see the "
+                        "description above.]"
+                    ),
+                })
+            elif outcome is None:
                 new_parts.append({
                     "type": "text",
                     "text": (
@@ -469,6 +512,8 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
                 })
             else:
                 _, label, description = outcome
+                _persist.setdefault(msg_idx, []).append(
+                    (part_idx, label, description))
                 new_parts.append({
                     "type": "text",
                     "text": (
@@ -483,6 +528,65 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
             out.append(new_msg)
         else:
             out.append(msg)
+
+    # B — persister la description dans le contexte : une image decrite est
+    # remplacee par sa description PERSISTEE (attachment marque described),
+    # donc elle ne sera JAMAIS re-soumise au vision aux tours suivants, ni
+    # apres un redemarrage serveur (le cache memoire/disk disparait). L'UI
+    # garde l'attachment (l'image reste affichee) ; le contexte LLM charge la
+    # description a la place de l'image_ref (_content_with_attachment_refs).
+    if _persist and conversation_id:
+        try:
+            _targets = []  # (msg_id, attachments)
+            for _mi in sorted(_persist):
+                _msg = messages[_mi]
+                _mid = getattr(_msg, "msg_id", "") or ""
+                if not _mid or getattr(_msg, "role", "") != "user":
+                    continue
+                if getattr(_msg, "_vision_persisted", False):
+                    continue  # deja persiste ce tour — pas de re-ecriture I/O
+                _descs = {pi: d for (pi, _l, d) in _persist[_mi]}
+                _content_parts = getattr(_msg, "content", None)
+                if not isinstance(_content_parts, list):
+                    continue
+                _new_atts = []
+                for _pi, _p in enumerate(_content_parts):
+                    if not isinstance(_p, dict):
+                        continue
+                    _pt = _p.get("type", "")
+                    if _pt == "image_ref":
+                        _new_atts.append({
+                            "file_id": _p.get("file_id", ""),
+                            "filename": _p.get("filename", "image"),
+                            "mime_type": _p.get("mime_type", "image/png"),
+                            "size": _p.get("size", 0),
+                            "described": True,
+                            "description": _descs.get(_pi, ""),
+                        })
+                    elif _pt == "file_ref":
+                        _new_atts.append({
+                            "file_id": _p.get("file_id", ""),
+                            "filename": _p.get("filename", "file"),
+                            "mime_type": _p.get("mime_type", "application/octet-stream"),
+                            "size": _p.get("size", 0),
+                        })
+                if _new_atts:
+                    _targets.append((_mid, _new_atts))
+                    _msg._vision_persisted = True
+            if _targets:
+                from core.conversation_store import ConversationStore
+                _store = ConversationStore.instance()
+                for _mid, _atts in _targets:
+                    _store.patch_message(
+                        conversation_id, _mid, attachments=_atts)
+                    logger.info(
+                        "[vision-fallback] persisted description for msg_id=%s "
+                        "(%d image attachment(s))",
+                        _mid, len([a for a in _atts if a.get("described")]))
+        except Exception:
+            logger.debug(
+                "vision fallback: description persistence failed", exc_info=True)
+
     if truncated:
         logger.warning(
             "vision fallback: more than %d images in one pass; extra images "

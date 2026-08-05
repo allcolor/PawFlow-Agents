@@ -212,6 +212,22 @@ class AgentSerializationMixin:
         for att in attachments:
             if not isinstance(att, dict):
                 continue
+            if att.get("described"):
+                # Cette image a deja ete decrite par le vision fallback — sa
+                # description est PERSISTEE dans le contexte. Ne JAMAIS
+                # recreer l'image_ref (sinon le fallback la re-decrirait a
+                # chaque tour, re-soumettant l'image au vision N fois) : la
+                # description persistee devient une part texte.
+                if att.get("description"):
+                    parts.append({
+                        "type": "text",
+                        "text": (
+                            f"[Image: {att.get('filename', 'image')} — "
+                            f"described in a previous turn]\n"
+                            f"{att['description']}"
+                        ),
+                    })
+                continue
             fid = att.get("file_id", "")
             if not fid or fid in existing_fids:
                 continue

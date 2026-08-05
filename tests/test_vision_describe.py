@@ -202,6 +202,140 @@ def test_apply_vision_fallback_no_images_is_noop(monkeypatch):
     assert not svc.calls
 
 
+def test_apply_vision_fallback_only_describes_current_turn(monkeypatch):
+    """A — only images of the CURRENT turn (message marked
+    _pawflow_current_user_message) are described. Images in OLDER context
+    messages are replaced by a short placeholder with NO vision call — their
+    description is already persisted in the context (persistence B), so
+    re-describing them would re-submit the image to the vision model every
+    turn (and, after a server restart, redo network calls for nothing)."""
+    from core.llm_client import LLMMessage
+    from core.vision_describe import apply_vision_fallback
+    svc = FakeVisionService()
+    _patch_registry(monkeypatch, svc)
+
+    old_msg = _image_message()  # historical message (not marked current)
+    current_msg = _image_message()
+    current_msg._pawflow_current_user_message = True
+
+    out = apply_vision_fallback(
+        [old_msg, current_msg], "vision_svc", source_service_id="glm_svc",
+        user_id="alice", conversation_id="c1")
+
+    # Exactly ONE image described: the current turn's. The historical image
+    # is NOT re-submitted to the vision model.
+    assert len(svc.calls) == 1
+    # Historical image → short placeholder, no description.
+    assert out[0].content[1]["type"] == "text"
+    assert "previously described" in out[0].content[1]["text"]
+    # Current-turn image → described normally.
+    assert "a red button" in out[1].content[1]["text"]
+
+
+def test_apply_vision_fallback_persists_description(monkeypatch):
+    """B — after describing the current user message, its image is replaced
+    in the store by the PERSISTED description (attachment marked described),
+    so it is never re-submitted to the vision model on later turns."""
+    from core.llm_client import LLMMessage
+    from core.vision_describe import apply_vision_fallback
+    svc = FakeVisionService()
+    _patch_registry(monkeypatch, svc)
+
+    patched = []
+
+    class _FakeStore:
+        def patch_message(self, cid, msg_id, **fields):
+            patched.append((cid, msg_id, fields))
+
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance",
+        lambda: _FakeStore())
+    monkeypatch.setattr(
+        "core.file_store.FileStore.instance",
+        lambda: SimpleNamespace(
+            get_required=lambda file_id, user_id="", conversation_id="": (
+                "photo.png", b"fake-png-bytes", "image/png"),
+        ))
+
+    msg = LLMMessage(
+        role="user",
+        conversation_id="c1",
+        msg_id="m-user-image",
+        content=[
+            {"type": "text", "text": "what do you see?"},
+            {"type": "image_ref", "file_id": "img-1", "filename": "photo.png",
+             "mime_type": "image/png", "size": 123},
+        ],
+    )
+    msg._pawflow_current_user_message = True
+
+    apply_vision_fallback(
+        [msg], "vision_svc", source_service_id="glm_svc",
+        user_id="alice", conversation_id="c1")
+
+    assert len(svc.calls) == 1
+    assert len(patched) == 1
+    cid, mid, fields = patched[0]
+    assert cid == "c1"
+    assert mid == "m-user-image"
+    atts = fields["attachments"]
+    assert len(atts) == 1
+    assert atts[0]["described"] is True
+    assert atts[0]["file_id"] == "img-1"
+    assert "a red button" in atts[0]["description"]
+    # The in-memory flag prevents redundant I/O on the next iteration.
+    assert msg._vision_persisted is True
+
+
+def test_apply_vision_fallback_persist_skips_when_already_persisted(monkeypatch):
+    """B — a message already persisted this turn (flag set) is not patched
+    again on the next iteration of the same turn (no redundant I/O)."""
+    from core.llm_client import LLMMessage
+    from core.vision_describe import apply_vision_fallback
+    svc = FakeVisionService()
+    _patch_registry(monkeypatch, svc)
+
+    patched = []
+
+    class _FakeStore:
+        def patch_message(self, cid, msg_id, **fields):
+            patched.append((cid, msg_id, fields))
+
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance",
+        lambda: _FakeStore())
+    monkeypatch.setattr(
+        "core.file_store.FileStore.instance",
+        lambda: SimpleNamespace(
+            get_required=lambda file_id, user_id="", conversation_id="": (
+                "photo.png", b"fake-png-bytes", "image/png"),
+        ))
+
+    msg = LLMMessage(
+        role="user",
+        conversation_id="c1",
+        msg_id="m-user-image",
+        content=[
+            {"type": "text", "text": "what do you see?"},
+            {"type": "image_ref", "file_id": "img-1", "filename": "photo.png",
+             "mime_type": "image/png", "size": 123},
+        ],
+    )
+    msg._pawflow_current_user_message = True
+
+    apply_vision_fallback(
+        [msg], "vision_svc", source_service_id="glm_svc",
+        user_id="alice", conversation_id="c1")
+    assert len(patched) == 1
+
+    # Second iteration of the same turn: same in-memory message (flag set) →
+    # the vision cache serves the description, but NO second store write.
+    apply_vision_fallback(
+        [msg], "vision_svc", source_service_id="glm_svc",
+        user_id="alice", conversation_id="c1")
+    assert len(patched) == 1
+
+
 def test_llm_connection_schema_and_rules_expose_vision_llm_service():
     from services.llm_connection import LLMConnectionService
 

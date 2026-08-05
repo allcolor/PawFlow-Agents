@@ -29,6 +29,11 @@ proxy. The provider does not read Claude Code transcripts or terminal output.
   tmux launch creates a private mount namespace and bind-mounts
   `/cc_sessions_host/<user>` over `/cc_sessions`, keeping Claude Code paths stable
   while avoiding a global container bind over `/cc_sessions`.
+- Global and user skill scopes are mounted read-only under `/skills`. In a
+  containerized server, their translated Docker-host source paths are outside
+  the server namespace and therefore cannot be pre-validated with a local
+  existence check; Docker validates those bind mounts when the CLI container is
+  created.
 - Runtime support files under `/opt/pawflow` are copied into the container once at
   spawn time instead of mounted read-only, so host-side development edits require
   a new interactive container before they are visible inside the session.

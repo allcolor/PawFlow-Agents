@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.105] — 2026-08-05
+
+### Fixed
+
+- Aligned scheduled wake-up generation ownership with the agent-qualified active
+  turn key, preventing a concurrent user message from starting a second Codex
+  interactive consumer and evicting the wake-up's live session.
+- Stopped reporting translated Docker-host skill mount sources as missing from a
+  containerized server while preserving a warning for genuinely absent local
+  sources.
+
 ## [1.0.0-beta.104] — 2026-08-05
 
 ### Added

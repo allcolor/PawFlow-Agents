@@ -191,10 +191,18 @@ def build_skill_mount_args(conversation_id: str, agent_name: str = "",
         seen.add(target)
         source = translate_path(to_host_path(str(server_dir)))
         if not os.path.exists(source):
-            logger.warning(
-                "[skill-mount] host source %s not visible from this process "
-                "(ok if the server is containerized with data on a volume; "
-                "otherwise skills will be missing in the container)", source)
+            _same_namespace = (
+                os.path.normcase(os.path.normpath(source))
+                == os.path.normcase(os.path.normpath(str(server_dir))))
+            if _same_namespace:
+                logger.warning(
+                    "[skill-mount] source %s is missing from this process; "
+                    "skills will be missing in the CLI container", source)
+            else:
+                logger.info(
+                    "[skill-mount] translated host source %s is outside the "
+                    "server namespace; Docker will validate the bind mount",
+                    source)
         args.extend(["-v", f"{source}:{target}:ro"])
 
     _add(skills_base / "global")

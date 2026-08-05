@@ -770,6 +770,13 @@ a continuation from recreating itself every ten seconds while preserving the
 safety net for queued user messages, tasks, plans, thoughts, and external
 wake-ups.
 
+Scheduled wakes use the same agent-qualified generation key as user turns and
+active runtime markers (`conversation_id:agent_name`). The poller allocates that
+generation only after resolving the target agent. A user message arriving while
+the wake is preparing therefore sees the wake as the current owner and is
+preempted or queued normally; it cannot start a second CCI consumer on the same
+session.
+
 ---
 
 ## 11. Auto-triggers

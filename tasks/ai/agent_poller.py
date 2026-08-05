@@ -18,6 +18,11 @@ _WATCHDOG_INTERVAL_SECONDS = int(
     os.getenv("PAWFLOW_AGENT_WATCHDOG_INTERVAL_SECONDS", "300") or "300")
 
 
+def _poll_generation_key(conversation_id: str, agent_name: str) -> str:
+    """Return the generation key shared by a poll and its active turn."""
+    return f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+
+
 def _check_task_limits(task: dict, task_id: str) -> str:
     """Check pre-launch limits. Returns cancel reason or empty string."""
     import time as _t
@@ -272,11 +277,6 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
 
             logger.info(f"[poller] Waking up conversation {conversation_id[:8]}")
 
-            # Bump generation for the poll run
-            with self._conv_gen_lock:
-                gen = self._conv_generation.get(conversation_id, 0) + 1
-                self._conv_generation[conversation_id] = gen
-
             # Mark as active
             with self._active_lock:
                 self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
@@ -294,8 +294,13 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                         else:
                             self._active_conversations[conversation_id] = rc
                     continue
+                _gen_key = _poll_generation_key(
+                    conversation_id, ctx.get("active_agent_name", "") or "")
+                with self._conv_gen_lock:
+                    gen = self._conv_generation.get(_gen_key, 0) + 1
+                    self._conv_generation[_gen_key] = gen
                 ctx["_generation"] = gen
-                ctx["_gen_key"] = conversation_id
+                ctx["_gen_key"] = _gen_key
 
                 # _active_contexts is managed by _run_agent_loop (push/pop in finally)
                 bus.publish_event(conversation_id, "thinking", {

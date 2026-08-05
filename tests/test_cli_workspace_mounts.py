@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from core.cli_workspace_mounts import (
@@ -377,6 +378,31 @@ def test_build_skill_mount_args_mounts_scope_dirs(tmp_path, monkeypatch):
     # Mount points are created so a skill written mid-session is visible.
     assert (skills / "global").is_dir()
     assert (skills / "users" / "u1").is_dir()
+
+
+def test_translated_skill_mount_source_is_not_a_false_warning(
+        tmp_path, monkeypatch, caplog):
+    from core import docker_utils, paths
+
+    repo = tmp_path / "repository"
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", repo)
+    monkeypatch.setattr(
+        docker_utils, "to_host_path", lambda path: f"/host-only{path}")
+    monkeypatch.setattr(docker_utils, "translate_path", lambda path: path)
+    caplog.set_level(logging.INFO, logger="core.cli_workspace_mounts")
+
+    args = build_skill_mount_args("conv1", "assistant", user_id="u1")
+
+    assert args[1].startswith("/host-only")
+    skill_records = [
+        record for record in caplog.records
+        if record.name == "core.cli_workspace_mounts"
+        and "[skill-mount]" in record.getMessage()
+    ]
+    assert not [record for record in skill_records
+                if record.levelno >= logging.WARNING]
+    assert any("Docker will validate the bind mount" in record.getMessage()
+               for record in skill_records)
 
 
 def test_build_skill_mount_args_global_only_without_user(tmp_path, monkeypatch):

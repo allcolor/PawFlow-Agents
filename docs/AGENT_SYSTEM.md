@@ -141,6 +141,13 @@ _run_agent_loop()              -- The core loop
 
 Every assistant message and tool result is persisted to the conversation store via `ConversationWriter` as it is produced. SSE events are published in parallel so the UI updates in real time. Context-internal messages (compaction acknowledgments) are never persisted to the transcript.
 
+Before a provider request, PawFlow validates strict tool-call adjacency. A
+preempt may persist the resumed user message before all in-flight tool results;
+the context builder moves any existing results directly behind the matching
+assistant `tool_calls` message in call order and inserts an explicit
+cancelled-result placeholder for a call whose result was never persisted. This
+keeps OpenAI-compatible histories valid without discarding the resumed message.
+
 `ConversationWriter` runs one daemon thread per conversation behind a FIFO queue. `enqueue()` is non-blocking for throughput, so on process exit the queue may still hold items. The signal handler in `cli.py` calls `ConversationWriter.shutdown_all(wait_timeout=...)` **before** `os._exit(0)` to drain every queue - without this, in-flight writes die with the daemon thread and messages are lost. `shutdown_all` returns `False` if any queue times out; the caller logs this as data loss.
 
 ### Agent hooks
@@ -345,9 +352,11 @@ The persisted entry is what `compute_context_usage` returns while no agent is ru
 
 The whole stored agent context is measured at one place only: the cold-session branch of `_prepare_agent_context` (`_agentctx_p2`, gated on `not _cli_has_session`). That is the bootstrap moment, when the provider window is empty by definition and the quantity that matters is the size of what is about to be serialized into `initial_context.md`. A store above the threshold is squeezed before it is written.
 
-A cold start is held to a lower bar than the live threshold, `CLI_COLD_START_TRIGGER_FRACTION` (0.40 of `max_context_size`), rather than to `compact_threshold_pct`. The live threshold guards against overflow, and 95% is the right bar for that; but a cold session receives its whole context at once — serialized into `initial_context.md` and read back as one tool result — so the same 95% would open a session at 94% of the window with nothing done yet. The cold-start bar applies whatever `compact_threshold_pct` says, including when it is 0: the provider's own compaction mechanism cannot help here, because the file is written before the provider sees anything. A stricter configured value is never loosened.
-
-Both `_should_proactive_compact` and the `_compact` call it guards read this fraction through `st._cold_start_trigger_fraction()`. They must agree: `_compact` re-checks the threshold itself and returns the messages untouched when it is not met, so a decision taken at 40% and handed a 95% bar is reversed silently.
+Cold and live sessions use the same configured `compact_threshold_pct`; there
+is no hidden cold-start threshold. A value of `0` disables proactive PawFlow
+compaction in both phases. Both `_should_proactive_compact` and the `_compact`
+call it guards read this value through `st._cold_start_trigger_fraction()`, so
+the decision and the operation cannot disagree about the active threshold.
 
 When the gauge and the compaction threshold appear to disagree, measure rather than reason: `python3 tools/gauge_probe.py <conversation_dir> [agent]` runs both counters over a stored agent context and reports how much of the difference the boundary accounts for. `UNEXPLAINED` must be 0; anything else means the gauge is losing messages. It also lists every *structural* bootstrap marker — a plain grep for the marker string is unusable, because it matches any message that merely quotes it, including tool output from reading this repository's own source. The probe is read-only, needs no network, and falls back to approximate counting when `tiktoken` is absent (the ratio between the two counters stays valid either way). A bare `.jsonl` path is accepted, which is how a version recovered from the conversation's git history is inspected.
 

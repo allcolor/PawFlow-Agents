@@ -1342,7 +1342,7 @@ def test_interactive_pool_send_text_pastes_then_sends_enter(monkeypatch):
     assert calls[1][0][-4:] == ["capture-pane", "-p", "-t", "pawflow"]
     assert calls[2][0][-2:] == ["load-buffer", "-"]
     assert calls[2][1] == b"hello"
-    assert calls[3][0][-3:] == ["paste-buffer", "-t", "pawflow"]
+    assert calls[3][0][-4:] == ["paste-buffer", "-p", "-t", "pawflow"]
     # Double Enter separated by the submit delay: the first submits in the
     # normal case, the second guarantees submission when the TUI drops the
     # first Enter at container restart.
@@ -1575,7 +1575,7 @@ class _PaneRun:
         self.stderr = ""
 
 
-def test_a_paste_that_missed_the_composer_is_pasted_again(monkeypatch):
+def test_an_unconfirmed_paste_is_never_replayed(monkeypatch):
     calls = []
     panes = {"n": 0}
 
@@ -1583,18 +1583,16 @@ def test_a_paste_that_missed_the_composer_is_pasted_again(monkeypatch):
         calls.append(cmd)
         if "capture-pane" in cmd:
             panes["n"] += 1
-            # Two captures per attempt: the before-image, then the check.
-            # The first paste went nowhere -- the screen never moved -- and
-            # the second lands.
-            return _PaneRun(_codex_pane(panes["n"] >= 4))
+            return _PaneRun(_codex_pane(False))
         return _PaneRun("")
 
     pool, state = _codex_paste_pool(monkeypatch, fake_run)
-    assert pool.send_text(state, PASTE_TEXT) is True
+    assert pool.send_text(state, PASTE_TEXT) is False
 
     pastes = [c for c in calls if "paste-buffer" in c]
-    assert len(pastes) == 2, "the prompt must be pasted again, not merely Entered"
-    assert len([c for c in calls if "load-buffer" in c]) == 2
+    assert len(pastes) == 1
+    assert len([c for c in calls if "load-buffer" in c]) == 1
+    assert "single paste" in state.last_error
 
 
 def test_a_paste_that_landed_is_not_pasted_twice(monkeypatch):
@@ -1624,8 +1622,8 @@ def test_a_prompt_that_never_lands_fails_loudly_and_bounded(monkeypatch):
 
     pool, state = _codex_paste_pool(monkeypatch, fake_run)
     assert pool.send_text(state, PASTE_TEXT) is False
-    assert "never reached the composer" in state.last_error
-    assert len([c for c in calls if "paste-buffer" in c]) == pool._PASTE_ATTEMPTS
+    assert "single paste" in state.last_error
+    assert len([c for c in calls if "paste-buffer" in c]) == 1
     # And no Enter pressed into an empty box.
     assert not [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
 
@@ -1715,7 +1713,8 @@ def test_an_empty_composer_is_still_a_missing_paste(monkeypatch):
 
     pool, state = _cc_paste_pool(monkeypatch, fake_run)
     assert pool.send_text(state, WRAPPED_TEXT) is False
-    assert "never reached the composer" in state.last_error
+    assert "single paste" in state.last_error
+    assert len([c for c in calls if "paste-buffer" in c]) == 1
     assert not [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
 
 
@@ -1860,7 +1859,7 @@ def test_interactive_pool_interrupt_and_force_stop_keys(monkeypatch):
     assert calls[0][0][-6:] == ["tmux", "send-keys", "-t", "pawflow", "-X", "cancel"]
     assert calls[1][0][-2:] == ["load-buffer", "-"]
     assert calls[1][1] == b"interrupt message"
-    assert calls[2][0][-3:] == ["paste-buffer", "-t", "pawflow"]
+    assert calls[2][0][-4:] == ["paste-buffer", "-p", "-t", "pawflow"]
     assert calls[3][0][-1:] == ["Escape"]
     assert calls[4][0][-1:] == ["Enter"]
 

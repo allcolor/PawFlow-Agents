@@ -535,13 +535,10 @@ class StreamEmitter(AgentEmitter):
             if not agent._is_current_generation(gen_key, generation):
                 raise AgentCancelled()
             _emitter._last_token_time = time.time()
-            if (not poll_silent and text and
-                    _emitter._provider in ("claude-code-interactive",
-                                           "antigravity-interactive",
-                                           "codex-interactive")):
+            if not poll_silent and text:
                 # Transient preview only. The durable thinking_content event
                 # is emitted later by ConversationWriter from the flushed
-                # block-level LLMMessage.
+                # LLMMessage.
                 _emitter._emit("thinking_delta", {
                     "text": text,
                     "agent_name": _emitter._agent_name or "",

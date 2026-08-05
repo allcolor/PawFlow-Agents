@@ -15,6 +15,59 @@ from tasks.ai._alc_base import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+def _repair_tool_result_order(messages, conversation_id):
+    """Make every assistant tool-call block valid for strict API providers.
+
+    A cancel can persist a user resume row between an assistant tool call and
+    its results. OpenAI requires the matching tool messages immediately after
+    the assistant message. Move existing results into call order and synthesize
+    an explicit unknown result only when no persisted result exists.
+    """
+    result_indexes = {}
+    for idx, message in enumerate(messages):
+        if getattr(message, "role", "") != "tool":
+            continue
+        call_id = getattr(message, "tool_call_id", "") or ""
+        if call_id and call_id not in result_indexes:
+            result_indexes[call_id] = idx
+
+    moved = set()
+    rebuilt = []
+    repaired = False
+    for idx, message in enumerate(messages):
+        if idx in moved:
+            continue
+        rebuilt.append(message)
+        if (getattr(message, "role", "") != "assistant"
+                or not getattr(message, "tool_calls", None)):
+            continue
+        expected = []
+        for call in message.tool_calls:
+            call_id = getattr(call, "id", "") or ""
+            if not call_id:
+                continue
+            result_idx = result_indexes.get(call_id)
+            if result_idx is not None and result_idx > idx:
+                tool_message = messages[result_idx]
+                moved.add(result_idx)
+            else:
+                tool_message = LLMMessage(
+                    role="tool",
+                    content=(
+                        "[Result unavailable because the previous turn was "
+                        "cancelled before this tool result was persisted.]"
+                    ),
+                    tool_call_id=call_id,
+                    conversation_id=conversation_id,
+                )
+            expected.append(tool_message)
+        immediate = messages[idx + 1:idx + 1 + len(expected)]
+        if immediate != expected:
+            repaired = True
+        rebuilt.extend(expected)
+    return rebuilt, repaired
+
+
 class _ALCSetupMixin:
     def _alc_setup(self, st):
         st.conversation_id = st.ctx.get("conversation_id", "")
@@ -144,28 +197,12 @@ class _ALCSetupMixin:
 
         st._append = lambda msg: self._alc_append(st, msg)
 
-        # Repair orphan tool_calls — assistant messages with tool_calls
-        # whose tool results are missing (broken by compact/clear)
-        st._repaired = False
-        for st.i, st.m in enumerate(st.messages):
-            if st.m.role == "assistant" and st.m.tool_calls:
-                st.tc_ids = {tc.id for tc in st.m.tool_calls}
-                # Check if all tool_call_ids have responses after this message
-                st.found_ids = set()
-                for st.j in range(st.i + 1, min(st.i + len(st.tc_ids) + 2, len(st.messages))):
-                    if st.messages[st.j].role == "tool" and st.messages[st.j].tool_call_id in st.tc_ids:
-                        st.found_ids.add(st.messages[st.j].tool_call_id)
-                st.missing = st.tc_ids - st.found_ids
-                if st.missing:
-                    # Insert placeholder tool results for missing IDs
-                    for st.idx, st.tc_id in enumerate(st.missing):
-                        st.messages.insert(st.i + 1 + st.idx, LLMMessage(
-                            role="tool", content="[Result unavailable — cleared by context compaction]",
-                            tool_call_id=st.tc_id,
-                            conversation_id=st.conversation_id))
-                    st._repaired = True
+        st.messages, st._repaired = _repair_tool_result_order(
+            st.messages, st.conversation_id)
         if st._repaired:
-            logger.warning(f"[agent:{st.conversation_id[:8]}] repaired orphan tool_calls in context")
+            logger.warning(
+                "[agent:%s] repaired interrupted tool-call ordering in context",
+                st.conversation_id[:8])
 
         # Start file checkpoint for /rewind support
         st._cp_id = ""

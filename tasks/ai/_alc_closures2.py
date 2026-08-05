@@ -16,17 +16,6 @@ from tasks.ai._alc_base import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
-# A cold CLI session receives its whole context in one go: the stored messages
-# are serialized into initial_context.md and read back as a single tool result.
-# The live threshold (compact_threshold_pct, 0.95 in practice) would let that
-# file open a session at 94% of the window -- nothing done yet and already out
-# of room. A session must start with room to work, so a cold start is held to a
-# lower bar, and to it whatever the live setting says: when
-# compact_threshold_pct is 0 the provider's own mechanism cannot help either,
-# because the file is written before the provider sees anything at all.
-CLI_COLD_START_TRIGGER_FRACTION = 0.40
-
-
 class _ALCClosures2Mixin:
     def _alc_apply_vision_fallback(self, st, messages, call_kwargs):
         """Apply the active llmConnection's vision fallback before a direct
@@ -44,15 +33,11 @@ class _ALCClosures2Mixin:
             )
             if service is None:
                 return messages
-            # Check if there are image parts before delegating — skip the
-            # service round-trip when there is nothing to describe.
-            has_images = any(
-                isinstance(getattr(m, "content", None), list) and any(
-                    isinstance(p, dict) and p.get("type") in ("image_ref", "image_url", "image")
-                    for p in m.content
-                ) for m in messages
-            )
-            if not has_images:
+            # Historical and unrelated tool images must not even enter the
+            # delegated service path. Only the active prompt and current-turn
+            # read/see results are eligible.
+            from core.vision_describe import has_current_vision_inputs
+            if not has_current_vision_inputs(messages):
                 return messages
             fallback = getattr(service, "_maybe_apply_vision_fallback", None)
             if fallback:
@@ -157,19 +142,8 @@ class _ALCClosures2Mixin:
             token_multiplier=_tmul)
 
     def _alc_cold_start_trigger_fraction(self, st):
-        """The trigger fraction in force for this turn.
-
-        Identical to the configured one while a CLI session is live -- the
-        provider window is what can overflow, and the live threshold watches
-        it. On a cold session the fraction governs the size of the file that
-        opens the session instead, and that answers to
-        CLI_COLD_START_TRIGGER_FRACTION.
-        """
-        if not st.ctx.get("_is_cli_provider") or st.ctx.get("_cli_has_session"):
-            return st._trigger_frac
-        if st._trigger_frac <= 0:
-            return CLI_COLD_START_TRIGGER_FRACTION
-        return min(st._trigger_frac, CLI_COLD_START_TRIGGER_FRACTION)
+        """Return the configured proactive-compaction threshold unchanged."""
+        return st._trigger_frac
 
     def _alc_should_proactive_compact(self, st, stored_msgs, max_ctx, cpt):
         # Must agree with what _compact is handed, or the decision made here
@@ -260,9 +234,7 @@ class _ALCClosures2Mixin:
                 agent_name=st.ctx.get("active_agent_name", ""),
                 model=st.model or None,
                 callback=st.emitter.get_token_callback(False) if st.emitter.is_streaming else None,
-                thinking_callback=(
-                    st.emitter.get_thinking_callback(False)
-                    if st.ctx.get("thinking_budget", 0) > 0 else None),
+                thinking_callback=st.emitter.get_thinking_callback(False),
                 turn_callback=_turn_cb,
                 block_callback=_block_cb,
             )
@@ -752,7 +724,10 @@ class _ALCClosures2Mixin:
                 tools=st.tool_defs if st.tool_defs else None,
                 callback=st.emitter.get_token_callback(ps),
                 thinking_budget=st._tb,
-                thinking_callback=st.emitter.get_thinking_callback(ps) if st._tb > 0 else None,
+                # Compatible endpoints may emit reasoning deltas even when
+                # PawFlow did not request an explicit token budget. Always
+                # provide the preview callback; unused callbacks are inert.
+                thinking_callback=st.emitter.get_thinking_callback(ps),
                 turn_callback=st._claude_code_turn_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini") else None,
                 block_callback=st._cli_block_callback if st._client_provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini") else None,
                 **_call_kwargs)

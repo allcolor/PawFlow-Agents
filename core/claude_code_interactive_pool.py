@@ -420,48 +420,26 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 logging.getLogger(__name__).debug(
                     "Could not mark CCI prompt submission", exc_info=True)
                 event_service = None
-        # Paste, then PROVE it landed, and paste again if it did not.
-        #
-        # Pressing Enter was the only retry there was, and it answers the
-        # wrong failure. When the paste itself never reaches the composer --
-        # a TUI still drawing itself, a pane not yet focused -- the composer
-        # is empty, and `_verify_submitted` reads an empty composer as
-        # "submitted": the same picture a delivered prompt leaves behind. So
-        # send_text returned True, raised nothing, and no prompt was ever
-        # submitted; the turn then sat waiting on a session that had been
-        # asked for nothing, holding the agent "active" until the 300s
-        # no-event timeout. Enter cannot fix an empty composer. Only another
-        # paste can.
+        # Load the whole prompt once and paste it once. Pane inspection is not
+        # authoritative enough to replay a paste: a false negative would stack
+        # the complete prompt in the composer. An inconclusive transport check
+        # therefore fails visibly and leaves the single paste untouched.
         settle = self._paste_settle_seconds()
-        landed = False
-        for attempt in range(1, self._PASTE_ATTEMPTS + 1):
-            # What the screen looked like before this paste. The strongest
-            # proof a paste arrived is not that the pane shows something we
-            # recognise -- it is that the pane is no longer what it was.
-            before = self._pane_text(state.name)
-            if not self._load_buffer(state, text):
-                return False
-            if not self._paste_buffer(state):
-                return False
-            # Let the TUI finish ingesting the paste before pressing Enter: an
-            # Enter that lands inside the paste-detection window is treated as
-            # pasted newline (inserts a blank line) instead of submitting.
-            if settle > 0:
-                time.sleep(settle)
-            if self._paste_landed(state, text, before):
-                landed = True
-                break
-            logging.getLogger(__name__).warning(
-                "[cci] paste did not reach the composer of %s; pasting again "
-                "(attempt %d/%d)%s", state.name, attempt, self._PASTE_ATTEMPTS,
-                self._pane_diagnostic(state.name))
-        if not landed:
-            # Bounded, and a failure rather than a silent success: the caller
-            # raises, which is strictly better than a turn that waits on a
-            # session nobody ever prompted.
-            state.last_error = (
-                f"prompt never reached the composer after "
-                f"{self._PASTE_ATTEMPTS} paste attempts")
+        before = self._pane_text(state.name)
+        if not self._load_buffer(state, text):
+            return False
+        if not self._paste_buffer(state):
+            return False
+        # Let the TUI finish ingesting the paste before pressing Enter: an
+        # Enter that lands inside the paste-detection window is treated as a
+        # pasted newline (inserts a blank line) instead of submitting.
+        if settle > 0:
+            time.sleep(settle)
+        if not self._paste_landed(state, text, before):
+            state.last_error = "prompt was not confirmed after the single paste"
+            logging.getLogger(__name__).error(
+                "[cci] paste was not confirmed for %s; refusing to replay it%s",
+                state.name, self._pane_diagnostic(state.name))
             return False
         delay = self._submit_delay_seconds()
         # Claude submits with a double Enter separated by a short wait. At container
@@ -696,15 +674,9 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             return False
         return cls._pane_squeeze(fragment) in cls._pane_squeeze(pane)
 
-    # How many times the same prompt is pasted before the pool gives up. The
-    # retry answers a paste that never arrived, which is a startup race and
-    # settles within a couple of attempts; more would only spend seconds
-    # re-pasting into a TUI that is not coming up.
-    _PASTE_ATTEMPTS = 3
     # How long to watch for the paste to appear in the composer before
-    # concluding it never will. Longer than the settle -- a TUI busy drawing
-    # itself ingests a multi-kilobyte buffer slowly -- and short enough that
-    # three attempts stay well inside a turn.
+    # reporting an inconclusive single paste. Longer than the settle because a
+    # TUI busy drawing itself can ingest a multi-kilobyte buffer slowly.
     _PASTE_LANDED_SECONDS = 3.0
 
     def _paste_landed(self, state: InteractiveContainer, text: str,
@@ -728,10 +700,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         fragment probe assumes the pasted text is rendered as text and
         findable across the layout the TUI wrapped it in. Both assumptions
         are a moving target -- they are read off a TUI that ships a new
-        version every few weeks -- and each time one of them goes stale the
-        failure is the same: a prompt sitting in the composer needing nothing
-        but Enter is declared missing, and pasted again, and again, until the
-        send fails with the prompt stacked three times in the input box.
+        version every few weeks -- so a failed check must never trigger a
+        second paste into a composer that may already hold the whole prompt.
         Whether the screen changed is a fact about the screen. A TUI that
         renames its chip, boxes its composer or re-wraps its text still
         redraws when 16 kB arrive.
@@ -755,8 +725,8 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         clean. A false "missing" pastes the whole prompt a second time into a
         composer that already holds it, and what the user gets is a turn that
         cannot be submitted at all because the input box now contains the
-        prompt three times over. Those are not symmetrical, and the check
-        must not err toward the second one.
+        duplicated. Those are not symmetrical, and the transport must never
+        replay the paste on visual evidence alone.
 
         The fragment is still looked for across the whole pane, and on a TUI
         that echoes pasted text that cannot tell this paste from the same text
@@ -767,10 +737,9 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         not a buffer: the composer hard-wraps the prompt at the pane width,
         and a tail that falls across a wrap is not on the pane verbatim even
         though every character of it is. That failure is deterministic -- the
-        same prompt wraps at the same column on every attempt -- so all three
-        pastes were declared missing and a turn whose prompt was sitting in
-        the composer, needing only Enter, failed with "never reached the
-        composer". `_verify_submitted` keeps the verbatim test on purpose:
+        same prompt wraps at the same column on every check -- so a prompt
+        sitting in the composer, needing only Enter, could be declared
+        missing. `_verify_submitted` keeps the verbatim test on purpose:
         there "fragment absent" means "submitted", so a wrap-blinded match
         errs toward leaving a running turn alone, while a squeezed one would
         keep finding the prompt Claude Code echoes into its own transcript.
@@ -932,7 +901,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
     def _paste_buffer(self, state: InteractiveContainer) -> bool:
         r = subprocess.run(  # nosec B603
             docker_cmd() + ["exec", "--user", self._user_spec(), state.name,
-                            "tmux", "paste-buffer", "-t", "pawflow"],
+                            "tmux", "paste-buffer", "-p", "-t", "pawflow"],
             capture_output=True, timeout=10)
         if r.returncode != 0:
             state.last_error = self._command_error("tmux paste-buffer", r)

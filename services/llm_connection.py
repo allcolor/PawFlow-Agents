@@ -552,6 +552,14 @@ class LLMConnectionService(BaseService):
                 "type": "integer", "default": 0,
                 "description": "Thinking token budget for reasoning models (0 = auto, -1 = disabled)",
             },
+            "reasoning_effort": {
+                "type": "select", "default": "",
+                "options": ["", "minimal", "low", "medium", "high", "xhigh", "max"],
+                "description": (
+                    "Reasoning effort for OpenAI-compatible reasoning models. "
+                    "Empty omits the field and uses the model default."
+                ),
+            },
             "max_rounds": {
                 "type": "integer", "default": 0,
                 "description": "Max conversation rounds (0 = default 1)",
@@ -702,6 +710,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": False},
                     "docker_memory_limit": {"visible": False},
                     "effort":        {"visible": False},
+                    "reasoning_effort": {"visible": False},
                     "codex_plugins": {"visible": False},
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
@@ -714,6 +723,12 @@ class LLMConnectionService(BaseService):
                                      "copilot"]},
                 "set": {
                     "extra_body":    {"visible": True},
+                }
+            },
+            {
+                "when": {"provider": ["openai", "openai-responses"]},
+                "set": {
+                    "reasoning_effort": {"visible": True},
                 }
             },
             {

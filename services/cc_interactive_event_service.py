@@ -785,7 +785,7 @@ class CCInteractiveEventService(BaseService):
         if not task_id:
             raise ValueError("TaskUpdate did not include a task id")
         changes = {}
-        for native, field in (
+        for native, target_field in (
             ("subject", "subject"), ("description", "description"),
             ("activeForm", "active_form"), ("active_form", "active_form"),
             ("owner", "owner"), ("metadata", "metadata"),
@@ -793,7 +793,7 @@ class CCInteractiveEventService(BaseService):
             ("blocked_by", "blocked_by"),
         ):
             if native in args:
-                changes[field] = args[native]
+                changes[target_field] = args[native]
         status = args.get("status")
         if status in TODO_STATUSES:
             changes["status"] = status
@@ -803,15 +803,15 @@ class CCInteractiveEventService(BaseService):
             state.user_id, state.conversation_id, state.agent_name, task_id)
         if existing is None:
             raise ValueError(f"native todo task not found: {task_id}")
-        for native, field in (("addBlocks", "blocks"),
-                              ("addBlockedBy", "blocked_by")):
+        for native, target_field in (("addBlocks", "blocks"),
+                                     ("addBlockedBy", "blocked_by")):
             if native in args:
-                current = list(existing.get(field) or [])
+                current = list(existing.get(target_field) or [])
                 for item in args.get(native) or []:
                     value = str(item)
                     if value not in current:
                         current.append(value)
-                changes[field] = current
+                changes[target_field] = current
         if changes:
             store.update(
                 state.user_id, state.conversation_id, state.agent_name,
@@ -832,6 +832,18 @@ class CCInteractiveEventService(BaseService):
         if not isinstance(data, dict):
             return
         digest = str(data.get("prompt_sha256") or "")
+        if not digest and data.get("pawflow_injected_prompt"):
+            # Older/compact Codex hooks acknowledge that PawFlow's injected
+            # prompt was submitted but omit the full prompt and its digest.
+            # Bind that receipt to the newest still-tracked injection ticket;
+            # otherwise a real UserPromptSubmit is misclassified as no proof
+            # and the pool presses Enter repeatedly into a running turn.
+            with self._sessions_lock:
+                if state.injected_prompt_texts:
+                    digest = state.injected_prompt_texts[-1].digest
+                elif state.injected_prompts:
+                    digest = max(
+                        state.injected_prompts.items(), key=lambda item: item[1])[0]
         if not digest:
             return
         kind = "exact" if data.get("pawflow_injected_prompt") else ""

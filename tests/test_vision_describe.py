@@ -49,7 +49,7 @@ def _patch_registry(monkeypatch, svc):
 
 def _image_message(b64=B64):
     from core.llm_client import LLMMessage
-    return LLMMessage(
+    msg = LLMMessage(
         role="user",
         conversation_id="c1",
         content=[
@@ -58,6 +58,8 @@ def _image_message(b64=B64):
              "image_url": {"url": f"data:image/png;base64,{b64}"}},
         ],
     )
+    msg._pawflow_current_user_message = True
+    return msg
 
 
 def test_apply_vision_fallback_replaces_images_with_descriptions(monkeypatch):
@@ -66,7 +68,6 @@ def test_apply_vision_fallback_replaces_images_with_descriptions(monkeypatch):
     _patch_registry(monkeypatch, svc)
 
     msg = _image_message()
-    original_parts = list(msg.content)
     out = apply_vision_fallback([msg], "vision_svc", source_service_id="glm_svc",
                                 user_id="alice", conversation_id="c1")
 
@@ -75,9 +76,9 @@ def test_apply_vision_fallback_replaces_images_with_descriptions(monkeypatch):
     assert out[0].content[1]["type"] == "text"
     assert "a red button at [10, 20, 80, 30]" in out[0].content[1]["text"]
     assert "vision model described it" in out[0].content[1]["text"]
-    # The stored message is never mutated
-    assert msg.content == original_parts
-    assert msg.content[1]["type"] == "image_url"
+    # The live agent context keeps the description, not the raw image.
+    assert msg.content == out[0].content
+    assert msg.content[1]["type"] == "text"
 
 
 def test_apply_vision_fallback_caches_by_image_hash(monkeypatch):
@@ -161,6 +162,7 @@ def test_apply_vision_fallback_describes_multiple_images_parallel(monkeypatch):
              "image_url": {"url": f"data:image/png;base64,{B64_OTHER}"}},
         ],
     )
+    msg._pawflow_current_user_message = True
 
     out = apply_vision_fallback([msg], "vision_svc", user_id="alice",
                                 conversation_id="c1")
@@ -214,7 +216,8 @@ def test_apply_vision_fallback_only_describes_current_turn(monkeypatch):
     svc = FakeVisionService()
     _patch_registry(monkeypatch, svc)
 
-    old_msg = _image_message()  # historical message (not marked current)
+    old_msg = _image_message()
+    del old_msg._pawflow_current_user_message
     current_msg = _image_message()
     current_msg._pawflow_current_user_message = True
 
@@ -230,6 +233,79 @@ def test_apply_vision_fallback_only_describes_current_turn(monkeypatch):
     assert "previously described" in out[0].content[1]["text"]
     # Current-turn image → described normally.
     assert "a red button" in out[1].content[1]["text"]
+
+
+def test_apply_vision_fallback_without_current_marker_never_calls_vision(monkeypatch):
+    from core.vision_describe import apply_vision_fallback
+
+    svc = FakeVisionService()
+    _patch_registry(monkeypatch, svc)
+    historical = _image_message()
+    del historical._pawflow_current_user_message
+
+    out = apply_vision_fallback(
+        [historical], "vision_svc", source_service_id="glm_svc",
+        user_id="alice", conversation_id="c1")
+
+    assert out is not None
+    assert svc.calls == []
+
+
+@pytest.mark.parametrize("tool_name", ["read", "see"])
+def test_current_read_and_see_images_become_tool_descriptions(
+        monkeypatch, tool_name):
+    from core.llm_client import LLMMessage, LLMToolCall
+    from core.vision_describe import apply_vision_fallback
+
+    svc = FakeVisionService()
+    _patch_registry(monkeypatch, svc)
+    current = LLMMessage(
+        role="user", content="inspect it", msg_id="u1",
+        conversation_id="c1")
+    current._pawflow_current_user_message = True
+    call = LLMMessage(
+        role="assistant", content="",
+        tool_calls=[LLMToolCall(id="tc1", name=tool_name, arguments={})],
+        conversation_id="c1")
+    result = _image_message()
+    result.role = "tool"
+    result.tool_call_id = "tc1"
+    del result._pawflow_current_user_message
+
+    out = apply_vision_fallback(
+        [current, call, result], "vision_svc", source_service_id="glm_svc",
+        user_id="alice", conversation_id="c1")
+
+    assert len(svc.calls) == 1
+    assert out[2].role == "tool"
+    assert all(part.get("type") != "image_url" for part in out[2].content)
+    assert "a red button" in out[2].content[1]["text"]
+
+
+def test_other_current_tool_images_are_not_sent_to_vision(monkeypatch):
+    from core.llm_client import LLMMessage, LLMToolCall
+    from core.vision_describe import apply_vision_fallback
+
+    svc = FakeVisionService()
+    _patch_registry(monkeypatch, svc)
+    current = LLMMessage(
+        role="user", content="browse", msg_id="u1",
+        conversation_id="c1")
+    current._pawflow_current_user_message = True
+    call = LLMMessage(
+        role="assistant", content="",
+        tool_calls=[LLMToolCall(id="tc1", name="browser", arguments={})],
+        conversation_id="c1")
+    result = _image_message()
+    result.role = "tool"
+    result.tool_call_id = "tc1"
+    del result._pawflow_current_user_message
+
+    apply_vision_fallback(
+        [current, call, result], "vision_svc", source_service_id="glm_svc",
+        user_id="alice", conversation_id="c1")
+
+    assert svc.calls == []
 
 
 def test_apply_vision_fallback_persists_description(monkeypatch):
@@ -328,12 +404,62 @@ def test_apply_vision_fallback_persist_skips_when_already_persisted(monkeypatch)
         user_id="alice", conversation_id="c1")
     assert len(patched) == 1
 
-    # Second iteration of the same turn: same in-memory message (flag set) →
-    # the vision cache serves the description, but NO second store write.
+    # The first pass replaces the live agent-context image with its text, so a
+    # later iteration performs neither a second vision call nor a store write.
     apply_vision_fallback(
         [msg], "vision_svc", source_service_id="glm_svc",
         user_id="alice", conversation_id="c1")
     assert len(patched) == 1
+    assert len(svc.calls) == 1
+    assert not any(part.get("type") == "image_ref" for part in msg.content)
+
+
+def test_find_msg_in_context_reuses_preexisting_user_message():
+    """_pac_p3 must not inject a second copy of the start-of-turn user
+    message: the streaming ingress pre-persists it BEFORE the context is
+    built, so the loaded context already carries it (same msg_id). Reusing
+    it (and marking it current) avoids the duplicate-image bug where the
+    same upload gets TWO image_refs with different file_ids and is
+    described twice by the vision fallback."""
+    from core.llm_client import LLMMessage
+    from tasks.ai._agentctx_p3 import _find_msg_in_context
+
+    ctx = [
+        LLMMessage(role="user", content="old", conversation_id="c1",
+                   msg_id="m-old"),
+        LLMMessage(role="user", conversation_id="c1",
+                   msg_id="m-current",
+                   content=[
+                       {"type": "text", "text": "with image"},
+                       {"type": "image_ref", "file_id": "fid-x"},
+                   ]),
+    ]
+
+    found = _find_msg_in_context(ctx, "m-current")
+    assert found is ctx[1]
+    assert _find_msg_in_context(ctx, "m-absent") is None
+    assert _find_msg_in_context(ctx, "") is None
+    # Mark the canonical row as the current prompt without injecting a copy.
+    found._pawflow_current_user_message = True
+    assert [m.msg_id for m in ctx] == ["m-old", "m-current"]
+
+
+def test_agentctx_p3_reuses_prepersisted_message_instead_of_duplicating():
+    """Source-level guard: _pac_p3 must look up the current user msg_id in
+    the already-loaded context and reuse it (skip the inject) rather than
+    appending a second copy — otherwise the same upload produces two
+    image_refs (different file_ids) and the vision fallback describes the
+    same image twice."""
+    import re
+    from pathlib import Path
+
+    src = re.sub(r"\bst\.", "", Path(
+        "tasks/ai/_agentctx_p3.py").read_text(encoding="utf-8"))
+    assert "_find_msg_in_context(" in src
+    assert "_existing_user_msg._pawflow_current_user_message = True" in src
+    assert "reusing it, not re-injecting (no duplicate)" in src
+    # Injection happens only when the row is absent from loaded context.
+    assert "if _append_user_message:" in src
 
 
 def test_llm_connection_schema_and_rules_expose_vision_llm_service():
@@ -446,6 +572,7 @@ def test_agent_loop_direct_client_call_applies_service_vision_fallback(streaming
         ],
         conversation_id="c1",
     )
+    original._pawflow_current_user_message = True
     transformed = LLMMessage(
         role="user",
         content=[{"type": "text", "text": "described image"}],

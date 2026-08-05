@@ -121,6 +121,7 @@ Common fields:
 | `compact_threshold_pct` | no | `0` disables proactive compaction. A positive value triggers compaction at that percentage of `max_context_size`. |
 | `token_multiplier` | no | Optional conservative multiplier for provider token estimates. |
 | `timeout` | no | Request/stall timeout in seconds. `0` or missing means no timeout; only a positive value limits provider calls. |
+| `reasoning_effort` | no | OpenAI/OpenAI Responses reasoning effort. Empty preserves the model default; supported values are `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. |
 | `supports_vision` | no | Whether the selected model accepts native image input. Disable it for a text-only model even if its provider can serve other vision models. |
 | `vision_llm_service` | when delegated vision is used | Id of a different, vision-enabled `llmConnection` that describes images before calls to a model with `supports_vision: false`. |
 
@@ -187,7 +188,19 @@ The `default_model` parameter helper lists the available cloud models live from 
 
 An `llmConnection` whose model cannot process images (`supports_vision: false`) can name a separate vision-enabled `llmConnection` in `vision_llm_service`. This decouples reasoning from perception: the primary model remains responsible for planning, tool selection, and desktop actions, while the delegated service acts as its eyes.
 
-Every image reaching the primary model — user uploads, image `read` results, browser captures, `screen` screenshots, and `see` results — is sent to the vision service first. PawFlow requests an exhaustive factual description containing all visible text, the overall layout, UI controls and their approximate `[x, y, width, height]` pixel coordinates, element states, colors, and visible errors. That description replaces the image only in the outbound call to the text model.
+Only images belonging to the active visual turn are delegated: uploads on the
+current user prompt and image results from current-turn `read` or `see` tool
+calls. Historical images and unrelated tool images are never resubmitted to the
+vision service. PawFlow requests an exhaustive factual description containing
+all visible text, the overall layout, UI controls and their approximate
+`[x, y, width, height]` pixel coordinates, element states, colors, and visible
+errors. The description replaces the raw image in the live agent context and is
+persisted on user attachments; the web UI still displays the original upload.
+
+Direct API providers forward text and reasoning callbacks as each SSE delta
+arrives. The final `LLMResponse` still contains the complete assembled text and
+reasoning, while streaming clients receive immediate previews instead of
+waiting for the block or response to finish.
 
 #### Example: GLM 5.2 reasoning through Gemma 4 Cloud vision
 

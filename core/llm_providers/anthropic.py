@@ -144,21 +144,15 @@ class LLMAnthropicMixin:
             def _append_text_piece(text: str, idx: int = 0) -> None:
                 if text:
                     content_parts.append(text)
-                    _text_block_bufs[idx] = _text_block_bufs.get(idx, "") + text
+                    if callback:
+                        callback(text)
 
             def _append_thinking_piece(text: str, idx: int = 0) -> None:
                 nonlocal thinking_text
                 if text:
                     thinking_text += text
-                    _thinking_block_bufs[idx] = _thinking_block_bufs.get(idx, "") + text
-
-            # Per-block buffers: callbacks fire ONCE per block (CC parity).
-            # CC's SDK delivers whole blocks, so its `token`/`thinking_content`
-            # SSE events arrive block-granular. Anthropic streams per-delta —
-            # we accumulate here and invoke the callbacks on content_block_stop
-            # so the UI sees the same cadence on every provider.
-            _text_block_bufs: Dict[int, str] = {}
-            _thinking_block_bufs: Dict[int, str] = {}
+                    if thinking_callback:
+                        thinking_callback(text)
 
             buffer = ""
             while True:
@@ -272,15 +266,6 @@ class LLMAnthropicMixin:
                                     if block_tool is current_tool:
                                         current_tool = None
                                     tool_input_str = ""
-                                # Fire block-level callbacks ONCE per closed block.
-                                if idx in _text_block_bufs and (block_type in ("text", None) or block_type not in {"thinking", "tool_use"}):
-                                    text_block = _text_block_bufs.pop(idx)
-                                    if callback:
-                                        callback(text_block)
-                                if idx in _thinking_block_bufs and (block_type in ("thinking", None) or block_type not in {"text", "tool_use"}):
-                                    thinking_block = _thinking_block_bufs.pop(idx)
-                                    if thinking_callback:
-                                        thinking_callback(thinking_block)
                                 if not block_types:
                                     current_block_type = None
 

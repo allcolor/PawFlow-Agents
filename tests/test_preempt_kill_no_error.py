@@ -50,6 +50,33 @@ def test_api_preempt_aborts_and_fast_restarts():
     assert "supports_live_preempt" in body
 
 
+def test_cancel_resume_reorders_tool_results_before_new_user_message():
+    from core.llm_client import LLMMessage, LLMToolCall
+    from tasks.ai._alc_setup import _repair_tool_result_order
+
+    call = LLMMessage(
+        role="assistant", content="",
+        tool_calls=[
+            LLMToolCall(id="a", name="read", arguments={}),
+            LLMToolCall(id="b", name="search", arguments={}),
+        ],
+        conversation_id="c1",
+    )
+    resume = LLMMessage(role="user", content="continue", conversation_id="c1")
+    result_b = LLMMessage(
+        role="tool", content="done", tool_call_id="b", conversation_id="c1")
+
+    repaired, changed = _repair_tool_result_order(
+        [call, resume, result_b], "c1")
+
+    assert changed is True
+    assert [message.role for message in repaired[:4]] == [
+        "assistant", "tool", "tool", "user"]
+    assert [message.tool_call_id for message in repaired[1:3]] == ["a", "b"]
+    assert "cancelled" in repaired[1].content
+    assert repaired[2] is result_b
+
+
 def test_api_stream_read_abort_raises_agent_cancelled():
     """abort() closes the socket mid-read; the provider must convert the
     resulting connection error into a clean AgentCancelled interruption, not

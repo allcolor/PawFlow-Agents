@@ -401,6 +401,7 @@ def test_a_paste_that_never_arrives_is_still_the_refusal(monkeypatch):
     into an undrawn composer still fails, on evidence rather than on chrome."""
     pool = CodexInteractivePool()
     state = _State()
+    paste_calls = []
     state.prompt_ready = False
     state.last_error = ""
     monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
@@ -411,14 +412,16 @@ def test_a_paste_that_never_arrives_is_still_the_refusal(monkeypatch):
     monkeypatch.setattr(pool, "_remember_injected_prompt_for_event_service",
                         lambda _state, _text: None)
     monkeypatch.setattr(pool, "_load_buffer", lambda _state, _text: True)
-    monkeypatch.setattr(pool, "_paste_buffer", lambda _state: True)
+    monkeypatch.setattr(
+        pool, "_paste_buffer", lambda _state: paste_calls.append(True) or True)
     monkeypatch.setattr(pool, "send_keys", lambda _state, _keys: True)
     monkeypatch.setattr(pool, "_pane_text", lambda _name: IDLE_PANE)
     monkeypatch.setattr(type(pool), "_PASTE_LANDED_SECONDS", 0.0)
     monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
 
     assert pool.send_text(state, PROMPT) is False
-    assert "never reached the composer" in state.last_error
+    assert "single paste" in state.last_error
+    assert len(paste_calls) == 1
 
 
 def test_successful_codex_paste_latches_readiness(monkeypatch):

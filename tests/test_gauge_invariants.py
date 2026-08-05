@@ -2530,23 +2530,13 @@ def _cold_start_fraction(*, is_cli, has_session, configured):
     return _ALCClosures2Mixin._alc_cold_start_trigger_fraction(None, st)
 
 
-def test_cold_cli_start_is_held_to_a_lower_bar_than_the_live_threshold():
-    """A cold session's stored context is serialized into initial_context.md
-    and read back whole, so it lands in the provider window in one go. The
-    live threshold would let that file open a session at 94% of the window --
-    nothing done yet and already out of room.
-    """
-    from tasks.ai._alc_closures2 import CLI_COLD_START_TRIGGER_FRACTION
-
-    assert CLI_COLD_START_TRIGGER_FRACTION == 0.40
+def test_cold_cli_start_keeps_the_configured_threshold():
+    """Cold CLI bootstrapping must not invent an earlier compact threshold."""
     assert _cold_start_fraction(
-        is_cli=True, has_session=False, configured=0.95) == 0.40
-    # Also when compact_threshold_pct is 0, where the provider's own mechanism
-    # is nominally in charge: it cannot help, the file is written before the
-    # provider sees anything at all.
+        is_cli=True, has_session=False, configured=0.95) == 0.95
+    # Zero means no proactive compaction in every provider phase.
     assert _cold_start_fraction(
-        is_cli=True, has_session=False, configured=0.0) == 0.40
-    # A stricter configured bar is never loosened.
+        is_cli=True, has_session=False, configured=0.0) == 0.0
     assert _cold_start_fraction(
         is_cli=True, has_session=False, configured=0.20) == 0.20
 
@@ -2562,8 +2552,7 @@ def test_live_and_non_cli_paths_keep_the_configured_threshold():
 
 
 def test_cold_start_decision_and_compact_are_held_to_one_bar():
-    """Deciding at 40% and then handing _compact the 95% threshold reverses
-    the decision inside _compact's own skip check, silently."""
+    """The decision and compact operation must use the configured threshold."""
     src = Path("tasks/ai/_alc_iteration.py").read_text(encoding="utf-8")
     assert src.count("trigger_fraction=st._cold_start_trigger_fraction()") == 2, (
         "both proactive compact sites must use the bar the decision used")

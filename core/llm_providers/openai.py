@@ -228,16 +228,15 @@ class LLMOpenaiMixin:
                             reasoning = delta.get("reasoning_content", "")
                             if reasoning:
                                 reasoning_parts.append(reasoning)
-                                # Buffered — one callback per block at end of
-                                # stream for CC parity (CC's SDK fires
-                                # thinking_content per whole block).
+                                if thinking_callback:
+                                    thinking_callback(reasoning)
 
                             # Text content
                             text = delta.get("content", "")
                             if text:
                                 content_parts.append(text)
-                                # Buffered — one callback per block at end of
-                                # stream for CC parity.
+                                if callback:
+                                    callback(text)
 
                             # Tool calls (streamed incrementally)
                             for tc_delta in delta.get("tool_calls", []):
@@ -279,16 +278,6 @@ class LLMOpenaiMixin:
             content = "".join(content_parts)
             thinking = "".join(reasoning_parts)
 
-            # Block-level callbacks (CC parity): fire ONCE for the whole text
-            # block and ONCE for the whole reasoning block. OpenAI's SSE
-            # stream has no content_block_stop marker, so the boundary is
-            # end-of-stream. If text and tool_calls both appear, the text
-            # callback fires here and tool_calls surface via the returned
-            # LLMResponse — same ordering the UI sees from CC.
-            if thinking and thinking_callback:
-                thinking_callback(thinking)
-            if content and callback:
-                callback(content)
             logger.info(
                 "OpenAI stream completed model=%s finish_reason=%s text_chars=%d thinking_chars=%d tool_calls=%d base_url=%s",
                 resp_model, finish_reason, len(content), len(thinking), len(tool_calls), safe_base_url,

@@ -358,6 +358,36 @@ class TestMessageSerializationSource(unittest.TestCase):
         msgs = task._deserialize_messages(data, conversation_id="test_cid")
         self.assertIsNone(msgs[0].source)
 
+    def test_deserialize_deduplicates_reused_message_uuid(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        from core.llm_client import stamp_message
+
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        first = stamp_message({
+            "role": "user", "content": "image",
+            "msg_id": "same-id",
+            "attachments": [{
+                "file_id": "f1", "filename": "image.png",
+                "mime_type": "image/png", "described": True,
+                "description": "persisted description",
+            }],
+        }, "test_cid")
+        duplicate = stamp_message({
+            "role": "user", "content": "image",
+            "msg_id": "same-id",
+            "attachments": [{
+                "file_id": "f2", "filename": "image.png",
+                "mime_type": "image/png",
+            }],
+        }, "test_cid")
+
+        messages = task._deserialize_messages(
+            [first, duplicate], conversation_id="test_cid")
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].msg_id, "same-id")
+        self.assertIn("persisted description", str(messages[0].content))
+
     def test_deserialize_unstamped_raises(self):
         """Unstamped on-disk message = corrupt state → hard error."""
         from tasks.ai.agent_loop import AgentLoopTask

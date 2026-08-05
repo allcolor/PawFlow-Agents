@@ -106,13 +106,17 @@ class TestOnDoneContextFields(unittest.TestCase):
         self.assertEqual(data["agent_name"], "test")
         self.assertEqual(data["source"]["provider"], "claude-code-interactive")
 
-    def test_non_cci_thinking_callback_does_not_publish_live_delta(self):
+    def test_api_thinking_callback_publishes_live_delta(self):
         em, bus = self._make_emitter()
         cb = em.get_thinking_callback(False)
 
         cb("plan")
 
-        bus.publish_event.assert_not_called()
+        bus.publish_event.assert_called_once()
+        (_cid, event_type, data), _ = bus.publish_event.call_args
+        self.assertEqual(event_type, "thinking_delta")
+        self.assertEqual(data["text"], "plan")
+        self.assertEqual(data["source"]["provider"], "anthropic")
 
 
 class TestTokenPreview(unittest.TestCase):

@@ -11,6 +11,19 @@ from core.llm_client import (
 logger = logging.getLogger(__name__)
 
 
+def _find_msg_in_context(messages, msg_id: str):
+    """Return the message with this msg_id already in the in-memory context,
+    or None. The streaming ingress pre-persists the user message BEFORE the
+    context is built, so a start-of-turn user message is often already in the
+    loaded context — _pac_p3 must reuse it instead of injecting a duplicate."""
+    if not msg_id:
+        return None
+    for _m in messages:
+        if getattr(_m, "msg_id", "") == msg_id:
+            return _m
+    return None
+
+
 class _PACPhase3Mixin:
     def _pac_p3(self, st):
         from core.conversation_store import ConversationStore
@@ -47,60 +60,77 @@ class _PACPhase3Mixin:
                             len(st.attachments),
                             ", ".join(f"{a.get('filename','?')} ({a.get('mime_type','?')}, {len(a.get('data',''))//1024}KB)"
                                       for a in st.attachments))
-            st.user_content = self._build_user_content(st.user_text, st.attachments, st.conversation_id, st.user_id)
-            st.user_source = {"type": "user", "name": st.user_id}
-            if st._target_agent:
-                st.user_source["target_agent"] = st._target_agent
-            if st._reply_to:
-                st.user_source["reply_to"] = st._reply_to
-            # Also tag btw messages
-            st._is_btw = st.body_json.get("btw", False) if st.body_json else False
-            if st._is_btw:
-                st.user_source["btw"] = True
-            st._umid = st.flowfile.get_attribute("_user_msg_id") or (st.body_json.get("msg_id", "") if st.body_json else "")
-            st._umsg = LLMMessage(role="user", content=st.user_content, source=st.user_source,
-                               conversation_id=st.conversation_id)
-            st._umsg._pawflow_current_user_message = True
-            if st._umid:
-                st._umsg.msg_id = st._umid
-            st._append_user_message = True
-            if st.flowfile.get_attribute("pre_user_message_hook_applied"):
-                logger.debug("pre_user_message hook already applied during ingress")
+            st._umid = st.flowfile.get_attribute("_user_msg_id") or (
+                st.body_json.get("msg_id", "") if st.body_json else "")
+            # Streaming ingress may pre-persist the current user message before
+            # context construction. Reinjecting the same msg_id would create a
+            # duplicate attachment and make delegated vision process one upload
+            # twice. Reuse the canonical row and mark it as the active prompt.
+            st._existing_user_msg = _find_msg_in_context(
+                st.messages, st._umid)
+            if st._existing_user_msg is not None:
+                st._existing_user_msg._pawflow_current_user_message = True
+                st._umsg = st._existing_user_msg
+                st._append_user_message = False
+                logger.info(
+                    "[context:%s] user msg_id=%s already in loaded context — "
+                    "reusing it, not re-injecting (no duplicate)",
+                    (st.conversation_id or "")[:8], st._umid)
             else:
-                try:
-                    from core.agent_hooks import AgentHookRunner
-                    st._pre_user = AgentHookRunner(
-                        user_id=st.user_id,
-                        conversation_id=st.conversation_id,
-                        agent_name=st._target_agent or "",
-                    ).run("pre_user_message", {
-                        "message": {
-                            "role": st._umsg.role,
+                st.user_content = self._build_user_content(
+                    st.user_text, st.attachments, st.conversation_id, st.user_id)
+                st.user_source = {"type": "user", "name": st.user_id}
+                if st._target_agent:
+                    st.user_source["target_agent"] = st._target_agent
+                if st._reply_to:
+                    st.user_source["reply_to"] = st._reply_to
+                # Also tag btw messages
+                st._is_btw = st.body_json.get("btw", False) if st.body_json else False
+                if st._is_btw:
+                    st.user_source["btw"] = True
+                st._umsg = LLMMessage(role="user", content=st.user_content, source=st.user_source,
+                                   conversation_id=st.conversation_id)
+                st._umsg._pawflow_current_user_message = True
+                if st._umid:
+                    st._umsg.msg_id = st._umid
+                st._append_user_message = True
+                if st.flowfile.get_attribute("pre_user_message_hook_applied"):
+                    logger.debug("pre_user_message hook already applied during ingress")
+                else:
+                    try:
+                        from core.agent_hooks import AgentHookRunner
+                        st._pre_user = AgentHookRunner(
+                            user_id=st.user_id,
+                            conversation_id=st.conversation_id,
+                            agent_name=st._target_agent or "",
+                        ).run("pre_user_message", {
+                            "message": {
+                                "role": st._umsg.role,
+                                "content": st._umsg.content,
+                                "source": st._umsg.source,
+                                "msg_id": getattr(st._umsg, "msg_id", ""),
+                            },
                             "content": st._umsg.content,
-                            "source": st._umsg.source,
-                            "msg_id": getattr(st._umsg, "msg_id", ""),
-                        },
-                        "content": st._umsg.content,
-                        "target_agent": st._target_agent or "",
-                        "channel": "agent_context",
-                    }, fail_policy="closed")
-                    if st._pre_user.get("decision") == "block":
-                        logger.info("pre_user_message hook blocked context user message")
+                            "target_agent": st._target_agent or "",
+                            "channel": "agent_context",
+                        }, fail_policy="closed")
+                        if st._pre_user.get("decision") == "block":
+                            logger.info("pre_user_message hook blocked context user message")
+                            st._append_user_message = False
+                        if st._pre_user.get("decision") == "replace":
+                            st._payload = st._pre_user.get("payload") or {}
+                            st._msg = st._payload.get("message")
+                            if isinstance(st._msg, dict):
+                                if "content" in st._msg:
+                                    st._umsg.content = st._msg.get("content")
+                                if isinstance(st._msg.get("source"), dict):
+                                    st._umsg.source = st._msg.get("source")
+                            elif "content" in st._payload:
+                                st._umsg.content = st._payload.get("content")
+                    except Exception as _hook_err:
+                        logger.error("pre_user_message hook failed: %s", _hook_err,
+                                     exc_info=True)
                         st._append_user_message = False
-                    if st._pre_user.get("decision") == "replace":
-                        st._payload = st._pre_user.get("payload") or {}
-                        st._msg = st._payload.get("message")
-                        if isinstance(st._msg, dict):
-                            if "content" in st._msg:
-                                st._umsg.content = st._msg.get("content")
-                            if isinstance(st._msg.get("source"), dict):
-                                st._umsg.source = st._msg.get("source")
-                        elif "content" in st._payload:
-                            st._umsg.content = st._payload.get("content")
-                except Exception as _hook_err:
-                    logger.error("pre_user_message hook failed: %s", _hook_err,
-                                 exc_info=True)
-                    st._append_user_message = False
             if st._append_user_message:
                 st.messages.append(st._umsg)
 

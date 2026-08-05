@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.114] — 2026-08-05
+
+### Added
+
+- OpenAI and OpenAI Responses services expose `reasoning_effort` in the
+  service editor (`minimal`, `low`, `medium`, `high`, `xhigh`, or `max`), with
+  an empty value preserving the model default.
+
+### Fixed
+
+- Claude Code and Codex interactive prompts are loaded as one tmux buffer and
+  sent with exactly one bracketed `paste-buffer -p`. Visual verification can
+  reject an unconfirmed transport but never replays and duplicates the prompt.
+- Compact Codex `UserPromptSubmit` receipts without an explicit digest now
+  acknowledge the newest tracked PawFlow injection instead of triggering
+  repeated submit keys after the turn has started.
+- API-provider preemption now repairs strict tool-call ordering before the
+  restarted OpenAI request: every assistant `tool_calls` block is immediately
+  followed by one result per call id, reusing persisted results in call order
+  and synthesizing an explicit cancelled-result placeholder only when needed.
+- Delegated vision operates only on the current user prompt and current-turn
+  `read`/`see` results. Descriptions replace raw images in the live context and
+  persist on attachments, while duplicate message UUIDs cannot reintroduce or
+  redescribe the same upload.
+- Cold CLI sessions now honor `compact_threshold_pct` exactly. The removed
+  hidden 40% threshold no longer compacts a context while the configured gauge
+  is still below its visible threshold; `0` consistently disables proactive
+  compaction.
+- Direct Anthropic, OpenAI chat-completions, and OpenAI Responses streams emit
+  text and reasoning callbacks as wire deltas instead of buffering the whole
+  block until completion, restoring immediate token/thinking previews.
+
 ## [1.0.0-beta.113] — 2026-08-05
 
 ### Fixed

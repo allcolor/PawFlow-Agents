@@ -184,10 +184,75 @@ def test_openai_stream_resolves_relay_base_url_once(monkeypatch):
     assert "/relay-proxy/relay1/tok1/l/localhost:11434/v1/chat/completions" in _Connection.requests[0][1]
 
 
+def test_openai_stream_callbacks_receive_wire_deltas(monkeypatch):
+    events = [
+        {"model": "deepseek-v4-flash", "choices": [{"delta": {
+            "reasoning_content": "think "}}]},
+        {"choices": [{"delta": {"reasoning_content": "more"}}]},
+        {"choices": [{"delta": {"content": "hel"}}]},
+        {"choices": [{"delta": {"content": "lo"},
+                      "finish_reason": "stop"}]},
+    ]
+    payload = "".join(
+        "data: " + json.dumps(event) + "\n\n" for event in events)
+    payload += "data: [DONE]\n\n"
+
+    class _Response:
+        status = 200
+        reason = "OK"
+
+        def __init__(self):
+            self._chunks = [payload.encode(), b""]
+
+        def read(self, _size):
+            return self._chunks.pop(0)
+
+    class _Connection:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, *args, **kwargs):
+            pass
+
+        def getresponse(self):
+            return _Response()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "core.llm_providers.openai.http.client.HTTPSConnection", _Connection)
+    client = LLMClient(provider="openai", config={
+        "api_key": "sk-test", "base_url": "https://example.test/v1",
+        "default_model": "deepseek-v4-flash", "max_retries": 1})
+    text_seen = []
+    thinking_seen = []
+
+    result = client.complete_stream(
+        [LLMMessage("user", "hi", conversation_id="conv1")],
+        callback=text_seen.append, thinking_callback=thinking_seen.append)
+
+    assert result.content == "hello"
+    assert result.thinking == "think more"
+    assert text_seen == ["hel", "lo"]
+    assert thinking_seen == ["think ", "more"]
+
+
 class TestLLMConnectionService:
 
     def test_register(self):
         assert "llmConnection" in ServiceFactory.list_types()
+
+    def test_openai_exposes_reasoning_effort(self):
+        svc = LLMConnectionService({"provider": "openai", "api_key": "test"})
+        schema = svc.get_parameter_schema()
+        rules = svc.get_parameter_rules()
+
+        assert schema["reasoning_effort"]["default"] == ""
+        assert any(
+            "openai" in (rule.get("when") or {}).get("provider", [])
+            and rule["set"].get("reasoning_effort", {}).get("visible") is True
+            for rule in rules)
 
     def test_openai_complete(self):
         svc = LLMConnectionService({

@@ -40,6 +40,26 @@ def test_exact_user_prompt_submit_is_a_non_destructive_ack():
     assert service.wait_event("sess", timeout=0) == event
 
 
+def test_compact_injected_hook_without_hash_acks_latest_prompt():
+    service = _service()
+    marker = service.submission_marker("sess")
+    event = {
+        "type": "hook",
+        "hook_event_name": "UserPromptSubmit",
+        "input": {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt_len": len(PROMPT),
+            "pawflow_injected_prompt": True,
+        },
+    }
+
+    service.publish_event("sess", event)
+
+    assert service.wait_for_prompt_submission(
+        "sess", PROMPT, after_submit=marker[0], after_request=marker[1],
+        timeout=0) == "hook"
+
+
 def test_a_stale_identical_hook_does_not_ack_the_next_prompt():
     service = _service()
     service.publish_event("sess", _hook(PROMPT, injected=True))

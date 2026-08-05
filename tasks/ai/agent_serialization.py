@@ -163,13 +163,22 @@ class AgentSerializationMixin:
                     ))
                 continue
 
+            # A UUID identifies one logical message. Older streaming ingress
+            # paths could persist the current user message twice; keeping both
+            # copies duplicates attachments, prompt tokens, and vision work.
+            # Keep the first canonical row (the one patch_message updates) and
+            # let following thinking/tool_call rows continue to target it.
+            entry_msg_id = entry.get("msg_id", "")
+            if entry_msg_id and entry_msg_id in by_msg_id:
+                continue
+
             msg = LLMMessage(
                 role=entry["role"],
                 content=self._content_with_attachment_refs(entry),
                 tool_calls=None,
                 tool_call_id=entry.get("tool_call_id"),
                 source=entry.get("source"),
-                msg_id=entry.get("msg_id", ""),
+                msg_id=entry_msg_id,
                 display_only=entry.get("display_only", False),
                 thinking=entry.get("thinking", ""),
                 thinking_signature=entry.get("thinking_signature", ""),
@@ -208,16 +217,14 @@ class AgentSerializationMixin:
             for p in parts
             if isinstance(p, dict) and p.get("file_id")
         }
-        added_ref = False
+        content_changed = False
         for att in attachments:
             if not isinstance(att, dict):
                 continue
             if att.get("described"):
-                # Cette image a deja ete decrite par le vision fallback — sa
-                # description est PERSISTEE dans le contexte. Ne JAMAIS
-                # recreer l'image_ref (sinon le fallback la re-decrirait a
-                # chaque tour, re-soumettant l'image au vision N fois) : la
-                # description persistee devient une part texte.
+                # Delegated vision already described this attachment. Restore
+                # its persisted text into agent context and never recreate an
+                # image_ref that would submit the image again.
                 if att.get("description"):
                     parts.append({
                         "type": "text",
@@ -227,6 +234,7 @@ class AgentSerializationMixin:
                             f"{att['description']}"
                         ),
                     })
+                    content_changed = True
                 continue
             fid = att.get("file_id", "")
             if not fid or fid in existing_fids:
@@ -241,9 +249,9 @@ class AgentSerializationMixin:
                 "size": att.get("size", 0),
             })
             existing_fids.add(fid)
-            added_ref = True
+            content_changed = True
 
-        if added_ref:
+        if content_changed:
             return parts
         return raw_content
 

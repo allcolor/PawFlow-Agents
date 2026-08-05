@@ -202,7 +202,8 @@ class EndToEnd(unittest.TestCase):
             "api_key": "k", "base_url": "https://api.deepseek.com",
             "default_model": "deepseek-v4-flash"})
 
-    def _run(self, client, body, messages=None, tools=None, callback=None):
+    def _run(self, client, body, messages=None, tools=None, callback=None,
+             thinking_callback=None):
         import core.llm_providers.openai_responses as mod
         conn = _FakeConn(_FakeResponse(body))
         orig = mod.http.client.HTTPSConnection
@@ -211,7 +212,8 @@ class EndToEnd(unittest.TestCase):
             return client._stream_openai_responses(
                 messages or [LLMMessage(role="user", content="hi",
                                         conversation_id="c1")],
-                "deepseek-v4-flash", 0.5, 100, tools, callback)
+                "deepseek-v4-flash", 0.5, 100, tools, callback,
+                thinking_callback=thinking_callback)
         finally:
             mod.http.client.HTTPSConnection = orig
 
@@ -312,14 +314,18 @@ class EndToEnd(unittest.TestCase):
                  "delta": "partial"}))
         self.assertIn("terminal event", str(ctx.exception))
 
-    def test_the_text_callback_fires_once_for_the_whole_block(self):
-        seen = []
+    def test_text_and_reasoning_callbacks_receive_wire_deltas(self):
+        text_seen = []
+        thinking_seen = []
         self._run(self._client(), _sse(
+            {"type": "response.reasoning_text.delta", "delta": "why "},
+            {"type": "response.reasoning_summary_text.delta", "delta": "this"},
             {"type": "response.output_text.delta", "delta": "a"},
             {"type": "response.output_text.delta", "delta": "b"},
             {"type": "response.completed", "response": {"status": "completed"}},
-        ), callback=seen.append)
-        self.assertEqual(seen, ["ab"])
+        ), callback=text_seen.append, thinking_callback=thinking_seen.append)
+        self.assertEqual(text_seen, ["a", "b"])
+        self.assertEqual(thinking_seen, ["why ", "this"])
 
 
 class Registration(unittest.TestCase):
@@ -345,6 +351,12 @@ class Registration(unittest.TestCase):
                  if "openai-responses" in (r.get("when") or {}).get("provider", [])]
         self.assertTrue(shown, "no rule makes the API fields visible")
         self.assertTrue(any("base_url" in r["set"] for r in shown))
+        self.assertTrue(any(
+            r["set"].get("reasoning_effort", {}).get("visible") is True
+            for r in shown))
+        self.assertEqual(
+            schema["reasoning_effort"]["options"],
+            ["", "minimal", "low", "medium", "high", "xhigh", "max"])
 
 
 if __name__ == "__main__":

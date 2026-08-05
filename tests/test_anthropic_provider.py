@@ -219,12 +219,12 @@ def test_anthropic_stream_accepts_compatible_text_delta_without_type(monkeypatch
     )
 
     assert resp.content == "hello world"
-    assert seen == ["hello world"]
+    assert seen == ["hello", " world"]
     assert resp.tokens_in == 10
     assert resp.tokens_out == 2
 
 
-def test_anthropic_stream_flushes_interleaved_callbacks_by_block_index(monkeypatch):
+def test_anthropic_stream_emits_interleaved_deltas_immediately(monkeypatch):
     client = LLMClient(provider="anthropic", config={"api_key": "test"})
     events = [
         {"type": "message_start", "message": {
@@ -286,7 +286,7 @@ def test_anthropic_stream_flushes_interleaved_callbacks_by_block_index(monkeypat
     assert resp.content == "Visible answer"
     assert resp.thinking == "plan first"
     assert thinking_seen == ["plan first"]
-    assert text_seen == ["Visible answer"]
+    assert text_seen == ["Visible ", "answer"]
 
 
 def test_anthropic_stream_does_not_replace_malformed_tool_json_with_empty_args(monkeypatch):

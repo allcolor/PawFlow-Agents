@@ -442,7 +442,17 @@ class LLMOpenaiResponsesMixin:
                     if not line.startswith("data: "):
                         continue
                     try:
-                        terminal = state.feed(json.loads(line[6:]))
+                        event = json.loads(line[6:])
+                        terminal = state.feed(event)
+                        delta = event.get("delta", "") or ""
+                        if event.get("type") == "response.output_text.delta":
+                            if delta and callback:
+                                callback(delta)
+                        elif event.get("type") in (
+                                "response.reasoning_text.delta",
+                                "response.reasoning_summary_text.delta"):
+                            if delta and thinking_callback:
+                                thinking_callback(delta)
                     except json.JSONDecodeError:
                         logger.debug("undecodable Responses event", exc_info=True)
                     if terminal:
@@ -483,13 +493,6 @@ class LLMOpenaiResponsesMixin:
                             for rid in state.reasoning_order
                             if rid in state.reasoning_items])
                 if state.reasoning_order else "")
-            # Block-level callbacks fire once each at end of stream, the same
-            # contract the chat/completions path gives the UI.
-            if thinking and thinking_callback:
-                thinking_callback(thinking)
-            if content and callback:
-                callback(content)
-
             usage = state.usage or {}
             tokens_in = usage.get("input_tokens", 0) or 0
             tokens_out = usage.get("output_tokens", 0) or 0

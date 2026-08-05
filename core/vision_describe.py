@@ -3,8 +3,9 @@
 When an llmConnection has supports_vision=false and names a
 vision_llm_service, image parts in its outbound messages are replaced by
 detailed textual descriptions produced by that vision service, so
-non-vision models can still act on screenshots, uploads, and tool-result
-images (see, read, browser). Descriptions are cached by image content
+non-vision models can still act on current prompt uploads and current-turn
+``read``/``see`` results. Historical and unrelated tool images are never sent
+to the delegated vision service. Descriptions are cached by image content
 hash — in memory and on disk — so each unique image is described once,
 not once per turn.
 """
@@ -53,6 +54,62 @@ DESCRIBE_PROMPT = (
 # Bound the number of vision calls a single message-list pass may trigger
 # (a video see() emits up to 5 frames; runaway contexts must not fan out).
 _MAX_DESCRIBE_PER_PASS = 12
+_VISION_TOOL_NAMES = frozenset({"read", "see"})
+
+
+def _vision_input_indexes(messages: List[Any]) -> set[int]:
+    """Return image-bearing messages eligible for this fallback pass.
+
+    The boundary is the latest explicitly marked current user message. Only
+    that prompt and ``read``/``see`` tool results produced after it belong to
+    the active visual turn. Everything else is historical context.
+    """
+    current_idx = -1
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
+        if (getattr(msg, "role", "") == "user"
+                and getattr(msg, "_pawflow_current_user_message", False)):
+            current_idx = idx
+            break
+    if current_idx < 0:
+        return set()
+
+    eligible = {current_idx}
+    tool_names: Dict[str, str] = {}
+    for idx in range(current_idx + 1, len(messages)):
+        msg = messages[idx]
+        if getattr(msg, "role", "") == "assistant":
+            for call in getattr(msg, "tool_calls", None) or []:
+                call_id = getattr(call, "id", "") or ""
+                name = getattr(call, "name", "") or ""
+                arguments = getattr(call, "arguments", None) or {}
+                try:
+                    from core.llm_client import unwrap_mcp_tool
+                    name, _ = unwrap_mcp_tool(name, arguments)
+                except Exception:
+                    pass
+                if call_id:
+                    tool_names[call_id] = name
+            continue
+        if getattr(msg, "role", "") != "tool":
+            continue
+        name = (getattr(msg, "_tool_name", "") or
+                tool_names.get(getattr(msg, "tool_call_id", "") or "", ""))
+        if name in _VISION_TOOL_NAMES:
+            eligible.add(idx)
+    return eligible
+
+
+def has_current_vision_inputs(messages: List[Any]) -> bool:
+    """Return whether the active prompt/read/see window contains an image."""
+    for idx in _vision_input_indexes(messages):
+        content = getattr(messages[idx], "content", None)
+        if isinstance(content, list) and any(
+                isinstance(part, dict)
+                and part.get("type") in ("image_ref", "image_url")
+                for part in content):
+            return True
+    return False
 
 _MEM_CACHE_MAX = 512
 _DISK_CACHE_MAX = 2000
@@ -344,10 +401,10 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
     if getattr(_tls, "active", False):
         logger.info("[vision-fallback] skipping: recursion guard active")
         return messages
-    if not any(isinstance(getattr(m, "content", None), list) and any(
-            isinstance(p, dict) and p.get("type") in ("image_ref", "image_url")
-            for p in m.content) for m in messages):
-        logger.info("[vision-fallback] skipping: no image_ref/image_url parts found")
+    eligible_indexes = _vision_input_indexes(messages)
+    if not eligible_indexes or not has_current_vision_inputs(messages):
+        logger.info(
+            "[vision-fallback] skipping: no current user/read/see image parts")
         return messages
     if source_service_id and vision_service_id == source_service_id:
         logger.warning("vision fallback: '%s' references itself; skipping",
@@ -362,43 +419,29 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
     logger.info("[vision-fallback] proceeding: vision_svc=%s, describing images...",
                 getattr(vision_svc, "_service_id", "") or type(vision_svc).__name__)
 
-    # A — fenetre du tour courant : seules les images du message utilisateur
-    # courant et des messages produits apres lui (tool results du tour) sont
-    # decrites. Les images des messages PLUS ANCIENS ont deja ete decrites —
-    # leur description est PERSISTEE dans le contexte (persistance B plus
-    # bas) — donc les re-decrire re-soumettrait l'image au vision a chaque
-    # tour : ca gonfle le prompt et, apres un redemarrage (cache froid),
-    # refait des appels reseau pour rien. Elles sont remplacees par un
-    # placeholder court SANS aucun appel vision.
-    # Quand aucun message ne porte le marqueur de tour courant (poller,
-    # synthese d'interruption, tests directs), tout est decrit comme avant :
-    # un fallback sans fenetre ne doit jamais perdre d'information.
-    _current_start = -1
-    for _mi, _m in enumerate(messages):
-        if getattr(_m, "_pawflow_current_user_message", False):
-            _current_start = _mi
-            break
-
     # Collect every image part to describe, honouring the per-pass budget.
     # The network calls run in parallel afterwards, so a message carrying
     # several images (video frames, multiple screenshots) is not serialized.
     jobs = []  # (msg_idx, part_idx, payload|placeholder)
     described = 0
     truncated = False
+    seen_message_ids = set()
     for msg_idx, msg in enumerate(messages):
         content = getattr(msg, "content", None)
         if not (isinstance(content, list) and any(
                 isinstance(p, dict) and p.get("type") in ("image_ref", "image_url")
                 for p in content)):
             continue
-        _is_history = _current_start >= 0 and msg_idx < _current_start
+        is_eligible = msg_idx in eligible_indexes
+        msg_id = getattr(msg, "msg_id", "") or ""
+        duplicate = bool(msg_id and msg_id in seen_message_ids)
+        if msg_id:
+            seen_message_ids.add(msg_id)
         for part_idx, part in enumerate(content):
             if not (isinstance(part, dict)
                     and part.get("type") in ("image_ref", "image_url")):
                 continue
-            if _is_history:
-                # Tour precedent : deja decrit / description persistee — ne
-                # JAMAIS re-soumettre cette image au vision.
+            if not is_eligible or duplicate:
                 jobs.append((msg_idx, part_idx, "history"))
                 continue
             if described >= _MAX_DESCRIBE_PER_PASS:
@@ -419,7 +462,7 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
         """Describe one collected image; returns (job, outcome)."""
         msg_idx, part_idx, payload = job
         if payload == "history":
-            # Ancien message du contexte — deja decrit, jamais re-soumis.
+            # Historical context is never resubmitted to delegated vision.
             return job, payload
         if payload is None or payload == "unavailable":
             return job, payload
@@ -529,12 +572,9 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
         else:
             out.append(msg)
 
-    # B — persister la description dans le contexte : une image decrite est
-    # remplacee par sa description PERSISTEE (attachment marque described),
-    # donc elle ne sera JAMAIS re-soumise au vision aux tours suivants, ni
-    # apres un redemarrage serveur (le cache memoire/disk disparait). L'UI
-    # garde l'attachment (l'image reste affichee) ; le contexte LLM charge la
-    # description a la place de l'image_ref (_content_with_attachment_refs).
+    # Persist current user-image descriptions on the attachment. The UI keeps
+    # displaying the upload, while future agent-context loads materialize the
+    # description instead of recreating an image_ref.
     if _persist and conversation_id:
         try:
             _targets = []  # (msg_id, attachments)
@@ -544,7 +584,7 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
                 if not _mid or getattr(_msg, "role", "") != "user":
                     continue
                 if getattr(_msg, "_vision_persisted", False):
-                    continue  # deja persiste ce tour — pas de re-ecriture I/O
+                    continue  # Already persisted during this turn.
                 _descs = {pi: d for (pi, _l, d) in _persist[_mi]}
                 _content_parts = getattr(_msg, "content", None)
                 if not isinstance(_content_parts, list):
@@ -576,7 +616,14 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
             if _targets:
                 from core.conversation_store import ConversationStore
                 _store = ConversationStore.instance()
+                # Historical duplicate rows can share a msg_id. Patch the
+                # canonical transcript row once instead of taking the
+                # conversation lock repeatedly for identical data.
+                _seen_mids = set()
                 for _mid, _atts in _targets:
+                    if _mid in _seen_mids:
+                        continue
+                    _seen_mids.add(_mid)
                     _store.patch_message(
                         conversation_id, _mid, attachments=_atts)
                     logger.info(
@@ -586,6 +633,15 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
         except Exception:
             logger.debug(
                 "vision fallback: description persistence failed", exc_info=True)
+
+    # Keep the transformed content in the live agent context as well. This is
+    # essential for current-turn read/see results: later tool-loop iterations
+    # must receive the textual vision result, never submit the same raw image
+    # again. User uploads remain available to the UI through transcript
+    # attachments; only the agent's in-memory representation is replaced.
+    for msg_idx in eligible_indexes:
+        if msg_idx < len(out) and out[msg_idx] is not messages[msg_idx]:
+            messages[msg_idx].content = out[msg_idx].content
 
     if truncated:
         logger.warning(

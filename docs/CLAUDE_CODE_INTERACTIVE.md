@@ -318,6 +318,10 @@ Timing controls are read once when the provider modules are imported:
 - `PAWFLOW_CCI_PASTE_SETTLE_SECONDS` sets the delay after `paste-buffer` and
   before the first `Enter`. Claude Code defaults to `0.2` seconds. Codex uses
   at most `0.2` seconds even when a larger inherited override is configured.
+- Every prompt is loaded into one tmux buffer and sent with exactly one
+  bracketed `paste-buffer -p`. Pane verification may reject an unconfirmed
+  transport, but it never replays the paste and risks duplicating the prompt in
+  the composer.
 - `PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` sets the delay between repeated submit
   keys. Claude Code defaults to `1.0` second. Codex uses at most `0.2`
   seconds and submits both normal prompts and live preempts with the fixed

@@ -143,16 +143,19 @@ controls:
 - The header keeps status and usage first, followed by the global theme and
   language selectors. Language options include their national flags.
 - Conversation actions formerly hidden behind the `+` menu form an always-visible,
-  vertically scrollable dock on the right. `Link account`, `Logout`, and
-  administration live in this dock, and extension-provided header/action slots
-  remain inside it. The administration panel is a fixed sibling of the scrollable
-  dock so opening the gear cannot clip the menu outside the dock's narrow bounds.
-- View mode, TTS, STT, and tool permission mode share a compact floating panel
-  above the prompt on the left, mirroring the active-agents panel on the right,
-  because they affect the current conversation or its next turn.
-- The task-tab dock uses a separate right offset so the two docks never overlap.
-  On narrow screens the action dock becomes a bounded horizontal strip above the
-  composer.
+  horizontally scrollable dock in the center of the composer's context row.
+  `Link account`, `Logout`, and administration live in this dock, and
+  extension-provided header/action slots remain inside it. The administration
+  panel opens above the dock as a sibling of its scroll container.
+  A shared CSS-styled tooltip is rendered outside that scroll container, keeping
+  every icon labelled without creating a horizontal scrollbar on hover.
+- View mode, TTS, STT, and tool permission mode occupy the left of that row,
+  while active agents occupy the right. Pasted files render as stacked thumbnails
+  immediately before Send; the first three stay visible and a count expands the
+  full tray. Keeping all of these inside the main layout makes them move with the
+  conversation when the left sidebar opens instead of overlapping it.
+- The task-tab dock remains fixed at the right edge. On narrow screens the three
+  composer zones stack and the action dock keeps bounded horizontal scrolling.
 
 These are presentation moves only. Existing element IDs and event handlers remain
 the behavioral contract for authentication, themes, localization, permissions,

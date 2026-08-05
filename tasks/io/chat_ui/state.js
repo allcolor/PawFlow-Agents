@@ -6,6 +6,21 @@ const _selectedMsgIds = new Set();  // multiselect for batch delete
 let conversationId = null;
 let sending = false;
 
+// Keep the action and active-agent docks beside the prompt without duplicating
+// their long-lived IDs or handlers. Both nodes are declared in their legacy
+// source positions so extensions can still discover them during HTML assembly,
+// then mounted into the composer's three-column context row once the DOM exists.
+function mountComposerChrome() {
+  const actionMount = document.getElementById('composerActionMount');
+  const activeMount = document.getElementById('composerActiveMount');
+  const actionDock = document.getElementById('actionMenuWrap');
+  const activePanel = document.getElementById('activePanel');
+  if (actionMount && actionDock) actionMount.appendChild(actionDock);
+  if (activeMount && activePanel) activeMount.appendChild(activePanel);
+}
+
+mountComposerChrome();
+
 // Canonical HTML escaper. Defined here (loads early, before any module that
 // renders user/agent-controlled text) so there is a single source of truth.
 function escapeHtml(s) {

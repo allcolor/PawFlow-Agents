@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.108] — 2026-08-05
+
+### Fixed
+
+- Kept conversation controls, actions, active agents, and pasted-file previews
+  inside the main chat layout, so opening the left sidebar no longer makes them
+  overlap it.
+- Replaced clipped action-dock hover labels with shared CSS-styled tooltips that
+  do not create a horizontal scrollbar.
+
+### Changed
+
+- Moved conversation actions into a horizontal dock between conversation controls
+  and active agents, and rendered pasted files as stacked thumbnails beside the
+  prompt with an expandable count after the first three.
+
 ## [1.0.0-beta.107] — 2026-08-05
 
 ### Changed

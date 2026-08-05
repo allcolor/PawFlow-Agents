@@ -322,12 +322,12 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
 
 
-def test_action_dock_is_fixed_and_scrollable():
+def test_action_dock_is_horizontal_and_scrollable():
     # Regression: the former + dropdown could extend beyond a short viewport.
-    # The always-visible right dock keeps the same actions in a bounded column.
-    assert ".action-dock-menu { display: flex; position: fixed;" in TEMPLATE_HTML
-    assert "max-height: calc(100vh - 150px);" in TEMPLATE_HTML
-    assert "overflow-y: auto;" in TEMPLATE_HTML
+    # The composer dock keeps the same actions in a bounded horizontal strip.
+    assert ".action-dock-menu { display: flex; position: static;" in TEMPLATE_HTML
+    assert "flex-direction: row;" in TEMPLATE_HTML
+    assert "overflow-x: auto; overflow-y: hidden;" in TEMPLATE_HTML
 
 
 def test_mobile_breakpoints_wrap_header_and_overlay_sidebar():

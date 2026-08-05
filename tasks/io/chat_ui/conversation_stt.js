@@ -40,7 +40,8 @@ function _convSttUpdateButton() {
   const baseTitle = _convSttRecording
     ? (typeof t === 'function' ? t('speechInputStopTitle') : 'Stop recording')
     : (typeof t === 'function' ? t('speechInputStartTitle') : 'Dictate and send');
-  btn.title = baseTitle + (_convSttServices.length > 1 ? ' (right-click to choose service)' : '');
+  btn.setAttribute('aria-label', baseTitle + (_convSttServices.length > 1 ? ' (right-click to choose service)' : ''));
+  btn.removeAttribute('title');
   btn.innerHTML = _convSttRecording ? '&#x23F9;' : '&#x1F3A4;';
 }
 

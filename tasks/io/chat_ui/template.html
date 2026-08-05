@@ -301,11 +301,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 @media (max-width: 768px) {
   .header { flex-wrap: wrap; row-gap: 8px; padding: 10px 12px; }
   .header .actions { margin-left: auto; }
-  .prompt-controls-panel { left: 8px !important; bottom: 126px !important; max-width: calc(100vw - 16px); }
-  .action-dock-menu { top: auto !important; right: 8px !important; bottom: 76px; transform: none !important;
-                      flex-direction: row !important; max-width: calc(100vw - 16px); max-height: none !important;
-                      overflow-x: auto; overflow-y: hidden !important; }
-  #adminSettingsMenu { top: auto !important; right: 8px !important; bottom: 120px; transform: none !important; }
+  .composer-context-row { grid-template-columns: minmax(0, 1fr); }
+  .composer-action-mount, .composer-active-mount { justify-self: stretch; }
+  .prompt-controls-panel { max-width: 100%; }
+  .action-dock-menu { max-width: 100%; }
+  #adminSettingsMenu { left: 8px; right: 8px; transform: none; }
   .sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;
              box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
   /* sidebar-toggle's left is also set inline by _syncToggleBtn() (state.js)
@@ -487,13 +487,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .reply-quote:hover { color: #e0e0e0; }
 .active-panel { display: none; background: rgba(15,22,41,0.9); border: 1px solid #0f3460; border-radius: 8px;
                 padding: 6px 10px; font-size: 11px; color: #a0a0c0;
-                position: fixed; bottom: 70px; right: 20px; z-index: 50; max-width: 350px;
-                max-height: 150px; overflow-y: auto; backdrop-filter: blur(4px); }
+                position: static; z-index: 50; max-width: 350px; max-height: 80px;
+                overflow-y: auto; backdrop-filter: blur(4px); }
 .active-panel.visible { display: block; }
+.composer-context-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+                        align-items: end; gap: 10px; min-width: 0; }
+.composer-action-mount { min-width: 0; justify-self: center; }
+.composer-active-mount { min-width: 0; justify-self: end; }
 .prompt-controls-panel { display: none; background: rgba(15,22,41,0.9); border: 1px solid #0f3460; border-radius: 8px;
                          padding: 6px 10px; font-size: 11px; color: #a0a0c0;
-                         position: fixed; bottom: 70px; left: 20px; z-index: 50;
-                         backdrop-filter: blur(4px); }
+                         flex: 0 0 auto; max-width: 100%; }
 .prompt-controls-panel.visible { display: block; }
 .prompt-controls-row { display: flex; align-items: center; gap: 6px; }
 .prompt-controls-row #permissionMode { max-width: 170px; height: 30px; }
@@ -553,7 +556,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .input-area { background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460; flex-shrink: 0;
                display: flex; gap: 10px; flex-direction: column; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }
-.input-row textarea { flex: 1; background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460;
+.input-row textarea { flex: 1; min-width: 0; background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460;
                         border-radius: 8px; padding: 10px; font-size: 14px; resize: none;
                         font-family: inherit; outline: none; min-height: 44px; max-height: 120px; }
 .input-row textarea:focus { border-color: #e94560; }
@@ -616,15 +619,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .ctx-menu-item:hover { background: #0f3460; color: #e0e0f0; }
 .ctx-menu-item.danger { color: #e94560; }
 .ctx-menu-item.danger:hover { background: #e94560; color: #fff; }
-.attachments-preview { display: flex; flex-wrap: wrap; gap: 8px; }
+.attachments-preview { display: flex; flex: 0 0 auto; align-items: center; min-width: 0;
+                       max-width: 148px; height: 44px; padding: 0 5px; overflow: visible; }
 .attachments-preview:empty { display: none; }
-.att-item { display: flex; align-items: center; gap: 6px; background: #1a1a2e; border: 1px solid #0f3460;
-            border-radius: 6px; padding: 4px 8px; font-size: 12px; color: #c0c0d0; }
-.att-item img { height: 32px; width: 32px; object-fit: cover; border-radius: 4px; }
+.attachments-preview.expanded { max-width: min(50vw, 480px); overflow-x: auto; padding-top: 5px; }
+.att-item { position: relative; display: flex; flex: 0 0 40px; width: 40px; height: 40px;
+            align-items: center; justify-content: center; background: #1a1a2e;
+            border: 1px solid #0f3460; border-radius: 7px; padding: 2px;
+            box-sizing: border-box; font-size: 12px; color: #c0c0d0; }
+.att-item + .att-item { margin-left: -10px; }
+.attachments-preview.expanded .att-item + .att-item { margin-left: 4px; }
+.att-item:hover { z-index: 2; border-color: #e94560; }
+.att-item img { height: 100%; width: 100%; object-fit: cover; border-radius: 4px; cursor: zoom-in; }
 .att-item .att-icon { font-size: 16px; }
-.att-item .att-remove { background: none; border: none; color: #e94560; cursor: pointer;
-                         font-size: 14px; padding: 0 2px; }
+.att-item .att-name { display: none; }
+.att-item .att-remove { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px;
+                         display: flex; align-items: center; justify-content: center;
+                         background: #e94560; border: 1px solid #fff; border-radius: 50%;
+                         color: #fff; cursor: pointer; font-size: 12px; line-height: 1; padding: 0; }
 .att-item .att-remove:hover { color: #ff6b6b; }
+.attachment-overflow-count { flex: 0 0 34px; width: 34px; height: 34px; margin-left: -8px;
+                             border: 1px solid #e94560; border-radius: 50%; background: #0f3460;
+                             color: #fff; cursor: pointer; font-size: 11px; font-weight: 700;
+                             position: relative; z-index: 3; padding: 0; }
 .msg img.chat-image { max-width: 300px; max-height: 200px; border-radius: 8px; margin: 6px 0;
                        cursor: pointer; }
 .msg .doc-badge { display: inline-block; background: #0f3460; padding: 2px 8px; border-radius: 4px;
@@ -793,25 +810,30 @@ body.desktop-fullscreen .tab-content.active iframe {
 .action-menu-item .ami-label { font-weight: 500; }
 .action-menu-item .ami-desc { font-size: 11px; color: #6c6c8a; }
 .action-menu-sep { border-top: 1px solid #0f3460; margin: 4px 0; }
-.action-dock { position: fixed; inset: 0 0 auto auto; z-index: 200; }
-.action-dock-menu { display: flex; position: fixed; right: 0; top: 50%; transform: translateY(-50%);
-                    flex-direction: column; gap: 3px; min-width: 0; width: 38px; max-height: calc(100vh - 150px);
-                    margin: 0; padding: 4px 3px; overflow-x: visible; overflow-y: auto; border-radius: 8px 0 0 8px; }
+.action-dock { position: relative; z-index: 200; min-width: 0; }
+.action-dock-menu { display: flex; position: static; flex-direction: row; gap: 3px; min-width: 0;
+                    width: auto; max-width: 100%; max-height: none; margin: 0; padding: 4px;
+                    overflow-x: auto; overflow-y: hidden; border-radius: 8px; }
 .action-dock-menu > .action-menu-item {
   position: relative; width: 30px; min-width: 30px; height: 30px; padding: 0; border: 1px solid var(--pf-border);
   border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); display: flex;
   align-items: center; justify-content: center; box-sizing: border-box;
 }
 .action-dock-menu > .action-menu-item > div { display: none; }
-.action-dock-menu > .action-menu-item:hover > div {
-  display: block; position: absolute; right: 36px; top: 0; width: max-content; max-width: 260px;
-  padding: 7px 9px; background: var(--pf-panel); border: 1px solid var(--pf-border); border-radius: 6px;
-  box-shadow: 0 3px 12px rgba(0,0,0,.45); pointer-events: none; text-align: left;
-}
 .action-dock-menu > .action-menu-item .ami-icon { width: auto; font-size: 15px; }
-.action-dock-menu > .action-menu-sep { width: 28px; margin: 2px 1px; }
-#adminSettingsMenu { position: fixed; right: 42px; left: auto; top: 50%; bottom: auto;
-                     transform: translateY(-50%); margin: 0; max-height: min(70vh, 440px); }
+.action-dock-menu > .action-menu-sep { width: 0; height: 28px; border-top: 0; border-left: 1px solid #0f3460;
+                                       margin: 1px 2px; flex: 0 0 0; }
+#adminSettingsMenu { position: absolute; right: auto; left: 50%; top: auto; bottom: calc(100% + 8px);
+                     transform: translateX(-50%); margin: 0; max-height: min(70vh, 440px); }
+.pf-css-tooltip { position: fixed; z-index: 6000; width: max-content; max-width: min(280px, calc(100vw - 16px));
+                  padding: 8px 10px; border: 1px solid var(--pf-border); border-radius: 7px;
+                  background: var(--pf-panel); background: color-mix(in srgb, var(--pf-panel) 94%, transparent); color: var(--pf-text);
+                  box-shadow: 0 5px 18px var(--pf-shadow); backdrop-filter: blur(8px);
+                  pointer-events: none; opacity: 0; visibility: hidden; transform: translateY(2px);
+                  transition: opacity .12s ease, transform .12s ease, visibility .12s; text-align: left; }
+.pf-css-tooltip.visible { opacity: 1; visibility: visible; transform: translateY(0); }
+.pf-css-tooltip-label { font-size: 12px; font-weight: 650; line-height: 1.25; }
+.pf-css-tooltip-desc { margin-top: 2px; color: var(--pf-muted); font-size: 10px; line-height: 1.35; }
 .action-dock-menu > [data-pf-slot="action_menu_ext"],
 .action-dock-menu > [data-pf-slot="header_actions_ext"] { display: contents; }
 /* Theme variable bridge: themes only set --pf-* variables. */
@@ -989,7 +1011,7 @@ if (typeof hljs !== 'undefined') {
           <span class="ami-icon">&#x1F6AA;</span>
           <div><div class="ami-label" data-i18n="logout">Logout</div><div class="ami-desc" data-i18n="logoutDesc">End this session</div></div>
         </button>
-        <button class="action-menu-item" id="adminSettingsBtn" onclick="toggleAdminSettingsMenu()" title="Server settings" aria-label="Server settings" style="display:none">
+        <button class="action-menu-item" id="adminSettingsBtn" onclick="toggleAdminSettingsMenu()" aria-label="Server settings" style="display:none">
           <span class="ami-icon">&#9881;</span>
           <div><div class="ami-label">Server settings</div><div class="ami-desc">Administration and updates</div></div>
         </button>
@@ -1021,6 +1043,7 @@ if (typeof hljs !== 'undefined') {
       </div>
   </div>
   <!-- /action dock -->
+  <div class="pf-css-tooltip" id="pfCssTooltip" role="tooltip" aria-hidden="true"></div>
 </div>
 <!-- Chat tab content -->
 <div class="tab-content active" id="tabContentChat" data-tab="chat">
@@ -1044,58 +1067,6 @@ if (typeof hljs !== 'undefined') {
     <button onclick="scrollBottom(true);document.getElementById('input').focus()" title="Scroll to bottom" data-i18n-title="scrollBottomTitle">&#x2193;</button>
   </div>
 </div>
-<div class="prompt-controls-panel" id="promptControlsPanel">
-  <div class="active-panel-title" data-i18n="conversationControls">Conversation controls</div>
-  <div class="prompt-controls-row">
-    <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode" data-i18n-title="permissionModeTitle"
-            style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
-      <option value="default" data-i18n-permission="permissionDefault">&#x1F512; Default</option>
-      <option value="approve_edits" data-i18n-permission="permissionApproveEdits">&#x270F; Approve edits</option>
-      <option value="read_only" data-i18n-permission="permissionReadOnly">&#x1F4D6; Read-only</option>
-      <option value="auto" data-i18n-permission="permissionAuto">&#x26A1; Auto</option>
-    </select>
-    <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" title="Speak agent messages live" data-i18n-title="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
-    <button id="speechInputBtn" onclick="toggleConversationSTT()" oncontextmenu="showConversationSTTServiceDialog(); return false;" title="Dictate and send" data-i18n-title="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
-    <div class="view-menu-wrap" id="viewMenuWrap">
-      <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
-              aria-label="View options" title="View options"
-              data-i18n-title="viewMenuTitle" data-i18n-aria-label="viewMenuTitle"
-              onclick="toggleViewMenu()">&#x1F441;</button>
-      <div class="view-menu" id="viewMenu" role="menu">
-        <div class="view-menu-section-label" data-i18n="viewMode">View mode</div>
-        <div class="view-menu-item active" id="viewItemClassic" role="menuitemradio" aria-checked="true"
-             onclick="onViewModeSelect('classic')">
-          <span class="view-menu-radio" aria-hidden="true"></span>
-          <span class="vmi-label" data-i18n="classicView">Classic</span>
-        </div>
-        <div class="view-menu-item" id="viewItemSimplified" role="menuitemradio" aria-checked="false"
-             onclick="onViewModeSelect('simplified')">
-          <span class="view-menu-radio" aria-hidden="true"></span>
-          <span class="vmi-label" data-i18n="simplifiedView">Simplified</span>
-        </div>
-        <div class="view-menu-divider"></div>
-        <div id="viewClassicOptions">
-        <div class="view-menu-section-label" data-i18n="classicOptions">Classic options</div>
-        <div class="view-menu-item" id="viewItemTechnical" role="menuitemcheckbox" aria-checked="false"
-             onclick="onViewGroupingToggle('technical')">
-          <span class="vmi-label" data-i18n="viewGroupTechnical">Group technical details</span>
-          <span class="vmi-switch" aria-hidden="true"></span>
-        </div>
-        <div class="view-menu-item" id="viewItemTask" role="menuitemcheckbox" aria-checked="false"
-             onclick="onViewGroupingToggle('task')">
-          <span class="vmi-label" data-i18n="viewGroupTasks">Group task messages</span>
-          <span class="vmi-switch" aria-hidden="true"></span>
-        </div>
-        <div class="view-menu-item" id="viewItemDelegate" role="menuitemcheckbox" aria-checked="false"
-             onclick="onViewGroupingToggle('delegate')">
-          <span class="vmi-label" data-i18n="viewGroupDelegates">Group delegate messages</span>
-          <span class="vmi-switch" aria-hidden="true"></span>
-        </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
 <div class="active-panel" id="activePanel">
   <div class="active-panel-title" data-i18n="activeAgents">Active agents</div>
   <div id="activeRows"></div>
@@ -1109,7 +1080,61 @@ if (typeof hljs !== 'undefined') {
   <div class="task-tab-panel-body" id="taskTabPanelBody"></div>
 </div>
 <div class="input-area">
-  <div class="attachments-preview" id="attachPreview"></div>
+  <div class="composer-context-row">
+    <div class="prompt-controls-panel" id="promptControlsPanel">
+      <div class="active-panel-title" data-i18n="conversationControls">Conversation controls</div>
+      <div class="prompt-controls-row">
+        <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode" data-i18n-title="permissionModeTitle"
+                style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
+          <option value="default" data-i18n-permission="permissionDefault">&#x1F512; Default</option>
+          <option value="approve_edits" data-i18n-permission="permissionApproveEdits">&#x270F; Approve edits</option>
+          <option value="read_only" data-i18n-permission="permissionReadOnly">&#x1F4D6; Read-only</option>
+          <option value="auto" data-i18n-permission="permissionAuto">&#x26A1; Auto</option>
+        </select>
+        <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" aria-label="Speak agent messages live" data-i18n-aria-label="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
+        <button id="speechInputBtn" onclick="toggleConversationSTT()" oncontextmenu="showConversationSTTServiceDialog(); return false;" aria-label="Dictate and send" data-i18n-aria-label="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
+        <div class="view-menu-wrap" id="viewMenuWrap">
+          <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
+                  aria-label="View options" data-i18n-aria-label="viewMenuTitle"
+                  onclick="toggleViewMenu()">&#x1F441;</button>
+          <div class="view-menu" id="viewMenu" role="menu">
+            <div class="view-menu-section-label" data-i18n="viewMode">View mode</div>
+            <div class="view-menu-item active" id="viewItemClassic" role="menuitemradio" aria-checked="true"
+                 onclick="onViewModeSelect('classic')">
+              <span class="view-menu-radio" aria-hidden="true"></span>
+              <span class="vmi-label" data-i18n="classicView">Classic</span>
+            </div>
+            <div class="view-menu-item" id="viewItemSimplified" role="menuitemradio" aria-checked="false"
+                 onclick="onViewModeSelect('simplified')">
+              <span class="view-menu-radio" aria-hidden="true"></span>
+              <span class="vmi-label" data-i18n="simplifiedView">Simplified</span>
+            </div>
+            <div class="view-menu-divider"></div>
+            <div id="viewClassicOptions">
+            <div class="view-menu-section-label" data-i18n="classicOptions">Classic options</div>
+            <div class="view-menu-item" id="viewItemTechnical" role="menuitemcheckbox" aria-checked="false"
+                 onclick="onViewGroupingToggle('technical')">
+              <span class="vmi-label" data-i18n="viewGroupTechnical">Group technical details</span>
+              <span class="vmi-switch" aria-hidden="true"></span>
+            </div>
+            <div class="view-menu-item" id="viewItemTask" role="menuitemcheckbox" aria-checked="false"
+                 onclick="onViewGroupingToggle('task')">
+              <span class="vmi-label" data-i18n="viewGroupTasks">Group task messages</span>
+              <span class="vmi-switch" aria-hidden="true"></span>
+            </div>
+            <div class="view-menu-item" id="viewItemDelegate" role="menuitemcheckbox" aria-checked="false"
+                 onclick="onViewGroupingToggle('delegate')">
+              <span class="vmi-label" data-i18n="viewGroupDelegates">Group delegate messages</span>
+              <span class="vmi-switch" aria-hidden="true"></span>
+            </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="composer-action-mount" id="composerActionMount"></div>
+    <div class="composer-active-mount" id="composerActiveMount"></div>
+  </div>
   <div class="input-row">
     <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" data-i18n-title="promptLibraryTitle" style="font-size:16px !important">&#x1F4DD;</button>
     <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
@@ -1120,6 +1145,7 @@ if (typeof hljs !== 'undefined') {
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"
               rows="1" onkeydown="handleKey(event)"></textarea>
+    <div class="attachments-preview" id="attachPreview" aria-live="polite"></div>
     <button id="sendBtn" onclick="send()" data-i18n="send">Send</button>
     <button id="stopBtn" onclick="interruptCurrent()" style="display:none" title="Interrupt (force answer)" data-i18n-title="stopTitle">&#9632;</button>
   </div>

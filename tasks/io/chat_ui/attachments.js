@@ -4,24 +4,49 @@ function removeFile(idx) {
   renderAttachments();
 }
 
+function toggleAttachmentPreview() {
+  const preview = document.getElementById('attachPreview');
+  if (!preview) return;
+  preview.classList.toggle('expanded');
+  renderAttachments();
+}
+
 function renderAttachments() {
   const preview = document.getElementById('attachPreview');
   preview.innerHTML = '';
-  pendingFiles.forEach((f, i) => {
+  if (pendingFiles.length <= 3) preview.classList.remove('expanded');
+  const expanded = preview.classList.contains('expanded');
+  const visibleFiles = expanded ? pendingFiles : pendingFiles.slice(0, 3);
+  visibleFiles.forEach((f, i) => {
     const el = document.createElement('div');
     el.className = 'att-item';
+    el.title = f.filename;
     if (f.uploading) el.style.opacity = '0.5';
     const isImage = f.mime_type.startsWith('image/');
     if (isImage && f.dataUrl) {
-      el.innerHTML = '<img src="' + f.dataUrl + '" alt="' + escapeHtml(f.filename) + '">';
+      el.innerHTML = '<img src="' + f.dataUrl + '" alt="' + escapeHtml(f.filename)
+        + '" onclick="window.open(this.src, \'_blank\', \'noopener\')">';
     } else {
       const icons = {'application/pdf': '\u{1F4C4}', 'text/plain': '\u{1F4DD}', 'text/html': '\u{1F310}', 'text/markdown': '\u{1F4DD}'};
       el.innerHTML = '<span class="att-icon">' + (icons[f.mime_type] || '\u{1F4CE}') + '</span>';
     }
-    el.innerHTML += '<span>' + escapeHtml(f.filename) + (f.uploading ? ' ⏳' : '') + '</span>'
-      + '<button class="att-remove" onclick="removeFile(' + i + ')">\u00d7</button>';
+    el.innerHTML += '<span class="att-name">' + escapeHtml(f.filename) + (f.uploading ? ' ⏳' : '') + '</span>'
+      + '<button class="att-remove" type="button" aria-label="Remove ' + escapeHtml(f.filename)
+      + '" onclick="removeFile(' + i + ')">\u00d7</button>';
     preview.appendChild(el);
   });
+  if (pendingFiles.length > 3) {
+    const overflow = document.createElement('button');
+    overflow.type = 'button';
+    overflow.className = 'attachment-overflow-count';
+    overflow.textContent = expanded ? '\u2212' : '+' + (pendingFiles.length - 3);
+    overflow.setAttribute(
+      'aria-label',
+      expanded ? 'Collapse attachment previews' : 'Show all attachment previews'
+    );
+    overflow.onclick = toggleAttachmentPreview;
+    preview.appendChild(overflow);
+  }
 }
 
 function renderUserAttachments(attachments) {

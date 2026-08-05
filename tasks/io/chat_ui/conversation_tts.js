@@ -69,7 +69,8 @@ function _convTtsUpdateButton() {
   const baseTitle = _convTtsEnabled
     ? (typeof t === 'function' ? t('liveSpeechStopTitle') : 'Stop live speech')
     : (typeof t === 'function' ? t('liveSpeechStartTitle') : 'Speak agent messages live');
-  btn.title = baseTitle + (_convTtsServices.length > 1 ? ' (right-click to choose service)' : '');
+  btn.setAttribute('aria-label', baseTitle + (_convTtsServices.length > 1 ? ' (right-click to choose service)' : ''));
+  btn.removeAttribute('title');
   btn.innerHTML = _convTtsEnabled ? '&#x1F50A;' : '&#x1F507;';
 }
 

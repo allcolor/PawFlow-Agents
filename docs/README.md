@@ -66,6 +66,7 @@
 | [Model Harness Profiles Plan](MODEL_HARNESS_PROFILES_PLAN.md) | Per-model prompt/tool/limit tuning behind one resolution point |
 | [Maestro PFP Integration Plan](MAESTRO_PFP_INTEGRATION_PLAN.md) | Deferred standalone connector architecture, license gates, security boundary, and phased delivery |
 | [Threat Models Plan](THREAT_MODELS_PLAN.md) | Per-surface attacker models with mandatory residual risk |
+| [Code Signing Plan](CODE_SIGNING_PLAN.md) | Signing Windows/macOS/Linux artifacts: certificates, registrations, costs, rollout phases |
 
 ## Quick Links
 

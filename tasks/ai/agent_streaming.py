@@ -441,6 +441,46 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                             "keeping active turn and queuing message",
                             conversation_id[:8])
 
+            # API providers (openai, openai-responses, anthropic, ...) have no
+            # stdin/tmux to interrupt, so a new user message cannot be typed
+            # into the running session. The only way to make it count NOW is to
+            # abort the in-flight HTTP stream (closing the connection), cancel
+            # in-flight tool calls, bump the generation so the running worker
+            # stops cleanly, and let the fall-through below seed a fresh turn
+            # with this same message -- the fast-restart semantics the CLI
+            # preempt uses when the provider kills its one-shot session.
+            if (_active_client
+                    and not getattr(_active_client, 'supports_live_preempt', False)
+                    and hasattr(_active_client, 'abort')
+                    and _user_text and _modes_match):
+                logger.info(
+                    "[agent:%s] preempting active API provider session"
+                    " (abort + fast-restart) agent=%s",
+                    conversation_id[:8], _target or "default")
+                try:
+                    _active_client.abort()
+                except Exception as _ab:
+                    logger.debug(
+                        "[agent:%s] API abort failed: %s",
+                        conversation_id[:8], _ab)
+                try:
+                    from services.tool_relay_service import ToolRelayService
+                    ToolRelayService.cancel_agent(
+                        conversation_id, _target or "")
+                except Exception as _tc:
+                    logger.debug(
+                        "[agent:%s] tool relay cancel failed: %s",
+                        conversation_id[:8], _tc)
+                with self._conv_gen_lock:
+                    self._conv_generation[_agent_key] = (
+                        self._conv_generation.get(_agent_key, 0) + 1)
+                with self._active_contexts_lock:
+                    self._active_claude_client.pop(_agent_key, None)
+                    self._active_contexts.pop(_agent_key, None)
+                    self._active_turns.pop(_agent_key, None)
+                _fast_restart_after_preempt = True
+                _already_active = False
+
             if (not _active_client and _active_turn and _user_text
                     and _modes_match):
                 # The thread exists, but the provider client is not currently

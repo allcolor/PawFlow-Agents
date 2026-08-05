@@ -30,6 +30,23 @@ def test_preempt_kill_fast_restarts_streaming_loop():
     assert "PendingQueue drain" in _AGENT_STREAMING
 
 
+def test_api_preempt_aborts_and_fast_restarts():
+    """API providers (openai/anthropic/responses) have no stdin to type
+    into: a new user message during an active turn must abort the in-flight
+    HTTP stream, cancel in-flight tool calls, bump the generation, and seed
+    a fresh turn with the same message -- the CLI fast-restart semantics.
+    """
+    body = _AGENT_STREAMING[_AGENT_STREAMING.index(
+        "API providers (openai, openai-responses"):]
+    body = body[:body.index("if (not _active_client")]
+    assert "_active_client.abort()" in body
+    assert "ToolRelayService.cancel_agent" in body
+    assert "_conv_generation[_agent_key]" in body
+    assert "_fast_restart_after_preempt = True" in body
+    assert "_already_active = False" in body
+    assert "supports_live_preempt" in body
+
+
 # ---------------------------------------------------------------------------
 # Conversation store extras.tmp → extras.json Windows AV race fix
 # ---------------------------------------------------------------------------

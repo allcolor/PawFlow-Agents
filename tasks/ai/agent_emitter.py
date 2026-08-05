@@ -747,7 +747,16 @@ class StreamEmitter(AgentEmitter):
             _msg._pending_enqueued_at = _qmsg.get("_pending_enqueued_at") or 0.0
             if _role == "user" and _msg._pending_source in {"http", "agent_msg", "resume_agent"}:
                 _msg._pawflow_current_user_message = True
-            append_fn(_msg)
+            if _qmsg.get("_already_persisted"):
+                # This message was pre-persisted by agent_streaming (transcript
+                # + agent context) at ingress; re-appending it here would
+                # duplicate the user row and any attached image_refs. The
+                # context loaded for this turn already contains it.
+                logger.info(
+                    "[drain] skipping already-persisted %s msg_id=%s",
+                    _role, _mid or "?")
+            else:
+                append_fn(_msg)
 
         # Source 3 (transcript scan) removed. Cross-channel and cross-agent
         # messages are routed through PendingQueue at their ingress — see

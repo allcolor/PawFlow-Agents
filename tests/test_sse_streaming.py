@@ -898,6 +898,66 @@ class TestAgentLoopStreaming(unittest.TestCase):
         from core.pending_queue import PendingQueue
         from core.llm_client import stamp_message
 
+    def test_drain_skips_already_persisted_message(self):
+        """A message pre-persisted by agent_streaming carries
+        _already_persisted; the drain must NOT append it again, or the
+        transcript/context gets a duplicate user row (seen as the same
+        image described twice)."""
+        from tasks.ai.agent_emitter import StreamEmitter
+        from core.pending_queue import PendingQueue
+        from core.llm_client import stamp_message
+
+        conversation_id = "test-conv-already-persisted"
+        agent_name = "assistant"
+
+        class _FakeStore:
+            def __init__(self, root):
+                self._store_dir = root / "convs"
+
+            def _conv_dir(self, cid, user_id=""):
+                path = self._store_dir / "u" / cid
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+        class _FakeAgent:
+            _drain_pending = None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_store = _FakeStore(root)
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=fake_store):
+                PendingQueue.drop_cache()
+                msg = stamp_message({
+                    "role": "user",
+                    "content": "already persisted",
+                    "source": {"type": "user", "target_agent": agent_name},
+                    "msg_id": "m-already-persisted",
+                }, conversation_id)
+                msg["_already_persisted"] = True
+                PendingQueue.for_agent(conversation_id, agent_name).enqueue(
+                    msg, source="http")
+                emitter = StreamEmitter(
+                    conversation_id,
+                    ConversationEventBus.instance(),
+                    {"active_agent_name": agent_name},
+                    _FakeAgent(),
+                    f"{conversation_id}:{agent_name}",
+                    0,
+                )
+                appended = []
+
+                emitter.drain_pending([], appended.append, 0)
+
+                assert appended == []
+
+        PendingQueue.drop_cache()
+
+    def test_pending_user_message_is_marked_as_current_turn(self):
+        from tasks.ai.agent_emitter import StreamEmitter
+        from core.pending_queue import PendingQueue
+        from core.llm_client import stamp_message
+
         conversation_id = "test-conv-pending-current-turn"
         agent_name = "assistant"
 

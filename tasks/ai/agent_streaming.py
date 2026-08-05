@@ -343,9 +343,16 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
             msg = _ensure_stamped_user()
             if not msg:
                 return False
+            _enqueue_dict = dict(msg)
+            if not _skip_pre_persist:
+                # The message was already persisted (and added to the agent
+                # context) by the pre-persist above. The next drain must NOT
+                # append it a second time or the transcript/context gets a
+                # duplicate user row (seen as the same image described twice).
+                _enqueue_dict["_already_persisted"] = True
             from core.pending_queue import PendingQueue
             PendingQueue.for_agent(conversation_id, _target or "").enqueue(
-                dict(msg), source=source)
+                _enqueue_dict, source=source)
             if publish:
                 bus.publish_event(conversation_id, "message_queued", {
                     "conversation_id": conversation_id})

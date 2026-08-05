@@ -893,11 +893,6 @@ class TestAgentLoopStreaming(unittest.TestCase):
 
         PendingQueue.drop_cache()
 
-    def test_pending_user_message_is_marked_as_current_turn(self):
-        from tasks.ai.agent_emitter import StreamEmitter
-        from core.pending_queue import PendingQueue
-        from core.llm_client import stamp_message
-
     def test_drain_skips_already_persisted_message(self):
         """A message pre-persisted by agent_streaming carries
         _already_persisted; the drain must NOT append it again, or the
@@ -952,6 +947,86 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 assert appended == []
 
         PendingQueue.drop_cache()
+
+    def test_drain_skips_flowfile_message_already_in_context(self):
+        """A start-of-turn user message is pre-persisted by the streaming
+        ingress (loaded from the transcript into the context) and also sits in
+        the executor file queue; the drain must not append it a second time
+        (the same msg_id would duplicate the user row and its image)."""
+        from tasks.ai.agent_emitter import StreamEmitter
+        from core.llm_client import LLMMessage
+
+        conversation_id = "test-conv-flowfile-in-context"
+        agent_name = "assistant"
+
+        class _FakeAgent:
+            def _drain_pending(self):
+                return [
+                    FlowFile(
+                        content=json.dumps({
+                            "message": "start of turn",
+                            "conversation_id": conversation_id,
+                        }).encode(),
+                        attributes={"_user_msg_id": "m-start-turn"},
+                    ),
+                ]
+
+        # The context already contains the pre-persisted message (same msg_id).
+        existing = LLMMessage(
+            role="user",
+            content="start of turn",
+            conversation_id=conversation_id,
+            msg_id="m-start-turn",
+        )
+        emitter = StreamEmitter(
+            conversation_id,
+            ConversationEventBus.instance(),
+            {"active_agent_name": agent_name},
+            _FakeAgent(),
+            f"{conversation_id}:{agent_name}",
+            0,
+        )
+        appended = []
+
+        emitter.drain_pending([existing], appended.append, 0)
+
+        assert appended == []  # already in context → not re-appended
+
+    def test_drain_appends_flowfile_message_not_in_context(self):
+        """A flowfile message whose msg_id is NOT yet in the context must
+        still be appended (normal start-of-turn ingestion)."""
+        from tasks.ai.agent_emitter import StreamEmitter
+
+        conversation_id = "test-conv-flowfile-fresh"
+        agent_name = "assistant"
+
+        class _FakeAgent:
+            def _drain_pending(self):
+                return [
+                    FlowFile(
+                        content=json.dumps({
+                            "message": "fresh message",
+                            "conversation_id": conversation_id,
+                        }).encode(),
+                        attributes={"_user_msg_id": "m-fresh"},
+                    ),
+                ]
+
+        emitter = StreamEmitter(
+            conversation_id,\
+            ConversationEventBus.instance(),
+            {"active_agent_name": agent_name},\
+            _FakeAgent(),
+            f"{conversation_id}:{agent_name}",
+            0,\
+        )
+        appended = []
+
+        emitter.drain_pending([], appended.append, 0)
+
+        assert len(appended) == 1
+        assert appended[0].msg_id == "m-fresh"
+        assert appended[0].content == "fresh message"
 
     def test_pending_user_message_is_marked_as_current_turn(self):
         from tasks.ai.agent_emitter import StreamEmitter

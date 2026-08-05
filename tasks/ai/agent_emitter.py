@@ -623,6 +623,15 @@ class StreamEmitter(AgentEmitter):
         return self.agent._check_interrupt(self.gen_key)
 
     def drain_pending(self, messages, append_fn, iteration):
+        def _already_in_context(msg_id):
+            """True when a message with this msg_id is already part of the
+            context being built (it was pre-persisted by the streaming ingress
+            and loaded from the transcript). Re-appending it would duplicate
+            the user row and any attached image_refs."""
+            if not msg_id:
+                return False
+            return any(getattr(m, "msg_id", "") == msg_id for m in messages)
+
         def _flowfile_created_ts(flowfile) -> float:
             created = getattr(flowfile, "created_at", None)
             if isinstance(created, datetime):
@@ -688,6 +697,12 @@ class StreamEmitter(AgentEmitter):
                             logger.debug(f"Inline action failed: {_ae}")
                     elif _ptext and _ptext.strip():
                         _pmid = _pff.get_attribute("_user_msg_id") or ""
+                        if _already_in_context(_pmid):
+                            logger.info(
+                                "[drain] skip flowfile msg already in context %s/%s msg_id=%s",
+                                self.conversation_id[:8], self._agent_name or "", _pmid)
+                            self._respond_http(_pff)
+                            continue
                         _msg = LLMMessage(
                             role="user", content=_ptext,
                             source={"type": "user",
@@ -747,13 +762,13 @@ class StreamEmitter(AgentEmitter):
             _msg._pending_enqueued_at = _qmsg.get("_pending_enqueued_at") or 0.0
             if _role == "user" and _msg._pending_source in {"http", "agent_msg", "resume_agent"}:
                 _msg._pawflow_current_user_message = True
-            if _qmsg.get("_already_persisted"):
+            if _already_in_context(_mid) or _qmsg.get("_already_persisted"):
                 # This message was pre-persisted by agent_streaming (transcript
                 # + agent context) at ingress; re-appending it here would
                 # duplicate the user row and any attached image_refs. The
                 # context loaded for this turn already contains it.
                 logger.info(
-                    "[drain] skipping already-persisted %s msg_id=%s",
+                    "[drain] skip already-persisted/in-context %s msg_id=%s",
                     _role, _mid or "?")
             else:
                 append_fn(_msg)

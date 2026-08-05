@@ -115,7 +115,13 @@ function _toolCallSummary(name, args) {
   const display = _TOOL_DISPLAY[name] || name;
   // Build summary from actual args sent (not hardcoded param names)
   let summary = '';
-  if (args && typeof args === 'object') {
+  if (typeof args === 'string') {
+    // Half-unwrapped wrapper or unparsable JSON string (the server degrades
+    // to the raw string when the LLM emitted broken JSON that even the
+    // repair pass could not recover). Show it raw instead of `Bash()`.
+    const raw = (args || '').trim();
+    summary = raw.length > 200 ? raw.substring(0, 200) + '...' : raw;
+  } else if (args && typeof args === 'object') {
     const keys = Object.keys(args);
     if (keys.length === 0) {
       summary = '';
@@ -138,7 +144,7 @@ function _toolCallSummary(name, args) {
       summary = parts.join(', ');
     }
   }
-  return display + '(' + summary + ')';
+  return display + (summary ? '(' + summary + ')' : '');
 }
 
 function _toolOriginValue(extra, toolName) {

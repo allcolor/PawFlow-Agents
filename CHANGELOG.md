@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.109] — 2026-08-05
+
+### Added
+
+- Added a configurable `vision_max_tokens` parameter on llmConnection services, so
+  verbose vision models (e.g. GPT-5.6 Luna) can raise the per-image description
+  budget beyond the 1024-token default.
+
+### Fixed
+
+- Fixed `flash_delegate` failing with "requires an active source agent and
+  llm_service" when invoked by API providers through `use_tool`: the calling
+  agent identity and LLM service are now derived from the conversation agent
+  config instead of relying solely on the `_do_execute` injection, and missing
+  context reports an actionable error instead of a bare BUG string.
+- Restored `delegate` source identity (self-call detection, result delivery) on
+  the same `use_tool` path.
+- Kept the final chat message visible after a background result.
+
+### Changed
+
+- Vision fallback rework: the v2 describe prompt forbids process narration and
+  invented text (models like Kimi leaked chain-of-thought and hallucinated
+  URLs/dates), the `max_tokens` default dropped from 4096 to 1024, and images
+  in one pass are now described in parallel (up to 4 workers).
+- The vision-description cache key now includes the token budget, so a
+  truncated description is never served from cache after the budget is raised.
+
 ## [1.0.0-beta.108] — 2026-08-05
 
 ### Fixed

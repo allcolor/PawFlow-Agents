@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.112] — 2026-08-05
+
+### Fixed
+
+- User messages are no longer duplicated on a start-of-turn (agent idle): the
+  message is pre-persisted by the streaming ingress and also sits in the
+  executor file queue; the drain now skips any flowfile or queued message
+  whose msg_id is already present in the context being built. This also
+  covers the busy-agent (PendingQueue) case via the same msg_id check.
+
 ## [1.0.0-beta.111] — 2026-08-05
 
 ### Fixed

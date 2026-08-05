@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.110] — 2026-08-05
+
+### Added
+
+- Added a cross-platform code signing plan (`docs/CODE_SIGNING_PLAN.md`):
+  Authenticode/Azure Trusted Signing for Windows, Developer ID + notarization
+  for macOS, OpenPGP for .deb/.rpm, key separation, costs, and rollout phases.
+
+### Fixed
+
+- API providers (openai/anthropic/responses) now preempt like CLI providers:
+  a new user message aborts the in-flight HTTP stream, cancels in-flight tool
+  calls, and fast-restarts a fresh turn with the message instead of queueing
+  it behind long-running tools.
+- Tool calls with slightly-broken argument JSON no longer render as empty
+  `Bash()` in the chat: the raw arguments are shown (truncated) and empty
+  parens are omitted.
+- Vision fallback no longer issues duplicate network calls when parallel
+  workers describe the same image: per-image single-flight coalesces them.
+
 ## [1.0.0-beta.109] — 2026-08-05
 
 ### Added

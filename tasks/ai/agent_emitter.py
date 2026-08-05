@@ -760,16 +760,29 @@ class StreamEmitter(AgentEmitter):
             )
             _msg._pending_source = _qmsg.get("_pending_source", "") or ""
             _msg._pending_enqueued_at = _qmsg.get("_pending_enqueued_at") or 0.0
-            if _role == "user" and _msg._pending_source in {"http", "agent_msg", "resume_agent"}:
+            if _role == "user" and _msg._pending_source in {"http", "agent_msg", "resume_agent", "preempt_soft"}:
                 _msg._pawflow_current_user_message = True
-            if _already_in_context(_mid) or _qmsg.get("_already_persisted"):
-                # This message was pre-persisted by agent_streaming (transcript
-                # + agent context) at ingress; re-appending it here would
-                # duplicate the user row and any attached image_refs. The
-                # context loaded for this turn already contains it.
+            if _already_in_context(_mid):
+                # Ce message est deja dans le contexte memoire (charge depuis
+                # le transcript par un tour qui a recharge le disque, ou draine
+                # plus tot dans ce tour). Le re-appender dupliquerait la ligne
+                # utilisateur et ses image_refs (vu comme la meme image decrite
+                # deux fois).
                 logger.info(
-                    "[drain] skip already-persisted/in-context %s msg_id=%s",
+                    "[drain] skip already-in-context %s msg_id=%s",
                     _role, _mid or "?")
+            elif _qmsg.get("_already_persisted"):
+                # Pre-persiste par l'ingress (transcript + agent context) mais
+                # ABSENT du contexte memoire de ce worker VIVANT : le soft
+                # preempt API (cancel des tool calls in-flight + queue, sans
+                # tuer le thread ni recharger le disque) a laisse ce worker en
+                # place, son contexte ne contient pas encore ce message.
+                # L'ajouter en memoire SEULEMENT — il est deja sur le
+                # transcript, le re-persister via append_fn cree un doublon.
+                logger.info(
+                    "[drain] added pre-persisted %s msg_id=%s (memory-only, soft preempt)",
+                    _role, _mid or "?")
+                messages.append(_msg)
             else:
                 append_fn(_msg)
 

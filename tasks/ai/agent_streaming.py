@@ -460,6 +460,43 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     and not getattr(_active_client, 'supports_live_preempt', False)
                     and hasattr(_active_client, 'abort')
                     and _user_text and _modes_match):
+                # Soft preempt (API) : si le worker est entre iterations
+                # (tool call en cours, ou idle) il n'y a AUCUNE connexion HTTP
+                # active (_active_http_conn est None). Tuer le thread puis
+                # recharger tout le contexte depuis le disque est un gaspillage
+                # pur — le contexte est une liste Python en memoire. On cancel
+                # les tool calls in-flight (ils repondent "cancelled"), on
+                # queue le message, et le worker VIVANT le draine au debut de
+                # la prochaine iteration (_alc_iteration_body appelle
+                # drain_pending avant chaque appel LLM) : le LLM lit
+                # naturellement le message, sans reload ni perte de contexte.
+                _in_flight_stream = bool(
+                    getattr(_active_client, "_active_http_conn", None))
+                if not _in_flight_stream:
+                    logger.info(
+                        "[agent:%s] preempting active API provider session"
+                        " (soft — cancel toolcalls + queue, no reload) agent=%s",
+                        conversation_id[:8], _target or "default")
+                    try:
+                        from services.tool_relay_service import ToolRelayService
+                        ToolRelayService.cancel_agent(
+                            conversation_id, _target or "")
+                    except Exception as _tc:
+                        logger.debug(
+                            "[agent:%s] tool relay cancel failed: %s",
+                            conversation_id[:8], _tc)
+                    _queue_pending_user(source="preempt_soft", publish=True)
+                    _ack_soft = json.dumps({
+                        "status": "accepted",
+                        "conversation_id": conversation_id,
+                        "message_count": _ack_message_count(),
+                        "server_start_time": SERVER_START_TIME,
+                        "wait_for_done": False,
+                    })
+                    flowfile.set_content(_ack_soft.encode("utf-8"))
+                    flowfile.set_attribute("agent.conversation_id", conversation_id)
+                    return [flowfile]
+                # Un stream LLM est en cours : on doit l'interrompre.
                 logger.info(
                     "[agent:%s] preempting active API provider session"
                     " (abort + fast-restart) agent=%s",

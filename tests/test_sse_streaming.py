@@ -893,11 +893,232 @@ class TestAgentLoopStreaming(unittest.TestCase):
 
         PendingQueue.drop_cache()
 
-    def test_drain_skips_already_persisted_message(self):
-        """A message pre-persisted by agent_streaming carries
-        _already_persisted; the drain must NOT append it again, or the
-        transcript/context gets a duplicate user row (seen as the same
-        image described twice)."""
+    def test_soft_preempt_api_cancels_toolcalls_and_queues_without_killing_thread(self):
+        """API preempt while the worker is between iterations (tool call in
+        flight — no active HTTP connection): cancel the in-flight tool calls
+        (they reply 'cancelled'), queue the message, and DO NOT kill the
+        thread — no abort, no generation bump, no marker pop. The live
+        worker drains the message at the start of its next iteration
+        (drain_pending runs before every LLM call), so the LLM reads it
+        naturally without any disk reload."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        from core.pending_queue import PendingQueue
+
+        conversation_id = "test-conv-soft-preempt"
+        agent_name = "assistant"
+        agent_key = f"{conversation_id}:{agent_name}"
+
+        class _FakeStore:
+            def __init__(self, root):
+                self._store_dir = root / "convs"
+
+            def _conv_dir(self, cid, user_id=""):
+                path = self._store_dir / "u" / cid
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+            def resolve_owner(self, cid):
+                return ""
+
+            def message_count(self, cid):
+                return 0
+
+        class _FakeClient:
+            supports_live_preempt = False
+            _active_http_conn = None  # no stream in flight → soft preempt
+
+            def __init__(self):
+                self.abort_called = False
+
+            def abort(self):
+                self.abort_called = True
+
+        class _ExistingThread:
+            name = f"agent-stream-{agent_key}"
+
+            def is_alive(self):
+                return True
+
+        started_threads = []
+
+        class _NewThread:
+            def __init__(self, target, daemon=False, name=""):
+                self.target = target
+                self.daemon = daemon
+                self.name = name
+
+            def start(self):
+                started_threads.append(self)
+
+        cancelled = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_store = _FakeStore(root)
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=fake_store), \
+                    patch("core.conversation_writer.ConversationWriter.for_conversation") as writer_for_conv, \
+                    patch("tasks.ai.agent_streaming.threading.enumerate",
+                          return_value=[_ExistingThread()]), \
+                    patch("tasks.ai.agent_streaming.threading.Thread", _NewThread), \
+                    patch("services.tool_relay_service.ToolRelayService.cancel_agent",
+                          side_effect=lambda cid, agent: cancelled.append((cid, agent))):
+                writer_for_conv.return_value.enqueue_message = MagicMock()
+                PendingQueue.drop_cache()
+                task = AgentLoopTask({"api_key": "k", "streaming": True})
+                task._conv_generation[agent_key] = 0
+                fake_client = _FakeClient()
+                with task._active_contexts_lock:
+                    task._active_turns[agent_key] = {
+                        "conversation_id": conversation_id,
+                        "agent_name": agent_name,
+                        "status": "thinking",
+                        "generation": 0,
+                    }
+                    task._active_contexts[agent_key] = {
+                        "_turn_mode": {"type": "user", "source_agent": None},
+                    }
+                    task._active_claude_client[agent_key] = fake_client
+
+                ff = FlowFile(content=json.dumps({
+                    "message": "new message during tool call",
+                    "conversation_id": conversation_id,
+                    "target_agent": agent_name,
+                    "msg_id": "m-soft-preempt",
+                }).encode())
+
+                results = task._execute_streaming(ff)
+
+                assert len(results) == 1
+                body = json.loads(results[0].get_content().decode())
+                assert body["status"] == "accepted"
+                assert fake_client.abort_called is False  # no HTTP kill
+                assert task._conv_generation[agent_key] == 0  # no generation bump
+                assert len(started_threads) == 0  # no new worker thread
+                # The live worker is preserved (markers intact).
+                with task._active_contexts_lock:
+                    assert agent_key in task._active_turns
+                    assert agent_key in task._active_contexts
+                    assert agent_key in task._active_claude_client
+                # In-flight tool calls were cancelled, message queued for the
+                # live worker's next drain.
+                assert cancelled == [(conversation_id, agent_name)]
+                q = PendingQueue.for_agent(conversation_id, agent_name)
+                assert q.peek_count() == 1
+                drained = q.drain()
+                assert drained[0]["_pending_source"] == "preempt_soft"
+
+        PendingQueue.drop_cache()
+
+    def test_api_preempt_with_active_stream_still_aborts(self):
+        """API preempt while the LLM stream is actually in flight
+        (_active_http_conn set) keeps the existing behaviour: abort the HTTP
+        connection, bump the generation, drop the markers, fast-restart — a
+        message cannot be injected into a stream that already left."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        from core.pending_queue import PendingQueue
+
+        conversation_id = "test-conv-stream-preempt"
+        agent_name = "assistant"
+        agent_key = f"{conversation_id}:{agent_name}"
+
+        class _FakeStore:
+            def __init__(self, root):
+                self._store_dir = root / "convs"
+
+            def _conv_dir(self, cid, user_id=""):
+                path = self._store_dir / "u" / cid
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+            def resolve_owner(self, cid):
+                return ""
+
+            def message_count(self, cid):
+                return 0
+
+        class _FakeClient:
+            supports_live_preempt = False
+            _active_http_conn = object()  # a stream IS in flight
+
+            def __init__(self):
+                self.abort_called = False
+
+            def abort(self):
+                self.abort_called = True
+
+        class _ExistingThread:
+            name = f"agent-stream-{agent_key}"
+
+            def is_alive(self):
+                return True
+
+        started_threads = []
+
+        class _NewThread:
+            def __init__(self, target, daemon=False, name=""):
+                self.target = target
+                self.daemon = daemon
+                self.name = name
+
+            def start(self):
+                started_threads.append(self)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_store = _FakeStore(root)
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=fake_store), \
+                    patch("core.conversation_writer.ConversationWriter.for_conversation") as writer_for_conv, \
+                    patch("tasks.ai.agent_streaming.threading.enumerate",
+                          return_value=[_ExistingThread()]), \
+                    patch("tasks.ai.agent_streaming.threading.Thread", _NewThread):
+                writer_for_conv.return_value.enqueue_message = MagicMock()
+                PendingQueue.drop_cache()
+                task = AgentLoopTask({"api_key": "k", "streaming": True})
+                task._conv_generation[agent_key] = 0
+                fake_client = _FakeClient()
+                with task._active_contexts_lock:
+                    task._active_turns[agent_key] = {
+                        "conversation_id": conversation_id,
+                        "agent_name": agent_name,
+                        "status": "thinking",
+                        "generation": 0,
+                    }
+                    task._active_contexts[agent_key] = {
+                        "_turn_mode": {"type": "user", "source_agent": None},
+                    }
+                    task._active_claude_client[agent_key] = fake_client
+
+                ff = FlowFile(content=json.dumps({
+                    "message": "message during live stream",
+                    "conversation_id": conversation_id,
+                    "target_agent": agent_name,
+                    "msg_id": "m-stream-preempt",
+                }).encode())
+
+                results = task._execute_streaming(ff)
+
+                assert len(results) == 1
+                body = json.loads(results[0].get_content().decode())
+                assert body["status"] == "accepted"
+                assert fake_client.abort_called is True  # HTTP stream aborted
+                assert task._conv_generation[agent_key] == 1  # generation bumped
+                # The stale worker is dropped, a fresh turn is seeded.
+                with task._active_contexts_lock:
+                    assert agent_key not in task._active_claude_client
+                assert results[0].get_attribute(
+                    "agent.fast_restart_after_preempt") == "true"
+                assert len(started_threads) == 1
+
+        PendingQueue.drop_cache()
+
+    def test_drain_adds_prepersisted_message_memory_only(self):
+        """A message pre-persisted by the ingress but ABSENT from this live
+        worker's in-memory context (soft preempt: cancel toolcalls + queue,
+        the thread is NOT killed, the disk is NOT reloaded) must be added to
+        the context IN MEMORY ONLY — it is already on the transcript,
+        re-persisting via append_fn would duplicate the row."""
         from tasks.ai.agent_emitter import StreamEmitter
         from core.pending_queue import PendingQueue
         from core.llm_client import stamp_message
@@ -931,7 +1152,7 @@ class TestAgentLoopStreaming(unittest.TestCase):
                 }, conversation_id)
                 msg["_already_persisted"] = True
                 PendingQueue.for_agent(conversation_id, agent_name).enqueue(
-                    msg, source="http")
+                    msg, source="preempt_soft")
                 emitter = StreamEmitter(
                     conversation_id,
                     ConversationEventBus.instance(),
@@ -940,11 +1161,78 @@ class TestAgentLoopStreaming(unittest.TestCase):
                     f"{conversation_id}:{agent_name}",
                     0,
                 )
+                context = []
                 appended = []
 
-                emitter.drain_pending([], appended.append, 0)
+                emitter.drain_pending(context, appended.append, 0)
+
+                # Added to the live in-memory context, NOT re-persisted.
+                assert appended == []
+                assert len(context) == 1
+                assert context[0].msg_id == "m-already-persisted"
+                assert context[0]._pawflow_current_user_message is True
+
+        PendingQueue.drop_cache()
+
+    def test_drain_skips_prepersisted_message_already_in_context(self):
+        """A pre-persisted message that is ALREADY in the in-memory context
+        (loaded from the transcript by a turn that reloaded the disk) is
+        fully ignored — neither appended again nor duplicated."""
+        from tasks.ai.agent_emitter import StreamEmitter
+        from core.pending_queue import PendingQueue
+        from core.llm_client import stamp_message, LLMMessage
+
+        conversation_id = "test-conv-already-persisted-in-ctx"
+        agent_name = "assistant"
+
+        class _FakeStore:
+            def __init__(self, root):
+                self._store_dir = root / "convs"
+
+            def _conv_dir(self, cid, user_id=""):
+                path = self._store_dir / "u" / cid
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+        class _FakeAgent:
+            _drain_pending = None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_store = _FakeStore(root)
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=fake_store):
+                PendingQueue.drop_cache()
+                msg = stamp_message({
+                    "role": "user",
+                    "content": "already persisted",
+                    "source": {"type": "user", "target_agent": agent_name},
+                    "msg_id": "m-already-persisted",
+                }, conversation_id)
+                msg["_already_persisted"] = True
+                PendingQueue.for_agent(conversation_id, agent_name).enqueue(
+                    msg, source="preempt_soft")
+                emitter = StreamEmitter(
+                    conversation_id,
+                    ConversationEventBus.instance(),
+                    {"active_agent_name": agent_name},
+                    _FakeAgent(),
+                    f"{conversation_id}:{agent_name}",
+                    0,
+                )
+                existing = LLMMessage(
+                    role="user",
+                    content="already persisted",
+                    conversation_id=conversation_id,
+                    msg_id="m-already-persisted",
+                )
+                context = [existing]
+                appended = []
+
+                emitter.drain_pending(context, appended.append, 0)
 
                 assert appended == []
+                assert len(context) == 1  # pas de doublon
 
         PendingQueue.drop_cache()
 

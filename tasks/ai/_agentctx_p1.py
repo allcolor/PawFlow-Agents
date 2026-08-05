@@ -135,6 +135,8 @@ class _PACPhase1Mixin:
         for st.h in st.registry.list_tools():
             if isinstance(st.h, SpawnAgentsHandler):
                 st.h.set_spawn_deps(st.client, _client_resolver, _sub_on_event, registry=st.registry)
+                if getattr(st, "_inst_name", ""):
+                    st.h.set_agent_name(st._inst_name)
                 if st._agent_infos:
                     st.h.set_available_agents(st._agent_infos)
 

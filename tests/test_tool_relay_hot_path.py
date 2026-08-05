@@ -452,3 +452,97 @@ def test_handle_execute_does_not_retry_exhausted_relay_results(monkeypatch):
 
     assert result["data"] == exhausted
     assert [delay for delay in sleeps if delay == 5.0] == []
+
+
+def test_flash_delegate_derives_source_context_from_agent_name(monkeypatch):
+    """use_tool calls bypass _do_execute injection; the handler must derive
+    the calling agent identity from the registry-wired agent name and the
+    conversation agent config's llm_service."""
+    import core.conv_agent_config as agent_config_mod
+    from core.handlers.flash_agent import FlashAgentHandler
+
+    class _Probe(FlashAgentHandler):
+        def execute(self, _arguments):
+            agent, svc = self._resolve_source_context()
+            return f"src={agent};svc={svc}"
+
+    monkeypatch.setattr(
+        agent_config_mod, "get_agent_config",
+        lambda conv_id, agent_name: {"llm_service": "svc_a"})
+
+    handler = _Probe()
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    handler.set_agent_name("agentA")
+
+    assert handler.execute({}) == "src=agentA;svc=svc_a"
+
+
+def test_use_tool_flash_delegate_receives_derived_source_context(monkeypatch):
+    """End-to-end through the meta-tool: an API agent calling
+    use_tool(tool_name='flash_delegate') must not hit the BUG guard."""
+    import core.conv_agent_config as agent_config_mod
+    from core.handlers.flash_agent import FlashAgentHandler
+    from core.handlers.meta_tools import UseToolHandler
+    from core.tool_registry import ToolRegistry
+
+    class _Probe(FlashAgentHandler):
+        def execute(self, _arguments):
+            agent, svc = self._resolve_source_context()
+            return f"src={agent};svc={svc}"
+
+    monkeypatch.setattr(
+        agent_config_mod, "get_agent_config",
+        lambda conv_id, agent_name: {"llm_service": "svc_a"})
+
+    reg = ToolRegistry()
+    handler = _Probe()
+    handler.set_spawn_deps(None, lambda svc, uid: (None, None), None, registry=reg)
+    reg.register(handler)
+    # Registry wiring (services/_tool_relay_registry.py) sets these on every
+    # handler before any tool executes.
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv1")
+    handler.set_agent_name("agentA")
+
+    result = UseToolHandler(reg).execute({
+        "tool_name": "flash_delegate",
+        "arguments": {"tasks": []},
+    })
+    assert result == "src=agentA;svc=svc_a"
+
+
+def test_flash_delegate_missing_context_returns_clear_error():
+    """With neither a thread-local source nor a wired agent name, the guard
+    must fail with an actionable message, not a bare BUG string."""
+    from core.handlers.flash_agent import FlashAgentHandler
+
+    handler = FlashAgentHandler()
+    handler.set_spawn_deps(None, lambda svc, uid: (None, None), None)
+    result = handler.execute({
+        "tasks": [{"name": "x", "prompt": "p", "message": "m"}]
+    })
+    assert result.startswith("Error: flash_delegate could not determine")
+
+
+def test_flash_delegate_explicit_source_agent_wins(monkeypatch):
+    """A populated thread-local context (the _do_execute injection) stays
+    authoritative; get_agent_config must not even be consulted."""
+    import core.conv_agent_config as agent_config_mod
+    from core.handlers.flash_agent import FlashAgentHandler
+
+    class _Probe(FlashAgentHandler):
+        def execute(self, _arguments):
+            agent, svc = self._resolve_source_context()
+            return f"src={agent};svc={svc}"
+
+    def _raise(*_a, **_k):
+        raise AssertionError("get_agent_config must not be called")
+
+    monkeypatch.setattr(agent_config_mod, "get_agent_config", _raise)
+
+    handler = _Probe()
+    handler.set_agent_name("otherAgent")
+    handler.set_source_agent("agentA", "svc_x")
+
+    assert handler.execute({}) == "src=agentA;svc=svc_x"

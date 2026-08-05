@@ -74,6 +74,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._conversation_id = ""
+        self._agent_name = ""
         self._available_agents: List[str] = []
         self._local = threading.local()  # thread-safe source agent
         self._client_resolver = None  # callable(svc_id, uid) -> (client, svc)
@@ -82,6 +83,10 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
 
     def set_conversation_id(self, conversation_id: str) -> None:
         self._conversation_id = conversation_id
+
+    def set_agent_name(self, agent_name: str) -> None:
+        """Record the calling agent instance name (registry wiring)."""
+        self._agent_name = agent_name
 
     def set_spawn_deps(self, client, client_resolver, on_event, registry=None):
         """Set dependencies for spawning sub-agents."""
@@ -97,6 +102,37 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
     def set_delegate_tc_id(self, tc_id: str) -> None:
         """Set the tool_call ID of the delegate call (thread-local)."""
         self._local.delegate_tc_id = tc_id
+
+    def _resolve_source_context(self):
+        """Resolve the calling agent identity and its LLM service.
+
+        Direct tool calls (API providers reach tools only via ``use_tool``,
+        which bypasses ToolRelayService._do_execute and its source-agent
+        injection) may arrive without a populated thread-local. Fall back to
+        the agent instance name configured by the registry wiring and resolve
+        the service from the conversation agent config. The result is stored
+        back on the thread-local so event routing and result delivery see a
+        consistent identity.
+        """
+        src_agent = getattr(self._local, 'source_agent', '') or ''
+        src_svc = getattr(self._local, 'source_llm_service', '') or ''
+        if not src_agent:
+            src_agent = self._agent_name or ''
+        if src_agent and not src_svc:
+            try:
+                from core.conv_agent_config import get_agent_config
+                from core.service_registry import _parent_conversation_id
+                raw_conv = self._conversation_id or ''
+                parent_cid = _parent_conversation_id(raw_conv) or raw_conv
+                src_svc = (get_agent_config(parent_cid, src_agent) or {}).get(
+                    "llm_service", "") or ""
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Ignored exception", exc_info=True)
+                src_svc = ""
+            self._local.source_agent = src_agent
+            self._local.source_llm_service = src_svc
+        return src_agent, src_svc
 
     def set_available_agents(self, agents: List):
         """Set the list of available agents (names or dicts with details)."""
@@ -248,9 +284,10 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
         _source_task_id = (_raw_conv_id.split("::task::", 1)[1]
                            if "::task::" in _raw_conv_id else "")
 
-        # Thread-safe source agent (each agent loop runs in its own thread)
-        _src_agent = getattr(self._local, 'source_agent', '') or ''
-        _src_svc = getattr(self._local, 'source_llm_service', '') or ''
+        # Thread-safe source agent (each agent loop runs in its own thread).
+        # Falls back to the agent instance name + conversation config when the
+        # call arrived via use_tool, which bypasses the _do_execute injection.
+        _src_agent, _src_svc = self._resolve_source_context()
         _delegate_tc_id = getattr(self._local, 'delegate_tc_id', '') or ''
 
         # Resolve self-name and nicknames to detect self-calls

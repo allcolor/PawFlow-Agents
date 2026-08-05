@@ -116,11 +116,20 @@ class FlashAgentHandler(SpawnAgentsHandler):
         source_task_id = (raw_conv_id.split("::task::", 1)[1]
                           if "::task::" in raw_conv_id else "")
 
-        src_agent = getattr(self._local, 'source_agent', '') or ''
-        src_svc = getattr(self._local, 'source_llm_service', '') or ''
+        src_agent, src_svc = self._resolve_source_context()
         delegate_tc_id = getattr(self._local, 'delegate_tc_id', '') or ''
-        if not src_agent or not src_svc:
-            return "Error: BUG: flash_delegate requires an active source agent and llm_service."
+        if not src_agent:
+            return (
+                "Error: flash_delegate could not determine the calling"
+                " agent: no thread-local source context and no agent"
+                " instance name is configured for this conversation."
+            )
+        if not src_svc:
+            return (
+                "Error: flash_delegate could not resolve an llm_service for"
+                f" source agent '{src_agent}'. Set the agent's llm_service in"
+                " the conversation agent config (conv_agents)."
+            )
 
         from core.agent_executor import get_live_delegate, queue_live_delegate_message
         agent_tasks = []

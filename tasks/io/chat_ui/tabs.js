@@ -379,51 +379,6 @@ function closeBrowserTab(tabId) {
   if (_activeTab === tabId) switchTab('chat');
 }
 
-/** Toggle the action dropdown menu. */
-function toggleActionMenu() {
-  const menu = document.getElementById('actionMenu');
-  const wasOpen = menu.classList.contains('open');
-  menu.classList.toggle('open');
-  if (!wasOpen && menu.classList.contains('open')) {
-    _positionActionMenu(menu);
-    // Close on outside click
-    setTimeout(() => {
-      document.addEventListener('click', _closeActionMenuOutside, { once: true, capture: true });
-    }, 0);
-  }
-}
-
-/** Anchor the (position:fixed) action menu below its button, flipping/clamping to stay on-screen. */
-function _positionActionMenu(menu) {
-  const btn = document.querySelector('#actionMenuWrap .action-menu-btn');
-  if (!btn) return;
-  const btnRect = btn.getBoundingClientRect();
-  menu.style.left = '0px';
-  menu.style.top = '0px';
-  const rect = menu.getBoundingClientRect();
-  let top = btnRect.bottom + 4;
-  if (top + rect.height > window.innerHeight) {
-    top = Math.max(8, btnRect.top - rect.height - 4);
-  }
-  let left = btnRect.right - rect.width;
-  if (left < 8) left = Math.min(8, window.innerWidth - rect.width - 8);
-  if (left + rect.width > window.innerWidth - 8) left = window.innerWidth - rect.width - 8;
-  menu.style.top = Math.max(8, top) + 'px';
-  menu.style.left = Math.max(8, left) + 'px';
-}
-
-function _closeActionMenuOutside(e) {
-  const wrap = document.getElementById('actionMenuWrap');
-  if (wrap && !wrap.contains(e.target)) {
-    closeActionMenu();
-  } else {
-    // Re-register if click was inside
-    setTimeout(() => {
-      document.addEventListener('click', _closeActionMenuOutside, { once: true, capture: true });
-    }, 0);
-  }
-}
-
 function closeActionMenu() {
   const menu = document.getElementById('actionMenu');
   if (menu) menu.classList.remove('open');

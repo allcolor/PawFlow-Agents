@@ -123,6 +123,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .header .btn:hover { background: #e94560; color: white; }
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.account-menu-wrap { display: flex; align-items: stretch; position: relative; }
+.account-menu-wrap .account-main { border-radius: 6px 0 0 6px; }
+.account-dropdown { position: relative; }
+.account-dropdown summary { list-style: none; border-left-width: 0 !important; border-radius: 0 6px 6px 0 !important;
+                            width: 28px; height: 100%; padding: 0 !important; display: flex; align-items: center;
+                            justify-content: center; user-select: none; }
+.account-dropdown summary::-webkit-details-marker { display: none; }
+.account-menu-panel { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5000; min-width: 150px;
+                      padding: 6px; background: var(--pf-panel); border: 1px solid var(--pf-border);
+                      border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+.account-menu-panel .btn { width: 100%; white-space: nowrap; }
 .header .tech-group-toggle { background: var(--pf-panel); color: var(--pf-muted); border: 1px solid var(--pf-border);
                             border-radius: 6px; width: 28px; height: 28px; padding: 0; font-size: 15px;
                             cursor: pointer; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
@@ -300,7 +311,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
    redesigning what's shown. */
 @media (max-width: 768px) {
   .header { flex-wrap: wrap; row-gap: 8px; padding: 10px 12px; }
-  .header .actions { flex-wrap: wrap; margin-left: 0; width: 100%; }
+  .header .actions { margin-left: auto; }
+  .composer-context-controls { flex-wrap: wrap; }
+  .action-dock-menu { top: auto !important; right: 8px !important; bottom: 76px; transform: none !important;
+                      flex-direction: row !important; max-width: calc(100vw - 16px); max-height: none !important;
+                      overflow-x: auto; overflow-y: hidden !important; }
   .sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;
              box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
   /* sidebar-toggle's left is also set inline by _syncToggleBtn() (state.js)
@@ -498,7 +513,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .active-row .a-actions button:hover { background: rgba(255,255,255,0.1); color: #fff; }
 .active-row .a-actions button.btn-stop { border-color: #993333; color: #ff6b6b; }
 .active-row .a-actions button.btn-stop:hover { background: #993333; color: #fff; }
-.task-tab-dock { position: fixed; top: 50%; right: 0; transform: translateY(-50%); display: flex;
+.task-tab-dock { position: fixed; top: 50%; right: 42px; transform: translateY(-50%); display: flex;
                  flex-direction: column; gap: 6px; z-index: 49; }
 .task-tab-dock-btn { position: relative; width: 30px; height: 30px; border-radius: 6px 0 0 6px;
                       border: 1px solid #0f3460; border-right: none; background: #16213e; color: #9d8cff;
@@ -538,6 +553,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .scroll-nav button:hover { background: #0f3460; color: #fff; }
 .input-area { background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460; flex-shrink: 0;
                display: flex; gap: 10px; flex-direction: column; }
+.composer-context-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 28px; }
+.composer-context-controls #permissionMode { max-width: 190px; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }
 .input-row textarea { flex: 1; background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460;
                         border-radius: 8px; padding: 10px; font-size: 14px; resize: none;
@@ -762,7 +779,7 @@ body.desktop-fullscreen .tab-content.active iframe {
   padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
 .audio-tab-controls button:hover { background: #e94560; color: white; }
 .audio-tab-controls .audio-status { font-size: 12px; color: #888; }
-/* ── Action dropdown menu ── */
+/* ── Action menu and NeXT-style conversation dock ── */
 .action-menu-wrap { position: relative; }
 .action-menu-btn { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
                     padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; }
@@ -779,6 +796,30 @@ body.desktop-fullscreen .tab-content.active iframe {
 .action-menu-item .ami-label { font-weight: 500; }
 .action-menu-item .ami-desc { font-size: 11px; color: #6c6c8a; }
 .action-menu-sep { border-top: 1px solid #0f3460; margin: 4px 0; }
+.action-dock { position: fixed; inset: 0 0 auto auto; z-index: 200; }
+.action-dock-menu { display: flex; position: fixed; right: 0; top: 50%; transform: translateY(-50%);
+                    flex-direction: column; gap: 3px; min-width: 0; width: 38px; max-height: calc(100vh - 150px);
+                    margin: 0; padding: 4px 3px; overflow-x: visible; overflow-y: auto; border-radius: 8px 0 0 8px; }
+.action-dock-menu > .action-menu-item,
+.action-dock-menu > .action-dock-admin > .action-dock-item {
+  position: relative; width: 30px; min-width: 30px; height: 30px; padding: 0; border: 1px solid var(--pf-border);
+  border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); display: flex;
+  align-items: center; justify-content: center; box-sizing: border-box;
+}
+.action-dock-menu > .action-menu-item > div { display: none; }
+.action-dock-menu > .action-menu-item:hover > div {
+  display: block; position: absolute; right: 36px; top: 0; width: max-content; max-width: 260px;
+  padding: 7px 9px; background: var(--pf-panel); border: 1px solid var(--pf-border); border-radius: 6px;
+  box-shadow: 0 3px 12px rgba(0,0,0,.45); pointer-events: none; text-align: left;
+}
+.action-dock-menu > .action-menu-item .ami-icon { width: auto; font-size: 15px; }
+.action-dock-menu > .action-menu-sep { width: 28px; margin: 2px 1px; }
+.action-dock-admin { position: relative; }
+.action-dock-item { cursor: pointer; font-size: 17px; }
+.action-dock-admin > .action-menu { position: absolute; right: 36px; left: auto; top: auto; bottom: 0;
+                                    margin: 0; max-height: min(70vh, 440px); }
+.action-dock-menu > [data-pf-slot="action_menu_ext"],
+.action-dock-menu > [data-pf-slot="header_actions_ext"] { display: contents; }
 /* Theme variable bridge: themes only set --pf-* variables. */
 body, .main, .messages-wrap, .tab-content.active, .audio-tab-panel { background: var(--pf-bg) !important; color: var(--pf-text) !important; }
 .sidebar, .tab-bar, .files-panel, .fe-toolbar, .fe-table th, .fe-status, .fe-preview-pane .fe-ph, .load-more-banner, .task-tab-dock-btn { background: var(--pf-sidebar) !important; border-color: var(--pf-border) !important; }
@@ -867,64 +908,27 @@ if (typeof hljs !== 'undefined') {
   <span id="actionLoading" class="ui-action-loading" style="display:none"></span>
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
   <span class="usage-cost-badge" id="usageCostBadge" onclick="showUsageCostPanel()" style="display:none"></span>
+  <select id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)" title="Global chat theme" data-i18n-title="globalThemeTitle"
+            style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:220px">
+    <option value="global:pawflow_dark">PawFlow Dark</option>
+  </select>
+  <select id="languageSelect" onchange="setLanguage(this.value)" title="Language" aria-label="Language" data-i18n-title="languageTitle" data-i18n-aria-label="languageTitle"
+            style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:120px">
+  </select>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
-    <select id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)" title="Global chat theme" data-i18n-title="globalThemeTitle"
-            style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:220px">
-      <option value="global:pawflow_dark">PawFlow Dark</option>
-    </select>
-    <select id="languageSelect" onchange="setLanguage(this.value)" title="Language" aria-label="Language" data-i18n-title="languageTitle" data-i18n-aria-label="languageTitle"
-            style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:120px">
-    </select>
-    <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" title="Speak agent messages live" data-i18n-title="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
-    <div class="view-menu-wrap" id="viewMenuWrap">
-      <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
-              aria-label="View options" title="View options"
-              data-i18n-title="viewMenuTitle" data-i18n-aria-label="viewMenuTitle"
-              onclick="toggleViewMenu()">&#x1F441;</button>
-      <div class="view-menu" id="viewMenu" role="menu">
-        <div class="view-menu-section-label" data-i18n="viewMode">View mode</div>
-        <div class="view-menu-item active" id="viewItemClassic" role="menuitemradio" aria-checked="true"
-             onclick="onViewModeSelect('classic')">
-          <span class="view-menu-radio" aria-hidden="true"></span>
-          <span class="vmi-label" data-i18n="classicView">Classic</span>
+    <div id="accountMenuWrap" class="account-menu-wrap" style="display:none">
+      <button class="btn account-main" id="linkAccountBtn" onclick="beginOAuthAccountLink()" style="display:none">Link account</button>
+      <details class="account-dropdown">
+        <summary class="btn" aria-label="Account actions" title="Account actions">&#x25BC;</summary>
+        <div class="account-menu-panel">
+          <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none" data-i18n="logout">Logout</button>
         </div>
-        <div class="view-menu-item" id="viewItemSimplified" role="menuitemradio" aria-checked="false"
-             onclick="onViewModeSelect('simplified')">
-          <span class="view-menu-radio" aria-hidden="true"></span>
-          <span class="vmi-label" data-i18n="simplifiedView">Simplified</span>
-        </div>
-        <div class="view-menu-divider"></div>
-        <div id="viewClassicOptions">
-        <div class="view-menu-section-label" data-i18n="classicOptions">Classic options</div>
-        <div class="view-menu-item" id="viewItemTechnical" role="menuitemcheckbox" aria-checked="false"
-             onclick="onViewGroupingToggle('technical')">
-          <span class="vmi-label" data-i18n="viewGroupTechnical">Group technical details</span>
-          <span class="vmi-switch" aria-hidden="true"></span>
-        </div>
-        <div class="view-menu-item" id="viewItemTask" role="menuitemcheckbox" aria-checked="false"
-             onclick="onViewGroupingToggle('task')">
-          <span class="vmi-label" data-i18n="viewGroupTasks">Group task messages</span>
-          <span class="vmi-switch" aria-hidden="true"></span>
-        </div>
-        <div class="view-menu-item" id="viewItemDelegate" role="menuitemcheckbox" aria-checked="false"
-             onclick="onViewGroupingToggle('delegate')">
-          <span class="vmi-label" data-i18n="viewGroupDelegates">Group delegate messages</span>
-          <span class="vmi-switch" aria-hidden="true"></span>
-        </div>
-        </div>
-      </div>
+      </details>
     </div>
-    <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode" data-i18n-title="permissionModeTitle"
-            style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
-      <option value="default" data-i18n-permission="permissionDefault">&#x1F512; Default</option>
-      <option value="approve_edits" data-i18n-permission="permissionApproveEdits">&#x270F; Approve edits</option>
-      <option value="read_only" data-i18n-permission="permissionReadOnly">&#x1F4D6; Read-only</option>
-      <option value="auto" data-i18n-permission="permissionAuto">&#x26A1; Auto</option>
-    </select>
-    <div class="action-menu-wrap" id="actionMenuWrap" style="display:none">
-      <button class="action-menu-btn" onclick="toggleActionMenu()" title="Actions" data-i18n-title="actionsTitle">+</button>
-      <div class="action-menu" id="actionMenu">
+  </div>
+  <div class="action-menu-wrap action-dock" id="actionMenuWrap" style="display:none">
+      <div class="action-menu action-dock-menu" id="actionMenu">
         <div class="action-menu-item" onclick="closeActionMenu();cmdTerminal('',[''])">
           <span class="ami-icon" style="font-family:monospace;font-weight:bold">&gt;_</span>
           <div><div class="ami-label" data-i18n="terminal">Terminal</div><div class="ami-desc" data-i18n="terminalDesc">Open interactive terminal on relay</div></div>
@@ -992,11 +996,8 @@ if (typeof hljs !== 'undefined') {
           <div><div class="ami-label" data-i18n="usageDashMenuLabel">Usage &amp; Costs</div><div class="ami-desc" data-i18n="usageDashMenuDesc">Usage/cost dashboard across conversations</div></div>
         </div>
 
-        <div data-pf-slot="action_menu_ext"></div>
-      </div>
-    </div>
-    <div class="action-menu-wrap" id="adminSettingsWrap" style="display:none">
-      <button class="action-menu-btn" onclick="toggleAdminSettingsMenu()" title="Server settings">&#9881;</button>
+        <div class="action-menu-wrap action-dock-admin" id="adminSettingsWrap" style="display:none">
+      <button class="action-dock-item" onclick="toggleAdminSettingsMenu()" title="Server settings" aria-label="Server settings">&#9881;</button>
       <div class="action-menu" id="adminSettingsMenu">
         <div class="action-menu-item" onclick="closeAdminSettingsMenu();openAdminUsersDialog()">
           <span class="ami-icon">U</span>
@@ -1021,10 +1022,11 @@ if (typeof hljs !== 'undefined') {
         <div data-pf-slot="gear_menu_ext"></div>
       </div>
     </div>
-    <span data-pf-slot="header_actions_ext"></span>
-    <button class="btn" id="linkAccountBtn" onclick="beginOAuthAccountLink()" style="display:none">Link account</button>
-    <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none" data-i18n="logout">Logout</button>
+        <div data-pf-slot="action_menu_ext"></div>
+        <span data-pf-slot="header_actions_ext"></span>
+      </div>
   </div>
+  <!-- /action dock -->
 </div>
 <!-- Chat tab content -->
 <div class="tab-content active" id="tabContentChat" data-tab="chat">
@@ -1061,6 +1063,54 @@ if (typeof hljs !== 'undefined') {
   <div class="task-tab-panel-body" id="taskTabPanelBody"></div>
 </div>
 <div class="input-area">
+  <div class="composer-context-controls" aria-label="Conversation controls">
+    <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode" data-i18n-title="permissionModeTitle"
+            style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
+      <option value="default" data-i18n-permission="permissionDefault">&#x1F512; Default</option>
+      <option value="approve_edits" data-i18n-permission="permissionApproveEdits">&#x270F; Approve edits</option>
+      <option value="read_only" data-i18n-permission="permissionReadOnly">&#x1F4D6; Read-only</option>
+      <option value="auto" data-i18n-permission="permissionAuto">&#x26A1; Auto</option>
+    </select>
+    <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" title="Speak agent messages live" data-i18n-title="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
+    <div class="view-menu-wrap" id="viewMenuWrap">
+      <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
+              aria-label="View options" title="View options"
+              data-i18n-title="viewMenuTitle" data-i18n-aria-label="viewMenuTitle"
+              onclick="toggleViewMenu()">&#x1F441;</button>
+      <div class="view-menu" id="viewMenu" role="menu">
+        <div class="view-menu-section-label" data-i18n="viewMode">View mode</div>
+        <div class="view-menu-item active" id="viewItemClassic" role="menuitemradio" aria-checked="true"
+             onclick="onViewModeSelect('classic')">
+          <span class="view-menu-radio" aria-hidden="true"></span>
+          <span class="vmi-label" data-i18n="classicView">Classic</span>
+        </div>
+        <div class="view-menu-item" id="viewItemSimplified" role="menuitemradio" aria-checked="false"
+             onclick="onViewModeSelect('simplified')">
+          <span class="view-menu-radio" aria-hidden="true"></span>
+          <span class="vmi-label" data-i18n="simplifiedView">Simplified</span>
+        </div>
+        <div class="view-menu-divider"></div>
+        <div id="viewClassicOptions">
+        <div class="view-menu-section-label" data-i18n="classicOptions">Classic options</div>
+        <div class="view-menu-item" id="viewItemTechnical" role="menuitemcheckbox" aria-checked="false"
+             onclick="onViewGroupingToggle('technical')">
+          <span class="vmi-label" data-i18n="viewGroupTechnical">Group technical details</span>
+          <span class="vmi-switch" aria-hidden="true"></span>
+        </div>
+        <div class="view-menu-item" id="viewItemTask" role="menuitemcheckbox" aria-checked="false"
+             onclick="onViewGroupingToggle('task')">
+          <span class="vmi-label" data-i18n="viewGroupTasks">Group task messages</span>
+          <span class="vmi-switch" aria-hidden="true"></span>
+        </div>
+        <div class="view-menu-item" id="viewItemDelegate" role="menuitemcheckbox" aria-checked="false"
+             onclick="onViewGroupingToggle('delegate')">
+          <span class="vmi-label" data-i18n="viewGroupDelegates">Group delegate messages</span>
+          <span class="vmi-switch" aria-hidden="true"></span>
+        </div>
+        </div>
+      </div>
+    </div>
+  </div>
   <div class="attachments-preview" id="attachPreview"></div>
   <div class="input-row">
     <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" data-i18n-title="promptLibraryTitle" style="font-size:16px !important">&#x1F4DD;</button>

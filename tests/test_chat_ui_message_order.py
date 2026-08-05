@@ -322,17 +322,12 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
 
 
-def test_action_menu_clamps_to_viewport_and_is_scrollable():
-    # Regression: .action-menu was position:absolute with no height limit,
-    # so on a short/narrow viewport where the + button sits near the top,
-    # the ~15-item dropdown extended past the bottom with no way to scroll
-    # to the rest -- cut off. Now fixed + clamped + scrollable, and
-    # positioned/flipped in JS relative to the button (tabs.js).
-    assert "position: fixed; margin-top: 4px;" in TEMPLATE_HTML
-    assert "max-height: calc(100vh - 16px); overflow-y: auto;" in TEMPLATE_HTML
-    tabs_js = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
-    assert "function _positionActionMenu(menu)" in tabs_js
-    assert "_positionActionMenu(menu);" in tabs_js
+def test_action_dock_is_fixed_and_scrollable():
+    # Regression: the former + dropdown could extend beyond a short viewport.
+    # The always-visible right dock keeps the same actions in a bounded column.
+    assert ".action-dock-menu { display: flex; position: fixed;" in TEMPLATE_HTML
+    assert "max-height: calc(100vh - 150px);" in TEMPLATE_HTML
+    assert "overflow-y: auto;" in TEMPLATE_HTML
 
 
 def test_mobile_breakpoints_wrap_header_and_overlay_sidebar():
@@ -346,7 +341,9 @@ def test_mobile_breakpoints_wrap_header_and_overlay_sidebar():
         TEMPLATE_HTML.index("@media (max-width: 768px)"):
         TEMPLATE_HTML.index("@media (max-width: 480px)")]
     assert ".header { flex-wrap: wrap;" in mobile_block
-    assert ".header .actions { flex-wrap: wrap; margin-left: 0;" in mobile_block
+    # Only the compact account control remains on the right. It no longer needs
+    # the full-width second row used by the old crowded header.
+    assert ".header .actions { margin-left: auto;" in mobile_block
     assert ".sidebar { position: fixed;" in mobile_block
     # sidebar-toggle's left is set inline by _syncToggleBtn() (state.js) to
     # '268px' assuming the sidebar pushes .main over -- must be pinned back

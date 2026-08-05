@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.106] — 2026-08-05
+
+### Changed
+
+- Simplified the web chat chrome: theme and language now follow usage in the
+  compact header, account linking and logout share one split control, conversation
+  actions and administration use an always-visible right dock, and view, live
+  speech, and permission controls now sit above the prompt.
+
 ## [1.0.0-beta.105] — 2026-08-05
 
 ### Fixed

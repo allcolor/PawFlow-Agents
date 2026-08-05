@@ -487,6 +487,14 @@ class LLMConnectionService(BaseService):
                     "cached per image."
                 ),
             },
+            "vision_max_tokens": {
+                "type": "integer", "default": 1024,
+                "description": (
+                    "Max output tokens for each vision-fallback description. "
+                    "Precise models like GPT-5.6 Luna are verbose and may need "
+                    "2000-4000; cheap models (MiMo, Kimi) stay fast at 1024."
+                ),
+            },
             "timeout": {
                 "type": "integer", "default": 0,
                 "description": "Request timeout in seconds (0 = no timeout)",
@@ -887,6 +895,7 @@ class LLMConnectionService(BaseService):
                 "when": {"supports_vision": ["false", False]},
                 "set": {
                     "vision_llm_service": {"visible": True},
+                    "vision_max_tokens": {"visible": True},
                 }
             },
         ]

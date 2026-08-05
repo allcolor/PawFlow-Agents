@@ -120,6 +120,61 @@ def test_apply_vision_fallback_skips_self_reference(monkeypatch):
     assert not svc.calls
 
 
+def test_apply_vision_fallback_describes_multiple_images_parallel(monkeypatch):
+    """Two images in one pass must both be described (parallel workers),
+    preserving message and part order in the rebuilt output."""
+    import threading
+    from core.llm_client import LLMMessage
+    from core.vision_describe import apply_vision_fallback
+
+    active = []
+    lock = threading.Lock()
+    peak = [0]
+
+    class SlowVisionClient:
+        supports_vision = True
+
+    class SlowVisionService(FakeVisionService):
+        def complete(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            with lock:
+                active.append(threading.current_thread().name)
+                peak[0] = max(peak[0], len(active))
+            try:
+                import time
+                time.sleep(0.05)
+                return SimpleNamespace(content=self._description)
+            finally:
+                with lock:
+                    active.remove(threading.current_thread().name)
+
+    svc = SlowVisionService()
+    _patch_registry(monkeypatch, svc)
+
+    msg = LLMMessage(
+        role="user",
+        conversation_id="c1",
+        content=[
+            {"type": "image_url",
+             "image_url": {"url": f"data:image/png;base64,{B64}"}},
+            {"type": "image_url",
+             "image_url": {"url": f"data:image/png;base64,{B64_OTHER}"}},
+        ],
+    )
+
+    out = apply_vision_fallback([msg], "vision_svc", user_id="alice",
+                                conversation_id="c1")
+
+    assert len(svc.calls) == 2
+    assert peak[0] >= 2  # at least two describes overlapped
+    assert len(out) == 1
+    assert len(out[0].content) == 2
+    assert out[0].content[0]["type"] == "text"
+    assert out[0].content[1]["type"] == "text"
+    assert "a red button" in out[0].content[0]["text"]
+    assert "a red button" in out[0].content[1]["text"]
+
+
 def test_apply_vision_fallback_requires_vision_enabled_target(monkeypatch):
     from core.vision_describe import apply_vision_fallback
 
@@ -154,17 +209,57 @@ def test_llm_connection_schema_and_rules_expose_vision_llm_service():
     param = schema["vision_llm_service"]
     assert param["type"] == "service_ref"
     assert param["service_type"] == "llmConnection"
+    mt = schema["vision_max_tokens"]
+    assert mt["type"] == "integer"
+    assert mt["default"] == 1024
 
     rules = object.__new__(LLMConnectionService).get_parameter_rules()
     show_rules = [r for r in rules
                   if r["set"].get("vision_llm_service", {}).get("visible") is True]
     assert show_rules, "a rule must reveal vision_llm_service"
     assert show_rules[-1]["when"] == {"supports_vision": ["false", False]}
+    assert show_rules[-1]["set"].get("vision_max_tokens", {}).get("visible") is True
     # supports_vision is configurable for every provider (CLI base_url can
     # point at a non-vision model)
     for rule in rules:
         vis = rule["set"].get("supports_vision", {}).get("visible")
         assert vis is not False
+
+
+def test_describe_image_b64_uses_service_vision_max_tokens(monkeypatch):
+    """The vision service's own config overrides the default token budget,
+    and the cache key changes so a truncated v1 description is not served
+    after the budget is raised."""
+    from core.vision_describe import describe_image_b64
+    import core.vision_describe as vd
+
+    captured = {}
+
+    class ConfVisionService(FakeVisionService):
+        config = {"vision_max_tokens": 4096}
+
+        def complete(self, messages, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(content="described")
+
+    svc = ConfVisionService()
+    out = describe_image_b64(svc, "image/png", B64, user_id="alice")
+    assert out == "described"
+    assert captured["max_tokens"] == 4096
+
+    # Same image, same service, but a different budget -> must re-describe
+    # (cache key includes max_tokens), so a truncated old entry is not reused.
+    vd._mem_cache.clear()
+    svc.config = {"vision_max_tokens": 1024}
+    out = describe_image_b64(svc, "image/png", B64, user_id="alice")
+    assert captured["max_tokens"] == 1024
+
+    # Default (no config): falls back to the 1024 parameter default. Use a
+    # fresh image so the earlier 4096/1024 entries are not served from cache.
+    plain = FakeVisionService()
+    fresh_b64 = base64.b64encode(b"default-budget-image").decode("ascii")
+    describe_image_b64(plain, "image/png", fresh_b64, user_id="alice")
+    assert plain.calls[-1][1]["max_tokens"] == 1024
 
 
 def test_service_complete_applies_fallback_only_when_vision_disabled(monkeypatch):

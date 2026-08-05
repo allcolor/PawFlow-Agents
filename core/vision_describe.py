@@ -15,12 +15,13 @@ import json
 import logging
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_VERSION = "v1"
+_PROMPT_VERSION = "v2"
 
  # Images larger than this (in either dimension) are downscaled before being
  # sent to the vision model.  Large screenshots (e.g. a full YouTube homepage
@@ -41,7 +42,12 @@ DESCRIBE_PROMPT = (
     "[x, y, width, height];\n"
     "- element states (focused, disabled, checked, selected) and colors;\n"
     "- anything unusual, truncated, or error-like.\n"
-    "Be precise; do not speculate beyond what is visible."
+    "RULES:\n"
+    "- Output ONLY the final description. No preamble, no process narration, "
+    "no 'I see', 'Let me', 'Looking at', no meta-commentary.\n"
+    "- Never guess: if a text element, URL, date, or label is illegible or "
+    "unclear, write [illegible] instead of inventing it.\n"
+    "- Be precise; do not speculate beyond what is visible."
 )
 
 # Bound the number of vision calls a single message-list pass may trigger
@@ -196,12 +202,18 @@ def _downscale_b64(mime: str, b64: str) -> tuple:
 def describe_image_b64(vision_svc, mime: str, b64: str, *,
                        user_id: str = "", conversation_id: str = "",
                        agent_name: str = "", prompt: str = "",
-                       model: str = "", max_tokens: int = 4096) -> str:
+                       model: str = "", max_tokens: int = 1024) -> str:
     """Describe one base64 image via a vision llmConnection, with caching."""
     svc_id = getattr(vision_svc, "_service_id", "") or ""
     model = model or ""
+    # Per-service override: the vision service's own config can raise (or
+    # lower) the output budget. Verbose models (GPT-5.6 Luna) need more room
+    # than the 1024-token default; cheap models stay fast at the default.
+    svc_config = getattr(vision_svc, "config", {}) or {}
+    if isinstance(svc_config, dict) and svc_config.get("vision_max_tokens"):
+        max_tokens = int(svc_config["vision_max_tokens"])
     cache_key = hashlib.sha256(
-        f"{_PROMPT_VERSION}|{svc_id}|{model}|{prompt}|{mime}|".encode()
+        f"{_PROMPT_VERSION}|{svc_id}|{model}|{prompt}|{mime}|{max_tokens}|".encode()
         + b64.encode()
     ).hexdigest()
     cached = _cache_get(cache_key)
@@ -306,10 +318,64 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
     logger.info("[vision-fallback] proceeding: vision_svc=%s, describing images...",
                 getattr(vision_svc, "_service_id", "") or type(vision_svc).__name__)
 
+    # Collect every image part to describe, honouring the per-pass budget.
+    # The network calls run in parallel afterwards, so a message carrying
+    # several images (video frames, multiple screenshots) is not serialized.
+    jobs = []  # (msg_idx, part_idx, payload|placeholder)
     described = 0
     truncated = False
+    for msg_idx, msg in enumerate(messages):
+        content = getattr(msg, "content", None)
+        if not (isinstance(content, list) and any(
+                isinstance(p, dict) and p.get("type") in ("image_ref", "image_url")
+                for p in content)):
+            continue
+        for part_idx, part in enumerate(content):
+            if not (isinstance(part, dict)
+                    and part.get("type") in ("image_ref", "image_url")):
+                continue
+            if described >= _MAX_DESCRIBE_PER_PASS:
+                truncated = True
+                jobs.append((msg_idx, part_idx, None))
+                continue
+            payload = _part_payload(part, user_id=user_id,
+                                    conversation_id=conversation_id)
+            if not payload:
+                described += 1
+                jobs.append((msg_idx, part_idx, "unavailable"))
+                continue
+            mime, b64, label = payload
+            jobs.append((msg_idx, part_idx, (mime, b64, label)))
+            described += 1
+
+    def _describe(job):
+        """Describe one collected image; returns (job, outcome)."""
+        msg_idx, part_idx, payload = job
+        if payload is None or payload == "unavailable":
+            return job, payload
+        mime, b64, label = payload
+        try:
+            description = describe_image_b64(
+                vision_svc, mime, b64, user_id=user_id,
+                conversation_id=conversation_id, agent_name=agent_name)
+        except Exception:
+            logger.warning("vision fallback describe failed for %s",
+                           label, exc_info=True)
+            return job, ("error", label)
+        if not description:
+            return job, ("empty", label)
+        return job, ("ok", label, description)
+
+    results = {}
+    to_describe = [j for j in jobs if isinstance(j[2], tuple)]
+    with ThreadPoolExecutor(max_workers=min(4, len(to_describe) or 1)) as ex:
+        for job, outcome in ex.map(_describe, to_describe):
+            results[(job[0], job[1])] = outcome
+
+    # Rebuild messages: replace image parts with their description (or a
+    # placeholder) without mutating the stored originals.
     out: List[Any] = []
-    for msg in messages:
+    for msg_idx, msg in enumerate(messages):
         content = getattr(msg, "content", None)
         if not (isinstance(content, list) and any(
                 isinstance(p, dict) and p.get("type") in ("image_ref", "image_url")
@@ -318,15 +384,14 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
             continue
         new_parts: List[Dict[str, Any]] = []
         changed = False
-        for part in content:
+        for part_idx, part in enumerate(content):
             if not (isinstance(part, dict)
                     and part.get("type") in ("image_ref", "image_url")):
                 new_parts.append(part)
                 continue
-            if described >= _MAX_DESCRIBE_PER_PASS:
-                truncated = True
-                # Replace with placeholder — don't leak raw image to non-vision LLM
-                changed = True
+            outcome = results.get((msg_idx, part_idx), "unavailable")
+            changed = True
+            if outcome is None:
                 new_parts.append({
                     "type": "text",
                     "text": (
@@ -334,14 +399,7 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
                         "image not described.]"
                     ),
                 })
-                continue
-            payload = _part_payload(part, user_id=user_id,
-                                    conversation_id=conversation_id)
-            if not payload:
-                # Cannot extract image data — replace with placeholder to
-                # avoid leaking a raw image part to the non-vision LLM.
-                described += 1
-                changed = True
+            elif outcome == "unavailable":
                 new_parts.append({
                     "type": "text",
                     "text": (
@@ -349,48 +407,31 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
                         "image data unavailable.]"
                     ),
                 })
-                continue
-            mime, b64, label = payload
-            try:
-                description = describe_image_b64(
-                    vision_svc, mime, b64, user_id=user_id,
-                    conversation_id=conversation_id, agent_name=agent_name)
-            except Exception:
-                logger.warning("vision fallback describe failed for %s",
-                               label, exc_info=True)
-                # Replace with a placeholder instead of leaking the raw image
-                # to the non-vision LLM (which would 500 on the image part).
-                described += 1
-                changed = True
+            elif outcome[0] == "error":
                 new_parts.append({
                     "type": "text",
                     "text": (
-                        f"[Image: {label} — vision model was unavailable; "
+                        f"[Image: {outcome[1]} — vision model was unavailable; "
                         f"image could not be described.]"
                     ),
                 })
-                continue
-            if not description:
-                # Empty description — same treatment, avoid leaking raw image
-                described += 1
-                changed = True
+            elif outcome[0] == "empty":
                 new_parts.append({
                     "type": "text",
                     "text": (
-                        f"[Image: {label} — vision model returned no "
+                        f"[Image: {outcome[1]} — vision model returned no "
                         f"description; image could not be described.]"
                     ),
                 })
-                continue
-            described += 1
-            changed = True
-            new_parts.append({
-                "type": "text",
-                "text": (
-                    f"[Image: {label} — you cannot see images directly; a "
-                    f"vision model described it as follows]\n{description}"
-                ),
-            })
+            else:
+                _, label, description = outcome
+                new_parts.append({
+                    "type": "text",
+                    "text": (
+                        f"[Image: {label} — you cannot see images directly; a "
+                        f"vision model described it as follows]\n{description}"
+                    ),
+                })
         if changed:
             import copy
             new_msg = copy.copy(msg)

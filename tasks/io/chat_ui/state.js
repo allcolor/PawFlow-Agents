@@ -165,7 +165,6 @@ function getAuthHeaders() {
 }
 // Page is behind validateSessionAuth, so if we're here, we're logged in
 if (LOGIN_URL) {
-  document.getElementById('accountMenuWrap').style.display = '';
   document.getElementById('linkAccountBtn').style.display = '';
   document.getElementById('logoutBtn').style.display = '';
 }

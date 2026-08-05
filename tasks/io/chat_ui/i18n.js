@@ -139,21 +139,22 @@ function _applyGenericI18n(root) {
 function _renderLanguageSelect() {
   const select = document.getElementById('languageSelect');
   if (!select) return;
-  const signature = _i18nLanguages.map(lang => lang.code + ':' + (lang.native_label || lang.label || '')).join('|');
+  const signature = _i18nLanguages.map(lang => lang.code + ':' + (lang.flag || '') + ':' + (lang.native_label || lang.label || '')).join('|');
   if (select.dataset.i18nSignature !== signature) {
     select.replaceChildren();
     _i18nLanguages.forEach(lang => {
       const key = 'language' + lang.code.charAt(0).toUpperCase() + lang.code.slice(1);
       const opt = document.createElement('option');
       opt.value = lang.code;
-      opt.textContent = t(key) || lang.native_label || lang.label || lang.code;
+      opt.textContent = (lang.flag ? lang.flag + ' ' : '') + (t(key) || lang.native_label || lang.label || lang.code);
       select.appendChild(opt);
     });
     select.dataset.i18nSignature = signature;
   } else {
     Array.from(select.options).forEach(opt => {
       const key = 'language' + opt.value.charAt(0).toUpperCase() + opt.value.slice(1);
-      opt.textContent = t(key) || opt.textContent;
+      const lang = _i18nLanguages.find(item => item.code === opt.value) || {};
+      opt.textContent = (lang.flag ? lang.flag + ' ' : '') + (t(key) || lang.native_label || lang.label || opt.value);
     });
   }
   select.value = _currentLanguage;
@@ -167,7 +168,6 @@ function applyI18n(root) {
   document.title = t('pageTitle');
   _setText('#status', t('ready'));
   _setText('#sendBtn', t('send'));
-  _setText('#logoutBtn', t('logout'));
   _setPlaceholder('#input', t('placeholder'));
   _setTitle('.btn-attach', t('promptLibraryTitle'));
   _setTitle('#fileAttachBtn', t('attachTitle'));

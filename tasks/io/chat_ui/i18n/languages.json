@@ -1,16 +1,19 @@
 [
   {
     "code": "en",
+    "flag": "🇬🇧",
     "label": "English",
     "native_label": "English"
   },
   {
     "code": "fr",
+    "flag": "🇫🇷",
     "label": "French",
     "native_label": "Français"
   },
   {
     "code": "es",
+    "flag": "🇪🇸",
     "label": "Spanish",
     "native_label": "Español"
   }

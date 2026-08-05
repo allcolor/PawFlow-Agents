@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.107] — 2026-08-05
+
+### Changed
+
+- Added a compact left-side conversation-controls dock mirroring the active-agent
+  panel, with permissions, TTS, STT, and View controls beside the prompt.
+- Moved account linking and logout from the header into the always-visible right
+  action dock, and added flags to the language selector.
+
+### Fixed
+
+- Restored the administration gear menu by rendering its expanded panel outside
+  the right dock's clipped scroll container and preserving it during click bubbling.
+
 ## [1.0.0-beta.106] — 2026-08-05
 
 ### Changed

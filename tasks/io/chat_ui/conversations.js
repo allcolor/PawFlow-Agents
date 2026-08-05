@@ -270,6 +270,8 @@ function updateViewMenuItem(kind, enabled) {
 
 function updateViewMenuVisibility() {
   const wrap = document.getElementById('viewMenuWrap');
+  const panel = document.getElementById('promptControlsPanel');
+  if (panel) panel.classList.toggle('visible', !!conversationId);
   if (!wrap) return;
   wrap.style.display = conversationId ? 'inline-flex' : 'none';
   if (!conversationId) closeViewMenu();

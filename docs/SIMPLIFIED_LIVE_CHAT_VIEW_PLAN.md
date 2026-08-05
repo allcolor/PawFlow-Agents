@@ -140,14 +140,15 @@ finalization paths.
 The classic and simplified message views share the same compact surrounding
 controls:
 
-- The left side of the header keeps status and usage first, followed by the
-  global theme and language selectors.
-- The right side of the header contains only the account control. `Link account`
-  is its primary action and `Logout` is available from the attached dropdown.
+- The header keeps status and usage first, followed by the global theme and
+  language selectors. Language options include their national flags.
 - Conversation actions formerly hidden behind the `+` menu form an always-visible,
-  vertically scrollable dock on the right. Administration is the final dock item,
-  and extension-provided header/action slots remain inside this dock.
-- View mode, live speech, and tool permission mode sit directly above the prompt
+  vertically scrollable dock on the right. `Link account`, `Logout`, and
+  administration live in this dock, and extension-provided header/action slots
+  remain inside it. The administration panel is a fixed sibling of the scrollable
+  dock so opening the gear cannot clip the menu outside the dock's narrow bounds.
+- View mode, TTS, STT, and tool permission mode share a compact floating panel
+  above the prompt on the left, mirroring the active-agents panel on the right,
   because they affect the current conversation or its next turn.
 - The task-tab dock uses a separate right offset so the two docks never overlap.
   On narrow screens the action dock becomes a bounded horizontal strip above the

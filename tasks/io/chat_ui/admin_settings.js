@@ -15,8 +15,8 @@ function adminJsArg(s) {
 }
 
 function updateAdminSettingsButton() {
-  var wrap = document.getElementById('adminSettingsWrap');
-  if (wrap) wrap.style.display = _isAdmin() ? '' : 'none';
+  var button = document.getElementById('adminSettingsBtn');
+  if (button) button.style.display = _isAdmin() ? '' : 'none';
 }
 
 function toggleAdminSettingsMenu() {
@@ -30,8 +30,11 @@ function closeAdminSettingsMenu() {
 }
 
 document.addEventListener('click', function(e) {
-  var wrap = document.getElementById('adminSettingsWrap');
-  if (wrap && !wrap.contains(e.target)) closeAdminSettingsMenu();
+  var button = document.getElementById('adminSettingsBtn');
+  var menu = document.getElementById('adminSettingsMenu');
+  if (button && menu && !button.contains(e.target) && !menu.contains(e.target)) {
+    closeAdminSettingsMenu();
+  }
 });
 
 function _adminOverlay(title, bodyHtml, buttonsHtml) {

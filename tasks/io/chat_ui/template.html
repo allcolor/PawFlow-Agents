@@ -123,24 +123,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .header .btn:hover { background: #e94560; color: white; }
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-.account-menu-wrap { display: flex; align-items: stretch; position: relative; }
-.account-menu-wrap .account-main { border-radius: 6px 0 0 6px; }
-.account-dropdown { position: relative; }
-.account-dropdown summary { list-style: none; border-left-width: 0 !important; border-radius: 0 6px 6px 0 !important;
-                            width: 28px; height: 100%; padding: 0 !important; display: flex; align-items: center;
-                            justify-content: center; user-select: none; }
-.account-dropdown summary::-webkit-details-marker { display: none; }
-.account-menu-panel { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5000; min-width: 150px;
-                      padding: 6px; background: var(--pf-panel); border: 1px solid var(--pf-border);
-                      border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
-.account-menu-panel .btn { width: 100%; white-space: nowrap; }
-.header .tech-group-toggle { background: var(--pf-panel); color: var(--pf-muted); border: 1px solid var(--pf-border);
-                            border-radius: 6px; width: 28px; height: 28px; padding: 0; font-size: 15px;
-                            cursor: pointer; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
-.header .tech-group-toggle.active { background: var(--pf-accent); border-color: var(--pf-accent); color: var(--pf-bg); }
-.header .tech-group-toggle:disabled { opacity: 0.6; cursor: wait; }
+.tech-group-toggle { background: var(--pf-panel); color: var(--pf-muted); border: 1px solid var(--pf-border);
+                     border-radius: 6px; width: 28px; height: 28px; padding: 0; font-size: 15px;
+                     cursor: pointer; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.tech-group-toggle.active { background: var(--pf-accent); border-color: var(--pf-accent); color: var(--pf-bg); }
+.tech-group-toggle:disabled { opacity: 0.6; cursor: wait; }
 .view-menu-wrap { position: relative; display: none; }
-.view-menu { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 220px;
+.view-menu { display: none; position: absolute; left: 0; bottom: calc(100% + 4px); min-width: 220px;
              background: var(--pf-panel); border: 1px solid var(--pf-border); border-radius: 8px;
              box-shadow: 0 4px 14px rgba(0,0,0,0.4); padding: 6px 0; z-index: 5000; }
 .view-menu.open { display: block; }
@@ -312,10 +301,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 @media (max-width: 768px) {
   .header { flex-wrap: wrap; row-gap: 8px; padding: 10px 12px; }
   .header .actions { margin-left: auto; }
-  .composer-context-controls { flex-wrap: wrap; }
+  .prompt-controls-panel { left: 8px !important; bottom: 126px !important; max-width: calc(100vw - 16px); }
   .action-dock-menu { top: auto !important; right: 8px !important; bottom: 76px; transform: none !important;
                       flex-direction: row !important; max-width: calc(100vw - 16px); max-height: none !important;
                       overflow-x: auto; overflow-y: hidden !important; }
+  #adminSettingsMenu { top: auto !important; right: 8px !important; bottom: 120px; transform: none !important; }
   .sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;
              box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
   /* sidebar-toggle's left is also set inline by _syncToggleBtn() (state.js)
@@ -500,6 +490,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                 position: fixed; bottom: 70px; right: 20px; z-index: 50; max-width: 350px;
                 max-height: 150px; overflow-y: auto; backdrop-filter: blur(4px); }
 .active-panel.visible { display: block; }
+.prompt-controls-panel { display: none; background: rgba(15,22,41,0.9); border: 1px solid #0f3460; border-radius: 8px;
+                         padding: 6px 10px; font-size: 11px; color: #a0a0c0;
+                         position: fixed; bottom: 70px; left: 20px; z-index: 50;
+                         backdrop-filter: blur(4px); }
+.prompt-controls-panel.visible { display: block; }
+.prompt-controls-row { display: flex; align-items: center; gap: 6px; }
+.prompt-controls-row #permissionMode { max-width: 170px; height: 30px; }
+.prompt-controls-row button { width: 30px; height: 30px; padding: 0; border-radius: 6px;
+                              display: inline-flex; align-items: center; justify-content: center; }
 .active-panel-title { font-size: 10px; color: #6c6c8a; margin-bottom: 2px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .active-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
 .active-row .a-spinner { animation: spin 1.2s linear infinite; font-style: normal; font-size: 10px; }
@@ -553,8 +552,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .scroll-nav button:hover { background: #0f3460; color: #fff; }
 .input-area { background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460; flex-shrink: 0;
                display: flex; gap: 10px; flex-direction: column; }
-.composer-context-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 28px; }
-.composer-context-controls #permissionMode { max-width: 190px; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }
 .input-row textarea { flex: 1; background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460;
                         border-radius: 8px; padding: 10px; font-size: 14px; resize: none;
@@ -800,8 +797,7 @@ body.desktop-fullscreen .tab-content.active iframe {
 .action-dock-menu { display: flex; position: fixed; right: 0; top: 50%; transform: translateY(-50%);
                     flex-direction: column; gap: 3px; min-width: 0; width: 38px; max-height: calc(100vh - 150px);
                     margin: 0; padding: 4px 3px; overflow-x: visible; overflow-y: auto; border-radius: 8px 0 0 8px; }
-.action-dock-menu > .action-menu-item,
-.action-dock-menu > .action-dock-admin > .action-dock-item {
+.action-dock-menu > .action-menu-item {
   position: relative; width: 30px; min-width: 30px; height: 30px; padding: 0; border: 1px solid var(--pf-border);
   border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); display: flex;
   align-items: center; justify-content: center; box-sizing: border-box;
@@ -814,16 +810,14 @@ body.desktop-fullscreen .tab-content.active iframe {
 }
 .action-dock-menu > .action-menu-item .ami-icon { width: auto; font-size: 15px; }
 .action-dock-menu > .action-menu-sep { width: 28px; margin: 2px 1px; }
-.action-dock-admin { position: relative; }
-.action-dock-item { cursor: pointer; font-size: 17px; }
-.action-dock-admin > .action-menu { position: absolute; right: 36px; left: auto; top: auto; bottom: 0;
-                                    margin: 0; max-height: min(70vh, 440px); }
+#adminSettingsMenu { position: fixed; right: 42px; left: auto; top: 50%; bottom: auto;
+                     transform: translateY(-50%); margin: 0; max-height: min(70vh, 440px); }
 .action-dock-menu > [data-pf-slot="action_menu_ext"],
 .action-dock-menu > [data-pf-slot="header_actions_ext"] { display: contents; }
 /* Theme variable bridge: themes only set --pf-* variables. */
 body, .main, .messages-wrap, .tab-content.active, .audio-tab-panel { background: var(--pf-bg) !important; color: var(--pf-text) !important; }
 .sidebar, .tab-bar, .files-panel, .fe-toolbar, .fe-table th, .fe-status, .fe-preview-pane .fe-ph, .load-more-banner, .task-tab-dock-btn { background: var(--pf-sidebar) !important; border-color: var(--pf-border) !important; }
-.header, .input-area, .action-menu, .ctx-menu, .dialog, .exec-dialog, .active-panel, .fe-panel, .fe-preview-pane, .audio-tab-controls, .task-tab-panel { background: var(--pf-panel) !important; border-color: var(--pf-border) !important; }
+.header, .input-area, .action-menu, .ctx-menu, .dialog, .exec-dialog, .active-panel, .prompt-controls-panel, .fe-panel, .fe-preview-pane, .audio-tab-controls, .task-tab-panel { background: var(--pf-panel) !important; border-color: var(--pf-border) !important; }
 .conv-item:hover, .conv-item.active, .msg.assistant, .msg.subagent, .msg.agent-result, .msg.btw, .msg.sub_agent_trace, .delegate-block, .delegate-sub-block, .dialog-body .btn, .fe-row:hover, .fe-row.selected, .ask-user-box, .tab-btn.active { background: var(--pf-assistant) !important; border-color: var(--pf-border) !important; color: var(--pf-text) !important; }
 .msg.user, button, .header .btn, .action-menu-btn, .sidebar-toggle, .btn-attach, .btn-folder, .scroll-nav button, .audio-tab-controls button { background: var(--pf-user) !important; color: var(--pf-text) !important; border-color: var(--pf-accent) !important; }
 button:hover, .header .btn:hover, .action-menu-btn:hover, .sidebar-header .btn-new:hover, .input-row button:hover, .dialog-body .btn:hover, .dialog-body .btn-primary:hover, .ask-user-btn:hover { background: var(--pf-accent) !important; color: var(--pf-bg) !important; border-color: var(--pf-accent) !important; }
@@ -917,15 +911,6 @@ if (typeof hljs !== 'undefined') {
   </select>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
-    <div id="accountMenuWrap" class="account-menu-wrap" style="display:none">
-      <button class="btn account-main" id="linkAccountBtn" onclick="beginOAuthAccountLink()" style="display:none">Link account</button>
-      <details class="account-dropdown">
-        <summary class="btn" aria-label="Account actions" title="Account actions">&#x25BC;</summary>
-        <div class="account-menu-panel">
-          <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none" data-i18n="logout">Logout</button>
-        </div>
-      </details>
-    </div>
   </div>
   <div class="action-menu-wrap action-dock" id="actionMenuWrap" style="display:none">
       <div class="action-menu action-dock-menu" id="actionMenu">
@@ -995,9 +980,22 @@ if (typeof hljs !== 'undefined') {
           <span class="ami-icon">&#x1F4CA;</span>
           <div><div class="ami-label" data-i18n="usageDashMenuLabel">Usage &amp; Costs</div><div class="ami-desc" data-i18n="usageDashMenuDesc">Usage/cost dashboard across conversations</div></div>
         </div>
-
-        <div class="action-menu-wrap action-dock-admin" id="adminSettingsWrap" style="display:none">
-      <button class="action-dock-item" onclick="toggleAdminSettingsMenu()" title="Server settings" aria-label="Server settings">&#9881;</button>
+        <div class="action-menu-sep"></div>
+        <button class="action-menu-item" id="linkAccountBtn" onclick="beginOAuthAccountLink()" style="display:none">
+          <span class="ami-icon">&#x1F517;</span>
+          <div><div class="ami-label" data-i18n="linkAccount">Link account</div><div class="ami-desc" data-i18n="linkAccountDesc">Link another sign-in identity</div></div>
+        </button>
+        <button class="action-menu-item" id="logoutBtn" onclick="doLogout()" style="display:none">
+          <span class="ami-icon">&#x1F6AA;</span>
+          <div><div class="ami-label" data-i18n="logout">Logout</div><div class="ami-desc" data-i18n="logoutDesc">End this session</div></div>
+        </button>
+        <button class="action-menu-item" id="adminSettingsBtn" onclick="toggleAdminSettingsMenu()" title="Server settings" aria-label="Server settings" style="display:none">
+          <span class="ami-icon">&#9881;</span>
+          <div><div class="ami-label">Server settings</div><div class="ami-desc">Administration and updates</div></div>
+        </button>
+        <div data-pf-slot="action_menu_ext"></div>
+        <span data-pf-slot="header_actions_ext"></span>
+      </div>
       <div class="action-menu" id="adminSettingsMenu">
         <div class="action-menu-item" onclick="closeAdminSettingsMenu();openAdminUsersDialog()">
           <span class="ami-icon">U</span>
@@ -1020,10 +1018,6 @@ if (typeof hljs !== 'undefined') {
           <div><div class="ami-label">Updates</div><div class="ami-desc">Installed versions and agent CLI image rebuild</div></div>
         </div>
         <div data-pf-slot="gear_menu_ext"></div>
-      </div>
-    </div>
-        <div data-pf-slot="action_menu_ext"></div>
-        <span data-pf-slot="header_actions_ext"></span>
       </div>
   </div>
   <!-- /action dock -->
@@ -1050,20 +1044,9 @@ if (typeof hljs !== 'undefined') {
     <button onclick="scrollBottom(true);document.getElementById('input').focus()" title="Scroll to bottom" data-i18n-title="scrollBottomTitle">&#x2193;</button>
   </div>
 </div>
-<div class="active-panel" id="activePanel">
-  <div class="active-panel-title" data-i18n="activeAgents">Active agents</div>
-  <div id="activeRows"></div>
-</div>
-<div class="task-tab-dock" id="taskTabDock" title="Task tabs" data-i18n-title="taskTabsTitle"></div>
-<div class="task-tab-panel" id="taskTabPanel">
-  <div class="task-tab-panel-header">
-    <span id="taskTabPanelTitle"></span>
-    <button class="btn-close-panel" onclick="closeActiveTaskTab()">&times;</button>
-  </div>
-  <div class="task-tab-panel-body" id="taskTabPanelBody"></div>
-</div>
-<div class="input-area">
-  <div class="composer-context-controls" aria-label="Conversation controls">
+<div class="prompt-controls-panel" id="promptControlsPanel">
+  <div class="active-panel-title" data-i18n="conversationControls">Conversation controls</div>
+  <div class="prompt-controls-row">
     <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode" data-i18n-title="permissionModeTitle"
             style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
       <option value="default" data-i18n-permission="permissionDefault">&#x1F512; Default</option>
@@ -1072,6 +1055,7 @@ if (typeof hljs !== 'undefined') {
       <option value="auto" data-i18n-permission="permissionAuto">&#x26A1; Auto</option>
     </select>
     <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" title="Speak agent messages live" data-i18n-title="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
+    <button id="speechInputBtn" onclick="toggleConversationSTT()" oncontextmenu="showConversationSTTServiceDialog(); return false;" title="Dictate and send" data-i18n-title="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
     <div class="view-menu-wrap" id="viewMenuWrap">
       <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
               aria-label="View options" title="View options"
@@ -1111,11 +1095,24 @@ if (typeof hljs !== 'undefined') {
       </div>
     </div>
   </div>
+</div>
+<div class="active-panel" id="activePanel">
+  <div class="active-panel-title" data-i18n="activeAgents">Active agents</div>
+  <div id="activeRows"></div>
+</div>
+<div class="task-tab-dock" id="taskTabDock" title="Task tabs" data-i18n-title="taskTabsTitle"></div>
+<div class="task-tab-panel" id="taskTabPanel">
+  <div class="task-tab-panel-header">
+    <span id="taskTabPanelTitle"></span>
+    <button class="btn-close-panel" onclick="closeActiveTaskTab()">&times;</button>
+  </div>
+  <div class="task-tab-panel-body" id="taskTabPanelBody"></div>
+</div>
+<div class="input-area">
   <div class="attachments-preview" id="attachPreview"></div>
   <div class="input-row">
     <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" data-i18n-title="promptLibraryTitle" style="font-size:16px !important">&#x1F4DD;</button>
     <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
-    <button class="btn-attach" id="speechInputBtn" onclick="toggleConversationSTT()" oncontextmenu="showConversationSTTServiceDialog(); return false;" title="Dictate and send" data-i18n-title="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
     <button class="btn-attach" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
     <button class="btn-attach" id="grabBtn" onclick="toggleGrab()" title="Type straight into the agent tmux" data-i18n-title="grabTitle" style="display:none">&#x1F5A5;&#xFE0F;</button>
     <button class="btn-attach" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>

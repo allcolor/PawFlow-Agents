@@ -4,6 +4,9 @@ from pathlib import Path
 
 _GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 _AGENT_STREAMING = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
+_OPENAI = Path("core/llm_providers/openai.py").read_text(encoding="utf-8")
+_OPENAI_RESPONSES = Path("core/llm_providers/openai_responses.py").read_text(encoding="utf-8")
+_ANTHROPIC = Path("core/llm_providers/anthropic.py").read_text(encoding="utf-8")
 
 
 def test_gemini_acp_preempt_uses_live_prompt():
@@ -45,6 +48,23 @@ def test_api_preempt_aborts_and_fast_restarts():
     assert "_fast_restart_after_preempt = True" in body
     assert "_already_active = False" in body
     assert "supports_live_preempt" in body
+
+
+def test_api_stream_read_abort_raises_agent_cancelled():
+    """abort() closes the socket mid-read; the provider must convert the
+    resulting connection error into a clean AgentCancelled interruption, not
+    a raw AttributeError/OSError that the agent loop turns into an error turn.
+    The fix must exist in every API streaming provider (openai, responses,
+    anthropic)."""
+    for src in (_OPENAI, _OPENAI_RESPONSES, _ANTHROPIC):
+        # The read is wrapped: try/except around response.read(4096) that
+        # converts the closed-socket error into AgentCancelled when abort
+        # is pending, and re-raises otherwise.
+        assert (
+            "try:\n                    chunk = response.read(4096)\n                except Exception:"
+            in src), "read must be wrapped"
+        assert "raise AgentCancelled()" in src
+        assert "_abort.is_set()" in src
 
 
 # ---------------------------------------------------------------------------

@@ -164,7 +164,14 @@ class LLMAnthropicMixin:
             while True:
                 if getattr(self, "_abort", None) and self._abort.is_set():
                     raise AgentCancelled()
-                chunk = response.read(4096)
+                try:
+                    chunk = response.read(4096)
+                except Exception:
+                    # abort() closes the socket mid-read; surface as a clean
+                    # AgentCancelled interruption instead of a raw error.
+                    if getattr(self, "_abort", None) and self._abort.is_set():
+                        raise AgentCancelled()
+                    raise
                 if getattr(self, "_abort", None) and self._abort.is_set():
                     raise AgentCancelled()
                 if not chunk:

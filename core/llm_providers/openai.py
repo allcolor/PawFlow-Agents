@@ -180,7 +180,16 @@ class LLMOpenaiMixin:
             while True:
                 if getattr(self, "_abort", None) and self._abort.is_set():
                     raise AgentCancelled()
-                chunk = response.read(4096)
+                try:
+                    chunk = response.read(4096)
+                except Exception:
+                    # abort() closes the socket mid-read; the resulting
+                    # connection error must surface as a clean interruption
+                    # (AgentCancelled), not as a raw AttributeError/OSError
+                    # that the agent loop turns into an error turn.
+                    if getattr(self, "_abort", None) and self._abort.is_set():
+                        raise AgentCancelled()
+                    raise
                 if getattr(self, "_abort", None) and self._abort.is_set():
                     raise AgentCancelled()
                 if not chunk:

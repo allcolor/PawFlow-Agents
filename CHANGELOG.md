@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.117] — 2026-08-05
+
+### Fixed
+
+- The NeXT-style action dock (Terminal / Agent Tmux / VS Code / Desktop /
+  Audio row in the composer) now zooms on hover like a macOS dock: each item
+  scales to 1.4 with a spring easing (`cubic-bezier(0.34, 1.56, 0.64, 1)`),
+  origin at the bottom center so the item grows upward, an accent border and a
+  drop shadow, and the hovered item rises above its neighbours. The container
+  no longer clips the overflow. The previous attempt animated the task-tab
+  dock (right-edge vertical stack), which is a different element that is not
+  the one users see.
+- The chat UI template is now part of the served-asset signature: editing
+  `template.html` (which carries the whole inline `<style>` block) invalidates
+  the server's in-memory HTML cache immediately, so CSS-only changes reach the
+  browser within the 5s signature check without a server restart. Before this,
+  a running server kept serving the old template forever and a browser
+  hard-reload showed stale CSS because the server itself never re-read the
+  file.
+
 ## [1.0.0-beta.116] — 2026-08-05
 
 ### Added

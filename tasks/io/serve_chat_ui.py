@@ -92,6 +92,19 @@ _HTML_SIG_CHECK_INTERVAL = 5.0
 
 def _asset_signature():
     items = []
+    # template.html carries the whole inline <style> block: a CSS-only change
+    # (dock zoom, theme, layout) must invalidate the served HTML. Before this
+    # was included, editing template.html changed nothing on a running server
+    # -- the signature stayed identical, the cached template was served
+    # forever, and a browser hard-reload (shift-ctrl-r) showed the old CSS
+    # because the server itself never re-read the file.
+    for _tpl in ("template.html",):
+        p = _CHAT_UI_DIR / _tpl
+        try:
+            st = p.stat()
+            items.append((_tpl, st.st_mtime_ns, st.st_size))
+        except FileNotFoundError:
+            items.append((_tpl, 0, 0))
     for mod in _JS_MODULES:
         p = _CHAT_UI_DIR / mod
         try:

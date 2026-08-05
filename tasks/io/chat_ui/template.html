@@ -817,12 +817,18 @@ body.desktop-fullscreen .tab-content.active iframe {
 .action-dock { position: relative; z-index: 200; min-width: 0; }
 .action-dock-menu { display: flex; position: static; flex-direction: row; gap: 3px; min-width: 0;
                     width: auto; max-width: 100%; max-height: none; margin: 0; padding: 4px;
-                    overflow-x: auto; overflow-y: hidden; border-radius: 8px; }
+                    overflow: visible; border-radius: 8px; }
 .action-dock-menu > .action-menu-item {
   position: relative; width: 30px; min-width: 30px; height: 30px; padding: 0; border: 1px solid var(--pf-border);
   border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); display: flex;
   align-items: center; justify-content: center; box-sizing: border-box;
-}
+  transform-origin: center bottom;
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+              background 0.15s ease, border-color 0.15s ease, box-shadow 0.18s ease; }
+.action-dock-menu > .action-menu-item:hover {
+  transform: scale(1.4); z-index: 3;
+  border-color: var(--pf-accent, #6c5ce7);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4); }
 .action-dock-menu > .action-menu-item > div { display: none; }
 .action-dock-menu > .action-menu-item .ami-icon { width: auto; font-size: 15px; }
 .action-dock-menu > .action-menu-sep { width: 0; height: 28px; border-top: 0; border-left: 1px solid #0f3460;

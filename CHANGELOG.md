@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.115] — 2026-08-05
+
+### Fixed
+
+- Relay HTTP spool cleanup is now atomic across producer and consumer threads.
+  Exhausting the response iterator cannot return before the temporary file has
+  actually been removed, eliminating the Python 3.11 CI race that occasionally
+  left `/tmp/pawflow-relay-http-*` behind.
+- Delegated-vision MCP tool unwrapping failures are logged at debug level
+  instead of being silently swallowed, keeping the full Bandit security scan
+  clean while preserving the original tool name as the safe fallback.
+
 ## [1.0.0-beta.114] — 2026-08-05
 
 ### Added

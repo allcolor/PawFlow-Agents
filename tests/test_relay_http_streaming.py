@@ -2,6 +2,7 @@
 
 import base64
 import os
+import threading
 
 import pytest
 
@@ -104,3 +105,38 @@ def test_server_stream_surfaces_failure_after_headers_and_removes_spool():
     with pytest.raises(RuntimeError, match="upstream connection broke"):
         list(stream.iter_bytes())
     assert not os.path.exists(spool_path)
+
+
+def test_concurrent_cleanup_cannot_return_before_spool_unlink(monkeypatch):
+    stream = RelayHttpResponseStream(lambda _on_output: {"ok": True})
+    with stream._condition:
+        stream._producer_done = True
+        stream._consumer_done = True
+
+    unlink_entered = threading.Event()
+    release_unlink = threading.Event()
+    second_done = threading.Event()
+    real_unlink = os.unlink
+
+    def blocking_unlink(path):
+        unlink_entered.set()
+        assert release_unlink.wait(2)
+        real_unlink(path)
+
+    monkeypatch.setattr(
+        "services._relay_http_response.os.unlink", blocking_unlink)
+    first = threading.Thread(target=stream._cleanup_if_finished)
+    second = threading.Thread(
+        target=lambda: (stream._cleanup_if_finished(), second_done.set()))
+    first.start()
+    assert unlink_entered.wait(2)
+    second.start()
+    try:
+        assert not second_done.wait(0.05)
+    finally:
+        release_unlink.set()
+        first.join(2)
+        second.join(2)
+
+    assert second_done.is_set()
+    assert not os.path.exists(stream.spool_path)

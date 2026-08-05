@@ -29,6 +29,15 @@ This document describes PawFlow's internal architecture, its core components, an
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Relay HTTP response streaming
+
+Relay-backed HTTP responses are decoded one bounded chunk at a time into a
+private disk spool. The HTTP consumer reads that file concurrently, so producer
+speed cannot create an unbounded in-memory response. Producer completion and
+consumer exhaustion jointly own cleanup: the final unlink and its completion
+marker are serialized under the stream condition, which guarantees that an
+exhausted iterator never exposes a still-existing spool path to its caller.
+
 ---
 
 ## FlowFile: Structure and Lifecycle

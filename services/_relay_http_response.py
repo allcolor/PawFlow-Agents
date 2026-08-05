@@ -189,10 +189,15 @@ class RelayHttpResponseStream:
             if (self._cleaned or not self._producer_done
                     or not self._consumer_done):
                 return
+            # Keep the claim and unlink atomic. Previously `_cleaned` became
+            # true before unlinking outside the lock: a concurrent consumer
+            # then returned from cleanup while the producer had not removed
+            # the spool yet, exposing the file after iterator exhaustion.
+            try:
+                os.unlink(self._path)
+            except FileNotFoundError:
+                pass
+            except Exception:
+                logger.debug("Could not remove relay HTTP spool", exc_info=True)
+                return
             self._cleaned = True
-        try:
-            os.unlink(self._path)
-        except FileNotFoundError:
-            pass
-        except Exception:
-            logger.debug("Could not remove relay HTTP spool", exc_info=True)

@@ -87,7 +87,9 @@ def _vision_input_indexes(messages: List[Any]) -> set[int]:
                     from core.llm_client import unwrap_mcp_tool
                     name, _ = unwrap_mcp_tool(name, arguments)
                 except Exception:
-                    pass
+                    logger.debug(
+                        "Could not unwrap vision tool call %s", call_id,
+                        exc_info=True)
                 if call_id:
                     tool_names[call_id] = name
             continue

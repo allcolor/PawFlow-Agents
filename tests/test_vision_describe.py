@@ -424,6 +424,49 @@ def test_apply_vision_fallback_empty_description_replaces_with_placeholder(monke
                    for p in out[0].content)
 
 
+def test_describe_image_b64_single_flight_parallel_same_image(monkeypatch):
+    """Two parallel describe calls for the SAME image must make exactly
+    ONE network call: the second waits on the first's in-flight event and
+    serves from the fresh cache entry (no stampede)."""
+    import threading
+    import time
+    from core.vision_describe import describe_image_b64
+    import core.vision_describe as vd
+
+    calls = []
+    lock = threading.Lock()
+    gate = threading.Event()
+
+    class GateVisionService(FakeVisionService):
+        def complete(self, messages, **kwargs):
+            with lock:
+                calls.append(1)
+            # Hold the call open so the second worker is guaranteed to
+            # arrive while this one is still in flight.
+            gate.wait(timeout=5)
+            return SimpleNamespace(content="described once")
+
+    svc = GateVisionService()
+    results = []
+
+    def _worker():
+        results.append(describe_image_b64(
+            svc, "image/png", B64, user_id="alice"))
+
+    t1 = threading.Thread(target=_worker)
+    t2 = threading.Thread(target=_worker)
+    t1.start()
+    time.sleep(0.1)  # ensure t1 registers as leader first
+    t2.start()
+    time.sleep(0.1)
+    gate.set()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    assert len(calls) == 1  # single flight: one network call for the image
+    assert results == ["described once", "described once"]
+
+
 def test_downscale_b64_returns_original_when_small():
     """Small images should pass through unchanged."""
     from core.vision_describe import _downscale_b64

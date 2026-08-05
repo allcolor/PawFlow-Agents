@@ -61,6 +61,13 @@ _cache_lock = threading.Lock()
 _mem_cache: "OrderedDict[str, str]" = OrderedDict()
 _disk_loaded = False
 
+# Single-flight: when several workers describe the SAME image in parallel
+# (a multi-image pass or duplicated image_refs), only one performs the
+# network call; the others wait on the same key's Event and then read the
+# fresh cache entry. Prevents stampede duplicate API calls for one image.
+_inflight: "Dict[str, threading.Event]" = {}
+_inflight_lock = threading.Lock()
+
 # Recursion guard: the describe call itself runs through
 # LLMConnectionService.complete — a misconfigured vision service chain
 # (A -> B -> A) must not loop.
@@ -219,42 +226,79 @@ def describe_image_b64(vision_svc, mime: str, b64: str, *,
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
-    # Downscale large images before sending to the vision model
-    scaled_mime, scaled_b64 = _downscale_b64(mime, b64)
-    full_prompt = prompt or DESCRIBE_PROMPT.format(dims=_image_dims(scaled_mime, scaled_b64))
-    from core.llm_client import LLMMessage
-    _prev_active = getattr(_tls, "active", False)
-    _tls.active = True
+
+    # Join any in-flight describe for this exact image+prompt+budget.
+    # The leader performs the call; followers wait on its Event (WITHOUT
+    # holding _inflight_lock, or the leader's finally could never pop/set
+    # and every waiter would deadlock) and then read the fresh cache entry.
+    # A failed leader is re-attempted by the next follower so one bad
+    # provider response does not silently drop every waiter.
+    with _inflight_lock:
+        _leader_ev = _inflight.get(cache_key)
+        if _leader_ev is None:
+            _leader_ev = threading.Event()
+            _inflight[cache_key] = _leader_ev
+            _is_leader = True
+        else:
+            _is_leader = False
+    if not _is_leader:
+        _leader_ev.wait()
+        _cached2 = _cache_get(cache_key)
+        if _cached2 is not None:
+            return _cached2
+        # Leader failed (no cache entry) — promote ourselves to leader.
+        with _inflight_lock:
+            _leader_ev = threading.Event()
+            _inflight[cache_key] = _leader_ev
+
+    def _do_describe():
+        """Downscale + call the vision service; returns the description."""
+        scaled_mime, scaled_b64 = _downscale_b64(mime, b64)
+        full_prompt = prompt or DESCRIBE_PROMPT.format(
+            dims=_image_dims(scaled_mime, scaled_b64))
+        from core.llm_client import LLMMessage
+        _prev_active = getattr(_tls, "active", False)
+        _tls.active = True
+        try:
+            response = vision_svc.complete(
+                [LLMMessage(
+                    role="user",
+                    content=[
+                        {"type": "text", "text": full_prompt},
+                        {"type": "image_url",
+                         "image_url": {"url": f"data:{scaled_mime};base64,{scaled_b64}"}},
+                    ],
+                    conversation_id=conversation_id or "vision_describe",
+                )],
+                model=model or None,
+                temperature=None,
+                max_tokens=max_tokens,
+                call_user_id=user_id,
+                call_conversation_id=conversation_id,
+                call_agent_name=agent_name,
+            )
+        finally:
+            _tls.active = _prev_active
+        description = (getattr(response, "content", "") or "").strip()
+        if not description:
+            # Reasoning models (gpt-5.x, o-series) may put all output in
+            # reasoning_content when max_tokens is too low. Use it as fallback.
+            reasoning = (getattr(response, "thinking", "") or "").strip()
+            if reasoning:
+                description = reasoning
+        if description:
+            _cache_put(cache_key, description)
+        return description
+
     try:
-        response = vision_svc.complete(
-            [LLMMessage(
-                role="user",
-                content=[
-                    {"type": "text", "text": full_prompt},
-                    {"type": "image_url",
-                     "image_url": {"url": f"data:{scaled_mime};base64,{scaled_b64}"}},
-                ],
-                conversation_id=conversation_id or "vision_describe",
-            )],
-            model=model or None,
-            temperature=None,
-            max_tokens=max_tokens,
-            call_user_id=user_id,
-            call_conversation_id=conversation_id,
-            call_agent_name=agent_name,
-        )
+        return _do_describe()
     finally:
-        _tls.active = _prev_active
-    description = (getattr(response, "content", "") or "").strip()
-    if not description:
-        # Reasoning models (gpt-5.x, o-series) may put all output in
-        # reasoning_content when max_tokens is too low. Use it as fallback.
-        reasoning = (getattr(response, "thinking", "") or "").strip()
-        if reasoning:
-            description = reasoning
-    if description:
-        _cache_put(cache_key, description)
-    return description
+        # Always release waiters, including on exception, or a follower
+        # would block forever on a failed leader.
+        with _inflight_lock:
+            _ev_owned = _inflight.pop(cache_key, None)
+        if _ev_owned is not None:
+            _ev_owned.set()
 
 
 def _part_payload(part: Dict[str, Any], *, user_id: str,

@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.113] — 2026-08-05
+
+### Fixed
+
+- **API soft preempt** — a user message arriving while the worker is between
+  iterations (tool call in flight, no active HTTP connection) no longer kills
+  the thread, bumps the generation and reloads the whole context from disk.
+  It now cancels the in-flight tool calls (they reply `cancelled`), queues
+  the message, and the live worker drains it at the start of its next
+  iteration — the LLM reads it naturally, with zero disk reload and zero
+  context rebuild. A preempt during an actual LLM stream still aborts +
+  fast-restarts, since a message cannot be injected into a stream that
+  already left.
+- **Vision fallback describes only the current turn** — images in older
+  context messages are no longer re-submitted to the vision model at every
+  turn (prompt bloat) or re-described after a server restart (cold cache,
+  network calls for nothing). Only the current user message and the tool
+  results produced after it are described; older images are replaced by a
+  short placeholder.
+- **Vision descriptions are persisted** — once a user image is described,
+  its attachment is patched in the store as `described` with the description,
+  so the context loads the description as text instead of re-creating the
+  `image_ref`: the image is never re-submitted to the vision model on later
+  turns, even after a restart. The UI keeps the attachment (image still
+  displayed).
+
 ## [1.0.0-beta.112] — 2026-08-05
 
 ### Fixed

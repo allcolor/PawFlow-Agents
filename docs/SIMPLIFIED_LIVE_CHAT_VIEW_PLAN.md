@@ -297,6 +297,27 @@ writer should see, not to make ids route rows. `tests/js/turn_view_spec.js`
 ("a user message before the answer gives user / block / user / block / answer")
 is the executable statement of this rule.
 
+Closing the block is not placement, and there the id is consulted — in one
+narrow case only. When the reader sends a new message while the agent is still
+on the previous turn, the server preempts it and the old turn's cancelled
+`done` arrives AFTER the new turn's block is already open and working.
+Applying it positionally stamped the live successor "Completed" (frozen
+clock, no rain) over an agent visibly still working. The preempted turn was
+already closed at its own user boundary, so a `done`/`cancel` that names a
+different turn while the current block is `working` is ignored: the successor
+keeps its animation, and only its own `done` (or one that names nothing)
+closes it. See `turnViewFinalize`/`turnViewFail` in `tasks/io/chat_ui/turn_view.js`
+and the preempt test in `tests/js/turn_view_spec.js`.
+
+A system notice — compact finished, git pruned — is not a turn, and it never
+opens a block. `/compact` while the agent is idle is the standing case: the
+notice arrives with no turn open, and nothing ever closes a block a notice
+opened (no `done` follows a notice), so an orphan block created for it sat in
+"working" with rain and a ticking clock forever (the reported "bloc detail
+runtime"). With a turn open the notice is filed into that block; with none it
+stays top level. See the `kind === 'system'` guards in `turnViewIngest` and
+`turnViewReconcile`, and the two notice tests in `tests/js/turn_view_spec.js`.
+
 This matters because correlation fails silently. The first implementation made
 `turn_id` load-bearing: `turnViewIngest` rejected every row without one, so a
 submitting path that did not set `agent.request_msg_id` produced no block, no

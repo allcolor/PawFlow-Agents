@@ -530,20 +530,41 @@ class StreamEmitter(AgentEmitter):
         generation = self.generation
         agent = self.agent
         _emitter = self
+        _buf = [""]  # shared buffer across callback calls of one turn
+
+        # Streaming par blocs de ~250 chars, a la frontiere de mot (jamais au
+        # milieu d'un mot), pour que le bloc detail reste lisible pendant le
+        # stream — avant, chaque token etait emis separement (quasi lettre a
+        # lettre). On ne decoupe ni par phrase ni par ligne (multiligne reste
+        # lisible). Le durable thinking_content (emise par ConversationWriter
+        # a la fin) supersede toujours ce preview, donc un fragment residuel
+        # non flushé est inoffensif.
+        _THINKING_FLUSH = 250
+
+        def _emit_chunk(chunk: str) -> None:
+            if poll_silent or not chunk:
+                return
+            _emitter._emit("thinking_delta", {
+                "text": chunk,
+                "agent_name": _emitter._agent_name or "",
+                "source": _emitter._agent_source(),
+            })
 
         def on_thinking(text: str):
             if not agent._is_current_generation(gen_key, generation):
                 raise AgentCancelled()
             _emitter._last_token_time = time.time()
-            if not poll_silent and text:
-                # Transient preview only. The durable thinking_content event
-                # is emitted later by ConversationWriter from the flushed
-                # LLMMessage.
-                _emitter._emit("thinking_delta", {
-                    "text": text,
-                    "agent_name": _emitter._agent_name or "",
-                    "source": _emitter._agent_source(),
-                })
+            if poll_silent or not text:
+                return
+            _buf[0] += text
+            while len(_buf[0]) >= _THINKING_FLUSH:
+                # Couper a la DERNIERE espace avant le seuil pour ne pas
+                # trancher un mot.
+                _cut = _buf[0].rfind(" ", 0, _THINKING_FLUSH)
+                if _cut <= 0:
+                    _cut = _THINKING_FLUSH  # mot unique > 250: couper sec
+                _emit_chunk(_buf[0][:_cut])
+                _buf[0] = _buf[0][_cut:]
         return on_thinking
 
     def start_heartbeat(self, poll_silent: bool) -> Any:

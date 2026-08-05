@@ -247,6 +247,8 @@ screen click / type / browser / other approved tool
 
 Descriptions are cached by image content hash in memory and in `data/runtime/vision_describe_cache.json`, so the same unchanged image is not billed for another description. The stored conversation keeps its original image parts, so a later vision-enabled agent can still receive the native image. The transformation works on a copy of the outbound messages and never rewrites conversation history.
 
+The vision model's reasoning events are never used as the description. Reasoning models (gpt-5.x, o-series) narrate their process ("I need to describe…", "I'll make sure…") which would pollute the persisted description and the main prompt at every turn; only the final `content` is accepted. To cap or disable that reasoning, set `vision_thinking_budget` on the delegated vision service (`0` = no requested thinking, `-1` = explicitly disabled, any positive value = budget). It is part of the description cache key, so changing it re-describes images. For OpenAI `responses`-style reasoning models the effective lever is `reasoning_effort` on the vision service.
+
 #### Requirements, limits, and safe use
 
 - The delegated service must be a different `llmConnection` with `supports_vision: true`; self-reference and recursive fallback chains are rejected.
@@ -257,6 +259,10 @@ Descriptions are cached by image content hash in memory and in `data/runtime/vis
 - Delegation adds a vision request for each unique image, plus its latency and provider cost. Hash caching removes repeat work only for byte-identical images; any changed screenshot is a new image. The pre-click stale-screen comparison is local image processing: it adds no second vision request or image-token charge, only a small opaque revision in the normal tool exchange.
 
 OpenAI-compatible providers receive the lazy meta-tools `get_tool_schema` and `use_tool`. The provider-facing `use_tool` schema uses `arguments_json`, a JSON object encoded as a string, instead of a nested free-form `arguments` object. The handler still accepts `arguments` internally for compatibility, but the exposed schema avoids the PawFlow bug where compatible backends repeatedly produced `{}` for nested tool arguments. The OpenAI provider logs tool calls whose `arguments` field is omitted or empty so tool-call regressions are visible.
+
+Tool argument JSON is repaired before execution (see `core/tool_json.py`). Besides truncation autoclose and invalid-escape repair, unescaped double quotes inside string values are recovered: a shell command embedding its own quoting (`grep -n "pattern" file`) previously failed the whole payload with `Expecting ',' delimiter`, wasting the call; the repair re-quotes every plausible opener/closer pair and accepts the first variant that parses. Mixed invalid `\'` escapes plus bare quotes are fixed in sequence. Repairs run only after strict parsing fails, so a valid payload is never altered.
+
+Assistant `tool_calls` are sanitized at message-build time (`_build_openai_messages` in `core/llm_providers/openai.py`): a call with no following `role: tool` response is a hard provider 400 ("insufficient tool messages following tool_calls message"). The standing source is a preempted turn — assistant `tool_calls` persisted, then the reader's next message cancelled the turn before the tool result arrived; the dangling call then 400s every later call in the conversation (a `/compact` only masked it by dropping the messages). The builder strips unanswered calls (keeping any text) and drops a message left with neither text nor calls. Compaction applies the same cleanup (`_agent_compact_core.py`) so the persisted context heals at the next compact.
 
 OpenAI-compatible services also support `extra_body`, a JSON object merged into the chat-completions request body after PawFlow builds its standard fields. This is intended for endpoint-specific options such as OpenRouter routing:
 

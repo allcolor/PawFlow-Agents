@@ -157,7 +157,10 @@ def test_turn_controller_keeps_positional_boundaries_and_rehydrates_live(tmp_pat
             detailB:!!b.finalDetailEl && b.tabs.messages.bodyEl.contains(b.finalDetailEl)
           };
           // The done carries turn-A's id while turn-B is the one on screen.
-          // An id NAMES a turn, it never selects one: the open block closes.
+          // An id NAMES a turn, it never selects one -- and a turn that is
+          // live cannot be closed by another turn's done (the preempted
+          // turn's cancelled done would stamp the working successor
+          // "Completed" over an agent still running).
           const finalB = row('final-B', 'assistant', 'final B');
           turnViewIngest('assistant', {msg_id:'final-B', turn_id:'turn-A',
             content:'final B'}, finalB);
@@ -168,7 +171,7 @@ def test_turn_controller_keeps_positional_boundaries_and_rehydrates_live(tmp_pat
     )
     assert all(value["hydrated"].values())
     assert value | {"hydrated": None} == {
-        "hydrated": None, "aStatus": "working", "bStatus": "completed",
+        "hydrated": None, "aStatus": "working", "bStatus": "working",
         "bFinal": True, "aUntouched": True,
     }
 

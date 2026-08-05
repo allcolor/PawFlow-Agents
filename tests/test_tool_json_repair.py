@@ -59,6 +59,49 @@ def test_parse_tool_arguments_valid_unaffected():
     assert out == {"x": 1}
 
 
+def test_parse_tool_arguments_recovers_bare_quotes_in_command():
+    # Shell command embedding its own quoting: {"command": "... grep -n
+    # "pattern" file ..."} — the inner double quotes are unescaped and
+    # previously killed the whole payload ("Expecting ',' delimiter").
+    bad = '{"command": "cd /workspace && grep -n \"pattern\" file.py"}'
+    bad = bad.replace('\\"', '"')  # strip escapes: emit them BARE like an LLM
+    out = parse_tool_arguments(bad, tool_name="bash", provider="cc")
+    assert PARSE_ERROR_KEY not in out
+    assert out == {"command": 'cd /workspace && grep -n "pattern" file.py'}
+
+
+def test_parse_tool_arguments_recovers_mixed_bare_quotes_and_escapes():
+    # Real server-log case: the LLM mixed invalid \' escapes, bare " quotes
+    # and double-escaped pipes in one bash command — previously the whole
+    # payload failed as [unwrap] with "Expecting ',' delimiter".
+    cmd = (
+        "cd /workspace && echo " + BS + SQ + "===x===" + BS + SQ
+        + " && grep -n " + Q + "pat" + BS + BS + "|" + BS + BS + "pat2"
+        + Q + " f.py | head"
+    )
+    bad = "{" + Q + "command" + Q + ": " + Q + cmd + Q + "}"
+    out = parse_tool_arguments(bad, tool_name="use_tool", provider="unwrap")
+    assert PARSE_ERROR_KEY not in out
+    assert out["command"].startswith("cd /workspace && echo '===x==='")
+    assert Q + "pat" + BS + "|" + BS + "pat2" + Q in out["command"]
+
+
+def test_parse_tool_arguments_recovers_bare_quotes_with_braces():
+    # A command embedding a JSON-ish literal: echo '{"a": 1}' unescaped.
+    bad = "{\"command\": \"echo '{\"a\": 1}'\"}"
+    bad = bad.replace('\\"', '"').replace("\\'", "'")
+    out = parse_tool_arguments(bad, tool_name="bash", provider="cc")
+    assert PARSE_ERROR_KEY not in out
+    assert out == {"command": "echo '{\"a\": 1}'"}
+
+
+def test_parse_tool_arguments_escaped_quotes_unaffected():
+    # Properly escaped quotes never reach the repair path.
+    out = parse_tool_arguments(
+        '{"command": "grep -n \\"p\\" f"}', tool_name="bash")
+    assert out == {"command": 'grep -n "p" f'}
+
+
 def test_parse_tool_arguments_truly_broken_still_errors():
     out = parse_tool_arguments('{"x": ', tool_name="t")
     assert PARSE_ERROR_KEY in out

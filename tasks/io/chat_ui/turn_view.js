@@ -390,6 +390,14 @@ function turnViewIngest(kind, data, element) {
     _turnOpen = null;
     state = _turnOpenOrphanTurn(element, data);
   }
+  // A system notice -- compact finished, git pruned -- is not a turn. With a
+  // turn open it is filed into that block; with none it must NOT open a
+  // phantom orphan block. /compact while the agent is idle is the standing
+  // case: the notice arrives with no open turn, and nothing ever closes a
+  // block a notice opened (no done follows a notice). The block would sit in
+  // "working" with rain and a ticking clock forever. The notice stays top
+  // level, where addMsg put it.
+  if (!state && kind === 'system') return false;
   state = state || _turnOpenOrphanTurn(element, data);
   if (!state || !state.blockEl.isConnected) return false;
   _turnUpdateIdentity(state, data || {});
@@ -1115,6 +1123,18 @@ function turnViewFinalize(data) {
   // after the reader has sent another message ends the turn they are looking
   // at. THE RULE at the top of this file.
   const state = _turnCurrentState(false); if (!state) return false;
+  // A done that names a DIFFERENT turn cannot close the turn that is
+  // currently working. When the reader sends a new message while the agent
+  // is still on the previous turn, the server preempts it and the old turn's
+  // cancelled `done` lands AFTER the new turn's block is already open and
+  // working; applying it positionally stamped the live block "Completed" --
+  // frozen clock, no rain, no cues -- over an agent visibly still working.
+  // The turn the done names is a block this view already closed (a new user
+  // message closes it), so there is nothing left to end. Only a done that
+  // names this turn (or names nothing) ends this block.
+  const incomingTurnId = _turnId(data || {});
+  if (state.status === 'working' && incomingTurnId
+      && state.turnId && incomingTurnId !== state.turnId) return false;
   const finalId = String((data && (data.final_msg_id || data.msg_id)) || '');
   // A derived marker is a reconstruction, and a reconstruction may not end a
   // turn that is still running. The page classifier names the last assistant
@@ -1167,6 +1187,12 @@ function turnViewFail(turnId, status, message) {
   // the open one is the one on screen. THE RULE at the top of this file.
   const state = _turnCurrentState(false); if (!state) return false;
   if (state.status === 'completed') return false;
+  // Same rule as turnViewFinalize: a cancel/fail naming a DIFFERENT turn is
+  // the preempted predecessor's, arriving while its successor is already
+  // live. Applying it here left the successor stuck "cancelled" -- no
+  // animation -- over an agent still working.
+  if (state.status === 'working' && turnId
+      && state.turnId && turnId !== state.turnId) return false;
   _turnRetireRuntime(state);
   _turnStopTransient(state); _turnUpdateStatus(state, ['stopped', 'cancelled', 'error'].includes(status) ? status : 'error');
   if (message) _turnOfferTransient(state, 'messages', message);
@@ -1262,6 +1288,9 @@ function turnViewReconcile() {
     if (!TURN_FILABLE_ROLES.has(_turnRowRole(el))) continue;
     if (state && el === state.finalEl) continue;
     if (!state) {
+      // A system notice never opens a block: with no turn open it stays top
+      // level (see turnViewIngest -- the /compact notice case).
+      if (_turnRowRole(el) === 'system') continue;
       state = (_passedOpenUser && _turnOpen && _turnOpen.userEl
                && _turnOpen.userEl.isConnected)
         ? _turnCurrentState(true) : _turnOpenOrphanTurn(el);

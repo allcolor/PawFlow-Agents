@@ -180,6 +180,41 @@ class _AgentCompactCoreMixin:
         if len(messages) < _pre_orphan:
             logger.info(f"[compact] Removed {_pre_orphan - len(messages)} orphan tool result(s)")
 
+        # And the reverse: assistant tool_calls with no following tool
+        # response -- the fingerprint of a turn cancelled mid-call (the reader
+        # sent a new message before the tool result landed). Kept here, the
+        # dangling call survives compaction and 400s every later provider call
+        # ("insufficient tool messages following tool_calls message"). Strip
+        # the unanswered calls; drop the message if nothing remains.
+        _dangling_idx = []
+        for _i, m in enumerate(messages):
+            if m.role != "assistant" or not m.tool_calls:
+                continue
+            _answered = {
+                tc.id for tc in m.tool_calls
+                if any(x.role == "tool" and getattr(x, "tool_call_id", None) == tc.id
+                       for x in messages[_i + 1:])
+            }
+            _kept = [tc for tc in m.tool_calls if tc.id in _answered]
+            if len(_kept) != len(m.tool_calls):
+                _dangling_idx.append((_i, _kept))
+        if _dangling_idx:
+            import dataclasses as _dc
+            _drop_dangling = set()
+            for _i, _kept in _dangling_idx:
+                _m = messages[_i]
+                if _kept:
+                    messages[_i] = _dc.replace(_m, tool_calls=_kept)
+                elif _m.content:
+                    messages[_i] = _dc.replace(_m, tool_calls=None)
+                else:
+                    _drop_dangling.add(_i)
+            if _drop_dangling:
+                messages = [m for _i, m in enumerate(messages) if _i not in _drop_dangling]
+            logger.info(
+                f"[compact] Removed {len(_dangling_idx)} dangling tool_call "
+                f"message(s) (no tool response)")
+
         # Deflate old images
         self._deflate_image_messages(messages, keep_last=True,
                                       user_id=user_id, conversation_id=conversation_id)

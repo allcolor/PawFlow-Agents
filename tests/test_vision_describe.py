@@ -462,6 +462,66 @@ def test_agentctx_p3_reuses_prepersisted_message_instead_of_duplicating():
     assert "if _append_user_message:" in src
 
 
+def test_vision_describe_never_uses_thinking_as_description(monkeypatch):
+    """The vision model's thinking events (reasoning narration like
+    'I need to describe...') must NEVER leak into the description. When the
+    content is empty but thinking is full, the description must stay empty
+    (the fallback treats it as 'no description'), not adopt the reasoning."""
+    from core.vision_describe import apply_vision_fallback
+
+    class ThinkingVisionService(FakeVisionService):
+        def complete(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            return SimpleNamespace(
+                content="",  # no visible content
+                thinking=(
+                    "I need to carefully describe this screenshot. "
+                    "I'll make sure to mention all coordinates..."
+                ),
+            )
+
+    svc = ThinkingVisionService()
+    _patch_registry(monkeypatch, svc)
+
+    msg = _image_message()
+    out = apply_vision_fallback([msg], "vision_svc", source_service_id="glm_svc",
+                                user_id="alice", conversation_id="c1")
+
+    assert len(svc.calls) == 1
+    assert out[0].content[1]["type"] == "text"
+    # The reasoning narration must not appear in the description.
+    assert "I need to" not in out[0].content[1]["text"]
+    assert "could not be described" in out[0].content[1]["text"]
+
+
+def test_describe_image_b64_forwards_vision_thinking_budget(monkeypatch):
+    """The vision service's own vision_thinking_budget config is forwarded
+    to the vision model call, so a reasoning model's narration can be capped
+    or disabled from the service settings."""
+    import core.vision_describe as vd
+    from core.vision_describe import describe_image_b64
+
+    captured = {}
+
+    class ConfVisionService(FakeVisionService):
+        config = {"vision_thinking_budget": 0}
+
+        def complete(self, messages, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(content="described")
+
+    svc = ConfVisionService()
+    out = describe_image_b64(svc, "image/png", B64, user_id="alice")
+    assert out == "described"
+    assert captured["thinking_budget"] == 0
+
+    # Un budget explicite (ex. 512) est aussi forwarde.
+    svc.config = {"vision_thinking_budget": 512}
+    vd._mem_cache.clear()
+    describe_image_b64(svc, "image/png", B64, user_id="alice")
+    assert captured["thinking_budget"] == 512
+
+
 def test_llm_connection_schema_and_rules_expose_vision_llm_service():
     from services.llm_connection import LLMConnectionService
 

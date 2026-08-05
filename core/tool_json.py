@@ -122,6 +122,58 @@ def repair_invalid_json_escapes(s: str) -> str:
     return "".join(out) if changed else s
 
 
+def repair_bare_quotes(s: str) -> str:
+    """Repair JSON whose string values contain unescaped double quotes.
+
+    The common LLM mistake is a shell command embedding its own quoting,
+    e.g. {"command": "cd /workspace && grep -n "pattern" file"} — the
+    inner quotes terminate the string early and the whole payload fails
+    with "Expecting ',' delimiter". Every plausible (opening, closing)
+    quote pair is tried with the quotes between them escaped, and the
+    first variant that parses is returned. Runs ONLY after strict parsing,
+    truncation autoclose and escape repair have all failed, so a valid
+    payload is never altered.
+    """
+    n = len(s)
+    quotes = [i for i, c in enumerate(s) if c == '"']
+    if len(quotes) < 2:
+        return s
+    # A plausible opener sits right after '{', '[', ',', ':' (spaces ok).
+    openers = []
+    for i in quotes:
+        j = i - 1
+        while j >= 0 and s[j] in " \t\r\n":
+            j -= 1
+        if j >= 0 and s[j] in "{[,:":
+            openers.append(i)
+    # A plausible closer is followed (spaces ok) by '}', ']', ',', ':' or EOF.
+    closers = []
+    for i in quotes:
+        j = i + 1
+        while j < n and s[j] in " \t\r\n":
+            j += 1
+        if j >= n or s[j] in "}],:":
+            closers.append(i)
+    for o in openers:
+        for cpos in closers:
+            if cpos <= o:
+                continue
+            out = [s[:o], '"']
+            for k in range(o + 1, cpos):
+                out.append('\\"' if s[k] == '"' else s[k])
+            out.append('"')
+            out.append(s[cpos + 1:])
+            candidate = "".join(out)
+            if candidate == s:
+                continue
+            try:
+                json.loads(candidate)
+            except (ValueError, TypeError):
+                continue
+            return candidate
+    return s
+
+
 def _error_payload(raw: Any, detail: str) -> Dict[str, Any]:
     raw_text = raw if isinstance(raw, str) else repr(raw)
     return {
@@ -212,6 +264,22 @@ def parse_tool_arguments(raw: Any, *, tool_name: str = "", provider: str = "",
                     continue
                 except (json.JSONDecodeError, TypeError) as exc4:
                     last_error = exc4
+            # Bare double quotes inside string values (shell commands
+            # embedding their own quoting, e.g. grep -n "pattern"). Only
+            # runs after strict parse, autoclose and escape repair failed.
+            # Starts from `repaired` so a mix of invalid \' escapes and
+            # bare quotes is fixed in sequence, not left half-broken.
+            requoted = repair_bare_quotes(repaired)
+            if requoted != repaired:
+                try:
+                    value = json.loads(requoted)
+                    _log.warning(
+                        "[%s] repaired unescaped quotes in tool JSON for %s",
+                        provider or "llm", tool_name or "<unknown>",
+                    )
+                    continue
+                except (json.JSONDecodeError, TypeError) as exc5:
+                    last_error = exc5
             detail = f"{last_error or exc}.{_json_error_window(value, last_error or exc)}"
             _log.error(
                 "[%s] failed to decode tool arguments for %s: %s raw=%r",

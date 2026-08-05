@@ -268,8 +268,14 @@ def _downscale_b64(mime: str, b64: str) -> tuple:
 def describe_image_b64(vision_svc, mime: str, b64: str, *,
                        user_id: str = "", conversation_id: str = "",
                        agent_name: str = "", prompt: str = "",
-                       model: str = "", max_tokens: int = 1024) -> str:
-    """Describe one base64 image via a vision llmConnection, with caching."""
+                       model: str = "", max_tokens: int = 1024,
+                       thinking_budget: int = 0) -> str:
+    """Describe one base64 image via a vision llmConnection, with caching.
+
+    thinking_budget: forwarded to the vision service call. Reasoning models
+    (gpt-5.x, o-series) narrate their process when given a budget; set 0 to
+    ask the service for no reasoning, or a small value to cap it.
+    """
     svc_id = getattr(vision_svc, "_service_id", "") or ""
     model = model or ""
     # Per-service override: the vision service's own config can raise (or
@@ -278,8 +284,13 @@ def describe_image_b64(vision_svc, mime: str, b64: str, *,
     svc_config = getattr(vision_svc, "config", {}) or {}
     if isinstance(svc_config, dict) and svc_config.get("vision_max_tokens"):
         max_tokens = int(svc_config["vision_max_tokens"])
+    # Per-service thinking budget: 0 = pas de thinking demande (le modele
+    # raisonne par defaut sur openai/responses; anthropic/gemini/codex
+    # honorent ce budget). -1 = desactive explicitement.
+    if isinstance(svc_config, dict) and svc_config.get("vision_thinking_budget") is not None:
+        thinking_budget = int(svc_config["vision_thinking_budget"])
     cache_key = hashlib.sha256(
-        f"{_PROMPT_VERSION}|{svc_id}|{model}|{prompt}|{mime}|{max_tokens}|".encode()
+        f"{_PROMPT_VERSION}|{svc_id}|{model}|{prompt}|{mime}|{max_tokens}|{thinking_budget}|".encode()
         + b64.encode()
     ).hexdigest()
     cached = _cache_get(cache_key)
@@ -332,6 +343,7 @@ def describe_image_b64(vision_svc, mime: str, b64: str, *,
                 model=model or None,
                 temperature=None,
                 max_tokens=max_tokens,
+                thinking_budget=thinking_budget,
                 call_user_id=user_id,
                 call_conversation_id=conversation_id,
                 call_agent_name=agent_name,
@@ -339,12 +351,11 @@ def describe_image_b64(vision_svc, mime: str, b64: str, *,
         finally:
             _tls.active = _prev_active
         description = (getattr(response, "content", "") or "").strip()
-        if not description:
-            # Reasoning models (gpt-5.x, o-series) may put all output in
-            # reasoning_content when max_tokens is too low. Use it as fallback.
-            reasoning = (getattr(response, "thinking", "") or "").strip()
-            if reasoning:
-                description = reasoning
+        # Ne JAMAIS prendre les events thinking (reasoning_content / thinking)
+        # comme description : les modeles de raisonnement (gpt-5.x, o-series)
+        # narrent leur processus ("I need to...", "I'll make sure...") ce qui
+        # polluerait le contexte persiste et le prompt principal a chaque tour.
+        # Seul le content final est une description acceptable.
         if description:
             _cache_put(cache_key, description)
         return description

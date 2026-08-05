@@ -109,8 +109,11 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
     def test_openai_tool_call_message(self):
         tc = LLMToolCall(id="call_1", name="search", arguments={"q": "test"})
         msg = LLMMessage(role="assistant", content="", tool_calls=[tc], conversation_id="test_conv")
+        # A tool_calls message must be paired with its tool response or the
+        # provider 400s; the builder keeps the pairing intact.
+        tool = LLMMessage(role="tool", content="ok", tool_call_id="call_1", conversation_id="test_conv")
         result = self.client._build_openai_messages(
-            [msg], user_id="u", conversation_id="test_conv")
+            [msg, tool], user_id="u", conversation_id="test_conv")
         assert result[0]["role"] == "assistant"
         assert len(result[0]["tool_calls"]) == 1
         assert result[0]["tool_calls"][0]["id"] == "call_1"
@@ -118,6 +121,46 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         func = result[0]["tool_calls"][0]["function"]
         assert func["name"] == "search"
         assert json.loads(func["arguments"]) == {"q": "test"}
+        assert result[1]["role"] == "tool"
+        assert result[1]["tool_call_id"] == "call_1"
+
+    def test_openai_dangling_tool_calls_stripped(self):
+        # An assistant tool_calls with no following tool response is the
+        # fingerprint of a preempted turn. Sent as-is it is a hard 400
+        # ("insufficient tool messages following tool_calls message"); the
+        # builder must strip the unanswered calls, not forward them.
+        tc = LLMToolCall(id="call_1", name="search", arguments={"q": "x"})
+        msg = LLMMessage(role="assistant", content="Let me check.",
+                         tool_calls=[tc], conversation_id="test_conv")
+        result = self.client._build_openai_messages(
+            [msg], user_id="u", conversation_id="test_conv")
+        assert len(result) == 1
+        assert result[0]["role"] == "assistant"
+        assert result[0]["content"] == "Let me check."
+        assert "tool_calls" not in result[0], "dangling tool_calls are stripped"
+
+    def test_openai_dangling_tool_calls_only_message_dropped(self):
+        # No text, no answered calls: nothing is left of the message.
+        tc = LLMToolCall(id="call_1", name="search", arguments={"q": "x"})
+        msg = LLMMessage(role="assistant", content="",
+                         tool_calls=[tc], conversation_id="test_conv")
+        result = self.client._build_openai_messages(
+            [msg], user_id="u", conversation_id="test_conv")
+        assert result == []
+
+    def test_openai_partial_tool_calls_keep_answered_only(self):
+        # Two calls, one answered: the answered call survives, the dangling
+        # one is stripped.
+        answered = LLMToolCall(id="call_1", name="search", arguments={"q": "a"})
+        dangling = LLMToolCall(id="call_2", name="open", arguments={"path": "b"})
+        msg = LLMMessage(role="assistant", content="",
+                         tool_calls=[answered, dangling], conversation_id="test_conv")
+        tool = LLMMessage(role="tool", content="ok", tool_call_id="call_1", conversation_id="test_conv")
+        result = self.client._build_openai_messages(
+            [msg, tool], user_id="u", conversation_id="test_conv")
+        assert len(result) == 2
+        calls = result[0]["tool_calls"]
+        assert [c["id"] for c in calls] == ["call_1"], "only the answered call survives"
 
     def test_openai_omits_image_blocks_when_service_vision_disabled(self):
         client = LLMClient(provider="openai", config={

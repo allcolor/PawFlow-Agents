@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.116] — 2026-08-05
+
+### Added
+
+- Vision `llmConnection` services expose `vision_thinking_budget` in the
+  service editor: reasoning models (gpt-5.x, o-series) narrate their process
+  when given a budget, and the budget now flows through to the vision call.
+  Set `0` for no requested thinking, a small value (e.g. 512) to cap it, or
+  `-1` to disable explicitly.
+- The floating task-tab dock (right edge) zooms on hover like a macOS dock —
+  `scale(1.35)` with a spring easing (`cubic-bezier(0.34, 1.56, 0.64, 1)`),
+  origin anchored to the dock edge, deeper shadow and raised stacking so the
+  hovered tab passes over its neighbours.
+
+### Fixed
+
+- Tool argument JSON repair now recovers unescaped double quotes inside string
+  values: a shell command embedding its own quoting (`grep -n "pattern" file`)
+  previously failed the whole payload with `Expecting ',' delimiter`, wasting
+  the call. Every plausible opener/closer pair is re-quoted and the first
+  variant that parses is accepted; mixed invalid `\'` escapes plus bare quotes
+  are fixed in sequence. Repairs run only after strict parsing fails, so a
+  valid payload is never altered.
+- Assistant `tool_calls` are sanitized at message-build time: a call with no
+  following `role: tool` response (the fingerprint of a turn cancelled
+  mid-call) is a hard provider 400 that then poisons every later call in the
+  conversation. The OpenAI builder strips unanswered calls, keeping any text,
+  and drops a message left with neither text nor calls; compaction applies the
+  same cleanup so the persisted context heals at the next compact.
+- Delegated vision never falls back to the model's reasoning output as the
+  image description. Reasoning models (gpt-5.x, o-series) narrate their
+  process ("I need to...", "I'll make sure...") which previously polluted the
+  persisted description and the main prompt at every turn; only the final
+  content is an acceptable description.
+- Thinking streaming is chunked at ~250 characters on word boundaries instead
+  of one delta per token, keeping the detail block readable mid-stream. The
+  durable `thinking_content` still supersedes the preview at turn end.
+- The simplified turn view ignores a `done`/`cancel` that names a different
+  turn while the current block is `working`: when the reader sends a message
+  mid-turn, the server preempts it and the old turn's cancelled `done` lands
+  after the successor's block is already open. Applying it positionally
+  stamped the live block "Completed" (frozen clock, no rain) over an agent
+  still working; the preempted turn was already closed at its own user
+  boundary.
+- A system notice (compact finished, git pruned) never opens a turn block.
+  `/compact` while the agent is idle is the standing case: the notice arrives
+  with no open turn and nothing ever closes a block a notice opened, so an
+  orphan block sat in "working" with rain and a ticking clock forever. With a
+  turn open the notice is filed into that block; with none it stays top level.
+
 ## [1.0.0-beta.115] — 2026-08-05
 
 ### Fixed

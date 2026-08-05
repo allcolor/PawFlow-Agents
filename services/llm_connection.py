@@ -495,6 +495,19 @@ class LLMConnectionService(BaseService):
                     "2000-4000; cheap models (MiMo, Kimi) stay fast at 1024."
                 ),
             },
+            "vision_thinking_budget": {
+                "type": "integer", "default": 0,
+                "description": (
+                    "Thinking budget for the vision model when describing images. "
+                    "Reasoning models (gpt-5.x, o-series) narrate their process "
+                    "('I need to...', 'I'll make sure...') which pollutes the "
+                    "persisted description and the main prompt at every turn. "
+                    "Set 0 for no requested thinking (models that reason by "
+                    "default, like openai/responses, are better controlled via "
+                    "reasoning_effort), or a small budget (e.g. 512) to cap it. "
+                    "-1 disables thinking explicitly."
+                ),
+            },
             "timeout": {
                 "type": "integer", "default": 0,
                 "description": "Request timeout in seconds (0 = no timeout)",
@@ -911,6 +924,7 @@ class LLMConnectionService(BaseService):
                 "set": {
                     "vision_llm_service": {"visible": True},
                     "vision_max_tokens": {"visible": True},
+                    "vision_thinking_budget": {"visible": True},
                 }
             },
         ]

@@ -215,6 +215,32 @@ test('a newer system notice replaces the one holding the spot', () => {
   assert(e.block().nextSibling === second, 'the newest notice holds the spot');
 });
 
+// /compact while the agent is idle: the notice arrives with NO turn open, and
+// nothing ever closes a block a notice opened (no done follows a notice).
+// Before the guard it opened a phantom orphan block stuck on "working" with
+// rain and a ticking clock forever -- the reported "bloc detail runtime".
+test('a system notice with no open turn never opens a block', () => {
+  const e = env('simplified');
+  const notice = e.row('s1');
+  eq(e.ctx.turnViewIngest('system', { agent: 'assistant' }, notice), false,
+     'the notice is refused when no turn is open');
+  eq(e.block(), null, 'no phantom block is created');
+  assert(notice.parentNode === e.messages, 'the notice stays top level');
+});
+
+test('a system notice after a completed turn opens no second block', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const answer = e.row('a1');
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, answer);
+  e.ctx.turnViewFinalize({ msg_id: 'a1', final_msg_id: 'a1' });
+  const notice = e.row('s1');
+  e.ctx.turnViewIngest('system', { agent: 'assistant' }, notice);
+  eq(e.messages.querySelectorAll('.simple-turn-block').length, 1,
+     'the notice files into the existing block, never a new one');
+  assert(notice.parentNode !== e.messages, 'the notice did not stay at top level');
+});
+
 test('a user message with no id at all still opens its own turn', () => {
   const e = env('simplified');
   const user = e.row('');
@@ -767,7 +793,10 @@ test('the runtime snapshot rehydrates a live turn, and a done still closes the o
          'partial B is also represented in B details');
 
   // The done carries turn-A's id while turn-B is the turn on screen. An id
-  // names a turn, it never selects one: the open block closes.
+  // names a turn, it never selects one -- and a turn that is live cannot be
+  // closed by another turn's done: doing so stamped the working block
+  // "Completed" (frozen clock, no rain) over an agent still running. The
+  // turn the done NAMES was already closed by its own user boundary.
   const finalB = e.row('final-B');
   finalB.dataset.messageRole = 'assistant';
   finalB.dataset.rawText = 'final B';
@@ -776,12 +805,43 @@ test('the runtime snapshot rehydrates a live turn, and a done still closes the o
   e.ctx.turnViewFinalize({ turn_id: 'turn-A', final_msg_id: 'final-B' });
 
   eq(blockB.querySelector('.simple-turn-status').className,
-     'simple-turn-status completed', 'the open turn is the one that closed');
+     'simple-turn-status working',
+     'the live turn is not closed by another turn\'s done');
   eq(topLevelIds(e).join(','),
      'turn-A,BLOCK,partial-A,turn-B,BLOCK,final-B',
-     'the answer sits under the block that closed');
+     'the late row still lands under the open block');
   assert(blockA.classList.contains('turn-working'),
          'the turn the done NAMED was not touched');
+});
+
+test("the preempted turn's done/cancel never closes the successor that is working", () => {
+  const e = env('simplified');
+  const blocks = () => e.messages.querySelectorAll('.simple-turn-block');
+  const lastStatus = () => {
+    const list = blocks();
+    return list[list.length - 1].querySelector('.simple-turn-status').className;
+  };
+  // Turn u1 is working and the reader sends u2: the previous turn closes
+  // positionally at its user boundary.
+  e.ctx.turnViewRegisterUser({ msg_id: 'u1' }, e.row('u1'));
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, e.row('a1'));
+  e.ctx.turnViewRegisterUser({ msg_id: 'u2' }, e.row('u2'));
+  e.ctx.turnViewIngest('assistant', { msg_id: 'b1' }, e.row('b1'));
+  eq(blocks().length, 2, 'two blocks on screen');
+  eq(lastStatus(), 'simple-turn-status working', 'the successor opens working');
+  // The server preempts u1 (abort + fast-restart): its cancelled done
+  // arrives now, naming u1, while u2 is live. Neither the done nor the
+  // cancel may stamp the successor "Completed"/"cancelled".
+  e.ctx.turnViewFinalize({ turn_id: 'u1' });
+  eq(lastStatus(), 'simple-turn-status working',
+     "the old turn's done leaves the live successor working");
+  e.ctx.turnViewFail('u1', 'cancelled');
+  eq(lastStatus(), 'simple-turn-status working',
+     "the old turn's cancel leaves the live successor working");
+  // The successor's own done still closes it, animation off.
+  e.ctx.turnViewFinalize({ turn_id: 'u2' });
+  eq(lastStatus(), 'simple-turn-status completed',
+     "the successor's own done still closes it");
 });
 
 test('a reloaded turn files every intermediate row into its tab', () => {

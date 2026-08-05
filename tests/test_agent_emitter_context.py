@@ -92,30 +92,40 @@ class TestOnDoneContextFields(unittest.TestCase):
         self.assertIsNotNone(payload)
         self.assertEqual(payload["context_used"], 1234)
 
-    def test_cci_thinking_callback_publishes_live_delta(self):
+    def test_cci_thinking_callback_publishes_chunked_delta(self):
         em, bus = self._make_cci_emitter()
         cb = em.get_thinking_callback(False)
 
-        cb("plan")
+        # ~300 chars: flushed once, cut at the last space BEFORE the 250
+        # threshold (never mid-word) — not token by token.
+        cb("word " * 60)
 
         bus.publish_event.assert_called_once()
         (cid, evt, data), _ = bus.publish_event.call_args
         self.assertEqual(cid, "cid1")
         self.assertEqual(evt, "thinking_delta")
-        self.assertEqual(data["text"], "plan")
+        self.assertTrue(data["text"].endswith("word"))
+        self.assertLessEqual(len(data["text"]), 250)
         self.assertEqual(data["agent_name"], "test")
         self.assertEqual(data["source"]["provider"], "claude-code-interactive")
 
-    def test_api_thinking_callback_publishes_live_delta(self):
+        # A short tail (< 250) stays buffered: no extra event (the durable
+        # thinking_content supersedes the preview at turn end).
+        bus.publish_event.reset_mock()
+        cb("plan")
+        bus.publish_event.assert_not_called()
+
+    def test_api_thinking_callback_publishes_chunked_delta(self):
         em, bus = self._make_emitter()
         cb = em.get_thinking_callback(False)
 
-        cb("plan")
+        cb("word " * 60)
 
         bus.publish_event.assert_called_once()
         (_cid, event_type, data), _ = bus.publish_event.call_args
         self.assertEqual(event_type, "thinking_delta")
-        self.assertEqual(data["text"], "plan")
+        self.assertTrue(data["text"].endswith("word"))
+        self.assertLessEqual(len(data["text"]), 250)
         self.assertEqual(data["source"]["provider"], "anthropic")
 
 

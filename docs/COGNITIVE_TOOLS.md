@@ -11,7 +11,7 @@ PawFlow provides four persistent cognitive systems that give agents long-term me
 | **Agent Diary** | Per-agent journal of observations and decisions | `data/memories/{user}/diary_{agent}.jsonl` |
 | **Project Graph** | AST-based code structure graph (17 languages) | `data/graphs/{user}/{conv_id}/graph.json` |
 
-A fifth, procedural layer — the **skill loop** — closes learning into reusable artifacts: agents are instructed (via a `## Skill loop` system-prompt block) to crystallize novel multi-step procedures into skills with `manage_resource` and to fix skills that proved wrong during use; post-compaction extraction proposes conservative `skill-draft` memories; `load_skill` tracks usage and suggests scope promotion; and the `skillCurator` flow task produces review-first maintenance reports. See [LEARNING_LOOP_PLAN.md](LEARNING_LOOP_PLAN.md).
+A fifth, procedural layer — the **skill loop** — closes learning into reusable artifacts: agents are instructed (via a `## Skill loop` system-prompt block) to crystallize novel multi-step procedures into skills with `manage_resource` and to fix skills that proved wrong during use; each completed compaction bucket or rollup can produce a structured `skill-draft` memory; the Memories UI exposes pending drafts for reviewed promotion or deletion; `load_skill` tracks usage and suggests scope promotion; and the `skillCurator` flow task produces review-first maintenance reports. See [LEARNING_LOOP_PLAN.md](LEARNING_LOOP_PLAN.md).
 
 They are interconnected:
 
@@ -391,6 +391,22 @@ If no LLM is available, a heuristic fallback scans for decision/preference indic
 ### 6.3 Summarizer Service
 
 Both auto-triggers use the `summarizer_service` -- a lightweight LLM configured for extraction tasks. It is resolved via `_get_summarizer_client()` using the user's service configuration.
+
+### 6.4 Skill Draft Proposals
+
+Every completed compaction bucket and rollup summary is also inspected for one
+repeatable operational procedure. Coverage requires an existing skill to target
+the same outcome; a broad skill about the same product or domain does not suppress
+a release, deployment, migration, validation, or recovery procedure.
+
+The proposer records an INFO outcome for every attempt (`created`, `rejected`,
+`invalid`, `duplicate`, or `skipped`) and a WARNING with traceback for `error`.
+Created proposals are conversation-scoped memories tagged `skill-draft` with a
+bounded structured payload. In the Memories panel, **Skill drafts** filters these
+entries. **Promote** submits the generated instructions through the canonical
+skill security review and creates a conversation-scoped skill; PawFlow deletes
+the draft only after creation succeeds. The normal delete action rejects a draft.
+Drafts are never silently installed or promoted to a broader scope.
 
 ---
 

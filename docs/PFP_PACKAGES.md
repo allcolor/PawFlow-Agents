@@ -97,8 +97,9 @@ They resolve through the same `pfp.asset()` API and are never auto-loaded;
 extension code must pass the URL explicitly to
 `audioContext.audioWorklet.addModule()`. The authenticated `/chat/ext/...`
 route verifies the installed whitelist, enablement, path containment, and full
-file hash before streaming, and supports immutable caching plus single byte
-ranges. See the
+file hash during the initial streaming copy, and supports immutable caching
+plus single byte ranges. Runtime hook subscriptions are limited to the hooks
+declared in the signed UI-extension manifest. See the
 [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md#ui-extensions-uiv1) for allowed
 formats, limits, slots, context snapshots, events, and teardown semantics.
 

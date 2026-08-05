@@ -221,6 +221,34 @@ def test_memory_extractor_called_per_bucket(fake_builder, monkeypatch):
         assert c["summary_len"] > 0
 
 
+def test_skill_draft_proposer_called_per_bucket(fake_builder, monkeypatch):
+    """Each completed bucket must run the observable skill proposer."""
+    proposals = []
+
+    def _fake_propose(user_id, summary, llm_client=None,
+                      conversation_id="", **kwargs):
+        proposals.append({
+            "user_id": user_id,
+            "summary": summary,
+            "conversation_id": conversation_id,
+            "client": llm_client,
+        })
+        return "rejected"
+
+    monkeypatch.setattr(
+        "core.skill_loop.propose_skill_draft_from_summary", _fake_propose)
+    _write_shared(fake_builder._shared_path,
+                  2 * L1_TRIGGER_MSGS + TAIL_RESERVE)
+    _wire(fake_builder, summarize_output="repeatable release procedure " * 10)
+
+    fake_builder.build_now_sync("cid", "uid", allow_partial=False)
+
+    assert len(proposals) == 2
+    assert all(row["user_id"] == "uid" for row in proposals)
+    assert all(row["conversation_id"] == "cid" for row in proposals)
+    assert all(row["client"] is not None for row in proposals)
+
+
 # ── trace + pyramid header integration ─────────────────────────────
 
 

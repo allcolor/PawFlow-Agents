@@ -13,6 +13,7 @@ Thread-safe. Uses ConversationStore.extra for persistence.
 """
 
 import logging
+import shlex
 import threading
 import uuid
 from typing import Any, Dict, Optional
@@ -182,6 +183,11 @@ class ToolApprovalGate:
         ".github/workflows",
     })
 
+    _PATCH_PATH_PREFIXES = (
+        "*** Add File:", "*** Update File:", "*** Delete File:",
+        "*** Move to:",
+    )
+
     # ── State ─────────────────────────────────────────────────────────
 
     _lock = threading.Lock()
@@ -267,16 +273,16 @@ class ToolApprovalGate:
         # Write/delete to protected paths always ask, even with session_allow.
         if policy_name in ("write", "edit", "delete", "batch_edit", "apply_patch",
                          "find_replace") and arguments:
-            _path = arguments.get("path", "") or arguments.get("file_path", "")
-            if cls._is_protected_path(_path):
+            if any(cls._is_protected_path(path) for path in
+                   cls._write_paths(policy_name, arguments)):
                 _force_ask = True
                 effective_name = f"{tool_name}:protected"
         if policy_name == "filesystem" and arguments:
             _fs_action = arguments.get("action", "")
             if _fs_action in ("write_file", "edit", "delete_file", "find_replace",
                               "batch_edit", "apply_patch"):
-                _path = arguments.get("path", "")
-                if cls._is_protected_path(_path):
+                if any(cls._is_protected_path(path) for path in
+                       cls._write_paths(_fs_action, arguments)):
                     _force_ask = True
                     effective_name = f"filesystem.{_fs_action}:protected"
 
@@ -625,3 +631,53 @@ class ToolApprovalGate:
             if protected.lower() in path_lower:
                 return True
         return False
+
+    @classmethod
+    def _write_paths(cls, action: str, arguments: dict) -> list[str]:
+        """Return every path a write-like call can affect.
+
+        Multi-file tools carry paths below ``edits`` or inside patch headers;
+        approval must inspect the same targets the handler will execute.
+        """
+        paths = []
+        for key in ("path", "file_path"):
+            value = arguments.get(key)
+            if isinstance(value, str) and value:
+                paths.append(value)
+
+        normalized = cls.normalize_tool_name(action)
+        if normalized == "batch_edit":
+            for edit in arguments.get("edits") or []:
+                if isinstance(edit, dict):
+                    value = edit.get("path")
+                    if isinstance(value, str) and value:
+                        paths.append(value)
+        elif normalized == "apply_patch":
+            paths.extend(cls._patch_paths(arguments.get("patch", "")))
+        return paths
+
+    @classmethod
+    def _patch_paths(cls, patch: str) -> list[str]:
+        """Extract targets from OpenAI and unified-diff patch headers."""
+        paths = []
+        for raw_line in str(patch or "").splitlines():
+            line = raw_line.strip()
+            for prefix in cls._PATCH_PATH_PREFIXES:
+                if line.startswith(prefix):
+                    value = line[len(prefix):].strip()
+                    if value:
+                        paths.append(value)
+                    break
+            else:
+                if line.startswith(("--- ", "+++ ")):
+                    value = line[4:].split("\t", 1)[0].strip()
+                    if value and value != "/dev/null":
+                        paths.append(value)
+                elif line.startswith("diff --git "):
+                    try:
+                        parts = shlex.split(line)
+                    except ValueError:
+                        parts = []
+                    if len(parts) >= 4:
+                        paths.extend(parts[2:4])
+        return paths

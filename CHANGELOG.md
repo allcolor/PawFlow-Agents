@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.104] — 2026-08-05
+
+### Added
+
+- Added a deferred integration plan for an independently distributed Maestro PFP
+  connector, with explicit licensing gates, a strict HTTP allowlist, durable job
+  ownership, security requirements, phased delivery, and go/no-go criteria.
+
+### Fixed
+
+- Gave scheduled continuation wakeups their own runtime turn identity and active
+  marker, preventing resumed work from being filed under a detail block that was
+  already labelled `Completed` while the agent was visibly still running.
+- Made the skill-learning loop produce observable structured outcomes instead of
+  silently returning `null` or swallowing provider failures, stopped broad
+  same-domain skills from suppressing recurring operational procedures, and
+  exposed pending drafts in the Memories UI with reviewed conversation-scope
+  promotion and delete actions.
+- Prevented flash and regular delegates using CCI, Antigravity, or another
+  three-argument interactive turn callback from failing before inference with
+  a callback-arity `TypeError`.
+- Made long-running-work guidance require stable workspace log and exit-status
+  files because temporary FileStore tool results may be removed by TTL or
+  compaction before a scheduled continuation wakes.
+- Enforced each PFP UI extension's signed hook declarations at browser runtime,
+  including realtime media hooks; removed a second full content pass while
+  preserving per-request asset integrity checks; and made multi-file
+  `apply_patch` rollback continue after individual restoration failures,
+  preserve the original exception, and remove directories it created.
+- Made extension-repository creation reject concurrent duplicate keys instead
+  of silently overwriting one winner, released failed Google Chat event claims
+  for retry, and made protected-path approval inspect nested `batch_edit` paths
+  plus every target encoded in an `apply_patch` payload.
+
 ## [1.0.0-beta.103] — 2026-08-04
 
 ### Fixed

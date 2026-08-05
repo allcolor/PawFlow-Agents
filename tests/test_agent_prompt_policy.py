@@ -35,6 +35,9 @@ def test_common_agent_prompt_contains_all_operating_points_without_mcp():
     assert "more than about 60 seconds" in COMMON_AGENT_SYSTEM_PROMPT
     assert "call `schedule_continuation`" in COMMON_AGENT_SYSTEM_PROMPT
     assert "Never keep the conversation alive" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "limited retention" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "stable workspace files" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "temporary tool-result URL" in COMMON_AGENT_SYSTEM_PROMPT
     assert "MCP" not in COMMON_AGENT_SYSTEM_PROMPT
     assert "PawFlow" not in COMMON_AGENT_SYSTEM_PROMPT
 

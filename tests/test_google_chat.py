@@ -16,6 +16,9 @@ def test_google_chat_space_store_defaults_denied_and_deduplicates(tmp_path, monk
     assert row["permission_mode"] == "read_only"
     assert store.claim_event("messages/1") is True
     assert store.claim_event("messages/1") is False
+    assert store.release_event("messages/1") is True
+    assert store.release_event("messages/1") is False
+    assert store.claim_event("messages/1") is True
     allowed = store.allow_space("spaces/AAA", "conv-1")
     assert allowed["status"] == "allowed"
     assert allowed["conversation_id"] == "conv-1"
@@ -217,6 +220,67 @@ def test_google_chat_allowed_group_runs_as_owner_with_actor_provenance(
     assert request.permission_mode == "read_only"
     assert request.source_attributes["google_chat.actor_id"] == "users/member"
     assert sent == [("spaces/A", "live answer", "spaces/A/threads/T")]
+
+
+def test_google_chat_delivery_failure_releases_event_for_retry(
+        tmp_path, monkeypatch):
+    from core import paths
+    from core.agent_runtime_api import (
+        AgentFinalResult, AgentRuntimeAPI, AgentSubmission)
+    from core.google_chat_store import GoogleChatSpaceStore
+    from tasks.io.google_chat import GoogleChatAgentClientTask
+
+    monkeypatch.setattr(paths, "RUNTIME_DIR", tmp_path)
+    GoogleChatSpaceStore("paw-owner", "chat").allow_space(
+        "spaces/A", "conv-1", "read_only")
+    attempts = []
+    delivered = []
+    fail_live_delivery = [True]
+
+    class Chat:
+        def send_message(self, _space_id, text, thread_name=""):
+            if text == "live answer" and fail_live_delivery[0]:
+                fail_live_delivery[0] = False
+                raise RuntimeError("transient send failure")
+            delivered.append((text, thread_name))
+
+    def submit(request):
+        attempts.append(request.msg_id)
+        request.live_callback("conv-1", "new_message", {
+            "role": "assistant", "content": "live answer", "msg_id": "a1"})
+        return AgentSubmission("accepted", "conv-1", request.msg_id)
+
+    monkeypatch.setattr(AgentRuntimeAPI, "submit_message", submit)
+    monkeypatch.setattr(
+        AgentRuntimeAPI, "wait_for_done",
+        lambda *_: AgentFinalResult("conv-1", "turn", response="live answer"))
+    monkeypatch.setattr(
+        GoogleChatAgentClientTask, "_selected_agent",
+        staticmethod(lambda _: "assistant"))
+
+    task = GoogleChatAgentClientTask({
+        "service_id": "chat", "owner_google_user_id": "users/owner"})
+    task.set_runtime_context(user_id="paw-owner")
+    task.set_services({"chat": Chat()})
+    event = {
+        "type": "MESSAGE",
+        "space": {"name": "spaces/A", "type": "ROOM"},
+        "message": {
+            "name": "spaces/A/messages/retry",
+            "argumentText": "hello",
+            "sender": {"name": "users/member", "type": "HUMAN"},
+            "thread": {"name": "spaces/A/threads/T"},
+        },
+    }
+    flowfile = FlowFile(attributes={
+        "google_chat.event_json": json.dumps(event),
+    })
+
+    assert task.execute(flowfile) == []
+    assert task.execute(flowfile) == []
+
+    assert attempts.count("google_chat:spaces/A/messages/retry") == 2
+    assert ("live answer", "spaces/A/threads/T") in delivered
 
 
 def test_agent_runtime_permission_override_is_reserved(monkeypatch):

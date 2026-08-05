@@ -29,7 +29,23 @@ async function main() {
     },
   };
   global.window = {
-    PAWFLOW_EXTENSIONS: [{ package: 'test.media', assets: [], slots: [] }],
+    PAWFLOW_EXTENSIONS: [{
+      package: 'test.media',
+      assets: [],
+      slots: [],
+      hooks: [
+        'media_track_subscribed',
+        'media_audio_frame',
+        'realtime_state_changed',
+        'media_track_unsubscribed',
+        'theme_changed',
+      ],
+    }, {
+      package: 'test.undeclared',
+      assets: [],
+      slots: [],
+      hooks: ['theme_changed'],
+    }],
     PAWFLOW_EXTENSION_CONTEXT: {
       user: 'u1', conversation: 'c1',
     },
@@ -46,6 +62,18 @@ async function main() {
   }), true);
   await tick();
   assert.ok(pfp, 'registration callback did not run');
+
+  let undeclaredPfp = null;
+  assert.strictEqual(window.pawflow.register(
+    'test.undeclared',
+    function(api) { undeclaredPfp = api; }), true);
+  await tick();
+  assert.ok(undeclaredPfp, 'undeclared-hook package did not register');
+  assert.strictEqual(
+    undeclaredPfp.on('media_audio_frame', function() {}), false,
+    'a known but undeclared media hook was accepted');
+  assert.strictEqual(typeof undeclaredPfp.on(
+    'theme_changed', function() {}), 'function');
 
   const subscribed = [];
   const frames = [];

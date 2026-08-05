@@ -64,6 +64,7 @@
 | [Roadmap Gaps](ROADMAP_GAPS.md) | Release-readiness gaps and planned improvements |
 | [Eval Harness Plan](EVAL_HARNESS_PLAN.md) | Scored agent evaluation: case format, scorers, suites, scorecard, phasing |
 | [Model Harness Profiles Plan](MODEL_HARNESS_PROFILES_PLAN.md) | Per-model prompt/tool/limit tuning behind one resolution point |
+| [Maestro PFP Integration Plan](MAESTRO_PFP_INTEGRATION_PLAN.md) | Deferred standalone connector architecture, license gates, security boundary, and phased delivery |
 | [Threat Models Plan](THREAT_MODELS_PLAN.md) | Per-surface attacker models with mandatory residual risk |
 
 ## Quick Links

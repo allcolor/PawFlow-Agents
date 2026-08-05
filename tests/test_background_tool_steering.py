@@ -86,6 +86,9 @@ def test_guidance_names_the_tools_instead_of_a_vague_background_hint():
     assert "`schedule_continuation`" in src
     assert "run_tests" in src
     assert "security_scan" in src
+    assert "temporary FileStore URL" in src
+    assert ".pawflow-runtime/<job>.log" in src
+    assert ".pawflow-runtime/<job>.status" in src
 
 
 def test_guidance_forbids_the_sleep_poll_pattern_by_name():
@@ -131,6 +134,21 @@ def test_bash_points_at_monitor_where_the_agent_actually_reads():
     assert "Monitor" in handler.description
     assert "Monitor" in handler.parameters_schema[
         "properties"]["run_in_background"]["description"]
+
+
+def test_bash_warns_that_background_filestore_output_is_not_durable():
+    from core.handlers.bash import BashHandler
+
+    handler = BashHandler()
+    schema_hint = handler.parameters_schema[
+        "properties"]["run_in_background"]["description"]
+
+    assert "FileStore" in handler.description
+    assert "TTL or compaction" in handler.description
+    assert ".log" in handler.description
+    assert ".status" in handler.description
+    assert "may expire or be cleaned" in schema_hint
+    assert ".log/.status" in schema_hint
 
 
 def test_bash_edit_guidance_matches_the_context_threshold():

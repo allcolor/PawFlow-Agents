@@ -218,14 +218,14 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
 // A stretch of activity with no user row above it -- a history window that
 // opens mid-turn, work resumed after a turn the server already closed. The
 // reader is owed a block for it exactly like any other turn.
-function _turnOpenOrphanTurn(element) {
+function _turnOpenOrphanTurn(element, data) {
   if (!element || !element.parentNode) return null;
   const container = document.getElementById('messages');
   if (container && element.parentNode !== container) return null;
-  const id = 'turn-' + (++_turnSeq);
-  const state = _turnCreateState(id, null, {}, element);
+  const id = _turnId(data) || ('turn-' + (++_turnSeq));
+  const state = _turnCreateState(id, null, data || {}, element);
   if (!state) return null;
-  _turnOpen = { turnId: id, userEl: null, data: {}, state };
+  _turnOpen = { turnId: id, userEl: null, data: data || {}, state };
   return state;
 }
 
@@ -371,7 +371,20 @@ function turnViewIngest(kind, data, element) {
   //
   // The row goes to the turn that is OPEN, not to the turn its id names: THE
   // RULE at the top of this file.
-  const state = _turnCurrentState(true) || _turnOpenOrphanTurn(element);
+  let state = _turnCurrentState(true);
+  const incomingTurnId = _turnId(data);
+  // A scheduled continuation is a new autonomous turn: it has no user row to
+  // create the positional boundary, but the poller gives it a fresh turn id.
+  // Once the open block is terminal, that new identity is boundary evidence,
+  // not routing: start an orphan block where the new row actually arrived.
+  // While a block is working, THE RULE above still wins and ids never select a
+  // different state (including concurrent or delayed events).
+  if (state && state.status !== 'working' && incomingTurnId
+      && incomingTurnId !== state.turnId) {
+    _turnOpen = null;
+    state = _turnOpenOrphanTurn(element, data);
+  }
+  state = state || _turnOpenOrphanTurn(element, data);
   if (!state || !state.blockEl.isConnected) return false;
   _turnUpdateIdentity(state, data || {});
   // A row that did not come from a replayed page, and does not itself claim to

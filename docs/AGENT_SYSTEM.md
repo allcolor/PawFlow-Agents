@@ -242,6 +242,14 @@ the same conversation later and survives a server restart. Blocking `Monitor`
 is reserved for operations expected to finish within 60 seconds or for a useful
 immediate success/failure pattern.
 
+The FileStore reference returned by a background Bash call is an internal tool
+result with limited retention: TTL or compaction cleanup may remove it before a
+scheduled wake-up. Long commands must therefore redirect stdout/stderr and
+persist their final exit status to stable workspace files before launch (for
+example `.pawflow-runtime/<job>.log` and `.pawflow-runtime/<job>.status`). The
+continuation reads those workspace files; the temporary `fs://filestore/...`
+reference is only a convenience for same-session checks.
+
 What stays stable, deliberately: the tool list is exactly two meta-tools
 (`get_tool_schema`, `use_tool`) regardless of what is installed, so tool
 definitions never move mid-conversation.
@@ -441,6 +449,11 @@ results. The caller receives the original delegate request and only the final
 synthesized reply from the target; the target's intermediate assistant blocks,
 tool calls, and tool results are not appended to the caller's private context.
 Delegate replies are never projected into shared context.
+
+Interactive providers may report each internal delegate turn with text, tool
+calls, and an optional thinking payload. The sub-agent loop accepts both the
+two-argument and three-argument callback forms; the callback only advances the
+live iteration counter and never exposes the thinking payload as answer text.
 
 ### Agent Selection
 

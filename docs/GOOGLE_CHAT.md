@@ -35,3 +35,8 @@ owner. Replies are posted to the originating thread one `new_message` event at a
 time. The final `done.response` is only used when no live assistant message was
 already delivered. Google attachment resources are downloaded with app
 credentials and materialized in FileStore before agent submission.
+
+Inbound message IDs are claimed atomically to suppress duplicate delivery. If
+agent submission or reply delivery fails, PawFlow releases that claim before
+reporting the error, so a later delivery of the same Google event can retry it
+instead of being discarded as already processed.

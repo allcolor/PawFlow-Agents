@@ -223,6 +223,28 @@ class TestSingleAgentExecution:
         assert result.tokens_out == 20
         executor.shutdown()
 
+    def test_interactive_provider_turn_callback_accepts_thinking(self):
+        """CCI-style three-argument turn callbacks must not crash delegates."""
+        client = make_client_mock([])
+
+        def complete_stream(*_args, **kwargs):
+            kwargs["turn_callback"]("Legacy intermediate answer", [])
+            kwargs["turn_callback"]("Intermediate answer", [], "Reasoning")
+            return simple_response("Final answer")
+
+        client.complete_stream = MagicMock(side_effect=complete_stream)
+        executor = SubAgentExecutor(client, make_registry())
+        task = AgentTask(
+            id="t1", agent_name="worker", message="Analyze",
+            system_prompt="Return a result",
+        )
+
+        result = executor.execute_agent(task)
+
+        assert result.status == "completed"
+        assert result.response == "Final answer"
+        executor.shutdown()
+
     def test_tool_use_loop(self):
         """Agent calls a tool, then produces final response."""
         client = make_client_mock([

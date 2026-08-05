@@ -87,6 +87,82 @@ def test_openai_apply_patch_is_atomic_across_files(tmp_path: Path):
     assert second.read_text(encoding="utf-8") == "old second\n"
 
 
+def test_apply_patch_preserves_original_error_and_continues_rollback(
+        tmp_path: Path, monkeypatch):
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("old first\n", encoding="utf-8")
+    second.write_text("old second\n", encoding="utf-8")
+    real_write_text = Path.write_text
+    real_write_bytes = Path.write_bytes
+    commit_writes = 0
+
+    def failing_commit(path, content, *args, **kwargs):
+        nonlocal commit_writes
+        commit_writes += 1
+        if commit_writes == 2:
+            raise RuntimeError("commit write failed")
+        return real_write_text(path, content, *args, **kwargs)
+
+    def partly_failing_rollback(path, content, *args, **kwargs):
+        if path == first:
+            raise OSError("rollback write failed")
+        return real_write_bytes(path, content, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", failing_commit)
+    monkeypatch.setattr(Path, "write_bytes", partly_failing_rollback)
+    with pytest.raises(RuntimeError, match="commit write failed") as caught:
+        action_apply_patch(str(tmp_path), str(tmp_path), {
+            "patch": """*** Begin Patch
+*** Update File: first.txt
+@@
+-old first
++new first
+*** Update File: second.txt
+@@
+-old second
++new second
+*** End Patch
+"""
+        })
+
+    assert second.read_text(encoding="utf-8") == "old second\n"
+    assert len(caught.value.rollback_errors) == 1
+    assert "rollback write failed" in str(caught.value.rollback_errors[0])
+
+
+def test_apply_patch_rollback_removes_created_directories(
+        tmp_path: Path, monkeypatch):
+    existing = tmp_path / "existing.txt"
+    existing.write_text("old\n", encoding="utf-8")
+    real_write_text = Path.write_text
+    commit_writes = 0
+
+    def failing_second_write(path, content, *args, **kwargs):
+        nonlocal commit_writes
+        commit_writes += 1
+        if commit_writes == 2:
+            raise RuntimeError("commit write failed")
+        return real_write_text(path, content, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", failing_second_write)
+    with pytest.raises(RuntimeError, match="commit write failed"):
+        action_apply_patch(str(tmp_path), str(tmp_path), {
+            "patch": """*** Begin Patch
+*** Add File: created/inside/new.txt
++new
+*** Update File: existing.txt
+@@
+-old
++new
+*** End Patch
+"""
+        })
+
+    assert not (tmp_path / "created").exists()
+    assert existing.read_text(encoding="utf-8") == "old\n"
+
+
 def test_apply_patch_rejects_zero_hunk_patch(tmp_path: Path):
     with pytest.raises(ValueError, match="applicable hunks|applicable"):
         action_apply_patch(str(tmp_path), str(tmp_path), {

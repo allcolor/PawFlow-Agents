@@ -141,3 +141,15 @@ class GoogleChatSpaceStore:
                     seen.pop(old_id, None)
             self._save(data)
             return True
+
+    def release_event(self, event_id: str) -> bool:
+        """Release a failed claim so the same inbound event can be retried."""
+        if not event_id:
+            raise ValueError("event_id is required")
+        with _LOCK:
+            data = self._load()
+            if event_id not in data["seen_events"]:
+                return False
+            data["seen_events"].pop(event_id, None)
+            self._save(data)
+            return True

@@ -9,8 +9,9 @@ Route pattern: `/chat/ext/<package_id>/<asset_hash>/<file_path>` where:
 
 Security:
   - whitelist: file must be listed in the install record's assets array;
-  - integrity: the file content's SHA-256 is recomputed and must match the
-    install-time digest. A tampered file refuses to serve.
+  - integrity: the file content's SHA-256 is computed while it is copied into
+    the response FlowFile and must match the install-time digest. A tampered
+    file refuses to serve without a second full content pass.
   - path containment: the resolved file must live under the package's
     content_dir (no symlink/parent traversal can escape).
   - cache: `Cache-Control: public, max-age=31536000, immutable` (hash in URL).
@@ -80,6 +81,23 @@ class _BoundedReader:
         return chunk
 
 
+class _HashingReader:
+    """Update one SHA-256 digest while a source stream is consumed."""
+
+    def __init__(self, source: BinaryIO):
+        self.source = source
+        self.digest = hashlib.sha256()
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self.source.read(size)
+        if chunk:
+            self.digest.update(chunk)
+        return chunk
+
+    def hexdigest(self) -> str:
+        return self.digest.hexdigest()
+
+
 class ServePfpExtensionAssetsTask(BaseTask):
     """Serve assets for installed PFP UI extensions."""
 
@@ -126,9 +144,10 @@ class ServePfpExtensionAssetsTask(BaseTask):
             return self._not_found(flowfile, "authentication required")
         conversation_id = (flowfile.get_attribute("http.cookie.pawflow_conv") or "").strip()
 
-        # Kill switch and per-conversation toggle: a disabled package must
-        # not be servable at all. Returning 404 (rather than 403) hides the
-        # presence of the package from a malicious page in another tab.
+        # The global kill switch always applies. A conversation toggle applies
+        # when the request carries that conversation's cookie; without one this
+        # is a user-scope request and no conversation can safely be inferred.
+        # Returning 404 (rather than 403) hides installed-package presence.
         from core.tool_mcp_filters import (
             _ui_extensions_globally_disabled, is_extension_enabled,
         )
@@ -173,20 +192,17 @@ class ServePfpExtensionAssetsTask(BaseTask):
         if not target.is_file():
             return self._not_found(flowfile, "asset missing on disk")
 
+        expected = str(asset.get("sha256") or "").lower().replace("sha256:", "")
         try:
             total_size = target.stat().st_size
             with target.open("rb") as source:
-                flowfile.set_content_from_stream(source, total_size)
+                hashing_source = _HashingReader(source)
+                flowfile.set_content_from_stream(hashing_source, total_size)
+                actual = hashing_source.hexdigest()
         except OSError as err:
             logger.warning("PFP asset read failed: %s", err)
             return self._not_found(flowfile, "asset read failed")
 
-        expected = str(asset.get("sha256") or "").lower().replace("sha256:", "")
-        actual_hash = hashlib.sha256()
-        with flowfile.get_content_stream() as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                actual_hash.update(chunk)
-        actual = actual_hash.hexdigest()
         if expected and actual != expected:
             logger.warning(
                 "PFP asset hash mismatch %s/%s: expected=%s actual=%s",

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from core import pfp_package
+from core import FlowFile, pfp_package
 
 
 def _write_ui_extension_pkg(root: Path, keypair, *, version: str = "1.0.0",
@@ -502,6 +502,22 @@ def test_pfp_ext_assets_serves_installed_script(tmp_path, keypair, monkeypatch):
     assert out.get_attribute("http.response.status") == "200"
     assert out.get_attribute("http.response.header.Content-Type").startswith("application/javascript")
     assert b"pawflow.register" in out.get_content()
+
+
+def test_pfp_ext_assets_hashes_during_the_initial_stream_copy(
+        tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    _install_ui_pkg(tmp_path, keypair)
+    rec = pfp_package.list_installed_ui_extensions(
+        user_id="alice", scope="user")[0]
+    url = _get_asset_url(rec, "content/ui/extension.js")
+
+    def unexpected_second_pass(self):
+        raise AssertionError("asset content was read again after the stream copy")
+
+    monkeypatch.setattr(FlowFile, "get_content_stream", unexpected_second_pass)
+    out = _serve_asset_task(url)
+    assert out.get_attribute("http.response.status") == "200"
 
 
 def test_pfp_ext_assets_serves_inert_glb_with_range(tmp_path, keypair, monkeypatch):

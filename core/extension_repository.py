@@ -175,15 +175,16 @@ class ExtensionRepository:
                source: str = "package") -> Dict[str, Any]:
         path = self._resource_path(
             resource_type, name, user_id, scope, conversation_id)
-        if path.exists():
-            raise ValueError(
-                f"extension resource {resource_type}/{name} already exists")
         now = time.time()
         entry = self._entry(
             resource_type, name, document, schema_version, owner_package,
             contributor_package, assets or [], installed_from or {}, source,
             created_at=now, updated_at=now)
-        self._write(path, entry)
+        with self._write_lock:
+            if path.exists():
+                raise ValueError(
+                    f"extension resource {resource_type}/{name} already exists")
+            self._write(path, entry)
         return copy.deepcopy(entry)
 
     def get(self, resource_type: str, name: str, *, user_id: str,

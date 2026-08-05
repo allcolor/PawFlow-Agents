@@ -189,6 +189,33 @@ def test_skill_creator_can_assign_after_create():
     assert "_showSkillAssignDialog(name)" in js
 
 
+def test_memory_panel_surfaces_and_promotes_skill_drafts():
+    js = Path("tasks/io/chat_ui/memories.js").read_text(encoding="utf-8")
+
+    assert "_memoryDraftFilter" in js
+    assert "function memPromoteDraft" in js
+    assert "skill_draft" in js
+    assert "action$('create_resource'" in js
+    assert "resource_type: 'skill'" in js
+    assert "scope: 'conversation'" in js
+    assert "action$('delete_memory'" in js
+    assert "requires_confirmation" in js
+
+
+def test_skill_draft_ui_labels_exist_in_every_locale():
+    import json
+
+    required = {
+        "noSkillDrafts", "promoteSkillDraft", "skillDraftCleanupFailed",
+        "skillDraftInvalid", "skillDraftPromoted", "skillDrafts",
+    }
+    for locale_file in Path("tasks/io/chat_ui/i18n").glob("*.json"):
+        if locale_file.name == "languages.json":
+            continue
+        catalog = json.loads(locale_file.read_text(encoding="utf-8"))
+        assert required <= catalog.keys(), locale_file.name
+
+
 def test_typing_indicators_use_sweeping_block_animation():
     js = Path("tasks/io/chat_ui/typing.js").read_text(encoding="utf-8")
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")

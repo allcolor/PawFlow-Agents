@@ -8,8 +8,10 @@ Leaf module: it must not import agent_streaming (would be circular).
 """
 
 import logging
+import re
 import threading
 import time
+import uuid
 from typing import Dict
 
 from core.llm_client import LLMMessage
@@ -22,6 +24,43 @@ class _AgentStreamingLoopMixin:
 
     def _streaming_agent_loop(self, ctx: Dict, conversation_id: str, bus) -> None:
         """Background thread wrapper — guaranteed cleanup via finally."""
+        # Poll-triggered work has no user message to lend it a turn id and skips
+        # the HTTP streaming entry point that normally registers `_active_turns`.
+        # Give every autonomous wake its own identity before StreamEmitter is
+        # created so SSE, persisted rows and conversation hydration all agree
+        # that this is a new live turn rather than late output from the previous
+        # completed one.
+        if ctx.get("is_poll"):
+            turn_id = ctx.get("request_msg_id") or uuid.uuid4().hex
+            ctx["request_msg_id"] = turn_id
+            agent_name = ctx.get("active_agent_name", "") or ""
+            turn_key = (
+                f"{conversation_id}:{agent_name}" if agent_name
+                else conversation_id
+            )
+            owner_id = uuid.uuid4().hex
+            ctx["_active_turn_key"] = turn_key
+            ctx["_active_turn_owner_id"] = owner_id
+            reasons = ctx.get("_scheduled_reasons") or []
+            preview = str(reasons[-1] if reasons else "scheduled wakeup")
+            preview = re.sub(r"^\[scheduled:[^\]]+\]\s*", "", preview)
+            preview = re.sub(r"^\[continuation\]\s*", "", preview)
+            marker = {
+                "conversation_id": conversation_id,
+                "agent_name": agent_name,
+                "turn_id": turn_id,
+                "started_at": time.time(),
+                "status": "preparing",
+                "message_preview": preview[:160],
+                "generation": ctx.get("_generation", 0),
+                "owner_id": owner_id,
+                "owner_type": "poll_worker",
+            }
+            with self._active_contexts_lock:
+                # A captured provider turn may already own this agent key. Do
+                # not replace it; the distinct owner id also prevents cleanup
+                # below from deleting that foreign marker.
+                self._active_turns.setdefault(turn_key, marker)
         try:
             self._streaming_agent_loop_inner(ctx, conversation_id, bus)
         except Exception as e:

@@ -1,6 +1,8 @@
 // ── Agent Memories ──────────────────────────────────────────────
 let _memoryCache = [];
 let _memoryAgentFilter = null;  // null = all
+let _memoryDraftFilter = false;
+let _memoryVisibleCache = [];
 
 function cmdShowMemories() {
   const body = {};
@@ -21,6 +23,11 @@ function showMemoryOverlay(memories) {
   overlay.id = 'memoryOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
 
+  const draftCount = memories.filter(m => !!m.skill_draft).length;
+  const visibleMemories = _memoryDraftFilter
+    ? memories.filter(m => !!m.skill_draft) : memories;
+  _memoryVisibleCache = visibleMemories;
+
   // Collect unique agent names for filter
   const agents = [...new Set(memories.map(m => m.agent || ''))].sort();
 
@@ -35,10 +42,11 @@ function showMemoryOverlay(memories) {
 
   // Build memory rows
   let msgsHtml = '';
-  if (memories.length === 0) {
-    msgsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + t('noMemoriesStored') + '</div>';
+  if (visibleMemories.length === 0) {
+    msgsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">'
+      + t(_memoryDraftFilter ? 'noSkillDrafts' : 'noMemoriesStored') + '</div>';
   } else {
-    memories.forEach((m, i) => {
+    visibleMemories.forEach((m, i) => {
       // Scope badge: private (agent+conv), conversation, agent, global
       let scopeBadge;
       if (m.agent && m.conversation_id) {
@@ -56,11 +64,14 @@ function showMemoryOverlay(memories) {
       const age = _formatAge(m.updated_at || m.created_at);
       const editBtn = '<button onclick="event.stopPropagation();memEdit(' + i + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('contextEdit')) + '">&#9998;</button>';
       const delBtn = '<button onclick="event.stopPropagation();memDelete(\'' + m.id + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('delete')) + '">&#128465;</button>';
+      const promoteBtn = m.skill_draft
+        ? '<button onclick="event.stopPropagation();memPromoteDraft(' + i + ')" style="background:#1b4332;color:#52b788;border:1px solid #2d6a4f;border-radius:4px;cursor:pointer;font-size:10px;padding:2px 7px" title="' + escapeHtml(t('promoteSkillDraft')) + '">' + escapeHtml(t('promote')) + '</button>'
+        : '';
       const text = (m.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      msgsHtml += '<div id="mem-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="this.querySelector(\'.mem-full\')&&(this.querySelector(\'.mem-full\').style.display=this.querySelector(\'.mem-full\').style.display===\'block\'?\'none\':\'block\')">'
+      msgsHtml += '<div id="mem-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer' + (m.skill_draft ? ';background:#10271f' : '') + '" onclick="this.querySelector(\'.mem-full\')&&(this.querySelector(\'.mem-full\').style.display=this.querySelector(\'.mem-full\').style.display===\'block\'?\'none\':\'block\')">'
         + '<div style="display:flex;align-items:center;gap:4px">' + scopeBadge + tagsHtml
         + '<span style="color:#6c6c8a;font-size:10px;margin-left:auto">' + age + '</span>'
-        + editBtn + delBtn + '</div>'
+        + promoteBtn + editBtn + delBtn + '</div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + text.slice(0, 200) + '</div>'
         + '<div class="mem-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">' + text + '</div>'
         + '</div>';
@@ -70,8 +81,9 @@ function showMemoryOverlay(memories) {
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
     + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('memories')) + '</h3>'
-    + '<span style="color:#6c6c8a;font-size:12px">' + escapeHtml(t('entriesCount', { n: memories.length })) + '</span>'
+    + '<span style="color:#6c6c8a;font-size:12px">' + escapeHtml(t('entriesCount', { n: visibleMemories.length })) + '</span>'
     + filterHtml
+    + '<button onclick="memToggleDraftFilter()" style="background:' + (_memoryDraftFilter ? '#1b4332' : '#2a2a4a') + ';color:' + (_memoryDraftFilter ? '#52b788' : '#a0a0c0') + ';border:1px solid ' + (_memoryDraftFilter ? '#2d6a4f' : '#444') + ';border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">' + escapeHtml(t('skillDrafts')) + ' (' + draftCount + ')</button>'
     + '<button onclick="memAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ ' + escapeHtml(t('add')) + '</button>'
     + '<button onclick="document.getElementById(\'memoryOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px">&times;</button>'
     + '</div>'
@@ -95,15 +107,79 @@ function memFilterChanged() {
   cmdShowMemories();
 }
 
+function memToggleDraftFilter() {
+  _memoryDraftFilter = !_memoryDraftFilter;
+  showMemoryOverlay(_memoryCache);
+}
+
 function memDelete(memId) {
   if (!confirm(t('memoryDeleteConfirm'))) return;
-  fireAction('delete_memory', { memory_id: memId });
-  // Refresh after a short delay to let the action complete
-  setTimeout(() => cmdShowMemories(), 500);
+  action$('delete_memory', { memory_id: memId }).subscribe({
+    next: (data) => {
+      if (data.error) { addMsg('error', data.error); return; }
+      cmdShowMemories();
+    },
+    error: (e) => addMsg('error', e.message),
+  });
+}
+
+function _skillDraftInstructions(draft) {
+  let body = '# ' + draft.description + '\n\n';
+  if (draft.trigger) body += '## Trigger\n\n' + draft.trigger + '\n\n';
+  body += '## Procedure\n\n';
+  (draft.steps || []).forEach((step, i) => { body += (i + 1) + '. ' + step + '\n'; });
+  return body;
+}
+
+function memPromoteDraft(idx, force) {
+  const memory = _memoryVisibleCache[idx];
+  const draft = memory && memory.skill_draft;
+  if (!memory || !draft || !memory.conversation_id) {
+    addMsg('error', t('skillDraftInvalid'));
+    return;
+  }
+  const payload = {
+    resource_type: 'skill',
+    name: draft.name,
+    scope: 'conversation',
+    conversation_id: memory.conversation_id,
+    data: {
+      description: draft.description,
+      instructions: _skillDraftInstructions(draft),
+      metadata: { created_from: 'skill-draft', memory_id: memory.id },
+    },
+  };
+  if (force) payload.force = true;
+  action$('create_resource', payload).subscribe({
+    next: (data) => {
+      if (data && data.requires_confirmation) {
+        _showSkillReviewConfirm(data.review, data.message,
+          function() { memPromoteDraft(idx, true); });
+        return;
+      }
+      if (data.error) { addMsg('error', data.error); return; }
+      action$('delete_memory', { memory_id: memory.id }).subscribe({
+        next: (deleted) => {
+          if (deleted.error || !deleted.deleted) {
+            addMsg('error', deleted.error || t('skillDraftCleanupFailed'));
+            return;
+          }
+          addMsg('system', t('skillDraftPromoted', { name: draft.name }));
+          notifyResourceChanged('skill', 'create', {
+            name: draft.name, scope: 'conversation',
+          });
+          loadResources();
+          cmdShowMemories();
+        },
+        error: (e) => addMsg('error', e.message),
+      });
+    },
+    error: (e) => addMsg('error', e.message),
+  });
 }
 
 function memEdit(idx) {
-  const m = _memoryCache[idx];
+  const m = _memoryVisibleCache[idx];
   if (!m) return;
   const row = document.getElementById('mem-row-' + idx);
   if (!row) return;

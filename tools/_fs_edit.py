@@ -647,20 +647,43 @@ def _apply_openai_patch(root_dir: str, patch: str, *,
         target: target.read_bytes() if target.exists() else None
         for target in pending
     }
+    created_dirs = set()
     try:
         for target, content in pending.items():
             if content is None:
                 target.unlink(missing_ok=True)
             else:
+                parent = target.parent
+                missing = []
+                while not parent.exists():
+                    missing.append(parent)
+                    if parent == parent.parent:
+                        break
+                    parent = parent.parent
+                created_dirs.update(missing)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
-    except Exception:
+    except Exception as original_error:
+        rollback_errors = []
         for target, original in originals.items():
-            if original is None:
-                target.unlink(missing_ok=True)
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(original)
+            try:
+                if original is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(original)
+            except Exception as rollback_error:
+                rollback_errors.append(rollback_error)
+        for directory in sorted(
+                created_dirs, key=lambda item: len(item.parts), reverse=True):
+            try:
+                directory.rmdir()
+            except FileNotFoundError:
+                pass
+            except OSError as rollback_error:
+                rollback_errors.append(rollback_error)
+        if rollback_errors:
+            original_error.rollback_errors = tuple(rollback_errors)
         raise
 
     return {

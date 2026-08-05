@@ -42,6 +42,39 @@ class TestApprovalProbe:
                            perms={"bash": "session_allow"}) == \
             "needs_approval"
 
+    def test_batch_edit_protected_nested_path_bypasses_no_permission(self):
+        arguments = {"edits": [{
+            "path": ".github/workflows/release.yml",
+            "old_string": "old", "new_string": "new",
+        }]}
+        assert self._check(
+            "batch_edit", arguments=arguments,
+            perms={"batch_edit": "session_allow",
+                   "_allow_all:batch_edit": "always_allow"}) == \
+            "needs_approval"
+
+    def test_apply_patch_embedded_protected_path_bypasses_no_permission(self):
+        arguments = {"patch": (
+            "*** Begin Patch\n"
+            "*** Update File: Dockerfile\n"
+            "@@\n-old\n+new\n"
+            "*** End Patch\n")}
+        assert self._check(
+            "apply_patch", arguments=arguments,
+            perms={"apply_patch": "session_allow",
+                   "_allow_all:apply_patch": "always_allow"}) == \
+            "needs_approval"
+
+    def test_filesystem_patch_embedded_protected_path_bypasses_no_allow_all(self):
+        arguments = {
+            "action": "apply_patch",
+            "patch": "--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n-old\n+new\n",
+        }
+        assert self._check(
+            "filesystem", arguments=arguments,
+            perms={"_allow_all:filesystem": "always_allow"}) == \
+            "needs_approval"
+
 
 # ── tool bridge ──────────────────────────────────────────────────────
 

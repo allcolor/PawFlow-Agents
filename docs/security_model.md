@@ -47,7 +47,7 @@ tool the mode allows, without asking.
 ### What the approval decision applies to
 
 An approval is only meaningful if the call that runs is the call that was
-approved. Four properties enforce that, each covered by regression tests in
+approved. Five properties enforce that, each covered by regression tests in
 `tests/test_tool_call_security_ordering.py`:
 
 - **Canonical before decided.** Arguments are decoded and wrapper tool names
@@ -68,6 +68,10 @@ approved. Four properties enforce that, each covered by regression tests in
   never prompts twice.
 - **Undecodable is refused, not emptied.** A payload that cannot be parsed is
   rejected with a diagnostic instead of degrading to `{}` and executing.
+- **Every write target is inspected.** Protected-path checks include direct
+  `path`/`file_path` values, each `batch_edit.edits[].path`, and every target in
+  OpenAI or unified-diff `apply_patch` headers. A session or allow-all grant for
+  the outer tool never covers a protected path hidden inside its payload.
 
 One gap remains: filesystem handlers resolve the expression language
 (`${scope.key}`) on their own arguments at handler entry, after the gate. A

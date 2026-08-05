@@ -379,9 +379,10 @@ class _LLMClientDriverMixin:
         Also returns the full LLMResponse at the end.  If callback is None,
         behaves like complete() but uses the streaming API under the hood.
 
-        turn_callback(text, tool_calls): called by multi-turn providers
-        (claude-code) at the end of each internal turn. Allows the agent
-        loop to persist intermediate messages.
+        turn_callback(text, tool_calls, thinking=""): called by multi-turn
+        providers at the end of each internal turn. Providers may omit the
+        optional thinking argument. Allows the agent loop to persist
+        intermediate messages.
 
         Supports both OpenAI and Anthropic streaming.
         """

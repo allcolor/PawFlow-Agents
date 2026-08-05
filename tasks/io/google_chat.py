@@ -277,6 +277,7 @@ class GoogleChatAgentClientTask(BaseTask):
             elif result and result.response and not sent_live:
                 self._send(service, space_id, result.response, thread_name)
         except Exception as exc:
+            store.release_event(event_id)
             logger.warning("Google Chat agent submission failed: %s", exc, exc_info=True)
             self._send(service, space_id, f"Agent request failed: {exc}", thread_name)
         return []

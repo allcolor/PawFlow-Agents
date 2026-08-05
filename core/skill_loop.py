@@ -21,7 +21,10 @@ logger = logging.getLogger(__name__)
 
 _DRAFT_TTL_DAYS = 90
 _MAX_EXISTING_SKILLS_LISTED = 40
-_MAX_DRAFT_TEXT_CHARS = 900
+_MAX_DESCRIPTION_CHARS = 300
+_MAX_STEP_CHARS = 400
+_MAX_TRIGGER_CHARS = 300
+_SKILL_DRAFT_DATA_PREFIX = "Skill draft data: "
 
 SKILL_LOOP_HINT = (
     "\n\n## Skill loop"
@@ -48,19 +51,28 @@ SKILL_IMPROVE_FOOTER = (
 
 _SKILL_DRAFT_PROMPT = """You review a conversation compaction summary to decide whether it contains ONE reusable multi-step procedure worth saving as an agent skill.
 
-Only propose a skill when ALL of these hold:
+Propose a skill when ALL of these hold:
 - the procedure was discovered through real work (workaround, non-obvious sequence, hard-won configuration), not generic knowledge;
 - it is likely to recur in future conversations;
-- it is NOT already covered by an existing skill listed below.
+- the summary contains enough concrete actions or checks to write useful steps;
+- it is NOT procedurally covered by an existing skill listed below.
+
+An existing skill covers the procedure only when its name or description
+explicitly targets the same operational outcome. The same product or domain does not count as coverage.
+In particular, recurring release,
+deployment, migration, incident-response, and validation procedures are good
+candidates even when a broad developer skill exists.
 
 Existing skills:
 {existing}
 
 Return a JSON object:
-{{"skill": null}} when nothing qualifies (the common case), or
+{{"skill": null}} only when the summary has no qualifying repeatable procedure, or
 {{"skill": {{"name": "kebab-case-name", "description": "one line: what it does and when to use it", "steps": ["step 1", "step 2"], "trigger": "condition that should make an agent load this skill"}}}}
 
-Be conservative: prefer null over a weak proposal.
+Prefer a concrete draft whenever the summary contains a repeatable operational
+sequence with validation or recovery steps. Do not reject it just because the
+individual commands are familiar.
 
 Summary:
 """
@@ -72,20 +84,28 @@ def propose_skill_draft_from_summary(
     llm_client=None,
     conversation_id: str = "",
     agent_name: str = "",
-) -> bool:
+) -> str:
     """Best-effort: store at most one skill-draft memory from a summary.
 
-    Returns True when a draft was stored. Never raises.
+    Return one of ``created``, ``rejected``, ``invalid``, ``duplicate``,
+    ``skipped``, or ``error``. Never raises.
     """
     if not user_id or not summary or llm_client is None:
-        return False
+        return "skipped"
     try:
-        draft = _propose_with_llm(llm_client, summary, user_id, conversation_id)
+        outcome, draft = _propose_with_llm(
+            llm_client, summary, user_id, conversation_id)
         if not draft:
-            return False
+            logger.info(
+                "[skill-loop] proposal outcome=%s user=%s cid=%s",
+                outcome, user_id[:8], conversation_id[:8])
+            return outcome
         text = _draft_memory_text(draft)
-        if not text or _draft_exists(user_id, draft["name"]):
-            return False
+        if _draft_exists(user_id, draft["name"]):
+            logger.info(
+                "[skill-loop] proposal outcome=duplicate name=%s user=%s cid=%s",
+                draft["name"], user_id[:8], conversation_id[:8])
+            return "duplicate"
         from core.memory_store import MemoryStore
         MemoryStore.instance().remember(
             user_id=user_id,
@@ -97,12 +117,14 @@ def propose_skill_draft_from_summary(
             category="discoveries",
             expires_at=time.time() + _DRAFT_TTL_DAYS * 86400,
         )
-        logger.info("[skill-loop] stored skill draft '%s' for user %s",
-                    draft["name"], user_id[:8])
-        return True
+        logger.info(
+            "[skill-loop] proposal outcome=created name=%s user=%s cid=%s",
+            draft["name"], user_id[:8], conversation_id[:8])
+        return "created"
     except Exception:
-        logger.debug("[skill-loop] draft proposal failed", exc_info=True)
-        return False
+        logger.warning("[skill-loop] proposal failed outcome=error user=%s cid=%s",
+                       user_id[:8], conversation_id[:8], exc_info=True)
+        return "error"
 
 
 def _existing_skill_lines(user_id: str, conversation_id: str) -> str:
@@ -149,33 +171,64 @@ def _propose_with_llm(client, summary: str, user_id: str,
     content = (resp.content or "").strip()
     match = re.search(r"\{.*\}", content, re.DOTALL)
     if not match:
-        return None
+        return "invalid", None
     data = json.loads(match.group())
     skill = data.get("skill") if isinstance(data, dict) else None
+    if skill is None:
+        return "rejected", None
     if not isinstance(skill, dict):
-        return None
+        return "invalid", None
+    raw_steps = skill.get("steps")
+    if not isinstance(raw_steps, list):
+        return "invalid", None
     name = str(skill.get("name", "")).strip().lower()
     name = re.sub(r"[^a-z0-9-]+", "-", name).strip("-")[:64]
-    description = str(skill.get("description", "")).strip()
-    steps = [str(s).strip() for s in (skill.get("steps") or [])
-             if str(s).strip()]
-    trigger = str(skill.get("trigger", "")).strip()
+    description = _one_line(skill.get("description", ""))[:_MAX_DESCRIPTION_CHARS]
+    steps = [_one_line(s)[:_MAX_STEP_CHARS]
+             for s in raw_steps if _one_line(s)]
+    trigger = _one_line(skill.get("trigger", ""))[:_MAX_TRIGGER_CHARS]
     if not name or not description or not steps:
-        return None
-    return {"name": name, "description": description,
-            "steps": steps[:8], "trigger": trigger}
+        return "invalid", None
+    return "candidate", {"name": name, "description": description,
+                         "steps": steps[:8], "trigger": trigger}
 
 
 def _draft_memory_text(draft) -> str:
-    steps = "; ".join(
-        f"{i}) {s}" for i, s in enumerate(draft["steps"], start=1))
-    trigger = f" Trigger: {draft['trigger']}." if draft.get("trigger") else ""
-    text = (
-        f"Skill draft: `{draft['name']}` — {draft['description']}.{trigger} "
-        f"Steps: {steps}. If this procedure recurs, create the skill via "
-        f"manage_resource; otherwise forget this draft."
+    payload = json.dumps(draft, ensure_ascii=False, separators=(",", ":"))
+    return (
+        f"Skill draft: `{draft['name']}` — {draft['description']}.\n"
+        f"{_SKILL_DRAFT_DATA_PREFIX}{payload}\n"
+        "Promote this draft to a conversation skill if it is useful; "
+        "otherwise delete it."
     )
-    return text[:_MAX_DRAFT_TEXT_CHARS]
+
+
+def parse_skill_draft_memory(text: str):
+    """Return structured draft data from a skill-draft memory, or ``None``."""
+    marker = str(text or "").find(_SKILL_DRAFT_DATA_PREFIX)
+    if marker < 0:
+        return None
+    raw = str(text)[marker + len(_SKILL_DRAFT_DATA_PREFIX):].splitlines()[0]
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    name = str(value.get("name", ""))
+    description = str(value.get("description", ""))
+    steps = value.get("steps")
+    trigger = str(value.get("trigger", ""))
+    if (not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name)
+            or not description or not isinstance(steps, list)
+            or not steps or not all(isinstance(step, str) and step for step in steps)):
+        return None
+    return {"name": name, "description": description,
+            "steps": steps, "trigger": trigger}
+
+
+def _one_line(value) -> str:
+    return " ".join(str(value or "").split())
 
 
 def _draft_exists(user_id: str, name: str) -> bool:

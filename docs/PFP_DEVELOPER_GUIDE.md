@@ -428,6 +428,10 @@ write access. The declared `asset_extensions` must be a subset of PawFlow's
 inert repository allow-list. Scripts, HTML, Python, WebAssembly, and external
 URLs do not become repository assets through this object.
 
+Resource creation is atomic for each scoped `(resource_type, name)` key. If
+concurrent callers create the same key, exactly one succeeds and every other
+caller receives an `already exists` error; `create` never overwrites the winner.
+
 A pack that contributes resources declares the normal package dependency:
 
 ```json
@@ -645,6 +649,11 @@ Hooks accepted in `ui.v1`: `boot`, `shutdown`, `conversation_changed`,
 operations emit `resource_changed` with `resource_type`, `operation`, `name`,
 and scope metadata.
 
+`pfp.on(hook, callback)` accepts only hooks declared by that package's signed
+`hooks` manifest field. A hook known to `ui.v1` but omitted from the manifest
+is refused at runtime. This is especially important for realtime media hooks,
+whose declaration is part of the install consent surface.
+
 `scripts` and `worklets` accept only `.js`, `styles` only `.css`, and
 i18n catalogs only `.json`. Each `worklets` entry requires a logical `id`
 and a `path`; it is reviewed as executable code but is never auto-loaded.
@@ -665,12 +674,14 @@ scripts keep their manifest insertion order. Inert `files` and executable
 `worklets` are listed in the boot manifest but never auto-loaded.
 `pfp.asset(idOrPath)` returns their hash-addressed authenticated URL, suitable
 for an explicit call such as `audioContext.audioWorklet.addModule(url)`. Asset
-responses recompute SHA-256, enforce
+responses compute SHA-256 during the initial streaming copy, enforce
 content-directory containment, set `nosniff` and immutable caching, expose an
 explicit MIME type, and support one RFC byte range (`206`, `Content-Range`,
 and `Accept-Ranges: bytes`). Malformed, multipart, or unsatisfiable ranges
 return `416`. Undeclared, tampered, disabled, uninstalled, or unauthenticated
-assets return `404`.
+assets return `404`. Per-conversation enablement is enforced when the request
+carries `pawflow_conv`; without conversation context, only the global switch
+and user-scope installation state apply.
 
 The extension JS calls `pawflow.register("<package_id>", function (pfp) {
 ... })` at top level. The `pfp` object exposes:

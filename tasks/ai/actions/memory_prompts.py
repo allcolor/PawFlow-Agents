@@ -7,6 +7,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _memory_payload(entry, *, include_timestamps: bool = False) -> dict:
+    tags = list(getattr(entry, "tags", []) or [])
+    payload = {
+        "id": entry.id, "text": entry.text, "tags": tags,
+        "source": getattr(entry, "source", ""),
+        "agent": getattr(entry, "agent", ""),
+        "conversation_id": getattr(entry, "conversation_id", ""),
+        "category": getattr(entry, "category", ""),
+    }
+    if include_timestamps:
+        payload.update({
+            "created_at": getattr(entry, "created_at", 0),
+            "updated_at": getattr(entry, "updated_at", 0),
+            "ended": getattr(entry, "ended", 0),
+            "expires_at": getattr(entry, "expires_at", 0),
+        })
+    if "skill-draft" in tags:
+        from core.skill_loop import parse_skill_draft_memory
+        draft = parse_skill_draft_memory(entry.text)
+        if draft:
+            payload["skill_draft"] = draft
+    return payload
+
+
 def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
     """Handle memory prompts actions. Returns [flowfile] or None."""
 
@@ -29,14 +53,8 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
                 key=lambda e: (e.updated_at or e.created_at or 0),
                 reverse=True,
             )
-            result = [{
-                "id": e.id, "text": e.text, "tags": e.tags,
-                "created_at": e.created_at, "updated_at": e.updated_at,
-                "source": e.source, "agent": e.agent,
-                "conversation_id": e.conversation_id,
-                "category": e.category, "ended": e.ended,
-                "expires_at": e.expires_at,
-            } for e in entries]
+            result = [_memory_payload(e, include_timestamps=True)
+                      for e in entries]
             flowfile.set_content(json.dumps({
                 "memories": result, "count": len(result),
             }, ensure_ascii=False).encode())
@@ -57,12 +75,7 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
                 agent_name=str(body.get("agent_name", "") or ""),
                 conversation_id=str(body.get("conversation_id", "") or ""),
             )
-            result = [{
-                "id": entry.id, "text": entry.text, "tags": entry.tags,
-                "agent": entry.agent,
-                "conversation_id": entry.conversation_id,
-                "category": entry.category,
-            } for entry in entries]
+            result = [_memory_payload(entry) for entry in entries]
             flowfile.set_content(json.dumps({
                 "memories": result, "count": len(result), "query": query,
             }, ensure_ascii=False).encode())

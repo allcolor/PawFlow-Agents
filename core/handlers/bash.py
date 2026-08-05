@@ -99,7 +99,11 @@ class BashHandler(BaseFsHandler):
             "commands run without a time limit unless you set this. "
             "If > 1000, treated as ms.\n"
             " - run_in_background: Set to true to run in background. "
-            "Use read to check the output file later. "
+            "The returned FileStore tool-result URL has limited retention and "
+            "may be removed by TTL or compaction before a scheduled wake-up. "
+            "For long work, redirect stdout/stderr and the final exit status to "
+            "stable workspace .log and .status files before launch, then read "
+            "those files after the wake-up. "
             "Do not use '&' at the end — use this parameter instead.\n"
             "For a long command you intend to wait for (build, test suite, "
             "deploy), prefer the Monitor tool: it blocks until the command "
@@ -128,7 +132,7 @@ class BashHandler(BaseFsHandler):
                 "cmd": {"type": "string", "description": "Alias for command."},
                 "description": {"type": "string", "description": "Short description of what the command does."},
                 "timeout": {"type": "integer", "description": "Optional timeout in milliseconds. Omit for no timeout (command runs until it exits)."},
-                "run_in_background": {"type": "boolean", "description": "Run command in background, then read the output file at checkpoints. To wait for a long command instead, use the Monitor tool — never a sleep loop."},
+                "run_in_background": {"type": "boolean", "description": "Run command in background. Its temporary FileStore result may expire or be cleaned before a wake-up; persist stdout/stderr and exit status to stable workspace .log/.status files for long work. To wait for a shorter command, use Monitor — never a sleep loop."},
                 "shell": {
                     "type": "string",
                     "description": "Shell to use (default: bash). Options: bash, powershell, cmd, python, node.",

@@ -412,6 +412,34 @@ test('activity after a finished turn keeps a block', () => {
   assert(user.isConnected, 'the user row is untouched');
 });
 
+test('a scheduled wakeup opens a working block after the completed turn', () => {
+  const e = env('simplified');
+  startTurn(e, 'user-turn');
+  const answer = e.row('answer-1');
+  e.ctx.turnViewIngest('assistant', {
+    turn_id: 'user-turn', msg_id: 'answer-1',
+  }, answer);
+  e.ctx.turnViewFinalize({ turn_id: 'user-turn', final_msg_id: 'answer-1' });
+  const completed = e.block();
+  const blockStatus = block => block.querySelector('.simple-turn-status')
+    .className.replace('simple-turn-status ', '');
+  eq(blockStatus(completed), 'completed');
+
+  // schedule_continuation resumes autonomously: there is no new user row, but
+  // the poller gives the resumed execution its own turn identity.
+  const resumed = e.row('wake-msg');
+  e.ctx.turnViewIngest('assistant', {
+    turn_id: 'wakeup-turn', msg_id: 'wake-msg',
+  }, resumed);
+
+  const blocks = e.messages.querySelectorAll('.simple-turn-block');
+  eq(blocks.length, 2, 'the wakeup does not reuse the terminal block');
+  eq(blockStatus(blocks[0]), 'completed', 'the original turn stays completed');
+  eq(blockStatus(blocks[1]), 'working', 'the resumed turn is visibly working');
+  eq(blocks[1].dataset.turnId, 'wakeup-turn');
+  eq(blocks[1].nextSibling, resumed, 'the resumed output belongs to the new block');
+});
+
 // ── Reload: the whole turn must rebuild from classifier rows ────────────
 //
 // A restart plus a hard reload replays history through _renderHistoryRow, not

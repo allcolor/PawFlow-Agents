@@ -107,6 +107,10 @@ finalization paths.
    technical grouping.
 2. One activity block represents one user turn, not one block per intermediate
    assistant message or per sub-agent.
+   Autonomous scheduled wakeups have no user row, so the poller assigns each one
+   a distinct runtime turn UUID. If the preceding block is already terminal, the
+   first resumed row opens a new positionally anchored activity block that stays
+   `Working` until that wakeup emits its own terminal event.
 3. The header identifies the primary agent and LLM service. Delegated agent
    identity remains visible inside detail rows.
 4. The tabs are live from the first event until terminal completion.

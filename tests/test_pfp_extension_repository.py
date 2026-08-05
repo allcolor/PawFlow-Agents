@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -154,6 +156,38 @@ def test_repository_objects_are_installable_without_builtin_resource_type(
         "example.avatar", user_id="alice")
     assert descriptor["owner_package"] == "examples.avatar-runtime"
     assert descriptor["schema_version"] == "1"
+
+
+def test_concurrent_create_of_same_resource_has_one_winner(monkeypatch):
+    repository = ExtensionRepository.instance()
+    original_write = repository._write
+    both_writers = threading.Barrier(2)
+
+    def delayed_write(path, value):
+        try:
+            both_writers.wait(timeout=0.25)
+        except threading.BrokenBarrierError:
+            pass
+        return original_write(path, value)
+
+    monkeypatch.setattr(repository, "_write", delayed_write)
+
+    def create(title):
+        return repository.create(
+            "example.avatar", "concurrent", user_id="alice", scope="user",
+            document={"format": "example.avatar.v1", "title": title},
+            schema_version="1", owner_package="examples.avatar-runtime",
+            contributor_package="examples.avatar-runtime")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(create, title) for title in ("First", "Second")]
+    successes = [future.result() for future in futures if future.exception() is None]
+    failures = [future.exception() for future in futures if future.exception() is not None]
+
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert isinstance(failures[0], ValueError)
+    assert "already exists" in str(failures[0])
 
 
 def test_invalid_resource_document_is_blocked_during_inspection(tmp_path):

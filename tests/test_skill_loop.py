@@ -14,6 +14,7 @@ from core.memory_store import MemoryStore
 from core.skill_loop import (
     SKILL_IMPROVE_FOOTER,
     SKILL_LOOP_HINT,
+    parse_skill_draft_memory,
     propose_skill_draft_from_summary,
 )
 
@@ -59,9 +60,9 @@ class TestSkillDraftProposal:
             "steps": ["edit config", "run foo --reload", "check status"],
             "trigger": "foo config changed",
         }})
-        ok = propose_skill_draft_from_summary(
+        outcome = propose_skill_draft_from_summary(
             "u1", "long summary", llm_client=client, conversation_id="c1")
-        assert ok is True
+        assert outcome == "created"
         entries = mem_store.list_all("u1")
         assert len(entries) == 1
         e = entries[0]
@@ -73,9 +74,9 @@ class TestSkillDraftProposal:
 
     def test_null_skill_stores_nothing(self, mem_store):
         client = _FakeClient({"skill": None})
-        ok = propose_skill_draft_from_summary(
+        outcome = propose_skill_draft_from_summary(
             "u1", "summary", llm_client=client, conversation_id="c1")
-        assert ok is False
+        assert outcome == "rejected"
         assert mem_store.list_all("u1") == []
 
     def test_duplicate_draft_not_stored_twice(self, mem_store):
@@ -86,20 +87,85 @@ class TestSkillDraftProposal:
         }}
         assert propose_skill_draft_from_summary(
             "u1", "s", llm_client=_FakeClient(payload),
-            conversation_id="c1")
-        assert not propose_skill_draft_from_summary(
+            conversation_id="c1") == "created"
+        assert propose_skill_draft_from_summary(
             "u1", "s2", llm_client=_FakeClient(payload),
-            conversation_id="c2")
+            conversation_id="c2") == "duplicate"
         assert len(mem_store.list_all("u1")) == 1
 
     def test_no_client_is_noop(self, mem_store):
-        assert propose_skill_draft_from_summary("u1", "s") is False
+        assert propose_skill_draft_from_summary("u1", "s") == "skipped"
 
     def test_invalid_payload_is_noop(self, mem_store):
         client = _FakeClient({"skill": {"name": "x"}})  # missing fields
-        assert not propose_skill_draft_from_summary(
-            "u1", "s", llm_client=client)
+        assert propose_skill_draft_from_summary(
+            "u1", "s", llm_client=client) == "invalid"
         assert mem_store.list_all("u1") == []
+
+    def test_steps_must_be_a_json_array(self, mem_store):
+        client = _FakeClient({"skill": {
+            "name": "bad-steps", "description": "bad",
+            "steps": "run tests",
+        }})
+        assert propose_skill_draft_from_summary(
+            "u1", "s", llm_client=client) == "invalid"
+        assert mem_store.list_all("u1") == []
+
+    def test_failure_is_an_observable_error(self, mem_store, caplog):
+        client = _FakeClient({"skill": None})
+        client.complete = MagicMock(side_effect=RuntimeError("provider down"))
+
+        assert propose_skill_draft_from_summary(
+            "u1", "summary", llm_client=client) == "error"
+        assert "proposal failed" in caplog.text
+
+    def test_prompt_does_not_treat_domain_overlap_as_coverage(self, mem_store):
+        client = _FakeClient({"skill": None})
+        propose_skill_draft_from_summary(
+            "u1", "Repeatable PawFlow release procedure", llm_client=client)
+
+        prompt = client.calls[0]["messages"][0].content
+        assert "same product or domain does not count as coverage" in prompt
+        assert "release" in prompt
+
+    def test_draft_memory_has_round_trippable_structured_fields(self, mem_store):
+        client = _FakeClient({"skill": {
+            "name": "release-pawflow",
+            "description": "Release PawFlow safely",
+            "steps": ["run all tests", "build twice", "push tag"],
+            "trigger": "a PawFlow release is requested",
+        }})
+        assert propose_skill_draft_from_summary(
+            "u1", "summary", llm_client=client,
+            conversation_id="c1") == "created"
+
+        draft = parse_skill_draft_memory(mem_store.list_all("u1")[0].text)
+        assert draft == {
+            "name": "release-pawflow",
+            "description": "Release PawFlow safely",
+            "steps": ["run all tests", "build twice", "push tag"],
+            "trigger": "a PawFlow release is requested",
+        }
+
+    def test_list_memories_exposes_structured_skill_draft(self, mem_store):
+        from core import FlowFile
+        from tasks.ai.actions.memory_prompts import _handle_memory_prompts
+
+        client = _FakeClient({"skill": {
+            "name": "release-pawflow",
+            "description": "Release PawFlow safely",
+            "steps": ["run tests", "push tag"],
+            "trigger": "release requested",
+        }})
+        propose_skill_draft_from_summary(
+            "u1", "summary", llm_client=client,
+            conversation_id="c1")
+
+        result = _handle_memory_prompts(
+            None, "list_memories", {}, None, "u1", FlowFile())
+        payload = json.loads(result[0].get_content())
+        assert payload["memories"][0]["skill_draft"]["name"] == \
+            "release-pawflow"
 
     def test_hint_mentions_manage_resource(self):
         assert "manage_resource" in SKILL_LOOP_HINT

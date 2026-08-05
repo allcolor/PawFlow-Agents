@@ -422,7 +422,7 @@ class _SubAgentExecutorLoopMixin:
                 # agent's does (one increment per CC output message).
                 _cc_turn_count = [0]
 
-                def _turn_cb(_text, _tool_calls):
+                def _turn_cb(_text, _tool_calls, _turn_thinking=""):
                     _cc_turn_count[0] += 1
                     if _active_inst and _active_ctx_key:
                         try:

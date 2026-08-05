@@ -402,6 +402,13 @@
           _logExtError(packageId, 'on', 'unknown hook: ' + hookName);
           return false;
         }
+        var manifestEntry = _manifestEntry(packageId);
+        var declaredHooks = manifestEntry && Array.isArray(manifestEntry.hooks)
+          ? manifestEntry.hooks : [];
+        if (declaredHooks.indexOf(hookName) < 0) {
+          _logExtError(packageId, 'on', 'undeclared hook: ' + hookName);
+          return false;
+        }
         if (!_isFn(cb)) return false;
         if (!_hookListeners[hookName]) _hookListeners[hookName] = [];
         _hookListeners[hookName].push({ pkg: packageId, cb: cb });

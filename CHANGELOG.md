@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.111] — 2026-08-05
+
+### Fixed
+
+- API preempt no longer surfaces an error turn: aborting the in-flight HTTP
+  stream now converts the closed-socket read error into a clean
+  `AgentCancelled` interruption (openai, openai-responses, anthropic).
+- User messages are no longer duplicated when the agent is busy: a message
+  pre-persisted by the streaming ingress and queued while the agent is
+  active is not re-appended on the next drain, so the transcript and agent
+  context keep a single user row (one uploaded image is described once).
+
 ## [1.0.0-beta.110] — 2026-08-05
 
 ### Added

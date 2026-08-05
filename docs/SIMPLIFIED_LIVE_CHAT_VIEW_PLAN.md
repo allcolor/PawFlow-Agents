@@ -1293,6 +1293,15 @@ server restart, where the turn died on an auth error. The promotion is now
 refused unless the row is already filed inside this turn's block or sits after
 it at top level. Position decides here as everywhere else.
 
+**A result id is not a message id.** API providers keep background completion
+as a `tool_result`, and the live renderer attaches that result to its canonical
+`tool_call` row. The result id may therefore resolve either to that technical
+row or to a hidden grouped-message marker inside it. The simplified view only
+indexes Messages rows as final candidates and rejects any resolved candidate
+whose canonical row belongs to a technical tab. A provider naming a background
+result at `done` can close the block, but it cannot replace the last assistant
+message below it.
+
 **A turn ends when the turn ends.** Closing the block required `is_final` and
 `final_msg_id` together; it now happens on any done that is not `continuing`,
 and on the next user message for a turn nobody closed. What the server names

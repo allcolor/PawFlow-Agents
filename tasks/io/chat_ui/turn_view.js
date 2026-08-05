@@ -336,6 +336,12 @@ function _turnTabForKind(kind) {
   return 'messages';
 }
 
+function _turnMessageRow(element) {
+  let row = element;
+  while (row && !(row.classList && row.classList.contains('msg'))) row = row.parentNode;
+  return row && _turnTabForKind(_turnRowRole(row)) === 'messages' ? row : null;
+}
+
 // Every row belongs to the turn currently open -- position decides, and only
 // position. A turn_id is never consulted here: when the two disagree the layout
 // on screen has to win. A second user message arriving before the answer gives
@@ -406,7 +412,12 @@ function turnViewIngest(kind, data, element) {
   const tabKey = _turnTabForKind(kind); const tab = state.tabs[tabKey];
   if (element) {
     const msgId = String((data && data.msg_id) || (element.dataset && element.dataset.msgid) || '');
-    if (msgId) state.elementsByMsgId.set(msgId, element);
+    // Only message rows can ever own the visible last-message spot. A live
+    // tool_result is handed over with its matching tool_call element, so
+    // indexing every kind here made result.msg_id resolve to that technical
+    // row when the provider later named it in done.
+    const messageRow = tabKey === 'messages' ? _turnMessageRow(element) : null;
+    if (msgId && messageRow) state.elementsByMsgId.set(msgId, messageRow);
     const tcId = String((data && (data.tc_id || data.tool_call_id)) || (element.dataset && element.dataset.tcId) || '');
     if (tcId) state.toolElementsByCallId.set(tcId, element);
     // The visible answer is positional: the last message of a turn is the one
@@ -1127,6 +1138,13 @@ function turnViewFinalize(data) {
       && data && data.turn_final_derived) return false;
   let element = finalId ? state.elementsByMsgId.get(finalId) : null;
   if (!element && finalId) element = document.querySelector('#messages [data-msgid="' + CSS.escape(finalId) + '"]');
+  // Grouped tool results leave hidden data-msgid markers inside their call.
+  // Resolve a marker to its canonical row, then accept only a Messages row:
+  // a final id may name technical activity, but technical activity can never
+  // replace the positional last message below the block.
+  if (element) {
+    element = _turnMessageRow(element);
+  }
   // A named final only moves the outside spot when the server names a row the
   // positional rule did not already put there. Closing the turn does not
   // depend on it: a done that names nothing still ends the block, or the
@@ -1331,7 +1349,8 @@ function _turnFileRow(state, el) {
   const tab = state.tabs[tabKey];
   if (!tab) return;
   const msgId = (el.dataset && el.dataset.msgid) || '';
-  if (msgId) state.elementsByMsgId.set(msgId, el);
+  const messageRow = tabKey === 'messages' ? _turnMessageRow(el) : null;
+  if (msgId && messageRow) state.elementsByMsgId.set(msgId, messageRow);
   if (tabKey === 'messages' && role !== 'system' && String(el.dataset.rawText || '').trim()) {
     _turnPromoteLast(state, el);
     return;

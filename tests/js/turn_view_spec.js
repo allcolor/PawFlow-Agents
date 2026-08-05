@@ -223,6 +223,36 @@ test('a user message with no id at all still opens its own turn', () => {
   assert(e.block(), 'block created without a single identifier');
 });
 
+// API providers keep background completion as a tool_result. The live handler
+// attaches that result to the matching tool_call row, then hands the same row
+// to turnViewIngest with the result's msg_id. A later done can name that id;
+// it must not mistake the technical row for the turn's visible last message.
+test('a background tool result id never promotes its tool call over the answer', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const call = e.row('c1');
+  call.dataset.messageRole = 'tool_call';
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c1', tc_id: 'tc-1' }, call);
+
+  const resultMarker = e.dom.document.createElement('span');
+  resultMarker.dataset.msgid = 'r1';
+  resultMarker.dataset.groupedMessageMarker = '1';
+  call.appendChild(resultMarker);
+  e.ctx.turnViewIngest('tool_result', { msg_id: 'r1', tc_id: 'tc-1' }, call);
+  const answer = e.row('a1');
+  answer.dataset.messageRole = 'assistant';
+  answer.dataset.rawText = 'final answer';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1' }, answer);
+
+  const done = { msg_id: 'r1', final_msg_id: 'r1', turn_final: true };
+  e.ctx.turnViewIngest('assistant', done, resultMarker);
+  e.ctx.turnViewFinalize(done);
+
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1');
+  assert(e.block().nextSibling === answer, 'the assistant answer stays readable outside');
+  assert(call.parentNode !== e.messages, 'the tool call stays inside the technical block');
+});
+
 test('a second user message closes the previous turn and opens a new block', () => {
   const e = env('simplified');
   const user1 = e.row('u1');

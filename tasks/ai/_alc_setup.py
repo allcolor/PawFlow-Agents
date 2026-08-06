@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Dict, List
 
-from core.llm_client import LLMClient
+from core.llm_client import LLMClient, LLMMessage
 
 from tasks.ai._alc_base import (  # noqa: F401
     _ALCState, _ALC_BREAK, _ALC_CONTINUE, _strip_context_ack,

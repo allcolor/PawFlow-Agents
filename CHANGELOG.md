@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.122] — 2026-08-06
+
+### Fixed
+
+- `use_tool` silently dropped any top-level parameter placed next to
+  `arguments_json` (e.g. `use_tool(tool_name="bash",
+  arguments_json="{...}", local=true)`): the target tool then ran on
+  the wrong surface (relay instead of local) with no error. Unknown
+  top-level keys are now merged into the inner arguments so the target
+  handler receives them — genuinely unknown keys are rejected loudly by
+  schema validation instead of being ignored.
+- `use_tool` failed with "missing tool_name" when the tool name was
+  placed INSIDE the argument payload (`use_tool(arguments_json="{\"tool_name\":\"bash\",\"command\":...}")`
+  with no top-level `tool_name`). The tool name is now recovered from
+  the parsed payload, and the same recovery applies through nested
+  `use_tool` wrappers (payload arguments used directly when the
+  envelope keys are absent).
+
 ## [1.0.0-beta.121] — 2026-08-06
 
 ### Fixed

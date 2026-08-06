@@ -396,6 +396,171 @@ class TestMetaToolAliases(unittest.TestCase):
         assert result == "glob-ok"
         assert received == {"pattern": "*.md"}
 
+    def test_use_tool_merges_unknown_top_level_keys_into_inner_args(self):
+        """Any top-level key that is not envelope metadata is a
+        target-tool parameter (e.g. local=true) and must reach the target
+        handler — silently dropping it executed the tool on the wrong
+        surface with no error."""
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "bash-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="bash",
+            schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "local": {"type": "boolean"},
+                },
+                "required": ["command"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "bash",
+            "arguments_json": '{"command": "ls -l /"}',
+            "local": True,
+        })
+
+        assert result == "bash-ok"
+        assert received == {"command": "ls -l /", "local": True}
+
+    def test_use_tool_merges_unknown_top_level_keys_into_nested_wrapper(self):
+        """Envelope extras survive the nested meta-tool unwrap."""
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "read-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="read",
+            schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "local": {"type": "boolean"},
+                },
+                "required": ["path"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "use_tool",
+            "arguments": {"tool_name": "read",
+                            "arguments_json": '{"path": "/tmp/x"}'},
+            "local": False,
+        })
+
+        assert result == "read-ok"
+        assert received == {"path": "/tmp/x", "local": False}
+
+    def test_use_tool_recovers_tool_name_inside_arguments_json(self):
+        """The model may put the tool name INSIDE the payload with no
+        top-level tool_name (use_tool(arguments_json='{\"tool_name\":\"bash\",\"command\":...}')).
+        Recover it instead of failing with "missing tool_name"."""
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "bash-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="bash",
+            schema={
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "arguments_json": '{"tool_name": "bash", "command": "ls -l /"}',
+        })
+
+        assert result == "bash-ok"
+        assert received == {"command": "ls -l /"}
+        # The recovered tool name must NOT leak into the target arguments.
+        assert "tool_name" not in received
+
+    def test_use_tool_recovers_tool_name_inside_nested_arguments(self):
+        """Recovery also applies when the payload is a nested wrapper."""
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "read-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="read",
+            schema={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "use_tool",
+            "arguments_json": '{"tool_name": "read", "path": "/tmp/y"}',
+        })
+
+        assert result == "read-ok"
+        assert received == {"path": "/tmp/y"}
+
+    def test_use_tool_top_level_tool_name_wins_over_payload_key(self):
+        """When both exist, the top-level tool_name stays authoritative
+        and the payload's tool_name is passed through untouched (validation
+        rejects it loudly if the target schema does not accept it)."""
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="tool_with_name_arg",
+            schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "tool_name": {"type": "string"},
+                },
+                "required": ["path"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "tool_with_name_arg",
+            "arguments_json": '{"tool_name": "tool_with_name_arg", "path": "/tmp/z"}',
+        })
+
+        assert result == "ok"
+        assert received == {"path": "/tmp/z", "tool_name": "tool_with_name_arg"}
+
     def test_use_tool_rejects_missing_required_argument_before_execution(self):
         from core.handlers.meta_tools import UseToolHandler
 

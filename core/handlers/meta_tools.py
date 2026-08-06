@@ -409,6 +409,20 @@ class UseToolHandler(ToolHandler):
             return parse_error
         if not isinstance(tool_args, dict):
             return f"Error: arguments for '{tool_name}' must be a JSON object, got {type(tool_args).__name__}"
+
+        # The model may have placed the tool name INSIDE the argument
+        # payload (use_tool(arguments_json='{"tool_name": "bash", ...}')
+        # with no top-level tool_name). Recover it: pop it out of the
+        # arguments and use it — otherwise the call would fail with
+        # "missing tool_name" and waste a turn.
+        if not tool_name and isinstance(tool_args, dict):
+            for _k in ("tool_name", "name", "tool"):
+                _n = tool_args.get(_k)
+                if _n:
+                    tool_name = str(_n)
+                    tool_args = {k: v for k, v in tool_args.items()
+                                 if k != _k}
+                    break
         tool_name = _canonical_tool_name(tool_name)
 
         # Recover the common nested meta-tool mistake:
@@ -430,6 +444,12 @@ class UseToolHandler(ToolHandler):
                 nested_args = tool_args.get("input")
             if nested_args is None:
                 nested_args = {}
+            if not nested_args and nested_name:
+                # The payload is not a wrapper envelope: the model put the
+                # target arguments directly next to the nested tool name
+                # (use_tool(tool_name="use_tool", arguments_json="{\"tool_name\": \"read\", \"path\": ...}")).
+                nested_args = {k: v for k, v in tool_args.items()
+                               if k not in ("tool_name", "name", "tool")}
 
             nested_args = parse_tool_arguments(
                 nested_args, tool_name=nested_name,
@@ -445,6 +465,23 @@ class UseToolHandler(ToolHandler):
             tool_name = _canonical_tool_name(nested_name)
             tool_args = nested_args
             unwrap_budget -= 1
+
+        # Any other top-level key is a target-tool parameter the LLM placed
+        # on the envelope (e.g. use_tool(tool_name="bash",
+        # arguments_json="{...}", local=true)). Silently dropping it
+        # executed the tool on the wrong surface / with wrong defaults —
+        # merge it into the inner arguments so the target handler receives
+        # it (validation then rejects genuinely unknown keys loudly instead
+        # of ignoring them).
+        if isinstance(tool_args, dict):
+            _envelope_keys = {
+                "tool_name", "name", "tool",
+                "arguments", "arguments_json", "params", "input",
+            }
+            _extra = {k: v for k, v in arguments.items()
+                      if k not in _envelope_keys}
+            if _extra:
+                tool_args = {**tool_args, **_extra}
 
         if not tool_name:
             return (

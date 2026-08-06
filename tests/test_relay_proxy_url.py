@@ -151,3 +151,33 @@ def test_direct_private_url_requires_opt_in():
         service_name="Test service",
         allow_private=True,
     ) == "http://127.0.0.1:7788"
+
+
+def test_relay_shaped_private_netloc_rejected_without_transform():
+    """SSRF bypass regression: http://<private-ip>/<host>:<port>/... was
+    classified as a legacy relay URL and returned verbatim, skipping the
+    private-address check (cloud metadata 169.254.169.254, 127.0.0.1, [::1],
+    RFC1918). A relay id is an identifier, never an IP."""
+    import pytest as _pytest
+    from core.relay_proxy_url import resolve_relay_aware_url
+
+    for evil in (
+        "http://169.254.169.254/8080:80/latest/meta-data/",
+        "http://127.0.0.1/8080:80/admin",
+        "http://10.0.0.5/8080:80/x",
+    ):
+        with _pytest.raises(ServiceError, match="private/local"):
+            resolve_relay_aware_url(evil, service_name="Test service",
+                                    transform_relay=False)
+
+    # Explicit opt-in still works.
+    assert resolve_relay_aware_url(
+        "http://127.0.0.1/8080:80/admin", service_name="Test service",
+        transform_relay=False, allow_private=True,
+    ) == "http://127.0.0.1/8080:80/admin"
+
+    # A real relay id is unaffected.
+    assert resolve_relay_aware_url(
+        "http://relay_a/localhost:7788", service_name="Test service",
+        transform_relay=False,
+    ) == "http://relay_a/localhost:7788"

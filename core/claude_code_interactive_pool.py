@@ -140,21 +140,25 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
 
     @staticmethod
     def _safe(value: str) -> str:
-        return (value or "").replace(":", "_").replace("/", "_").replace("\\", "_")
+        # `..` as a path component (agent named ".." or "a/../..") would escape
+        # the session root on the host side. Replace it before the separators
+        # so ".." can never survive as a component.
+        return ((value or "").replace("..", "_")
+                .replace(":", "_").replace("/", "_").replace("\\", "_"))
 
     @staticmethod
     def _container_workdir(user_id: str, conversation_id: str, agent_name: str) -> str:
         return "/cc_sessions/{}/{}".format(
-            (conversation_id or "").replace(":", "_"),
-            agent_name,
+            InteractiveClaudeCodePool._safe(conversation_id or ""),
+            InteractiveClaudeCodePool._safe(agent_name),
         )
 
     @staticmethod
     def _physical_container_workdir(user_id: str, conversation_id: str, agent_name: str) -> str:
         return "/cc_sessions_host/{}/{}/{}".format(
             InteractiveClaudeCodePool._safe(user_id),
-            (conversation_id or "").replace(":", "_"),
-            agent_name,
+            InteractiveClaudeCodePool._safe(conversation_id),
+            InteractiveClaudeCodePool._safe(agent_name),
         )
 
     def ensure_started(self, client, model: str, user_id: str,

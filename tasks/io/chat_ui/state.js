@@ -151,7 +151,14 @@ let hasMoreMessages = false;     // server says there are older messages
 let loadingMore = false;         // prevent concurrent load-more
 
 // ── Message history (arrow key navigation) ──
-let messageHistory = JSON.parse(localStorage.getItem('pawflow_msg_history') || '[]');
+let messageHistory = [];
+try {
+  messageHistory = JSON.parse(localStorage.getItem('pawflow_msg_history') || '[]');
+} catch (_e) {
+  // Corrupt/old-schema storage must not kill the whole UI at load (this
+  // module defines escapeHtml and other singletons downstream modules need).
+  messageHistory = [];
+}
 let historyIndex = -1;    // -1 = not navigating, 0 = most recent
 let savedDraft = '';      // text being typed before navigating
 

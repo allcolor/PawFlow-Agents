@@ -249,7 +249,7 @@ function _renderToolCallEdit(srcLabel, args) {
   const endLn = args.end_line || '';
   let editHtml = '<span style="color:#4ecdc4;font-size:11px">\u270E [' + escapeHtml(srcLabel) + '] Edit(' + escapeHtml(fpath) + ')</span>';
   if (startLn && endLn) {
-    editHtml += '<span style="color:#8b949e;font-size:11px"> lines ' + startLn + '-' + endLn + '</span>';
+    editHtml += '<span style="color:#8b949e;font-size:11px"> lines ' + escapeHtml(String(startLn)) + '-' + escapeHtml(String(endLn)) + '</span>';
   }
   const _ext = fpath.split('.').pop().toLowerCase();
   const _langMap = {js:'javascript',ts:'typescript',py:'python',rb:'ruby',rs:'rust',go:'go',java:'java',cpp:'cpp',c:'c',cs:'csharp',php:'php',sh:'bash',bash:'bash',json:'json',html:'xml',xml:'xml',css:'css',sql:'sql',yaml:'yaml',yml:'yaml',md:'markdown',jsx:'javascript',tsx:'typescript',vue:'xml',svelte:'xml'};

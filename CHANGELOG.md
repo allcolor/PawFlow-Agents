@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.118] — 2026-08-06
+
+### Security
+
+- **SSRF bypass closed in relay-aware URL validation** (`core/relay_proxy_url.py`):
+  a URL shaped `http://<private-ip>/<host>:<port>/...` was classified as a
+  legacy relay URL and returned verbatim, skipping the private-address
+  rejection — verified exploitable against cloud metadata (169.254.169.254),
+  127.0.0.1, `[::1]` and RFC1918 hosts via ComfyUI media URLs and other
+  `allow_private=False` paths. The relay netloc is now checked for
+  private/local addresses even when the URL is not transformed; a real relay
+  id (an identifier, never an IP) is unaffected. Regression test added.
+- **Path traversal via agent names closed** (`claude_code_interactive_pool.py`,
+  `codex_interactive_pool.py` via shared base, `claude_code_session.py`,
+  `codex_session.py`): `agent_name` is user-controlled (`agent_create`
+  accepts any string) and was embedded raw into host-side and in-container
+  session workdirs, where credentials/certs are written. A name like
+  `../../x` could escape the session root; names are now sanitized
+  (`/`, `\`, `:`, `..` → `_`).
+- **Telegram bot token no longer persisted inside `telegram.raw`**
+  (`telegram_receiver.py`): the live bot token and owner id (injected into
+  every update) were dumped verbatim into the `telegram.raw` FlowFile
+  attribute, exposed to any attribute-dumping/logging flow. The functional
+  `telegram.bot_token` attribute remains; the raw dump strips the secret keys.
+- **PFP registry SSRF + DoS hardening** (`core/pfp_registry.py`,
+  `core/pfp_package/_pp_mod2.py`): registry URLs pointing at
+  private/loopback/link-local addresses are rejected; registry index and
+  package downloads are streamed with hard caps (1 MB index / 128 MB
+  package) instead of reading the full body first; zip entries are capped
+  per-entry (64 MB) and in total (256 MB uncompressed) against zip-bombs.
+- **WebSocket frame size caps** (`services/code_server_proxy.py`,
+  `services/_relay_ws.py`): a single connection (client or user-run relay)
+  declaring a huge 64-bit frame length could OOM the server; frames larger
+  than 64 MiB are now rejected.
+
+### Fixed
+
+- `closeAudioTab()` in the chat UI used an invalid CSS selector (missing
+  `]`), throwing and leaving the dock button clickable, never switching back
+  to Chat and rendering the main area blank; the selector is fixed.
+- LLM-provided `start_line`/`end_line` in the Edit tool-call renderer were
+  interpolated into `innerHTML` unescaped (XSS gap in the message render
+  path); they are now escaped like every sibling field.
+- Corrupt `pawflow_msg_history` localStorage no longer kills the whole chat
+  UI at load (`state.js`).
+- The admin update-wait poll stops when the dialog is closed instead of
+  running up to the 600 s timeout and force-reloading minutes later.
+- Missing i18n keys `refreshConversationTitle` and `noPackageResults` added
+  to en/fr/es catalogs (previously rendered as raw key text).
+- `AgentResultWaiter` no longer leaks pending entries forever: queued
+  submissions and turns that never emit `done` (agent crash, preempt) are
+  swept after a 30-minute TTL, and an unbounded `wait()` is bounded by that
+  TTL.
+
 ## [1.0.0-beta.117] — 2026-08-05
 
 ### Fixed

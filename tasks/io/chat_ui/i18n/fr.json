@@ -1480,5 +1480,7 @@
   "usageDashDaily": "quotidien",
   "usageDashMonthly": "mensuel",
   "usageDashAddBudget": "Ajouter un budget",
-  "usageDashScopeValuePlaceholder": "id user/conv/agent/service"
+  "usageDashScopeValuePlaceholder": "id user/conv/agent/service",
+  "refreshConversationTitle": "Actualiser la conversation",
+  "noPackageResults": "Aucun paquet trouvé."
 }

@@ -13,6 +13,11 @@ import os
 import struct
 import threading
 
+# Hard cap on a single WebSocket frame (relay-declared length). A connected
+# relay is user-run and holds a token; a huge declared frame must not be
+# read into unbounded memory.
+_WS_MAX_FRAME_BYTES = 64 * 1024 * 1024
+
 logger = logging.getLogger(__name__)
 
 
@@ -216,6 +221,10 @@ async def _ws_recv_frame(reader):
         length = struct.unpack('!H', await reader.readexactly(2))[0]
     elif length == 127:
         length = struct.unpack('!Q', await reader.readexactly(8))[0]
+    # Cap relay-declared frame sizes: a connected relay (user-run, token
+    # holder) can otherwise stream bytes into unbounded memory.
+    if length > _WS_MAX_FRAME_BYTES:
+        raise ConnectionError(f"WS frame too large: {length} bytes")
     if masked:
         mask = await reader.readexactly(4)
         data = await reader.readexactly(length)

@@ -16,6 +16,21 @@ class _Response:
         self.status_code = status_code
         self.headers = headers or {}
 
+    # requests.get is called with stream=True by the registry fetch path;
+    # support both the plain .content access and the context-manager +
+    # iter_content protocol.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def iter_content(self, chunk_size=65536):
+        if not self.content:
+            return
+        for i in range(0, len(self.content), chunk_size):
+            yield self.content[i:i + chunk_size]
+
 
 def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the package skill safely.",
                        package_id="community.wavespeed", skill_name="pkg-skill",

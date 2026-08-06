@@ -252,6 +252,24 @@ def resolve_relay_aware_url(raw_url: str, *, user_id: str = "",
         raise _service_error(f"invalid {service_name} relay URL: {exc}") from exc
     if relay_url:
         if not transform_relay:
+            # A legacy relay-shaped http(s) URL whose netloc is a private
+            # address is NOT a relay URL — it is an SSRF probe crafted as
+            # http://<private-ip>/<host>:<port>/... (verified: 169.254.169.254,
+            # 127.0.0.1, [::1], RFC1918 all passed before). A real relay id is
+            # an identifier, never an IP. Reject private netlocs here too;
+            # allow_private still opts out deliberately.
+            _relay_host = (relay_url.relay_id or "").strip().lower()
+            if (_relay_host == "localhost"
+                    or _relay_host.endswith(".localhost")
+                    or _is_private_address(_relay_host)):
+                if allow_private:
+                    return resolved.rstrip("/")
+                raise _service_error(
+                    f"{service_name} relay URL targets a private/local "
+                    f"network address ({_relay_host}). Use a registered "
+                    "relay id, or set allow_private_base_url=true only for "
+                    "a trusted endpoint."
+                )
             return resolved.rstrip("/")
         proxy = maybe_transform_relay_proxy_url(
             resolved, user_id=user_id, conv_id=conversation_id,

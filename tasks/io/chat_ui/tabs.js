@@ -279,7 +279,7 @@ function closeAudioTab(tabId) {
   if (!document.querySelector('[id^="tabContent_desktop-"]')) {
     if (typeof audioDisconnect === 'function') audioDisconnect();
   }
-  const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"');
+  const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
   if (_activeTab === tabId) switchTab('chat');
 }

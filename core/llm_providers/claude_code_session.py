@@ -312,7 +312,11 @@ class ClaudeCodeSessionMixin:
         # Sanitize for safe paths
         uid = uid.replace(':', '_').replace('/', '_').replace('\\', '_')
         cid = cid.replace(":", "_")
-        agent = agent_name
+        # agent_name is user-controlled (agent_create accepts any string):
+        # a name like "../../x" must not escape the session root and write
+        # credentials/certs into attacker-chosen directories.
+        agent = (agent_name.replace('..', '_')
+                 .replace(':', '_').replace('/', '_').replace('\\', '_'))
         workdir = os.path.join(_get_sessions_base(), uid, cid, agent)
         os.makedirs(workdir, exist_ok=True)
         return workdir

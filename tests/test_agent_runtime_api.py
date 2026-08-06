@@ -593,3 +593,43 @@ def test_telegram_filestore_media_does_not_fallback_to_unscoped_access():
     assert name == "secret.txt"
     assert raw == b"secret"
     assert content_type == "text/plain"
+
+
+def test_waiter_sweeps_stale_entries():
+    """Queued submissions / turns that never emit `done` must not leak in
+    _pending forever: register() sweeps entries older than the TTL."""
+    from core.agent_runtime_api import AgentResultWaiter
+
+    w = AgentResultWaiter()
+    w._WAITER_TTL_SECONDS = 0.01
+    w._last_sweep = 0.0
+    w._ensure_listener()
+    w.register("c1", "turn-1")
+    assert w._pending
+
+    import time
+    time.sleep(0.02)
+    w._last_sweep = 0.0  # bypass the 60s throttle for the test
+    w.register("c1", "turn-2")  # triggers the sweep
+
+    assert "c1\x1fturn-1" not in w._pending, "stale entry must be swept"
+    assert "c1\x1fturn-2" in w._pending, "fresh entry must survive"
+
+
+def test_waiter_unbounded_wait_bounded_by_ttl():
+    """wait() without an explicit timeout must not block forever on an entry
+    that will never receive `done`."""
+    from core.agent_runtime_api import AgentResultWaiter
+
+    w = AgentResultWaiter()
+    w._WAITER_TTL_SECONDS = 0.02
+    w._ensure_listener()
+    w.register("c1", "turn-x")
+
+    import time
+    start = time.time()
+    result = w.wait("c1", "turn-x")  # no timeout
+    elapsed = time.time() - start
+
+    assert result is None
+    assert elapsed < 2.0, f"wait must return after the TTL, took {elapsed:.1f}s"

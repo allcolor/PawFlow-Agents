@@ -463,6 +463,17 @@ function _admWaitForServer(info, before, dialogTitle) {
       note.textContent = (wentDown ? 'Server stopped; waiting for it to come back\u2026 ('
                                    : 'Waiting for the server to restart\u2026 (') + waited + 's)';
     }
+    // The user closed the dialog (Close button removes the overlay DOM): stop
+    // polling instead of running up to the 600 s timeout, spawning stale
+    // error/stall overlays or force-reloading the page minutes later. The
+    // overlay is created by _adminOverlay before this poll starts, so its
+    // absence means the user dismissed it.
+    try {
+      if (!document.querySelectorAll('.exec-overlay').length) {
+        clearInterval(poll);
+        return;
+      }
+    } catch (_e) { /* no DOM (stub) — keep polling */ }
     if (waited > ADM_UPDATE_TIMEOUT_S) {
       settled = true;
       clearInterval(poll);

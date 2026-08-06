@@ -353,7 +353,11 @@ class CodexSessionMixin:
             raise ValueError("BUG: agent_name required for codex session workdir")
         uid = uid.replace(':', '_').replace('/', '_').replace('\\', '_')
         cid = cid.replace(":", "_")
-        workdir = os.path.join(_get_sessions_base(), uid, cid, agent_name)
+        # agent_name is user-controlled (agent_create accepts any string):
+        # a name like "../../x" must not escape the session root.
+        agent = (agent_name.replace('..', '_')
+                 .replace(':', '_').replace('/', '_').replace('\\', '_'))
+        workdir = os.path.join(_get_sessions_base(), uid, cid, agent)
         os.makedirs(workdir, exist_ok=True)
         return workdir
 

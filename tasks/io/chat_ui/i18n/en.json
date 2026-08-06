@@ -1480,5 +1480,7 @@
   "usageDashDaily": "daily",
   "usageDashMonthly": "monthly",
   "usageDashAddBudget": "Add budget",
-  "usageDashScopeValuePlaceholder": "user/conv/agent/service id"
+  "usageDashScopeValuePlaceholder": "user/conv/agent/service id",
+  "refreshConversationTitle": "Refresh conversation",
+  "noPackageResults": "No packages found."
 }

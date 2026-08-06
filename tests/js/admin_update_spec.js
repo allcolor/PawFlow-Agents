@@ -36,7 +36,10 @@ function fakeDocument() {
       if (!nodes[id]) nodes[id] = { textContent: '', style: {}, classList: { toggle() {} } };
       return nodes[id];
     },
-    querySelectorAll() { return []; },
+    // _adminOverlay appends a real .exec-overlay in production; this stub
+    // reports the overlay as present (the wait loop keeps polling until the
+    // server restarts or the dialog is dismissed).
+    querySelectorAll() { return [{ _stubOverlay: true, remove() {} }]; },
     _nodes: nodes,
   };
 }

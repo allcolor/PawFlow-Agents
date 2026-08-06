@@ -417,7 +417,14 @@ class TelegramReceiverTask(BaseTask):
             ff.set_attribute("telegram.entities",
                              json.dumps(entities, ensure_ascii=False))
 
-        ff.set_attribute("telegram.raw", json.dumps(update, ensure_ascii=False))
+        # Never persist the live bot token/owner inside telegram.raw: the
+        # full dump lands in logs/attribute dumps (log_task dumps all
+        # attributes), leaking the token with read/write/kick capability
+        # for every chat the bot is in. Keep the functional attribute.
+        ff.set_attribute("telegram.raw", json.dumps(
+            {k: v for k, v in update.items()
+             if k not in ("_bot_token", "_bot_owner")},
+            ensure_ascii=False))
         bot_token = str(update.get("_bot_token") or "")
         if bot_token:
             ff.set_attribute("telegram.bot_token", bot_token)
@@ -445,7 +452,14 @@ class TelegramReceiverTask(BaseTask):
         ff.set_attribute("telegram.target_is_bot", str(target.get("is_bot", False)))
         ff.set_attribute("telegram.old_status", str(old.get("status", "")))
         ff.set_attribute("telegram.new_status", str(new.get("status", "")))
-        ff.set_attribute("telegram.raw", json.dumps(update, ensure_ascii=False))
+        # Never persist the live bot token/owner inside telegram.raw: the
+        # full dump lands in logs/attribute dumps (log_task dumps all
+        # attributes), leaking the token with read/write/kick capability
+        # for every chat the bot is in. Keep the functional attribute.
+        ff.set_attribute("telegram.raw", json.dumps(
+            {k: v for k, v in update.items()
+             if k not in ("_bot_token", "_bot_owner")},
+            ensure_ascii=False))
         bot_token = str(update.get("_bot_token") or "")
         if bot_token:
             ff.set_attribute("telegram.bot_token", bot_token)

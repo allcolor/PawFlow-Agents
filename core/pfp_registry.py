@@ -24,6 +24,10 @@ REGISTRY_FORMAT = "pawflow.package.registry.v1"
 BUNDLED_FORMAT = "pawflow.bundled-packages.v1"
 BUNDLED_REGISTRY_NAME = "PawFlow bundled"
 MAX_INDEX_BYTES = 1_000_000
+# Hard cap on a downloaded .pfp artifact (compressed). The depot path caps
+# uploads at 100 MB; registry downloads had NO cap at all — a malicious
+# registry could stream unlimited data into memory.
+MAX_PACKAGE_BYTES = 128 * 1024 * 1024
 MAX_REGISTRY_PACKAGES = 500
 MAX_SEARCH_RESULTS = 50
 USER_AGENT = "PawFlow-pfp-registry/1.0"
@@ -112,16 +116,24 @@ def list_bundled_packages() -> List[Dict[str, Any]]:
 
 def fetch_registry_index(url: str) -> Dict[str, Any]:
     clean_url = _validate_registry_url(url)
-    response = requests.get(
+    with requests.get(
         clean_url,
         headers={"User-Agent": USER_AGENT},
         timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    if response.status_code >= 400:
-        raise PfpRegistryError(f"Registry fetch failed {response.status_code}: {clean_url}")
-    content = response.content
-    if len(content) > MAX_INDEX_BYTES:
-        raise PfpRegistryError("Registry index exceeds size cap")
+        stream=True,
+    ) as response:
+        if response.status_code >= 400:
+            raise PfpRegistryError(f"Registry fetch failed {response.status_code}: {clean_url}")
+        # Stream with a hard cap: read the whole body before applying the cap
+        # allowed a malicious registry to stream unlimited data into memory.
+        chunks = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=65536):
+            total += len(chunk)
+            if total > MAX_INDEX_BYTES:
+                raise PfpRegistryError("Registry index exceeds size cap")
+            chunks.append(chunk)
+        content = b"".join(chunks)
     try:
         data = json.loads(content.decode("utf-8"))
     except Exception as exc:
@@ -174,14 +186,24 @@ def download_pfp(url: str, *, expected_sha256: str = "",
                  expected_size: int = 0) -> Dict[str, Any]:
     """Download a .pfp artifact to the local runtime cache."""
     clean_url = _validate_pfp_url(url)
-    response = requests.get(
+    with requests.get(
         clean_url,
         headers={"User-Agent": USER_AGENT},
         timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    if response.status_code >= 400:
-        raise PfpRegistryError(f"Package fetch failed {response.status_code}: {clean_url}")
-    content = response.content
+        stream=True,
+    ) as response:
+        if response.status_code >= 400:
+            raise PfpRegistryError(f"Package fetch failed {response.status_code}: {clean_url}")
+        # Stream with a hard cap; reading the full body first allowed a
+        # malicious registry to exhaust server memory.
+        chunks = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=65536):
+            total += len(chunk)
+            if total > MAX_PACKAGE_BYTES:
+                raise PfpRegistryError("Downloaded package exceeds size cap")
+            chunks.append(chunk)
+        content = b"".join(chunks)
     if expected_size and len(content) != expected_size:
         raise PfpRegistryError("Downloaded package size does not match registry")
     digest = "sha256:" + hashlib.sha256(content).hexdigest()
@@ -488,11 +510,31 @@ def _registries_file(user_id: str) -> Path:
     return _paths.REPOSITORY_DIR / "packages" / "registries" / f"{_safe_component(user_id)}.json"
 
 
+def _is_private_host(host: str) -> bool:
+    """True for localhost and any IP-literal private/loopback/link-local
+    address. Hostnames are resolved at connect time; a registry URL pointing
+    at an internal name is still a server-side probe risk, but blocking the
+    IP forms closes the cloud-metadata/localhost hole."""
+    host = (host or "").strip().lower().rstrip(".")
+    if host in {"localhost", "::1"} or host.endswith(".localhost"):
+        return True
+    try:
+        import ipaddress
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return (addr.is_loopback or addr.is_private or addr.is_link_local
+            or addr.is_reserved or addr.is_unspecified)
+
+
 def _validate_registry_url(url: str) -> str:
     clean = str(url or "").strip()
     parsed = urlparse(clean)
     if parsed.scheme not in {"https", "http"} or not parsed.netloc:
         raise PfpRegistryError("Registry URL must be http(s)")
+    if _is_private_host(parsed.hostname or ""):
+        raise PfpRegistryError(
+            "Registry URL must not target a private/local network address")
     return clean
 
 

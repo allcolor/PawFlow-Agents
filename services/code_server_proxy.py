@@ -11,6 +11,10 @@ import base64
 import json
 import logging
 import struct
+
+# Hard cap on a single WebSocket frame (client-declared length). Prevents a
+# single connection from OOMing the server with a huge declared frame.
+_WS_MAX_FRAME_BYTES = 64 * 1024 * 1024
 import threading
 import time
 import uuid
@@ -645,6 +649,11 @@ def _ws_recv_frame(sock):
         ext = _recv_exact(8)
         parts.append(ext)
         length = struct.unpack("!Q", ext)[0]
+    # Unbounded frame sizes let a single connection declare a huge 64-bit
+    # length and OOM the server (masked frames materialize ~3x the payload).
+    # Cap at 64 MiB — generous for code-server data, fatal for a flood.
+    if length > _WS_MAX_FRAME_BYTES:
+        raise ConnectionError(f"WS frame too large: {length} bytes")
     if masked:
         mask = _recv_exact(4)
         parts.append(mask)

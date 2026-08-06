@@ -269,11 +269,23 @@ def _package_skill_names(package: Dict[str, Any]) -> set:
 
 
 def _read_pfp_zip(path: Path) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, bytes], bytes]:
+    # Zip-bomb guard: a crafted .pfp (registry download, or a 100 MB depot
+    # upload with heavy compression) could expand to multiple GB and OOM the
+    # process. Cap the total uncompressed size and per-entry size.
+    MAX_UNCOMPRESSED = 256 * 1024 * 1024
+    MAX_ENTRY = 64 * 1024 * 1024
     files: Dict[str, bytes] = {}
     with zipfile.ZipFile(path, "r") as zf:
         names = zf.namelist()
+        total = 0
         for name in names:
             rel = _safe_relpath(name)
+            info = zf.getinfo(name)
+            if info.file_size > MAX_ENTRY:
+                raise PfpError(f"Package entry exceeds size cap: {name}")
+            total += info.file_size
+            if total > MAX_UNCOMPRESSED:
+                raise PfpError("Package expands beyond the uncompressed size cap")
             data = zf.read(name)
             files[rel] = data
     for required in (MANIFEST_FILE, LOCK_FILE, SIGNATURE_FILE):

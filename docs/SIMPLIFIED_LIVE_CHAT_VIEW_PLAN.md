@@ -140,20 +140,32 @@ finalization paths.
 The classic and simplified message views share the same compact surrounding
 controls:
 
-- The header keeps status and usage first, followed by the global theme and
-  language selectors. Language options include their national flags.
+- The header keeps status and usage compact. Global theme and language are native
+  selectors presented as palette/globe icons at the end of the conversation dock;
+  their option lists retain the full labels and language flags for keyboard and
+  screen-reader access.
 - Conversation actions formerly hidden behind the `+` menu form an always-visible,
   horizontally scrollable dock in the center of the composer's context row.
-  `Link account`, `Logout`, and administration live in this dock, and
-  extension-provided header/action slots remain inside it. The administration
+  Linked-account management, power-styled `Logout`, and administration live in
+  this dock. The account dialog lists identities, allows unlinking, and starts the
+  existing OAuth link flow for an additional identity. Linked identities are not
+  duplicated at the bottom of the Resources tree. The dock reserves horizontal
+  edge padding for hover zoom and hides its native scrollbar, so zooming the last
+  icon cannot flash a scrollbar while touch/trackpad horizontal scrolling remains.
+  The extension-provided header/action slots remain inside it. The administration
   panel opens above the dock as a sibling of its scroll container.
   A shared CSS-styled tooltip is rendered outside that scroll container, keeping
   every icon labelled without creating a horizontal scrollbar on hover.
 - View mode, TTS, STT, and tool permission mode occupy the left of that row,
   while active agents occupy the right. Pasted files render as stacked thumbnails
   immediately before Send; the first three stay visible and a count expands the
-  full tray. Keeping all of these inside the main layout makes them move with the
+  full tray. The redundant prompt-library button is omitted while file attachment
+  and conversation refresh remain beside the composer. Keeping all of these inside
+  the main layout makes them move with the
   conversation when the left sidebar opens instead of overlapping it.
+- Expiry and the conversation theme no longer consume permanent sidebar height.
+  Right-clicking any conversation and choosing Conversation controls activates that
+  conversation and opens the existing controls in a modal.
 - The task-tab dock remains fixed at the right edge. On narrow screens the three
   composer zones stack and the action dock keeps bounded horizontal scrolling.
 

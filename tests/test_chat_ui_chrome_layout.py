@@ -15,21 +15,27 @@ def _between(start: str, end: str) -> str:
     return TEMPLATE_HTML[start_index:TEMPLATE_HTML.index(end, start_index)]
 
 
-def test_theme_and_language_sit_with_status_and_usage_before_right_header_actions():
+def test_theme_and_language_are_compact_controls_in_the_conversation_dock():
     header = _between('<div class="header">', '<!-- Chat tab content -->')
+    header_lead = header[:header.index('id="actionMenuWrap"')]
+    dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
 
-    usage_index = header.index('id="usageCostBadge"')
-    theme_index = header.index('id="themeSelect"')
-    language_index = header.index('id="languageSelect"')
-    actions_index = header.index('<div class="actions">')
+    for element_id in ("themeSelect", "languageSelect"):
+        marker = f'id="{element_id}"'
+        assert marker in dock
+        assert marker not in header_lead
+    assert 'dock-select-item' in dock
+    assert 'class="dock-icon-select"' in dock
+    assert '&#x1F3A8;' in dock
+    assert '&#x1F310;' in dock
 
-    assert usage_index < theme_index < language_index < actions_index
 
-
-def test_account_actions_live_in_composer_dock_not_header():
+def test_account_actions_live_in_composer_dock_not_header_or_resource_tree():
     header = _between('<div class="header">', '<!-- Chat tab content -->')
     dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
     i18n_js = Path("tasks/io/chat_ui/i18n.js").read_text(encoding="utf-8")
+    state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
+    resources_js = Path("tasks/io/chat_ui/resources_render.js").read_text(encoding="utf-8")
 
     for element_id in ("linkAccountBtn", "logoutBtn"):
         marker = f'id="{element_id}"'
@@ -38,6 +44,29 @@ def test_account_actions_live_in_composer_dock_not_header():
 
     assert 'id="accountMenuWrap"' not in TEMPLATE_HTML
     assert "_setText('#logoutBtn'" not in i18n_js
+    assert 'onclick="showLinkedAccountsDialog()"' in dock
+    assert "function showLinkedAccountsDialog()" in state_js
+    assert "list_linked_accounts" in state_js
+    assert "list_linked_accounts" not in resources_js
+    assert "linkedAccounts" not in resources_js
+    assert '<span class="ami-icon">&#x23FB;</span>' in dock
+
+
+def test_conversation_expiry_and_theme_open_from_the_context_menu():
+    sidebar = _between(
+        '<div class="sidebar collapsed"',
+        '<div class="dialog-bg" id="conversationSettingsDialog"',
+    )
+    menu_js = Path("tasks/io/chat_ui/conversations_menu.js").read_text(encoding="utf-8")
+
+    assert 'id="ttlSelect"' not in sidebar
+    assert 'id="conversationThemeSelect"' not in sidebar
+    assert 'id="conversationSettingsDialog"' in TEMPLATE_HTML
+    assert 'id="ttlSelect"' in TEMPLATE_HTML
+    assert 'id="conversationThemeSelect"' in TEMPLATE_HTML
+    assert "#conversationSettingsDialog select { width: 100%;" in TEMPLATE_HTML
+    assert "showConversationSettings(cid)" in menu_js
+    assert "function showConversationSettings(cid)" in menu_js
 
 
 def test_language_selector_renders_catalog_flags():
@@ -115,10 +144,13 @@ def test_control_docks_use_an_external_css_tooltip_without_horizontal_scroll():
 
     assert 'id="pfCssTooltip"' in TEMPLATE_HTML
     assert '.pf-css-tooltip {' in TEMPLATE_HTML
-    # The dock keeps its horizontal scroll (overflow-x: auto) while the
-    # macOS-style hover zoom is allowed to grow upward (overflow-y: visible;
-    # computed as `auto`, and a `transform: scale` never produces a scrollbar).
+    # The dock stays scrollable when narrow, but its scrollbar is hidden and
+    # end padding absorbs the 1.4x hover growth of the first/last icon.
     assert 'overflow-x: auto; overflow-y: visible;' in TEMPLATE_HTML
+    assert 'padding: 4px 8px;' in TEMPLATE_HTML
+    assert 'scrollbar-width: none;' in TEMPLATE_HTML
+    assert '.action-dock-menu::-webkit-scrollbar' in TEMPLATE_HTML
+    assert 'height: 0;' in TEMPLATE_HTML
     assert '.action-menu-item:hover > div' not in TEMPLATE_HTML
     assert 'title="Server settings"' not in dock
     assert "_setTitle('#viewMenuToggle'" not in i18n_js
@@ -138,6 +170,14 @@ def test_attachment_thumbnails_stack_before_send_and_expand_past_three():
     assert "pendingFiles.slice(0, 3)" in ATTACHMENTS_JS
     assert "attachment-overflow-count" in ATTACHMENTS_JS
     assert "toggleAttachmentPreview" in ATTACHMENTS_JS
+
+
+def test_composer_keeps_attachment_and_refresh_but_drops_prompt_library_button():
+    input_row = _between('<div class="input-row">', '</div>\n</div>\n</div><!-- /tab-content chat -->')
+
+    assert 'id="promptsBtn"' not in input_row
+    assert 'id="fileAttachBtn"' in input_row
+    assert 'id="refreshConvBtn"' in input_row
 
 
 def test_task_dock_stays_fixed_while_action_dock_joins_composer():

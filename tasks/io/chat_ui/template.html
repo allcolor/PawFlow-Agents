@@ -700,6 +700,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .dialog-actions .btn { width: auto; display: inline-block; padding: 6px 16px; background: none;
                         color: #6c6c8a; border: 1px solid #333; margin-bottom: 0; }
 .dialog-actions .btn:hover { color: #e94560; border-color: #e94560; }
+#conversationSettingsDialog label { display: block; margin-bottom: 4px; color: var(--pf-muted); font-size: 11px; }
+#conversationSettingsDialog select { width: 100%; padding: 6px 8px; border: 1px solid var(--pf-border);
+                                     border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); }
 /* Terminal output in chat */
 .terminal-output { background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
                     padding: 12px; margin: 8px 0; font-family: 'Consolas', 'Monaco', monospace;
@@ -820,8 +823,9 @@ body.desktop-fullscreen .tab-content.active iframe {
 .action-menu-sep { border-top: 1px solid #0f3460; margin: 4px 0; }
 .action-dock { position: relative; z-index: 200; min-width: 0; }
 .action-dock-menu { display: flex; position: static; flex-direction: row; gap: 3px; min-width: 0;
-                    width: auto; max-width: 100%; max-height: none; margin: 0; padding: 4px;
-                    overflow-x: auto; overflow-y: visible; border-radius: 8px; }
+                    width: auto; max-width: 100%; max-height: none; margin: 0; padding: 4px 8px;
+                    overflow-x: auto; overflow-y: visible; border-radius: 8px; scrollbar-width: none; }
+.action-dock-menu::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .action-dock-menu > .action-menu-item {
   position: relative; width: 30px; min-width: 30px; height: 30px; padding: 0; border: 1px solid var(--pf-border);
   border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); display: flex;
@@ -835,6 +839,9 @@ body.desktop-fullscreen .tab-content.active iframe {
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4); }
 .action-dock-menu > .action-menu-item > div { display: none; }
 .action-dock-menu > .action-menu-item .ami-icon { width: auto; font-size: 15px; }
+.action-dock-menu > .dock-select-item { overflow: hidden; }
+.dock-icon-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0;
+                    cursor: pointer; border: 0; padding: 0; }
 .action-dock-menu > .action-menu-sep { width: 0; height: 28px; border-top: 0; border-left: 1px solid #0f3460;
                                        margin: 1px 2px; flex: 0 0 0; }
 #adminSettingsMenu { position: absolute; right: auto; left: 50%; top: auto; bottom: calc(100% + 8px);
@@ -900,20 +907,6 @@ if (typeof hljs !== 'undefined') {
     </div>
   </div>
   <div class="conv-list" id="convList"></div>
-  <div class="sidebar-settings">
-    <label id="ttlLabel" data-i18n="ttlLabel">Expiry</label>
-    <select id="ttlSelect">
-      <option value="0" data-i18n="ttlNone">Unlimited</option>
-      <option value="3600" data-i18n="ttl1h">1 hour</option>
-      <option value="21600" data-i18n="ttl6h">6 hours</option>
-      <option value="86400" data-i18n="ttl24h">24 hours</option>
-      <option value="604800" data-i18n="ttl7d">7 days</option>
-    </select>
-    <label id="convThemeLabel" style="margin-top:8px" data-i18n="convThemeLabel">Conversation theme</label>
-    <select id="conversationThemeSelect" onchange="onConversationThemeSelectChange(this.value)" title="Conversation theme" data-i18n-title="convThemeLabel">
-      <option value="" data-i18n="useGlobalTheme">Use global theme</option>
-    </select>
-  </div>
   <div class="sidebar-settings" id="resourcesPanel" style="display:none">
     <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; <span data-i18n="resources">Resources</span></label>
     <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:var(--pf-muted);"></div>
@@ -922,6 +915,28 @@ if (typeof hljs !== 'undefined') {
   </div>
   <div class="sidebar-settings" data-pf-slot="sidebar_bottom_ext"></div>
   <div class="sidebar-settings" data-pf-slot="sidebar_top_ext" style="order:-1"></div>
+</div>
+<div class="dialog-bg" id="conversationSettingsDialog" style="display:none" onclick="if(event.target===this)closeConversationSettings()">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="conversationSettingsTitle">
+    <div class="dialog-title" id="conversationSettingsTitle" data-i18n="conversationControls">Conversation controls</div>
+    <div class="dialog-body">
+      <label id="ttlLabel" data-i18n="ttlLabel">Expiry</label>
+      <select id="ttlSelect">
+        <option value="0" data-i18n="ttlNone">Unlimited</option>
+        <option value="3600" data-i18n="ttl1h">1 hour</option>
+        <option value="21600" data-i18n="ttl6h">6 hours</option>
+        <option value="86400" data-i18n="ttl24h">24 hours</option>
+        <option value="604800" data-i18n="ttl7d">7 days</option>
+      </select>
+      <label id="convThemeLabel" style="display:block;margin-top:12px" data-i18n="convThemeLabel">Conversation theme</label>
+      <select id="conversationThemeSelect" onchange="onConversationThemeSelectChange(this.value)" aria-label="Conversation theme" data-i18n-aria-label="convThemeLabel">
+        <option value="" data-i18n="useGlobalTheme">Use global theme</option>
+      </select>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn" type="button" onclick="closeConversationSettings()" data-i18n="close">Close</button>
+    </div>
+  </div>
 </div>
 <!-- Tab bar -->
 <div class="tab-bar" id="tabBar">
@@ -938,13 +953,6 @@ if (typeof hljs !== 'undefined') {
   <span id="actionLoading" class="ui-action-loading" style="display:none"></span>
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
   <span class="usage-cost-badge" id="usageCostBadge" onclick="showUsageCostPanel()" style="display:none"></span>
-  <select id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)" title="Global chat theme" data-i18n-title="globalThemeTitle"
-            style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:220px">
-    <option value="global:pawflow_dark">PawFlow Dark</option>
-  </select>
-  <select id="languageSelect" onchange="setLanguage(this.value)" title="Language" aria-label="Language" data-i18n-title="languageTitle" data-i18n-aria-label="languageTitle"
-            style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:120px">
-  </select>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
   </div>
@@ -1017,18 +1025,30 @@ if (typeof hljs !== 'undefined') {
           <div><div class="ami-label" data-i18n="usageDashMenuLabel">Usage &amp; Costs</div><div class="ami-desc" data-i18n="usageDashMenuDesc">Usage/cost dashboard across conversations</div></div>
         </div>
         <div class="action-menu-sep"></div>
-        <button class="action-menu-item" id="linkAccountBtn" onclick="beginOAuthAccountLink()" style="display:none">
+        <button class="action-menu-item" id="linkAccountBtn" onclick="showLinkedAccountsDialog()" style="display:none">
           <span class="ami-icon">&#x1F517;</span>
-          <div><div class="ami-label" data-i18n="linkAccount">Link account</div><div class="ami-desc" data-i18n="linkAccountDesc">Link another sign-in identity</div></div>
+          <div><div class="ami-label" data-i18n="linkedAccounts">Linked accounts</div><div class="ami-desc" data-i18n="linkAccountDesc">Link another sign-in identity</div></div>
         </button>
         <button class="action-menu-item" id="logoutBtn" onclick="doLogout()" style="display:none">
-          <span class="ami-icon">&#x1F6AA;</span>
+          <span class="ami-icon">&#x23FB;</span>
           <div><div class="ami-label" data-i18n="logout">Logout</div><div class="ami-desc" data-i18n="logoutDesc">End this session</div></div>
         </button>
         <button class="action-menu-item" id="adminSettingsBtn" onclick="toggleAdminSettingsMenu()" aria-label="Server settings" style="display:none">
           <span class="ami-icon">&#9881;</span>
           <div><div class="ami-label">Server settings</div><div class="ami-desc">Administration and updates</div></div>
         </button>
+        <label class="action-menu-item dock-select-item" id="themeSelectControl" aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle" style="display:none">
+          <span class="ami-icon">&#x1F3A8;</span>
+          <div><div class="ami-label" data-i18n="globalThemeTitle">Global chat theme</div></div>
+          <select class="dock-icon-select" id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)" aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle">
+            <option value="global:pawflow_dark">PawFlow Dark</option>
+          </select>
+        </label>
+        <label class="action-menu-item dock-select-item" id="languageSelectControl" aria-label="Language" data-i18n-aria-label="languageTitle" style="display:none">
+          <span class="ami-icon">&#x1F310;</span>
+          <div><div class="ami-label" data-i18n="languageTitle">Language</div></div>
+          <select class="dock-icon-select" id="languageSelect" onchange="setLanguage(this.value)" aria-label="Language" data-i18n-aria-label="languageTitle"></select>
+        </label>
         <div data-pf-slot="action_menu_ext"></div>
         <span data-pf-slot="header_actions_ext"></span>
       </div>
@@ -1150,7 +1170,6 @@ if (typeof hljs !== 'undefined') {
     <div class="composer-active-mount" id="composerActiveMount"></div>
   </div>
   <div class="input-row">
-    <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" data-i18n-title="promptLibraryTitle" style="font-size:16px !important">&#x1F4DD;</button>
     <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
     <button class="btn-attach" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
     <button class="btn-attach" id="grabBtn" onclick="toggleGrab()" title="Type straight into the agent tmux" data-i18n-title="grabTitle" style="display:none">&#x1F5A5;&#xFE0F;</button>

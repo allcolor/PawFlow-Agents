@@ -643,16 +643,14 @@ async function _renderResourcesData(data) {
     repoHtml += _sectionFooter();
 
     // ─────────────────────────────────────────────────────────────
-    // Async: Variables + Secrets (rendered between live & repo) and
-    // Linked Accounts (appended at the very end).
+    // Async: Variables + Secrets (rendered between live & repo).
     // ─────────────────────────────────────────────────────────────
     if (!liveHtml && !repoHtml) {
       liveHtml = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('noResourcesHint')) + '</div>';
     }
-    rxjs.forkJoin([
-      action$('list_params_secrets', { conversation_id: conversationId }).pipe(rxjs.catchError(() => rxjs.of({}))),
-      action$('list_linked_accounts', { conversation_id: conversationId }).pipe(rxjs.catchError(() => rxjs.of({}))),
-    ]).subscribe(([ps, linksData]) => {
+    action$('list_params_secrets', { conversation_id: conversationId })
+      .pipe(rxjs.catchError(() => rxjs.of({})))
+      .subscribe(ps => {
       let varSecHtml = '';
       // Variables and Secrets headers render unconditionally — like every
       // other section (Services, Flows, …). Gating the header on a non-empty
@@ -681,25 +679,9 @@ async function _renderResourcesData(data) {
         varSecHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noSecrets')) + '</div>';
       }
       varSecHtml += _sectionFooter();
-      const links = (linksData && linksData.links) || {};
-      const linkKeys = Object.keys(links);
-      let linksHtml = '<div style="margin-top:6px;padding:4px 6px;font-size:11px;color:var(--pf-muted);border-top:1px solid var(--pf-border);">';
-      linksHtml += '<b>' + escapeHtml(t('linkedAccounts')) + '</b>';
-      if (linkKeys.length) {
-        linkKeys.forEach(provider => {
-          linksHtml += `<div style="display:flex;align-items:center;gap:6px;margin:3px 0 3px 8px;">
-            <span style="font-size:11px;color:var(--pf-text);">${escapeHtml(provider)}</span>
-            <span style="font-size:10px;color:var(--pf-muted);">${escapeHtml(links[provider])}</span>
-            <span style="cursor:pointer;font-size:10px;color:var(--pf-danger);" title="${escapeHtml(t('unlink'))}" onclick="cmdResourceAction('unlink_account',{provider:'${provider}'}).then(loadResources)">\u2715</span>
-          </div>`;
-        });
-      } else {
-        linksHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noLinkedAccounts')) + '</div>';
-      }
-      linksHtml += '</div>';
-      // Final assembly: live → variables/secrets → repos → PFP depot → linked accounts
+      // Final assembly: live → variables/secrets → repos → PFP depot.
       const fullHtml = _viewAllBarHtml() + liveHtml + varSecHtml + repoHtml
-        + _pfpDepotPanelHtml() + (noConv ? '' : linksHtml);
+        + _pfpDepotPanelHtml();
       // Only update DOM if content actually changed (prevents flash/blink)
       if (el.innerHTML !== fullHtml) {
         el.innerHTML = fullHtml;

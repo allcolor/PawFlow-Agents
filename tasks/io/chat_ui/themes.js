@@ -83,6 +83,7 @@ async function loadThemeSelector() {
   const seq = ++_themeLoadSeq;
   const globalSel = document.getElementById('themeSelect');
   const convSel = document.getElementById('conversationThemeSelect');
+  const globalControl = document.getElementById('themeSelectControl');
   if (!globalSel && !convSel) return;
 
   try {
@@ -111,6 +112,7 @@ async function loadThemeSelector() {
       globalSel.innerHTML = globalThemes.map(_themeOption).join('');
       globalSel.value = globalRef;
       globalSel.style.display = '';
+      if (globalControl) globalControl.style.display = 'flex';
     }
 
     if (convSel) {

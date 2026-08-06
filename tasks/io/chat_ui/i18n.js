@@ -158,9 +158,10 @@ function _renderLanguageSelect() {
     });
   }
   select.value = _currentLanguage;
-  select.title = t('languageTitle');
   select.setAttribute('aria-label', t('languageTitle'));
-  select.style.display = 'inline-flex';
+  select.style.display = '';
+  const control = document.getElementById('languageSelectControl');
+  if (control) control.style.display = 'flex';
 }
 
 function applyI18n(root) {
@@ -172,8 +173,6 @@ function applyI18n(root) {
   _setTitle('.btn-attach', t('promptLibraryTitle'));
   _setTitle('#fileAttachBtn', t('attachTitle'));
   _setTitle('#stopBtn', t('stopTitle'));
-  _setTitle('#themeSelect', t('globalThemeTitle'));
-  _setTitle('#conversationThemeSelect', t('convThemeLabel'));
   _setTitle('#permissionMode', t('permissionModeTitle'));
   _setText('.sidebar-header h2', t('conversations'));
   _setText('.btn-new', t('newChat'));

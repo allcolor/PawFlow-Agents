@@ -204,6 +204,83 @@ function beginOAuthAccountLink() {
     window.location.href = (data && data.login_url) || '/auth/login';
   }).catch(err => addMsg('error', err.message || 'Failed to start account linking'));
 }
+function showLinkedAccountsDialog() {
+  if (typeof closeActionMenu === 'function') closeActionMenu();
+  const previous = document.getElementById('linkedAccountsDialog');
+  if (previous) previous.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'linkedAccountsDialog';
+  overlay.className = 'dialog-bg';
+  const dialog = document.createElement('div');
+  dialog.className = 'dialog';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  const title = document.createElement('div');
+  title.className = 'dialog-title';
+  title.textContent = t('linkedAccounts');
+  const body = document.createElement('div');
+  body.className = 'dialog-body';
+  const actions = document.createElement('div');
+  actions.className = 'dialog-actions';
+  const link = document.createElement('button');
+  link.className = 'btn btn-primary';
+  link.type = 'button';
+  link.textContent = t('linkAccount');
+  link.onclick = () => { overlay.remove(); beginOAuthAccountLink(); };
+  const close = document.createElement('button');
+  close.className = 'btn';
+  close.type = 'button';
+  close.textContent = t('close');
+  close.onclick = () => overlay.remove();
+  actions.append(link, close);
+  dialog.append(title, body, actions);
+  overlay.appendChild(dialog);
+  overlay.onclick = (event) => { if (event.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+
+  function loadLinks() {
+    body.textContent = t('loading');
+    action$('list_linked_accounts', { conversation_id: conversationId || '' }).subscribe(data => {
+      body.replaceChildren();
+      if (data.error) {
+        body.textContent = data.error;
+        return;
+      }
+      const links = data.links || {};
+      const providers = Object.keys(links).sort();
+      if (!providers.length) {
+        body.textContent = t('noLinkedAccounts');
+        return;
+      }
+      providers.forEach(provider => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;margin:7px 0;';
+        const identity = document.createElement('span');
+        identity.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;';
+        identity.textContent = provider + ': ' + links[provider];
+        const unlink = document.createElement('button');
+        unlink.className = 'btn';
+        unlink.type = 'button';
+        unlink.textContent = t('unlink');
+        unlink.onclick = () => {
+          unlink.disabled = true;
+          action$('unlink_account', { provider: provider }).subscribe(result => {
+            if (result.error) {
+              unlink.disabled = false;
+              addMsg('error', result.error);
+              return;
+            }
+            loadLinks();
+          });
+        };
+        row.append(identity, unlink);
+        body.appendChild(row);
+      });
+    });
+  }
+  loadLinks();
+}
 function doLogout() {
   if (eventSource) { eventSource.close(); eventSource = null; }
   fetch(window.location.origin + '/auth/logout', { method: 'POST', credentials: 'same-origin' })
@@ -576,8 +653,8 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
 
 function updateDeleteBtn() {
   const show = conversationId ? '' : 'none';
-  const themeSel = document.getElementById('themeSelect');
-  if (themeSel) themeSel.style.display = '';
+  const themeControl = document.getElementById('themeSelectControl');
+  if (themeControl) themeControl.style.display = '';
   const convThemeSel = document.getElementById('conversationThemeSelect');
   if (convThemeSel) convThemeSel.style.display = show;
   const convThemeLabel = document.getElementById('convThemeLabel');

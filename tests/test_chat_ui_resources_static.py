@@ -432,7 +432,8 @@ def test_pfp_depot_is_a_permanent_left_sidebar_panel():
     assert "createOnclick: '_uploadPfpToDepot()'" in js
     assert "refreshOnclick: 'event.stopPropagation();loadPfpDepot()'" in js
     assert 'id="pfp-depot-upload"' not in js
-    assert "repoHtml\n        + _pfpDepotPanelHtml() + (noConv ? '' : linksHtml)" in render_js
+    assert "repoHtml\n        + _pfpDepotPanelHtml()" in render_js
+    assert "list_linked_accounts" not in render_js
     assert "el.innerHTML = fullHtml;\n        loadPfpDepot();" in render_js
     assert "async function loadPfpDepot()" in js
     assert "action$('pfp_depot_list', {}, {" in js

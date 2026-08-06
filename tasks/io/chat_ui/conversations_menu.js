@@ -37,6 +37,7 @@ function showConvMenu(e, cid, status) {
     menu.appendChild(s);
   };
 
+  item('\u2699 ' + t('conversationControls'), () => showConversationSettings(cid));
   item('\u{1F4E5} ' + t('export'), () => showExportDialog(cid));
   item('\u{1F91D} ' + t('shareConversation'), () => showShareDialog(cid));
   item('\u{21BB} ' + t('refresh'), () => resumeConv(cid, true));
@@ -53,6 +54,24 @@ function showConvMenu(e, cid, status) {
   item('\u{1F5D1} Delete branch...', () => convDeleteBranchDialog(cid), { danger: true, disabled: !idle });
 
   setTimeout(() => document.addEventListener('click', function _close() { menu.remove(); document.removeEventListener('click', _close); }), 0);
+}
+
+function showConversationSettings(cid) {
+  if (!cid) return;
+  if (cid !== conversationId) resumeConv(cid);
+  const dialog = document.getElementById('conversationSettingsDialog');
+  if (!dialog) return;
+  dialog.style.display = 'flex';
+  if (typeof loadThemeSelector === 'function') loadThemeSelector();
+  const first = document.getElementById('ttlSelect');
+  if (first) first.focus();
+}
+
+function closeConversationSettings() {
+  const dialog = document.getElementById('conversationSettingsDialog');
+  if (dialog) dialog.style.display = 'none';
+  const input = document.getElementById('input');
+  if (input) input.focus();
 }
 
 function convFork(cid) {

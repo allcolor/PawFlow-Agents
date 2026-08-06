@@ -633,3 +633,58 @@ def test_waiter_unbounded_wait_bounded_by_ttl():
 
     assert result is None
     assert elapsed < 2.0, f"wait must return after the TTL, took {elapsed:.1f}s"
+
+
+def test_waiter_live_turn_never_bounded_but_dead_turn_released():
+    """The wait bound is a DEAD-entry hygiene ceiling, never a functional
+    timeout: a turn that keeps emitting live events (progress/tool results)
+    is waited on past the TTL, while a silent turn is released."""
+    import threading
+    import time
+    from core.agent_runtime_api import AgentResultWaiter
+
+    w = AgentResultWaiter()
+    w._WAITER_TTL_SECONDS = 0.05
+    w._last_sweep = 0.0
+    w._ensure_listener()
+
+    w.register("c1", "turn-live")
+    w.register("c1", "turn-dead")
+
+    done = {"live": None, "dead": None}
+    stop = {"bus": False}
+
+    def _bus():
+        # Simulates the conversation bus: the live turn emits events
+        # periodically, refreshing its activity stamp past the TTL.
+        while not stop["bus"]:
+            with w._pending_lock:
+                item = w._pending.get("c1turn-live")
+                if item:
+                    item["last_activity"] = time.time()
+            time.sleep(0.01)
+
+    def _wait_live():
+        done["live"] = w.wait("c1", "turn-live")
+
+    def _wait_dead():
+        done["dead"] = w.wait("c1", "turn-dead")
+
+    bus = threading.Thread(target=_bus)
+    t1 = threading.Thread(target=_wait_live)
+    t2 = threading.Thread(target=_wait_dead)
+    bus.start(); t1.start(); t2.start()
+    time.sleep(0.25)  # well past the TTL for both
+
+    # The dead turn was released (no activity for TTL).
+    assert done["dead"] is None
+    # The live turn is STILL waiting (activity refreshed past its TTL).
+    assert done["live"] is None and t1.is_alive(),         "live turn must not be released by the hygiene ceiling"
+
+    # The live turn finishes normally; stop the bus so activity stops.
+    stop["bus"] = True
+    bus.join(timeout=2)
+    w._on_event("c1", "done", {"turn_id": "turn-live", "response": "ok"})
+    t1.join(timeout=2)
+    assert not t1.is_alive()
+    assert done["live"] is not None and done["live"].response == "ok"

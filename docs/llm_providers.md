@@ -197,6 +197,17 @@ all visible text, the overall layout, UI controls and their approximate
 errors. The description replaces the raw image in the live agent context and is
 persisted on user attachments; the web UI still displays the original upload.
 
+`see`/`read` tool results are also described at **tool-execution time** when
+the active LLM is text-only: instead of returning the raw image to the loop
+(which would force a vision-model round-trip on the next LLM call and can
+break strict providers that reject image content inside tool results), the
+tool result is immediately replaced by the delegated vision description as
+plain text. A vision-enabled LLM keeps receiving the native image. When no
+`vision_llm_service` is configured, or the description call fails, the image
+result is kept and the OpenAI builder emits it as a user message *after* the
+tool block — never between tool results — so the strict provider sequence
+`assistant(tool_calls) -> tool* -> user(image)*` stays valid.
+
 Direct API providers forward text and reasoning callbacks as each SSE delta
 arrives. The final `LLMResponse` still contains the complete assembled text and
 reasoning, while streaming clients receive immediate previews instead of

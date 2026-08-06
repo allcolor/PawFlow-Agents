@@ -338,6 +338,17 @@ function _sseWireA() {
       t('iterStatus', {agent: displayAgentName(agentName), i: data.iteration, r: data.round, mr: data.max_rounds, t: data.total_tools});
   });
 
+  // Transient agent status (e.g. "Waiting for background tasks..."): show it
+  // in the status bar without polluting the chat timeline.
+  eventSource.addEventListener('status', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (data.task_id) return;
+    const aKey = agentKey(data.agent_name || '');
+    if (activeInteractions[aKey]) activeInteractions[aKey].updatedAt = Date.now();
+    document.getElementById('status').textContent = data.message || '';
+  });
+
   eventSource.addEventListener('flowfile_in', () => {
     lastSSEActivity = Date.now();
   });

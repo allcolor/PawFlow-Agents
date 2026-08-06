@@ -63,6 +63,10 @@ class AgentEmitter:
     def on_no_pending_work(self, content, ctx): return content
     def on_fatal_error(self, error_msg): pass
     def on_overflow_retry(self, iteration): pass
+    def on_status(self, message: str) -> None:
+        """Surface a transient status message (e.g. waiting on background
+        tasks). No-op in the base emitter; stream emitters publish it."""
+        pass
 
 
 class SyncEmitter(AgentEmitter):
@@ -462,6 +466,15 @@ class StreamEmitter(AgentEmitter):
             "iteration": iteration,
             "detail": "compacting context...",
             "agent_name": self._agent_name or "",
+        })
+
+    def on_status(self, message: str) -> None:
+        """Publish a transient status message (waiting on background tasks,
+        etc.) so the UI/CLI can surface it without polluting the timeline."""
+        logger.info("[agent:%s] status: %s", self.conversation_id[:8], message)
+        self._emit("status", {
+            "agent_name": self._agent_name or "",
+            "message": str(message),
         })
 
     # ── LLM interaction ───────────────────────────────────────────────

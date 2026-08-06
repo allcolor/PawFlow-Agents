@@ -181,3 +181,20 @@ def test_relay_shaped_private_netloc_rejected_without_transform():
         "http://relay_a/localhost:7788", service_name="Test service",
         transform_relay=False,
     ) == "http://relay_a/localhost:7788"
+
+
+def test_transform_relay_never_returns_verbatim_private_target():
+    """With transform_relay=True (the default), a private-IP relay-shaped
+    URL must be rewritten into a relay-proxy route or rejected — never
+    returned verbatim with the private address as fetch target."""
+    from core.relay_proxy_url import resolve_relay_aware_url
+
+    evil = "http://169.254.169.254/8080:80/latest/meta-data/"
+    try:
+        out = resolve_relay_aware_url(evil, service_name="Test service",
+                                      transform_relay=True, allow_private=False)
+    except Exception:
+        return  # rejected is fine
+    # If accepted, it must be a relay-proxy route toward OUR listener.
+    assert "/relay-proxy/" in out, f"private target leaked verbatim: {out}"
+    assert not out.startswith("http://169.254.169.254"), out

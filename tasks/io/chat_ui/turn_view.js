@@ -316,6 +316,31 @@ function _turnActivateTab(state, key, focus) {
   }
   const current = state.tabs[key]; current.unread = 0; current.tabEl.classList.remove('has-unread');
   if (focus) current.tabEl.focus();
+  // A detail panel reads like a roller: opening a tab starts it at the
+  // bottom, on the newest row, not at the top of whatever was there first.
+  _turnScrollPanelToBottom(current.bodyEl);
+}
+
+// Anchor a detail panel at its newest row. The simple-turn panels scroll
+// independently (max-height + overflow), so the main messages scroll logic
+// never touches them — without this, long content is shown from the top and
+// the rows the reader is waiting for sit below the fold.
+function _turnScrollPanelToBottom(bodyEl) {
+  if (!bodyEl || !bodyEl.scrollHeight) return;
+  bodyEl.scrollTop = bodyEl.scrollHeight;
+}
+
+// Stick-to-bottom while a turn streams: keep the active panel on the newest
+// row, but never steal the reader's scroll position when they have moved up
+// to re-read — follow only when they are already at (or near) the bottom.
+function _turnFollowPanelScroll(state, tabKey) {
+  if (!state || !state.expanded || !state.tabs) return;
+  if (state.activeTab !== tabKey) return;
+  const bodyEl = state.tabs[tabKey] && state.tabs[tabKey].bodyEl;
+  if (!bodyEl || !bodyEl.scrollHeight) return;
+  if (bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 60) {
+    bodyEl.scrollTop = bodyEl.scrollHeight;
+  }
 }
 
 function _turnTabKeydown(state, key, ev) {
@@ -463,6 +488,9 @@ function turnViewIngest(kind, data, element) {
         _turnPromoteLast(state, element);
       }
       else if (element.parentNode !== tab.bodyEl) tab.bodyEl.appendChild(element);
+      // The panel is on the newest row while the turn streams: follow the
+      // bottom unless the reader has scrolled up to re-read.
+      _turnFollowPanelScroll(state, tabKey);
     }
   }
   if (state.expanded && state.activeTab !== tabKey) { tab.unread++; tab.tabEl.classList.add('has-unread'); }
@@ -836,12 +864,14 @@ function _turnEnqueueTransient(state, item) {
   }
   cue.appendChild(icons); cue.appendChild(body);
   // Enter blurred and offset; the transition to depth 0 is the arrival. The
-  // newest goes on top, so the reader's eye lands on it and follows the older
-  // ones down as they fade.
+  // newest settles at the bottom of the column — a roller reading top to
+  // bottom, like a terminal — and the older ones roll up above it as they
+  // fade.
   _turnStyleCue(cue, -1);
-  // After the rain canvas, which stays at the back of the surface.
-  state.ephemeralEl.insertBefore(cue, state.rainEl ? state.rainEl.nextSibling
-                                                  : state.ephemeralEl.firstChild);
+  // Append at the end of the column: the newest cue is the last one the eye
+  // lands on, at the bottom. (The rain canvas stays at the back, absolutely
+  // positioned, so it is not part of the flex flow.)
+  state.ephemeralEl.appendChild(cue);
   // Restack rather than jump to the front: a cue that arrives during this
   // delay has already taken depth 0, and this one belongs behind it.
   entry.enter = setTimeout(() => { entry.enter = null; _turnRestackCues(state); }, 16);
@@ -1052,18 +1082,20 @@ function _turnSyncIdle(state) {
 // A column, not a pile: cues used to share one spot and stack in depth, which
 // works for four words and falls apart for a tool call rendered in full --
 // three cues on the same square inch, each blurred through the others, and
-// nothing readable. Here the newest arrives at the top at full strength and
-// pushes the older ones down, fading as they go.
+// nothing readable. Here the newest arrives at the bottom at full strength and
+// pushes the older ones up, fading as they go — a roller that reads top to
+// bottom, like a terminal.
 function _turnStyleCue(el, depth) {
-  el.style.transform = depth < 0 ? 'translateY(-14px) scale(.96)' : 'translateY(0) scale(1)';
+  el.style.transform = depth < 0 ? 'translateY(14px) scale(.96)' : 'translateY(0) scale(1)';
   el.style.opacity = depth < 0 ? '0' : String(Math.max(0.12, 1 - depth * 0.28));
   el.style.filter = depth < 0 ? 'blur(6px)' : 'blur(' + (depth * 1.1) + 'px)';
 }
 
 function _turnRestackCues(state) {
   // Snapshot: retiring splices the live array, and depth is read off the
-  // order as it was when the pass started. Newest first, so a cue that keeps
-  // its place does not push the ones in front of it any deeper.
+  // order as it was when the start of the pass. Newest last (the DOM order
+  // is also oldest first): depth 0 is the cue at the bottom of the column,
+  // and each one above it is one step further back.
   const cues = state.transient.cues.slice();
   let depth = 0;
   for (let i = cues.length - 1; i >= 0; i--) {

@@ -359,6 +359,17 @@ class AgentToolExecMixin:
                 _h = _handler_for_result_shape(tc)
                 _ri = bool(getattr(_h, '_returns_images', False))
                 if _ri and isinstance(result, str) and "__image_data__:" in result:
+                    # Text-only LLM (supports_vision=false + vision_llm_service):
+                    # describe the images via delegated vision NOW so the tool
+                    # result is plain text. Keeps strict providers happy (no
+                    # image user message between tool results) and gives the
+                    # text-only model real perception of the file.
+                    from core.vision_describe import describe_tool_result_images
+                    _vision_text = describe_tool_result_images(
+                        result, agent_svc=agent_svc, user_id=user_id,
+                        conversation_id=conversation_id, agent_name=agent_name)
+                    if _vision_text is not None:
+                        return tc, _vision_text
                     lines = result.split("\n")
                     text_lines = []
                     image_parts = []

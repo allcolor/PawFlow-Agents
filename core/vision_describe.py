@@ -664,3 +664,79 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
         logger.info("vision fallback: described %d image(s) via '%s'",
                     described, vision_service_id)
     return out
+
+
+def describe_tool_result_images(result: str, *, agent_svc: str = "",
+                                user_id: str = "", conversation_id: str = "",
+                                agent_name: str = "") -> Optional[str]:
+    """Describe the images inside a see/read tool result via delegated vision.
+
+    ``see``/``read`` return ``__image_data__:`` markers so a vision-enabled
+    model can perceive the file natively. When the active LLM is text-only
+    (supports_vision=false) and names a ``vision_llm_service``, the images are
+    described here — at tool execution time — and the tool result becomes a
+    plain-text description. This keeps tool results text-only for strict
+    providers (no image-derived user messages interleaved between tool
+    results) and gives the text-only model the perception it needs.
+
+    Returns the text-only result, or None when the caller should keep the
+    native multimodal result (no agent service, vision-enabled LLM, or no
+    resolvable delegated vision service).
+    """
+    if not agent_svc or "__image_data__:" not in (result or ""):
+        return None
+    try:
+        from core.service_registry import ServiceRegistry
+        svc = ServiceRegistry.get_instance().resolve(
+            agent_svc, user_id=user_id, conv_id=conversation_id)
+        if svc is None or getattr(svc, "TYPE", "") != "llmConnection":
+            return None
+        client = svc.get_client() if hasattr(svc, "get_client") else None
+        if client is not None and getattr(client, "supports_vision", False):
+            return None  # Native vision path stays multimodal.
+        vision_id = str(
+            (getattr(svc, "config", {}) or {}).get(
+                "vision_llm_service", "") or "").strip()
+        if not vision_id:
+            return None
+        vision_svc, err = resolve_vision_service(
+            vision_id, user_id=user_id, conversation_id=conversation_id)
+        if not vision_svc:
+            logger.warning(
+                "see vision fallback unavailable for '%s': %s",
+                agent_svc, err)
+            return None
+    except Exception:
+        logger.debug("see vision fallback setup failed", exc_info=True)
+        return None
+
+    text_lines: List[str] = []
+    images: List[Tuple[str, str, str]] = []  # (mime, b64, label)
+    for line in (result or "").split("\n"):
+        if line.startswith("__image_data__:"):
+            parts = line.split(":", 2)
+            if len(parts) == 3:
+                mime, b64 = parts[1], parts[2]
+                images.append((mime, b64, f"image ({mime})"))
+                continue
+        text_lines.append(line)
+    if not images:
+        return None
+
+    out_lines: List[str] = list(text_lines)
+    out_lines.append("")
+    for mime, b64, label in images:
+        try:
+            description = describe_image_b64(
+                vision_svc, mime, b64, user_id=user_id,
+                conversation_id=conversation_id, agent_name=agent_name)
+        except Exception:
+            description = ""
+        if description:
+            out_lines.append(
+                f"[Image: {label} — described by the vision model]\n{description}")
+        else:
+            out_lines.append(
+                f"[Image: {label} — vision model returned no description; "
+                "image could not be described.]")
+    return "\n".join(out_lines)

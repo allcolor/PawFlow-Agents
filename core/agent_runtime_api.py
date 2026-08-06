@@ -95,21 +95,27 @@ class AgentResultWaiter:
         self._pending: Dict[str, Dict[str, Any]] = {}
         self._pending_lock = threading.Lock()
         self._listener_registered = False
-        # Sweep stale entries (queued submissions, turns that never emitted
-        # `done` after an agent crash/preempt) so the waiter never leaks for
-        # the server's lifetime. A turn never legitimately runs this long.
+        # Hygiene ceiling for DEAD entries only: a turn that emits no event at
+        # all for this long (agent crash, preempt, cancelled queued
+        # submission) is swept instead of leaking for the server's lifetime.
+        # LIVE turns keep emitting events (progress, tool results, tokens)
+        # through the bus, which refreshes last_activity — so a turn that
+        # legitimately runs for hours is never swept and its wait() is never
+        # bounded. This is NOT a functional timeout (project rule).
         self._WAITER_TTL_SECONDS = 1800.0
         self._last_sweep = 0.0
 
     def _sweep_stale(self) -> None:
-        """Drop pending entries older than the TTL. Called on every register."""
+        """Drop pending entries with no activity for the TTL. Called on every
+        register (throttled to once per minute)."""
         now = time.time()
         if now - self._last_sweep < 60.0:
             return
         self._last_sweep = now
         stale = [
             key for key, item in self._pending.items()
-            if now - float(item.get("created_at") or 0) > self._WAITER_TTL_SECONDS
+            if now - float(item.get("last_activity")
+                           or item.get("created_at") or 0) > self._WAITER_TTL_SECONDS
         ]
         if not stale:
             return
@@ -148,36 +154,47 @@ class AgentResultWaiter:
                 "event": threading.Event(),
                 "result": None,
                 "created_at": time.time(),
+                "last_activity": time.time(),
                 "live_callback": live_callback,
             }
 
     def wait(self, conversation_id: str, turn_id: str,
              timeout: Optional[float] = None) -> Optional[AgentFinalResult]:
-        # NO implicit functional timeout — project rule. Default (timeout=None)
-        # blocks until the turn's `done` arrives, however long the turn runs.
-        # Hygiene bound only: an entry that will NEVER receive `done` (agent
-        # crash, preempted turn, queued submission that was cancelled) must
-        # not hold the caller forever; the waiter TTL caps that.
+        # NO implicit functional timeout — project rule. A LIVE turn (one that
+        # keeps emitting events through the bus) is waited on for as long as
+        # it runs, however long that is. The only bound is the hygiene
+        # ceiling: an entry with NO activity for the waiter TTL (agent crash,
+        # preempt, cancelled queued submission) releases the caller instead
+        # of holding it forever.
         key = self._key(conversation_id, turn_id)
-        with self._pending_lock:
-            item = self._pending.get(key)
-        if not item:
-            return None
-        # Bound an unbounded wait by the waiter TTL: an entry that will never
-        # receive `done` (agent crash, preempted turn) must not hold the
-        # caller forever — the sweeper drops it after the TTL anyway.
-        _wait_for = timeout
-        if _wait_for is None:
-            _elapsed = time.time() - float(item.get("created_at") or 0)
-            _wait_for = max(0.0, self._WAITER_TTL_SECONDS - _elapsed)
-        else:
-            _wait_for = max(0.0, float(timeout))
-        signaled = item["event"].wait(timeout=_wait_for)
-        if not signaled:
-            return None
-        with self._pending_lock:
-            item = self._pending.pop(key, item)
-        return item.get("result")
+        deadline = None if timeout is None else time.time() + max(0.0, float(timeout))
+        while True:
+            with self._pending_lock:
+                item = self._pending.get(key)
+            if item is None:
+                # Swept/cancelled while waiting: nothing will ever arrive.
+                return None
+            if item["event"].is_set():
+                with self._pending_lock:
+                    item = self._pending.pop(key, item)
+                return item.get("result")
+            if deadline is not None and time.time() >= deadline:
+                return None
+            if time.time() - float(item.get("last_activity")
+                                   or item.get("created_at") or 0) > self._WAITER_TTL_SECONDS:
+                # Dead entry (no event at all for the TTL): release the
+                # caller; the sweeper drops the entry on its next pass.
+                return None
+            # Bounded slice: re-check activity/result periodically so a turn
+            # that went silent is released shortly after the TTL, while an
+            # explicit deadline is honoured to the second. The slice adapts
+            # to the TTL (60 s max in production; short for test TTLs).
+            _slice = min(60.0, max(0.05, self._WAITER_TTL_SECONDS))
+            if deadline is not None:
+                _slice = min(_slice, deadline - time.time())
+            if _slice <= 0:
+                continue
+            item["event"].wait(timeout=_slice)
 
     def cancel(self, conversation_id: str, turn_id: str) -> None:
         with self._pending_lock:
@@ -206,6 +223,12 @@ class AgentResultWaiter:
                 logging.getLogger(__name__).debug(
                     "Agent runtime live callback failed", exc_info=True)
         if event_type not in {"done", "error_event"}:
+            # Any live event proves the turn is still running: refresh its
+            # activity stamp so the TTL sweep/wait bound never mistakes a
+            # long-running turn for a dead one.
+            with self._pending_lock:
+                if self._pending.get(key if turn_id else None) is item:
+                    item["last_activity"] = time.time()
             return
         if not turn_id:
             return

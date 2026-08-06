@@ -443,7 +443,17 @@ class LLMOpenaiMixin:
                     valid_tc_ids.add(tc.id)
 
         api_messages = []
+        # Images attached to tool results cannot live inside the OpenAI tool
+        # message (string content only). They become user messages, but they
+        # MUST be emitted after the whole tool block, never between tool
+        # results: strict providers reject an assistant tool_calls block whose
+        # tool messages are interrupted by a user message (HTTP 400
+        # "insufficient tool messages following tool_calls message").
+        _pending_image_users = []
         for idx, m in enumerate(messages):
+            if _pending_image_users and m.role != "tool":
+                api_messages.extend(_pending_image_users)
+                _pending_image_users = []
             is_current_image_user = vision_enabled and idx == last_user_idx
             if m.role == "tool":
                 # Skip orphan tool messages (no matching assistant tool_call)
@@ -454,8 +464,9 @@ class LLMOpenaiMixin:
                     "content": m.text_content if isinstance(m.content, list) else m.content,
                     "tool_call_id": m.tool_call_id or "",
                 })
-                # OpenAI tool messages only support string content.
-                # If multimodal, inject a user message with image parts after the tool result.
+                # OpenAI tool messages only support string content. Image
+                # parts become deferred user messages (flushed after the tool
+                # block) so assistant(tool_calls) -> tool* stays contiguous.
                 if isinstance(m.content, list):
                     img_parts = []
                     for p in m.content:
@@ -474,7 +485,7 @@ class LLMOpenaiMixin:
                             if link_part:
                                 img_parts.append(link_part)
                     if img_parts:
-                        api_messages.append({
+                        _pending_image_users.append({
                             "role": "user",
                             "content": [{"type": "text", "text": "(image from tool result)"}] + img_parts,
                         })
@@ -554,6 +565,8 @@ class LLMOpenaiMixin:
                         and getattr(m, "reasoning_item", "")):
                     plain["reasoning_item"] = m.reasoning_item
                 api_messages.append(plain)
+        if _pending_image_users:
+            api_messages.extend(_pending_image_users)
         return api_messages
 
     @staticmethod

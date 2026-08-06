@@ -1664,9 +1664,71 @@ test('an artifact result releases the cue its call pinned', () => {
   eq(cueCopies(e), 0, 'released the moment its result lands, artifact or not');
 });
 
+// The roller reads top to bottom, like a terminal: the newest cue sits at
+// the BOTTOM of the ephemeral column, and the older ones above it. Before
+// this, the newest was inserted at the top, so long thinking read bottom-up.
+test('the roller stacks newest at the bottom, oldest above', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const stream = e.row('a1');
+  e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'first' }, stream);
+  e.clock.tick(300);
+  e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'second' }, stream);
+  e.clock.tick(300);
+  e.ctx.turnViewIngest('token', { msg_id: 'a1', content: 'third' }, stream);
+  // Let the coalescing window close AND the scramble animation finish (14
+  // ticks x 40 ms) so every cue resolves to its true text.
+  e.clock.tick(300 + 14 * 40 + 200);
+  eq(e.cues(), 3, 'three cues are on screen');
+  const texts = Array.from(e.messages.querySelectorAll('.simple-turn-ephemeral-text'))
+    .map(el => el.textContent);
+  eq(texts.join('|'), 'first|second|third',
+    'the column reads oldest at the top, newest at the bottom');
+});
+
+// The detail panels scroll independently of the message feed. Activating a
+// tab anchors it at the bottom (the newest row), and while the turn streams
+// the active panel follows the bottom — unless the reader scrolled up.
+test('a detail panel opens at the bottom and follows the stream', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  // A first ingest creates and places the block (registerUser alone only
+  // records the boundary).
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a1' }, e.row('a1'));
+  const block = e.block();
+  assert(block, 'block created');
+  const msgBody = block.querySelector('.simple-turn-panel-scroll');
+  assert(msgBody, 'messages panel exists');
+  // The panel already holds content taller than its viewport: opening the
+  // detail block must anchor it at the bottom (newest row), not at the top.
+  msgBody.scrollHeight = 500; msgBody.clientHeight = 100; msgBody.scrollTop = 0;
+  const header = block.querySelector('.simple-turn-header');
+  header.click();  // expand the detail block (real user path)
+  assert(block.className.indexOf('expanded') >= 0, 'block is expanded');
+  assert(msgBody.scrollTop === msgBody.scrollHeight,
+    'opening the detail block starts at the bottom');
+  // Reader at the bottom (e.g. right after the panel opened anchored): new
+  // content grows the scrollHeight and the panel follows.
+  msgBody.scrollHeight = 500; msgBody.clientHeight = 100; msgBody.scrollTop = 500;
+  msgBody.scrollHeight = 600;  // a new row arrives: content grows
+  e.ctx.turnViewIngest('assistant',
+    { msg_id: 'a2', turn_id: 'u1', content: 'newest' }, e.row('a2'));
+  assert(msgBody.scrollTop === 600,
+    'the active panel follows the newest row while streaming');
+  // A reader who scrolled up to re-read is NOT yanked back down.
+  msgBody.scrollTop = 100;
+  msgBody.scrollHeight = 800;
+  e.ctx.turnViewIngest('assistant',
+    { msg_id: 'a3', turn_id: 'u1', content: 'even newer' }, e.row('a3'));
+  assert(msgBody.scrollTop === 100,
+    'a reader who scrolled up keeps their position');
+});
+
 if (failures.length) {
   console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
   for (const f of failures) console.error('  - ' + f);
   process.exit(1);
 }
 console.log(passed + ' passing');
+
+

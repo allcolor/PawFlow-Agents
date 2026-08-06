@@ -204,3 +204,35 @@ class TestTokenPreview(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOnStatus(unittest.TestCase):
+
+    def _make_emitter(self):
+        bus = MagicMock()
+        client = MagicMock(provider="anthropic", base_url="", default_model="x")
+        ctx = {
+            "active_agent_name": "test",
+            "active_llm_service": "svc",
+            "user_id": "u",
+            "max_context_size": 200000,
+            "_event_cid": "cid1",
+            "client": client,
+        }
+        return StreamEmitter(
+            conversation_id="cid1", bus=bus, ctx=ctx,
+            agent=MagicMock(), gen_key="k", generation=1), bus
+
+    def test_on_status_publishes_status_event_with_message(self):
+        em, bus = self._make_emitter()
+        em.on_status("Waiting for background tasks...")
+        (_cid, evt, data), _ = bus.publish_event.call_args
+        self.assertEqual(evt, "status")
+        self.assertEqual(data["message"], "Waiting for background tasks...")
+        self.assertEqual(data["agent_name"], "test")
+
+    def test_sync_emitter_has_noop_on_status(self):
+        from tasks.ai.agent_emitter import SyncEmitter
+        sync = SyncEmitter()
+        # Must not raise: the agent loop calls on_status on any emitter.
+        self.assertIsNone(sync.on_status("Waiting for background tasks..."))

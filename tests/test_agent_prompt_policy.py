@@ -28,6 +28,7 @@ def test_common_agent_prompt_contains_all_operating_points_without_mcp():
         "Parallel Flash Agents",
         "Durable Work Tracking",
         "Passive Long-Running Work",
+        "Heredoc & Shell Payload Safety",
     ):
         assert title in COMMON_AGENT_SYSTEM_PROMPT
     assert "Use `todolist` proactively" in COMMON_AGENT_SYSTEM_PROMPT
@@ -35,9 +36,15 @@ def test_common_agent_prompt_contains_all_operating_points_without_mcp():
     assert "more than about 60 seconds" in COMMON_AGENT_SYSTEM_PROMPT
     assert "call `schedule_continuation`" in COMMON_AGENT_SYSTEM_PROMPT
     assert "Never keep the conversation alive" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "run_in_background: true" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "NEVER shell backgrounding" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "nohup" in COMMON_AGENT_SYSTEM_PROMPT
     assert "limited retention" in COMMON_AGENT_SYSTEM_PROMPT
     assert "stable workspace files" in COMMON_AGENT_SYSTEM_PROMPT
-    assert "temporary tool-result URL" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "not the temporary URL" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "Never hand-escape payloads" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "escaping-neutral by construction" in COMMON_AGENT_SYSTEM_PROMPT
+    assert "python -m py_compile" in COMMON_AGENT_SYSTEM_PROMPT
     assert "MCP" not in COMMON_AGENT_SYSTEM_PROMPT
     assert "PawFlow" not in COMMON_AGENT_SYSTEM_PROMPT
 

@@ -6,6 +6,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.119] — 2026-08-06
+
+### Fixed
+
+- Agent turns could die with a 400 "insufficient tool messages following
+  tool_calls message" from strict OpenAI-compatible providers: a cancel,
+  compact, rewind, or out-of-order in-turn tool results could leave an
+  assistant `tool_calls` block without its tool responses. A new shared
+  repair (`core/llm_tool_sequence`) rebuilds the context before every LLM
+  send so each `tool_calls` block is immediately followed by its results —
+  moving results persisted before their assistant, dropping duplicates and
+  orphans, and synthesizing `[Result unavailable...]` for unanswered calls
+  (preempted turn). The agent setup repair delegates to the same helper.
+- CI: restored the `LLMMessage` import used by `_alc_setup` type
+  annotations and synced `PROJECT_SUMMARY.md` to the shipped version.
+
+## [1.0.0-beta.120] — 2026-08-06
+
+### Fixed
+
+- Chat UI simplified turn view: detail panels now read like a roller —
+  opening a tab anchors it at the newest row (bottom) and the active panel
+  follows the stream while the turn runs (unless the reader scrolled up).
+  The ephemeral cue column reads top-to-bottom like a terminal: the newest
+  cue settles at the bottom at full strength, older ones roll up above it
+  and fade (CSS mask/transform updated).
+- Agent prompt policy: new Section 8 "Heredoc & Shell Payload Safety" —
+  agents must prefer `write`/`edit`/`apply_patch` over hand-escaped shell
+  payloads, and verify a payload arrived intact before executing it.
+- `'StreamEmitter' object has no attribute 'on_status'` crash when an agent
+  ended its turn while background tasks were still pending ("Waiting for
+  background tasks..." path). The hook was called but never implemented on
+  any emitter; it now exists as a no-op on the base emitter and publishes a
+  transient `status` SSE event from `StreamEmitter`, surfaced in the chat
+  UI status bar without polluting the timeline.
+- `AgentResultWaiter` hygiene bound is now **activity-based** instead of
+  creation-based: a live turn (one that keeps emitting progress/tool/token
+  events through the bus) is waited on for as long as it runs — the 30 min
+  ceiling now applies only to DEAD entries (agent crash, preempt, cancelled
+  queued submission) that would otherwise leak for the server's lifetime.
+  This restores the "NO implicit timeout" contract for Telegram/Google Chat
+  turns that legitimately run longer than 30 minutes.
+- `resolve_relay_aware_url(transform_relay=True)` is verified to never
+  return a private-IP relay-shaped URL verbatim (non-regression test for
+  the SSRF fix).
+- **400 "insufficient tool messages" on parallel `see`/`read` image
+  results** (second root cause after the sequence repair): the OpenAI
+  builder turned image-bearing tool results into a `user` message emitted
+  BETWEEN the tool results, so a strict provider saw
+  `assistant(tool_calls) -> tool -> user -> tool` and rejected it. Image
+  user messages are now deferred and flushed after the whole tool block —
+  `assistant(tool_calls) -> tool* -> user(image)*` is valid by construction
+  even when a delegated-vision description fails.
+- **`see`/`read` on a text-only LLM now return the vision-model
+  description at tool-execution time**: when the active `llmConnection` has
+  `supports_vision: false` and names a `vision_llm_service`, image tool
+  results are described immediately (`core/vision_describe.describe_tool_result_images`)
+  and the tool result becomes plain text — the text-only model perceives
+  the file and strict providers never see images inside tool results. When
+  the LLM is vision-enabled, or no delegated service is configured, the
+  native multimodal result is unchanged.
+
 ## [1.0.0-beta.118] — 2026-08-06
 
 ### Security

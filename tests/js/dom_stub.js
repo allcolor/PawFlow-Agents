@@ -57,6 +57,8 @@ class Element {
     // Read by the load-more path to keep the scroll anchored; the value only
     // has to exist and stay stable, nothing here lays anything out.
     this.scrollHeight = 0;
+    this.scrollTop = 0;
+    this.clientHeight = 0;
     this._listeners = new Map();
     this.dataset = makeDataset(this);
     this.focusCount = 0;

@@ -189,8 +189,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .simple-turn-ephemeral { position: relative; height: 190px; padding: 10px 14px 14px;
                          color: var(--pf-muted); overflow: hidden;
                          display: flex; flex-direction: column; gap: 10px;
-                         -webkit-mask-image: linear-gradient(180deg, #000 62%, transparent);
-                         mask-image: linear-gradient(180deg, #000 62%, transparent); }
+                         /* Roller reads top to bottom, like a terminal: the
+                            newest cue sits at the bottom at full strength and
+                            the older ones roll up above it, fading out as they
+                            go — so the fade lives at the TOP of the surface. */
+                         -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 55%);
+                         mask-image: linear-gradient(180deg, transparent 0%, #000 55%); }
 /* The rain sits behind everything on the surface, sized by the surface itself.
    Its glyphs are drawn in the theme's accent, read off the block at run time. */
 .simple-turn-rain { position: absolute; inset: 0; width: 100%; height: 100%;
@@ -198,7 +202,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .simple-turn-cue { position: relative; z-index: 1;
                    display: flex; align-items: flex-start; gap: 10px; flex: none;
                    max-height: 140px; overflow: hidden;
-                   pointer-events: none; transform-origin: 50% 0;
+                   pointer-events: none; transform-origin: 50% 100%;
                    transition: transform .42s cubic-bezier(.22, .61, .36, 1),
                                opacity .42s ease, filter .42s ease;
                    will-change: transform, opacity, filter; }

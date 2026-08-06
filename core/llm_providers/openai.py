@@ -403,47 +403,22 @@ class LLMOpenaiMixin:
         current native-vision paths, never as historical text context.
         """
         from core.llm_message_regroup import regroup_split_assistant_messages
+        from core.llm_tool_sequence import repair_tool_sequence
         messages = regroup_split_assistant_messages(messages)
-        # Sanitize dangling tool_calls. An assistant message that names a tool
-        # call with no following tool response breaks the OpenAI protocol (400
-        # "insufficient tool messages following tool_calls message"). The
-        # standing source is a preempted turn: assistant tool_calls persisted,
-        # then the reader's next message cancelled the turn before the tool
-        # result ever arrived. Strip the unanswered calls (keep any text), and
-        # drop the message when nothing is left of it.
-        _dangling: list = []
-        for _i, _m in enumerate(messages):
-            if _m.role != "assistant" or not _m.tool_calls:
-                continue
-            _answered = {
-                tc.id for tc in _m.tool_calls
-                if any(x.role == "tool" and getattr(x, "tool_call_id", None) == tc.id
-                       for x in messages[_i + 1:])
-            }
-            _kept = [tc for tc in _m.tool_calls if tc.id in _answered]
-            if len(_kept) != len(_m.tool_calls):
-                _dangling.append((_i, _kept))
-        if _dangling:
-            import dataclasses as _dc
-            _sanitized = list(messages)
-            _drop_idx: set = set()
-            _stripped_count = 0
-            for _i, _kept in _dangling:
-                _m = messages[_i]
-                _stripped_count += len(_m.tool_calls or []) - len(_kept)
-                if _kept:
-                    _sanitized[_i] = _dc.replace(_m, tool_calls=_kept)
-                elif _m.content:
-                    _sanitized[_i] = _dc.replace(_m, tool_calls=None)
-                else:
-                    _drop_idx.add(_i)
-            if _drop_idx:
-                _sanitized = [m for _i, m in enumerate(_sanitized) if _i not in _drop_idx]
+        # Enforce the strict provider protocol: every assistant tool_calls
+        # block must be immediately followed by its tool results, in call
+        # order. A cancel/compact/rewind can leave results before their
+        # assistant message, duplicated, orphaned, interleaved with unrelated
+        # messages, or missing — any of which the provider rejects with a 400
+        # ("insufficient tool messages following tool_calls message"). Rebuild
+        # the list so the sequence is valid by construction; unanswered calls
+        # (preempted turn) get a synthetic "[Result unavailable...]" result.
+        messages, _tool_seq_changed = repair_tool_sequence(
+            messages, conversation_id)
+        if _tool_seq_changed:
             logger.warning(
-                "build_openai_messages: stripped %d dangling tool_call(s) from "
-                "%d assistant message(s) with no tool response (preempted turn)",
-                _stripped_count, len(_dangling))
-            messages = _sanitized
+                "build_openai_messages: repaired tool-call ordering for "
+                "strict provider sequence (conv=%s)", conversation_id)
         # Log multipart content for debugging
         _img_count = 0
         for m in messages:

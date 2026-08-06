@@ -3,9 +3,7 @@ import logging
 import time
 from typing import Dict, List
 
-from core.llm_client import (
-    LLMClient, LLMMessage,
-)
+from core.llm_client import LLMClient
 
 from tasks.ai._alc_base import (  # noqa: F401
     _ALCState, _ALC_BREAK, _ALC_CONTINUE, _strip_context_ack,
@@ -18,54 +16,13 @@ logger = logging.getLogger(__name__)
 def _repair_tool_result_order(messages, conversation_id):
     """Make every assistant tool-call block valid for strict API providers.
 
-    A cancel can persist a user resume row between an assistant tool call and
-    its results. OpenAI requires the matching tool messages immediately after
-    the assistant message. Move existing results into call order and synthesize
-    an explicit unknown result only when no persisted result exists.
+    Delegates to the shared ``core.llm_tool_sequence`` repair, which also
+    fixes results persisted BEFORE their assistant message, duplicates,
+    orphans, and interleaved results — the cases a cancel/compact/rewind can
+    leave behind and that strict providers reject with a 400.
     """
-    result_indexes = {}
-    for idx, message in enumerate(messages):
-        if getattr(message, "role", "") != "tool":
-            continue
-        call_id = getattr(message, "tool_call_id", "") or ""
-        if call_id and call_id not in result_indexes:
-            result_indexes[call_id] = idx
-
-    moved = set()
-    rebuilt = []
-    repaired = False
-    for idx, message in enumerate(messages):
-        if idx in moved:
-            continue
-        rebuilt.append(message)
-        if (getattr(message, "role", "") != "assistant"
-                or not getattr(message, "tool_calls", None)):
-            continue
-        expected = []
-        for call in message.tool_calls:
-            call_id = getattr(call, "id", "") or ""
-            if not call_id:
-                continue
-            result_idx = result_indexes.get(call_id)
-            if result_idx is not None and result_idx > idx:
-                tool_message = messages[result_idx]
-                moved.add(result_idx)
-            else:
-                tool_message = LLMMessage(
-                    role="tool",
-                    content=(
-                        "[Result unavailable because the previous turn was "
-                        "cancelled before this tool result was persisted.]"
-                    ),
-                    tool_call_id=call_id,
-                    conversation_id=conversation_id,
-                )
-            expected.append(tool_message)
-        immediate = messages[idx + 1:idx + 1 + len(expected)]
-        if immediate != expected:
-            repaired = True
-        rebuilt.extend(expected)
-    return rebuilt, repaired
+    from core.llm_tool_sequence import repair_tool_sequence
+    return repair_tool_sequence(messages, conversation_id)
 
 
 class _ALCSetupMixin:

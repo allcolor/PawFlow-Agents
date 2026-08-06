@@ -55,7 +55,6 @@ _BG_ACTION_SUBMIT_DELAY = float(os.getenv("PAWFLOW_BG_ACTION_SUBMIT_DELAY", "1.0
 _BG_ACTION_QUEUE = deque()
 _BG_ACTION_QUEUE_COND = threading.Condition()
 _BG_ACTION_SCHEDULER_STARTED = False
-_BG_ACTION_LAST_ENQUEUE = 0.0
 _UI_ACTION_STATUS_LOCK = threading.Lock()
 _UI_ACTION_STATUS: Dict[str, dict] = {}
 _UI_ACTION_STATUS_TTL = float(os.getenv("PAWFLOW_UI_ACTION_STATUS_TTL", "600") or "600")
@@ -210,26 +209,49 @@ def _ensure_bg_action_scheduler() -> None:
             with _BG_ACTION_QUEUE_COND:
                 while not _BG_ACTION_QUEUE:
                     _BG_ACTION_QUEUE_COND.wait()
-                deadline = _BG_ACTION_LAST_ENQUEUE + _BG_ACTION_SUBMIT_DELAY
-                wait_for = deadline - time.monotonic()
+                ready_at, queued_at, fn, action, call_id = _BG_ACTION_QUEUE[0]
+                wait_for = ready_at - time.monotonic()
                 if wait_for > 0:
                     _BG_ACTION_QUEUE_COND.wait(wait_for)
                     continue
-                fn = _BG_ACTION_QUEUE.popleft()
+                _BG_ACTION_QUEUE.popleft()
+                queue_depth = len(_BG_ACTION_QUEUE)
+            queue_wait_ms = (time.monotonic() - queued_at) * 1000.0
+            queue_level = logging.WARNING if queue_wait_ms > 2000 else logging.DEBUG
+            logger.log(
+                queue_level,
+                "[ui-action-bg] submit action=%s call_id=%s queue_wait=%.0fms queued=%d",
+                action, call_id[:12], queue_wait_ms, queue_depth,
+            )
+
+            def _run(action_fn=fn, action_name=action, action_call_id=call_id):
+                started_at = time.monotonic()
+                try:
+                    action_fn()
+                finally:
+                    handler_ms = (time.monotonic() - started_at) * 1000.0
+                    handler_level = logging.WARNING if handler_ms > 2000 else logging.DEBUG
+                    logger.log(
+                        handler_level,
+                        "[ui-action-bg] done action=%s call_id=%s handler=%.0fms",
+                        action_name, action_call_id[:12], handler_ms,
+                    )
             try:
-                _BG_ACTION_EXECUTOR.submit(fn)
+                _BG_ACTION_EXECUTOR.submit(_run)
             except RuntimeError:
                 logger.debug("action background executor unavailable", exc_info=True)
 
     threading.Thread(target=_loop, daemon=True, name="cmd-action-scheduler").start()
 
 
-def _schedule_bg_action(fn) -> None:
-    global _BG_ACTION_LAST_ENQUEUE
+def _schedule_bg_action(fn, action: str = "", call_id: str = "") -> None:
     _ensure_bg_action_scheduler()
     with _BG_ACTION_QUEUE_COND:
-        _BG_ACTION_LAST_ENQUEUE = time.monotonic()
-        _BG_ACTION_QUEUE.append(fn)
+        queued_at = time.monotonic()
+        ready_at = queued_at + max(0.0, _BG_ACTION_SUBMIT_DELAY)
+        # Each action owns its deadline. A process-wide "last enqueue" deadline
+        # let unrelated tabs/users postpone the entire queue indefinitely.
+        _BG_ACTION_QUEUE.append((ready_at, queued_at, fn, str(action), str(call_id)))
         _BG_ACTION_QUEUE_COND.notify()
 
 _ACTION_HANDLERS = [
@@ -531,7 +553,7 @@ class AgentActionsMixin(_AgentActionsConvMixin):
         # Defer submitting the real handler until after the HTTP ACK has had a
         # chance to leave the request thread. A single scheduler drains bursty
         # UI refreshes without creating a timer thread for each request.
-        _schedule_bg_action(_bg)
+        _schedule_bg_action(_bg, action=result_action, call_id=call_id)
         return [flowfile]
 
 

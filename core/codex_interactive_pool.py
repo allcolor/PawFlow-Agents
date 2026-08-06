@@ -337,25 +337,12 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                            InteractiveClaudeCodePool):
     _instance: Optional["CodexInteractivePool"] = None
     _instance_lock = threading.Lock()
-    # NOT a gate. Every readiness marker below is a string read off a Codex
-    # release, and Codex redraws its composer chrome every few weeks: the
-    # placeholder, the footer and the box around them have all moved already.
-    # beta.82 made a missed marker fatal, and the first release whose idle
-    # composer drew none of them took the whole provider down with it -- every
-    # cold send refused, five LLM retries deep, ~45s apiece, while the TUI on
-    # the other side sat there perfectly ready to be pasted into. A recognition
-    # test that models somebody else's UI must never be the thing that decides
-    # a turn cannot happen. The transport proof is `_paste_landed` (below, and
-    # TUI-agnostic: did the screen move?), which refuses and re-pastes when
-    # nothing arrived -- exactly the undrawn-composer case the gate was added
-    # for.
-    _REQUIRE_PROMPT_READY = False
-    # And the wait is short, because it is advisory: on a stale marker it is
-    # pure latency on every cold turn, paid before each of the five LLM
-    # retries. Long enough for the composer to draw, not long enough to matter
-    # when it never announces itself. Claude Code keeps its own 45s: its
-    # markers are dependable, and nothing here changes that pool.
-    _PROMPT_READY_SECONDS = 12.0
+    # A first paste sent before the composer exists is silently discarded by
+    # Codex. Readiness is therefore mandatory, but does not depend only on
+    # release-specific footer copy: `_pane_shows_prompt` also recognizes the
+    # structural `> ` composer line while excluding the permanent `>_` header.
+    _REQUIRE_PROMPT_READY = True
+    _PROMPT_READY_SECONDS = 45.0
     # Codex can drop the first Enter after a pasted prompt. The transport sends
     # two Enters 200ms apart; verification remains observation-only and never
     # injects any additional key into the live TUI.
@@ -393,15 +380,12 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
 
     def _wait_for_prompt_ready(self, name: str, *,
                                timeout: Optional[float] = None) -> bool:
-        """Give the real Codex composer a short chance to appear.
+        """Wait for the real Codex composer to appear.
 
         Warm sessions bypass this method through ``state.prompt_ready``.  A
-        cold session does not turn the inherited wait into a zero-second probe
-        -- pasting into the permanent header fragmented the bootstrap into
-        orphan turns when the composer had not been drawn yet -- but it waits
-        on a Codex clock, not Claude Code's 45s, and its failure is advisory
-        (see ``_REQUIRE_PROMPT_READY``): a marker Codex stopped drawing is a
-        reason to paste unproven, not a reason to refuse the turn.
+        cold session uses the same bounded 45-second startup allowance as
+        Claude Code. Failure is fatal for this send: pasting into the permanent
+        header can discard the entire bootstrap without any tmux error.
         """
         if timeout is None:
             configured = os.environ.get(
@@ -412,6 +396,11 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             except ValueError:
                 timeout = self._PROMPT_READY_SECONDS
         return super()._wait_for_prompt_ready(name, timeout=timeout)
+
+    def _pane_shows_prompt(self, text: str) -> bool:
+        """Recognize Codex readiness by copy or by its structural input line."""
+        return (super()._pane_shows_prompt(text)
+                or bool(self._composer_text(text)))
 
     def _pane_diagnostic(self, name: str) -> str:
         """Never copy the Codex pane (and potentially prompts) into logs."""
@@ -428,13 +417,25 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
 
     def _paste_landed(self, state: InteractiveContainer, text: str,
                       before_pane: str = "") -> bool:
-        landed = super()._paste_landed(state, text, before_pane)
-        if landed:
-            # The pane reacting to the paste is stronger evidence than Codex's
-            # release-dependent readiness labels.  Keep later turns off the old
-            # cold-start gate even when the initial visual probe missed.
-            state.prompt_ready = True
-        return landed
+        """Require evidence in the Codex composer, not an unrelated redraw.
+
+        The footer, context gauge and other status can redraw after
+        `paste-buffer` while the active input remains empty. The shared pool
+        intentionally treats any pane change as best-effort evidence for TUIs
+        that echo text. Codex never echoes the prompt: it renders an attachment
+        chip, so only that chip (or an already running turn) proves that this
+        transport landed.
+        """
+        deadline = time.time() + max(0.0, self._PASTE_LANDED_SECONDS)
+        while True:
+            pane = self._pane_text(state.name)
+            if pane and (self._pane_holds_unsent_paste(pane)
+                         or self._pane_shows_running(pane)):
+                state.prompt_ready = True
+                return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.3)
 
     def _verify_submitted(self, state: InteractiveContainer, text: str, *,
                           event_service=None,

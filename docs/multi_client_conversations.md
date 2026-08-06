@@ -104,7 +104,7 @@ The UI action bus is separate from the active conversation SSE stream because th
 
 Every accepted call must publish exactly one `command_result`, including calls whose payload must not be rendered. A context operation (`/compact`, `/clear`, `/rewind`) reports its own progress through `context_op` events and marks its acknowledgement `suppress_command_result`, so the raw JSON is never printed as a system message — but it still publishes a `command_result` carrying `{"suppressed": true}`. The browser clears a pending action only on a result, so skipping the publication left the header's "Working: …" indicator running with nothing in flight until the status registry expired it (`PAWFLOW_UI_ACTION_STATUS_TTL`, default 600s). Suppressing the *display* of a result is never a reason to suppress the *result*.
 
-UI background actions are bounded by `PAWFLOW_MAX_BG_ACTIONS` (default `32`). Polling actions such as `list_active` also avoid overlapping browser requests; a stale poll is unsubscribed before a replacement starts.
+UI background actions are bounded by `PAWFLOW_MAX_BG_ACTIONS` (default `32`). Each accepted action has its own fixed submission deadline (`PAWFLOW_BG_ACTION_SUBMIT_DELAY`, default one second), which lets the HTTP acknowledgement leave first without allowing newer actions from another tab or user to postpone older work. Queue wait and handler duration are logged as `[ui-action-bg]` diagnostics, with warnings above two seconds. Polling actions such as `list_active` also avoid overlapping browser requests; a stale poll is unsubscribed before a replacement starts.
 
 ## Concurrent Messages
 

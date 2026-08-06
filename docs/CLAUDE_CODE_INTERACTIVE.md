@@ -322,6 +322,12 @@ Timing controls are read once when the provider modules are imported:
   bracketed `paste-buffer -p`. Pane verification may reject an unconfirmed
   transport, but it never replays the paste and risks duplicating the prompt in
   the composer.
+- A cold Codex send waits up to 45 seconds for a structural composer line
+  (`> `; the permanent `>_` header is excluded). Readiness is mandatory:
+  PawFlow never pastes best-effort into an input box that has not been drawn.
+  On every send, only Codex's attachment chip in that composer (or an
+  already-running turn) proves delivery after `paste-buffer`; an unrelated
+  status redraw does not.
 - `PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` sets the delay between repeated submit
   keys. Claude Code defaults to `1.0` second. Codex uses at most `0.2`
   seconds and submits both normal prompts and live preempts with the fixed

@@ -503,13 +503,16 @@ Operational notes:
   launching a process means a cold start and a full context, finding one alive
   means a delta. See [Agent System](AGENT_SYSTEM.md).
 - A cold Codex session waits for the real composer before PawFlow pastes the
-  bootstrap. Submission then uses one initial `Enter`: PawFlow waits for the
-  exact `UserPromptSubmit` digest or the corresponding MITM `/responses`
-  request and retries `Enter` only while neither signal exists. The event queue
-  is never consumed by this check, so the normal turn coordinator still receives
-  the complete stream. Large pastes receive a proportionally longer bounded
-  acknowledgement window; a fragmented submit or an unacknowledged prompt fails
-  explicitly instead of being reported as a successful turn.
+  bootstrap, for up to 45 seconds. The structural `> ` input line counts as
+  readiness while the permanent `>_` header does not. After the single
+  `paste-buffer`, the attachment chip must be visible in that composer; an
+  unrelated TUI redraw is not treated as delivery. Submission then uses the
+  bounded Enter sequence and waits for the exact `UserPromptSubmit` digest or
+  corresponding MITM `/responses` request. The event queue is never consumed by
+  this check, so the normal turn coordinator still receives the complete stream.
+  Large pastes receive a proportionally longer bounded acknowledgement window; a
+  fragmented submit or an unacknowledged prompt fails explicitly instead of
+  being reported as a successful turn.
 - Codex's `.codex/sessions/**/rollout-*.jsonl` remains useful for post-mortem
   inspection, as it is for app-server preempt receipts. It is not the interactive
   submit control signal: the TUI owns the active rollout identity and disk-write

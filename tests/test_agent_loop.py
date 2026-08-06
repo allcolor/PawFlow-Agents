@@ -1604,6 +1604,38 @@ class TestContextActionsAsync(unittest.TestCase):
         finally:
             self._bus.unsubscribe(reply_conv, writer)
 
+    def test_ui_action_scheduler_cannot_be_starved_by_continuous_arrivals(self):
+        import threading
+        import time
+        from tasks.ai import agent_actions
+
+        first_started = threading.Event()
+        producer_stop = threading.Event()
+        queue_drained = threading.Event()
+
+        def _produce():
+            while not producer_stop.is_set():
+                agent_actions._schedule_bg_action(
+                    lambda: None, action="poll", call_id="poll")
+                time.sleep(0.01)
+
+        with patch.object(agent_actions, "_BG_ACTION_SUBMIT_DELAY", 0.05):
+            agent_actions._schedule_bg_action(
+                first_started.set, action="load_history", call_id="first")
+            producer = threading.Thread(target=_produce)
+            producer.start()
+            try:
+                started_while_traffic_continued = first_started.wait(0.5)
+            finally:
+                producer_stop.set()
+                producer.join(timeout=1.0)
+            agent_actions._schedule_bg_action(
+                queue_drained.set, action="sentinel", call_id="last")
+            assert queue_drained.wait(1.0)
+
+        assert started_while_traffic_continued, (
+            "new UI actions must not postpone an already queued action")
+
     def test_unhandled_ui_action_publishes_error_and_clears_status(self):
         import time
 

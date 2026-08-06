@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.121] — 2026-08-06
+
+### Fixed
+
+- The vision fallback (image → description via the delegated vision
+  service) could silently stop running on real turns: the dynamic-metadata
+  injection rebuilds the last user message as a fresh LLMMessage and used
+  to drop the `_pawflow_current_user_message` marker, so the fallback
+  guard (`has_current_vision_inputs`) saw no current prompt, skipped the
+  transformation, and raw image parts reached the text-only LLM — the
+  exact trigger of the provider 400 "insufficient tool messages" when
+  two `see`/`read` tools ran in parallel. Rebuilds now carry all
+  `_pawflow_*` attributes (`_alc_carry_pawflow_attrs`), and the fallback
+  no longer depends on the marker alone: when no message is marked, the
+  most recent user message is treated as the active prompt, so a
+  non-vision LLM can never receive image parts.
+
 ## [1.0.0-beta.119] — 2026-08-06
 
 ### Fixed

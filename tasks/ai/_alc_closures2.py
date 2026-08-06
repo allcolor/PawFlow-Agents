@@ -16,6 +16,20 @@ from tasks.ai._alc_base import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+def _alc_carry_pawflow_attrs(src, dst):
+    """Carry dynamic context flags onto a rebuilt message.
+
+    Provider-context builders construct fresh LLMMessage objects and would
+    otherwise silently drop the dynamic attributes (e.g.
+    _pawflow_current_user_message) that drive the vision fallback — the
+    current prompt would lose its image eligibility on every turn.
+    """
+    for _k, _v in vars(src).items():
+        if _k.startswith("_pawflow_"):
+            setattr(dst, _k, _v)
+    return dst
+
+
 class _ALCClosures2Mixin:
     def _alc_apply_vision_fallback(self, st, messages, call_kwargs):
         """Apply the active llmConnection's vision fallback before a direct
@@ -112,7 +126,7 @@ class _ALCClosures2Mixin:
                 if isinstance(_um.content, list):
                     _new_content = list(_um.content) + [
                         {"type": "text", "text": _meta_note_local}]
-                    provider_context[_mi] = LLMMessage(
+                    _rebuilt = LLMMessage(
                         role="user", content=_new_content,
                         tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
                         source=_um.source, msg_id=_um.msg_id,
@@ -121,13 +135,17 @@ class _ALCClosures2Mixin:
                     )
                 else:
                     _uc = _um.content or ""
-                    provider_context[_mi] = LLMMessage(
+                    _rebuilt = LLMMessage(
                         role="user", content=_uc + _meta_note_local,
                         tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
                         source=_um.source, msg_id=_um.msg_id,
                         timestamp=_um.timestamp, seq=_um.seq,
                         conversation_id=st.conversation_id,
                     )
+                # Rebuilds must keep the dynamic flags (e.g.
+                # _pawflow_current_user_message) or the vision fallback
+                # silently loses the current prompt's image eligibility.
+                provider_context[_mi] = _alc_carry_pawflow_attrs(_um, _rebuilt)
                 break
         return provider_context
 

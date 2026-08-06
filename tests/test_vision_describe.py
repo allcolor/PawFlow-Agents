@@ -235,7 +235,11 @@ def test_apply_vision_fallback_only_describes_current_turn(monkeypatch):
     assert "a red button" in out[1].content[1]["text"]
 
 
-def test_apply_vision_fallback_without_current_marker_never_calls_vision(monkeypatch):
+def test_apply_vision_fallback_without_marker_uses_last_user_message(monkeypatch):
+    """The prompt marker can be lost when context builders rebuild the
+    message; the most recent user message is then the active prompt and
+    its images MUST still be described — never sent raw to the LLM."""
+    from core.llm_client import LLMMessage
     from core.vision_describe import apply_vision_fallback
 
     svc = FakeVisionService()
@@ -248,7 +252,23 @@ def test_apply_vision_fallback_without_current_marker_never_calls_vision(monkeyp
         user_id="alice", conversation_id="c1")
 
     assert out is not None
-    assert svc.calls == []
+    assert len(svc.calls) == 1
+    assert not any(p.get("type") in ("image_url", "image_ref")
+                   for p in out[0].content)
+
+    # But a historical image (an older user message) is NOT re-described
+    # when a more recent user message exists without images.
+    svc2 = FakeVisionService()
+    _patch_registry(monkeypatch, svc2)
+    old = _image_message()
+    del old._pawflow_current_user_message
+    cur = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "text", "text": "hello"}])
+    out2 = apply_vision_fallback(
+        [old, cur], "vision_svc", source_service_id="glm_svc",
+        user_id="alice", conversation_id="c1")
+    assert svc2.calls == []
+    assert out2[0].content[1]["type"] == "image_url"
 
 
 @pytest.mark.parametrize("tool_name", ["read", "see"])
@@ -869,3 +889,109 @@ def test_agent_loop_vision_fallback_failure_is_fail_open():
 
     assert response.content == "ok"
     assert provider_calls[0]["messages"] == [message]
+
+
+def test_has_current_vision_inputs_without_marker_uses_last_user_message():
+    """The marker can be lost when provider context builders rebuild the
+    prompt message (identity / dynamic-metadata injection). The most recent
+    user message must still be treated as the active prompt — otherwise the
+    vision fallback silently stops running and raw images reach a
+    non-vision LLM (provider 400 on parallel see/read)."""
+    from core.llm_client import LLMMessage
+    from core.vision_describe import has_current_vision_inputs
+
+    # No marker at all: the last user message carries an image -> eligible.
+    msg = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "image_ref", "file_id": "img-1"}])
+    assert has_current_vision_inputs([msg]) is True
+
+    # Older user image is NOT current when a more recent user message
+    # (without image) exists.
+    old = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "image_ref", "file_id": "img-old"}])
+    cur = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "text", "text": "hi"}])
+    assert has_current_vision_inputs([old, cur]) is False
+
+    # The marked prompt still wins over a more recent unmarked user message.
+    marked = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "image_ref", "file_id": "img-marked"}])
+    marked._pawflow_current_user_message = True
+    later = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "text", "text": "after"}])
+    assert has_current_vision_inputs([later, marked]) is True
+
+
+def test_apply_vision_fallback_without_marker_describes_last_user_image(monkeypatch):
+    """Integration: a rebuilt prompt (marker lost) still gets its image
+    replaced by the vision description — never sent raw to the LLM."""
+    from core.llm_client import LLMMessage
+    from core.vision_describe import apply_vision_fallback
+
+    svc = FakeVisionService()
+    _patch_registry(monkeypatch, svc)
+
+    msg = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "text", "text": "look"},
+        {"type": "image_url",
+         "image_url": {"url": f"data:image/png;base64,{B64}"}},
+    ])
+    # NOTE: no _pawflow_current_user_message marker — as after a rebuild.
+
+    out = apply_vision_fallback([msg], "vision_svc",
+                                source_service_id="glm_svc",
+                                user_id="alice", conversation_id="c1")
+
+    assert len(svc.calls) == 1
+    assert out[0].content[0]["type"] == "text"
+    assert out[0].content[1]["type"] == "text"
+    assert "red button" in out[0].content[1]["text"]
+    assert not any(p.get("type") in ("image_url", "image_ref")
+                   for p in out[0].content)
+
+
+def test_alc_carry_pawflow_attrs_preserves_marker_on_rebuild():
+    """Provider-context rebuilds construct fresh LLMMessage objects; the
+    dynamic flags driving the vision fallback must survive them."""
+    from core.llm_client import LLMMessage
+    from tasks.ai._alc_closures2 import _alc_carry_pawflow_attrs
+
+    src = LLMMessage(role="user", content="x", conversation_id="c1")
+    src._pawflow_current_user_message = True
+    src._pawflow_other = 42
+    src.normal_attr = "not-carried"
+
+    dst = LLMMessage(role="user", content="y", conversation_id="c1")
+    out = _alc_carry_pawflow_attrs(src, dst)
+
+    assert out is dst
+    assert dst._pawflow_current_user_message is True
+    assert dst._pawflow_other == 42
+    assert not hasattr(dst, "normal_attr")
+
+
+def test_alc_inject_dynamic_metadata_keeps_current_user_marker():
+    """The exact rebuild that used to drop the marker: dynamic-metadata
+    injection replaces the last user message with a fresh LLMMessage."""
+    from core.llm_client import LLMMessage
+    from tasks.ai._alc_closures2 import _ALCClosures2Mixin
+
+    msg = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "image_ref", "file_id": "img-1"}])
+    msg._pawflow_current_user_message = True
+
+    st = SimpleNamespace(
+        ctx={"_datetime_str": "2026-01-01", "_dynamic_blocks": []},
+        conversation_id="c1",
+        _max_ctx=1000,
+        tool_defs=[],
+    )
+    core = object.__new__(_ALCClosures2Mixin)
+    core._estimate_tokens = lambda *a, **k: 10
+
+    out = core._alc_inject_dynamic_metadata(st, [msg])
+    rebuilt = out[0]
+
+    assert rebuilt is not msg
+    assert getattr(rebuilt, "_pawflow_current_user_message", False) is True
+    assert any(p.get("type") == "image_ref" for p in rebuilt.content)

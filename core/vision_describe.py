@@ -67,10 +67,18 @@ def _vision_input_indexes(messages: List[Any]) -> set[int]:
     current_idx = -1
     for idx in range(len(messages) - 1, -1, -1):
         msg = messages[idx]
-        if (getattr(msg, "role", "") == "user"
-                and getattr(msg, "_pawflow_current_user_message", False)):
+        if getattr(msg, "role", "") != "user":
+            continue
+        if getattr(msg, "_pawflow_current_user_message", False):
             current_idx = idx
             break
+        # No explicitly marked prompt found: the most recent user message
+        # is the active prompt. The marker can be lost when provider
+        # context builders rebuild the message (identity / dynamic-metadata
+        # injection) — the fallback must still run: a non-vision LLM must
+        # never receive image parts.
+        if current_idx < 0:
+            current_idx = idx
     if current_idx < 0:
         return set()
 

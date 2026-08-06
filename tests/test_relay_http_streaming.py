@@ -107,6 +107,31 @@ def test_server_stream_surfaces_failure_after_headers_and_removes_spool():
     assert not os.path.exists(spool_path)
 
 
+def test_stream_failure_removes_spool_before_runner_returns():
+    release_runner = threading.Event()
+
+    class _Relay:
+        def http_proxy_stream(self, *, on_output, **_kwargs):
+            on_output("start", {"status": 200, "headers": {}})
+            on_output("chunk", "not-valid-base64")
+            release_runner.wait(2)
+            return {"ok": True}
+
+    stream = RelayHttpResponseStream.for_local_port(
+        _Relay(), port=8765, method="GET", req_path="/large.bin",
+        headers={}, body=b"").start()
+    stream.wait_ready()
+    spool_path = stream.spool_path
+
+    try:
+        with pytest.raises(RuntimeError, match="invalid base64"):
+            list(stream.iter_bytes())
+        assert not os.path.exists(spool_path)
+        assert not release_runner.is_set()
+    finally:
+        release_runner.set()
+
+
 def test_concurrent_cleanup_cannot_return_before_spool_unlink(monkeypatch):
     stream = RelayHttpResponseStream(lambda _on_output: {"ok": True})
     with stream._condition:

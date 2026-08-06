@@ -555,6 +555,48 @@ test('the newest historical turn is completed when no runtime turn exists', () =
   eq(block.querySelector('.simple-turn-status').textContent, 'Completed');
 });
 
+test('a reloaded live tool call keeps its detail block working', () => {
+  const e = env('simplified');
+  const user = e.row('u1');
+  e.ctx.turnViewRegisterUser(
+    { msg_id: 'u1', turn_id: 'u1', _history: true }, user);
+  const call = e.row('c1');
+  call.dataset.messageRole = 'tool_call';
+  e.ctx.turnViewIngest('tool_call', {
+    msg_id: 'c1', tc_id: 'tc-live', turn_id: 'u1',
+    tool_name: 'bash', _history: true, live: true,
+  }, call);
+
+  e.ctx.turnViewReconcile();
+
+  const block = e.block();
+  assert(block.classList.contains('turn-working'),
+         'the authoritative in-flight marker keeps the block running');
+  eq(block.querySelector('.simple-turn-status').textContent, 'Working');
+});
+
+test('live activity reopens a tail block completed only by reconstruction', () => {
+  const e = env('simplified');
+  const user = e.row('u1');
+  user.dataset.messageRole = 'user';
+  user.dataset.turnId = 'u1';
+  const old = e.row('a1');
+  old.dataset.messageRole = 'assistant';
+  old.dataset.rawText = 'partial';
+  e.ctx.turnViewReconcile();
+  eq(e.block().querySelector('.simple-turn-status').textContent, 'Completed');
+
+  const thinking = e.row('t1');
+  thinking.dataset.messageRole = 'thinking';
+  e.ctx.turnViewIngest('thinking', {
+    msg_id: 't1', turn_id: 'u1', content: 'still working',
+  }, thinking);
+
+  assert(e.block().classList.contains('turn-working'),
+         'fresh activity refutes the reconstructed completion');
+  eq(e.block().querySelector('.simple-turn-status').textContent, 'Working');
+});
+
 // The runtime snapshot says what was running when the page was built. It keeps
 // the live turn open -- no promotion, no closing -- and stops being true the
 // moment that turn ends. Left behind, it would hold a finished turn open and

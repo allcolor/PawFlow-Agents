@@ -133,19 +133,28 @@ class RelayHttpResponseStream:
         with self._condition:
             if not self.error:
                 self.error = message or "Relay HTTP proxy failed"
+            # Failure is terminal for this spool. Mark producer completion
+            # before waking the consumer so its finally block can unlink the
+            # file synchronously even if the runner has not returned yet.
+            self._mark_producer_done_locked()
             self._condition.notify_all()
         self._ready.set()
+        self._cleanup_if_finished()
 
     def _finish_producer(self) -> None:
         with self._condition:
-            if not self._producer_done:
-                self._producer_done = True
-                try:
-                    self._writer.close()
-                except Exception:
-                    logger.debug("Could not close relay HTTP spool", exc_info=True)
-                self._condition.notify_all()
+            self._mark_producer_done_locked()
+            self._condition.notify_all()
         self._cleanup_if_finished()
+
+    def _mark_producer_done_locked(self) -> None:
+        if self._producer_done:
+            return
+        self._producer_done = True
+        try:
+            self._writer.close()
+        except Exception:
+            logger.debug("Could not close relay HTTP spool", exc_info=True)
 
     def iter_bytes(self, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
         """Yield bytes as the producer extends the spool file."""

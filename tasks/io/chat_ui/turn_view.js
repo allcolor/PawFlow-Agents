@@ -147,9 +147,10 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
     status: 'working', expanded: false, activeTab: 'messages', finalMsgId: '',
     finalEl: null, finalDetailEl: null,
     identityRendered: false,
-    // Whether the live channel has ever fed this turn, and whether the only
-    // thing that closed it was a reconstruction. Together they decide if a
-    // guessed ending may stand -- see turnViewFinalize.
+    // Whether authoritative live activity has fed this turn (either the live
+    // channel or a history row stamped live by the server), and whether the
+    // only thing that closed it was a reconstruction. Together they decide if
+    // a guessed ending may stand -- see turnViewFinalize.
     liveFed: false, closedByGuess: false,
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
     artifactElementsByFileId: new Map(), artifactFileIdByCallId: new Map(),
@@ -426,14 +427,15 @@ function turnViewIngest(kind, data, element) {
   state = state || _turnOpenOrphanTurn(element, data);
   if (!state || !state.blockEl.isConnected) return false;
   _turnUpdateIdentity(state, data || {});
-  // A row that did not come from a replayed page, and does not itself claim to
-  // end the turn, is the turn talking -- now. That is the one thing a
+  // A row that did not come from a replayed page, or a replayed tool call the
+  // server stamped live, is the turn talking -- now. That is the one thing a
   // reconstruction cannot argue with: if a guessed ending closed this block,
   // the turn just refuted it, so reopen it. Only a guess is undone -- a `done`
   // is the server stating the turn is over, and no later row may contradict
   // that. A row carrying a final marker is excluded on purpose: what claims
   // the turn is finished is not evidence that it is running.
-  if (!(data && (data._history || data.turn_final))) {
+  const authoritativeLive = !!(data && data.live);
+  if (authoritativeLive || !(data && (data._history || data.turn_final))) {
     state.liveFed = true;
     if (state.closedByGuess && state.status === 'completed') {
       state.closedByGuess = false;
@@ -1347,6 +1349,10 @@ function turnViewReconcile() {
     if (!owner || owner.status !== 'working' || owner.liveFed
         || _turnRuntime.has(owner.turnId)) continue;
     _turnStopTransient(owner);
+    // No terminal event closed this block. A fresh SSE row or an in-flight
+    // tool snapshot may arrive immediately after the history reconstruction
+    // and must be allowed to refute this guess.
+    owner.closedByGuess = true;
     _turnUpdateStatus(owner, 'completed');
   }
   for (const s of touched) {

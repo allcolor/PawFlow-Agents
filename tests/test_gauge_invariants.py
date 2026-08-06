@@ -530,9 +530,13 @@ def test_webchat_live_display_window_trims_only_autoscroll():
     assert "el.remove()" in trim_body
 
 
-def test_prompt_bar_has_fast_conversation_refresh_button():
+def test_conversation_controls_have_fast_conversation_refresh_button():
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
-    assert 'id="refreshConvBtn"' in template
+    controls = template[
+        template.index('<div class="prompt-controls-panel"'):
+        template.index('<div class="composer-action-mount"')
+    ]
+    assert 'id="refreshConvBtn"' in controls
     assert 'onclick="refreshCurrentConversation()"' in template
     assert "function refreshCurrentConversation" in Path(
         "tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")

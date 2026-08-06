@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.123] — 2026-08-06
+
+### Fixed
+
+- Concurrent API-provider conversations could execute a tool with another
+  conversation's mutable handler scope. A DeepSeek `todolist.create` and
+  `schedule_continuation`, for example, could report success while writing into
+  an active Codex conversation. Tool dispatch now forks the registry and
+  configures execution-local handlers with the current user, conversation,
+  agent, client, and model immediately before execution.
+- Relay HTTP streaming failures now mark the producer complete and remove the
+  spool synchronously before surfacing the error, even while the relay runner is
+  still unwinding.
+- Chat controls now keep realtime voice, grab, and refresh together in the
+  conversation controls row; linked accounts and logout remain visible in the
+  header, and the linked-account dialog keeps long identities readable beside a
+  bounded unlink action.
+- Simplified live view no longer leaves an active turn displayed as completed
+  after reload: an in-flight history marker or a fresh SSE row reopens a tail
+  block that was closed only by reconstruction, while real terminal events stay
+  final.
+
 ## [1.0.0-beta.122] — 2026-08-06
 
 ### Fixed

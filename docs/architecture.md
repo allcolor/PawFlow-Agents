@@ -37,6 +37,9 @@ speed cannot create an unbounded in-memory response. Producer completion and
 consumer exhaustion jointly own cleanup: the final unlink and its completion
 marker are serialized under the stream condition, which guarantees that an
 exhausted iterator never exposes a still-existing spool path to its caller.
+An upstream failure atomically closes and marks the producer side complete
+before waking the consumer, so propagating a streaming error provides the same
+synchronous spool-removal guarantee even while the relay runner is unwinding.
 
 ---
 

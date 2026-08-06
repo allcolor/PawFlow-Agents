@@ -29,6 +29,7 @@ class AgentToolExecMixin:
                             max_consecutive: int, *, parallel: bool = True,
                             agent_name: str = "", agent_svc: str = "",
                             conversation_id: str = "", user_id: str = "",
+                            llm_client=None, llm_model: str = "",
                             is_claude_code: bool = False,
                             cancel_check: callable = None,
                             event_cid: str = "",
@@ -37,6 +38,25 @@ class AgentToolExecMixin:
 
         Returns list of (tool_call, result_text) in original order.
         """
+        # AgentLoopTask owns one base registry, while conversations can execute
+        # concurrently. Handlers store runtime scope on themselves, so mutating
+        # the base registry here would let another turn redirect an in-flight
+        # todo, continuation or filesystem call. Fork and configure an isolated
+        # handler set immediately before dispatch instead.
+        fork_registry = getattr(registry, "fork", None)
+        configure_handlers = getattr(self, "_configure_tool_handlers", None)
+        if callable(fork_registry) and callable(configure_handlers):
+            registry = fork_registry()
+            configure_handlers(
+                registry,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                llm_client=llm_client,
+                llm_model=llm_model,
+                agent_name=agent_name,
+                agent_svc=agent_svc,
+            )
+
         # Load env vars (for $VAR resolution) and secret values (for redaction)
         _secret_values = set()
         _secret_names = {}

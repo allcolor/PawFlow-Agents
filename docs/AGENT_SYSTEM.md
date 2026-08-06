@@ -136,6 +136,7 @@ _run_agent_loop()              -- The core loop
 5. **Queue-based messaging**: New user messages do not cancel the running agent. They are queued and processed after the current turn completes. For Claude Code providers, messages can be injected directly into the active session (preemption).
 6. **Multi-round**: `max_rounds` allows the agent to run multiple consecutive turns before yielding (useful for autonomous tasks).
 7. **One iteration owns one heartbeat**: the heartbeat is a thread started per iteration, covering the LLM call and the tools. `_alc_iteration` starts it and stops it in a `finally`, because the body leaves by five different returns — a compact restart, a cold restart, an overflow retry, a break, the normal end — and by any exception the turn raises. Stopping it at each return is how threads were left behind, one per attempt, all publishing for the same conversation. The body still stops it early on purpose before the end-of-iteration bookkeeping; the handle is cleared on stop, so the `finally` then finds nothing to do and it is never stopped twice.
+8. **Tool scope isolation**: API-provider dispatch forks the tool registry immediately before execution and configures the fork with the current user, conversation, agent, client, and model. Handler objects therefore never share mutable conversation scope across concurrent turns; referenced services, locks, caches, and registry hooks remain shared intentionally.
 
 ### Message persistence
 

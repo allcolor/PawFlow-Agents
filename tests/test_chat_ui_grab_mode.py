@@ -28,10 +28,16 @@ def test_grab_module_registered_after_terminal_js():
     assert src.index('"terminal.js"') < src.index('"grab.js"')
 
 
-def test_grab_button_sits_before_the_reload_button():
+def test_grab_button_lives_with_reload_in_conversation_controls():
     html = (CHAT_UI / "template.html").read_text(encoding="utf-8")
+    controls = html[
+        html.index('<div class="prompt-controls-panel"'):
+        html.index('<div class="composer-action-mount"')
+    ]
     assert 'id="grabBtn"' in html
     assert 'onclick="toggleGrab()"' in html
+    assert 'id="grabBtn"' in controls
+    assert 'id="refreshConvBtn"' in controls
     # Hidden until the selected agent actually has a tmux.
     assert html.index('id="grabBtn"') < html.index('id="refreshConvBtn"')
     grab_btn = html[html.index('id="grabBtn"'):]

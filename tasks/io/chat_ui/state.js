@@ -253,16 +253,24 @@ function showLinkedAccountsDialog() {
         body.textContent = t('noLinkedAccounts');
         return;
       }
+      body.classList.add('linked-account-list');
       providers.forEach(provider => {
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:10px;margin:7px 0;';
-        const identity = document.createElement('span');
-        identity.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;';
-        identity.textContent = provider + ': ' + links[provider];
+        row.className = 'linked-account-row';
+        const identity = document.createElement('div');
+        identity.className = 'linked-account-identity';
+        const providerLabel = document.createElement('div');
+        providerLabel.className = 'linked-account-provider';
+        providerLabel.textContent = provider;
+        const identityValue = document.createElement('div');
+        identityValue.className = 'linked-account-value';
+        identityValue.textContent = String(links[provider]);
+        identity.append(providerLabel, identityValue);
         const unlink = document.createElement('button');
-        unlink.className = 'btn';
+        unlink.className = 'btn linked-account-unlink';
         unlink.type = 'button';
         unlink.textContent = t('unlink');
+        unlink.setAttribute('aria-label', t('unlink') + ' ' + provider + ' ' + links[provider]);
         unlink.onclick = () => {
           unlink.disabled = true;
           action$('unlink_account', { provider: provider }).subscribe(result => {

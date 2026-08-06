@@ -123,6 +123,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .header .btn:hover { background: #e94560; color: white; }
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.header .header-auth-btn { width: 32px; height: 32px; padding: 0; display: inline-flex;
+                           align-items: center; justify-content: center; font-size: 16px; line-height: 1; }
 .tech-group-toggle { background: var(--pf-panel); color: var(--pf-muted); border: 1px solid var(--pf-border);
                      border-radius: 6px; width: 28px; height: 28px; padding: 0; font-size: 15px;
                      cursor: pointer; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
@@ -700,6 +702,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .dialog-actions .btn { width: auto; display: inline-block; padding: 6px 16px; background: none;
                         color: #6c6c8a; border: 1px solid #333; margin-bottom: 0; }
 .dialog-actions .btn:hover { color: #e94560; border-color: #e94560; }
+#linkedAccountsDialog .dialog { max-width: 520px; }
+.linked-account-list { display: flex; flex-direction: column; gap: 8px; }
+.linked-account-row { display: grid; grid-template-columns: minmax(0, 1fr) auto;
+                      align-items: center; gap: 12px; min-width: 0; padding: 10px 12px;
+                      background: var(--pf-sidebar); border: 1px solid var(--pf-border);
+                      border-radius: 8px; }
+.linked-account-identity { min-width: 0; }
+.linked-account-provider { color: var(--pf-accent); font-size: 12px; font-weight: 700;
+                           line-height: 1.3; text-transform: capitalize; }
+.linked-account-value { color: var(--pf-text); font-size: 12px; line-height: 1.35;
+                        overflow-wrap: anywhere; }
+.dialog-body .linked-account-unlink { width: auto; display: inline-flex; flex: none;
+                                      align-items: center; justify-content: center;
+                                      margin: 0; padding: 7px 11px; text-align: center; }
 #conversationSettingsDialog label { display: block; margin-bottom: 4px; color: var(--pf-muted); font-size: 11px; }
 #conversationSettingsDialog select { width: 100%; padding: 6px 8px; border: 1px solid var(--pf-border);
                                      border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); }
@@ -955,6 +971,14 @@ if (typeof hljs !== 'undefined') {
   <span class="usage-cost-badge" id="usageCostBadge" onclick="showUsageCostPanel()" style="display:none"></span>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
+    <button class="btn header-auth-btn" id="linkAccountBtn" type="button"
+            onclick="showLinkedAccountsDialog()" title="Linked accounts"
+            data-i18n-title="linkedAccounts" aria-label="Linked accounts"
+            data-i18n-aria-label="linkedAccounts" style="display:none">&#x1F517;</button>
+    <button class="btn header-auth-btn" id="logoutBtn" type="button"
+            onclick="doLogout()" title="Logout" data-i18n-title="logout"
+            aria-label="Logout" data-i18n-aria-label="logout"
+            style="display:none">&#x23FB;</button>
   </div>
   <div class="action-menu-wrap action-dock" id="actionMenuWrap" style="display:none">
       <div class="action-menu action-dock-menu" id="actionMenu">
@@ -1025,14 +1049,6 @@ if (typeof hljs !== 'undefined') {
           <div><div class="ami-label" data-i18n="usageDashMenuLabel">Usage &amp; Costs</div><div class="ami-desc" data-i18n="usageDashMenuDesc">Usage/cost dashboard across conversations</div></div>
         </div>
         <div class="action-menu-sep"></div>
-        <button class="action-menu-item" id="linkAccountBtn" onclick="showLinkedAccountsDialog()" style="display:none">
-          <span class="ami-icon">&#x1F517;</span>
-          <div><div class="ami-label" data-i18n="linkedAccounts">Linked accounts</div><div class="ami-desc" data-i18n="linkAccountDesc">Link another sign-in identity</div></div>
-        </button>
-        <button class="action-menu-item" id="logoutBtn" onclick="doLogout()" style="display:none">
-          <span class="ami-icon">&#x23FB;</span>
-          <div><div class="ami-label" data-i18n="logout">Logout</div><div class="ami-desc" data-i18n="logoutDesc">End this session</div></div>
-        </button>
         <button class="action-menu-item" id="adminSettingsBtn" onclick="toggleAdminSettingsMenu()" aria-label="Server settings" style="display:none">
           <span class="ami-icon">&#9881;</span>
           <div><div class="ami-label">Server settings</div><div class="ami-desc">Administration and updates</div></div>
@@ -1127,6 +1143,9 @@ if (typeof hljs !== 'undefined') {
         </select>
         <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" aria-label="Speak agent messages live" data-i18n-aria-label="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
         <button id="speechInputBtn" onclick="toggleConversationSTT()" oncontextmenu="showConversationSTTServiceDialog(); return false;" aria-label="Dictate and send" data-i18n-aria-label="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
+        <button class="btn-attach" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
+        <button class="btn-attach" id="grabBtn" onclick="toggleGrab()" title="Type straight into the agent tmux" data-i18n-title="grabTitle" style="display:none">&#x1F5A5;&#xFE0F;</button>
+        <button class="btn-attach" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
         <div class="view-menu-wrap" id="viewMenuWrap">
           <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
                   aria-label="View options" data-i18n-aria-label="viewMenuTitle"
@@ -1171,9 +1190,6 @@ if (typeof hljs !== 'undefined') {
   </div>
   <div class="input-row">
     <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
-    <button class="btn-attach" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
-    <button class="btn-attach" id="grabBtn" onclick="toggleGrab()" title="Type straight into the agent tmux" data-i18n-title="grabTitle" style="display:none">&#x1F5A5;&#xFE0F;</button>
-    <button class="btn-attach" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
     <div data-pf-slot="composer_accessory_ext" hidden></div>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"

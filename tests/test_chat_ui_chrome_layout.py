@@ -30,7 +30,7 @@ def test_theme_and_language_are_compact_controls_in_the_conversation_dock():
     assert '&#x1F310;' in dock
 
 
-def test_account_actions_live_in_composer_dock_not_header_or_resource_tree():
+def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
     header = _between('<div class="header">', '<!-- Chat tab content -->')
     dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
     i18n_js = Path("tasks/io/chat_ui/i18n.js").read_text(encoding="utf-8")
@@ -39,17 +39,29 @@ def test_account_actions_live_in_composer_dock_not_header_or_resource_tree():
 
     for element_id in ("linkAccountBtn", "logoutBtn"):
         marker = f'id="{element_id}"'
-        assert marker in dock
-        assert marker not in header[:header.index('id="actionMenuWrap"')]
+        assert marker in header[:header.index('id="actionMenuWrap"')]
+        assert marker not in dock
 
     assert 'id="accountMenuWrap"' not in TEMPLATE_HTML
     assert "_setText('#logoutBtn'" not in i18n_js
-    assert 'onclick="showLinkedAccountsDialog()"' in dock
+    assert 'onclick="showLinkedAccountsDialog()"' in header
     assert "function showLinkedAccountsDialog()" in state_js
     assert "list_linked_accounts" in state_js
     assert "list_linked_accounts" not in resources_js
     assert "linkedAccounts" not in resources_js
-    assert '<span class="ami-icon">&#x23FB;</span>' in dock
+    assert "&#x23FB;" in header
+
+
+def test_linked_account_dialog_keeps_identity_visible_beside_unlink_action():
+    state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
+
+    assert "linked-account-row" in state_js
+    assert "linked-account-provider" in state_js
+    assert "linked-account-value" in state_js
+    assert "linked-account-unlink" in state_js
+    assert ".linked-account-row {" in TEMPLATE_HTML
+    assert ".linked-account-unlink {" in TEMPLATE_HTML
+    assert "width: auto;" in TEMPLATE_HTML
 
 
 def test_conversation_expiry_and_theme_open_from_the_context_menu():
@@ -172,12 +184,23 @@ def test_attachment_thumbnails_stack_before_send_and_expand_past_three():
     assert "toggleAttachmentPreview" in ATTACHMENTS_JS
 
 
-def test_composer_keeps_attachment_and_refresh_but_drops_prompt_library_button():
+def test_composer_keeps_only_attachment_before_prompt():
     input_row = _between('<div class="input-row">', '</div>\n</div>\n</div><!-- /tab-content chat -->')
+    before_prompt = input_row[:input_row.index('id="input"')]
 
     assert 'id="promptsBtn"' not in input_row
-    assert 'id="fileAttachBtn"' in input_row
-    assert 'id="refreshConvBtn"' in input_row
+    assert 'id="fileAttachBtn"' in before_prompt
+    for element_id in ("voiceModeBtn", "grabBtn", "refreshConvBtn"):
+        assert f'id="{element_id}"' not in input_row
+
+
+def test_voice_grab_and_refresh_live_in_conversation_controls():
+    controls = _between(
+        '<div class="prompt-controls-panel"', '<div class="composer-action-mount"'
+    )
+
+    for element_id in ("voiceModeBtn", "grabBtn", "refreshConvBtn"):
+        assert f'id="{element_id}"' in controls
 
 
 def test_task_dock_stays_fixed_while_action_dock_joins_composer():

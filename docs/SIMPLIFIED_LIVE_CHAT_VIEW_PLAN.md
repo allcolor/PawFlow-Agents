@@ -146,10 +146,11 @@ controls:
   screen-reader access.
 - Conversation actions formerly hidden behind the `+` menu form an always-visible,
   horizontally scrollable dock in the center of the composer's context row.
-  Linked-account management, power-styled `Logout`, and administration live in
-  this dock. The account dialog lists identities, allows unlinking, and starts the
-  existing OAuth link flow for an additional identity. Linked identities are not
-  duplicated at the bottom of the Resources tree. The dock reserves horizontal
+  Administration stays in this dock, while linked-account management and the
+  power-styled `Logout` remain visible at the right of the header. The account
+  dialog renders each provider and identity beside its bounded unlink action, and
+  starts the existing OAuth link flow for an additional identity. Linked identities
+  are not duplicated at the bottom of the Resources tree. The dock reserves horizontal
   edge padding for hover zoom and hides its native scrollbar, so zooming the last
   icon cannot flash a scrollbar while touch/trackpad horizontal scrolling remains.
   The extension-provided header/action slots remain inside it. The administration
@@ -159,9 +160,10 @@ controls:
 - View mode, TTS, STT, and tool permission mode occupy the left of that row,
   while active agents occupy the right. Pasted files render as stacked thumbnails
   immediately before Send; the first three stay visible and a count expands the
-  full tray. The redundant prompt-library button is omitted while file attachment
-  and conversation refresh remain beside the composer. Keeping all of these inside
-  the main layout makes them move with the
+  full tray. The redundant prompt-library button is omitted; only file attachment
+  remains beside the prompt, while realtime voice, grab, and conversation refresh
+  join the left Conversation controls panel. Keeping all of these inside the main
+  layout makes them move with the
   conversation when the left sidebar opens instead of overlapping it.
 - Expiry and the conversation theme no longer consume permanent sidebar height.
   Right-clicking any conversation and choosing Conversation controls activates that
@@ -172,6 +174,13 @@ controls:
 These are presentation moves only. Existing element IDs and event handlers remain
 the behavioral contract for authentication, themes, localization, permissions,
 view selection, speech, administration, actions, and UI extensions.
+
+On conversation switch or reload, liveness is reconstructed from both server
+signals: the active-turn snapshot and any history tool call stamped live by the
+relay's in-flight snapshot. If the tail block was marked complete only because
+reconstruction found neither signal, that completion remains a guess: the next
+live SSE row reopens the same positional block. A real terminal event is never
+reopened.
 
 ## Non-goals
 

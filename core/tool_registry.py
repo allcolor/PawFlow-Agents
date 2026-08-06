@@ -15,6 +15,7 @@ Agent tool types:
 - mcp: Call a tool on an MCP server (HTTP transport)
 """
 
+import copy
 import json
 import logging
 import threading
@@ -227,6 +228,26 @@ class ToolRegistry:
     def list_tools(self) -> List[ToolHandler]:
         """List all registered handlers."""
         return list(self._handlers.values())
+
+    def fork(self) -> "ToolRegistry":
+        """Return an execution-local registry with isolated handler state.
+
+        Handlers carry runtime scope such as user, conversation and agent IDs.
+        A shallow copy gives each execution its own attribute dictionary while
+        intentionally retaining shared service clients, locks and caches.  Any
+        handler that points back to this registry is rebound to the fork.
+        """
+        forked = ToolRegistry()
+        forked._hooks = {
+            event: list(callbacks)
+            for event, callbacks in self._hooks.items()
+        }
+        for name, handler in self._handlers.items():
+            local_handler = copy.copy(handler)
+            if getattr(local_handler, "_registry", None) is self:
+                local_handler._registry = forked
+            forked._handlers[name] = local_handler
+        return forked
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
         """Get tool definitions in a format suitable for LLMToolDefinition."""

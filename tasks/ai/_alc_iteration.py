@@ -524,6 +524,7 @@ class _ALCIterationMixin:
             agent_name=st.ctx.get("active_agent_name") or "",
             agent_svc=st.ctx.get("active_llm_service", ""),
             conversation_id=st.conversation_id, user_id=st.user_id,
+            llm_client=st.client, llm_model=st.model,
             is_claude_code=st._is_claude_code,
             cancel_check=st.emitter.check_cancelled,
             event_cid=st.ctx.get("_event_cid", ""),

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.124] — 2026-08-06
+
+### Fixed
+
+- Global theme and language controls now live in the right-hand chat header
+  instead of the conversation action dock. The authenticated principal is shown
+  between the linked-account control and the power-styled logout button.
+
 ## [1.0.0-beta.123] — 2026-08-06
 
 ### Fixed

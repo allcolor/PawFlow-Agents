@@ -15,19 +15,20 @@ def _between(start: str, end: str) -> str:
     return TEMPLATE_HTML[start_index:TEMPLATE_HTML.index(end, start_index)]
 
 
-def test_theme_and_language_are_compact_controls_in_the_conversation_dock():
+def test_theme_and_language_are_compact_controls_in_the_header():
     header = _between('<div class="header">', '<!-- Chat tab content -->')
     header_lead = header[:header.index('id="actionMenuWrap"')]
     dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
 
     for element_id in ("themeSelect", "languageSelect"):
         marker = f'id="{element_id}"'
-        assert marker in dock
-        assert marker not in header_lead
-    assert 'dock-select-item' in dock
-    assert 'class="dock-icon-select"' in dock
-    assert '&#x1F3A8;' in dock
-    assert '&#x1F310;' in dock
+        assert marker in header_lead
+        assert marker not in dock
+    assert header_lead.count('class="header-select-control"') == 2
+    assert header_lead.count('class="header-icon-select"') == 2
+    assert '&#x1F3A8;' in header_lead
+    assert '&#x1F310;' in header_lead
+    assert header_lead.index('id="themeSelect"') < header_lead.index('id="languageSelect"')
 
 
 def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
@@ -37,10 +38,20 @@ def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
     state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
     resources_js = Path("tasks/io/chat_ui/resources_render.js").read_text(encoding="utf-8")
 
-    for element_id in ("linkAccountBtn", "logoutBtn"):
+    for element_id in ("linkAccountBtn", "userInfo", "logoutBtn"):
         marker = f'id="{element_id}"'
         assert marker in header[:header.index('id="actionMenuWrap"')]
         assert marker not in dock
+
+    header_controls = header[:header.index('id="actionMenuWrap"')]
+    assert (
+        header_controls.index('id="linkAccountBtn"')
+        < header_controls.index('id="userInfo"')
+        < header_controls.index('id="logoutBtn"')
+    )
+    assert "window.PAWFLOW_EXTENSION_CONTEXT" in state_js
+    assert "userInfo.textContent = activeUser" in state_js
+    assert "userInfo.style.display = activeUser ? '' : 'none'" in state_js
 
     assert 'id="accountMenuWrap"' not in TEMPLATE_HTML
     assert "_setText('#logoutBtn'" not in i18n_js

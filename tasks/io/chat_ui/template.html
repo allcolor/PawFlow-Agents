@@ -125,6 +125,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .header .header-auth-btn { width: 32px; height: 32px; padding: 0; display: inline-flex;
                            align-items: center; justify-content: center; font-size: 16px; line-height: 1; }
+.header .header-select-control { position: relative; width: 32px; height: 32px; flex: 0 0 32px;
+                                 align-items: center; justify-content: center; overflow: hidden;
+                                 border: 1px solid #e94560; border-radius: 6px;
+                                 background: #0f3460; color: #e0e0e0; cursor: pointer; }
+.header .header-select-control:hover { background: #e94560; color: #fff; }
+.header .header-select-icon { font-size: 16px; line-height: 1; pointer-events: none; }
+.header .header-icon-select { position: absolute; inset: 0; width: 100%; height: 100%;
+                              opacity: 0; cursor: pointer; border: 0; padding: 0; }
 .tech-group-toggle { background: var(--pf-panel); color: var(--pf-muted); border: 1px solid var(--pf-border);
                      border-radius: 6px; width: 28px; height: 28px; padding: 0; font-size: 15px;
                      cursor: pointer; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
@@ -295,7 +303,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   .simple-turn-idle-dot { animation: none; transition: none; }
   .simple-turn-block.turn-working .simple-turn-ephemeral::after { animation: none; }
 }
-.header .user-info { font-size: 12px; color: #8888aa; }
+.header .user-info { display: inline-block; max-width: min(240px, 24vw); overflow: hidden;
+                     text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #8888aa; }
 /* ── Mobile layout (narrow viewports) ──
    Base layout above assumes desktop width: sidebar pushes .main over at a
    fixed 260px, and .header lays every control out on one row. Neither
@@ -855,9 +864,6 @@ body.desktop-fullscreen .tab-content.active iframe {
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4); }
 .action-dock-menu > .action-menu-item > div { display: none; }
 .action-dock-menu > .action-menu-item .ami-icon { width: auto; font-size: 15px; }
-.action-dock-menu > .dock-select-item { overflow: hidden; }
-.dock-icon-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0;
-                    cursor: pointer; border: 0; padding: 0; }
 .action-dock-menu > .action-menu-sep { width: 0; height: 28px; border-top: 0; border-left: 1px solid #0f3460;
                                        margin: 1px 2px; flex: 0 0 0; }
 #adminSettingsMenu { position: absolute; right: auto; left: 50%; top: auto; bottom: calc(100% + 8px);
@@ -970,11 +976,27 @@ if (typeof hljs !== 'undefined') {
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
   <span class="usage-cost-badge" id="usageCostBadge" onclick="showUsageCostPanel()" style="display:none"></span>
   <div class="actions">
-    <span class="user-info" id="userInfo"></span>
+    <label class="header-select-control" id="themeSelectControl" title="Global chat theme"
+           aria-label="Global chat theme" data-i18n-title="globalThemeTitle"
+           data-i18n-aria-label="globalThemeTitle" style="display:none">
+      <span class="header-select-icon">&#x1F3A8;</span>
+      <select class="header-icon-select" id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)"
+              aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle">
+        <option value="global:pawflow_dark">PawFlow Dark</option>
+      </select>
+    </label>
+    <label class="header-select-control" id="languageSelectControl" title="Language"
+           aria-label="Language" data-i18n-title="languageTitle"
+           data-i18n-aria-label="languageTitle" style="display:none">
+      <span class="header-select-icon">&#x1F310;</span>
+      <select class="header-icon-select" id="languageSelect" onchange="setLanguage(this.value)"
+              aria-label="Language" data-i18n-aria-label="languageTitle"></select>
+    </label>
     <button class="btn header-auth-btn" id="linkAccountBtn" type="button"
             onclick="showLinkedAccountsDialog()" title="Linked accounts"
             data-i18n-title="linkedAccounts" aria-label="Linked accounts"
             data-i18n-aria-label="linkedAccounts" style="display:none">&#x1F517;</button>
+    <span class="user-info" id="userInfo" style="display:none"></span>
     <button class="btn header-auth-btn" id="logoutBtn" type="button"
             onclick="doLogout()" title="Logout" data-i18n-title="logout"
             aria-label="Logout" data-i18n-aria-label="logout"
@@ -1053,18 +1075,6 @@ if (typeof hljs !== 'undefined') {
           <span class="ami-icon">&#9881;</span>
           <div><div class="ami-label">Server settings</div><div class="ami-desc">Administration and updates</div></div>
         </button>
-        <label class="action-menu-item dock-select-item" id="themeSelectControl" aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle" style="display:none">
-          <span class="ami-icon">&#x1F3A8;</span>
-          <div><div class="ami-label" data-i18n="globalThemeTitle">Global chat theme</div></div>
-          <select class="dock-icon-select" id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)" aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle">
-            <option value="global:pawflow_dark">PawFlow Dark</option>
-          </select>
-        </label>
-        <label class="action-menu-item dock-select-item" id="languageSelectControl" aria-label="Language" data-i18n-aria-label="languageTitle" style="display:none">
-          <span class="ami-icon">&#x1F310;</span>
-          <div><div class="ami-label" data-i18n="languageTitle">Language</div></div>
-          <select class="dock-icon-select" id="languageSelect" onchange="setLanguage(this.value)" aria-label="Language" data-i18n-aria-label="languageTitle"></select>
-        </label>
         <div data-pf-slot="action_menu_ext"></div>
         <span data-pf-slot="header_actions_ext"></span>
       </div>

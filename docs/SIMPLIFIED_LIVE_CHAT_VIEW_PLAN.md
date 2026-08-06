@@ -141,13 +141,14 @@ The classic and simplified message views share the same compact surrounding
 controls:
 
 - The header keeps status and usage compact. Global theme and language are native
-  selectors presented as palette/globe icons at the end of the conversation dock;
+  selectors presented as palette/globe icons in the right-hand header controls;
   their option lists retain the full labels and language flags for keyboard and
   screen-reader access.
 - Conversation actions formerly hidden behind the `+` menu form an always-visible,
   horizontally scrollable dock in the center of the composer's context row.
   Administration stays in this dock, while linked-account management and the
-  power-styled `Logout` remain visible at the right of the header. The account
+  power-styled `Logout` remain visible at the right of the header. The authenticated
+  principal is displayed between the linked-account and logout controls. The account
   dialog renders each provider and identity beside its bounded unlink action, and
   starts the existing OAuth link flow for an additional identity. Linked identities
   are not duplicated at the bottom of the Resources tree. The dock reserves horizontal

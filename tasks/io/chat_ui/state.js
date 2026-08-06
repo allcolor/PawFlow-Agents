@@ -188,6 +188,11 @@ function getAuthHeaders() {
 // Page is behind validateSessionAuth, so if we're here, we're logged in
 if (LOGIN_URL) {
   document.getElementById('linkAccountBtn').style.display = '';
+  const activeUser = String((window.PAWFLOW_EXTENSION_CONTEXT || {}).user || '').trim();
+  const userInfo = document.getElementById('userInfo');
+  userInfo.textContent = activeUser;
+  userInfo.title = activeUser;
+  userInfo.style.display = activeUser ? '' : 'none';
   document.getElementById('logoutBtn').style.display = '';
 }
 function beginOAuthAccountLink() {

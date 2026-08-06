@@ -196,9 +196,11 @@ def test_theme_ui_selector_and_repository_entries_exist():
         for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     themes_js = open("tasks/io/chat_ui/themes.js", encoding="utf-8").read()
 
-    dock_start = template.index('id="actionMenuWrap"')
+    header_start = template.index('<div class="header">')
+    dock_start = template.index('id="actionMenuWrap"', header_start)
     dock_end = template.index('<!-- /action dock -->', dock_start)
-    assert dock_start < template.index('id="themeSelect"') < dock_end
+    assert header_start < template.index('id="themeSelect"') < dock_start
+    assert 'id="themeSelect"' not in template[dock_start:dock_end]
     assert 'id="conversationThemeSelect"' in template
     assert template.index('id="resourcesPanel"') < template.index('id="conversationThemeSelect"')
     assert '"themes.js"' in serve

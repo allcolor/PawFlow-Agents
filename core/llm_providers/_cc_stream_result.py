@@ -245,11 +245,8 @@ class _CCStreamResultMixin:
             # same way the Codex interactive provider records its rollout
             # token_count, so compute_context_usage can use it as the
             # measured occupancy.
-            _tok_map = getattr(self, '_cli_observed_context_tokens_by_stream', None)
-            if _tok_map is None:
-                _tok_map = {}
-                self._cli_observed_context_tokens_by_stream = _tok_map
-            _tok_map[_cw_key] = _total_in
+            self.record_observed_cli_context(
+                _cw_key[0], _cw_key[1], _total_in)
             self._ccs_pub(st, "message_meta", {
                 "msg_id": _last_msg_id,
                 "agent_name": st.agent_name,

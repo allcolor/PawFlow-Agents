@@ -101,6 +101,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             emitted_tool_result_ids=state.emitted_tool_result_ids,
             consumer_epoch=consumer_epoch)
         response = coord.run(getattr(self, "_abort", None))
+        self._cci_record_observed_context(coord, conversation_id, agent_name)
         # Prefer the model resolved on the wire (message_start); fall back to
         # the configured alias (e.g. "best") then the provider default.
         response.model = response.model or model or self.default_model
@@ -151,10 +152,26 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             emitted_tool_result_ids=state.emitted_tool_result_ids,
             consumer_epoch=consumer_epoch)
         response = coord.run(getattr(self, "_abort", None))
+        self._cci_record_observed_context(coord, conversation_id, agent_name)
         # Prefer the model resolved on the wire (message_start); fall back to
         # the configured alias (e.g. "best") then the provider default.
         response.model = response.model or model or self.default_model
         return response
+
+    def _cci_record_observed_context(self, coord, conversation_id: str,
+                                     agent_name: str) -> None:
+        """Feed the central gauge the prompt size seen on the wire.
+
+        Same defect the `claude -p` provider had: nothing recorded the measured
+        occupancy, so compute_context_usage fell back to reconstructing from
+        the externalized PawFlow context, and the gauge sat at 0% for a session
+        that had done real work. The proxy already sees the exact number in the
+        wire usage of every ``message_start``; the interactive session's window
+        holds Claude Code's own system prompt, tool schemas and history on top
+        of what PawFlow can enumerate, so this is the only honest measurement.
+        """
+        self.record_observed_wire_usage(
+            getattr(coord, "usage", None), conversation_id, agent_name)
 
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,
                     user_id: str, conversation_id: str,

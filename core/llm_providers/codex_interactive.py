@@ -11,11 +11,13 @@ from core.llm_providers._codex_interactive_turn import (
     _CodexInteractiveTurnCoordinator)
 from core.llm_providers.claude_code_interactive import (
     LLMClaudeCodeInteractiveMixin)
+from core.llm_providers.cli_shared import LLMCliSharedMixin
 
 logger = logging.getLogger(__name__)
 
 
-def codex_rollout_context_usage(workdir: str, *, not_before: float = 0.0):
+def codex_rollout_context_usage(workdir: str, *, not_before: float = 0.0,
+                                thread_id: str = ""):
     """Return the latest native Codex prompt size and context window.
 
     Recent Codex versions no longer expose ``context left`` in the TUI footer,
@@ -23,6 +25,11 @@ def codex_rollout_context_usage(workdir: str, *, not_before: float = 0.0):
     The session rollout's ``token_count`` event is the source Codex itself uses
     for its context display.  Read backwards so even a large rollout costs only
     the distance to its latest valid measurement.
+
+    ``thread_id`` restricts the search to that thread's rollout.  A TUI workdir
+    holds one live session, but app-server can resume several threads under the
+    same workdir, and there the most-recently-touched file is not necessarily
+    the thread that just answered.
     """
     sessions = Path(workdir or "") / ".codex" / "sessions"
     try:
@@ -32,6 +39,8 @@ def codex_rollout_context_usage(workdir: str, *, not_before: float = 0.0):
             reverse=True)
     except (OSError, ValueError):
         return 0, 0
+    if thread_id:
+        candidates = [path for path in candidates if thread_id in path.name]
 
     for path in candidates:
         try:
@@ -83,29 +92,10 @@ class LLMCodexInteractiveMixin:
         LLMClaudeCodeInteractiveMixin._cci_attachment_block)
     _cci_preempt_prompt = LLMClaudeCodeInteractiveMixin._cci_preempt_prompt
 
-    def record_observed_cli_context(self, conversation_id: str,
-                                    agent_name: str, tokens: int) -> None:
-        """Store the prompt size Codex reported for this stream.
-
-        Read back by the context gauge, which otherwise has nothing to
-        measure: the window belongs to the Codex session, not to PawFlow.
-        The dict is created in ``LLMClient.__init__`` and shared by reference
-        with call clones, so the clone that runs the turn and the resolver
-        client the gauge reads expose one authoritative value.
-        """
-        if not conversation_id or not agent_name:
-            return
-        try:
-            measured = int(tokens or 0)
-        except (TypeError, ValueError):
-            return
-        if measured <= 0:
-            return
-        counts = getattr(self, "_cli_observed_context_tokens_by_stream", None)
-        if not isinstance(counts, dict):
-            counts = {}
-            self._cli_observed_context_tokens_by_stream = counts
-        counts[(conversation_id, agent_name)] = measured
+    # Recording the measured prompt size is provider-neutral -- every observed
+    # CLI feeds the same gauge from the same dict. One implementation, borrowed
+    # like the prompt helpers above so a bare mixin still exposes it.
+    record_observed_cli_context = LLMCliSharedMixin.record_observed_cli_context
 
     def _publish_codex_context_gauge(self, conversation_id: str,
                                      agent_name: str, user_id: str = "",

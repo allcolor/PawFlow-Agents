@@ -3511,3 +3511,30 @@ def test_turn_coordinator_observed_full_args_supersede_empty_stream_emit():
                  if tc.get("id") == "toolu_race"]
     assert len(persisted) == 1
     assert persisted[0]["arguments"] == full_args
+
+
+def test_observed_wire_prompt_size_feeds_the_context_gauge():
+    """The measured prompt size must reach the gauge's per-stream dict.
+
+    Regression: nothing recorded it for claude-code-interactive, so
+    compute_context_usage fell back to reconstructing the window from the
+    PawFlow messages that survive the bootstrap-read boundary. Once the
+    externalized context file grew past the native Read ceiling, that
+    reconstruction had almost nothing left to count and the gauge sat at 0%
+    for a session holding a full window.
+
+    Cross-provider coverage lives in tests/test_measured_gauge_all_providers.py.
+    """
+    client = LLMClient("claude-code-interactive")
+
+    class _Coord:
+        usage = {
+            "input_tokens": 1_200,
+            "cache_read_input_tokens": 180_000,
+            "cache_creation_input_tokens": 47_222,
+            "output_tokens": 900,
+        }
+
+    client._cci_record_observed_context(_Coord(), "conv-1", "claude")
+    assert client._cli_observed_context_tokens_by_stream[
+        ("conv-1", "claude")] == 228_422

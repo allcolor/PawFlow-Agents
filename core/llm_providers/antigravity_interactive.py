@@ -486,6 +486,12 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
                 emitted_tool_result_ids=state.emitted_tool_result_ids,
                 interrupted_callback=lambda: pool.is_interrupted_prompt(state))
             response = coord.run(getattr(self, "_abort", None))
+            # The observer normalizes Gemini's promptTokenCount to
+            # input_tokens: that is the window's real occupancy, and the only
+            # number PawFlow can trust here -- the session holds Antigravity's
+            # own prompt and history on top of what PawFlow can enumerate.
+            self.record_observed_wire_usage(
+                getattr(coord, "usage", None), conversation_id, agent_name)
         finally:
             pool.mark_submit_complete(state)
             pool.resume_manual_ingest(state)
@@ -679,6 +685,9 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
                 emitted_tool_result_ids=state.emitted_tool_result_ids,
                 interrupted_callback=lambda: pool.is_interrupted_prompt(state))
             response = coord.run(getattr(self, "_abort", None))
+            # An interrupt runs against the same window as an ordinary turn.
+            self.record_observed_wire_usage(
+                getattr(coord, "usage", None), conversation_id, agent_name)
         finally:
             pool.resume_manual_ingest(state)
         response.model = model or self.default_model

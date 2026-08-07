@@ -1067,8 +1067,58 @@ Responses usage describes only the current exchange.
 - `reset_cli_context_usage` drops it: after a session is invalidated the old
   measurement describes a window that no longer exists.
 
-This is Codex interactive only. The other interactive providers keep the
-reconstructed gauge.
+Claude Code interactive measures the same way, from a different source. Its
+MITM proxy sees every `message_start`, whose `usage` is the exact prompt size
+Anthropic counted: `_cci_record_observed_context`
+(`core/llm_providers/claude_code_interactive.py`) sums `input_tokens`,
+`cache_read_input_tokens` and `cache_creation_input_tokens` — cached tokens
+occupy the window exactly like uncached ones, and for a Claude Code session
+they are most of it — and hands the total to the same
+`record_observed_cli_context`. Both the turn path and the interrupt path record
+it: both coordinators run against the same window.
+
+Why it was needed: the reconstructed gauge counts only what survives the
+bootstrap-read boundary (`_strip_for_count` zeroes everything before it, so the
+externalized context is not charged twice). That accounting holds only while
+the native read brings the whole file back in one tool result. Once a
+conversation's `initial_context.md` grew past the native Read tool's 256 KB
+ceiling, the read returned a size error instead of the context, the agent
+paginated it in pieces PawFlow never sees as the boundary result, and the gauge
+reported ~0% for a session holding a full window. The measurement does not care
+how the file was read.
+
+`record_observed_cli_context` itself lives on `LLMCliSharedMixin`
+(`core/llm_providers/cli_shared.py`): recording a measured prompt size is
+provider-neutral, and one implementation keeps every provider on a single
+authoritative number. Two copies is how one of them drifts — the Codex mixin
+used to define its own, so the gauge depended on which mixin won the MRO.
+
+#### Where each provider's measurement comes from
+
+A provider that can measure its own prompt records it; one that cannot keeps
+the reconstruction. `record_observed_wire_usage` sums `input_tokens +
+cache_read_input_tokens + cache_creation_input_tokens` for the proxied ones,
+and `record_observed_cli_window` stores a native denominator when the provider
+publishes one.
+
+| Provider | Source of the measurement |
+|---|---|
+| `codex-interactive` | rollout `token_count` (`info.last_token_usage.input_tokens`) + `model_context_window` |
+| `codex-app-server` | the same rollout — app-server writes it too, so `codex_rollout_context_usage` is reused verbatim, window included |
+| `claude-code` | `result.usage` of the stream-json result event |
+| `claude-code-interactive` | `message_start.usage` seen by the MITM proxy, turn path and interrupt path |
+| `antigravity-interactive` | observer usage, where Gemini's `promptTokenCount` is normalized to `input_tokens` |
+| `gemini` (ACP) | `meta.quota.token_count.promptTokenCount`, else `totalTokenCount − candidatesTokenCount` |
+| API providers (openai, anthropic, …) | none needed: PawFlow builds the payload, so counting messages + system prompt + tool defs *is* the measurement |
+
+A measurement that is absent records nothing rather than a 0: a stored 0 is
+indistinguishable from "measured an empty window" for every consumer, and would
+pin the gauge at 0% instead of letting the reconstruction answer.
+
+Before this, `codex-app-server` and `gemini` divided a *character estimate* of
+what PawFlow sent by a configured window, seeing neither the provider's system
+prompt nor the session history it resumed — the estimate was structurally
+unable to be right, however carefully it was computed.
 
 #### A measured gauge is never advanced by counting
 

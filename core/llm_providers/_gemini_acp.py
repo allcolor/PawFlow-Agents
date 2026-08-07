@@ -512,6 +512,39 @@ class _GeminiAcpProtocolMixin:
         return update.get("status") or ""
 
     @staticmethod
+    def _gemini_acp_prompt_tokens(meta: dict) -> int:
+        """Return Gemini's own prompt size for this turn, or 0.
+
+        The ACP quota block carries the same ``usageMetadata`` counters the
+        Gemini API reports. ``promptTokenCount`` is the window's real
+        occupancy -- Gemini CLI's system prompt, tool declarations and resumed
+        history included -- none of which PawFlow can enumerate from its own
+        messages. Without it the gauge divides a char-estimate of what PawFlow
+        sent by a configured window.
+
+        When only totals are published, the prompt is the total minus the
+        answer: ``totalTokenCount`` counts both.
+        """
+        quota = (meta or {}).get("quota") or {}
+        token_count = quota.get("token_count") or quota.get("tokenCount") or {}
+        for key in ("promptTokenCount", "prompt_token_count",
+                    "inputTokens", "input_tokens"):
+            try:
+                value = int(token_count.get(key, 0) or 0)
+            except (TypeError, ValueError, AttributeError):
+                value = 0
+            if value > 0:
+                return value
+        try:
+            total = int(token_count.get("totalTokenCount", 0)
+                        or token_count.get("total_token_count", 0) or 0)
+            answer = int(token_count.get("candidatesTokenCount", 0)
+                         or token_count.get("candidates_token_count", 0) or 0)
+        except (TypeError, ValueError, AttributeError):
+            return 0
+        return max(0, total - answer)
+
+    @staticmethod
     def _gemini_acp_output_tokens(meta: dict, content: str) -> int:
         quota = (meta or {}).get("quota") or {}
         token_count = quota.get("token_count") or quota.get("tokenCount") or {}

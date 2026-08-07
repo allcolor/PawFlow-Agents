@@ -742,6 +742,18 @@ class _CodexAppStreamMixin:
             # single message and stay glued.
             content = ("\n\n".join(p for p in final_text_parts if p).strip()
                        or "".join(text_parts).strip())
+            # app-server writes the same rollout the TUI does, and its
+            # token_count event is Codex's own context measurement. Without it
+            # the gauge divided a char-estimate of what PawFlow sent by a
+            # configured window, seeing neither Codex's system prompt nor the
+            # session history it resumed.
+            from core.llm_providers.codex_interactive import (
+                codex_rollout_context_usage)
+            _native_used, _native_window = codex_rollout_context_usage(
+                workdir, thread_id=thread_id)
+            self.record_observed_cli_context(conv_id, agent_name, _native_used)
+            self.record_observed_cli_window(
+                conv_id, agent_name, _native_window)
             return LLMResponse(
                 content=content,
                 model=model,

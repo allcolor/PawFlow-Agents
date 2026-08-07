@@ -620,6 +620,12 @@ class _GeminiStreamMixin:
             _flush_text()
             content = "".join(text_parts).strip()
             tokens_out = self._gemini_acp_output_tokens(usage_meta, content)
+            # Gemini's own promptTokenCount beats the char-estimate of what
+            # PawFlow sent: the CLI session's window also holds its system
+            # prompt, its tool declarations and the history it resumed.
+            self.record_observed_cli_context(
+                conv_id, agent_name,
+                self._gemini_acp_prompt_tokens(usage_meta))
             if session_id and conv_id and store is not None and not is_ephemeral:
                 try:
                     store.set_extra(conv_id, session_key, session_id)

@@ -311,6 +311,85 @@ def is_bootstrap_read_result(msg: Any, call_ids: Set[str]) -> bool:
 class LLMCliSharedMixin:
     """Methods shared across CLI and HTTP providers."""
 
+    def record_observed_cli_context(self, conversation_id: str,
+                                    agent_name: str, tokens: int) -> None:
+        """Store the prompt size the CLI provider reported for this stream.
+
+        Read back by the context gauge (``tasks.ai.context_usage``), which
+        otherwise has nothing to measure: the window belongs to the CLI
+        session, not to PawFlow -- provider system prompt, tool schemas and
+        session history included, none of which PawFlow can enumerate from
+        its own messages. Every observed CLI provider records here (Codex from
+        the rollout ``token_count``, claude-code and claude-code-interactive
+        from the wire ``usage``), so one number feeds the gauge and the
+        auto-compact threshold.
+
+        The dict is created in ``LLMClient.__init__`` and shared by reference
+        with call clones, so the clone that runs the turn and the resolver
+        client the gauge reads expose one authoritative value.
+        """
+        if not conversation_id or not agent_name:
+            return
+        try:
+            measured = int(tokens or 0)
+        except (TypeError, ValueError):
+            return
+        if measured <= 0:
+            return
+        counts = getattr(self, "_cli_observed_context_tokens_by_stream", None)
+        if not isinstance(counts, dict):
+            counts = {}
+            self._cli_observed_context_tokens_by_stream = counts
+        counts[(conversation_id, agent_name)] = measured
+
+    def record_observed_wire_usage(self, usage: Any, conversation_id: str,
+                                   agent_name: str) -> None:
+        """Record the prompt occupancy carried by an observed usage dict.
+
+        For every provider PawFlow watches through a proxy, the prompt size is
+        the sum of what the API charges as input: uncached tokens, cache reads
+        and cache creation. Cached tokens occupy the window exactly like
+        uncached ones -- for a Claude Code session they are most of it -- so a
+        gauge built on ``input_tokens`` alone would report a fraction of the
+        real prompt.
+
+        Providers whose usage carries no cache fields (the Antigravity
+        observer normalizes Gemini's ``promptTokenCount`` to ``input_tokens``)
+        simply contribute those missing terms as 0.
+        """
+        if not isinstance(usage, dict):
+            return
+        total = 0
+        for field in ("input_tokens", "cache_read_input_tokens",
+                      "cache_creation_input_tokens"):
+            try:
+                total += int(usage.get(field, 0) or 0)
+            except (TypeError, ValueError):
+                continue
+        self.record_observed_cli_context(conversation_id, agent_name, total)
+
+    def record_observed_cli_window(self, conversation_id: str,
+                                   agent_name: str, window: int) -> None:
+        """Store the window a measured prompt size is divided by, when native.
+
+        Only providers that report their own window call this. Without it the
+        gauge divides by whatever ``max_context_size`` happens to say, which is
+        a configured guess rather than the session's real budget.
+        """
+        if not conversation_id or not agent_name:
+            return
+        try:
+            measured = int(window or 0)
+        except (TypeError, ValueError):
+            return
+        if measured <= 0:
+            return
+        windows = getattr(self, "_cli_observed_context_window_by_stream", None)
+        if not isinstance(windows, dict):
+            windows = {}
+            self._cli_observed_context_window_by_stream = windows
+        windows[(conversation_id, agent_name)] = measured
+
     def _cli_require_cold_context(self, provider: str, *,
                                   release=None) -> None:
         """Refuse to launch a process holding a resume's context.

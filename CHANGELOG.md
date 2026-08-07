@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.136] — 2026-08-07
+
+### Fixed
+
+- The authenticated username is now the label of the linked-accounts button
+  itself: the header renders one control `[icon username]` instead of a
+  separate username span next to the icon button. Clicking the combined
+  control still opens the linked-accounts dialog, and the tooltip is
+  unchanged.
+
 ## [1.0.0-beta.135] — 2026-08-07
 
 ### Fixed

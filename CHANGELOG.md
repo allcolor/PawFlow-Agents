@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.129] — 2026-08-07
+
+### Fixed
+
+- Pending webchat UI actions now reconcile against the synchronous status
+  registry every 1.5 seconds while work remains. Results are recovered even
+  when the per-tab SSE stream expires or reconnects at the wrong moment;
+  silent polling calls participate without appearing in the visible activity
+  indicator, and only one reconciliation request may run at a time.
+
 ## [1.0.0-beta.128] — 2026-08-07
 
 ### Fixed

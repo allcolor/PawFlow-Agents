@@ -396,11 +396,9 @@ class TestMetaToolAliases(unittest.TestCase):
         assert result == "glob-ok"
         assert received == {"pattern": "*.md"}
 
-    def test_use_tool_merges_unknown_top_level_keys_into_inner_args(self):
-        """Any top-level key that is not envelope metadata is a
-        target-tool parameter (e.g. local=true) and must reach the target
-        handler — silently dropping it executed the tool on the wrong
-        surface with no error."""
+    def test_use_tool_merges_declared_top_level_keys_into_inner_args(self):
+        """A schema-declared envelope key reaches the target when absent
+        from the canonical arguments object."""
         from core.handlers.meta_tools import UseToolHandler
 
         received = {}
@@ -432,7 +430,41 @@ class TestMetaToolAliases(unittest.TestCase):
         assert result == "bash-ok"
         assert received == {"command": "ls -l /", "local": True}
 
-    def test_use_tool_merges_unknown_top_level_keys_into_nested_wrapper(self):
+    def test_use_tool_inner_args_win_over_declared_top_level_keys(self):
+        """The canonical arguments object cannot be overwritten by its
+        fallback envelope copy."""
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "bash-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="bash",
+            schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "local": {"type": "boolean"},
+                },
+                "required": ["command"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "bash",
+            "arguments_json": '{"command": "ls -l /", "local": true}',
+            "local": False,
+        })
+
+        assert result == "bash-ok"
+        assert received == {"command": "ls -l /", "local": True}
+
+    def test_use_tool_merges_declared_top_level_keys_into_nested_wrapper(self):
         """Envelope extras survive the nested meta-tool unwrap."""
         from core.handlers.meta_tools import UseToolHandler
 

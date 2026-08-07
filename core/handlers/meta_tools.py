@@ -474,36 +474,19 @@ class UseToolHandler(ToolHandler):
             tool_args = nested_args
             unwrap_budget -= 1
 
-        # Any other top-level key is a target-tool parameter the LLM placed
-        # on the envelope (e.g. use_tool(tool_name="bash",
-        # arguments_json="{...}", local=true)). Silently dropping it
-        # executed the tool on the wrong surface / with wrong defaults —
-        # merge it into the inner arguments so the target handler receives
-        # it (validation then rejects genuinely unknown keys loudly instead
-        # of ignoring them).
-        #
-        # Narration attached to the CALL is the exception. `bash` declares
-        # `description`, so models learn to send it everywhere; merging it
-        # blindly made `read` answer "unknown argument(s) ['description']"
-        # for a call that used to run. Such a key is held back here and
-        # merged below only if the TARGET tool declares it — kept for `bash`,
-        # dropped for `read`, and never the reason a call fails.
-        _narrated: dict = {}
-        if isinstance(tool_args, dict):
-            _envelope_keys = {
-                "tool_name", "name", "tool",
-                "arguments", "arguments_json", "params", "input",
-            }
-            _extra = {}
-            for k, v in arguments.items():
-                if k in _envelope_keys:
-                    continue
-                if k in _NARRATIVE_ENVELOPE_KEYS:
-                    _narrated[k] = v
-                else:
-                    _extra[k] = v
-            if _extra:
-                tool_args = {**tool_args, **_extra}
+        # Keep extra envelope keys aside until the target schema is known.
+        # A declared key is a misplaced target argument and may be merged,
+        # but only when the canonical arguments object did not already
+        # provide it. Undeclared narration is harmless; every other
+        # undeclared key remains a loud error so misspellings such as
+        # `lokal=true` cannot silently select the wrong execution surface.
+        _envelope_keys = {
+            "tool_name", "name", "tool",
+            "arguments", "arguments_json", "params", "input",
+        }
+        _envelope_extras = {
+            k: v for k, v in arguments.items() if k not in _envelope_keys
+        }
 
         if not tool_name:
             return (
@@ -518,12 +501,22 @@ class UseToolHandler(ToolHandler):
         handler = self._registry.get(tool_name)
         if handler:
             schema = _schema_with_local(handler)
-            tool_args = _normalize_tool_args(tool_name, tool_args, schema)
             props = schema.get("properties", {})
-            if _narrated and isinstance(tool_args, dict):
-                _kept = {k: v for k, v in _narrated.items() if k in props}
-                if _kept:
-                    tool_args = {**tool_args, **_kept}
+            unknown_envelope = [
+                k for k in _envelope_extras
+                if k not in props and k not in _NARRATIVE_ENVELOPE_KEYS
+            ]
+            if unknown_envelope:
+                valid = list(props.keys())
+                return (f"Error: unknown argument(s) {unknown_envelope} for tool '{tool_name}'. "
+                        f"Valid arguments: {valid}. "
+                        f"Use get_tool_schema(tool_name='{tool_name}') to see full schema.")
+            if _envelope_extras:
+                tool_args = dict(tool_args)
+                for key, value in _envelope_extras.items():
+                    if key in props:
+                        tool_args.setdefault(key, value)
+            tool_args = _normalize_tool_args(tool_name, tool_args, schema)
             if props and isinstance(tool_args, dict):
                 unknown = [k for k in tool_args if k not in props]
                 if unknown:

@@ -661,18 +661,22 @@ Instead of sending all tool schemas to the LLM (which can consume thousands of t
 
 **Envelope keys.** Models routinely put target-tool parameters next to
 `arguments_json` instead of inside it (`use_tool(tool_name="bash",
-arguments_json="{...}", local=true)`). Those top-level keys are merged into the
-inner arguments and reach the target handler; a key the target schema does not
-declare is then rejected loudly rather than silently dropped, because dropping
-`local=true` ran the tool on the wrong surface with no error.
+arguments_json="{...}", local=true)`). A top-level key is merged only when the
+target schema declares it and the canonical arguments object does not already
+contain it. Thus misplaced parameters still reach the target, while
+`arguments_json` always wins when both locations provide the same key. A key
+the target schema does not declare is rejected loudly rather than silently
+dropped, because dropping `local=true` ran the tool on the wrong surface with
+no error.
 
 One category is exempt: keys that narrate the *call* rather than the target's
 input — `description`, `explanation`, `reasoning`, `thought`
 (`_NARRATIVE_ENVELOPE_KEYS`). `bash` declares `description`, so models learn to
-attach it everywhere; merging it blindly made `read` and every other tool
-answer `unknown argument(s) ['description']` for calls that used to run. A
-narrative key is merged only when the target tool declares it, and dropped
-otherwise. It is never the reason a call fails.
+attach it everywhere; treating it as a target argument made `read` and every
+other tool answer `unknown argument(s) ['description']` for calls that used to
+run. Like every envelope key, a narrative key is merged only when the target
+tool declares it and the inner object omitted it. Unlike a genuinely unknown
+parameter, undeclared narration is ignored rather than rejected.
 
 This reduces the constant token overhead from ~7000 tokens to ~200 tokens, making it practical for smaller context LLMs.
 

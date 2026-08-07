@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The `Context: ~x/y` note the agent reads is now the gauge's number on every
+  CLI provider, instead of a recount of what is being sent this turn. The two
+  are the same thing only on API providers, where PawFlow resends the whole
+  context on every call. On a warm CLI session `_alc_with_provider_system_prompt`
+  deliberately drops the system prompt and the history the CLI already holds,
+  so the outgoing provider context is just the turn's delta — the note
+  announced `~864/800000` to an agent whose session the gauge measured at
+  `77965`, and `~602307` for the same conversation one restart earlier while
+  its session was still cold. The note did not drift; it silently switched
+  quantity with the session state, and an agent deciding how much to read from
+  its bootstrap file was doing so two orders of magnitude off.
+  - `_alc_inject_dynamic_metadata` reads `compute_context_usage` when
+    `_is_cli_provider` is set, and divides by the window that measurement was
+    taken against (Codex reports its own; a correct numerator over a configured
+    guess is still wrong).
+  - It falls back to counting the provider context when no measurement exists
+    yet — a cold start, or a provider that has not reported. That is exactly
+    the case where the provider context *is* the whole context, so the old
+    behaviour was right there and is kept.
+  - The note's denominator stays local. `st._max_ctx` also budgets compaction;
+    moving it here would have changed what gets compacted.
+  - Verified across all six CLI providers: claude-code, claude-code-interactive,
+    antigravity-interactive, codex-app-server, codex-interactive and gemini all
+    feed `record_observed_cli_context` / `record_observed_wire_usage`, so the
+    measurement the note now reads exists on each of them. A test pins that
+    list against `_CLI_CONTEXT_PROVIDERS` so a seventh provider cannot be added
+    without one.
+
+### Notes
+
+- The gauge itself was already correct and is unchanged. For a CLI provider it
+  reports the CLI session's own window — the only context that can actually
+  overflow. PawFlow's stored conversation is larger (654k tokens against a
+  measured 78k on the conversation above) but is never sent anywhere in one
+  piece; compacting against its size would destroy history to protect a window
+  that does not exist. Documented in `docs/AGENT_SYSTEM.md` so the distinction
+  stops being rediscovered.
+
 ## [1.0.0-beta.140] — 2026-08-07
 
 ### Fixed

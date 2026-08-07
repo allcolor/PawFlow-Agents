@@ -101,30 +101,63 @@ class _ALCClosures2Mixin:
         return provider_context, pre_inject_chars
 
     def _alc_inject_dynamic_metadata(self, st, provider_context):
-        # Single source of truth: the same counter the live gauge and the
-        # compact check use (count_context_tokens). provider_context already
-        # carries the provider system prompt in head position, so counting it
-        # plus the tool defs yields exactly the gauge's used value -- the
-        # "Context: ~x/y" note the LLM sees can never disagree with the UI.
-        try:
-            from core.token_counter import (
-                count_context_tokens, resolve_token_multiplier)
-            _est_used_local = count_context_tokens(
-                provider_context, tool_defs=st.tool_defs,
-                multiplier=resolve_token_multiplier(
-                    getattr(st.ctx.get("resolved_svc"), "config", None)
-                    or {}))
-        except Exception:
-            _est_used_local = self._estimate_tokens(
-                provider_context, tool_defs=st.tool_defs,
-                chars_per_token=st.ctx.get("chars_per_token", 0))
-        _remaining_local = max(0, st._max_ctx - _est_used_local)
+        # Single source of truth: the "Context: ~x/y" note the LLM sees must be
+        # the number the UI gauge and the compact check use. Two different
+        # quantities answer "how full is the context", and which one is right
+        # depends on the provider:
+        #
+        #   * API providers -- PawFlow resends the whole context on every call,
+        #     so provider_context (system prompt already in head position) plus
+        #     the tool defs IS the occupancy. Unchanged.
+        #   * CLI providers -- the window belongs to the CLI session, not to
+        #     PawFlow. On a warm session _alc_with_provider_system_prompt drops
+        #     the system prompt and the history the CLI already holds, so
+        #     provider_context is only this turn's delta. Counting it announced
+        #     864 tokens for a session the gauge measured at 77965, and the
+        #     same conversation announced 602307 one restart earlier while
+        #     cold: the note silently switched quantity with the session state.
+        #     Ask the gauge, which reports the size the provider itself
+        #     measured, and divide by the window it measured against.
+        _est_used_local = 0
+        _max_ctx_local = int(getattr(st, "_max_ctx", 0) or 0)
+        if st.ctx.get("_is_cli_provider"):
+            try:
+                from tasks.ai.context_usage import compute_context_usage
+                _gauge_local = compute_context_usage(
+                    st.conversation_id,
+                    st.ctx.get("active_agent_name", ""),
+                    user_id=getattr(st, "user_id", ""), source="context_note")
+                _est_used_local = max(0, int(_gauge_local.get("used", 0) or 0))
+                if int(_gauge_local.get("max", 0) or 0) > 0:
+                    _max_ctx_local = int(_gauge_local.get("max", 0) or 0)
+            except Exception:
+                logger.debug("context note gauge lookup failed", exc_info=True)
+                _est_used_local = 0
+        # API providers, and any CLI session the gauge cannot measure yet (cold
+        # start, provider that has not reported): counting provider_context is
+        # then the honest answer, because it carries the whole context.
+        if _est_used_local <= 0:
+            try:
+                from core.token_counter import (
+                    count_context_tokens, resolve_token_multiplier)
+                _est_used_local = count_context_tokens(
+                    provider_context, tool_defs=st.tool_defs,
+                    multiplier=resolve_token_multiplier(
+                        getattr(st.ctx.get("resolved_svc"), "config", None)
+                        or {}))
+            except Exception:
+                _est_used_local = self._estimate_tokens(
+                    provider_context, tool_defs=st.tool_defs,
+                    chars_per_token=st.ctx.get("chars_per_token", 0))
+        # Denominator stays local to the note: st._max_ctx also budgets the
+        # compaction path, and moving it here would change what gets compacted.
+        _remaining_local = max(0, _max_ctx_local - _est_used_local)
         _meta_parts_local = []
         if st.ctx.get("_datetime_str", ""):
             _meta_parts_local.append(
                 f"Current date/time: {st.ctx.get('_datetime_str', '')}")
         _meta_parts_local.append(
-            f"Context: ~{_est_used_local}/{st._max_ctx} tokens "
+            f"Context: ~{_est_used_local}/{_max_ctx_local} tokens "
                             f"(~{_remaining_local} remaining)")
         _meta_note_local = "\n\n[System: " + ". ".join(_meta_parts_local) + "]"
         # Cognitive digests ride the same channel: they are rebuilt from live

@@ -16,6 +16,7 @@
 | [Media and Multimodal Tools](media_tools.md) | Image, video, audio, 3D, try-on, lipsync, voice clone, speech-to-video |
 | [PawFlow Avatar Helper](HELPER_AVATAR.md) | Installable avatar-guided navigation, fixed semantic UI targets, and safety boundary |
 | [ComfyUI](comfyui.md) | Install ComfyUI, export API workflows, configure relay routing and image/video bindings |
+| [ComfyUI local setup](COMFYUI_LOCAL_SETUP.md) | Step-by-step: local GPU + VPS relay, SSH tunnel, LTX-Video workflow, `generate_video` end-to-end |
 | [Realtime Voice Plan](REALTIME_VOICE_PLAN.md) | Speech-to-speech voice sessions: architecture, adapters, phasing |
 
 ## Runtime Reference

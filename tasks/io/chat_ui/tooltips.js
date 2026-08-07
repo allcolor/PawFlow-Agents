@@ -1,7 +1,7 @@
 // Shared CSS tooltip portal for compact icon controls. The tooltip lives outside
 // scrollable docks so revealing it cannot change their overflow dimensions.
 (function() {
-  const TARGET_SELECTOR = '.action-dock-menu > .action-menu-item, .prompt-controls-row button';
+  const TARGET_SELECTOR = '.action-dock-menu > .action-menu-item, .prompt-controls-row button, .header-dock-item';
   let activeTarget = null;
 
   function tooltipElement() {

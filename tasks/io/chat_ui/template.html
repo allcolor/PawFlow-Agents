@@ -851,19 +851,23 @@ body.desktop-fullscreen .tab-content.active iframe {
                     width: auto; max-width: 100%; max-height: none; margin: 0; padding: 4px 8px;
                     overflow-x: auto; overflow-y: visible; border-radius: 8px; scrollbar-width: none; }
 .action-dock-menu::-webkit-scrollbar { width: 0; height: 0; display: none; }
-.action-dock-menu > .action-menu-item {
+.action-dock-menu > .action-menu-item,
+.header-dock-item {
   position: relative; width: 30px; min-width: 30px; height: 30px; padding: 0; border: 1px solid var(--pf-border);
   border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); display: flex;
   align-items: center; justify-content: center; box-sizing: border-box;
   transform-origin: center bottom;
   transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
               background 0.15s ease, border-color 0.15s ease, box-shadow 0.18s ease; }
-.action-dock-menu > .action-menu-item:hover {
+.action-dock-menu > .action-menu-item:hover,
+.header-dock-item:hover {
   transform: scale(1.4); z-index: 3;
   border-color: var(--pf-accent, #6c5ce7);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4); }
-.action-dock-menu > .action-menu-item > div { display: none; }
-.action-dock-menu > .action-menu-item .ami-icon { width: auto; font-size: 15px; }
+.action-dock-menu > .action-menu-item > div,
+.header-dock-item > div { display: none; }
+.action-dock-menu > .action-menu-item .ami-icon,
+.header-dock-item .ami-icon { width: auto; font-size: 15px; }
 .action-dock-menu > .action-menu-sep { width: 0; height: 28px; border-top: 0; border-left: 1px solid #0f3460;
                                        margin: 1px 2px; flex: 0 0 0; }
 #adminSettingsMenu { position: absolute; right: auto; left: 50%; top: auto; bottom: calc(100% + 8px);
@@ -975,32 +979,37 @@ if (typeof hljs !== 'undefined') {
   <span id="actionLoading" class="ui-action-loading" style="display:none"></span>
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
   <span class="usage-cost-badge" id="usageCostBadge" onclick="showUsageCostPanel()" style="display:none"></span>
+  <label class="header-select-control" id="themeSelectControl" title="Global chat theme"
+         aria-label="Global chat theme" data-i18n-title="globalThemeTitle"
+         data-i18n-aria-label="globalThemeTitle" style="display:none">
+    <span class="header-select-icon">&#x1F3A8;</span>
+    <select class="header-icon-select" id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)"
+            aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle">
+      <option value="global:pawflow_dark">PawFlow Dark</option>
+    </select>
+  </label>
+  <label class="header-select-control" id="languageSelectControl" title="Language"
+         aria-label="Language" data-i18n-title="languageTitle"
+         data-i18n-aria-label="languageTitle" style="display:none">
+    <span class="header-select-icon">&#x1F310;</span>
+    <select class="header-icon-select" id="languageSelect" onchange="setLanguage(this.value)"
+            aria-label="Language" data-i18n-aria-label="languageTitle"></select>
+  </label>
   <div class="actions">
-    <label class="header-select-control" id="themeSelectControl" title="Global chat theme"
-           aria-label="Global chat theme" data-i18n-title="globalThemeTitle"
-           data-i18n-aria-label="globalThemeTitle" style="display:none">
-      <span class="header-select-icon">&#x1F3A8;</span>
-      <select class="header-icon-select" id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)"
-              aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle">
-        <option value="global:pawflow_dark">PawFlow Dark</option>
-      </select>
-    </label>
-    <label class="header-select-control" id="languageSelectControl" title="Language"
-           aria-label="Language" data-i18n-title="languageTitle"
-           data-i18n-aria-label="languageTitle" style="display:none">
-      <span class="header-select-icon">&#x1F310;</span>
-      <select class="header-icon-select" id="languageSelect" onchange="setLanguage(this.value)"
-              aria-label="Language" data-i18n-aria-label="languageTitle"></select>
-    </label>
-    <button class="btn header-auth-btn" id="linkAccountBtn" type="button"
-            onclick="showLinkedAccountsDialog()" title="Linked accounts"
-            data-i18n-title="linkedAccounts" aria-label="Linked accounts"
-            data-i18n-aria-label="linkedAccounts" style="display:none">&#x1F517;</button>
+    <button class="btn header-auth-btn header-dock-item" id="linkAccountBtn" type="button"
+            onclick="showLinkedAccountsDialog()" aria-label="Linked accounts"
+            data-i18n-aria-label="linkedAccounts" style="display:none">
+      <span class="ami-icon" aria-hidden="true">&#x1F517;</span>
+      <div><div class="ami-label" data-i18n="linkedAccounts">Linked accounts</div><div class="ami-desc" data-i18n="linkAccountDesc">Link another sign-in identity</div></div>
+    </button>
     <span class="user-info" id="userInfo" style="display:none"></span>
-    <button class="btn header-auth-btn" id="logoutBtn" type="button"
-            onclick="doLogout()" title="Logout" data-i18n-title="logout"
+    <button class="btn header-auth-btn header-dock-item" id="logoutBtn" type="button"
+            onclick="doLogout()"
             aria-label="Logout" data-i18n-aria-label="logout"
-            style="display:none">&#x23FB;</button>
+            style="display:none">
+      <span class="ami-icon" aria-hidden="true">&#x23FB;</span>
+      <div><div class="ami-label" data-i18n="logout">Logout</div><div class="ami-desc" data-i18n="logoutDesc">End this session</div></div>
+    </button>
   </div>
   <div class="action-menu-wrap action-dock" id="actionMenuWrap" style="display:none">
       <div class="action-menu action-dock-menu" id="actionMenu">

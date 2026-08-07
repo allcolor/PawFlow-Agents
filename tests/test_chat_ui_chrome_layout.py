@@ -28,7 +28,12 @@ def test_theme_and_language_are_compact_controls_in_the_header():
     assert header_lead.count('class="header-icon-select"') == 2
     assert '&#x1F3A8;' in header_lead
     assert '&#x1F310;' in header_lead
-    assert header_lead.index('id="themeSelect"') < header_lead.index('id="languageSelect"')
+    assert (
+        header_lead.index('id="usageCostBadge"')
+        < header_lead.index('id="themeSelect"')
+        < header_lead.index('id="languageSelect"')
+        < header_lead.index('<div class="actions">')
+    )
 
 
 def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
@@ -61,6 +66,32 @@ def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
     assert "list_linked_accounts" not in resources_js
     assert "linkedAccounts" not in resources_js
     assert "&#x23FB;" in header
+
+
+def test_header_account_actions_reuse_dock_tooltip_and_hover_zoom():
+    header = _between('<div class="header">', '<!-- Chat tab content -->')
+    header_controls = header[:header.index('id="actionMenuWrap"')]
+
+    for element_id in ("linkAccountBtn", "logoutBtn"):
+        element_id_index = header_controls.index(f'id="{element_id}"')
+        start = header_controls.rindex("<button", 0, element_id_index)
+        button = header_controls[start:header_controls.index("</button>", start)]
+        assert "header-dock-item" in button
+        assert "title=" not in button
+        assert 'class="ami-icon"' in button
+        assert 'class="ami-label"' in button
+        assert 'class="ami-desc"' in button
+
+    assert ".header-dock-item" in TOOLTIPS_JS
+    assert (
+        ".action-dock-menu > .action-menu-item,\n.header-dock-item {"
+        in TEMPLATE_HTML
+    )
+    assert (
+        ".action-dock-menu > .action-menu-item:hover,\n.header-dock-item:hover {"
+        in TEMPLATE_HTML
+    )
+    assert "transform: scale(1.4);" in TEMPLATE_HTML
 
 
 def test_linked_account_dialog_keeps_identity_visible_beside_unlink_action():

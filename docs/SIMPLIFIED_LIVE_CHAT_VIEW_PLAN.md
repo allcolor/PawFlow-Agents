@@ -141,7 +141,7 @@ The classic and simplified message views share the same compact surrounding
 controls:
 
 - The header keeps status and usage compact. Global theme and language are native
-  selectors presented as palette/globe icons in the right-hand header controls;
+  selectors presented as palette/globe icons immediately after usage on the left;
   their option lists retain the full labels and language flags for keyboard and
   screen-reader access.
 - Conversation actions formerly hidden behind the `+` menu form an always-visible,
@@ -157,7 +157,9 @@ controls:
   The extension-provided header/action slots remain inside it. The administration
   panel opens above the dock as a sibling of its scroll container.
   A shared CSS-styled tooltip is rendered outside that scroll container, keeping
-  every icon labelled without creating a horizontal scrollbar on hover.
+  every icon labelled without creating a horizontal scrollbar on hover. The
+  linked-account and power controls in the header reuse the dock's exact tooltip
+  structure and 1.4x hover zoom.
 - View mode, TTS, STT, and tool permission mode occupy the left of that row,
   while active agents occupy the right. Pasted files render as stacked thumbnails
   immediately before Send; the first three stay visible and a count expands the

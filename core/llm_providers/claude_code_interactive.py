@@ -97,6 +97,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             event_service, state.session_token, callback=callback,
             thinking_callback=thinking_callback, block_callback=block_callback,
             turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
+            usage_callback=self._cci_usage_observer(conversation_id, agent_name),
             emitted_tool_use_ids=state.emitted_tool_use_ids,
             emitted_tool_result_ids=state.emitted_tool_result_ids,
             consumer_epoch=consumer_epoch)
@@ -148,6 +149,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             event_service, state.session_token, callback=callback,
             thinking_callback=thinking_callback, block_callback=block_callback,
             turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
+            usage_callback=self._cci_usage_observer(conversation_id, agent_name),
             emitted_tool_use_ids=state.emitted_tool_use_ids,
             emitted_tool_result_ids=state.emitted_tool_result_ids,
             consumer_epoch=consumer_epoch)
@@ -172,6 +174,20 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         """
         self.record_observed_wire_usage(
             getattr(coord, "usage", None), conversation_id, agent_name)
+
+    def _cci_usage_observer(self, conversation_id: str, agent_name: str):
+        """Callback that records the prompt size while the turn is streaming.
+
+        The end-of-turn record above is correct but too late for the live
+        gauge: the UI recomputes on every appended message and on heartbeats,
+        all of which happen BEFORE run() returns, so the whole turn was
+        gauged from the reconstruction. Recording on each message_start means
+        the first API exchange of a turn already puts a measured number in
+        front of every consumer.
+        """
+        def _observe(usage):
+            self.record_observed_wire_usage(usage, conversation_id, agent_name)
+        return _observe
 
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,
                     user_id: str, conversation_id: str,

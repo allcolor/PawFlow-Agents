@@ -107,10 +107,31 @@ class StreamEmitter(AgentEmitter):
         self._context_usage_payload_sig = None
         self._context_usage_persist_sig = None
 
+    def _observed_context_measurement(self) -> int:
+        """The prompt size the provider last reported, or 0.
+
+        Part of the heartbeat signature: for an observed CLI provider the
+        gauge can move with no new PawFlow message at all -- a long turn of
+        provider-side work revises the measurement on every message_start.
+        Keying the heartbeat on the message list alone made those updates
+        invisible until something happened to be appended.
+        """
+        counts = getattr(
+            self.ctx.get("client"), "_cli_observed_context_tokens_by_stream", None)
+        if not isinstance(counts, dict):
+            return 0
+        try:
+            return int(counts.get(
+                (self.conversation_id, self._agent_name), 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
     def _context_usage_input_signature(self):
+        measured = self._observed_context_measurement()
         messages = self.ctx.get("messages") or []
         if not messages:
-            return (0, "", "", 0, int(self.ctx.get("max_context_size", 0) or 0))
+            return (0, "", "", 0,
+                    int(self.ctx.get("max_context_size", 0) or 0), measured)
         last = messages[-1]
         content = getattr(last, "content", "")
         if not isinstance(content, str):
@@ -124,6 +145,7 @@ class StreamEmitter(AgentEmitter):
             getattr(last, "msg_id", "") or getattr(last, "id", ""),
             len(content or ""),
             int(self.ctx.get("max_context_size", 0) or 0),
+            measured,
         )
 
     def _stop_all_heartbeats(self) -> None:

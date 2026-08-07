@@ -98,10 +98,15 @@ class _AntigravityTurnCoordinator:
     def __init__(self, log_path: str, offset: int = 0, callback=None,
                  thinking_callback=None, block_callback=None,
                  turn_callback=None, touch_callback=None,
+                 usage_callback=None,
                  emitted_tool_use_ids=None, emitted_tool_result_ids=None,
                  interrupted_callback=None):
         self.tail = _AntigravityLogTail(log_path, offset)
         self.callback = callback
+        # Same contract as the CCI coordinator: fired whenever an observed
+        # event revises the prompt size, so the gauge is measured during the
+        # turn instead of only once run() has returned.
+        self.usage_callback = usage_callback
         self.thinking_callback = thinking_callback
         self.block_callback = block_callback
         self.turn_callback = turn_callback
@@ -129,6 +134,21 @@ class _AntigravityTurnCoordinator:
         self._awaiting_tool_followup = False
         self._turn_callback_sent = False
         self._last_interrupt_check_at = 0.0
+
+    def _publish_usage_observation(self) -> None:
+        """Hand the current prompt size to the gauge, mid-stream.
+
+        Passes the accumulated ``self.usage`` rather than the event's dict --
+        an event may carry only the output side. Never raises: a gauge update
+        must not be able to break a turn.
+        """
+        if not self.usage_callback:
+            return
+        try:
+            self.usage_callback(dict(self.usage))
+        except Exception:
+            logger.debug("antigravity usage observation callback failed",
+                         exc_info=True)
 
     def run(self, abort_event=None):
         from core.llm_client import LLMResponse
@@ -249,6 +269,7 @@ class _AntigravityTurnCoordinator:
         self._last_event_at = time.time()
         if event.get("usage") and isinstance(event.get("usage"), dict):
             self.usage.update(event["usage"])
+            self._publish_usage_observation()
         thinking = event.get("thinking", "") or "".join(event.get("thinking_texts") or [])
         if thinking:
             self._flush_text_block()
@@ -482,6 +503,8 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
                 state.log_path, offset=offset, callback=callback,
                 thinking_callback=thinking_callback, block_callback=block_callback,
                 turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
+                usage_callback=self._agi_usage_observer(
+                    conversation_id, agent_name),
                 emitted_tool_use_ids=state.emitted_tool_use_ids,
                 emitted_tool_result_ids=state.emitted_tool_result_ids,
                 interrupted_callback=lambda: pool.is_interrupted_prompt(state))
@@ -681,6 +704,8 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
                 state.log_path, offset=offset, callback=callback,
                 thinking_callback=thinking_callback, block_callback=block_callback,
                 turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
+                usage_callback=self._agi_usage_observer(
+                    conversation_id, agent_name),
                 emitted_tool_use_ids=state.emitted_tool_use_ids,
                 emitted_tool_result_ids=state.emitted_tool_result_ids,
                 interrupted_callback=lambda: pool.is_interrupted_prompt(state))
@@ -692,6 +717,17 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
             pool.resume_manual_ingest(state)
         response.model = model or self.default_model
         return response
+
+    def _agi_usage_observer(self, conversation_id: str, agent_name: str):
+        """Callback that records the prompt size while the turn is streaming.
+
+        The end-of-turn records are correct but too late for the live gauge:
+        the UI recomputes on appended messages and heartbeats, all of which
+        happen before run() returns.
+        """
+        def _observe(usage):
+            self.record_observed_wire_usage(usage, conversation_id, agent_name)
+        return _observe
 
     def _agi_preempt_prompt(self, text: str, attachments: list, state,
                             user_id: str, conversation_id: str,

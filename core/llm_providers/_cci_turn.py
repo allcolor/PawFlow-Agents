@@ -103,6 +103,7 @@ class _CCITurnCoordinator:
     def __init__(self, event_service, session_token: str, callback=None,
                  thinking_callback=None, block_callback=None,
                  turn_callback=None, touch_callback=None,
+                 usage_callback=None,
                  emitted_tool_use_ids=None, emitted_tool_result_ids=None,
                  consumer_epoch: int = 0, consumer_kind: str = "request"):
         self.event_service = event_service
@@ -128,6 +129,14 @@ class _CCITurnCoordinator:
         self.thinking_callback = thinking_callback
         self.block_callback = block_callback
         self.turn_callback = turn_callback
+        # Fired with the accumulated wire usage every time a message_start
+        # revises the prompt size, so the context gauge is measured DURING
+        # the turn. Recording only after run() returns leaves the live gauge
+        # on the reconstruction for the whole turn -- and for
+        # claude-code-interactive that reconstruction reads 0 once the
+        # externalized context outgrows the native read's size ceiling, so
+        # the UI sat at 0% until the turn ended.
+        self.usage_callback = usage_callback
         self.text_parts: list[str] = []
         # Per-API-message text tracking: a CCI turn spans several
         # /v1/messages calls (text → tool use → text …). The final visible
@@ -175,6 +184,22 @@ class _CCITurnCoordinator:
         self._first_model_content_at = 0.0
         self._last_event_at = 0.0
         self._max_event_gap = 0.0
+
+    def _publish_usage_observation(self) -> None:
+        """Hand the current prompt size to the gauge, mid-stream.
+
+        Passes the ACCUMULATED ``self.usage``, not the event's dict: a
+        message_start carries the input/cache fields and a later message_delta
+        carries only output, so the accumulated view is the only one that
+        always holds a complete prompt occupancy. Never raises -- a gauge
+        update must not be able to break a turn.
+        """
+        if not self.usage_callback:
+            return
+        try:
+            self.usage_callback(dict(self.usage))
+        except Exception:
+            logger.debug("cci usage observation callback failed", exc_info=True)
 
     def _wait_event(self, timeout: float) -> dict:
         """Poll the session queue, asserting we still own the stream.
@@ -305,6 +330,7 @@ class _CCITurnCoordinator:
                 usage = msg.get("usage") or {}
                 if usage:
                     self.usage.update(usage)
+                    self._publish_usage_observation()
             elif ptype == "content_block_start":
                 self._saw_model_content = True
                 if not self._first_model_content_at:

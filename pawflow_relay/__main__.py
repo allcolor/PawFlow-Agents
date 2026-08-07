@@ -57,36 +57,15 @@ def main(argv=None):
                         help="Username (required if --token is provided)")
     args = parser.parse_args(argv)
 
-    # Acquire gateway cookie if key provided
+    # Acquire gateway cookie if key provided. The private gateway exposes
+    # only the human challenge endpoint /_gateway (form-encoded secret); the
+    # old inline POST to /auth/gateway hit a route that does not exist, so
+    # every later API call was answered with the Matrix challenge page.
     gateway_cookie = ""
     if args.gateway_key:
         try:
-            import http.client
-            from urllib.parse import urlparse
-            parsed = urlparse(args.server)
-            use_ssl = parsed.scheme == "https"
-            host = parsed.hostname or "localhost"
-            port = parsed.port or (443 if use_ssl else 80)
-            if use_ssl:
-                import ssl
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                conn = http.client.HTTPSConnection(host, port, context=ctx, timeout=10)
-            else:
-                conn = http.client.HTTPConnection(host, port, timeout=10)
-            conn.request("POST", "/auth/gateway",
-                         body=args.gateway_key.encode("utf-8"),
-                         headers={"Content-Type": "text/plain"})
-            resp = conn.getresponse()
-            resp.read()
-            cookie_header = resp.getheader("Set-Cookie", "")
-            for part in cookie_header.split(";"):
-                part = part.strip()
-                if part.startswith("_pf_gw="):
-                    gateway_cookie = part.split("=", 1)[1]
-                    break
-            conn.close()
+            from .register import acquire_gateway_cookie
+            gateway_cookie = acquire_gateway_cookie(args.server, args.gateway_key)
             if gateway_cookie:
                 print("[Relay] Gateway cookie acquired.", file=sys.stderr)
             else:

@@ -332,7 +332,8 @@ function dockerImageOptions(current) {
   for (const image of state.dockerImages || []) {
     if (!image.name || seen.has(image.name)) continue;
     seen.add(image.name);
-    const label = image.size ? `${image.name} (${image.size})` : image.name;
+    const label = image.size ? `${image.name} (${image.size})`
+      : image.remote ? `${image.name} (GitHub)` : image.name;
     rows.push(`<option value="${escapeAttr(image.name)}">${escapeHtml(label)}</option>`);
   }
   return rows.join('');

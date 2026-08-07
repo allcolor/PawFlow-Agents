@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, Tray, nativeImage } = require('electron');
 const fs = require('fs');
+const https = require('https');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -235,9 +236,91 @@ function loadRelayImageCatalog() {
   return JSON.parse(fs.readFileSync(relayImageCatalogPath(), 'utf8'));
 }
 
+// Only images that can actually serve as a PawFlow relay belong in the
+// docker-image picker. Listing every local image (alpine, hello-world, a
+// stale prealpha tag, ...) made the combo look broken and let the user
+// download images that are not relay images at all.
+const PAWFLOW_RELAY_IMAGE_REPOS = new Set([
+  'ghcr.io/allcolor/pawflow-relay-dev',
+  'ghcr.io/allcolor/pawflow-relay-minimal',
+  'pawflow-relay-dev',
+  'pawflow-relay-minimal',
+]);
+
+// The officially released relay images, as published to GHCR by the
+// docker-publish workflow (tag = config/relay_image_catalog.json
+// relay_image_version, e.g. 2026.07.16).
+const REMOTE_RELAY_IMAGE_REPOS = [
+  'ghcr.io/allcolor/pawflow-relay-dev',
+  'ghcr.io/allcolor/pawflow-relay-minimal',
+];
+
+const _REMOTE_TAGS_CACHE_TTL_MS = 5 * 60 * 1000;
+let _remoteTagsCache = { at: 0, tags: [] };
+
+function httpsGetJson(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers }, res => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+          return;
+        }
+        try { resolve(JSON.parse(data)); }
+        catch (err) { reject(err); }
+      });
+    });
+    req.setTimeout(8000, () => req.destroy(new Error('GHCR request timed out')));
+    req.on('error', reject);
+  });
+}
+
+async function listRemoteRelayImageTags() {
+  // GHCR requires a token even for public package metadata; the anonymous
+  // registry-v2 token flow is the same one a plain `docker pull` uses.
+  if (Date.now() - _remoteTagsCache.at < _REMOTE_TAGS_CACHE_TTL_MS) {
+    return _remoteTagsCache.tags;
+  }
+  const tags = [];
+  for (const repo of REMOTE_RELAY_IMAGE_REPOS) {
+    try {
+      const registryPath = repo.replace(/^ghcr\.io\//, '');
+      const auth = await httpsGetJson(
+        `https://ghcr.io/token?scope=repository:${registryPath}:pull`);
+      const token = auth && auth.token;
+      if (!token) continue;
+      const data = await httpsGetJson(
+        `https://ghcr.io/v2/${registryPath}/tags/list`,
+        { Authorization: `Bearer ${token}` });
+      const list = Array.isArray(data.tags) ? data.tags : [];
+      list.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+      for (const tag of list) {
+        tags.push({
+          name: `${repo}:${tag}`, repository: repo, tag,
+          id: '', size: '', remote: true,
+        });
+      }
+    } catch (err) {
+      appendLog('docker', `[docker] failed to list remote tags for ${repo}: ${err.message}\n`);
+    }
+  }
+  _remoteTagsCache = { at: Date.now(), tags };
+  return tags;
+}
+
 function defaultRelayImageName() {
   const repo = process.env.PAWFLOW_RELAY_DEV_IMAGE_REPO || 'ghcr.io/allcolor/pawflow-relay-dev';
-  const tag = process.env.PAWFLOW_RELAY_IMAGE_TAG || process.env.PAWFLOW_VERSION || 'latest';
+  // The official image is published under the catalog's relay_image_version
+  // (e.g. 2026.07.16), never under "latest". Falling back to "latest" made
+  // the default pull fail with "repository does not exist".
+  let tag = process.env.PAWFLOW_RELAY_IMAGE_TAG || process.env.PAWFLOW_VERSION || '';
+  if (!tag) {
+    try { tag = String(loadRelayImageCatalog().relay_image_version || ''); }
+    catch (_err) { tag = ''; }
+  }
+  if (!tag) tag = 'latest';
   return `${repo}:${tag}`;
 }
 
@@ -248,7 +331,7 @@ async function listDockerImages() {
       '--format',
       '{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}',
     ]);
-    const images = out.split('\n')
+    const local = out.split('\n')
       .map(line => line.trim())
       .filter(Boolean)
       .map(line => {
@@ -256,7 +339,30 @@ async function listDockerImages() {
         return { name: `${repository}:${tag}`, repository, tag, id, size };
       })
       .filter(image => image.repository && image.tag && image.repository !== '<none>' && image.tag !== '<none>')
+      .filter(image => PAWFLOW_RELAY_IMAGE_REPOS.has(image.repository));
+    // Merge the officially released relay images from GHCR so the picker
+    // always shows every released relay image, pulled locally or not.
+    // Local copies win over the remote placeholder (same name, real size).
+    const remote = await listRemoteRelayImageTags();
+    const byName = new Map();
+    for (const image of local) byName.set(image.name, image);
+    for (const image of remote) {
+      if (!byName.has(image.name)) byName.set(image.name, image);
+    }
+    const images = Array.from(byName.values())
       .sort((a, b) => a.name.localeCompare(b.name));
+    // The official catalog image is always offered first, even before it has
+    // been pulled locally, so the default pick is a real, downloadable image.
+    const official = defaultRelayImageName();
+    if (!images.some(image => image.name === official)) {
+      const split = official.lastIndexOf(':');
+      images.unshift({
+        name: official,
+        repository: official.slice(0, split),
+        tag: official.slice(split + 1),
+        id: '', size: '', remote: true,
+      });
+    }
     return { images, error: '' };
   } catch (err) {
     const message = (err && err.message) ? err.message : String(err);
@@ -368,7 +474,16 @@ async function downloadRelayImage(input = {}) {
   validateDockerImageName(imageName);
   const oldIds = await relayImageIds();
   appendLog('image-download', `Pulling Docker image ${imageName}\n`);
-  await runDocker(['pull', imageName], { logName: 'image-download' });
+  // An image already present locally (e.g. the local pawflow-relay-dev:latest
+  // tag created by a previous download) must not be re-pulled from a
+  // registry: "pawflow-relay-dev:latest" is not on Docker Hub, so the pull
+  // failed with "pull access denied" and looked like a broken download.
+  try {
+    await runDocker(['image', 'inspect', imageName], { logName: 'image-download' });
+    appendLog('image-download', `Image ${imageName} already present locally; skipping pull\n`);
+  } catch (_err) {
+    await runDocker(['pull', imageName], { logName: 'image-download' });
+  }
   if (imageName.startsWith('ghcr.io/allcolor/pawflow-relay-dev:')) {
     appendLog('image-download', `Tagging ${imageName} as pawflow-relay-dev:latest\n`);
     await runDocker(['tag', imageName, 'pawflow-relay-dev:latest'], { logName: 'image-download' });
@@ -657,7 +772,7 @@ ipcMain.handle('relay:add-workspace', async (_event, input) => {
     '--server', input.server || '',
     '--path', input.path || '',
     '--mode', input.mode || 'rw',
-    '--docker-image', input.dockerImage || 'pawflow-relay-dev:latest',
+    '--docker-image', input.dockerImage || defaultRelayImageName(),
   ];
   if (Boolean(input.allowLocal)) args.push('--allow-local');
   if (!Boolean(input.allowExec)) args.push('--no-exec');

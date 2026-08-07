@@ -21,9 +21,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Global theme and language controls now live in the right-hand chat header
-  instead of the conversation action dock. The authenticated principal is shown
-  between the linked-account control and the power-styled logout button.
+- The UI could stall under continuous traffic: the background action
+  scheduler used a process-wide "last enqueue" deadline, so every new
+  UI action (tabs, users, refreshes) postponed the whole queue
+  indefinitely and actions were never submitted. Each queued action now
+  owns its own ready-at deadline, so the queue advances even under
+  bursty refreshes; latency is logged (queue wait / handler duration)
+  for future diagnosis.
+- Codex interactive prompts could be silently lost on cold sessions:
+  a paste sent before the composer existed is discarded by Codex with no
+  tmux error. Prompt readiness is mandatory again (bounded 45s, same as
+  Claude Code) and now also recognizes the structural `> ` composer line
+  while excluding the permanent `>_` header — robust to Codex release
+  copy changes. Paste verification requires evidence in the composer
+  (attachment chip or running turn), not an unrelated pane redraw.
+- Global theme and language controls now live in the right-hand chat
+  header instead of the conversation action dock. The authenticated
+  principal is shown between the linked-account control and the
+  power-styled logout button.
 
 ## [1.0.0-beta.123] — 2026-08-06
 

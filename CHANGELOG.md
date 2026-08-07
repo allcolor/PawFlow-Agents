@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.137] — 2026-08-07
+
+### Fixed
+
+- Relay Desktop: a first run behind a private gateway failed with the
+  Matrix challenge page because the relay acquired the gateway cookie from
+  `/auth/gateway` (a route that does not exist) instead of `/_gateway`
+  (the form-encoded challenge endpoint). The relay now reuses
+  `acquire_gateway_cookie()` — the same helper the CLI and manager use —
+  so every API call carries a valid `_pf_gw` cookie.
+- Relay Desktop: the Docker image picker listed every local image
+  (alpine, hello-world, stale prealpha tags). It now filters to PawFlow
+  relay repositories and merges the officially released GHCR tags, so
+  every published relay image (`pawflow-relay-dev` /
+  `pawflow-relay-minimal`) is offered even before it is pulled locally.
+- Relay Desktop: the default download targeted `pawflow-relay-dev:latest`,
+  which exists neither on Docker Hub nor as a GHCR tag. The default now
+  resolves to the catalog's `relay_image_version`
+  (e.g. `ghcr.io/allcolor/pawflow-relay-dev:2026.07.16`), and an image
+  already present locally is no longer re-pulled.
+
 ## [1.0.0-beta.136] — 2026-08-07
 
 ### Fixed

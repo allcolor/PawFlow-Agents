@@ -125,11 +125,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .header .header-auth-btn { width: 32px; height: 32px; padding: 0; display: inline-flex;
                            align-items: center; justify-content: center; font-size: 16px; line-height: 1; }
-.header .header-select-control { position: relative; width: 32px; height: 32px; flex: 0 0 32px;
-                                 align-items: center; justify-content: center; overflow: hidden;
-                                 border: 1px solid #e94560; border-radius: 6px;
-                                 background: #0f3460; color: #e0e0e0; cursor: pointer; }
-.header .header-select-control:hover { background: #e94560; color: #fff; }
+.header .header-select-control { position: relative; flex: 0 0 30px; overflow: hidden; cursor: pointer; }
 .header .header-select-icon { font-size: 16px; line-height: 1; pointer-events: none; }
 .header .header-icon-select { position: absolute; inset: 0; width: 100%; height: 100%;
                               opacity: 0; cursor: pointer; border: 0; padding: 0; }
@@ -978,26 +974,28 @@ if (typeof hljs !== 'undefined') {
 <div class="main">
 <div class="header">
   <h1>PawFlow Agent</h1>
-  <span class="status" id="status" data-i18n="ready">Ready</span>
-  <span id="actionLoading" class="ui-action-loading" style="display:none"></span>
-  <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
-  <span class="usage-cost-badge" id="usageCostBadge" onclick="showUsageCostPanel()" style="display:none"></span>
-  <label class="header-select-control" id="themeSelectControl" title="Global chat theme"
-         aria-label="Global chat theme" data-i18n-title="globalThemeTitle"
+  <label class="header-select-control header-dock-item" id="themeSelectControl"
+         aria-label="Global chat theme"
          data-i18n-aria-label="globalThemeTitle" style="display:none">
-    <span class="header-select-icon">&#x1F3A8;</span>
+    <span class="header-select-icon ami-icon" aria-hidden="true">&#x1F3A8;</span>
+    <div><div class="ami-label" data-i18n="globalThemeTitle">Global chat theme</div><div class="ami-desc" data-i18n="globalThemeDesc">Choose the interface theme</div></div>
     <select class="header-icon-select" id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)"
             aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle">
       <option value="global:pawflow_dark">PawFlow Dark</option>
     </select>
   </label>
-  <label class="header-select-control" id="languageSelectControl" title="Language"
-         aria-label="Language" data-i18n-title="languageTitle"
+  <label class="header-select-control header-dock-item" id="languageSelectControl"
+         aria-label="Language"
          data-i18n-aria-label="languageTitle" style="display:none">
-    <span class="header-select-icon">&#x1F310;</span>
+    <span class="header-select-icon ami-icon" aria-hidden="true">&#x1F310;</span>
+    <div><div class="ami-label" data-i18n="languageTitle">Language</div><div class="ami-desc" data-i18n="languageDesc">Choose the interface language</div></div>
     <select class="header-icon-select" id="languageSelect" onchange="setLanguage(this.value)"
             aria-label="Language" data-i18n-aria-label="languageTitle"></select>
   </label>
+  <span class="status" id="status" data-i18n="ready">Ready</span>
+  <span id="actionLoading" class="ui-action-loading" style="display:none"></span>
+  <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
+  <span class="usage-cost-badge" id="usageCostBadge" onclick="showUsageCostPanel()" style="display:none"></span>
   <div class="actions">
     <button class="btn header-auth-btn header-dock-item" id="linkAccountBtn" type="button"
             onclick="showLinkedAccountsDialog()" aria-label="Linked accounts"

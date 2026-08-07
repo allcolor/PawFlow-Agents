@@ -24,16 +24,40 @@ def test_theme_and_language_are_compact_controls_in_the_header():
         marker = f'id="{element_id}"'
         assert marker in header_lead
         assert marker not in dock
-    assert header_lead.count('class="header-select-control"') == 2
+    assert header_lead.count(
+        'class="header-select-control header-dock-item"'
+    ) == 2
     assert header_lead.count('class="header-icon-select"') == 2
     assert '&#x1F3A8;' in header_lead
     assert '&#x1F310;' in header_lead
     assert (
-        header_lead.index('id="usageCostBadge"')
+        header_lead.index('<h1>PawFlow Agent</h1>')
         < header_lead.index('id="themeSelect"')
         < header_lead.index('id="languageSelect"')
+        < header_lead.index('id="status"')
+        < header_lead.index('id="actionLoading"')
+        < header_lead.index('id="activeAgentBadge"')
+        < header_lead.index('id="usageCostBadge"')
         < header_lead.index('<div class="actions">')
     )
+
+
+def test_theme_and_language_reuse_dock_tooltips_and_hover_zoom():
+    header = _between('<div class="header">', '<!-- Chat tab content -->')
+    header_controls = header[:header.index('id="actionMenuWrap"')]
+
+    for control_id in ("themeSelectControl", "languageSelectControl"):
+        control_index = header_controls.index(f'id="{control_id}"')
+        start = header_controls.rindex("<label", 0, control_index)
+        control = header_controls[start:header_controls.index("</label>", start)]
+        assert "header-dock-item" in control
+        assert "title=" not in control
+        assert 'class="header-select-icon ami-icon"' in control
+        assert 'class="ami-label"' in control
+        assert 'class="ami-desc"' in control
+
+    assert ".header-dock-item" in TOOLTIPS_JS
+    assert "transform: scale(1.4);" in TEMPLATE_HTML
 
 
 def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():

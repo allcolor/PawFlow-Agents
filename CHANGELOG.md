@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.132] — 2026-08-07
+
+### Fixed
+
+- Codex interactive context usage now comes from the native rollout's latest
+  `last_token_usage.input_tokens` and `model_context_window` values after every
+  internal Responses exchange. The gauge and auto-compaction cache no longer
+  drift from tiny proxy deltas or stay near zero during long tool-driven turns;
+  cumulative billing usage is explicitly excluded from context occupancy.
+
 ## [1.0.0-beta.131] — 2026-08-07
 
 ### Added

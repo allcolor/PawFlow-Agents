@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.128] — 2026-08-07
+
+### Fixed
+
+- Codex interactive cold starts no longer reject the first webchat prompt when
+  a newer TUI layout does not expose the expected composer markers. Readiness
+  detection is advisory again, and a pane reaction after the single tmux paste
+  is accepted as transport evidence so PawFlow can submit the prompt without a
+  manual Enter.
+
 ## [1.0.0-beta.127] — 2026-08-07
 
 ### Fixed

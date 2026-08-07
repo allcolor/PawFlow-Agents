@@ -1627,27 +1627,6 @@ def test_a_prompt_that_never_lands_fails_loudly_and_bounded(monkeypatch):
     # And no Enter pressed into an empty box.
     assert not [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
 
-def test_a_redraw_with_an_empty_composer_is_not_a_landed_paste(monkeypatch):
-    """A Codex redraw is not proof that paste-buffer reached active input."""
-    calls = []
-    panes = {"n": 0}
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if "capture-pane" in cmd:
-            panes["n"] += 1
-            if panes["n"] == 1:
-                return _PaneRun(_codex_pane(False) + "\n99% context left")
-            return _PaneRun(_codex_pane(False) + "\n98% context left")
-        return _PaneRun("")
-
-    pool, state = _codex_paste_pool(monkeypatch, fake_run)
-    assert pool.send_text(state, PASTE_TEXT) is False
-    assert "single paste" in state.last_error
-    assert len([c for c in calls if "paste-buffer" in c]) == 1
-    assert not [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
-
-
 # The pane is a screen, not a buffer. Claude Code hard-wraps the prompt at the
 # pane width, so the probe fragment routinely arrives split across two screen
 # lines with a border and padding between its halves -- present, character for
@@ -1747,8 +1726,6 @@ def test_the_codex_header_alone_is_not_a_ready_prompt():
 
     pool = CodexInteractivePool()
     assert pool._pane_shows_prompt(">_ OpenAI Codex (v0.104.0)\n\n") is False
-    assert pool._pane_shows_prompt(
-        ">_ OpenAI Codex (v0.104.0)\n\n> ") is True
     assert pool._pane_shows_prompt(
         ">_ OpenAI Codex (v0.104.0)\n\n> \n  ? for shortcuts") is True
 

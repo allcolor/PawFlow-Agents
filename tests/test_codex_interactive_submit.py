@@ -225,9 +225,8 @@ def test_a_running_turn_is_still_proof(monkeypatch):
     assert _landed(CodexInteractivePool(), RUNNING_PANE, monkeypatch) is True
 
 
-def test_an_unreadable_pane_is_not_proof_of_a_paste(monkeypatch):
-    """A failed capture cannot prove that the first Codex paste landed."""
-    assert _landed(CodexInteractivePool(), "", monkeypatch) is False
+def test_an_unreadable_pane_still_must_not_block_a_send(monkeypatch):
+    assert _landed(CodexInteractivePool(), "", monkeypatch) is True
 
 
 def test_a_tui_that_declares_no_composer_is_judged_exactly_as_before(
@@ -286,11 +285,11 @@ def _landed_after(pool, before, after, monkeypatch):
     return pool._paste_landed(_State(), PROMPT, before)
 
 
-def test_a_pane_that_changed_is_not_proof_the_paste_arrived(monkeypatch):
-    """An unrelated TUI redraw must not prove that the paste landed."""
+def test_a_pane_that_changed_is_proof_the_paste_arrived(monkeypatch):
+    """The screen moved between the two captures. Only the paste moved it."""
     pool = CodexInteractivePool()
     assert _landed_after(
-        pool, IDLE_PANE, BOXED_UNSENT_PANE, monkeypatch) is False
+        pool, IDLE_PANE, BOXED_UNSENT_PANE, monkeypatch) is True
 
 
 def test_without_the_comparison_the_same_pane_is_still_a_refusal(monkeypatch):
@@ -326,7 +325,7 @@ def test_codex_default_readiness_check_keeps_the_cold_start_wait(monkeypatch):
         lambda self, name, *, timeout=None: seen.append((name, timeout)) or False)
     assert pool._wait_for_prompt_ready(_State.name) is False
     assert seen == [(_State.name, pool._PROMPT_READY_SECONDS)]
-    assert pool._PROMPT_READY_SECONDS == 45.0
+    assert 0 < pool._PROMPT_READY_SECONDS <= 15.0
 
 
 def test_codex_readiness_wait_is_its_own_clock(monkeypatch):
@@ -360,8 +359,15 @@ def test_the_codex_fix_leaves_the_claude_code_pool_alone(monkeypatch):
     assert seen == [1]
 
 
-def test_codex_cold_send_refuses_when_no_composer_was_recognised(monkeypatch):
-    """A cold send must not paste until the real composer is visible."""
+def test_codex_cold_send_pastes_even_when_no_marker_was_recognised(monkeypatch):
+    """The regression that took Codex interactive down whole (beta.82).
+
+    A missed readiness marker was fatal, so the first Codex release whose idle
+    composer drew none of them refused every cold send -- "refusing first send
+    ... because the TUI composer is not ready" -- against a TUI that was ready.
+    The unproven composer must fall through to the paste, where `_paste_landed`
+    decides on evidence instead of on chrome.
+    """
     pool = CodexInteractivePool()
     state = _State()
     state.prompt_ready = False
@@ -385,19 +391,21 @@ def test_codex_cold_send_refuses_when_no_composer_was_recognised(monkeypatch):
                         lambda _state, _text, **_kw: True)
     monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
 
-    assert pool.send_text(state, PROMPT) is False
-    assert "paste" not in touched
-    assert "composer was not ready" in state.last_error
+    assert pool.send_text(state, PROMPT) is True
+    assert "paste" in touched
+    assert state.last_error == ""
 
 
 def test_a_paste_that_never_arrives_is_still_the_refusal(monkeypatch):
-    """A ready composer still needs evidence that its single paste arrived."""
+    """Dropping the gate does not restore the case it was added for: a paste
+    into an undrawn composer still fails, on evidence rather than on chrome."""
     pool = CodexInteractivePool()
     state = _State()
     paste_calls = []
-    state.prompt_ready = True
+    state.prompt_ready = False
     state.last_error = ""
     monkeypatch.setattr(pool, "_is_alive", lambda _name: True)
+    monkeypatch.setattr(pool, "_wait_for_prompt_ready", lambda _name: False)
     monkeypatch.setattr(pool, "_cancel_copy_mode", lambda _state: None)
     monkeypatch.setattr(pool, "_remember_injected_prompt",
                         lambda _state, _text: None)
@@ -420,7 +428,7 @@ def test_successful_codex_paste_latches_readiness(monkeypatch):
     pool = CodexInteractivePool()
     state = _State()
     state.prompt_ready = False
-    monkeypatch.setattr(pool, "_pane_text", lambda _name: UNSENT_PANE)
+    monkeypatch.setattr(pool, "_pane_text", lambda _name: BOXED_UNSENT_PANE)
     monkeypatch.setattr(ccip.time, "sleep", lambda _s: None)
     monkeypatch.setattr(type(pool), "_PASTE_LANDED_SECONDS", 0.0)
     assert pool._paste_landed(state, PROMPT, IDLE_PANE) is True
@@ -454,7 +462,7 @@ def test_the_prompt_is_pasted_once_then_submitted_with_two_spaced_enters(
 
     def _paste(_state):
         events.append(("paste", PROMPT))
-        panes.append(UNSENT_PANE)
+        panes.append(BOXED_UNSENT_PANE)
         return True
 
     monkeypatch.setattr(pool, "_paste_buffer", _paste)

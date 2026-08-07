@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.138] — 2026-08-07
+
+### Fixed
+
+- The claude-code (`claude -p`) context gauge and compact check stayed at
+  ~0 while a turn was active: the provider-measured prompt occupancy
+  (`_cli_observed_context_tokens_by_stream`) was never recorded for this
+  provider, so the reconstructed gauge started at 0 and only grew by the
+  delta of each appended message. The provider's own `usage.input_tokens`
+  (system prompt, tool schemas and session history included) is now
+  recorded at every result event, exactly like the Codex interactive
+  rollout, so the live gauge, the compact check and the UI agree.
+
 ## [1.0.0-beta.137] — 2026-08-07
 
 ### Fixed

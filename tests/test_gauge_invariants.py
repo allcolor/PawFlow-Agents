@@ -372,6 +372,33 @@ def test_action_bus_starts_work_only_on_subscription():
     assert body.index("return defer(() => {") < body.index("fetch(_uiUrl")
 
 
+def test_pending_ui_actions_have_an_sse_independent_status_watchdog():
+    """A per-tab action SSE can be between two connections when a result is
+    published. Pending calls must therefore reconcile through the synchronous
+    status registry instead of waiting for the next SSE ping or reconnect."""
+    track = _extract_function_body(_RXBUS_JS, "_trackPendingAction")
+    untrack = _extract_function_body(_RXBUS_JS, "_untrackPendingAction")
+    schedule = _extract_function_body(
+        _RXBUS_JS, "_schedulePendingActionStatusSync")
+    sync = _extract_function_body(_RXBUS_JS, "_syncPendingActionsFromServer")
+
+    assert "_schedulePendingActionStatusSync();" in track
+    assert "_PENDING_ACTION_STATUS_INTERVAL_MS = 1500" in _RXBUS_JS
+    assert "_syncPendingActionsFromServer();" in schedule
+    assert "_schedulePendingActionStatusSync();" in schedule
+    assert "!_pendingActionItems.size || _pendingActionStatusSyncInFlight" in sync
+    assert "_pendingActionStatusSyncInFlight = true" in sync
+    assert ".finally(() =>" in sync
+    assert "_pendingActionStatusSyncInFlight = false" in sync
+    assert "window.clearTimeout(_pendingActionStatusTimer)" in untrack
+
+    action = _extract_function_body(_RXBUS_JS, "action$")
+    assert "_trackPendingAction(_callId, actionName, opts);" in action
+    assert "if (_trackPending)" not in action
+    assert "const silent = !!(opts && opts.silent)" in track
+    assert "if (!item.silent)" in untrack
+
+
 def test_ui_list_actions_have_short_backend_cache():
     """Expensive resource/status list actions are called in bursts by the UI.
     They need a short backend cache keyed by real params, not per-call SSE ids."""

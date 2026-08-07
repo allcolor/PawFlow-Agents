@@ -128,6 +128,19 @@ function _ensureUIActionSSE(force) {
 let _pendingActions = 0;
 const _pendingActionItems = new Map();
 const _PENDING_ACTION_SHOW_AFTER_MS = 500;
+const _PENDING_ACTION_STATUS_INTERVAL_MS = 1500;
+let _pendingActionStatusTimer = null;
+let _pendingActionStatusSyncInFlight = false;
+
+function _schedulePendingActionStatusSync() {
+  if (_pendingActionStatusTimer || !_pendingActionItems.size) return;
+  _pendingActionStatusTimer = window.setTimeout(() => {
+    _pendingActionStatusTimer = null;
+    if (!_pendingActionItems.size) return;
+    _syncPendingActionsFromServer();
+    _schedulePendingActionStatusSync();
+  }, _PENDING_ACTION_STATUS_INTERVAL_MS);
+}
 
 function _formatActionLabel(actionName, opts) {
   if (opts && opts.label) return String(opts.label);
@@ -143,26 +156,36 @@ function _escapeActionHtml(text) {
 }
 
 function _trackPendingAction(callId, actionName, opts) {
-  _pendingActions++;
+  const silent = !!(opts && opts.silent);
+  if (!silent) _pendingActions++;
   _pendingActionItems.set(callId, {
     action: actionName,
     label: _formatActionLabel(actionName, opts),
     startedAt: Date.now(),
+    silent,
     visible: false,
   });
-  window.setTimeout(() => {
-    const item = _pendingActionItems.get(callId);
-    if (!item) return;
-    item.visible = true;
+  if (!silent) {
+    window.setTimeout(() => {
+      const item = _pendingActionItems.get(callId);
+      if (!item) return;
+      item.visible = true;
+      _updateLoadingState();
+    }, _PENDING_ACTION_SHOW_AFTER_MS);
     _updateLoadingState();
-  }, _PENDING_ACTION_SHOW_AFTER_MS);
-  _updateLoadingState();
+  }
+  _schedulePendingActionStatusSync();
 }
 
 function _untrackPendingAction(callId) {
-  if (!_pendingActionItems.has(callId)) return;
+  const item = _pendingActionItems.get(callId);
+  if (!item) return;
   _pendingActionItems.delete(callId);
-  _pendingActions = Math.max(0, _pendingActions - 1);
+  if (!item.silent) _pendingActions = Math.max(0, _pendingActions - 1);
+  if (!_pendingActionItems.size && _pendingActionStatusTimer) {
+    window.clearTimeout(_pendingActionStatusTimer);
+    _pendingActionStatusTimer = null;
+  }
   _updateLoadingState();
 }
 
@@ -186,7 +209,8 @@ function _updateLoadingState() {
 }
 
 function _syncPendingActionsFromServer() {
-  if (!_pendingActionItems.size) return;
+  if (!_pendingActionItems.size || _pendingActionStatusSyncInFlight) return;
+  _pendingActionStatusSyncInFlight = true;
   const callIds = Array.from(_pendingActionItems.keys());
   const body = {
     action: 'list_ui_action_status',
@@ -213,6 +237,8 @@ function _syncPendingActionsFromServer() {
     });
   }).catch(err => {
     console.warn('[action$] pending action sync failed', err);
+  }).finally(() => {
+    _pendingActionStatusSyncInFlight = false;
   });
 }
 
@@ -247,10 +273,7 @@ function action$(actionName, params = {}, opts = {}) {
     const _callId = Math.random().toString(36).slice(2) + Date.now().toString(36);
     body._call_id = _callId;
     body._reply_conversation_id = _uiActionConversationId();
-    const _trackPending = !opts.silent;
-    if (_trackPending) {
-      _trackPendingAction(_callId, actionName, opts);
-    }
+    _trackPendingAction(_callId, actionName, opts);
 
     // UI commands go to /api/ui (dedicated task slot, isolated from
     // agent execution). Derive from API (/api/agent) by swapping the
@@ -314,7 +337,7 @@ function action$(actionName, params = {}, opts = {}) {
       }),
       catchError(err => of({ error: err.message || String(err) })),
       finalize(() => {
-        if (_trackPending) _untrackPendingAction(_callId);
+        _untrackPendingAction(_callId);
       }),
     );
   });

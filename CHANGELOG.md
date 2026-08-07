@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `repair_tool_sequence` left un-addressable tool calls (empty id) on an
+  assistant message that had text: the strip was gated on a condition that
+  could never hold, so the repaired list still carried the assistant
+  `tool_calls` block with no results behind it — the exact 400 the module
+  exists to prevent.
+- `use_tool` no longer fails a call because of narration attached to the
+  envelope. `bash` declares `description`, so models send it to every tool;
+  merging it into the target arguments made `read` and others answer
+  `unknown argument(s) ['description']` for calls that previously ran.
+  `description` / `explanation` / `reasoning` / `thought` now reach the target
+  only when it declares them. Genuinely unknown keys stay loud.
+- Vision fallback: a stale `_pawflow_current_user_message` marker on an older
+  user message no longer wins over a newer user message that carries images,
+  which would have sent those image parts raw to a non-vision LLM. An unmarked
+  user resume row persisted after the real prompt still does not move the
+  boundary — only image parts override the marker.
+
 ## [1.0.0-beta.125] — 2026-08-07
 
 ### Fixed

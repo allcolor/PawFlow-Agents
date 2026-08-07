@@ -329,6 +329,14 @@ class GetToolSchemaHandler(ToolHandler):
         }, indent=2)
 
 
+# Keys that describe the CALL, not the target tool's input. A model that has
+# learned `bash(description=...)` sends them to every tool; they must never
+# turn a valid call into an "unknown argument" error.
+_NARRATIVE_ENVELOPE_KEYS = frozenset({
+    "description", "explanation", "reasoning", "thought",
+})
+
+
 class UseToolHandler(ToolHandler):
     """Execute any tool by name. The LLM should call get_tool_schema first."""
 
@@ -473,13 +481,27 @@ class UseToolHandler(ToolHandler):
         # merge it into the inner arguments so the target handler receives
         # it (validation then rejects genuinely unknown keys loudly instead
         # of ignoring them).
+        #
+        # Narration attached to the CALL is the exception. `bash` declares
+        # `description`, so models learn to send it everywhere; merging it
+        # blindly made `read` answer "unknown argument(s) ['description']"
+        # for a call that used to run. Such a key is held back here and
+        # merged below only if the TARGET tool declares it — kept for `bash`,
+        # dropped for `read`, and never the reason a call fails.
+        _narrated: dict = {}
         if isinstance(tool_args, dict):
             _envelope_keys = {
                 "tool_name", "name", "tool",
                 "arguments", "arguments_json", "params", "input",
             }
-            _extra = {k: v for k, v in arguments.items()
-                      if k not in _envelope_keys}
+            _extra = {}
+            for k, v in arguments.items():
+                if k in _envelope_keys:
+                    continue
+                if k in _NARRATIVE_ENVELOPE_KEYS:
+                    _narrated[k] = v
+                else:
+                    _extra[k] = v
             if _extra:
                 tool_args = {**tool_args, **_extra}
 
@@ -498,6 +520,10 @@ class UseToolHandler(ToolHandler):
             schema = _schema_with_local(handler)
             tool_args = _normalize_tool_args(tool_name, tool_args, schema)
             props = schema.get("properties", {})
+            if _narrated and isinstance(tool_args, dict):
+                _kept = {k: v for k, v in _narrated.items() if k in props}
+                if _kept:
+                    tool_args = {**tool_args, **_kept}
             if props and isinstance(tool_args, dict):
                 unknown = [k for k in tool_args if k not in props]
                 if unknown:

@@ -659,6 +659,21 @@ Instead of sending all tool schemas to the LLM (which can consume thousands of t
 
 `UseToolHandler` still accepts legacy/internal `arguments` objects for compatibility, but the exposed schema deliberately avoids nested free-form objects because some OpenAI-compatible backends drop them and repeatedly call tools with `{}`.
 
+**Envelope keys.** Models routinely put target-tool parameters next to
+`arguments_json` instead of inside it (`use_tool(tool_name="bash",
+arguments_json="{...}", local=true)`). Those top-level keys are merged into the
+inner arguments and reach the target handler; a key the target schema does not
+declare is then rejected loudly rather than silently dropped, because dropping
+`local=true` ran the tool on the wrong surface with no error.
+
+One category is exempt: keys that narrate the *call* rather than the target's
+input — `description`, `explanation`, `reasoning`, `thought`
+(`_NARRATIVE_ENVELOPE_KEYS`). `bash` declares `description`, so models learn to
+attach it everywhere; merging it blindly made `read` and every other tool
+answer `unknown argument(s) ['description']` for calls that used to run. A
+narrative key is merged only when the target tool declares it, and dropped
+otherwise. It is never the reason a call fails.
+
 This reduces the constant token overhead from ~7000 tokens to ~200 tokens, making it practical for smaller context LLMs.
 
 #### What the user sees

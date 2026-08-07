@@ -99,7 +99,12 @@ def repair_tool_sequence(messages: List[Any],
                 rebuilt[-1] = _replace_tool_calls(message, kept)
             elif not getattr(message, "content", ""):
                 rebuilt.pop()
-            elif expected:
+            else:
+                # `kept` empty means every call had an empty id, so `expected`
+                # is empty too: testing it here left the un-addressable calls
+                # in place on a message that has text worth keeping, emitting
+                # the exact assistant-tool_calls-without-results shape this
+                # function exists to prevent.
                 rebuilt[-1] = _replace_tool_calls(message, None)
 
         if expected:

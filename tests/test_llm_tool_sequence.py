@@ -110,6 +110,21 @@ class TestRepairToolSequence(unittest.TestCase):
         assert [m.role for m in repaired] == ["assistant", "tool"]
         assert [c.id for c in repaired[0].tool_calls] == ["a"]
 
+    def test_unaddressable_call_stripped_when_message_has_content(self):
+        # The regression: `kept` empty means `expected` is empty too, so the
+        # branch that stripped the calls was gated on a condition that could
+        # never hold. The message kept an un-addressable tool_call with no
+        # result behind it -- the exact 400 this module prevents.
+        bad = LLMMessage(
+            role="assistant", content="here you go",
+            tool_calls=[LLMToolCall(id="", name="tool", arguments={})],
+            conversation_id="c1")
+        repaired, changed = repair_tool_sequence([bad], "c1")
+        assert changed is True
+        assert _roles(repaired) == ["assistant"]
+        assert not repaired[0].tool_calls
+        assert repaired[0].content == "here you go"
+
     def test_result_claimed_by_earlier_assistant_not_duplicated(self):
         # Two assistant blocks claiming the same call id: only the first gets
         # the real result, the second gets a synthetic one.

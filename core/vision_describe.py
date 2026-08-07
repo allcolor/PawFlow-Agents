@@ -57,28 +57,58 @@ _MAX_DESCRIBE_PER_PASS = 12
 _VISION_TOOL_NAMES = frozenset({"read", "see"})
 
 
+def _has_image_parts(msg: Any) -> bool:
+    """Does this message carry at least one image part?"""
+    content = getattr(msg, "content", None)
+    return isinstance(content, list) and any(
+        isinstance(part, dict)
+        and part.get("type") in ("image_ref", "image_url")
+        for part in content)
+
+
 def _vision_input_indexes(messages: List[Any]) -> set[int]:
     """Return image-bearing messages eligible for this fallback pass.
 
     The boundary is the latest explicitly marked current user message. Only
     that prompt and ``read``/``see`` tool results produced after it belong to
     the active visual turn. Everything else is historical context.
+
+    Two things can hide that marker, and they pull in opposite directions:
+
+    * a provider context builder rebuilds the last user message (identity /
+      dynamic-metadata injection) and drops the marker — the most recent user
+      message is then the active prompt;
+    * a cancel persists an unmarked user resume row AFTER the real prompt —
+      there the marker is right and the newer row is not a prompt.
+
+    Marker precedence resolves the second case, and it is also the safe
+    default: too early a boundary re-describes history (wasteful), too late a
+    one lets image parts reach a non-vision LLM (the 400 this fallback
+    exists to prevent). The first case is therefore only allowed to override
+    the marker when the later user message actually carries image parts —
+    unambiguous evidence of an active visual prompt, which a resume row
+    never has.
     """
     current_idx = -1
+    latest_user_idx = -1
+    latest_image_idx = -1
     for idx in range(len(messages) - 1, -1, -1):
         msg = messages[idx]
         if getattr(msg, "role", "") != "user":
             continue
+        if latest_user_idx < 0:
+            latest_user_idx = idx
+        if latest_image_idx < 0 and _has_image_parts(msg):
+            latest_image_idx = idx
         if getattr(msg, "_pawflow_current_user_message", False):
             current_idx = idx
             break
-        # No explicitly marked prompt found: the most recent user message
-        # is the active prompt. The marker can be lost when provider
-        # context builders rebuild the message (identity / dynamic-metadata
-        # injection) — the fallback must still run: a non-vision LLM must
-        # never receive image parts.
-        if current_idx < 0:
-            current_idx = idx
+    if current_idx < 0:
+        # No marked prompt at all: the most recent user message is it.
+        current_idx = latest_user_idx
+    elif latest_image_idx > current_idx:
+        # A newer user message bears images and lost its marker to a rebuild.
+        current_idx = latest_image_idx
     if current_idx < 0:
         return set()
 
@@ -113,11 +143,7 @@ def _vision_input_indexes(messages: List[Any]) -> set[int]:
 def has_current_vision_inputs(messages: List[Any]) -> bool:
     """Return whether the active prompt/read/see window contains an image."""
     for idx in _vision_input_indexes(messages):
-        content = getattr(messages[idx], "content", None)
-        if isinstance(content, list) and any(
-                isinstance(part, dict)
-                and part.get("type") in ("image_ref", "image_url")
-                for part in content):
+        if _has_image_parts(messages[idx]):
             return True
     return False
 

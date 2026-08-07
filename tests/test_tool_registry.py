@@ -466,6 +466,99 @@ class TestMetaToolAliases(unittest.TestCase):
         assert result == "read-ok"
         assert received == {"path": "/tmp/x", "local": False}
 
+    def test_use_tool_narrative_key_is_dropped_when_target_ignores_it(self):
+        """`description` narrates the CALL, not the target tool's input.
+
+        `bash` declares it, so models send it everywhere. Merging it blindly
+        made every other tool answer "unknown argument(s) ['description']"
+        for a call that used to run — a regression dressed as strictness."""
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "read-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="read",
+            schema={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "read",
+            "arguments_json": '{"path": "/tmp/x"}',
+            "description": "read the file",
+        })
+
+        assert result == "read-ok"
+        assert received == {"path": "/tmp/x"}
+
+    def test_use_tool_narrative_key_reaches_a_target_that_declares_it(self):
+        """Held back is not dropped: `bash` declares `description`, so it
+        still arrives — the envelope filter must not reintroduce the silent
+        parameter loss it exists to prevent."""
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "bash-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="bash",
+            schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["command"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "bash",
+            "arguments_json": '{"command": "ls -l /"}',
+            "description": "list root",
+        })
+
+        assert result == "bash-ok"
+        assert received == {"command": "ls -l /", "description": "list root"}
+
+    def test_use_tool_still_rejects_a_genuinely_unknown_envelope_key(self):
+        """Only narration is forgiven. A misspelled real parameter must stay
+        loud — that is the `local=true` class the merge was added for."""
+        from core.handlers.meta_tools import UseToolHandler
+
+        reg = ToolRegistry()
+        reg.register(MockHandler(
+            name="read",
+            schema={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "read",
+            "arguments_json": '{"path": "/tmp/x"}',
+            "lokal": True,
+        })
+
+        assert "unknown argument" in result
+        assert "lokal" in result
+
     def test_use_tool_recovers_tool_name_inside_arguments_json(self):
         """The model may put the tool name INSIDE the payload with no
         top-level tool_name (use_tool(arguments_json='{\"tool_name\":\"bash\",\"command\":...}')).

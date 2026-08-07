@@ -914,12 +914,24 @@ def test_has_current_vision_inputs_without_marker_uses_last_user_message():
     assert has_current_vision_inputs([old, cur]) is False
 
     # The marked prompt still wins over a more recent unmarked user message.
+    # That is the cancel case: an unmarked user resume row persisted AFTER the
+    # real prompt is not a new prompt, and must not move the boundary past it.
     marked = LLMMessage(role="user", conversation_id="c1", content=[
         {"type": "image_ref", "file_id": "img-marked"}])
     marked._pawflow_current_user_message = True
     later = LLMMessage(role="user", conversation_id="c1", content=[
         {"type": "text", "text": "after"}])
     assert has_current_vision_inputs([later, marked]) is True
+
+    # But a LATER user message that bears images is a real visual prompt whose
+    # marker a rebuild dropped. A stale marker on an older message must not
+    # send its images raw to a non-vision LLM.
+    stale = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "text", "text": "previous turn"}])
+    stale._pawflow_current_user_message = True
+    rebuilt = LLMMessage(role="user", conversation_id="c1", content=[
+        {"type": "image_ref", "file_id": "img-rebuilt"}])
+    assert has_current_vision_inputs([stale, rebuilt]) is True
 
 
 def test_apply_vision_fallback_without_marker_describes_last_user_image(monkeypatch):

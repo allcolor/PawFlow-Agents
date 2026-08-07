@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.125] — 2026-08-07
+
+### Fixed
+
+- Global theme and language now sit on the left of the chat header immediately
+  after usage, while linked accounts, the authenticated principal, and power
+  remain grouped on the right as originally specified.
+- The linked-account and power controls now reuse the conversation dock's
+  styled tooltip, translated label/description, and 1.4x hover zoom instead of
+  browser-native title tooltips.
+
 ## [1.0.0-beta.124] — 2026-08-06
 
 ### Fixed

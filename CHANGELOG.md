@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.127] — 2026-08-07
+
+### Fixed
+
+- `use_tool` now treats `arguments_json` as the canonical target-tool input.
+  A parameter misplaced on the wrapper envelope is merged only when the target
+  schema declares it and the inner object omitted it; an envelope duplicate can
+  no longer overwrite the canonical value. Undeclared narration remains
+  harmless, while genuinely unknown parameters still fail loudly.
+- The conversation action dock now stays centered when the Active Agents panel
+  or the left Conversation controls panel is hidden. Equal desktop side tracks
+  make visibility independent from the dock position, while the narrow-screen
+  layout keeps its single-column stacking behavior.
+
 ## [1.0.0-beta.126] — 2026-08-07
 
 ### Fixed

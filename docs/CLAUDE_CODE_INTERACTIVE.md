@@ -328,7 +328,9 @@ Timing controls are read once when the provider modules are imported:
   report a live pane with input enabled, no active tmux mode and the application
   cursor visible; Codex exposes that cursor only for an editable composer. No
   model, version, placeholder, footer or other pane text participates. The wait
-  remains advisory. After `paste-buffer`, the attachment chip, an already-running
+  uses a printable `|` delimiter because `display-message` sanitizes literal
+  tabs to underscores. The wait remains advisory. After `paste-buffer`, the
+  attachment chip, an already-running
   turn or a direct before/after pane reaction proves transport without replaying
   the paste.
 - `PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` sets the delay between repeated submit
@@ -732,7 +734,9 @@ gate. It reads no pane text. A thread-writer UUID lock created after the current
 container state proves that this Codex launch has created its thread; tmux then
 must report a live, input-enabled pane outside copy mode with the application
 cursor visible. Codex only asks the terminal to show that cursor while its
-composer accepts edits. Two identical observations reject a transient redraw.
+composer accepts edits. The tmux format uses `|`, not tabs:
+`display-message` rewrites literal tabs to underscores before returning its
+output. Two identical observations reject a transient redraw.
 The transport proof remains the before/after paste comparison below, which does
 not model the TUI and refuses when nothing reached the composer. A successful
 paste proof latches the session ready for later turns. Submission verification is also

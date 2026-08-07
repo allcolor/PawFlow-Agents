@@ -349,12 +349,12 @@ def test_codex_readiness_requires_this_launch_thread_and_editable_pane(
     assert pool._current_codex_thread(_State.name) == current_id
 
     outputs = iter([
-        "0\t0\t0\t0\t2\t47",
-        "1\t1\t0\t0\t2\t47",
-        "1\t0\t1\t0\t2\t47",
-        "1\t0\t0\t1\t2\t47",
-        "1\t0\t0\t0\t2\t47",
-        "1\t0\t0\t0\t2\t47",
+        "0|0|0|0|2|47",
+        "1|1|0|0|2|47",
+        "1|0|1|0|2|47",
+        "1|0|0|1|2|47",
+        "1|0|0|0|2|47",
+        "1|0|0|0|2|47",
     ])
 
     class _Run:
@@ -383,6 +383,7 @@ def test_codex_readiness_requires_this_launch_thread_and_editable_pane(
     assert all("pane_current_command" not in fmt for fmt in formats)
     assert all("#{pane_dead}" in fmt and "#{pane_input_off}" in fmt
                for fmt in formats)
+    assert all("|" in fmt and "\t" not in fmt for fmt in formats)
 
 
 def test_the_codex_fix_leaves_the_claude_code_pool_alone(monkeypatch):

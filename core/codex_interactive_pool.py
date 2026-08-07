@@ -444,8 +444,11 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
 
     def _tmux_composer_cursor(self, name: str):
         """Return the cursor only while tmux can deliver input to the TUI."""
-        fmt = ("#{cursor_flag}\t#{pane_in_mode}\t#{pane_dead}"
-               "\t#{pane_input_off}\t#{cursor_x}\t#{cursor_y}")
+        # display-message sanitizes literal tabs to underscores, so a tab
+        # format followed by split("\t") can never yield these six fields.
+        # Every value is numeric; a printable pipe is therefore unambiguous.
+        fmt = ("#{cursor_flag}|#{pane_in_mode}|#{pane_dead}"
+               "|#{pane_input_off}|#{cursor_x}|#{cursor_y}")
         try:
             result = subprocess.run(  # nosec B603
                 docker_cmd() + [
@@ -457,7 +460,7 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
             return None
         if result.returncode != 0:
             return None
-        fields = (result.stdout or "").strip().split("\t")
+        fields = (result.stdout or "").strip().split("|")
         if len(fields) != 6:
             return None
         (cursor_flag, pane_in_mode, pane_dead, pane_input_off,

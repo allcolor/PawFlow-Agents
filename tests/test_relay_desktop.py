@@ -72,7 +72,9 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "function runDockerBuild(" in main
     assert "function relayBinaryPath()" in main
     assert "function relayClientCommand(" in main
-    assert "input.dockerImage || 'pawflow-relay-dev:latest'" in main
+    assert "input.dockerImage || defaultRelayImageName()" in main
+    assert "function defaultRelayImageName()" in main
+    assert "relay_image_version" in main
     assert "function runRelayClientJson(" in main
     assert "PAWFLOW_RELAY_BIN" in main
     assert "process.resourcesPath, 'runtime'" in main
@@ -89,6 +91,10 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "function downloadRelayImage(" in main
     assert "Cleaning older PawFlow relay image tags" in main
     assert "runDocker(['pull', imageName]" in main
+    assert "runDocker(['image', 'inspect', imageName]" in main
+    assert "skipping pull" in main
+    assert "PAWFLOW_RELAY_IMAGE_REPOS" in main
+    assert "listRemoteRelayImageTags" in main
     assert "runDocker(['rmi', ref]" in main
     assert "runDocker(['rmi', '-f', id]" in main
     # Both Docker prunes are daemon-wide: an image prune deletes every other

@@ -170,6 +170,17 @@ def test_composer_context_row_orders_controls_action_dock_and_active_agents():
     assert "activeMount.appendChild(activePanel)" in STATE_JS
     assert context_row in input_area
     assert ".composer-context-row { display: grid;" in TEMPLATE_HTML
+    assert (
+        "grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);"
+        in TEMPLATE_HTML
+    )
+    assert "grid-template-columns: auto minmax(0, 1fr) auto;" not in TEMPLATE_HTML
+    assert ".prompt-controls-panel { justify-self: start; }" in TEMPLATE_HTML
+    assert (
+        ".input-area .composer-context-row { grid-template-columns: minmax(0, 1fr); }"
+        in TEMPLATE_HTML
+    )
+    assert ".composer-context-row > .composer-action-mount," in TEMPLATE_HTML
 
 
 def test_conversation_actions_are_an_horizontal_composer_dock():

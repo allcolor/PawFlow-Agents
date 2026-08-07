@@ -161,12 +161,13 @@ controls:
   linked-account and power controls in the header reuse the dock's exact tooltip
   structure and 1.4x hover zoom.
 - View mode, TTS, STT, and tool permission mode occupy the left of that row,
-  while active agents occupy the right. Pasted files render as stacked thumbnails
-  immediately before Send; the first three stay visible and a count expands the
-  full tray. The redundant prompt-library button is omitted; only file attachment
-  remains beside the prompt, while realtime voice, grab, and conversation refresh
-  join the left Conversation controls panel. Keeping all of these inside the main
-  layout makes them move with the
+  while active agents occupy the right. The two side tracks remain equal, so the
+  action dock stays centered on the conversation even when either side panel is
+  hidden. Pasted files render as stacked thumbnails immediately before Send; the
+  first three stay visible and a count expands the full tray. The redundant
+  prompt-library button is omitted; only file attachment remains beside the prompt,
+  while realtime voice, grab, and conversation refresh join the left Conversation
+  controls panel. Keeping all of these inside the main layout makes them move with the
   conversation when the left sidebar opens instead of overlapping it.
 - Expiry and the conversation theme no longer consume permanent sidebar height.
   Right-clicking any conversation and choosing Conversation controls activates that

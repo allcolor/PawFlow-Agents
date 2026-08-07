@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.139] — 2026-08-07
+
+### Fixed
+
+- The context gauge is now measured, not estimated, for every provider that
+  can report its own prompt size. beta.138 did this for claude-code; four
+  others still dropped a measurement they already had.
+  - **claude-code-interactive** recorded nothing, so the gauge fell back to
+    reconstructing the window from the messages PawFlow holds. That
+    accounting only holds while the native read of the externalized context
+    returns the whole file in one tool result. Once a conversation's
+    `initial_context.md` grew past the native Read tool's 256 KB ceiling, the
+    read returned a size error instead of the context and the gauge reported
+    0% for a session holding a full window. The MITM proxy already sees the
+    exact number in `message_start.usage`; it is recorded on the turn path
+    and the interrupt path.
+  - **antigravity-interactive** collected the observer's usage and never
+    recorded it. Same two call sites.
+  - **codex-app-server** and **gemini** divided a character estimate of what
+    PawFlow sent by a configured window, seeing neither the provider's system
+    prompt nor the session history it resumed. app-server now reads the same
+    native rollout the Codex TUI does (scoped to its `thread_id`, native
+    context window included); Gemini ACP reads `promptTokenCount` from
+    `meta.quota.token_count`, falling back to `totalTokenCount −
+    candidatesTokenCount`.
+- Cached tokens now count toward the gauge. Prompt occupancy is
+  `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`: a
+  gauge built on `input_tokens` alone reported a fraction of a Claude Code
+  session's real prompt.
+- One recorder for every provider. `record_observed_cli_context` moves to
+  `LLMCliSharedMixin`; the Codex mixin defined its own copy and both land on
+  `LLMClient`, so the gauge depended on which mixin won the MRO.
+- An absent measurement records nothing instead of a 0. A stored 0 is
+  indistinguishable from "measured an empty window" for every consumer and
+  pinned the gauge instead of letting the reconstruction answer.
+
 ## [1.0.0-beta.138] — 2026-08-07
 
 ### Fixed

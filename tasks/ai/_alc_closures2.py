@@ -101,9 +101,23 @@ class _ALCClosures2Mixin:
         return provider_context, pre_inject_chars
 
     def _alc_inject_dynamic_metadata(self, st, provider_context):
-        _est_used_local = self._estimate_tokens(
-            provider_context, tool_defs=st.tool_defs,
-            chars_per_token=st.ctx.get("chars_per_token", 0))
+        # Single source of truth: the same counter the live gauge and the
+        # compact check use (count_context_tokens). provider_context already
+        # carries the provider system prompt in head position, so counting it
+        # plus the tool defs yields exactly the gauge's used value -- the
+        # "Context: ~x/y" note the LLM sees can never disagree with the UI.
+        try:
+            from core.token_counter import (
+                count_context_tokens, resolve_token_multiplier)
+            _est_used_local = count_context_tokens(
+                provider_context, tool_defs=st.tool_defs,
+                multiplier=resolve_token_multiplier(
+                    getattr(st.ctx.get("resolved_svc"), "config", None)
+                    or {}))
+        except Exception:
+            _est_used_local = self._estimate_tokens(
+                provider_context, tool_defs=st.tool_defs,
+                chars_per_token=st.ctx.get("chars_per_token", 0))
         _remaining_local = max(0, st._max_ctx - _est_used_local)
         _meta_parts_local = []
         if st.ctx.get("_datetime_str", ""):

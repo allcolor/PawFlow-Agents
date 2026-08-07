@@ -11,6 +11,7 @@ Pass the multiplier from `llm_service.config["token_multiplier"]`; 0 or
 unset = 1.0 (no correction).
 """
 
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -115,3 +116,39 @@ def resolve_token_multiplier(service_config) -> float:
     except (TypeError, ValueError):
         return 1.0
     return v if v > 0 else 1.0
+
+
+def count_context_tokens(messages, *, system_prompt="", tool_defs=None,
+                         multiplier: float = 1.0) -> int:
+    """Count the full PawFlow provider context in one place.
+
+    This is the single token-counting entry point for the context gauge:
+    the messages PawFlow holds for the agent, plus the provider system
+    prompt and the tool definitions that travel with every request. Every
+    consumer (live gauge, compact check, injected \"Context: ~x/y\" note,
+    persisted snapshot) must derive its number here so the UI, the LLM and
+    the compactor can never disagree about the size of the same context.
+    """
+    total = count_messages_tokens(messages, multiplier=1.0)
+    if system_prompt:
+        total += count_tokens(system_prompt)
+    for td in tool_defs or []:
+        if isinstance(td, dict):
+            name = str(td.get("name", "") or "")
+            desc = str(td.get("description", "") or "")
+            params = td.get("parameters")
+        else:
+            name = str(getattr(td, "name", "") or "")
+            desc = str(getattr(td, "description", "") or "")
+            params = getattr(td, "parameters", None)
+        text = name + desc
+        if params:
+            try:
+                text += json.dumps(params, sort_keys=True, ensure_ascii=False)\
+                    if isinstance(params, dict) else str(params)
+            except (TypeError, ValueError):
+                text += str(params)
+        total += count_tokens(text)
+    if multiplier and multiplier != 1.0:
+        return int(total * multiplier)
+    return total

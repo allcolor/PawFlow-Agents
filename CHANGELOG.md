@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The context gauge for API providers now counts the full PawFlow provider
+  context: messages + the provider system prompt + tool definitions. The
+  gauge, the injected `Context: ~x/y` note and the persisted snapshot all
+  derive from the same counter (`count_context_tokens`), so they can no
+  longer disagree — a conversation shown at 1% while its context note said
+  12% was the symptom of the gauge counting a message subset without the
+  system prompt and tool schemas that travel with every request.
+- The platform agent prompt now forbids editing source files through bash
+  (heredocs, `echo >`, python inline, `sed -i`): the dedicated edit tools
+  are the only supported path, keeping edits atomic and auditable on every
+  install.
+
 ## [1.0.0-beta.133] — 2026-08-07
 
 ### Fixed

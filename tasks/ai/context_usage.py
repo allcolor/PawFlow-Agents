@@ -242,12 +242,13 @@ def context_usage_for_messages(conversation_id: str, agent_name: str,
                                source: str = "context_usage",
                                cache: Optional[Dict[str, Any]] = None,
                                bootstrap_prompt_tokens: int = 0,
+                               api_overhead: int = 0,
                                cli_context_state: str = "") -> Dict[str, Any]:
     """Build a context gauge from an already-loaded message list."""
     svc_cfg = dict(svc_cfg or {})
     from core.token_counter import resolve_token_multiplier
     token_multiplier = resolve_token_multiplier(svc_cfg)
-    overhead = max(0, int(bootstrap_prompt_tokens or 0))
+    overhead = max(0, int(bootstrap_prompt_tokens or 0)) + max(0, int(api_overhead or 0))
     cache_params = cache.get("cache_params", {}) if isinstance(cache, dict) else {}
     if (overhead == 0 and str(provider) in _CLI_CONTEXT_PROVIDERS
             and cache_params.get("accounting_version") == 3):
@@ -314,6 +315,24 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
         _observed_cli_context_tokens(
             conversation_id, agent_name, user_id, active_ctx)
         if is_cli else 0)
+    # API providers: the provider context PawFlow sends is messages + the
+    # provider system prompt + tool definitions. The gauge must count the
+    # whole thing (the injected "Context: ~x/y" note does), so the system
+    # prompt and tool defs ride as overhead -- with the same token
+    # multiplier as the messages, keeping every consumer on one number.
+    api_overhead = 0
+    if not is_cli and active_ctx is not None:
+        try:
+            from core.token_counter import (
+                count_context_tokens, resolve_token_multiplier)
+            api_overhead = count_context_tokens(
+                [],
+                system_prompt=str(
+                    active_ctx.get("_provider_system_prompt") or ""),
+                tool_defs=active_ctx.get("tool_defs"),
+                multiplier=resolve_token_multiplier(svc_cfg))
+        except Exception:
+            api_overhead = 0
     # Codex interactive records every live session's prompt size on the
     # long-lived service client.  No active turn and no such measurement means
     # the process restarted and the old persisted snapshot describes a dead
@@ -393,10 +412,17 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     cfg_for_count = dict(svc_cfg)
     if configured > 0:
         cfg_for_count["max_context_size"] = configured
+    if (not is_cli and api_overhead == 0 and isinstance(cache, dict)
+            and int(cache.get("overhead_tokens", 0) or 0) > 0):
+        # Idle lookup with no active context: keep the last measured
+        # system-prompt + tool-defs overhead so the gauge does not drop
+        # when the turn ends.
+        api_overhead = max(0, int(cache.get("overhead_tokens", 0) or 0))
     usage = context_usage_for_messages(
         conversation_id, agent_name, messages, svc_cfg=cfg_for_count,
         real_window=real_window, provider=provider, source=source,
         cache=cache, bootstrap_prompt_tokens=bootstrap_prompt_tokens,
+        api_overhead=api_overhead,
         cli_context_state=cli_context_state)
     if observed_tokens > 0:
         # Measured beats reconstructed. Everything above counted the messages

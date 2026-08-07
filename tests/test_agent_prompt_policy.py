@@ -176,3 +176,17 @@ def test_agent_context_tracks_effective_context_budget():
     assert "effective_context_window(" in src
     assert '"configured_context_size": int(_configured_max_ctx or 0)' in src
     assert '"real_context_size": int(_real_max_ctx or 0)' in src
+
+
+def test_platform_prompt_forbids_bash_file_editing():
+    """The platform tool-usage guidelines must forbid editing source files
+    through bash. Without it an agent drifts back to heredoc/sed/python-inline
+    edits: no atomicity, no auditability, and the escape-layer guarantees of
+    the edit tools are silently bypassed. The rule lives in the platform
+    prompt (all installs, all agents), not in project docs or memory."""
+    src = _agent_context_src()
+    assert "## Using your tools" in src
+    assert "NEVER edit source files through bash" in src
+    assert "`python3 - << PYEOF`" in src
+    assert "STOP and use the edit tools instead" in src
+    assert "bash is for executing commands, not for file I/O" in src

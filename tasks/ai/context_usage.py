@@ -63,9 +63,10 @@ def _client_real_window(client: Any, conversation_id: str,
     One lookup, used whether or not a turn is running. Two providers can report
     a window, and both write it per (conversation, agent):
 
-      * ``_cli_observed_context_window_by_stream`` -- Codex, derived from the
-        TUI's "context left N%" status bar against the prompt size measured on
-        the wire. Checked first: it describes the session actually running.
+      * ``_cli_observed_context_window_by_stream`` -- Codex, read from the
+        native rollout's ``model_context_window`` (with the older TUI status
+        bar derivation retained as a fallback). Checked first: it describes the
+        session actually running.
       * ``_cc_context_window_by_stream`` -- Claude Code, from its own
         authoritative ``modelUsage[model].contextWindow``.
 
@@ -218,10 +219,11 @@ def _observed_cli_context_tokens(conversation_id: str, agent_name: str,
     """Return the prompt size the provider itself reported, or 0.
 
     Only an observed CLI provider records this (see the Codex interactive
-    provider): PawFlow sits on its wire and reads the prompt-token count the
-    provider sends with every exchange. That number is the context window's
-    real occupancy -- provider system prompt, tool schemas and session history
-    included -- none of which PawFlow can enumerate from its own messages.
+    provider): PawFlow reads the native rollout's latest token-count event after
+    every exchange, falling back to the observed wire usage. That number is the
+    context window's real occupancy -- provider system prompt, tool schemas and
+    session history included -- none of which PawFlow can enumerate from its
+    own messages.
 
     Unlike the bootstrap counts this is read WITHOUT an active context too, so
     the gauge survives a conversation switch: the value lives on the resolved

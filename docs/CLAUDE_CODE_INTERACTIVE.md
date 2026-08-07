@@ -1022,7 +1022,7 @@ new TUI must receive the complete PawFlow initial context. Context edits and
 compaction evict both individual and conversation-wide Codex interactive
 sessions so a stale TUI can never receive a delta after its history changed.
 
-### The Codex context gauge is measured on the wire
+### The Codex context gauge uses the native session counter
 
 Codex owns its context window. PawFlow cannot enumerate what is in it: the
 provider's own system prompt and tool schemas are invisible to it, and the
@@ -1037,18 +1037,22 @@ its script, so that call never reaches PawFlow — the gate never opened,
 life of the session. A gauge stuck at 0 never trips auto-compaction, and
 switching conversation showed 0 because the persisted snapshot said `cold`.
 
-PawFlow sits on the wire, so it does not have to rebuild anything: every
-`/responses` exchange reports the prompt-token count Codex computed itself.
+After every `/responses` exchange, PawFlow reads the latest native
+`.codex/sessions/**/rollout-*.jsonl` `token_count` event. This is the same
+session telemetry Codex owns, and remains authoritative when the proxied
+Responses usage describes only the current exchange.
 
-- `observed_context_tokens` (`core/llm_providers/_codex_interactive_turn.py`)
-  reads `usage.input_tokens`. Responses already includes the cached prefix
-  there and details it under `input_tokens_details.cached_tokens`; adding that
-  back would count the cache twice. A payload with no input side returns 0,
-  meaning "no measurement" — never "the window is empty".
-- `_merge_usage` records the **last** exchange, while it keeps summing for
-  cost. A turn runs several exchanges; summing their prompts would report
-  several times the window. Last also means a compaction inside Codex moves
-  the gauge down.
+- `codex_rollout_context_usage` reads
+  `info.last_token_usage.input_tokens`, never
+  `total_token_usage.input_tokens`: the latter is cumulative billing across
+  exchanges and can be many times larger than the window. It also reads
+  `info.model_context_window` as the native denominator.
+- `observed_context_tokens` keeps `usage.input_tokens` from the MITM stream as
+  a fallback when the rollout has not published a valid counter yet.
+- `_merge_usage` records the **last** proxy exchange as the fallback, while it
+  keeps summing for cost. A turn runs several exchanges; summing their prompts
+  would report several times the window. Last also means a compaction inside
+  Codex moves the fallback gauge down.
 - `record_observed_cli_context` stores it per `(conversation_id, agent_name)`
   on `_cli_observed_context_tokens_by_stream`, created in `LLMClient.__init__`
   and shared by reference with call clones — so the clone that runs the turn
@@ -1083,12 +1087,13 @@ for a suffix delta. **A measured gauge can only be moved by a new measurement.**
 
 #### The window the measurement is divided by
 
-`input_tokens` says how full the window is, never how big it is — the Responses
-API does not report the window at all. So the denominator fell back to whatever
-`max_context_size` was configured, with no guarantee it matched the model.
+The rollout's `model_context_window` supplies the native denominator. PawFlow's
+configured `max_context_size` can still impose a lower operational cap through
+`effective_context_window`.
 
-The Codex TUI prints the missing half in its status bar (`context left 74%`),
-and the two together determine the window exactly:
+Older Codex versions printed `context left 74%` in the TUI. That derivation is
+retained only as a compatibility fallback when native rollout telemetry is not
+available:
 
 - `context_left_fraction` / `derive_context_window`
   (`core/codex_interactive_pool.py`) parse the status bar and compute
@@ -1097,8 +1102,8 @@ and the two together determine the window exactly:
   so at 5% used half a point of rounding moves the result by 10%. A derivation
   within 5% of the stored one is also refused — a denominator that breathes
   turn to turn is the very defect this area exists to remove.
-- `record_codex_context_window` samples the pane once per turn (capturing it
-  costs a `docker exec`, and the window cannot change mid-turn) and stores it
+- `record_codex_context_window` samples the pane once per turn only for that
+  fallback and stores the result
   on `_cli_observed_context_window_by_stream`, shared with call clones like the
   token counts.
 - `_client_real_window` (`tasks/ai/context_usage.py`) is the single lookup for

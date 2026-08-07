@@ -514,11 +514,12 @@ Operational notes:
   Large pastes receive a proportionally longer bounded acknowledgement window; a
   fragmented submit or an unacknowledged prompt fails explicitly instead of
   being reported as a successful turn.
-- Codex's `.codex/sessions/**/rollout-*.jsonl` remains useful for post-mortem
-  inspection, as it is for app-server preempt receipts. It is not the interactive
-  submit control signal: the TUI owns the active rollout identity and disk-write
-  ordering, while the exact hook and MITM request are already ordered live
-  events for the session PawFlow is driving.
+- Codex's `.codex/sessions/**/rollout-*.jsonl` supplies the interactive context
+  gauge after each exchange: `last_token_usage.input_tokens` is the current
+  prompt occupancy and `model_context_window` is its native window. The
+  cumulative `total_token_usage` is billing data and is never used for the
+  gauge. The rollout is still not the submit control signal: the exact hook and
+  MITM request are already ordered live events for the driven session.
 
 Known limitations:
 

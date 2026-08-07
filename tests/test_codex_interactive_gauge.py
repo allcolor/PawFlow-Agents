@@ -1,4 +1,4 @@
-"""The Codex interactive context gauge is measured on the wire.
+"""The Codex interactive context gauge uses Codex's native token counter.
 
 Codex owns its context window. PawFlow cannot enumerate what is in it -- the
 provider's own system prompt and tool schemas are invisible, and a code-mode
@@ -7,13 +7,16 @@ never reaches PawFlow either. Reconstructing the gauge from the messages
 PawFlow holds reported 0 for the whole life of such a session, and a gauge
 stuck at 0 never trips auto-compaction.
 
-The observing proxy does not have that problem: every Responses exchange
-carries the prompt-token count Codex itself computed.
+The native rollout does not have that problem: every ``token_count`` event
+carries both the last prompt occupancy and the model context window.
 """
 from types import SimpleNamespace
+import json
+import os
 from unittest.mock import patch
 
 from core.llm_providers._codex_interactive_turn import observed_context_tokens
+from core.llm_providers.codex_interactive import codex_rollout_context_usage
 from tasks.ai.context_usage import compute_context_usage
 
 
@@ -161,6 +164,96 @@ def test_a_payload_without_an_input_side_keeps_the_previous_measurement():
     """0 means 'no measurement', never 'the window is empty'."""
     assert observed_context_tokens({"output_tokens": 120}) == 0
     assert observed_context_tokens(None) == 0
+
+
+def _write_rollout(tmp_path, rows):
+    rollout = (tmp_path / ".codex" / "sessions" / "2026" / "08" / "07" /
+               "rollout-test.jsonl")
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    return rollout
+
+
+def _token_count(last_input, window, total_input):
+    return {
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "info": {
+                "total_token_usage": {"input_tokens": total_input},
+                "last_token_usage": {"input_tokens": last_input},
+                "model_context_window": window,
+            },
+        },
+    }
+
+
+def test_rollout_uses_last_prompt_not_cumulative_usage(tmp_path):
+    _write_rollout(tmp_path, [
+        _token_count(210_000, 258_400, 4_100_000),
+        {"type": "event_msg", "payload": {"type": "agent_message"}},
+        _token_count(223_627, 258_400, 4_900_000),
+    ])
+
+    assert codex_rollout_context_usage(str(tmp_path)) == (223_627, 258_400)
+
+
+def test_rollout_measurement_beats_a_misleading_proxy_value(tmp_path):
+    _write_rollout(tmp_path, [_token_count(223_627, 258_400, 4_900_000)])
+
+    from core.llm_providers.codex_interactive import LLMCodexInteractiveMixin
+
+    class _Client(LLMCodexInteractiveMixin):
+        def __init__(self):
+            self._cli_observed_context_tokens_by_stream = {}
+            self._cli_observed_context_window_by_stream = {}
+
+    client = _Client()
+    state = SimpleNamespace(workdir=str(tmp_path), created_at=0)
+    with patch.object(client, "_publish_codex_context_gauge") as publish:
+        client.record_codex_live_context(
+            state, "conv", "assistant", 880, user_id="user")
+
+    assert client._cli_observed_context_tokens_by_stream[
+        ("conv", "assistant")] == 223_627
+    assert client._cli_observed_context_window_by_stream[
+        ("conv", "assistant")] == 258_400
+    publish.assert_called_once()
+
+
+def test_native_window_is_not_overwritten_by_the_tui_fallback(tmp_path):
+    _write_rollout(tmp_path, [_token_count(223_627, 258_400, 4_900_000)])
+
+    from core.llm_providers.codex_interactive import LLMCodexInteractiveMixin
+
+    class _Client(LLMCodexInteractiveMixin):
+        def __init__(self):
+            self._cli_observed_context_tokens_by_stream = {}
+            self._cli_observed_context_window_by_stream = {}
+
+    client = _Client()
+    state = SimpleNamespace(workdir=str(tmp_path), created_at=0, name="session")
+    with patch.object(client, "_publish_codex_context_gauge"):
+        client.record_codex_live_context(state, "conv", "assistant", 880)
+    pool = SimpleNamespace(
+        _pane_text=lambda _name: (_ for _ in ()).throw(
+            AssertionError("native window must skip the pane probe")))
+
+    client.record_codex_context_window(
+        pool, state, "conv", "assistant", 223_627)
+
+    assert client._cli_observed_context_window_by_stream[
+        ("conv", "assistant")] == 258_400
+
+
+def test_rollout_from_an_old_session_is_not_reused(tmp_path):
+    rollout = _write_rollout(
+        tmp_path, [_token_count(223_627, 258_400, 4_900_000)])
+    os.utime(rollout, (10, 10))
+
+    assert codex_rollout_context_usage(
+        str(tmp_path), not_before=100) == (0, 0)
 
 
 def _coordinator(sink):

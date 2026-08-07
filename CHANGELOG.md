@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.133] — 2026-08-07
+
+### Fixed
+
+- Codex interactive cold-start readiness now parses tmux pane state with a
+  printable delimiter. Tmux sanitizes literal tabs to underscores, which made
+  every otherwise-valid thread and editable-cursor observation fail and forced
+  the first prompt through the advisory best-effort path.
+
 ## [1.0.0-beta.132] — 2026-08-07
 
 ### Fixed

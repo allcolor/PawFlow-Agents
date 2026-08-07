@@ -652,15 +652,24 @@ def test_cli_bootstrap_native_read_result_is_not_double_counted(
     )
     usage = context_usage_from_cache(
         [original, call, result], 200000, source="cold_cli")
+    # Same shape, but the call reads an ordinary file: its result is real
+    # context the agent would not otherwise hold, so it IS charged. That is
+    # the reference for "counted twice".
+    ordinary_call = LLMMessage(
+        role="assistant",
+        conversation_id="conv-bootstrap",
+        tool_calls=[LLMToolCall(
+            id=tool_call_id,
+            name=tool_name,
+            arguments={"path": "/workspace/some_other_file.md"},
+            tool_origin="native",
+        )],
+    )
     doubled = context_usage_from_cache(
-        [original, LLMMessage(
-            role="assistant",
-            conversation_id="conv-bootstrap",
-            tool_calls=call.tool_calls,
-        ), result],
-        200000, source="unmarked_cold_cli")
+        [original, ordinary_call, result], 200000, source="ordinary_read")
 
     assert _is_cli_bootstrap_read(call.tool_calls[0]) is True
+    assert _is_cli_bootstrap_read(ordinary_call.tool_calls[0]) is False
     assert usage["bootstrap_context_start"] == 1
     assert usage["used"] < doubled["used"] * 0.6
     assert usage["used"] > doubled["used"] * 0.4
@@ -692,24 +701,55 @@ def test_cli_bootstrap_exclusion_survives_append_delta():
             tool_origin="native",
         )],
     )
-    assert context_usage_append_delta(
-        before, call, source="append") is None
+    # A cold start does not discard the history: it serializes it. The
+    # boundary call no longer forces a recount, and the total it lands on
+    # still holds the messages that were externalized.
+    stepped = context_usage_append_delta(before, call, source="append")
+    assert stepped is not None
+    assert stepped["used"] >= before["used"]
     boundary = context_usage_from_cache(
         [original, call], 200000, before, source="cold_cli")
-    after = context_usage_append_delta(
+    assert boundary["used"] >= before["used"]
+
+    # The read result carries the flag stamped when the turn produced it
+    # (tasks/ai/_alc_closures2.py). Its body is the serialized form of
+    # `original`, so charging it would count that context twice.
+    result = LLMMessage(
+        role="tool",
+        conversation_id="conv-bootstrap",
+        tool_call_id=call_id,
+        source={"context_usage_bootstrap_body": True},
+        content="serialized context " * 4000,
+    )
+    after = context_usage_append_delta(boundary, result, source="append")
+    assert after is not None
+    # Only the message's structural role/separator cost lands; none of the
+    # 76k characters of body do.
+    assert 0 <= after["used"] - boundary["used"] <= 8
+
+    # An ordinary result of the same size is real context, and is charged.
+    ordinary = context_usage_append_delta(
         boundary,
         LLMMessage(
             role="tool",
             conversation_id="conv-bootstrap",
-            tool_call_id=call_id,
+            tool_call_id="some-other-call",
             content="serialized context " * 4000,
         ),
-        source="append",
-    )
+        source="append")
+    assert ordinary["used"] > boundary["used"] * 1.8
 
-    assert after is not None
-    assert boundary["used"] < before["used"] / 20
-    assert after["used"] > before["used"] * 0.8
+    # The authoritative recount reaches the same total without the flag: it
+    # correlates the result against the call's arguments instead.
+    unflagged = LLMMessage(
+        role="tool",
+        conversation_id="conv-bootstrap",
+        tool_call_id=call_id,
+        content="serialized context " * 4000,
+    )
+    full = context_usage_from_cache(
+        [original, call, unflagged], 200000, source="recount")
+    assert full["used"] == after["used"]
 
 
 def test_non_native_bootstrap_read_result_stays_counted():
@@ -1226,11 +1266,14 @@ def test_cli_resumed_context_usage_uses_stored_context_plus_live_delta():
     assert usage["used"] > 0
 
 
-def test_cold_cli_gauge_does_not_count_externalized_stored_context():
-    """A cold CLI has not loaded initial_context.md yet.
+def test_cold_cli_gauge_counts_the_context_it_will_serialize():
+    """A cold CLI has not loaded initial_context.md yet — and that is fine.
 
-    Its gauge starts empty even though PawFlow has a compacted context ready
-    to serialize for the provider.
+    The gauge used to return an empty message list until the provider read
+    that file back, which made it depend on a native read landing: a full
+    window displayed 0%, and stayed there on any provider that never reports
+    a measurement. PawFlow holds the context either way; a cold start
+    serializes it, it does not discard it.
     """
     from tasks.ai.context_usage import compute_context_usage
 
@@ -1265,13 +1308,15 @@ def test_cold_cli_gauge_does_not_count_externalized_stored_context():
             "conv-live", "assistant", user_id="user", store=_Store(),
             source="test")
 
-    assert usage["message_count"] == 0
-    assert usage["used"] == 0
+    assert usage["message_count"] == len(stored_messages)
+    assert usage["used"] > 0
+    # The state still describes the session, which is genuinely cold. Only
+    # the number stopped pretending the context does not exist.
     assert usage["cli_context_state"] == "cold"
 
 
-def test_cold_cli_gauge_counts_only_injected_bootstrap_prompt():
-    """Once sent, the short bootstrap prompt is the whole CLI context."""
+def test_bootstrap_prompt_tokens_ride_on_top_of_the_message_count():
+    """The injected read command is overhead, not the whole context."""
     from tasks.ai.context_usage import compute_context_usage
 
     stored = [{"role": "user", "content": "hello world", "msg_id": "s1"}]
@@ -1308,9 +1353,9 @@ def test_cold_cli_gauge_counts_only_injected_bootstrap_prompt():
         usage = compute_context_usage(
             "c", "assistant", user_id="user", store=_Store(), source="test")
 
-    assert usage["message_count"] == 0
-    assert usage["used"] == 17
-    assert usage["overhead_tokens"] == usage["used"]
+    assert usage["message_count"] == len(stored)
+    assert usage["overhead_tokens"] == 17
+    assert usage["used"] > 17
     assert usage["cli_context_state"] == "bootstrap"
 
 

@@ -154,31 +154,37 @@ all_marks = [i for i, m in enumerate(msgs) if cuc._is_cli_bootstrap_boundary(m)]
 print('all structural markers   :', all_marks or 'none',
       '<- %d reset(s)' % len(all_marks))
 
-# The gauge: content only, everything before the boundary zeroed.
+# The gauge: every message's content, minus the bootstrap read bodies --
+# those are the same context in its serialized form, already charged as
+# messages.
 gauge = count_messages_tokens(cuc._strip_for_count(msgs))
 # The compaction threshold: content only, nothing zeroed.
 all_content = [{'content': cuc._content_text(cuc._message_content(m))}
                for m in msgs]
 compact = count_messages_tokens(all_content)
-# What the boundary alone is entitled to hide. The zeroed messages still cost
-# their 4-token role/separator overhead in the gauge, so only their CONTENT is
-# hidden -- subtract that overhead or the arithmetic lands 4 per message short.
-hidden = max(0, boundary)
-pre = count_messages_tokens(all_content[:hidden]) - 4 * hidden
+# What the gauge is entitled to hide. A zeroed message still costs its
+# 4-token role/separator overhead, so only its CONTENT is hidden -- subtract
+# that overhead or the arithmetic lands 4 per message short.
+_call_ids = cuc._bootstrap_body_call_ids(msgs)
+body_idx = [i for i, m in enumerate(msgs)
+            if cuc._is_bootstrap_body(m, _call_ids)]
+bodies = count_messages_tokens([all_content[i] for i in body_idx])
+pre = bodies - 4 * len(body_idx) if body_idx else 0
 
 print()
-print('gauge   (post-boundary content) :', gauge)
+print('gauge   (no bootstrap bodies)   :', gauge)
 print('compact (all content)           :', compact)
 print('difference                      :', compact - gauge)
-print('explained by the boundary       :', pre)
+print('explained by bootstrap bodies   :', pre)
 print('UNEXPLAINED                     :', (compact - gauge) - pre)
 print('  ^ must be 0. Anything else is the bug.')
 
-# How much history the boundary is hiding, in messages -- if this is far more
-# than one bootstrap's worth, the marker is misplaced, not the counting.
+# One entry per read of the bootstrap file, paginated calls included. Many
+# entries are normal for a file past the native read ceiling; zero entries on
+# a cold CLI session means the reads are not being recognized.
 print()
-print('messages hidden by the boundary :', max(0, boundary))
-print('messages counted by the gauge   :', len(msgs) - max(0, boundary))
+print('bootstrap body messages         :', body_idx or 'none')
+print('messages counted by the gauge   :', len(msgs) - len(body_idx))
 
 # Tokens carried by tool_calls, which NEITHER counter looks at.
 tc_chars = 0

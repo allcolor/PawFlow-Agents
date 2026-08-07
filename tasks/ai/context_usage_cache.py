@@ -19,7 +19,10 @@ _CLI_BOOTSTRAP_CONTEXT_PATHS = (
     "/.pawflow_cci/initial_context.md",
     "/.pawflow_ag/initial_context.md",
 )
-_CONTEXT_ACCOUNTING_VERSION = 3
+# 4: PawFlow's messages are always charged, and the bootstrap read body --
+# the same context in its serialized form -- never is. 3 did the opposite,
+# so every cached `used` written under it describes a different quantity.
+_CONTEXT_ACCOUNTING_VERSION = 4
 
 
 def _scrub_image_payloads(text: str) -> str:
@@ -125,18 +128,72 @@ def _content_text(content: Any) -> str:
         return str(content)
 
 
-def _strip_for_count(messages: Iterable[Any]) -> List[Dict[str, str]]:
+def _message_tool_call_id(msg: Any) -> str:
+    if isinstance(msg, dict):
+        return str(msg.get("tool_call_id") or "")
+    return str(getattr(msg, "tool_call_id", "") or "")
+
+
+def _is_bootstrap_body(msg: Any, call_ids: set) -> bool:
+    """Whether this message carries a copy of the serialized PawFlow context.
+
+    Two ways to know, because a gauge runs on both fresh and reloaded data.
+    The flag is stamped on the result when the turn produces it and is the
+    only signal available to the single-message append delta, which has no
+    list to correlate a ``tool_call_id`` against. The id set covers messages
+    written before the flag existed, and any path that re-reads a stored
+    context whole.
+    """
+    if _message_source(msg).get("context_usage_bootstrap_body"):
+        return True
+    if not call_ids or _message_role(msg) != "tool":
+        return False
+    return _message_tool_call_id(msg) in call_ids
+
+
+def _bootstrap_body_call_ids(messages: Iterable[Any]) -> set:
+    """Ids of every call that read the bootstrap file, paginated ones included.
+
+    Deliberately not gated on "first read seen": a bootstrap file past the
+    native read ceiling is consumed page by page, and each page returns
+    another slice of the same serialized context.
+    """
+    call_ids = set()
+    for msg in messages or []:
+        for tool_call in _message_tool_calls(msg):
+            if not _is_cli_bootstrap_read(tool_call):
+                continue
+            call_id = str(
+                tool_call.get("id") if isinstance(tool_call, dict)
+                else getattr(tool_call, "id", "") or "")
+            if call_id:
+                call_ids.add(call_id)
+    return call_ids
+
+
+def _strip_for_count(messages: Iterable[Any],
+                     call_ids: Optional[set] = None) -> List[Dict[str, str]]:
+    """Render messages down to countable text, charging each context once.
+
+    PawFlow's own messages are the authoritative account of what the agent
+    holds, on every provider and at every moment -- no provider has to report
+    anything for this number to exist, and it cannot collapse because a
+    native read failed or has not happened yet.
+
+    What must NOT be added on top is the bootstrap read output: a cold CLI
+    start serializes those same messages into initial_context.md, and the
+    agent reads that file back. Its body and the messages are the same
+    context in two representations, so only the messages are charged.
+    """
     msg_list = list(messages or [])
-    boundary = _cli_bootstrap_boundary_index(msg_list)
+    if call_ids is None:
+        call_ids = _bootstrap_body_call_ids(msg_list)
     stripped = []
-    for index, msg in enumerate(msg_list):
-        content = _content_text(_message_content(msg))
-        # On a cold CLI start the provider receives a small file reference,
-        # not the serialized PawFlow messages themselves.  Once the native
-        # read begins, only its real result belongs to provider context.
-        if index < boundary:
-            content = ""
-        stripped.append({"content": content})
+    for msg in msg_list:
+        if _is_bootstrap_body(msg, call_ids):
+            stripped.append({"content": ""})
+            continue
+        stripped.append({"content": _content_text(_message_content(msg))})
     return stripped
 
 
@@ -160,11 +217,12 @@ def _cache_params(max_context_size: int, token_multiplier: float,
     }
 
 
-def _count(messages: Iterable[Any], token_multiplier: float = 1.0) -> int:
+def _count(messages: Iterable[Any], token_multiplier: float = 1.0,
+           call_ids: Optional[set] = None) -> int:
     from core.token_counter import count_messages_tokens
 
     return int(count_messages_tokens(
-        _strip_for_count(messages),
+        _strip_for_count(messages, call_ids),
         multiplier=float(token_multiplier or 1.0),
     ) or 0)
 
@@ -246,17 +304,18 @@ def context_usage_from_cache(messages: Iterable[Any], max_context_size: int,
                 # there, cached_used is the provider's reported prompt size and
                 # the suffix is already inside it.
                 suffix = msg_list[cached_n:]
-                # A new cold-session boundary replaces the provider's prior
-                # representation, so it requires a full recount. Ordinary
-                # suffixes (including bootstrap read results) stay incremental.
-                if not any(_is_cli_bootstrap_boundary(msg) for msg in suffix):
-                    delta = _count(suffix, token_multiplier)
-                    return context_usage_entry(
-                        msg_list, cached_used + delta, max_ctx,
-                        source=source, token_multiplier=token_multiplier,
-                        cache_mode="delta", overhead=overhead_i,
-                        bootstrap_context_start=int(
-                            cache.get("bootstrap_context_start", -1) or -1))
+                # The bootstrap ids come from the FULL list: a read result can
+                # land in the suffix while the assistant call that identifies
+                # it sits before the cache boundary, and counting that body
+                # would charge the serialized context a second time.
+                delta = _count(suffix, token_multiplier,
+                               _bootstrap_body_call_ids(msg_list))
+                return context_usage_entry(
+                    msg_list, cached_used + delta, max_ctx,
+                    source=source, token_multiplier=token_multiplier,
+                    cache_mode="delta", overhead=overhead_i,
+                    bootstrap_context_start=int(
+                        cache.get("bootstrap_context_start", -1) or -1))
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
@@ -288,11 +347,6 @@ def context_usage_append_delta(cache: Dict[str, Any], message: Any, *,
             # until the next full recompute drops it back onto the measurement.
             # A measured cache can only be advanced by a new measurement, so
             # decline and let the caller run the authoritative calculation.
-            return None
-        if _is_cli_bootstrap_boundary(message):
-            # The old cached total represents the context serialized into the
-            # bootstrap file. Recount now so that representation is replaced
-            # before native read output starts arriving.
             return None
         params = cache.get("cache_params") or {}
         max_ctx = int(cache.get("max", 0) or params.get("max", 0) or 0)

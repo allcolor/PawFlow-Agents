@@ -671,20 +671,31 @@ class _ALCClosures2Mixin:
                 tool_origin=_tool_origin,
             )
             _tool_src = _src
-            if (not st.ctx.get("_cli_has_session")
-                    and not st.ctx.get("_cli_bootstrap_read_seen")):
-                try:
-                    from tasks.ai.context_usage_cache import (
-                        _is_cli_bootstrap_read)
-                    if _is_cli_bootstrap_read(tc_obj):
+            try:
+                from tasks.ai.context_usage_cache import (
+                    _is_cli_bootstrap_read)
+                if _is_cli_bootstrap_read(tc_obj):
+                    # Every read of the bootstrap file is tracked, not just
+                    # the first: the agent pages through a file that exceeds
+                    # the native read ceiling, and each page carries another
+                    # slice of a context the gauge already counts as
+                    # messages. The linked results are flagged below.
+                    _ids = st.ctx.get("_cli_bootstrap_read_call_ids")
+                    if not isinstance(_ids, set):
+                        _ids = set()
+                        st.ctx["_cli_bootstrap_read_call_ids"] = _ids
+                    if tc_obj.id:
+                        _ids.add(str(tc_obj.id))
+                    if (not st.ctx.get("_cli_has_session")
+                            and not st.ctx.get("_cli_bootstrap_read_seen")):
                         st.ctx["_cli_bootstrap_read_seen"] = True
                         _tool_src = dict(_src)
                         _tool_src["context_usage_boundary"] = (
                             "cli_bootstrap_read")
-                except Exception:
-                    logger.debug(
-                        "CLI bootstrap context boundary detection failed",
-                        exc_info=True)
+            except Exception:
+                logger.debug(
+                    "CLI bootstrap context boundary detection failed",
+                    exc_info=True)
             st.tools_called.append(tc_obj.name)
             st.ctx["_last_tool"] = tc_obj.name
             msg = LLMMessage(
@@ -710,10 +721,23 @@ class _ALCClosures2Mixin:
             _result = self._materialize_tool_result_images(
                 _result, user_id=st.user_id,
                 conversation_id=st.conversation_id)
+            _tc_id = payload.get("tc_id", "")
+            _result_src = None
+            _bootstrap_ids = st.ctx.get("_cli_bootstrap_read_call_ids")
+            if (isinstance(_bootstrap_ids, set) and _tc_id
+                    and str(_tc_id) in _bootstrap_ids):
+                # This body IS the serialized PawFlow context. It is persisted
+                # like any other result -- the transcript must show what the
+                # agent did -- but the gauge must not charge the same bytes
+                # twice, so it travels with a flag every counting path can
+                # read off the message itself, including the single-message
+                # append delta that has no list to correlate against.
+                _result_src = {"context_usage_bootstrap_body": True}
             msg = LLMMessage(
                 role="tool",
                 content=self._wrap_tool_output(_tool_name, _result),
-                tool_call_id=payload.get("tc_id", ""),
+                tool_call_id=_tc_id,
+                source=_result_src,
                 conversation_id=st.conversation_id)
             msg._tool_name = _tool_name
             if payload.get("tool_origin"):

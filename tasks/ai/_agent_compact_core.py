@@ -165,6 +165,38 @@ class _AgentCompactCoreMixin:
             and not _is_synthetic_compact_msg(m)
         ]
 
+        # A cold CLI start externalizes the whole history to
+        # initial_context.md, and the agent reads it back -- often in several
+        # paginated calls. Those results are a verbatim copy of a context the
+        # summarizer is already being handed as messages, so leaving them in
+        # makes compaction summarize the same conversation twice, and the
+        # duplicate grows by one layer on every cold start. The context
+        # builder drops them for the same reason (cli_shared
+        # _cli_context_before_latest_text); compaction is the other surface
+        # that must.
+        from core.llm_providers.cli_shared import (
+            bootstrap_read_call_ids, drop_bootstrap_calls,
+            is_bootstrap_read_result)
+        _bootstrap_ids = bootstrap_read_call_ids(messages)
+        if _bootstrap_ids:
+            _kept = []
+            for m in messages:
+                if is_bootstrap_read_result(m, _bootstrap_ids):
+                    continue
+                m = drop_bootstrap_calls(m, _bootstrap_ids)
+                # Dropping the only call of a silent assistant message leaves
+                # nothing to summarize; the orphan pass below would keep it.
+                if (getattr(m, 'role', '') == 'assistant'
+                        and not (getattr(m, 'tool_calls', None) or [])
+                        and not str(getattr(m, 'content', '') or '').strip()):
+                    continue
+                _kept.append(m)
+            logger.info(
+                "[compact] dropped %d bootstrap-read message(s) — their body "
+                "is the serialized context already present as messages",
+                len(messages) - len(_kept))
+            messages = _kept
+
         # Remove orphan tool results
         _valid_tc_ids = set()
         for m in messages:

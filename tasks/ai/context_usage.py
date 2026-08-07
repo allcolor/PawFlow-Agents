@@ -159,16 +159,14 @@ def _context_messages(conversation_id: str, agent_name: str, user_id: str,
     if active_ctx:
         live_messages = active_ctx.get("messages") or []
         if active_ctx.get("_is_cli_provider"):
-            if (not active_ctx.get("_cli_has_session")
-                    and not active_ctx.get("_cli_bootstrap_read_seen")):
-                # The PawFlow context is externalized in initial_context.md.
-                # Before the provider reads that file, none of those stored
-                # messages belongs to the new CLI context window.
-                return [], None, False
-            # Once the bootstrap has been read, merge persisted native blocks
-            # with the in-flight delta. context_usage_cache uses the marked
-            # read boundary to exclude the externalized PawFlow representation
-            # and count the native tool result exactly once.
+            # The stored messages count from the first moment, bootstrap read
+            # or not. They ARE the context: a cold start does not discard them,
+            # it serializes them into initial_context.md and hands the provider
+            # a path. Returning [] until the provider read that file made the
+            # gauge depend on a native read landing -- it showed 0% for a full
+            # window, and stayed there for any provider that never reports a
+            # measurement. context_usage_cache charges the messages and skips
+            # the read bodies, so the same context is never counted twice.
             stored = list(_stored_context_messages(
                 conversation_id, agent_name, store) or [])
             seen = {_message_identity(msg) for msg in stored}
@@ -251,7 +249,7 @@ def context_usage_for_messages(conversation_id: str, agent_name: str,
     overhead = max(0, int(bootstrap_prompt_tokens or 0)) + max(0, int(api_overhead or 0))
     cache_params = cache.get("cache_params", {}) if isinstance(cache, dict) else {}
     if (overhead == 0 and str(provider) in _CLI_CONTEXT_PROVIDERS
-            and cache_params.get("accounting_version") == 3):
+            and cache_params.get("accounting_version") == 4):
         overhead = max(0, int(cache.get("overhead_tokens", 0) or 0))
     configured = int(svc_cfg.get("max_context_size", 0) or 0)
     from core.context_window import effective_context_window

@@ -365,13 +365,15 @@ The provider assembles responses from those events:
   the question the transcript exists to answer. What the agent did is what the
   transcript shows.
 - **Not filtered is not the same as re-serialized.** The bootstrap `Read` and
-  its result stay in the transcript, and stay on the gauge. They are dropped
-  from the *agent context*: that result body is the previous
-  `initial_context.md`, so writing it into the next one nests a copy of the file
-  the agent is already reading, and the nesting deepens on every cold start.
-  `core/llm_providers/cli_shared.py` drops the pair in every CLI serializer.
-  Transcript and context are two surfaces with two rules — the earlier fix made
-  the call visible, and visible must not mean fed back in.
+  its result stay in the transcript. They are dropped from the *agent context*,
+  from *compaction input*, and from the *gauge*: that result body is the
+  previous `initial_context.md`, so writing it into the next one nests a copy of
+  the file the agent is already reading and the nesting deepens on every cold
+  start; summarizing it duplicates the conversation; counting it charges the
+  same context twice. `core/llm_providers/cli_shared.py` drops the pair in every
+  CLI serializer and in `_compact`, and `tasks/ai/context_usage_cache.py` zeroes
+  it for the count. Transcript and context are two surfaces with two rules — the
+  earlier fix made the call visible, and visible must not mean fed back in.
 - Outgoing `/v1/messages` request bodies are observed for both assistant
   `tool_use` blocks and user `tool_result` blocks. This preserves live ordering
   even when a response-side tool block is delayed or missed; provider events are
@@ -1077,15 +1079,96 @@ they are most of it — and hands the total to the same
 `record_observed_cli_context`. Both the turn path and the interrupt path record
 it: both coordinators run against the same window.
 
-Why it was needed: the reconstructed gauge counts only what survives the
-bootstrap-read boundary (`_strip_for_count` zeroes everything before it, so the
-externalized context is not charged twice). That accounting holds only while
-the native read brings the whole file back in one tool result. Once a
-conversation's `initial_context.md` grew past the native Read tool's 256 KB
-ceiling, the read returned a size error instead of the context, the agent
-paginated it in pieces PawFlow never sees as the boundary result, and the gauge
-reported ~0% for a session holding a full window. The measurement does not care
-how the file was read.
+**When** it is recorded matters as much as that it is. The end-of-turn record
+above runs after `coord.run()` returns, and every live gauge update happens
+before that: the emitter recomputes on each appended message
+(`_publish_context_usage("append")`) and on heartbeats, all inside the turn. So
+the measurement existed but arrived too late, and the UI displayed the
+reconstruction — 0% for an externalized context past the read ceiling — for the
+whole turn, snapping to the real number only after the last token. The
+coordinator now takes a `usage_callback` and fires it at each `message_start`
+that revises the prompt size (`_publish_usage_observation`, which passes a
+snapshot of the accumulated `usage` and never raises), so the turn's first API
+exchange already puts a measured number in front of every consumer. Antigravity
+carries the same callback on its own coordinator, fired wherever an observed
+event updates `usage`.
+
+The emitter's heartbeat gate had to follow: `_context_usage_input_signature`
+keyed only on the PawFlow message list, and for an observed CLI provider the
+gauge moves with no new message at all — a long stretch of provider-side work
+revises the measurement on every `message_start`. The signature now includes
+`_observed_context_measurement`, so a measurement that moved on its own
+republishes.
+
+The append fast path needs no change: `context_usage_append_delta` already
+declines a measured cache (adding PawFlow's own count on top of a number that
+already contains the appended message double-counts it) and falls through to the
+authoritative recompute, which reads the fresh measurement.
+
+Why it was needed: the reconstruction it falls back on used to be keyed on the
+native read landing — see the next section, which replaced that accounting
+altogether. The measurement does not care how the file was read.
+
+#### The reconstruction charges PawFlow's messages, never the read body
+
+A cold start does not discard the agent's context. It renders it into
+`initial_context.md` and hands the provider a path, so the same conversation
+exists twice in the stored context: as messages, and as the body of the reads
+that brought the file back. Exactly one of those may be charged.
+
+Until beta.140 the *messages* were the copy that got dropped:
+`_context_messages` returned `[]` until the provider was seen reading the file,
+and `_strip_for_count` then zeroed everything before that read's boundary
+marker, charging the read output instead. Two consequences, both structural:
+
+- The number depended on a native read landing. Before it, a full window read
+  0%. That is also why the reconstruction was useless to any provider that
+  only reports its usage when a turn ends (`claude-code`, `codex-app-server`)
+  or that cannot report mid-turn at all (`gemini` ACP, whose prompt count
+  arrives in the `session/prompt` JSON-RPC *result*).
+- The boundary marker is set on the FIRST read only. A file past the native
+  read ceiling is paginated, and every later page was charged as if it were
+  fresh context.
+
+It is now the other way round. PawFlow's messages are always charged — they are
+the one account that exists on every provider, at every moment, without anyone
+reporting anything — and the read bodies never are. `_strip_for_count` zeroes a
+message it recognizes as a bootstrap body, by either of two signals:
+
+- `source.context_usage_bootstrap_body`, stamped on the result when the turn
+  produces it (`tasks/ai/_alc_closures2.py`). This is the only signal available
+  to `context_usage_append_delta`, which sees one message and has no list to
+  correlate a `tool_call_id` against.
+- membership in `_bootstrap_body_call_ids`, derived from the calls' own
+  arguments over the whole list. Deliberately not gated on "first read seen",
+  so every page of a paginated read is covered, and it still answers for
+  contexts written before the flag existed.
+
+The suffix delta derives that id set from the FULL list, not the suffix: a read
+result can land in the suffix while the assistant call identifying it sits
+before the cache boundary. `_CONTEXT_ACCOUNTING_VERSION` moved to 4 — every
+cached `used` written under 3 describes a different quantity, and the cache
+params carry the version so those entries invalidate rather than mix.
+
+What this number is: the true size of the context PawFlow holds and will
+serialize, plus the injected read command as overhead. It is not the provider's
+window, which also holds a system prompt and tool schemas PawFlow cannot
+enumerate, and which on a paginated bootstrap holds only the pages actually
+read. It errs high, which is the safe direction for a gauge that drives
+auto-compaction at 95%: under-reporting means never compacting and letting the
+CLI drop context silently. When a provider does report a measurement, that
+still wins (`context_source_measured`).
+
+#### Compaction drops the same bodies
+
+The context builder has always excluded bootstrap reads from what it
+re-serializes (`_cli_context_before_latest_text`, `drop_bootstrap_calls`).
+Compaction did not, and it is the other surface that handles the whole stored
+context: it was handed the read bodies *and* the messages they are a copy of,
+and asked to summarize both — a duplicate that grew by one layer on every cold
+start. Phase 0 of `_compact` (`tasks/ai/_agent_compact_core.py`) now applies
+the same three helpers, and drops an assistant message left with neither text
+nor a surviving call.
 
 `record_observed_cli_context` itself lives on `LLMCliSharedMixin`
 (`core/llm_providers/cli_shared.py`): recording a measured prompt size is

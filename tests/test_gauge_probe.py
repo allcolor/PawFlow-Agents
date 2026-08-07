@@ -13,7 +13,15 @@ from pathlib import Path
 PROBE = Path(__file__).resolve().parents[1] / "tools" / "gauge_probe.py"
 
 
+_BOOTSTRAP = "/cc_sessions/c/a/.pawflow_cci/initial_context.md"
+
+
 def _rows(with_boundary):
+    """A conversation whose native read either is, or is not, a bootstrap read.
+
+    Laid out the way a turn produces it: the marker rides on the assistant
+    call, the body flag on the linked result.
+    """
     rows = [
         {"role": "user", "msg_id": "m1",
          "content": "a user message long enough to weigh something"},
@@ -27,7 +35,9 @@ def _rows(with_boundary):
          "content": "an answer produced after the bootstrap"},
     ]
     if with_boundary:
-        rows[2]["source"] = {"context_usage_boundary": "cli_bootstrap_read"}
+        rows[1]["tool_calls"][0]["arguments"] = {"path": _BOOTSTRAP}
+        rows[1]["source"] = {"context_usage_boundary": "cli_bootstrap_read"}
+        rows[2]["source"] = {"context_usage_bootstrap_body": True}
     return rows
 
 
@@ -56,40 +66,41 @@ def _field(out, label):
     raise AssertionError("%r not in probe output:\n%s" % (label, out))
 
 
-def test_boundary_difference_is_fully_explained(tmp_path):
+def test_bootstrap_body_difference_is_fully_explained(tmp_path):
     out = _run(_write_conversation(tmp_path, _rows(True)), "claude")
 
     assert _field(out, "UNEXPLAINED").startswith("0")
-    assert _field(out, "bootstrap boundary index").startswith("2")
-    # The gauge zeroes what the boundary hides, so it must read lower.
-    gauge = int(_field(out, "gauge   (post-boundary content)"))
+    assert _field(out, "bootstrap body messages").startswith("[2]")
+    # The gauge drops the read body, so it must read lower.
+    gauge = int(_field(out, "gauge   (no bootstrap bodies)"))
     compact = int(_field(out, "compact (all content)"))
     assert 0 < gauge < compact
 
 
-def test_without_a_boundary_the_two_counters_agree_exactly(tmp_path):
+def test_without_a_bootstrap_read_the_two_counters_agree_exactly(tmp_path):
     out = _run(_write_conversation(tmp_path, _rows(False)), "claude")
 
     assert _field(out, "UNEXPLAINED").startswith("0")
-    assert _field(out, "bootstrap boundary index").startswith("-1")
+    assert _field(out, "bootstrap body messages").startswith("none")
     assert _field(out, "all structural markers").startswith("none")
-    assert (_field(out, "gauge   (post-boundary content)")
+    assert (_field(out, "gauge   (no bootstrap bodies)")
             == _field(out, "compact (all content)"))
 
 
-def test_markers_are_counted_structurally_not_by_text_match(tmp_path):
-    # A message that merely quotes the marker string is not a marker. The text
-    # match is what a grep gives, and it is wrong here: reading this
+def test_bodies_are_found_structurally_not_by_text_match(tmp_path):
+    # A message that merely quotes the marker string is not a bootstrap body.
+    # The text match is what a grep gives, and it is wrong here: reading this
     # repository's own source into a conversation makes every such line look
-    # like a boundary and hides where the gauge really resets.
+    # like one and hides what the gauge really drops.
     rows = _rows(True)
     rows.append({
         "role": "tool", "msg_id": "m5", "tool_call_id": "t2",
-        "content": 'src: context_usage_boundary == "cli_bootstrap_read"',
+        "content": 'src: context_usage_bootstrap_body == True',
     })
     out = _run(_write_conversation(tmp_path, rows), "claude")
 
-    assert _field(out, "all structural markers").startswith("[2]")
+    assert _field(out, "all structural markers").startswith("[1]")
+    assert _field(out, "bootstrap body messages").startswith("[2]")
     assert _field(out, "UNEXPLAINED").startswith("0")
 
 

@@ -322,12 +322,15 @@ Timing controls are read once when the provider modules are imported:
   bracketed `paste-buffer -p`. Pane verification may reject an unconfirmed
   transport, but it never replays the paste and risks duplicating the prompt in
   the composer.
-- A cold Codex send waits up to 45 seconds for a structural composer line
-  (`> `; the permanent `>_` header is excluded). Readiness is mandatory:
-  PawFlow never pastes best-effort into an input box that has not been drawn.
-  On every send, only Codex's attachment chip in that composer (or an
-  already-running turn) proves delivery after `paste-buffer`; an unrelated
-  status redraw does not.
+- A cold Codex send waits up to 12 seconds for two consecutive structural
+  readiness observations. A UUID writer lock newer than the container state
+  proves that Codex created the thread for this launch. Tmux must simultaneously
+  report a live pane with input enabled, no active tmux mode and the application
+  cursor visible; Codex exposes that cursor only for an editable composer. No
+  model, version, placeholder, footer or other pane text participates. The wait
+  remains advisory. After `paste-buffer`, the attachment chip, an already-running
+  turn or a direct before/after pane reaction proves transport without replaying
+  the paste.
 - `PAWFLOW_CCI_SUBMIT_DELAY_SECONDS` sets the delay between repeated submit
   keys. Claude Code defaults to `1.0` second. Codex uses at most `0.2`
   seconds and submits both normal prompts and live preempts with the fixed
@@ -476,11 +479,11 @@ overrides this diagnostic with an empty string: its attachment chips and pane
 history can contain user prompt material, and Codex transport warnings never
 copy the pane into the server log.
 
-The readiness markers a pool waits for must belong to the **input box**, not to
-the chrome around it. `>_ OpenAI Codex (v...)` is a permanent pane header drawn
-the instant the TUI starts: while it counted as readiness, the cold-start wait
-returned immediately and the first paste of a fresh session went into a composer
-that did not exist yet.
+Historically, readiness parsed input-box labels from the pane. That contract is
+gone: every such label is release UI copy. In particular, `>_ OpenAI Codex
+(v...)` is permanent startup chrome and once caused the wait to return before an
+editable composer existed. Current readiness reads only the current launch's
+thread-writer lock and tmux's editable-cursor/input state.
 
 That header is also why "the composer is not on screen" cannot mean "landed".
 It used to: an unlocatable composer was read as unknowable and answered `True`,
@@ -725,19 +728,14 @@ the output source.
 
 Codex readiness is a short advisory wait on its own clock (12 seconds,
 `_PROMPT_READY_SECONDS`), not the inherited 45-second one, and **never** a
-gate: a cold send
-whose readiness marker was not recognised pastes anyway. Every marker in
-`_PROMPT_READY_MARKERS` is a string read off a Codex release, and Codex redraws
-its composer chrome every few weeks — placeholder, footer and the box around
-them have all moved already. Making a missed marker fatal (beta.82) meant the
-first release whose idle composer drew none of them took the whole provider
-down: every cold send refused with *refusing first send … because the TUI
-composer is not ready*, five LLM retries deep at ~45 s apiece, against a TUI
-that was sitting there ready to be pasted into. The transport proof is the
-before/after paste comparison below, which does not model the TUI at all and
-still refuses (and re-pastes) when nothing reached the composer — the undrawn-
-composer case the gate was meant to catch. A successful before/after paste proof
-latches the session ready for later turns. Submission verification is also
+gate. It reads no pane text. A thread-writer UUID lock created after the current
+container state proves that this Codex launch has created its thread; tmux then
+must report a live, input-enabled pane outside copy mode with the application
+cursor visible. Codex only asks the terminal to show that cursor while its
+composer accepts edits. Two identical observations reject a transient redraw.
+The transport proof remains the before/after paste comparison below, which does
+not model the TUI and refuses when nothing reached the composer. A successful
+paste proof latches the session ready for later turns. Submission verification is also
 Codex-specific: absence
 of the injected text is never accepted as proof because Codex renders pastes as
 attachment chips. If the composer layout is unknown and no running marker is
@@ -785,9 +783,9 @@ trust_level = "trusted"
 ```
 
 Without it the TUI opens `Do you trust the contents of this directory?` on a
-cold start and waits. That dialog draws no readiness marker, so the launch
-burns the full prompt-ready timeout, the injected prompt is pasted into the
-modal, and only a human at the tmux can unblock it. The trusted path is the
+cold start and waits. That modal does not produce the current launch's editable
+composer state, so the structural readiness wait expires and a best-effort paste
+cannot submit the bootstrap. The trusted path is the
 directory the tmux actually `cd`s into, and the table is written inside the
 PawFlow-managed section so a regeneration replaces it instead of appending a
 second table for the same path. `codex exec` never asks the question, so the

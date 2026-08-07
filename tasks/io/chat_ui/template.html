@@ -710,6 +710,30 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .dialog-actions .btn { width: auto; display: inline-block; padding: 6px 16px; background: none;
                         color: #6c6c8a; border: 1px solid #333; margin-bottom: 0; }
 .dialog-actions .btn:hover { color: #e94560; border-color: #e94560; }
+.todo-dialog { max-width: 760px; max-height: 82vh; display: flex; flex-direction: column; }
+.todo-dialog-header { display: flex; align-items: baseline; gap: 10px; }
+.todo-dialog-header .dialog-title { flex: 1; }
+.todo-count { color: var(--pf-muted); font-size: 12px; white-space: nowrap; }
+.todo-dialog-body { min-height: 80px; overflow-y: auto; padding-right: 4px; }
+.todo-section + .todo-section { margin-top: 14px; }
+.todo-section-title { margin: 0 0 6px; color: var(--pf-muted); font-size: 11px;
+                      letter-spacing: .06em; text-transform: uppercase; }
+.todo-card { padding: 10px 12px; margin-bottom: 7px; border: 1px solid var(--pf-border);
+             border-radius: 8px; background: var(--pf-sidebar); }
+.todo-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.todo-subject { min-width: 0; color: var(--pf-text); font-size: 13px; overflow-wrap: anywhere; }
+.todo-status { flex: none; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.todo-status-in_progress { background: #1e3a5f; color: #4fc3f7; }
+.todo-status-pending { background: #3a2a1a; color: #f0c040; }
+.todo-status-completed { background: #1b4332; color: #52b788; }
+.todo-description { margin-top: 7px; color: var(--pf-text); font-size: 12px;
+                    line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.todo-detail { display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+               gap: 8px; margin-top: 5px; font-size: 11px; }
+.todo-detail-label { color: var(--pf-muted); }
+.todo-detail-value { color: var(--pf-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.todo-empty, .todo-error { padding: 24px; text-align: center; color: var(--pf-muted); }
+.todo-error { color: #ff6b6b; }
 #linkedAccountsDialog .dialog { max-width: 520px; }
 .linked-account-list { display: flex; flex-direction: column; gap: 8px; }
 .linked-account-row { display: grid; grid-template-columns: minmax(0, 1fr) auto;
@@ -1046,6 +1070,10 @@ if (typeof hljs !== 'undefined') {
         <div class="action-menu-item" id="plansMenuItem" onclick="closeActionMenu();togglePlansPanel()">
           <span class="ami-icon">&#x1F4CB;</span>
           <div><div class="ami-label" data-i18n="plans">Plans</div><div class="ami-desc" data-i18n="plansDesc">View active plans</div></div>
+        </div>
+        <div class="action-menu-item" id="todosMenuItem" onclick="closeActionMenu();showTodosDialog()">
+          <span class="ami-icon">&#x2611;</span>
+          <div><div class="ami-label" data-i18n="todoList">Todo List</div><div class="ami-desc" data-i18n="todoListDesc">View durable agent work items</div></div>
         </div>
         <div class="action-menu-item" id="schedsMenuItem" onclick="closeActionMenu();toggleSchedsPanel()">
           <span class="ami-icon">&#x23F0;</span>

@@ -233,6 +233,14 @@ tools. The event service records the native call, waits for its successful
 `external_id` so later `TaskUpdate` calls resolve the same PawFlow item.
 Failed native calls never mutate the store.
 
+The webchat action dock exposes a read-only Todo List dialog for the selected
+agent. Its internal `list_todos` action resolves the conversation owner before
+reading the same `(owner_user_id, conversation_id, agent_name)` scope, so an
+authorised reader of a shared conversation sees the owner's list rather than an
+empty list in the reader's namespace. The dialog groups active, pending and
+completed items and renders store values with DOM `textContent`; it cannot create,
+update or delete tasks.
+
 The common agent policy tells every agent to create and maintain this list
 proactively for multi-step, compaction-prone, deferred, or background work. The
 current item is marked `in_progress` before substantial work and completed as

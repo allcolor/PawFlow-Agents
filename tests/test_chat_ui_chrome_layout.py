@@ -6,6 +6,7 @@ from pathlib import Path
 
 TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
 TOOLTIPS_JS = Path("tasks/io/chat_ui/tooltips.js").read_text(encoding="utf-8")
+TODOS_JS = Path("tasks/io/chat_ui/todos.js").read_text(encoding="utf-8")
 ATTACHMENTS_JS = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
 STATE_JS = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
 
@@ -224,6 +225,24 @@ def test_conversation_actions_are_an_horizontal_composer_dock():
     assert "#adminSettingsMenu { position: absolute;" in TEMPLATE_HTML
     assert "button.contains(e.target)" in admin_js
     assert "menu.contains(e.target)" in admin_js
+
+
+def test_todo_list_has_a_dock_action_and_safe_read_only_dialog():
+    dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
+    serve_src = Path("tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
+
+    assert 'id="todosMenuItem"' in dock
+    assert 'onclick="closeActionMenu();showTodosDialog()"' in dock
+    assert 'data-i18n="todoList"' in dock
+    assert 'data-i18n="todoListDesc"' in dock
+    assert '"todos.js"' in serve_src
+    assert "action$('list_todos', { agent_name: agent })" in TODOS_JS
+    assert "function showTodosDialog()" in TODOS_JS
+    assert "function closeTodosDialog()" in TODOS_JS
+    assert "function closeTodosDialog() {\n  _todosDialogAgent = '';" in TODOS_JS
+    assert "textContent" in TODOS_JS
+    assert ".innerHTML" not in TODOS_JS
+    assert "todolist" not in TODOS_JS
 
 
 def test_control_docks_use_an_external_css_tooltip_without_horizontal_scroll():

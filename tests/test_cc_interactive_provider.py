@@ -1718,16 +1718,19 @@ def test_an_empty_composer_is_still_a_missing_paste(monkeypatch):
     assert not [c for c in calls if c[-2:] == ["pawflow", "Enter"]]
 
 
-def test_the_codex_header_alone_is_not_a_ready_prompt():
-    """`>_ OpenAI Codex (v...)` is drawn the instant the TUI starts, long
-    before the input box is interactive. Counting it as readiness made the
-    cold-start wait return at once, and the first paste missed the composer."""
+def test_codex_readiness_does_not_parse_pane_text(monkeypatch):
+    """Models, versions, placeholders and footer copy are not invariants."""
     from core.codex_interactive_pool import CodexInteractivePool
 
     pool = CodexInteractivePool()
-    assert pool._pane_shows_prompt(">_ OpenAI Codex (v0.104.0)\n\n") is False
-    assert pool._pane_shows_prompt(
-        ">_ OpenAI Codex (v0.104.0)\n\n> \n  ? for shortcuts") is True
+    monkeypatch.setattr(
+        pool, "_pane_text",
+        lambda _name: (_ for _ in ()).throw(AssertionError("pane text parsed")))
+    monkeypatch.setattr(
+        pool, "_codex_readiness_state",
+        lambda _name: ("6d979bcd-60db-42cb-a66b-a375c2b78e7b", 2, 47))
+
+    assert pool._wait_for_prompt_ready("container", timeout=0) is True
 
 
 def test_send_interrupt_represses_enter_when_submit_swallowed(monkeypatch):

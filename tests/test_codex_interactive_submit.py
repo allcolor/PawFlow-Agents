@@ -14,6 +14,9 @@ that collapse pastes, and pin that the Claude Code path -- whose TUI does echo
 pasted text -- is left on the fragment heuristic unchanged.
 """
 
+import os
+from types import SimpleNamespace
+
 import core.claude_code_interactive_pool as ccip
 from core.claude_code_interactive_pool import InteractiveClaudeCodePool
 from core.codex_interactive_pool import CodexInteractivePool
@@ -23,26 +26,26 @@ PROMPT = "Some long injected prompt\nwith a distinctive trailing line here"
 # What `tmux capture-pane` returns while the paste sits unsent: the composer
 # line carries the chip, the text itself appears nowhere.
 UNSENT_PANE = """\
->_ OpenAI Codex (v0.146.0)
+Codex
 
-  model:  gpt-5.6-sol medium
+  session status
 
 > [Pasted Content 24470 chars][Pasted Content 1013 chars]
 
-  gpt-5.6-sol medium  ~
+  ready
 """
 
 # After submission: the chip moves into the transcript (the TUI keeps showing
 # the user turn that way) and the composer is empty again.
 SUBMITTED_PANE = """\
->_ OpenAI Codex (v0.146.0)
+Codex
 
 › You
   [Pasted Content 24470 chars]
 
 > Ask Codex
 
-  gpt-5.6-sol medium  ~  context left 74%
+  context left 74%
 """
 
 RUNNING_PANE = SUBMITTED_PANE + "\n  Working (Esc to interrupt)\n"
@@ -94,7 +97,7 @@ def test_missing_composer_line_is_unknown_not_empty():
 # it starts with the composer prefix `>`. Everything below it is transcript,
 # including a chip from a message submitted long ago.
 NO_COMPOSER_PANE = """\
->_ OpenAI Codex (v0.146.0)
+>_ OpenAI Codex
 
 \u203a You
   [Pasted Content 24470 chars]
@@ -192,9 +195,9 @@ def test_codex_paste_settle_caps_stale_env_override_at_200ms(monkeypatch):
 # that waits out its 300s no-event timeout. Two ways it said yes without
 # evidence.
 
-# The header is drawn the instant the TUI starts; the input box is not. Past
-# the readiness timeout, or during a redraw, this is the whole pane.
-HEADER_ONLY_PANE = ">_ OpenAI Codex (v0.104.0)\n\n  model:  gpt-5.6-sol\n"
+# Startup chrome can be drawn before an input box exists. It is never proof
+# that a paste landed.
+STARTUP_ONLY_PANE = "Codex is starting\n"
 
 
 def _landed(pool, pane, monkeypatch):
@@ -205,11 +208,8 @@ def _landed(pool, pane, monkeypatch):
 
 
 def test_a_pane_with_no_input_box_is_not_proof_of_a_paste(monkeypatch):
-    """The reviewer's repro. `>_ OpenAI Codex` locates no composer, and
-    "cannot tell" was answered True -- so a paste into a TUI that has no input
-    box yet was declared landed, Enter went nowhere, and the turn sat on a
-    session nobody had prompted until the no-event timeout fired."""
-    assert _landed(CodexInteractivePool(), HEADER_ONLY_PANE, monkeypatch) is False
+    """Startup chrome alone says nothing about delivery."""
+    assert _landed(CodexInteractivePool(), STARTUP_ONLY_PANE, monkeypatch) is False
 
 
 def test_the_chip_in_the_composer_is_still_proof(monkeypatch):
@@ -250,21 +250,19 @@ def test_a_tui_that_declares_no_composer_is_judged_exactly_as_before(
 # needed nothing but Enter -- pasted three times over on the way there.
 
 IDLE_PANE = """\
->_ OpenAI Codex (v0.146.0)
+Codex
 
 \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e
 \u2502 > Ask Codex \u2502
 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f
-  gpt-5.6-sol medium  ~
 """
 
 BOXED_UNSENT_PANE = """\
->_ OpenAI Codex (v0.146.0)
+Codex
 
 \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e
 \u2502 > [Pasted Content 1024 chars][Pasted Content 1021 chars] \u2502
 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f
-  gpt-5.6-sol medium  ~
 """
 
 
@@ -314,31 +312,77 @@ def test_codex_pane_diagnostic_never_leaks_the_pane(monkeypatch):
     assert pool._pane_diagnostic(_State.name) == ""
 
 
-def test_codex_default_readiness_check_keeps_the_cold_start_wait(monkeypatch):
-    """Still a real wait, not the zero-second probe: a paste into the permanent
-    header fragments the bootstrap when the composer has not been drawn yet."""
+def test_codex_readiness_waits_for_two_stable_thread_and_composer_states(
+        monkeypatch):
+    """Readiness is Codex thread state plus editable terminal state."""
     monkeypatch.delenv("PAWFLOW_CCI_PROMPT_READY_TIMEOUT_SECONDS", raising=False)
     pool = CodexInteractivePool()
-    seen = []
-    monkeypatch.setattr(
-        InteractiveClaudeCodePool, "_wait_for_prompt_ready",
-        lambda self, name, *, timeout=None: seen.append((name, timeout)) or False)
-    assert pool._wait_for_prompt_ready(_State.name) is False
-    assert seen == [(_State.name, pool._PROMPT_READY_SECONDS)]
+    ready = ("6d979bcd-60db-42cb-a66b-a375c2b78e7b", 2, 47)
+    states = iter([None, ready, ready])
+    monkeypatch.setattr(pool, "_codex_readiness_state",
+                        lambda _name: next(states))
+    monkeypatch.setattr(ccip.time, "sleep", lambda _seconds: None)
+
+    assert pool._wait_for_prompt_ready(_State.name) is True
     assert 0 < pool._PROMPT_READY_SECONDS <= 15.0
 
 
-def test_codex_readiness_wait_is_its_own_clock(monkeypatch):
-    """The wait is advisory, and on a stale marker it is paid in full before
-    every one of the five LLM retries. Claude Code's 45s is Claude Code's."""
-    monkeypatch.setenv("PAWFLOW_CCI_PROMPT_READY_TIMEOUT_SECONDS", "3")
+def test_codex_readiness_requires_this_launch_thread_and_editable_pane(
+        tmp_path, monkeypatch):
+    """Old locks and non-editable tmux states are not cold-start readiness."""
     pool = CodexInteractivePool()
-    seen = []
+    state = SimpleNamespace(
+        name=_State.name, workdir=str(tmp_path), created_at=200.0)
+    pool._sessions[("u", "c", "a", "s")] = state
+    lock_dir = tmp_path / ".codex" / "thread-writer-locks"
+    lock_dir.mkdir(parents=True)
+    old_lock = lock_dir / "5ae420b6-e43f-412e-b854-45bdb68bbcc0.lock"
+    old_lock.touch()
+    os.utime(old_lock, (100.0, 100.0))
+
+    assert pool._current_codex_thread(_State.name) is None
+
+    current_id = "6d979bcd-60db-42cb-a66b-a375c2b78e7b"
+    current_lock = lock_dir / f"{current_id}.lock"
+    current_lock.touch()
+    os.utime(current_lock, (201.0, 201.0))
+    assert pool._current_codex_thread(_State.name) == current_id
+
+    outputs = iter([
+        "0\t0\t0\t0\t2\t47",
+        "1\t1\t0\t0\t2\t47",
+        "1\t0\t1\t0\t2\t47",
+        "1\t0\t0\t1\t2\t47",
+        "1\t0\t0\t0\t2\t47",
+        "1\t0\t0\t0\t2\t47",
+    ])
+
+    class _Run:
+        returncode = 0
+        stderr = ""
+
+        @property
+        def stdout(self):
+            return next(outputs)
+
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _Run()
+
     monkeypatch.setattr(
-        InteractiveClaudeCodePool, "_wait_for_prompt_ready",
-        lambda self, name, *, timeout=None: seen.append(timeout) or False)
-    assert pool._wait_for_prompt_ready(_State.name) is False
-    assert seen == [3.0]
+        "core.codex_interactive_pool.subprocess.run", fake_run)
+    assert pool._tmux_composer_cursor(_State.name) is None
+    assert pool._tmux_composer_cursor(_State.name) is None
+    assert pool._tmux_composer_cursor(_State.name) is None
+    assert pool._tmux_composer_cursor(_State.name) is None
+    assert pool._tmux_composer_cursor(_State.name) == (2, 47)
+    assert pool._codex_readiness_state(_State.name) == (current_id, 2, 47)
+    formats = [call[-1] for call in calls]
+    assert all("pane_current_command" not in fmt for fmt in formats)
+    assert all("#{pane_dead}" in fmt and "#{pane_input_off}" in fmt
+               for fmt in formats)
 
 
 def test_the_codex_fix_leaves_the_claude_code_pool_alone(monkeypatch):

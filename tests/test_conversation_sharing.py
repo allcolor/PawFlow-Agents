@@ -1285,12 +1285,22 @@ class TestDrivingToolsIsAWrite:
                             "result": {"choice": "always_allow"}},
                            STRANGER)[1] == "404"
 
-    def test_a_reader_may_list_but_not_drive(self, store, talking):
+    def test_a_reader_may_list_but_not_drive(
+            self, store, talking, monkeypatch):
         _invite(store, talking, role=ca.ROLE_READ)
         _accept(store, talking)
 
+        from core.todo_store import TodoStore
+        monkeypatch.setattr(
+            TodoStore, "instance",
+            staticmethod(lambda: type(
+                "_Todos", (), {"list_tasks": lambda *_args: []})()))
+
         assert _call_tools(store, "list_bg_tools",
                            {"conversation_id": talking}, COLLAB)[1] == "200"
+        assert _call_tools(store, "list_todos", {
+            "conversation_id": talking, "agent_name": "assistant",
+        }, COLLAB)[1] == "200"
         for action, extra in (
             ("tool_approval_result", {"request_id": "r1",
                                       "result": {"choice": "always_allow"}}),
@@ -1318,6 +1328,31 @@ class TestDrivingToolsIsAWrite:
             bg.release_owner("tc1")
         assert _call_tools(store, "list_bg_tools",
                            {"conversation_id": talking}, COLLAB)[1] == "200"
+
+    def test_todo_listing_uses_requester_conversation_and_agent_scope(
+            self, store, talking, monkeypatch):
+        seen = []
+        _invite(store, talking, role=ca.ROLE_READ)
+        _accept(store, talking)
+
+        class _Todos:
+            def list_tasks(self, user_id, conversation_id, agent_name):
+                seen.append((user_id, conversation_id, agent_name))
+                return [{"id": "td_1", "status": "pending", "subject": "Review"}]
+
+        from core.todo_store import TodoStore
+        monkeypatch.setattr(TodoStore, "instance", staticmethod(lambda: _Todos()))
+
+        payload, status = _call_tools(store, "list_todos", {
+            "conversation_id": talking, "agent_name": "reviewer",
+        }, COLLAB)
+
+        assert status == "200"
+        assert payload == {
+            "agent_name": "reviewer",
+            "tasks": [{"id": "td_1", "status": "pending", "subject": "Review"}],
+        }
+        assert seen == [(OWNER, talking, "reviewer")]
 
     def test_a_kill_is_judged_on_the_conversation_that_owns_the_tc_id(
             self, store, talking):

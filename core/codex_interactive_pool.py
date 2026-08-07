@@ -337,24 +337,16 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                            InteractiveClaudeCodePool):
     _instance: Optional["CodexInteractivePool"] = None
     _instance_lock = threading.Lock()
-    # NOT a gate. Every readiness marker below is a string read off a Codex
-    # release, and Codex redraws its composer chrome every few weeks: the
-    # placeholder, the footer and the box around them have all moved already.
-    # beta.82 made a missed marker fatal, and the first release whose idle
-    # composer drew none of them took the whole provider down with it -- every
-    # cold send refused, five LLM retries deep, ~45s apiece, while the TUI on
-    # the other side sat there perfectly ready to be pasted into. A recognition
-    # test that models somebody else's UI must never be the thing that decides
-    # a turn cannot happen. The transport proof is `_paste_landed` (below, and
-    # TUI-agnostic: did the screen move?), which refuses and re-pastes when
-    # nothing arrived -- exactly the undrawn-composer case the gate was added
-    # for.
+    # NOT a gate. Readiness combines two structural facts Codex/tmux expose:
+    # this launch owns a UUID thread-writer lock, and the live pane exposes the
+    # application cursor that Codex only renders for an editable composer. It
+    # deliberately reads no model, version, placeholder, footer or pane text.
+    # The transport proof remains `_paste_landed` below; a missed readiness
+    # observation adds bounded latency but never decides that a turn cannot
+    # happen.
     _REQUIRE_PROMPT_READY = False
-    # And the wait is short, because it is advisory: on a stale marker it is
-    # pure latency on every cold turn, paid before each of the five LLM
-    # retries. Long enough for the composer to draw, not long enough to matter
-    # when it never announces itself. Claude Code keeps its own 45s: its
-    # markers are dependable, and nothing here changes that pool.
+    # The advisory wait stays short. Claude Code keeps its own timeout and
+    # text-based detector; nothing here changes that pool.
     _PROMPT_READY_SECONDS = 12.0
     # Codex can drop the first Enter after a pasted prompt. The transport sends
     # two Enters 200ms apart; verification remains observation-only and never
@@ -368,14 +360,6 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
     _VERIFY_INTERRUPT_SYNCHRONOUS = True
     _PREPARE_INTERRUPT_BEFORE_PASTE = True
 
-    # `>_ OpenAI Codex (v...)` is the pane's PERMANENT header: it is drawn the
-    # instant the TUI starts, long before the input box is interactive. Used as
-    # a readiness marker it made the cold-start wait return immediately, and
-    # the first paste went into a composer that did not exist yet -- the same
-    # header that already fooled the composer scan before beta.72. Every marker
-    # here belongs to the input box or its footer.
-    _PROMPT_READY_MARKERS = (
-        "ask codex", "for shortcuts", "context left")
     # The Codex TUI never renders pasted text: it replaces it with an
     # attachment chip. The prompt sitting unsent in the input box therefore
     # looks, to a text probe, exactly like a prompt that was accepted --
@@ -393,15 +377,15 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
 
     def _wait_for_prompt_ready(self, name: str, *,
                                timeout: Optional[float] = None) -> bool:
-        """Give the real Codex composer a short chance to appear.
+        """Wait for Codex to expose a stable, editable composer.
 
-        Warm sessions bypass this method through ``state.prompt_ready``.  A
-        cold session does not turn the inherited wait into a zero-second probe
-        -- pasting into the permanent header fragmented the bootstrap into
-        orphan turns when the composer had not been drawn yet -- but it waits
-        on a Codex clock, not Claude Code's 45s, and its failure is advisory
-        (see ``_REQUIRE_PROMPT_READY``): a marker Codex stopped drawing is a
-        reason to paste unproven, not a reason to refuse the turn.
+        TUI labels, model names, versions and prompt suggestions are display
+        text, not readiness contracts.  Codex supplies a writer lock for the
+        thread created by this launch, and its TUI only exposes an application
+        cursor while the composer accepts input. Tmux additionally proves the
+        pane is alive, accepts input and is outside copy mode. Two identical
+        observations reject transient launch state. Failure remains advisory (see
+        ``_REQUIRE_PROMPT_READY``); the paste observation is authoritative.
         """
         if timeout is None:
             configured = os.environ.get(
@@ -411,7 +395,80 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                            else self._PROMPT_READY_SECONDS)
             except ValueError:
                 timeout = self._PROMPT_READY_SECONDS
-        return super()._wait_for_prompt_ready(name, timeout=timeout)
+        timeout = max(0.0, float(timeout))
+        deadline = time.time() + timeout
+        previous = None
+        while True:
+            current = self._codex_readiness_state(name)
+            if timeout <= 0:
+                return current is not None
+            if current is not None and current == previous:
+                return True
+            previous = current
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.2)
+
+    def _codex_readiness_state(self, name: str):
+        """Return the current Codex thread and editable terminal cursor."""
+        thread_id = self._current_codex_thread(name)
+        cursor = self._tmux_composer_cursor(name)
+        if thread_id is None or cursor is None:
+            return None
+        return thread_id, *cursor
+
+    def _current_codex_thread(self, name: str) -> Optional[str]:
+        """Return the UUID lock created for this container's Codex thread."""
+        with self._lock:
+            state = next(
+                (item for item in self._sessions.values()
+                 if item.name == name), None)
+        if state is None:
+            return None
+        lock_dir = Path(state.workdir) / ".codex" / "thread-writer-locks"
+        candidates = []
+        try:
+            for path in lock_dir.glob("*.lock"):
+                try:
+                    thread_id = str(uuid.UUID(path.stem))
+                    modified = path.stat().st_mtime
+                except (OSError, ValueError):
+                    continue
+                if modified >= state.created_at:
+                    candidates.append((modified, thread_id))
+        except OSError:
+            return None
+        if not candidates:
+            return None
+        return max(candidates)[1]
+
+    def _tmux_composer_cursor(self, name: str):
+        """Return the cursor only while tmux can deliver input to the TUI."""
+        fmt = ("#{cursor_flag}\t#{pane_in_mode}\t#{pane_dead}"
+               "\t#{pane_input_off}\t#{cursor_x}\t#{cursor_y}")
+        try:
+            result = subprocess.run(  # nosec B603
+                docker_cmd() + [
+                    "exec", "--user", self._user_spec(), name,
+                    "tmux", "display-message", "-p", "-t", "pawflow", fmt,
+                ],
+                capture_output=True, text=True, timeout=10)
+        except Exception:
+            return None
+        if result.returncode != 0:
+            return None
+        fields = (result.stdout or "").strip().split("\t")
+        if len(fields) != 6:
+            return None
+        (cursor_flag, pane_in_mode, pane_dead, pane_input_off,
+         cursor_x, cursor_y) = fields
+        if (cursor_flag, pane_in_mode, pane_dead, pane_input_off) != (
+                "1", "0", "0", "0"):
+            return None
+        try:
+            return int(cursor_x), int(cursor_y)
+        except ValueError:
+            return None
 
     def _pane_diagnostic(self, name: str) -> str:
         """Never copy the Codex pane (and potentially prompts) into logs."""
@@ -430,9 +487,8 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
                       before_pane: str = "") -> bool:
         landed = super()._paste_landed(state, text, before_pane)
         if landed:
-            # The pane reacting to the paste is stronger evidence than Codex's
-            # release-dependent readiness labels.  Keep later turns off the old
-            # cold-start gate even when the initial visual probe missed.
+            # A pane reaction proves the transport directly. Keep later turns
+            # off the cold-start wait even when its structural probe missed.
             state.prompt_ready = True
         return landed
 

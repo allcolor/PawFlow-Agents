@@ -502,11 +502,12 @@ Operational notes:
 - Like every CLI provider, it obeys the cold/delta rule in both directions:
   launching a process means a cold start and a full context, finding one alive
   means a delta. See [Agent System](AGENT_SYSTEM.md).
-- A cold Codex session waits for the real composer before PawFlow pastes the
-  bootstrap, for up to 45 seconds. The structural `> ` input line counts as
-  readiness while the permanent `>_` header does not. After the single
-  `paste-buffer`, the attachment chip must be visible in that composer; an
-  unrelated TUI redraw is not treated as delivery. Submission then uses the
+- A cold Codex session waits up to 12 seconds for the current launch's UUID
+  thread-writer lock and two stable tmux observations of a live, input-enabled
+  pane outside copy mode with the application cursor visible. This is the cursor
+  Codex exposes for an editable composer; no model, version or other rendered text
+  participates. The wait is advisory. After the single `paste-buffer`, a chip,
+  running turn or direct pane reaction proves transport. Submission then uses the
   bounded Enter sequence and waits for the exact `UserPromptSubmit` digest or
   corresponding MITM `/responses` request. The event queue is never consumed by
   this check, so the normal turn coordinator still receives the complete stream.

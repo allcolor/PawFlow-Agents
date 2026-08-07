@@ -30,6 +30,7 @@ _ACTION_ROLES = {
     "background_tool": "write",
     "cancel_bg_tool": "write",
     "list_bg_tools": "read",
+    "list_todos": "read",
     "list_tools": "read",
 }
 
@@ -190,6 +191,34 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         import core.background_tool as _bg
         tasks = _bg.list_tasks(conv_id)
         flowfile.set_content(json.dumps({"tasks": tasks}).encode())
+        return [flowfile]
+
+    if action == "list_todos":
+        conv_id = str(body.get("conversation_id", "") or "")
+        agent_name = str(body.get("agent_name", "") or "").strip()
+        if not conv_id or not agent_name:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id and agent_name are required",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        owner_id = store.resolve_owner(conv_id)
+        if not owner_id:
+            flowfile.set_content(json.dumps({
+                "error": "Conversation owner could not be resolved",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        try:
+            from core.todo_store import TodoStore
+            tasks = TodoStore.instance().list_tasks(
+                owner_id, conv_id, agent_name)
+            flowfile.set_content(json.dumps({
+                "agent_name": agent_name,
+                "tasks": tasks,
+            }, ensure_ascii=False).encode())
+        except Exception as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
         return [flowfile]
 
     if action == "tool_approval_result":

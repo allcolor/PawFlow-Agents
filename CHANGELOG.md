@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The webchat action dock can now show the selected agent's durable TodoStore in
+  a translated, read-only dialog, including status groups, details, dependencies,
+  owner and update time. Shared-conversation readers resolve the owner's scoped
+  list and all task text is rendered through safe DOM text nodes.
+
+### Fixed
+
+- Codex interactive cold-start readiness no longer depends on release UI copy,
+  model names or `pane_current_command` (the real tmux pane runs through
+  `sh -c`). PawFlow now combines the current launch's Codex thread-writer lock
+  with a stable editable-cursor/input state from tmux before the first paste.
+
 ## [1.0.0-beta.130] — 2026-08-07
 
 ### Fixed

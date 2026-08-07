@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.140] — 2026-08-07
+
+### Fixed
+
+- The measured context gauge now lands *during* the turn instead of only
+  after it. beta.139 recorded the observed prompt size once `coord.run()`
+  returned, and every live gauge update happens strictly before that: the
+  emitter recomputes on each appended message and on heartbeats, all inside
+  the turn. The measurement existed but arrived too late, so the UI showed the
+  reconstruction for the whole turn — 0% for a claude-code-interactive session
+  whose externalized context had outgrown the native read's size ceiling — and
+  snapped to the real number only after the last token.
+  - The CCI turn coordinator takes a `usage_callback` and fires it at each
+    `message_start` that revises the prompt size, so the turn's first API
+    exchange already puts a measured number in front of every consumer. It
+    publishes a snapshot of the accumulated usage (a `message_delta` carries
+    only the output side) and never raises: a gauge update must not be able to
+    break a stream.
+  - The Antigravity coordinator carries the same callback, fired wherever an
+    observed event updates `usage`. Both providers wire it on the turn path
+    and the interrupt path.
+- The emitter's heartbeat gate follows the measurement.
+  `_context_usage_input_signature` keyed only on the PawFlow message list, but
+  for an observed CLI provider the gauge moves with no new message at all — a
+  long stretch of provider-side work revises the measurement on every
+  `message_start`. The signature now includes the observed measurement, so an
+  update that moved on its own republishes.
+- The reconstructed gauge is now provider-independent, and charges PawFlow's
+  own messages instead of the bootstrap file read back. A cold CLI start does
+  not discard the agent's context: it renders it into `initial_context.md` and
+  hands the provider a path, so the conversation exists twice in the stored
+  context. The old accounting dropped the messages and charged the read output
+  — `_context_messages` returned `[]` until the provider was seen reading the
+  file, then `_strip_for_count` zeroed everything before that read's marker.
+  That made the number depend on a native read landing, which is why it was
+  useless to providers reporting only at end of turn (`claude-code`,
+  `codex-app-server`) or unable to report mid-turn at all (`gemini` ACP). It
+  also charged every page of a paginated read as fresh context, because the
+  marker is set on the first read only. Now the messages always count and the
+  read bodies never do, recognized either by the flag stamped on the result
+  when the turn produces it or by the calls' own arguments across the whole
+  list. `_CONTEXT_ACCOUNTING_VERSION` moves to 4, invalidating caches written
+  under the previous accounting.
+- Compaction no longer summarizes the conversation twice. The context builder
+  has always excluded bootstrap reads from what it re-serializes; the
+  compaction path had no notion of them, so it was handed the read bodies *and*
+  the messages they are a copy of, with the duplicate growing by one layer on
+  every cold start. Phase 0 of `_compact` applies the same filter.
+
 ## [1.0.0-beta.139] — 2026-08-07
 
 ### Fixed

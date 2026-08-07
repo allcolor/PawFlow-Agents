@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.135] — 2026-08-07
+
+### Fixed
+
+- The chat UI mobile sidebar toggle stays visible above the open drawer. On
+  narrow viewports the sidebar becomes a fixed overlay (z-index 150) but the
+  toggle button kept its desktop z-index (100) and stayed pinned at
+  `left: 12px`, so the open drawer covered the only button that closes it and
+  the menu could never be closed again. The toggle now sits above the drawer
+  (z-index 200) and moves to `left: 268px` (just outside the drawer's right
+  edge) while it is open.
+
+### Docs
+
+- New step-by-step guide `docs/COMFYUI_LOCAL_SETUP.md`: install ComfyUI on a
+  local GPU machine, export an LTX-Video API workflow, connect to a VPS-hosted
+  PawFlow via reverse SSH tunnel (or Tailscale), configure the
+  `comfyUIVideoGeneration` service, and test `generate_video` end to end.
+
 ## [1.0.0-beta.134] — 2026-08-07
 
 ### Fixed

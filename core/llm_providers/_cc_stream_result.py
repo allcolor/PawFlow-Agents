@@ -236,6 +236,20 @@ class _CCStreamResultMixin:
                 self._cc_context_window_by_stream = _cw_map
             if _cc_ctx_window > 0:
                 _cw_map[_cw_key] = _cc_ctx_window
+            # The provider's own prompt size is the real context occupancy
+            # (system prompt, tool schemas and session history included --
+            # none of which PawFlow can enumerate from its own messages).
+            # Without it, the central gauge for claude-code started from 0
+            # and only grew by the delta of each appended message (used=13,
+            # 26, 52...) instead of the session's true size. Record it the
+            # same way the Codex interactive provider records its rollout
+            # token_count, so compute_context_usage can use it as the
+            # measured occupancy.
+            _tok_map = getattr(self, '_cli_observed_context_tokens_by_stream', None)
+            if _tok_map is None:
+                _tok_map = {}
+                self._cli_observed_context_tokens_by_stream = _tok_map
+            _tok_map[_cw_key] = _total_in
             self._ccs_pub(st, "message_meta", {
                 "msg_id": _last_msg_id,
                 "agent_name": st.agent_name,

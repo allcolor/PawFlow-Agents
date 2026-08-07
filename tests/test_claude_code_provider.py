@@ -341,6 +341,14 @@ class TestStreamClaude(unittest.TestCase):
             self.assertEqual(tokens, ["Hello ", "world!"])
             # turn_callback receives the full turn text
             self.assertEqual(turns, ["Hello world!"])
+            # The provider's own prompt size (usage.input_tokens of the result
+            # event) must be recorded for the central gauge. Regression: it
+            # was not, so the claude-code gauge started at 0 and only grew by
+            # the delta of each appended message (used=13, 26, 52...) instead
+            # of the session's true occupancy.
+            self.assertEqual(
+                self.client._cli_observed_context_tokens_by_stream.get(
+                    ("test-conv", "test-agent")), 10)
 
     def _run_tool_turn(self, **stream_kwargs):
         """Drive a tool_use(m1) → tool_result → text(m2) stream and return

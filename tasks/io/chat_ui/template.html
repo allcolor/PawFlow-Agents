@@ -323,9 +323,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
              box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
   /* sidebar-toggle's left is also set inline by _syncToggleBtn() (state.js)
      to '268px' when the sidebar is open, assuming it pushes .main over.
-     On mobile the sidebar overlays instead, so .main never moves -- pin
-     the toggle at its collapsed position regardless of that inline style. */
-  .sidebar-toggle { left: 12px !important; }
+     On mobile the sidebar overlays instead (fixed, z-index 150), so the
+     toggle must stay above the drawer (z-index 200) and, while the drawer
+     is open, sit just outside its right edge -- otherwise the open menu
+     covers the only button that closes it and the menu cannot be closed. */
+  .sidebar-toggle { left: 12px !important; z-index: 200; }
+  body:has(.sidebar:not(.collapsed)) .sidebar-toggle { left: 268px !important; }
   /* Desktop sizes assume a ~1400px-wide window read at arm's length; the same
      11-12px on a phone is unreadable. Bump the type scale (roughly +1-2px per
      step) and let bubbles use the full width, since horizontal space -- not

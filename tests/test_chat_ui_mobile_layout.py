@@ -33,6 +33,21 @@ def test_full_height_elements_use_dvh_so_the_header_stays_on_screen():
         assert rule.index("height: 100vh") < rule.index("height: 100dvh")
 
 
+def test_mobile_sidebar_toggle_stays_above_the_open_drawer():
+    """Regression: on mobile the sidebar becomes a fixed overlay (z-index 150).
+    The toggle kept its desktop z-index (100) and stayed pinned at left:12px,
+    so the open drawer covered it and the menu could never be closed again.
+    The toggle must sit above the drawer and move outside its right edge
+    while the drawer is open."""
+    mobile = _mobile_block()
+    assert ".sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;" in mobile
+    assert ".sidebar-toggle { left: 12px !important; z-index: 200; }" in mobile
+    assert (
+        "body:has(.sidebar:not(.collapsed)) .sidebar-toggle"
+        " { left: 268px !important; }" in mobile
+    )
+
+
 def test_mobile_bumps_the_type_scale_above_the_desktop_sizes():
     """Desktop uses 11-12px for technical/tool output, which is unreadable on a
     phone. Every size the mobile block sets must be larger than the desktop

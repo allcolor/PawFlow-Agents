@@ -894,6 +894,10 @@ body.desktop-fullscreen .tab-content.active iframe {
 .header-dock-item > div { display: none; }
 .action-dock-menu > .action-menu-item .ami-icon,
 .header-dock-item .ami-icon { width: auto; font-size: 15px; }
+#linkAccountBtn .user-info { display: inline-block; color: inherit !important;
+                             font-size: 12px; font-weight: 500; max-width: min(160px, 22vw);
+                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#linkAccountBtn { width: auto; min-width: 30px; padding: 0 8px; gap: 5px; }
 .action-dock-menu > .action-menu-sep { width: 0; height: 28px; border-top: 0; border-left: 1px solid #0f3460;
                                        margin: 1px 2px; flex: 0 0 0; }
 #adminSettingsMenu { position: absolute; right: auto; left: 50%; top: auto; bottom: calc(100% + 8px);
@@ -1028,9 +1032,9 @@ if (typeof hljs !== 'undefined') {
             onclick="showLinkedAccountsDialog()" aria-label="Linked accounts"
             data-i18n-aria-label="linkedAccounts" style="display:none">
       <span class="ami-icon" aria-hidden="true">&#x1F517;</span>
+      <span class="user-info" id="userInfo" style="display:none"></span>
       <div><div class="ami-label" data-i18n="linkedAccounts">Linked accounts</div><div class="ami-desc" data-i18n="linkAccountDesc">Link another sign-in identity</div></div>
     </button>
-    <span class="user-info" id="userInfo" style="display:none"></span>
     <button class="btn header-auth-btn header-dock-item" id="logoutBtn" type="button"
             onclick="doLogout()"
             aria-label="Logout" data-i18n-aria-label="logout"

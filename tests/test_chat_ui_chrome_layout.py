@@ -79,6 +79,15 @@ def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
         < header_controls.index('id="userInfo"')
         < header_controls.index('id="logoutBtn"')
     )
+    # The username is the LABEL of the linked-accounts button itself, not a
+    # separate span beside it: userInfo must sit inside linkAccountBtn (after
+    # its opening tag, before its closing </button>) so the header renders one
+    # control [icon username] instead of [icon] [username].
+    btn_end = header_controls.index('</button>', header_controls.index('id="linkAccountBtn"'))
+    assert 'id="userInfo"' in header_controls[
+        header_controls.index('id="linkAccountBtn"'):btn_end]
+    assert "#linkAccountBtn { width: auto; min-width: 30px; padding: 0 8px; gap: 5px; }" in TEMPLATE_HTML
+    assert "#linkAccountBtn .user-info" in TEMPLATE_HTML
     assert "window.PAWFLOW_EXTENSION_CONTEXT" in state_js
     assert "userInfo.textContent = activeUser" in state_js
     assert "userInfo.style.display = activeUser ? '' : 'none'" in state_js

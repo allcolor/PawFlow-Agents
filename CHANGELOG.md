@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.130] — 2026-08-07
+
+### Fixed
+
+- The global theme and language controls now sit immediately after the
+  PawFlow Agent title, ahead of dynamic status, loading, agent and usage
+  badges, so their header position remains stable while work starts and stops.
+  Both controls reuse the action dock's translated tooltip portal and hover
+  zoom while retaining their existing selectors.
+
 ## [1.0.0-beta.129] — 2026-08-07
 
 ### Fixed

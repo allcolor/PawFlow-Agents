@@ -13,8 +13,22 @@ function _sseWireA() {
       // duplicate: replace the preview with the persisted text and retire its
       // stream. Merely returning leaves a transient bubble that a later release
       // can close without ever displaying the durable answer.
-      const existing = data.msg_id
+      const agent = data.agent_name || (data.source && data.source.name) || '';
+      let existing = data.msg_id
         ? document.querySelector('[data-msgid="' + data.msg_id + '"]') : null;
+      // Reconciliation when the durable id does not match the streaming
+      // bubble's id: the token preview won the race under a different id
+      // (providers whose preview id and persisted id diverge). Without this
+      // the durable message renders a SECOND row and the reader sees the same
+      // answer twice in the detail block until `done` retires the stream.
+      // Claim the agent's still-streaming bubble, exactly as the same-id path
+      // below does.
+      if (!existing && data.role === 'assistant') {
+        const _preview = streams[(agent || '').toLowerCase()];
+        if (_preview && _preview.el && _preview.el.classList.contains('streaming')) {
+          existing = _preview.el;
+        }
+      }
       if (existing) {
         if (data.role === 'assistant') {
           const contentEl = existing.querySelector('.msg-content');
@@ -26,7 +40,6 @@ function _sseWireA() {
           existing.classList.remove('streaming');
           existing.classList.add('finalized');
           delete existing.dataset.transientUi;
-          const agent = data.agent_name || (data.source && data.source.name) || '';
           const stream = streams[(agent || '').toLowerCase()];
           if (stream && stream.el === existing) {
             stream.lastEl = existing;

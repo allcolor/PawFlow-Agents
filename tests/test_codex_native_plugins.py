@@ -42,6 +42,16 @@ def _write_config(tmp_path, config=None):
         return path, f.read()
 
 
+def test_toml_dependencies_are_available_to_runtime_and_ci_installs():
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    requirements = Path("requirements.txt").read_text(encoding="utf-8")
+
+    assert '"tomli>=2.0; python_version < \'3.11\'"' in pyproject
+    assert '"tomli-w>=1.0"' in pyproject
+    assert "tomli>=2.0; python_version < '3.11'" in requirements
+    assert "tomli-w>=1.0" in requirements
+
+
 class TestPluginSpecs:
     def test_empty_and_missing(self):
         assert _Host({})._codex_plugin_specs() == []

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.147] — 2026-08-08
+
+### Fixed
+
+- Clean and CI installations now install the TOML reader required on Python
+  3.10 and the TOML writer used to merge Codex `config.toml` files.
+
 ## [1.0.0-beta.146] — 2026-08-08
 
 ### Added

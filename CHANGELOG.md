@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.153] — 2026-08-08
+
+### Fixed
+
+- Simplified live chat now explicitly marks token-created assistant previews so
+  their durable `new_message` can reclaim the same row even after a tool or turn
+  boundary rotates the in-memory stream state. Reconciliation remains
+  provider-agnostic and never content-deduplicates independent durable messages.
+
 ## [1.0.0-beta.152] — 2026-08-08
 
 ### Fixed

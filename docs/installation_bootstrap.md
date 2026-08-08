@@ -263,10 +263,13 @@ and global-secret files after removing runtime artifacts it created.
      non-expired OAuth credential with an access token and refresh token
    - provider guidance mirrors `docs/llm_providers.md`: API keys should default
      to direct `openai`/`anthropic` services unless CLI session behavior is
-     required; Codex subscriptions use `codex-app-server`, or `codex-interactive`
-     for an interactive TUI session on the same credential pool; Claude subscriptions
-     use `claude-code-interactive`; Gemini subscriptions use
+     required; Codex subscriptions use `codex-interactive` on the shared
+     `codex-app-server` credential pool; Claude subscriptions use
+     `claude-code-interactive`; Gemini subscriptions use
      `antigravity-interactive` by default
+   - `claude-code` (`cc -p`) and `codex-app-server` are legacy agent transports;
+     keep them selectable for existing configurations but never recommend them
+     for a new agent service
    - Gemini credential pools can be populated through either Gemini CLI or
      Agy/Antigravity server login; both write the same Gemini OAuth pool
    - do not create a credential pool for API-backed providers, or for CLI-backed

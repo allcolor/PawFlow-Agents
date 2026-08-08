@@ -56,8 +56,8 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - **Durable context**: conversations, shared context, per-agent context, memory, knowledge graphs, diaries, project graphs, files, and buckets survive restarts.
 - **Skill learning loop**: agents crystallize hard-won procedures into skills, update skills that proved wrong during use, and get conservative skill drafts proposed from compaction summaries; skill usage is tracked and a `skillCurator` flow task produces review-first maintenance reports — nothing is archived or promoted without your confirmation.
 - **Encryption at rest (opt-in)**: per-conversation passphrase encryption of message content, thinking, and tool I/O (and conv-scoped relay workspaces via CryFS); keys live in RAM only, so a stopped server leaves only ciphertext on disk. Off by default and transparent to conversations that don't use it.
-- **Multi-provider agents**: mix Codex app-server, Codex interactive, Claude Code, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation.
-- **Native CLI engines, not API reimplementations**: subscription providers run the real Codex app-server, Claude Code, Antigravity, and Gemini CLI engines per conversation — native harness, threads, and reasoning preserved — with native Codex plugins (`codex_plugins`) and Claude Code plugin marketplaces (`claude_plugins`/`claude_marketplaces`) declarable per LLM service.
+- **Multi-provider agents**: mix Codex interactive, Claude Code interactive, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation. The old Codex app-server and Claude Code `-p` agent transports remain available only for legacy configurations.
+- **Native CLI engines, not API reimplementations**: subscription providers run the real interactive Codex, Claude Code, Antigravity, and Gemini CLI engines per conversation — native harness and reasoning preserved — with native Codex plugins (`codex_plugins`) and Claude Code plugin marketplaces (`claude_plugins`/`claude_marketplaces`) declarable per LLM service.
 - **Delegated vision**: pair a strong text-only reasoning model with a separate vision-enabled LLM so uploads, screenshots, and desktop views become detailed descriptions with UI coordinates before the reasoning turn. Images sent to a text-only model are never silently dropped: any model — including free-tier ones — gets vision, and clicks stay accurate because coordinates come from the vision model, verified locally by the pre-click screen guard.
 - **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, API clients, or channel integrations.
 - **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
@@ -229,17 +229,17 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 
 | Provider | Mode | Features |
 |---|---|---|
-| **Claude Code** | CLI subprocess/container + MCP | Non-interactive coding turns, session persistence, thinking |
-| **Claude Code interactive** | Interactive CLI container + observed stream | Claude subscription sessions, live control, provider-observed usage |
-| **Codex app-server** | App-server protocol in pooled container | Codex subscription or OpenAI API-key coding agents, threads, steering |
-| **Codex interactive** | Interactive Codex TUI in tmux + observed stream | Long-lived Codex sessions, live control, shares the Codex OAuth pool, one row per tool even for code-mode harnesses |
+| **Claude Code interactive** | Interactive CLI container + observed stream | **Recommended Claude Code provider**; subscription sessions, live control, provider-observed usage |
+| **Codex interactive** | Interactive Codex TUI in tmux + observed stream | **Recommended Codex provider**; long-lived sessions, live control, shares the Codex OAuth pool, one row per tool even for code-mode harnesses |
 | **Antigravity / Agy** | Interactive CLI container + observed stream | Default Gemini subscription provider, Gemini OAuth pool, MCP tools |
 | **Gemini CLI** | CLI subprocess/container | Secondary Gemini CLI path for Pro/CLI-specific workflows |
 | **Anthropic API** | Direct HTTP | Streaming, tool use, vision, extended thinking |
 | **OpenAI API** | Direct HTTP | Streaming, tool use, vision, JSON mode |
 | **OpenAI-compatible** | Direct HTTP | Local/self-hosted and third-party compatible endpoints via `base_url` |
+| **Claude Code (`cc -p`) — legacy** | Non-interactive CLI subprocess/container + MCP | Existing configurations only; migrate agent services to Claude Code interactive |
+| **Codex app-server — legacy** | App-server protocol in pooled container | Existing configurations only; migrate agent services to Codex interactive |
 
-Switch providers per agent, per conversation, or globally. API keys normally use direct `openai`/`anthropic` services; subscription logins use the matching CLI-backed provider (`codex-app-server` or `codex-interactive`, `claude-code-interactive`, or `antigravity-interactive`). Self-hosted and third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override). See [LLM Providers](docs/llm_providers.md).
+Switch providers per agent, per conversation, or globally. API keys normally use direct `openai`/`anthropic` services; subscription logins use the matching interactive CLI-backed provider (`codex-interactive`, `claude-code-interactive`, or `antigravity-interactive`). `claude-code` (`cc -p`) and `codex-app-server` are legacy agent transports kept for existing configurations; do not select them for new agent services. Self-hosted and third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override). See [LLM Providers](docs/llm_providers.md).
 
 ### Multi-LLM Advisor Aggregation
 
@@ -429,7 +429,7 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 | [Skill Learning Loop](docs/LEARNING_LOOP_PLAN.md) | Agent-created skills, drafts from compaction, usage stats, curator task |
 | [Expression Language](docs/EXPRESSION_LANGUAGE.md) | 40+ operators, scopes, cascade |
 | [Slash Commands](docs/SLASH_COMMANDS.md) | All webchat commands |
-| [LLM Providers](docs/llm_providers.md) | OpenAI, Anthropic, Claude Code, Codex app-server, Codex interactive, Antigravity/Agy, Gemini CLI, compatible APIs |
+| [LLM Providers](docs/llm_providers.md) | OpenAI, Anthropic, recommended Claude Code/Codex interactive providers, legacy transports, Antigravity/Agy, Gemini CLI, compatible APIs |
 | [PawCode CLI](docs/pawcode.md) | Terminal client and stream-JSON mode |
 | [VS Code Extension](docs/vscode.md) | Editor client and resource panel |
 | [Multi-Client Conversations](docs/multi_client_conversations.md) | Shared runtime across web, CLI, VS Code, API, channels |

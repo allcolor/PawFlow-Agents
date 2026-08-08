@@ -150,7 +150,7 @@
             <div><strong>Your files stay reachable through relays.</strong><span>Agents can read, edit, search, run commands, use browser/desktop actions, and generate media through controlled tool routes.</span></div>
             <div><strong>Context survives restarts.</strong><span>Conversations, memory, knowledge graphs, diaries, project graphs, and FileStore outputs remain available across clients.</span></div>
             <div><strong>Agents learn on the job.</strong><span>Hard-won procedures become reusable skills, skill drafts are proposed from past work, usage is tracked, and a curator flow reports what to keep or archive — you confirm every change.</span></div>
-            <div><strong>Providers are interchangeable and fault-tolerant.</strong><span>Use Codex app-server, Codex interactive, Claude Code interactive, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, or compatible endpoints per agent or conversation. Subscription providers run the real CLI engine — native harness preserved, native Codex and Claude Code plugins declarable per service. Wrap a preferred connection with ordered fallbacks so an agent can cold-start the next provider from its current persisted context instead of abandoning the turn.</span></div>
+            <div><strong>Providers are interchangeable and fault-tolerant.</strong><span>Use Codex interactive, Claude Code interactive, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, or compatible endpoints per agent or conversation. Interactive is the recommended path for Codex and Claude Code; the old Codex app-server and Claude Code `cc -p` agent transports are legacy and remain only for existing configurations. Subscription providers run the real CLI engine — native harness preserved, native Codex and Claude Code plugins declarable per service. Wrap a preferred connection with ordered fallbacks so an agent can cold-start the next provider from its current persisted context instead of abandoning the turn.</span></div>
           </div>
         </div>
         <figure class="visual-card" data-reveal>
@@ -199,7 +199,7 @@
           <div class="bullet-stack">
             <div><strong>Desktop Relay</strong><span>Agents can inspect and control a full desktop through screen tools. With a local relay started with `allow_local`, that desktop can be the local machine where the relay runs; otherwise it is the relay container or configured remote desktop.</span></div>
             <div><strong>Terminals on the relay</strong><span>The webchat can open terminals for the relay Docker workspace, the host-local relay surface when allowed, and the server relay shell for working directly on the PawFlow server.</span></div>
-            <div><strong>Interactive provider tmux</strong><span>CLI-backed interactive providers such as Claude Code interactive and Antigravity/Agy run in tmux-backed sessions, so their live terminal state can be observed and debugged instead of being a black box.</span></div>
+            <div><strong>Interactive provider tmux</strong><span>CLI-backed interactive providers such as Codex interactive, Claude Code interactive, and Antigravity/Agy run in tmux-backed sessions, so their live terminal state can be observed and debugged instead of being a black box.</span></div>
           </div>
         </div>
       </div>

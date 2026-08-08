@@ -83,7 +83,9 @@ Built-in direct providers are
 `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`,
 `codex-interactive`, and `gemini`; OpenAI-compatible
 and Anthropic-compatible endpoints use `base_url` on the corresponding direct
-API provider. An `llmAggregator` consults its configured advisor connections in
+API provider. For new agent services, use `claude-code-interactive` and
+`codex-interactive`; `claude-code` (`cc -p`) and `codex-app-server` are legacy
+agent transports retained for existing configurations. An `llmAggregator` consults its configured advisor connections in
 parallel and passes their internal plans to its final connection. An
 `llmFailover` starts every agent turn with its main connection and cold-starts
 each ordered fallback from PawFlow's latest persisted agent context when the

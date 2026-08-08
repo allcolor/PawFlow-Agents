@@ -2,6 +2,8 @@
 
 PawFlow can run agents through direct HTTP APIs and through CLI-backed coding agents. Agents reference an LLM service by id, so different agents in the same conversation can use different backends.
 
+For new CLI-backed agent services, use `claude-code-interactive` for Claude Code and `codex-interactive` for Codex. The non-interactive `claude-code` transport (`claude -p`, commonly called `cc -p`) and `codex-app-server` are legacy agent providers retained for existing configurations and migration only. Their identifiers still name the shared OAuth credential pools, so credential references do not need to change when an agent service migrates to the interactive provider.
+
 ## Provider Types
 
 | Provider | Mode | Typical use | Notes |
@@ -9,12 +11,12 @@ PawFlow can run agents through direct HTTP APIs and through CLI-backed coding ag
 | `openai` | Direct API | OpenAI and OpenAI-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. This is the generic OpenAI-compatible API surface. |
 | `openai-responses` | Direct API | Endpoints speaking OpenAI's **Responses API** | Same fields as `openai`, different wire format and a different endpoint (`/responses`). See [Responses API](#responses-api). |
 | `anthropic` | Direct API | Claude API and Anthropic-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
-| `claude-code` | CLI container or subprocess | Non-interactive Claude Code style coding turns | Uses Claude Code credentials or API-key mode, session resume, and the PawFlow MCP bridge. |
-| `claude-code-interactive` | Interactive CLI container with observed provider stream | Claude subscription accounts and long-lived Claude Code sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
+| `claude-code-interactive` | Interactive CLI container with observed provider stream | **Preferred** Claude subscription and Claude Code agent sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
 | `antigravity-interactive` | Interactive `agy` CLI in tmux with observed provider stream | Default Gemini subscription provider | Uses the Gemini OAuth credential pool, starts the real `agy` CLI, and routes tools through PawFlow MCP. |
-| `codex-app-server` | Codex `app-server` in a pooled container | Codex subscription accounts or OpenAI API-key coding agents | Uses Codex/OpenAI credentials, Codex app-server threads, a Codex pool, and the PawFlow MCP bridge. |
-| `codex-interactive` | Interactive Codex TUI in tmux with observed provider stream | Long-lived Codex sessions, when you want the real Codex TUI rather than app-server threads | Reuses the `codex-app-server` OAuth pool. The turn is read from a local MITM of the Responses stream. See [Codex Interactive](#codex-interactive). |
+| `codex-interactive` | Interactive Codex TUI in tmux with observed provider stream | **Preferred** Codex subscription and coding-agent sessions | Reuses the `codex-app-server` OAuth pool. The turn is read from a local MITM of the Responses stream. See [Codex Interactive](#codex-interactive). |
 | `gemini` | Gemini CLI one-shot stream provider | Secondary Gemini CLI path, mainly when a Gemini Pro account/CLI workflow is required | Uses Gemini credentials, stream-json output, and Gemini session files. Prefer `antigravity-interactive` for normal Gemini subscription use. |
+| `claude-code` | Legacy non-interactive CLI container or subprocess (`claude -p`) | Existing agent configurations only | Migrate to `claude-code-interactive`; the legacy transport remains available for compatibility. |
+| `codex-app-server` | Legacy Codex `app-server` transport in a pooled container | Existing agent configurations only | Migrate to `codex-interactive`; the identifier remains canonical for the shared Codex OAuth pool. |
 
 Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge.
 
@@ -26,16 +28,16 @@ Use the credential source to choose the provider surface:
 |---|---|---|
 | Generic API key for an OpenAI-compatible endpoint | `openai` | Direct HTTP, tool calling, vision when `supports_vision=true`, `base_url` support, and `/v1/embeddings` support when the endpoint exposes it. |
 | An endpoint you want to drive through the Responses API | `openai-responses` | Reasoning items, server-side built-in tools, and the event stream those need. Prefer plain `openai` unless you specifically want the Responses surface. |
-| Anthropic API key | `anthropic`, or `claude-code` / `claude-code-interactive` with `api_key` | Use `anthropic` for direct API agents. Use Claude Code providers when you want the provider CLI/session behavior and PawFlow MCP bridge. |
+| Anthropic API key | `anthropic`, or `claude-code-interactive` with `api_key` | Use `anthropic` for direct API agents. Use `claude-code-interactive` when you want the native Claude Code session behavior and PawFlow MCP bridge. |
 | Claude subscription login | `claude-code-interactive` | Long-lived interactive Claude Code session with OAuth credentials from the `claude-code` credential pool. |
-| OpenAI API key | `openai`, or `codex-app-server` with `api_key` | Use `openai` for direct API agents. Use `codex-app-server` when you want Codex app-server threads and coding-agent behavior. |
-| Codex subscription login | `codex-app-server`, or `codex-interactive` | Both use Codex OAuth credentials from the same pool. `codex-app-server` drives app-server threads and is the default Codex agent provider; `codex-interactive` keeps a real Codex TUI alive and observes its Responses stream, the way `claude-code-interactive` does for Claude. |
+| OpenAI API key | `openai`, or `codex-interactive` with `api_key` | Use `openai` for direct API agents. Use `codex-interactive` when you want the native Codex coding-agent session. |
+| Codex subscription login | `codex-interactive` | Recommended Codex agent provider. It uses the existing `codex-app-server` OAuth credential pool while keeping the real Codex TUI alive and observing its Responses stream. |
 | Gemini subscription login | `antigravity-interactive` | Default Gemini subscription path. It uses the `agy`/Antigravity CLI with the Gemini OAuth pool. |
 | Gemini Pro / Gemini CLI account | `gemini` | Use when the account/workflow specifically needs Gemini CLI stream-json behavior. |
 
 `llmCredentialOAuthProvider` services own OAuth pools for three canonical CLI credential providers: `claude-code`, `codex-app-server`, and `gemini`. `claude-code-interactive` reuses the `claude-code` pool. `codex-interactive` reuses the `codex-app-server` pool. `antigravity-interactive` reuses the `gemini` pool. API-key mode skips the OAuth pool.
 
-Advanced endpoint routing is supported where the underlying CLI honors it. `claude-code` and `claude-code-interactive` can be used against non-Anthropic compatible endpoints by setting `api_key` plus `base_url`; in that mode PawFlow passes `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` instead of writing OAuth credentials. `codex-app-server` can use an OpenAI API key and passes it as `CODEX_API_KEY`/`OPENAI_API_KEY`; direct OpenAI-compatible endpoints should normally use the `openai` provider.
+Advanced endpoint routing is supported where the underlying CLI honors it. `claude-code-interactive` can be used against non-Anthropic compatible endpoints by setting `api_key` plus `base_url`; in that mode PawFlow passes `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` instead of writing OAuth credentials. `codex-interactive` supports key-based auth for the native Codex session. The legacy transports retain their existing endpoint behavior for migration, while direct OpenAI-compatible endpoints should normally use the `openai` provider.
 
 On a cold CLI session, PawFlow writes the full serialized initial context to a
 session-local `.pawflow_cli/initial_context.md` file and sends a short bootstrap
@@ -60,7 +62,7 @@ provider measurements are authoritative. The local fallback counts the serialize
 PawFlow messages and never adds a tool result that reads `initial_context.md`,
 because that result is a second representation of those same messages.
 
-The non-interactive `claude-code` provider requests Claude Code partial stream
+The legacy non-interactive `claude-code` provider requests Claude Code partial stream
 events and updates its gauge only from native usage. `message_start` supplies
 the exact input side, including cache reads and cache creation, and
 `message_delta` supplies cumulative output tokens. PawFlow publishes their sum
@@ -384,10 +386,10 @@ field.
 
 PawFlow has two Claude Code provider surfaces:
 
-- `claude-code`: non-interactive CLI turns with session files and MCP bridge.
-- `claude-code-interactive`: long-lived interactive Claude Code session with observed provider stream.
+- `claude-code-interactive`: the recommended provider, with a long-lived interactive Claude Code session and observed provider stream.
+- `claude-code`: the legacy `claude -p` / `cc -p` transport, retained for existing non-interactive configurations with session files and the MCP bridge.
 
-Both can authenticate with an Anthropic API key or with Claude Code OAuth/login credentials. Both can target a compatible non-Anthropic endpoint by setting `api_key` and `base_url` instead of using an OAuth credential service.
+Use `claude-code-interactive` for every new Claude Code agent service and migrate legacy `claude-code` services when practical. Both transports can authenticate with an Anthropic API key or with Claude Code OAuth/login credentials, and both can target a compatible non-Anthropic endpoint by setting `api_key` and `base_url` instead of using an OAuth credential service.
 
 Credential inputs:
 
@@ -408,7 +410,7 @@ Container notes:
 
 ### Native Claude Code plugins
 
-Both Claude Code providers can enable native Claude Code plugins (slash commands, skills, agents shipped by a plugin marketplace). Two `llmConnection` parameters:
+Claude Code interactive, and the legacy provider during migration, can enable native Claude Code plugins (slash commands, skills, agents shipped by a plugin marketplace). Two `llmConnection` parameters:
 
 ```
 claude_marketplaces: acme=acme-corp/cc-plugins, lab=https://git.example/lab.git
@@ -417,13 +419,15 @@ claude_plugins: pr-review@acme, deploy@acme
 
 `claude_marketplaces` declares marketplaces as `name=owner/repo` (GitHub) or `name=<git-url>` (git); `claude_plugins` lists `plugin@marketplace` ids to enable. PawFlow merges `extraKnownMarketplaces` and `enabledPlugins` into the session's `.claude/settings.json` (preserving all other keys — CCI hook settings included), and Claude Code auto-installs them on session start. Removing entries from the service config disables them on the next session. Caveat: MCP servers shipped by plugins are constrained by `--strict-mcp-config` on the batch provider — plugin commands/skills/agents load, plugin MCP servers may not.
 
-## Codex App-Server
+## Codex App-Server (Legacy Agent Provider)
 
-Codex agents use `codex-app-server`. PawFlow does not expose a legacy `codex`
-agent provider. The image-generation service may run isolated `codex exec`
+`codex-app-server` is a legacy agent transport retained for existing services.
+Use `codex-interactive` for every new Codex agent service and migrate app-server
+agent configurations when practical. PawFlow does not expose the older `codex`
+provider name. The image-generation service may still run isolated `codex exec`
 jobs for `$imagegen`, but that is a media service, not an agent provider.
 
-Codex app-server uses OpenAI/Codex credentials and Codex thread state. Use it for Codex subscription accounts and for OpenAI API-key backed coding-agent sessions. Use the direct `openai` provider when you only need normal HTTP chat/completions behavior.
+Existing Codex app-server services continue to use OpenAI/Codex credentials and Codex thread state. Use `codex-interactive` for Codex subscription or key-backed native coding-agent sessions, and use the direct `openai` provider when you only need normal HTTP API behavior.
 
 Credential inputs:
 
@@ -461,9 +465,9 @@ Claude. Where `codex-app-server` speaks a protocol, this provider watches a
 program: PawFlow reads the turn from a local MITM that observes Codex's own
 `/responses` stream, and drives the session by pasting into tmux.
 
-Use it when you want Codex's interactive behavior and session state. Use
-`codex-app-server` when you want app-server threads, which remain the default
-Codex agent surface.
+Use it for new Codex agent services. It is the recommended Codex surface and
+replaces the legacy `codex-app-server` agent transport while reusing the same
+credential pool.
 
 Credentials come from the **same pool as `codex-app-server`** — there is no
 separate Codex credential provider. Point `credential_service_id` at an

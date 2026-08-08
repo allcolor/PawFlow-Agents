@@ -22,8 +22,9 @@ The current core value is twofold:
   - agent execution and tool-use loops;
   - LLM providers: Anthropic API, OpenAI API (chat completions and Responses),
     OpenAI-compatible endpoints, Gemini, and the CLI-backed subscription
-    providers `claude-code`, `claude-code-interactive`, `codex-app-server`,
-    `codex-interactive`, and `antigravity-interactive`;
+    providers `claude-code-interactive`, `codex-interactive`, and
+    `antigravity-interactive`, plus the legacy `claude-code` (`cc -p`) and
+    `codex-app-server` agent transports retained for existing configurations;
   - memory, knowledge graph, diary, project graph;
   - conversation, plan, token, file, relay, and tool-handler management;
   - storage backends and security/context helpers.

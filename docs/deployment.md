@@ -97,7 +97,7 @@ PawFlow runs directly on the host. No containers.
 
 ### Requirements
 - Python 3.11+
-- Claude CLI (`npm install -g @anthropic-ai/claude-code`) -- optional, for Claude Code provider
+- Claude CLI (`npm install -g @anthropic-ai/claude-code`) -- optional, for Claude Code providers
 - Docker -- optional, for containerized exec
 
 ### Start
@@ -107,7 +107,10 @@ python cli.py start --host 0.0.0.0 --port PORT
 ```
 
 ### Claude Code
-Runs as a subprocess: `claude -p --input-format stream-json ...`
+
+Use `claude-code-interactive` for new agent services. The subprocess transport
+(`claude -p --input-format stream-json ...`, also called `cc -p`) is legacy and
+is retained only for existing `claude-code` configurations.
 
 ### Filesystem relay
 Runs natively -- no container. The relay process runs Python `fs_actions.py` directly.

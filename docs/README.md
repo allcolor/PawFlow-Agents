@@ -8,7 +8,7 @@
 | [Agent System](AGENT_SYSTEM.md) | Agent loop, context management, plans, multi-agent, streaming |
 | [LLM Providers](llm_providers.md) | Provider selection, API/subscription credentials, compatible endpoints, and delegated vision for text-only models |
 | [Multi-LLM Aggregator](llm_aggregator.md) | Configure parallel read-only advisors and a final synthesis/execution LLM |
-| [Claude Code Interactive](CLAUDE_CODE_INTERACTIVE.md) | Experimental MITM-backed Claude Code interactive provider |
+| [Claude Code Interactive](CLAUDE_CODE_INTERACTIVE.md) | Recommended Claude Code provider: observable, tmux-backed interactive sessions |
 | [PawCode CLI](pawcode.md) | Terminal client, stream-JSON mode, shared conversations |
 | [VS Code Extension](vscode.md) | Editor client, resource panel, approvals |
 | [Multi-Client Conversations](multi_client_conversations.md) | Web, CLI, VS Code, API, and channels sharing one conversation runtime |

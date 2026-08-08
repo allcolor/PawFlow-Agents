@@ -55,7 +55,7 @@ All website media should live under `pawflow-website/assets/media/`. Keep origin
 | P0 | `howtos/install-script-terminal.webp` | 1600x1000 | How-to: install wizard | Terminal showing release zip download, unzip, and `scripts/install-pawflow.sh --port 19990 --pull-images`. |
 | P0 | `howtos/wizard-gateway.webp` | 1600x1000 | How-to: install wizard | First-run gateway/bootstrap screen, showing local certificate/private install context and gateway key replacement without real secrets. |
 | P0 | `howtos/wizard-admin.webp` | 1600x1000 | How-to: install wizard | Admin account creation screen with no real credentials. |
-| P0 | `howtos/wizard-llm-provider.webp` | 1600x1000 | How-to: install wizard | LLM provider selection screen showing Codex, Claude Code, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and compatible endpoint options. |
+| P0 | `howtos/wizard-llm-provider.webp` | 1600x1000 | How-to: install wizard | LLM provider selection screen showing Codex interactive and Claude Code interactive as recommended, with Codex app-server and Claude Code `cc -p` visibly marked legacy, plus Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and compatible endpoint options. |
 | P0 | `howtos/wizard-first-conversation.webp` | 1600x1000 | How-to: install wizard | First conversation after install with `assistant` selected and a small successful response. |
 | P1 | `howtos/desktop-novnc-audio.webp` | 1600x1000 | How-to: Desktop Relay | noVNC desktop surface in browser with audio controls and visible relay/session boundary. |
 | P1 | `howtos/pawcode-installer.webp` | 1600x1000 | How-to: PawCode installer | Release asset download plus terminal install/login flow. |

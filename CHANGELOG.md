@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.154] — 2026-08-08
+
+### Fixed
+
+- Claude Code Interactive and Antigravity tmux viewers now use the same pinned
+  220x50 PTY and browser xterm grid as Codex Interactive. The browser receives
+  the fixed dimensions instead of independently fitting its terminal, preventing
+  sparse, displaced, or garbled rendering without resizing the live provider
+  window.
+- Claude Code Interactive API-key sessions now preapprove Claude Code's native
+  custom-key confirmation using the CLI's own 20-character key suffix marker.
+  Cold starts no longer wait for a manual yes/no answer in tmux, and PawFlow
+  never persists the complete API key in that marker.
+
 ## [1.0.0-beta.153] — 2026-08-08
 
 ### Fixed

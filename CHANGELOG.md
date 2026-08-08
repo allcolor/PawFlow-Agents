@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.143] — 2026-08-08
+
+### Added
+
+- The web chat left sidebar is now a keyboard-accessible vertical accordion:
+  Conversations owns the available height by default, while Resources expands
+  to the full remaining height when selected. The helper-avatar integration and
+  `/flows` command use the same controller.
+- Active Agents now shows the `LIVE` badge for reused Claude Code Interactive
+  and Codex Interactive sessions, with provider-specific labels and reuse
+  telemetry.
+
+### Fixed
+
+- Claude Code's context gauge now publishes native stream usage while a turn is
+  running instead of waiting until completion.
+- CLI bootstrap reads are deduplicated consistently across native tools,
+  PawFlow MCP wrappers, visible shell commands, and Codex code-mode pagination.
+  The transcript remains intact while local gauges, compaction inputs, and the
+  next cold bootstrap avoid counting or embedding the same context twice.
+- Claude Code Interactive containers now receive the selected credential's
+  `ANTHROPIC_API_KEY`.
+
 ## [1.0.0-beta.142] — 2026-08-08
 
 ### Fixed

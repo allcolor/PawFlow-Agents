@@ -258,21 +258,14 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                         _row["active_llm_provider"] = _provider
                     active_by_key[_key] = _row
             active.extend(active_by_key.values())
-        # The active turn owns the primary LIVE truth. Registry telemetry is
-        # supplemental: a cold CLI process has reuse_count=0 but is still live
-        # for the entire turn, and a registry sampling race must not clear it.
-        _provider_live_prefix = {
-            "claude-code": "cc",
-            "claude-code-interactive": "cci",
-            "codex-app-server": "codex",
-            "codex-interactive": "codex_interactive",
-            "gemini": "gemini",
-        }
-        for row in active:
-            _prefix = _provider_live_prefix.get(
-                row.get("active_llm_provider", ""))
-            if _prefix:
-                row[f"{_prefix}_live"] = True
+        # The LIVE badge means "this turn reuses a warm CLI container" -- not
+        # "an active provider turn is running". That distinction lives in the
+        # registry/pool reuse_count (>0 only once the warm container is
+        # actually reused, never on a cold start), so {_prefix}_live is set
+        # solely by _apply_live below. A previous blind prefix loop forced the
+        # badge on for every active provider turn (cold starts included) and
+        # fought the 10s poll, which is why the badge flickered and lit up
+        # during cold starts.
         # Live CLI sessions. Enrich rows that are currently in the active
         # stack. Warm idle sessions are exposed in the side-channel lists
         # below, but must not create Active Agents rows.

@@ -178,21 +178,18 @@ function trackAgentStart(agentName, msgPreview, taskId) {
 }
 
 function trackAgentProviderLive(agentName, provider, taskId) {
+  // Provider metadata reached the browser: make sure the Active Agents row
+  // exists immediately. The LIVE badge itself is deliberately NOT set here --
+  // it means "reuses a warm CLI" (reuse_count > 0), which only the server's
+  // list_active poll knows. Setting it unconditionally here forced the badge
+  // on during cold starts and made it flicker against the poll; the poll is
+  // now the single source of truth for the badge.
   const key = activeAgentKey(agentName, taskId || '');
   if (!key || !provider) return;
-  if (!activeInteractions[key]) trackAgentStart(agentName, '', taskId || '');
-  const fieldByProvider = {
-    'claude-code': 'ccLive',
-    'claude-code-interactive': 'cciLive',
-    'codex-app-server': 'codexLive',
-    'codex-interactive': 'codexInteractiveLive',
-    'gemini': 'geminiLive',
-  };
-  const field = fieldByProvider[provider];
-  if (!field) return;
-  activeInteractions[key][field] = true;
-  activeInteractions[key].updatedAt = Date.now();
-  updateActivePanel();
+  if (!activeInteractions[key]) {
+    trackAgentStart(agentName, '', taskId || '');
+    updateActivePanel();
+  }
 }
 
 function trackAgentTool(agentName, toolName, taskId) {

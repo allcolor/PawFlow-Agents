@@ -211,11 +211,16 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             from core.todo_store import TodoStore
-            tasks = TodoStore.instance().list_tasks(
-                owner_id, conv_id, agent_name)
+            page = TodoStore.instance().list_page(
+                owner_id, conv_id, agent_name,
+                status=str(body.get("status") or "in_progress"),
+                query=str(body.get("query") or ""),
+                limit=int(body.get("limit") or 20),
+                offset=int(body.get("offset") or 0),
+            )
             flowfile.set_content(json.dumps({
                 "agent_name": agent_name,
-                "tasks": tasks,
+                **page,
             }, ensure_ascii=False).encode())
         except Exception as exc:
             flowfile.set_content(json.dumps({"error": str(exc)}).encode())

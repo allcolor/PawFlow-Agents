@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -31,10 +32,61 @@ def test_create_update_list_get_and_atomic_document(store):
     assert store.list_tasks(
         "user", "conv", "agent", status="in_progress") == [updated]
 
-    document = json.loads(next((tmp_path for tmp_path in paths.TODOLISTS_DIR.rglob("*.json"))).read_text())
-    assert document["version"] == 1
-    assert document["tasks"][0]["id"] == task["id"]
+    assert (paths.TODOLISTS_DIR / "todos.sqlite3").is_file()
     assert list(paths.TODOLISTS_DIR.rglob("*.tmp")) == []
+
+
+def test_list_page_is_filtered_ordered_and_bounded(store, monkeypatch):
+    now = iter(range(1, 100))
+    monkeypatch.setattr("core.todo_store.time.time", lambda: float(next(now)))
+    created = [
+        store.create("u", "c", "a", subject=f"needle-{index}")
+        for index in range(25)
+    ]
+    store.update("u", "c", "a", created[-1]["id"], status="completed")
+
+    page = store.list_page(
+        "u", "c", "a", status="pending", query="needle-1",
+        limit=5, offset=0)
+
+    assert [task["subject"] for task in page["tasks"]] == [
+        "needle-19", "needle-18", "needle-17", "needle-16", "needle-15"]
+    assert page["total"] == 11
+    assert page["has_more"] is True
+    assert page["counts"] == {
+        "pending": 11, "in_progress": 0, "completed": 0}
+
+    second = store.list_page(
+        "u", "c", "a", status="pending", query="needle-1",
+        limit=5, offset=5)
+    assert len(second["tasks"]) == 5
+    assert not ({task["id"] for task in page["tasks"]}
+                & {task["id"] for task in second["tasks"]})
+
+
+def test_legacy_atomic_document_is_migrated_once(tmp_path, monkeypatch):
+    todo_dir = tmp_path / "todolists"
+    legacy = todo_dir / "user" / "conv" / "agent.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps({
+        "version": 1,
+        "tasks": [{
+            "id": "td_legacy", "status": "completed", "subject": "old",
+            "description": "", "active_form": "", "owner": "",
+            "blocks": [], "blocked_by": [], "metadata": {},
+            "external_id": "", "source_call_id": "",
+            "created_at": 1.0, "updated_at": 2.0,
+        }],
+    }), encoding="utf-8")
+    monkeypatch.setattr(paths, "TODOLISTS_DIR", todo_dir)
+    TodoStore._instance = None
+    migrated = TodoStore.instance()
+    try:
+        assert migrated.get("user", "conv", "agent", "td_legacy")["subject"] == "old"
+        assert not legacy.exists()
+        assert (todo_dir / "todos.sqlite3").is_file()
+    finally:
+        TodoStore._instance = None
 
 
 def test_scope_isolated_by_user_conversation_and_agent(store):

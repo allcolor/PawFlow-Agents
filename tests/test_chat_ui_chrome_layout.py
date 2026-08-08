@@ -252,7 +252,13 @@ def test_todo_list_has_a_dock_action_and_safe_read_only_dialog():
     assert 'data-i18n="todoList"' in dock
     assert 'data-i18n="todoListDesc"' in dock
     assert '"todos.js"' in serve_src
-    assert "action$('list_todos', { agent_name: agent })" in TODOS_JS
+    assert "action$('list_todos'," in TODOS_JS
+    assert "status: _todosState.status" in TODOS_JS
+    assert "limit: TODO_PAGE_SIZE" in TODOS_JS
+    assert "offset: _todosState.tasks.length" in TODOS_JS
+    assert "todo-search" in TODOS_JS
+    assert "todo-tab" in TODOS_JS
+    assert "todo-load-more" in TODOS_JS
     assert "function showTodosDialog()" in TODOS_JS
     assert "function closeTodosDialog()" in TODOS_JS
     assert "function closeTodosDialog() {\n  _todosDialogAgent = '';" in TODOS_JS

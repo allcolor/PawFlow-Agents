@@ -43,6 +43,9 @@ class TodoListHandler(ToolHandler):
                 "description": {"type": "string"},
                 "active_form": {"type": "string"},
                 "status": {"type": "string", "enum": list(TODO_STATUSES)},
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "offset": {"type": "integer", "minimum": 0},
                 "owner": {"type": "string"},
                 "blocks": {"type": "array", "items": {"type": "string"}},
                 "blocked_by": {"type": "array", "items": {"type": "string"}},
@@ -100,11 +103,14 @@ class TodoListHandler(ToolHandler):
                     raise ValueError(f"todo task not found: {task_id}")
                 return json.dumps(task, ensure_ascii=False, sort_keys=True)
             if action == "list":
-                tasks = store.list_tasks(
+                page = store.list_page(
                     self._user_id, self._conversation_id, self._agent_name,
-                    status=str(arguments.get("status") or ""))
+                    status=str(arguments.get("status") or ""),
+                    query=str(arguments.get("query") or ""),
+                    limit=int(arguments.get("limit") or 20),
+                    offset=int(arguments.get("offset") or 0))
                 return json.dumps(
-                    {"tasks": tasks}, ensure_ascii=False, sort_keys=True)
+                    page, ensure_ascii=False, sort_keys=True)
             raise ValueError("action must be create, update, list, or get")
         except (TypeError, ValueError) as exc:
             return f"Error: {exc}"

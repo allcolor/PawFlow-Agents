@@ -1336,9 +1336,16 @@ class TestDrivingToolsIsAWrite:
         _accept(store, talking)
 
         class _Todos:
-            def list_tasks(self, user_id, conversation_id, agent_name):
-                seen.append((user_id, conversation_id, agent_name))
-                return [{"id": "td_1", "status": "pending", "subject": "Review"}]
+            def list_page(self, user_id, conversation_id, agent_name, **options):
+                seen.append((user_id, conversation_id, agent_name, options))
+                return {
+                    "tasks": [{"id": "td_1", "status": "pending", "subject": "Review"}],
+                    "total": 1,
+                    "counts": {"pending": 1, "in_progress": 0, "completed": 0},
+                    "has_more": False,
+                    "limit": 20,
+                    "offset": 0,
+                }
 
         from core.todo_store import TodoStore
         monkeypatch.setattr(TodoStore, "instance", staticmethod(lambda: _Todos()))
@@ -1351,8 +1358,14 @@ class TestDrivingToolsIsAWrite:
         assert payload == {
             "agent_name": "reviewer",
             "tasks": [{"id": "td_1", "status": "pending", "subject": "Review"}],
+            "total": 1,
+            "counts": {"pending": 1, "in_progress": 0, "completed": 0},
+            "has_more": False,
+            "limit": 20,
+            "offset": 0,
         }
-        assert seen == [(OWNER, talking, "reviewer")]
+        assert seen == [(OWNER, talking, "reviewer", {
+            "status": "in_progress", "query": "", "limit": 20, "offset": 0})]
 
     def test_a_kill_is_judged_on_the_conversation_that_owns_the_tc_id(
             self, store, talking):

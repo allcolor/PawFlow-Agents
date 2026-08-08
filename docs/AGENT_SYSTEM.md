@@ -218,9 +218,12 @@ and those runtimes manage their own caching.
 `todolist` is the universal lightweight work-state tool. It supports
 `create`, `update`, `list`, and `get`, with `pending`, `in_progress`,
 and `completed` statuses. Each list is scoped by the required
-`(user_id, conversation_id, agent_name)` tuple and stored as one atomically
-replaced JSON document under `data/runtime/todolists/`. It is separate from
-memories and orchestrated plans.
+`(user_id, conversation_id, agent_name)` tuple and stored in the indexed SQLite
+database `data/runtime/todolists/todos.sqlite3`. On first open, legacy per-agent
+JSON documents are imported in one transaction and removed only after the
+database commit succeeds. Todo state remains separate from memories and
+orchestrated plans. The `list` action accepts `status`, `query`, `limit`, and
+`offset`; pages contain the matching status counts, total, and `has_more` flag.
 
 Every prepared API/stream turn receives all active items plus the five most
 recently completed items in dynamic context. A cold CLI session receives the
@@ -239,9 +242,12 @@ The webchat action dock exposes a read-only Todo List dialog for the selected
 agent. Its internal `list_todos` action resolves the conversation owner before
 reading the same `(owner_user_id, conversation_id, agent_name)` scope, so an
 authorised reader of a shared conversation sees the owner's list rather than an
-empty list in the reader's namespace. The dialog groups active, pending and
-completed items and renders store values with DOM `textContent`; it cannot create,
-update or delete tasks.
+empty list in the reader's namespace. The dialog separates in-progress, pending,
+and completed items into counted tabs, searches the indexed fields after a short
+debounce, and loads bounded 20-item pages on demand. Request generations discard
+late responses after a search, tab switch, agent switch, or close. Store values
+are rendered with DOM `textContent`; the dialog cannot create, update, or delete
+tasks.
 
 The common agent policy tells every agent to create and maintain this list
 proactively for multi-step, compaction-prone, deferred, or background work. The

@@ -153,4 +153,46 @@ eventSource.emit('new_message', {
 });
 assert.strictEqual(addedMessages, 1, 'different text must create a distinct message row');
 
+// A tool boundary may rotate the in-memory stream record before the writer
+// publishes the durable message. The token row is still the same logical
+// message and remains explicitly tagged as a preview, so reconciliation must
+// not depend on streams[agent] retaining lastEl.
+addedMessages = 0;
+preview.dataset.msgid = 'orphan-preview-id';
+preview.dataset.streamPreviewAgent = 'assistant';
+preview._streamPreviewText = 'orphan durable answer';
+streams.assistant = {
+  el: null, lastEl: null, lastText: '', text: '', chunks: [],
+  msg_id: 'orphan-preview-id',
+};
+global._seenMsgIds = new Set(['orphan-preview-id']);
+document.querySelectorAll = selector => selector === '[data-stream-preview-agent]'
+  ? [preview] : [];
+eventSource.emit('new_message', {
+  role: 'assistant', content: 'orphan durable answer', agent_name: 'assistant',
+  msg_id: 'orphan-durable-id', message_count: 7,
+});
+assert.strictEqual(addedMessages, 0,
+  'durable message must reclaim its tagged preview after stream-state rotation');
+assert.strictEqual(preview.dataset.msgid, 'orphan-durable-id',
+  'reclaimed preview must receive the durable id');
+assert.strictEqual(preview.dataset.streamPreviewAgent, undefined,
+  'claiming the preview must consume its provenance marker');
+assert.strictEqual(preview._streamPreviewText, undefined,
+  'claiming the preview must consume its private full text');
+
+// Content equality alone is never a dedup key. Once the preview marker has
+// been consumed, a distinct durable message with the same text must render.
+addedMessages = 0;
+streams.assistant = {
+  el: null, lastEl: null, lastText: '', text: '', chunks: [],
+  msg_id: 'orphan-durable-id',
+};
+eventSource.emit('new_message', {
+  role: 'assistant', content: 'orphan durable answer', agent_name: 'assistant',
+  msg_id: 'genuine-repeat-id', message_count: 8,
+});
+assert.strictEqual(addedMessages, 1,
+  'an untagged durable message must not be content-deduplicated');
+
 console.log('context usage SSE lifecycle: ok');

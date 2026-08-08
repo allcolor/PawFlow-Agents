@@ -2,6 +2,29 @@
 // Called by connectSSE() in sse.js after the EventSource is created.
 function _sseWireA() {
 
+  function _normalizedAssistantPreviewText(value) {
+    return String(value || '').replace(/^\[[^\]]+\]:\s*/, '').trim();
+  }
+
+  function _findTaggedAssistantPreview(agent, content) {
+    const wantedAgent = String(agent || '').toLowerCase();
+    const wantedText = _normalizedAssistantPreviewText(content);
+    if (!wantedAgent || !wantedText) return null;
+    const candidates = Array.from(
+      document.querySelectorAll('[data-stream-preview-agent]'));
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const candidate = candidates[i];
+      if (!candidate || !candidate.isConnected || !candidate.dataset) continue;
+      if (candidate.dataset.streamPreviewAgent !== wantedAgent) continue;
+      // `_streamPreviewText` exists only on the original token-created row.
+      // turn_view clones that row inside the detail block, but DOM clones do
+      // not copy JS properties, so the mirror can never be claimed by mistake.
+      if (_normalizedAssistantPreviewText(candidate._streamPreviewText)
+          === wantedText) return candidate;
+    }
+    return null;
+  }
+
   // Plan step instructions — render BEFORE agent starts thinking
   eventSource.addEventListener('new_message', (e) => {
     lastSSEActivity = Date.now();
@@ -31,10 +54,14 @@ function _sseWireA() {
           // turn_complete/tool_call may retire the preview before its durable
           // new_message arrives. Claim that just-finalized row only when the
           // text proves it is the same message, never merely by agent name.
-          const _durableText = String(data.content || '').replace(/^\[[^\]]+\]:\s*/, '').trim();
-          const _previewText = String(_preview.lastText || '').replace(/^\[[^\]]+\]:\s*/, '').trim();
+          const _durableText = _normalizedAssistantPreviewText(data.content);
+          const _previewText = _normalizedAssistantPreviewText(_preview.lastText);
           if (_durableText && _durableText === _previewText) existing = _preview.lastEl;
         }
+        // Tool/turn boundaries may rotate the stream object before the writer
+        // publishes `new_message`. Recover only a row explicitly created from
+        // tokens; never content-dedup two durable messages.
+        if (!existing) existing = _findTaggedAssistantPreview(agent, data.content);
       }
       if (existing) {
         if (data.role === 'assistant') {
@@ -51,6 +78,8 @@ function _sseWireA() {
             }
             existing.dataset.msgid = data.msg_id;
           }
+          if (existing.dataset) delete existing.dataset.streamPreviewAgent;
+          delete existing._streamPreviewText;
           const contentEl = existing.querySelector('.msg-content');
           if (contentEl) {
             contentEl.innerHTML = sourceBadge(data.source || {})
@@ -206,6 +235,13 @@ function _sseWireA() {
         }
       }
       s.chunks.push(s.el);
+    }
+    // Durable `new_message` can arrive after tool_call/turn_complete rotated
+    // `streams[agent]`. Keep a provenance marker on the original token row so
+    // it remains safely reclaimable without provider-specific UI logic.
+    if (s.el && s.el.dataset) {
+      s.el.dataset.streamPreviewAgent = String(agent || '').toLowerCase();
+      s.el._streamPreviewText = s.text;
     }
     // Update content with badge — strip identity prefix if LLM echoed it
     const badge = sourceBadge(src);

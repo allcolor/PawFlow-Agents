@@ -92,6 +92,10 @@ after the turn block. It must not be cloned or rendered twice.
 When `turn_complete` or a tool call precedes the durable `new_message`, the UI
 reconciles that event with the just-finalized streaming row by matching its
 normalized text; a different message from the same agent is never merged.
+Token-created rows also retain an explicit preview marker until their durable
+message claims them. This lets reconciliation survive stream-state rotation
+without content-deduplicating independent durable messages, and applies equally
+to every provider.
 
 If the user expanded the block, it stays expanded after completion. All
 intermediate messages, thinking, tool calls, and presented artifacts remain

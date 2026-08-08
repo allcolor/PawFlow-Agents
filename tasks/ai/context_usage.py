@@ -377,7 +377,7 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     if active_ctx and int(active_ctx.get("max_context_size") or 0) > 0:
         configured = int(active_ctx.get("max_context_size") or 0)
 
-    if cold_cli_unmeasured:
+    if cold_codex_restart or cold_cli_unmeasured:
         cfg_for_count = dict(svc_cfg)
         if configured > 0:
             cfg_for_count["max_context_size"] = configured

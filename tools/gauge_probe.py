@@ -162,14 +162,14 @@ gauge = count_messages_tokens(cuc._strip_for_count(msgs))
 all_content = [{'content': cuc._content_text(cuc._message_content(m))}
                for m in msgs]
 compact = count_messages_tokens(all_content)
-# What the gauge is entitled to hide. A zeroed message still costs its
-# 4-token role/separator overhead, so only its CONTENT is hidden -- subtract
-# that overhead or the arithmetic lands 4 per message short.
+# What the gauge is entitled to hide. Bootstrap body messages are removed
+# entirely, including their 4-token role/separator overhead, because the same
+# serialized context is already charged through PawFlow's stored messages.
 _call_ids = cuc._bootstrap_body_call_ids(msgs)
 body_idx = [i for i, m in enumerate(msgs)
             if cuc._is_bootstrap_body(m, _call_ids)]
 bodies = count_messages_tokens([all_content[i] for i in body_idx])
-pre = bodies - 4 * len(body_idx) if body_idx else 0
+pre = bodies if body_idx else 0
 
 print()
 print('gauge   (no bootstrap bodies)   :', gauge)

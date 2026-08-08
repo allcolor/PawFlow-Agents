@@ -51,8 +51,8 @@
       "description": "Non-destructive PawFlow interface guidance coordinated with the installed realtime avatar runtime.",
       "category": "Media & AI",
       "artifact": "pawflow.avatar-helper-0.1.0.pfp",
-      "sha256": "sha256:9f94a4b4f754deffb6053fcf8bc4d8904d6c582ceb65bda49f6d131e38bcf52d",
-      "package_size": 7022,
+      "sha256": "sha256:80e7050c18153eb4f1c5faacc0c52c638c96cbb1726df62b6045a24246129f96",
+      "package_size": 7046,
       "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
       "tags": [
         "avatar",

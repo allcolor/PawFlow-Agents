@@ -491,7 +491,8 @@ def test_turn_coordinator_waits_for_stop_hook_after_request_stop():
     assert resp.content == "final from bytes still running"
 
 
-def test_turn_coordinator_preempt_after_stop_does_not_abandon_final_answer(monkeypatch):
+def test_turn_coordinator_prefixed_preempt_after_stop_keeps_final_answer(
+        monkeypatch):
     """Regression: a preempt that extends the turn past a Stop must not be cut
     off by a later idle gap.
 
@@ -534,7 +535,8 @@ def test_turn_coordinator_preempt_after_stop_does_not_abandon_final_answer(monke
         {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
         # Preempt injects a new prompt — a fresh /v1/messages turn begins
         # immediately. This must clear the stale Stop latch.
-        {"type": "request_start", "request_id": "r2", "path": "/v1/messages"},
+        {"type": "request_start", "request_id": "r2",
+         "path": "/api/anthropic/v1/messages?beta=true"},
         _sse("message_start", {"type": "message_start", "message": {"model": "m"}}) | {"request_id": "r2"},
         # Model churns on the (large) tool result: idle gaps with no SSE.
         {},
@@ -561,6 +563,23 @@ def test_turn_coordinator_preempt_after_stop_does_not_abandon_final_answer(monke
     # And it was actually flushed through block_callback (the delivery path),
     # so it reaches the conversation rather than only tmux.
     assert "the real final answer" in flushed_text
+
+
+def test_turn_coordinator_tracks_prefixed_messages_request(monkeypatch):
+    """The server coordinator must arm per-request state behind a base path."""
+    import core.llm_providers.claude_code_interactive as cci
+
+    monkeypatch.setattr(cci, "_POST_STOP_IDLE_DRAIN_SECONDS", 0)
+    coordinator = _CCITurnCoordinator(_Events([
+        {"type": "request_start", "request_id": "zai-r1",
+         "path": "/api/anthropic/v1/messages?beta=true"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {}},
+    ]), "sess")
+
+    coordinator.run()
+
+    assert coordinator._request_saw_model_content == {"zai-r1": False}
+    assert coordinator._request_saw_tool_use == {"zai-r1": False}
 
 
 def test_turn_coordinator_request_stop_does_not_finish_tool_use_boundary():
@@ -3231,7 +3250,7 @@ def test_cc_interactive_event_service_adopts_orphan_injected_turn(monkeypatch):
     assert state.injected_prompts == {}
 
 
-def test_cc_interactive_event_service_adopts_orphan_running_request(monkeypatch):
+def test_cc_interactive_event_service_adopts_prefixed_orphan_request(monkeypatch):
     """Tmux is mid-turn (live /v1/messages request) with no coordinator
     polling: the turn must be adopted even without a UserPromptSubmit
     (the hook can be lost too)."""
@@ -3256,7 +3275,7 @@ def test_cc_interactive_event_service_adopts_orphan_running_request(monkeypatch)
 
     svc.publish_event("sess", {
         "type": "request_start", "request_id": "r2",
-        "path": "/v1/messages?beta=true"})
+        "path": "/api/anthropic/v1/messages?beta=true"})
     assert captured == ["sess"]
 
 

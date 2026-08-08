@@ -664,6 +664,18 @@ def test_wire_logger_skips_non_model_paths_by_default(monkeypatch):
     assert events == []
 
 
+def test_wire_path_filter_accepts_prefixed_messages_endpoint(monkeypatch):
+    monkeypatch.setattr(
+        "tools.cc_interactive_common.WIRE_LOG_PATHS", ("/v1/messages",))
+    monkeypatch.setattr("tools.cc_interactive_common.WIRE_LOG_ALL", False)
+
+    from tools.cc_interactive_common import _wire_path_allowed
+
+    assert _wire_path_allowed(
+        "/api/anthropic/v1/messages?beta=true") is True
+    assert _wire_path_allowed("/api/event_logging/v2/batch") is False
+
+
 def test_sse_observer_emits_json_events(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")

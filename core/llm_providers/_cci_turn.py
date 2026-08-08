@@ -15,6 +15,7 @@ import os
 import time
 import uuid
 
+from core.llm_providers.cli_shared import is_anthropic_messages_endpoint
 from core.tool_json import parse_tool_arguments, tool_argument_parse_error
 from tools.cc_interactive_filters import (
     normalize_observed_tool, observed_tool_origin)
@@ -261,7 +262,8 @@ class _CCITurnCoordinator:
                 self._saw_proxy_event = True
                 request_id = event.get("request_id", "") or ""
                 path = event.get("path", "") or ""
-                if request_id and path.startswith("/v1/messages") and not event.get("ignore_reason"):
+                if (request_id and is_anthropic_messages_endpoint(path)
+                        and not event.get("ignore_reason")):
                     self._request_saw_model_content.setdefault(request_id, False)
                     self._request_saw_tool_use.setdefault(request_id, False)
                     # A fresh /v1/messages request after a Stop means the turn

@@ -121,7 +121,14 @@ SENSITIVE_HEADERS = {
 def _wire_path_allowed(path: str) -> bool:
     if WIRE_LOG_ALL:
         return True
-    return any(path == allowed or path.startswith(f"{allowed}?") for allowed in WIRE_LOG_PATHS)
+    request_path = urlsplit(path).path.rstrip("/")
+    return any(
+        allowed_path
+        and (request_path == allowed_path
+             or request_path.endswith(allowed_path))
+        for allowed_path in (
+            urlsplit(allowed).path.rstrip("/") for allowed in WIRE_LOG_PATHS)
+    )
 
 def _redact_header_block(header_bytes: bytes) -> bytes:
     text = header_bytes.decode("latin-1", errors="replace")

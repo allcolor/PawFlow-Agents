@@ -116,6 +116,11 @@ def request_path(base_url: str, endpoint_path: str = "") -> str:
     return f"{path}?{query}" if query else path
 
 
+def is_anthropic_messages_endpoint(path: str) -> bool:
+    """Match Anthropic Messages behind any provider base-path prefix."""
+    return urlparse(path or "").path.rstrip("/").endswith("/v1/messages")
+
+
 # ── Tool-call synopsis helpers ───────────────────────────────────
 # Shared by _serialize_messages_for_cli (CC prompt) AND the compaction
 # summarizer input (old_conversation). Without them, assistant messages

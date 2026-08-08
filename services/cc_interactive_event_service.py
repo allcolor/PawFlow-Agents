@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 
 from core import ServiceFactory
 from core.base_service import BaseService
+from core.llm_providers.cli_shared import is_anthropic_messages_endpoint
 from core.native_todo_adapter import native_task_id as _native_task_id
 
 logger = logging.getLogger(__name__)
@@ -896,7 +897,7 @@ class CCInteractiveEventService(BaseService):
         path = event.get("path", "") or ""
         return (urlsplit(path).path.rstrip("/").endswith("/responses")
                 if state.provider == "codex-interactive"
-                else path.startswith("/v1/messages"))
+                else is_anthropic_messages_endpoint(path))
 
     def _track_turn_boundary(self, state: CCInteractiveSessionEvents,
                              event: dict) -> None:

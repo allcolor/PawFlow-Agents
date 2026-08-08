@@ -80,7 +80,10 @@ several `/v1/messages` requests, the last observed model wins.
 API-key providers may prepend their own path to the Anthropic endpoint, for
 example `/api/anthropic/v1/messages`. The observer identifies the normalized
 endpoint by its `/v1/messages` suffix so request-side tool results and quota
-probes remain visible with custom providers such as Z.ai.
+probes remain visible with custom providers such as Z.ai. The server-side turn
+coordinator and event service use the same suffix rule when arming per-request
+state, clearing stale Stop latches, tracking turn boundaries, and adopting
+orphaned turns. Optional wire logging applies the same normalization.
 
 For transport debugging, the proxy can emit `wire` events for raw socket chunks
 received and sent on both directions (`client_to_upstream` and

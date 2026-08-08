@@ -19,6 +19,9 @@ It starts `agy` in a tmux session with:
 - A local TLS MITM observer for `daily-cloudcode-pa.googleapis.com:443`.
 - A browser xterm tab attached to the live provider tmux session through the
   same **Agent Tmux** action used by Claude Code interactive agents.
+- The tmux window, viewer PTY, and browser xterm all use the same pinned
+  220x50 grid as Codex Interactive. Browser resizing never resizes the shared
+  provider window, preventing TUI reflow and garbled restored screens.
 
 The provider injects prompts through tmux. On cold start it writes the full
 PawFlow context to `.pawflow_ag/initial_context.md` and sends an `@file` prompt,

@@ -940,6 +940,10 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     assert "container._xterm.resize(fixedSize.cols, fixedSize.rows)" in terminal_src
     assert "fixedCols: Number(resp.fixed_cols) || 0" in terminal_cmds_src
     assert "fixedRows: Number(resp.fixed_rows) || 0" in terminal_cmds_src
+    assert terminal_cmds_src.count(
+        "fixedCols: Number(resp.fixed_cols) || 0") == 2
+    assert terminal_cmds_src.count(
+        "fixedRows: Number(resp.fixed_rows) || 0") == 2
     assert "reconnectOnExit: true" in terminal_cmds_src
     assert "function scheduleReconnect(connection)" in terminal_src
     assert "reconnectCount >= maxReconnects" in terminal_src
@@ -947,6 +951,8 @@ def test_terminal_frontend_keeps_scrollback_and_cci_tmux_mouse():
     assert '("mouse", "on")' in service_flow_src
     assert '("history-limit", "50000")' in service_flow_src
     assert '["tmux", "set-option", "-g", *option]' in service_flow_src
+    assert service_flow_src.count('"fixed_cols": cols') == 2
+    assert service_flow_src.count('"fixed_rows": rows') == 2
     assert "except Exception:\n        pass" in service_flow_src
 
 

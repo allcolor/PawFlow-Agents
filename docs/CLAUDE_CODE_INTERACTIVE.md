@@ -42,6 +42,13 @@ proxy. The provider does not read Claude Code transcripts or terminal output.
   after idle reaping or restart, PawFlow starts a fresh Claude Code interactive
   session and injects the PawFlow initial context file again. Interactive mode
   never starts Claude Code with `--resume <session_id>`.
+- Every interactive tmux window and browser viewer uses the same pinned
+  220x50 grid as Codex Interactive. The browser never resizes the shared tmux
+  window; xterm renders the fixed grid and letterboxes it when necessary.
+- In API-key mode, PawFlow preapproves Claude Code's custom-key confirmation by
+  storing only Claude Code's own 20-character key suffix in
+  `customApiKeyResponses.approved`. The full API key remains only in the
+  process environment, and a cold session cannot stop on the yes/no prompt.
 
 ## TLS Material
 

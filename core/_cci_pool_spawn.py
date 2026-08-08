@@ -208,7 +208,8 @@ class _InteractiveContainerSpawnMixin:
         )
 
         try:
-            self._write_hook_settings(workdir)
+            self._write_hook_settings(
+                workdir, anthropic_api_key=anthropic_api_key)
             self._install_ca(name, physical_container_workdir)
             self._start_proxy(
                 name=name,
@@ -376,7 +377,8 @@ class _InteractiveContainerSpawnMixin:
         if r.returncode != 0:
             raise RuntimeError(f"Failed to start CC interactive proxy: {r.stderr[:300]}")
 
-    def _write_hook_settings(self, workdir: str) -> None:
+    def _write_hook_settings(
+            self, workdir: str, anthropic_api_key: str = "") -> None:
         hooks = {}
         handler = {
             "type": "command",
@@ -420,6 +422,31 @@ class _InteractiveContainerSpawnMixin:
             "theme": claude_json.get("theme") or "dark",
             "hasCompletedOnboarding": True,
         })
+        # Claude Code 2.1.x gates a custom ANTHROPIC_API_KEY behind an
+        # interactive consent prompt. Its own config panel identifies keys by
+        # the stripped last 20 characters, never by the full secret. Preapprove
+        # that same identifier so API-key-backed providers cannot strand a cold
+        # PawFlow turn waiting for a human in tmux.
+        api_key_suffix = str(anthropic_api_key or "").strip()[-20:]
+        if api_key_suffix:
+            responses = claude_json.get("customApiKeyResponses")
+            if not isinstance(responses, dict):
+                responses = {}
+            approved = responses.get("approved")
+            rejected = responses.get("rejected")
+            if not isinstance(approved, list):
+                approved = []
+            if not isinstance(rejected, list):
+                rejected = []
+            approved = [
+                str(item) for item in approved if str(item) != api_key_suffix]
+            approved.append(api_key_suffix)
+            rejected = [
+                str(item) for item in rejected if str(item) != api_key_suffix]
+            claude_json["customApiKeyResponses"] = {
+                "approved": approved,
+                "rejected": rejected,
+            }
         project_key = self._container_workdir("", "", "")
         try:
             rel = Path(workdir).relative_to(_paths.CLAUDE_SESSIONS_DIR)

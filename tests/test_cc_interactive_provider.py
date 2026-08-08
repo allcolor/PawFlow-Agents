@@ -3379,11 +3379,12 @@ def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
     # The viewer must NOT resize the shared pawflow window.
     assert 'resize-window", "-t", "pawflow"' not in block
     assert "server_pipe_resize_command=None" in block
-    # Only Codex pins the viewer PTY/xterm to the tmux window's 220x50 grid.
-    assert "codex_viewer = isinstance(pool, CodexInteractivePool)" in block
+    # Every interactive pool creates and pins its tmux at 220x50. The viewer
+    # PTY and xterm must use that same grid, exactly like Codex Interactive.
+    assert "codex_viewer = isinstance(pool, CodexInteractivePool)" not in block
     assert "cols, rows = 220, 50" in block
-    assert '"fixed_cols": cols if codex_viewer else 0' in block
-    assert '"fixed_rows": rows if codex_viewer else 0' in block
+    assert '"fixed_cols": cols' in block
+    assert '"fixed_rows": rows' in block
     # And never pins the CLI uid to a literal inside this block.
     assert "1000:1000" not in block
 
@@ -3395,6 +3396,32 @@ def test_cci_terminal_viewer_attaches_tmux_as_pool_uid_not_hardcoded():
     agy = src[end:]
     assert "user_spec = pool._user_spec()" in agy
     assert 'resize-window", "-t", "pawflow-agy"' not in agy
+    assert "cols, rows = 220, 50" in agy
+    assert '"fixed_cols": cols' in agy
+    assert '"fixed_rows": rows' in agy
+
+
+def test_interactive_pool_preapproves_configured_api_key(tmp_path):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    api_key = "sk-zai-example-1234567890abcdefghijkl"
+    suffix = api_key.strip()[-20:]
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text(json.dumps({
+        "customApiKeyResponses": {
+            "approved": ["other-key-suffix"],
+            "rejected": [suffix, "rejected-other-key"],
+        },
+    }), encoding="utf-8")
+
+    InteractiveClaudeCodePool()._write_hook_settings(
+        str(tmp_path), anthropic_api_key=api_key)
+
+    config = json.loads(claude_json.read_text())
+    assert config["customApiKeyResponses"] == {
+        "approved": ["other-key-suffix", suffix],
+        "rejected": ["rejected-other-key"],
+    }
 
 
 def test_cci_tmux_session_pins_window_size_so_viewer_cannot_resize():

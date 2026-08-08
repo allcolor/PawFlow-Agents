@@ -112,6 +112,21 @@ class _InteractiveContainerSpawnMixin:
             base_url = ""
         return str(base_url or "").strip().rstrip("/")
 
+    @staticmethod
+    def _anthropic_api_key(client) -> str:
+        # Mirror _claude_code_env's api_key resolution so the interactive
+        # container receives the same key the -p subprocess gets. Without this,
+        # API-key mode fails authentication_failed: _setup_credentials writes
+        # no .credentials.json in api-key mode, and the tmux env never set
+        # ANTHROPIC_API_KEY, so Claude Code inside the container had no
+        # credentials at all.
+        api_key = getattr(client, "api_key", "")
+        if callable(api_key):
+            api_key = api_key()
+        elif isinstance(api_key, property):
+            api_key = ""
+        return str(api_key or "")
+
     @classmethod
     def _anthropic_endpoint(cls, client) -> tuple[str, int, str, str, int]:
         base_url = cls._anthropic_base_url(client)
@@ -151,6 +166,7 @@ class _InteractiveContainerSpawnMixin:
         cert_dir = Path(workdir) / ".pawflow_cci" / "certs"
         (upstream_host, upstream_port, upstream_scheme,
          anthropic_base_url, listen_port) = self._anthropic_endpoint(client)
+        anthropic_api_key = self._anthropic_api_key(client)
         generate_leaf(
             cert_dir,
             common_name=upstream_host,
@@ -216,6 +232,7 @@ class _InteractiveContainerSpawnMixin:
                 event_token=event_token,
                 internal_token=internal_token,
                 anthropic_base_url=anthropic_base_url,
+                anthropic_api_key=anthropic_api_key,
             )
             state.claude_started = True
         except Exception:
@@ -449,7 +466,8 @@ class _InteractiveContainerSpawnMixin:
                            ca_path: str,
                            session_token: str, event_url: str,
                            event_token: str, internal_token: str,
-                           anthropic_base_url: str = "") -> None:
+                           anthropic_base_url: str = "",
+                           anthropic_api_key: str = "") -> None:
         parts = container_workdir.lstrip("/").split("/")
         if len(parts) < 3 or parts[0] != "cc_sessions_host":
             raise ValueError(
@@ -480,6 +498,14 @@ class _InteractiveContainerSpawnMixin:
         endpoint_env = (
             f"ANTHROPIC_BASE_URL={shlex.quote(anthropic_base_url)} "
             if anthropic_base_url else "")
+        # API-key mode: _setup_credentials writes no .credentials.json, so the
+        # key must reach Claude Code through the env (like the -p path does via
+        # _claude_code_env). Independent of endpoint_env: the key is needed even
+        # when anthropic_base_url is empty (default api.anthropic.com, reached
+        # via --add-host -> the in-container proxy).
+        api_key_env = (
+            f"ANTHROPIC_API_KEY={shlex.quote(anthropic_api_key)} "
+            if anthropic_api_key else "")
         shell = (
             "mkdir -p /cc_sessions && "
             f"mount --bind {shlex.quote(user_slot)} /cc_sessions && "
@@ -504,6 +530,7 @@ class _InteractiveContainerSpawnMixin:
             f"PAWFLOW_INTERNAL_TOKEN={shlex.quote(internal_token)} "
             f"PAWFLOW_CCI_INJECTED_PROMPTS={shlex.quote(ns_workdir + '/.pawflow_cci/injected_prompts.jsonl')} "
             f"{endpoint_env}"
+            f"{api_key_env}"
             "CLAUDE_CODE_CERT_STORE=system TERM=xterm-256color "
             f"{quoted}'; "
             # Pin the window size so a webchat tmux viewer attaching/detaching

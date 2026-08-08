@@ -20,10 +20,14 @@ except ImportError:  # Unit tests import this file as tools.cc_interactive_proxy
 
 try:  # standalone (/opt/pawflow on path) vs package (tools.cc_interactive_common)
     from cc_interactive_common import (  # noqa: F401
-        EVENTS, _log, _preview, _content_text, _content_length, _header_map, _is_chunked, _is_quota_probe, HTTPExchangeTracker)
+        EVENTS, _log, _preview, _content_text, _content_length, _header_map,
+        _is_chunked, _is_messages_endpoint, _is_quota_probe,
+        HTTPExchangeTracker)
 except ImportError:
     from tools.cc_interactive_common import (  # noqa: F401
-        EVENTS, _log, _preview, _content_text, _content_length, _header_map, _is_chunked, _is_quota_probe, HTTPExchangeTracker)
+        EVENTS, _log, _preview, _content_text, _content_length, _header_map,
+        _is_chunked, _is_messages_endpoint, _is_quota_probe,
+        HTTPExchangeTracker)
 
 try:  # standalone (/opt/pawflow on path) vs package (tools.cc_interactive_ws)
     from cc_interactive_ws import (  # noqa: F401
@@ -127,7 +131,7 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
                     "tool_origin": observed_tool_origin(tool_name),
                 })
         return
-    if not path.startswith("/v1/messages"):
+    if not _is_messages_endpoint(path):
         return
     messages = payload.get("messages") or []
     if not isinstance(messages, list):

@@ -253,6 +253,38 @@ def test_request_observer_emits_observed_tool_results(monkeypatch):
     }
 
 
+def test_request_observer_emits_tool_results_for_prefixed_anthropic_base(
+        monkeypatch):
+    """API-key providers keep their base path before Claude's /v1/messages."""
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_zai",
+                "content": "tool result received by GLM",
+            }],
+        }],
+    }).encode()
+    chunk = (
+        b"POST /api/anthropic/v1/messages?beta=true HTTP/1.1\r\n"
+        b"Host: api.z.ai\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body
+    )
+
+    proxy.HTTPRequestObserver(proxy.HTTPExchangeTracker("zai")).feed(chunk)
+
+    assert [event["type"] for event in events] == [
+        "request_start", "tool_result"]
+    assert events[1]["tool_use_id"] == "toolu_zai"
+    assert events[1]["content"] == "tool result received by GLM"
+
+
 def test_request_observer_emits_observed_tool_use_before_result(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
     proxy = importlib.import_module("tools.cc_interactive_proxy")

@@ -77,6 +77,11 @@ provider default. The `message_start` usage block also seeds `input_tokens`,
 which `message_delta` later completes with `output_tokens`. When a turn issues
 several `/v1/messages` requests, the last observed model wins.
 
+API-key providers may prepend their own path to the Anthropic endpoint, for
+example `/api/anthropic/v1/messages`. The observer identifies the normalized
+endpoint by its `/v1/messages` suffix so request-side tool results and quota
+probes remain visible with custom providers such as Z.ai.
+
 For transport debugging, the proxy can emit `wire` events for raw socket chunks
 received and sent on both directions (`client_to_upstream` and
 `upstream_to_client`). This dump is disabled by default because Claude Code also

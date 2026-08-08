@@ -13,7 +13,7 @@ import sys
 import queue
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 UPSTREAM_HOST = os.environ.get("PAWFLOW_ANTHROPIC_UPSTREAM_HOST", "api.anthropic.com")
 UPSTREAM_PORT = int(os.environ.get("PAWFLOW_ANTHROPIC_UPSTREAM_PORT", "443"))
@@ -329,8 +329,13 @@ class HTTPExchangeTracker:
     def pop(self) -> dict:
         return self._pending.get()
 
+def _is_messages_endpoint(path: str) -> bool:
+    """Match Anthropic Messages behind an API provider's base-path prefix."""
+    return urlsplit(path).path.rstrip("/").endswith("/v1/messages")
+
+
 def _is_quota_probe(path: str, body: bytes) -> bool:
-    if not path.startswith("/v1/messages"):
+    if not _is_messages_endpoint(path):
         return False
     try:
         payload = json.loads(body.decode("utf-8"))

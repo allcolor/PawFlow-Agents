@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.155] — 2026-08-08
+
+### Added
+
+- The webchat Todo List now scales to long histories with counted in-progress,
+  pending, and completed tabs, debounced search, bounded 20-item pages, and a
+  Load more action. Late responses are discarded after search, tab, agent, or
+  dialog changes so stale data cannot replace the current view.
+
+### Changed
+
+- Durable todos now use an indexed SQLite store with status/search pagination.
+  Existing per-agent JSON documents are imported transactionally on first open
+  and removed only after the database commit succeeds. The tool and shared-
+  conversation action return page totals, per-status counts, and `has_more`.
+- Public documentation, README guidance, and the website now mark Claude Code
+  `cc -p` and Codex app-server as legacy agent transports retained for existing
+  configurations. New Claude Code and Codex services should use their
+  interactive providers; the legacy identifiers remain valid for shared OAuth
+  credential pools and internal compatibility paths.
+
 ## [1.0.0-beta.154] — 2026-08-08
 
 ### Fixed

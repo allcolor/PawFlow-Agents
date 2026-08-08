@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.144] — 2026-08-08
+
+### Fixed
+
+- Relay Desktop lifecycle calls now send the configured Private Gateway key in
+  `X-PawFlow-Gateway-Key`, including startup registration and best-effort
+  cleanup. The HTTP Private Gateway accepts the same validated header as its
+  WebSocket path while preserving browser challenge-cookie authentication.
+
 ## [1.0.0-beta.143] — 2026-08-08
 
 ### Added

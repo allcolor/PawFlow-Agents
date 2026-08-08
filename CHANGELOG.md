@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.152] — 2026-08-08
+
+### Fixed
+
+- Simplified live chat now reconciles a durable assistant `new_message` with
+  its just-finalized streaming row when `turn_complete` or a tool call arrives
+  first. Exact normalized-text matching prevents the completed detail block
+  from retaining two copies while keeping distinct consecutive messages apart.
+
 ## [1.0.0-beta.151] — 2026-08-08
 
 ### Fixed

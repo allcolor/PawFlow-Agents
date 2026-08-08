@@ -1881,6 +1881,40 @@ class TestContextActionsAsync(unittest.TestCase):
         assert data is not None
         assert data["context"][0]["content"] == full_content
 
+    def test_get_context_rebuilds_canonical_tool_call_for_display(self):
+        """Transcript tool_call rows must expose their name and arguments."""
+        from core.conversation_store import ConversationStore
+
+        store = ConversationStore.instance()
+        cid = "ctx_visible_canonical_tool_call"
+        store.save(cid, [{
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "tc-read-1",
+                "name": "read",
+                "arguments": {"path": "/workspace/README.md"},
+            }],
+        }], user_id="testuser")
+
+        ack, data = self._exec_async(self._make_task(), {
+            "action": "get_context",
+            "conversation_id": cid,
+            "agent_name": "transcript",
+        }, timeout=5.0)
+
+        assert ack["status"] == "accepted"
+        assert data is not None
+        tool_row = next(
+            row for row in data["context"] if row["raw_role"] == "tool_call")
+        assert tool_row["content"] == ""
+        assert tool_row["has_tool_calls"] is True
+        assert tool_row["tool_calls"] == [{
+            "id": "tc-read-1",
+            "name": "read",
+            "arguments": {"path": "/workspace/README.md"},
+        }]
+
     def test_get_context_hides_system_and_user_named_contexts(self):
         """System/user context files must not become selectable agent contexts."""
         import time

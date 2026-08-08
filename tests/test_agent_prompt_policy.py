@@ -163,11 +163,16 @@ def test_context_editor_displays_tool_call_only_messages():
         context_ops, _ctxops_base, _ctxops_k1, _ctxops_k2, _ctxops_k3, _ctxops_k4))
     editor_src = open("tasks/io/chat_ui/context_editor.js", encoding="utf-8").read()
 
-    assert '"tool_calls": m.get("tool_calls") or []' in context_ops_src
+    assert 'if role == "tool_call" and not tool_calls:' in context_ops_src
+    assert '"tool_calls": tool_calls' in context_ops_src
     assert "function _ctxToolCallsText" in editor_src
     assert "if (!String(content).trim() && m.has_tool_calls)" in editor_src
     assert "parsed && parsed.tool_name" in editor_src
     assert "function _ctxStripToolOutputEnvelope" in editor_src
+    assert "function _ctxShouldDisplayMessage" in editor_src
+    assert "if (rawRole !== 'assistant') return true;" in editor_src
+    assert "return !!(m && m.has_tool_calls);" in editor_src
+    assert editor_src.count("if (!_ctxShouldDisplayMessage(m)) return;") == 2
 
 
 def test_agent_context_tracks_effective_context_budget():

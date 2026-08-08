@@ -87,6 +87,16 @@ function _ctxDisplayContent(m) {
   return _ctxEscape(content);
 }
 
+function _ctxShouldDisplayMessage(m) {
+  const rawRole = (m && (m.raw_role || m.role)) || '';
+  if (rawRole !== 'assistant') return true;
+  if (String((m && m.content) || '').trim()) return true;
+  // Canonical storage keeps an empty assistant anchor before its linked
+  // tool_call/thinking children. The webchat does not render that technical
+  // anchor, so the transcript viewer must not expose it as an empty card.
+  return !!(m && m.has_tool_calls);
+}
+
 function _ctxScopedMutation(body) {
   const scoped = Object.assign({}, body);
   const agent = _ctxScopedAgentName();
@@ -178,6 +188,7 @@ function ctxLoadMore() {
     const reversed = [...olderMsgs].reverse();
     const readonly = _ctxIsReadonly();
     reversed.forEach((m) => {
+      if (!_ctxShouldDisplayMessage(m)) return;
       const mid = m.msg_id || m.trace_id || '';
       if (!mid) return;
       _ctxVisibleById.set(mid, m);
@@ -440,6 +451,7 @@ function showContextOverlay(data) {
     // Reverse: newest first
     const reversed = [...data.context].reverse();
     reversed.forEach((m) => {
+      if (!_ctxShouldDisplayMessage(m)) return;
       const mid = m.msg_id || m.trace_id || '';
       if (!mid) return;  // cannot edit/delete a message without a stable id
       _ctxVisibleById.set(mid, m);

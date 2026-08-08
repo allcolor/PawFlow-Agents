@@ -151,7 +151,19 @@ def _handle_ctxops_k3(self, action, body, store, user_id, flowfile, _helpers):
             if isinstance(content, list):
                 text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
                 content = "\n".join(text_parts) if text_parts else str(content)
-            has_tool_calls = bool(m.get("tool_calls"))
+            tool_calls = m.get("tool_calls") or []
+            # Transcript/context storage expands assistant tool_calls into
+            # canonical role="tool_call" rows. Rebuild the display shape used
+            # by context_editor.js so those rows do not render as empty cards.
+            if role == "tool_call" and not tool_calls:
+                tool_calls = [{
+                    "id": m.get("tool_call_id") or m.get("tc_id") or "",
+                    "name": (m.get("tool_name") or m.get("name")
+                             or m.get("tool") or ""),
+                    "arguments": (m.get("arguments")
+                                  if "arguments" in m else m.get("input", {})),
+                }]
+            has_tool_calls = bool(tool_calls)
             # sub_agent_trace messages persisted before the msg_id fix
             # have no msg_id — fall back to trace_id so the context
             # editor can still select + delete them.
@@ -162,7 +174,7 @@ def _handle_ctxops_k3(self, action, body, store, user_id, flowfile, _helpers):
                 "raw_role": role,
                 "content": content if isinstance(content, str) else str(content),
                 "has_tool_calls": has_tool_calls,
-                "tool_calls": m.get("tool_calls") or [],
+                "tool_calls": tool_calls,
                 "source": m.get("source"),
                 "msg_id": _row_mid,
             })

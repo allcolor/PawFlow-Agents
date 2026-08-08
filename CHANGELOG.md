@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.156] — 2026-08-08
+
+### Fixed
+
+- TodoStore now uses static SQLite statements throughout while preserving
+  parameter binding, escaped search terms, API field filtering, and atomic
+  updates. This removes the Bandit B608 findings that made beta.155 CI fail
+  without suppressing the security scanner.
+
 ## [1.0.0-beta.155] — 2026-08-08
 
 ### Added

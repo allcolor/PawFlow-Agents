@@ -20,9 +20,10 @@ import core.paths as _paths
 
 TODO_STATUSES = ("pending", "in_progress", "completed")
 _PAGE_LIMIT_MAX = 100
-_TASK_COLUMNS = (
-    "id, status, subject, description, active_form, owner, blocks, blocked_by, "
-    "metadata, external_id, source_call_id, created_at, updated_at"
+_TASK_FIELDS = (
+    "id", "status", "subject", "description", "active_form", "owner",
+    "blocks", "blocked_by", "metadata", "external_id", "source_call_id",
+    "created_at", "updated_at",
 )
 
 
@@ -122,7 +123,7 @@ class TodoStore:
 
     @classmethod
     def _row_to_task(cls, row: sqlite3.Row) -> Dict[str, Any]:
-        task = dict(row)
+        task = {field: row[field] for field in _TASK_FIELDS}
         task["blocks"] = cls._decoded_json(task.get("blocks", ""), [])
         task["blocked_by"] = cls._decoded_json(
             task.get("blocked_by", ""), [])
@@ -235,8 +236,8 @@ class TodoStore:
             existing = None
             if source_call_id:
                 existing = connection.execute(
-                    f"""
-                    SELECT {_TASK_COLUMNS} FROM todos
+                    """
+                    SELECT * FROM todos
                     WHERE user_id = ? AND conversation_id = ?
                       AND agent_name = ? AND source_call_id = ?
                     LIMIT 1
@@ -284,8 +285,8 @@ class TodoStore:
                     ),
                 )
             row = connection.execute(
-                f"""
-                SELECT {_TASK_COLUMNS} FROM todos
+                """
+                SELECT * FROM todos
                 WHERE user_id = ? AND conversation_id = ?
                   AND agent_name = ? AND id = ?
                 """,
@@ -319,40 +320,50 @@ class TodoStore:
         self._validate_dependencies(
             changes.get("blocks"), changes.get("blocked_by"))
 
-        encoded = {}
-        for field, value in changes.items():
-            if field in ("blocks", "blocked_by"):
-                encoded[field] = self._json([str(item) for item in value])
-            elif field == "metadata":
-                encoded[field] = self._json(dict(value))
-            elif field == "subject":
-                encoded[field] = str(value or "").strip()
-            else:
-                encoded[field] = str(value or "")
-        assignments = ", ".join(f"{field} = ?" for field in encoded)
-        params = list(encoded.values()) + [
-            time.time(), user_id, conversation_id, agent_name,
-            task_id, task_id,
-        ]
         with self._lock, self._connect() as connection:
-            cursor = connection.execute(
-                f"""
-                UPDATE todos SET {assignments}, updated_at = ?
-                WHERE user_id = ? AND conversation_id = ? AND agent_name = ?
-                  AND (id = ? OR external_id = ?)
-                """,
-                params,
-            )
-            if not cursor.rowcount:
-                raise ValueError(f"todo task not found: {task_id}")
             row = connection.execute(
-                f"""
-                SELECT {_TASK_COLUMNS} FROM todos
+                """
+                SELECT * FROM todos
                 WHERE user_id = ? AND conversation_id = ? AND agent_name = ?
                   AND (id = ? OR external_id = ?)
                 LIMIT 1
                 """,
                 (user_id, conversation_id, agent_name, task_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"todo task not found: {task_id}")
+            current = self._row_to_task(row)
+            current.update(changes)
+            connection.execute(
+                """
+                UPDATE todos SET
+                    subject = ?, description = ?, active_form = ?, status = ?,
+                    owner = ?, blocks = ?, blocked_by = ?, metadata = ?,
+                    external_id = ?, updated_at = ?
+                WHERE user_id = ? AND conversation_id = ? AND agent_name = ?
+                  AND id = ?
+                """,
+                (
+                    str(current["subject"]).strip(),
+                    str(current["description"] or ""),
+                    str(current["active_form"] or ""),
+                    str(current["status"]),
+                    str(current["owner"] or ""),
+                    self._json([str(item) for item in current["blocks"]]),
+                    self._json(
+                        [str(item) for item in current["blocked_by"]]),
+                    self._json(dict(current["metadata"])),
+                    str(current["external_id"] or ""), time.time(),
+                    user_id, conversation_id, agent_name, current["id"],
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM todos
+                WHERE user_id = ? AND conversation_id = ? AND agent_name = ?
+                  AND id = ?
+                """,
+                (user_id, conversation_id, agent_name, current["id"]),
             ).fetchone()
             return self._row_to_task(row)
 
@@ -361,8 +372,8 @@ class TodoStore:
         self._require_scope(user_id, conversation_id, agent_name)
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                f"""
-                SELECT {_TASK_COLUMNS} FROM todos
+                """
+                SELECT * FROM todos
                 WHERE user_id = ? AND conversation_id = ? AND agent_name = ?
                   AND (id = ? OR external_id = ?)
                 LIMIT 1
@@ -373,21 +384,15 @@ class TodoStore:
         return self._row_to_task(row) if row is not None else None
 
     @staticmethod
-    def _search_clause(query: str) -> tuple[str, List[str]]:
+    def _search_term(query: str) -> str:
         query = str(query or "").strip()
         if not query:
-            return "", []
+            return "%"
         escaped = (
             query.replace("\\", "\\\\").replace("%", "\\%")
             .replace("_", "\\_")
         )
-        term = f"%{escaped}%"
-        fields = ("id", "subject", "description", "active_form", "owner")
-        return (
-            " AND (" + " OR ".join(
-                f"{field} LIKE ? ESCAPE '\\'" for field in fields) + ")",
-            [term] * len(fields),
-        )
+        return f"%{escaped}%"
 
     def list_page(self, user_id: str, conversation_id: str, agent_name: str,
                   *, status: str = "", query: str = "", limit: int = 20,
@@ -403,31 +408,41 @@ class TodoStore:
                 f"limit must be between 1 and {_PAGE_LIMIT_MAX}")
         if offset < 0:
             raise ValueError("offset must be non-negative")
-        search_sql, search_params = self._search_clause(query)
-        scope_sql = (
-            "user_id = ? AND conversation_id = ? AND agent_name = ?")
-        scope_params: List[Any] = [user_id, conversation_id, agent_name]
+        search_term = self._search_term(query)
+        scope_params: List[Any] = [
+            user_id, conversation_id, agent_name, *([search_term] * 5)]
         with self._lock, self._connect() as connection:
             count_rows = connection.execute(
-                f"""
+                """
                 SELECT status, COUNT(*) AS count FROM todos
-                WHERE {scope_sql}{search_sql}
+                WHERE user_id = ? AND conversation_id = ? AND agent_name = ?
+                  AND (
+                    id LIKE ? ESCAPE char(92)
+                    OR subject LIKE ? ESCAPE char(92)
+                    OR description LIKE ? ESCAPE char(92)
+                    OR active_form LIKE ? ESCAPE char(92)
+                    OR owner LIKE ? ESCAPE char(92)
+                  )
                 GROUP BY status
                 """,
-                scope_params + search_params,
+                scope_params,
             ).fetchall()
             counts = {item: 0 for item in TODO_STATUSES}
             for row in count_rows:
                 counts[row["status"]] = int(row["count"])
-            status_sql = " AND status = ?" if status else ""
-            page_params = (
-                scope_params + search_params
-                + ([status] if status else []) + [limit, offset]
-            )
+            page_params = scope_params + [status, status, limit, offset]
             rows = connection.execute(
-                f"""
-                SELECT {_TASK_COLUMNS} FROM todos
-                WHERE {scope_sql}{search_sql}{status_sql}
+                """
+                SELECT * FROM todos
+                WHERE user_id = ? AND conversation_id = ? AND agent_name = ?
+                  AND (
+                    id LIKE ? ESCAPE char(92)
+                    OR subject LIKE ? ESCAPE char(92)
+                    OR description LIKE ? ESCAPE char(92)
+                    OR active_form LIKE ? ESCAPE char(92)
+                    OR owner LIKE ? ESCAPE char(92)
+                  )
+                  AND (? = '' OR status = ?)
                 ORDER BY updated_at DESC, created_at DESC, id DESC
                 LIMIT ? OFFSET ?
                 """,
@@ -450,19 +465,15 @@ class TodoStore:
         if status and status not in TODO_STATUSES:
             raise ValueError(
                 "status must be pending, in_progress, or completed")
-        status_sql = " AND status = ?" if status else ""
-        params = [user_id, conversation_id, agent_name]
-        if status:
-            params.append(status)
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                f"""
-                SELECT {_TASK_COLUMNS} FROM todos
+                """
+                SELECT * FROM todos
                 WHERE user_id = ? AND conversation_id = ? AND agent_name = ?
-                {status_sql}
+                  AND (? = '' OR status = ?)
                 ORDER BY created_at, id
                 """,
-                params,
+                (user_id, conversation_id, agent_name, status, status),
             ).fetchall()
         return [self._row_to_task(row) for row in rows]
 

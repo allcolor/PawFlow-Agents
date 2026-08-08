@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.157] — 2026-08-08
+
+### Fixed
+
+- Cold-session compaction now carries the selected agent LLM service's context
+  budget into the initial compact. A separate summarizer service can still write
+  the summary, but its own `compact_target_tokens` no longer overrides the
+  active service's configured target.
+- Claude Code Interactive now observes tool results on Anthropic-compatible
+  API-key endpoints with provider-specific path prefixes, including Z.ai.
+  Completed native and MCP calls therefore display their results and leave the
+  active state instead of remaining permanently in progress.
+
 ## [1.0.0-beta.156] — 2026-08-08
 
 ### Fixed

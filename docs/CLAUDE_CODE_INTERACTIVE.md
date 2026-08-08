@@ -1079,6 +1079,17 @@ they are most of it — and hands the total to the same
 `record_observed_cli_context`. Both the turn path and the interrupt path record
 it: both coordinators run against the same window.
 
+Stateless API providers use the same native-first gauge contract. Immediately
+after each completed request, before any local token fallback, the common LLM
+driver records the provider's full input occupancy: uncached input plus cache
+read and cache creation tokens. It publishes that observation as live
+`message_meta` and increments a per-stream revision even when two successive
+requests report the same number. Because this measurement describes one request
+rather than a persistent provider session, PawFlow may add messages appended
+after it until the next native request measurement replaces the base. A response
+with no native usage never promotes the local tokenizer estimate to a measured
+gauge.
+
 **When** it is recorded matters as much as that it is. The end-of-turn record
 above runs after `coord.run()` returns, and every live gauge update happens
 before that: the emitter recomputes on each appended message

@@ -137,6 +137,7 @@ class LLMAnthropicMixin:
             tokens_out = 0
             cache_creation_tokens = 0
             cache_read_tokens = 0
+            input_usage_native = False
             thinking_text = ""
             thinking_signature = ""
             current_block_type = None
@@ -188,6 +189,7 @@ class LLMAnthropicMixin:
                                 msg = data.get("message", {})
                                 resp_model = msg.get("model", model)
                                 usage = msg.get("usage", {})
+                                input_usage_native = "input_tokens" in usage
                                 tokens_in = usage.get("input_tokens", 0)
                                 cache_creation_tokens = usage.get("cache_creation_input_tokens", 0) or 0
                                 cache_read_tokens = usage.get("cache_read_input_tokens", 0) or 0
@@ -305,6 +307,7 @@ class LLMAnthropicMixin:
                 tool_calls=tool_calls,
                 cache_creation_tokens=cache_creation_tokens,
                 cache_read_tokens=cache_read_tokens,
+                input_usage_native=input_usage_native,
                 thinking=thinking_text,
                 thinking_signature=thinking_signature,
             )
@@ -724,6 +727,7 @@ class LLMAnthropicMixin:
             raw=data,
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cache_read_tokens,
+            input_usage_native="input_tokens" in usage,
             thinking=thinking_text,
             thinking_signature=thinking_signature,
         )

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The context gauge now uses provider-native input usage for every API provider,
+  including cache-read and cache-creation tokens, and publishes each observation
+  during both streamed and non-streamed turns. Local token estimates remain a
+  cold-start fallback and are never promoted to authoritative measurements.
+  Measurements now carry explicit `request` or `session` provenance plus an
+  incrementing revision, so repeated equal-valued observations still reach the
+  live SSE gauge. CLI invalidation also clears the measured numerator, runtime
+  window, revision and stale `real_context_size` before rebuilding a cold gauge.
+
 ## [1.0.0-beta.141] — 2026-08-07
 
 ### Fixed

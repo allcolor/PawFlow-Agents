@@ -208,6 +208,13 @@ class _LLMClientDriverMixin:
                                                    call_user_id=call_user_id or "",
                                                    call_conversation_id=call_conversation_id or "")
             result.duration_ms = (time.time() - start) * 1000
+            self._record_response_context_usage(
+                result,
+                call_conversation_id=call_conversation_id or "",
+                call_agent_name=call_agent_name or "",
+                call_user_id=call_user_id or "",
+                call_event_cid=call_event_cid or "",
+            )
             if not result.tokens_in and messages:
                 result.tokens_in = count_messages_tokens(messages)
             if not result.tokens_out and result.content:
@@ -508,6 +515,13 @@ class _LLMClientDriverMixin:
             else:
                 raise LLMClientError(f"Unknown provider '{self.provider}'")
             result.duration_ms = (time.time() - start) * 1000
+            self._record_response_context_usage(
+                result,
+                call_conversation_id=call_conversation_id or "",
+                call_agent_name=call_agent_name or "",
+                call_user_id=call_user_id or "",
+                call_event_cid=call_event_cid or "",
+            )
             if not result.tokens_in and messages:
                 result.tokens_in = count_messages_tokens(messages)
             if not result.tokens_out and result.content:

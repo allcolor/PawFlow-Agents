@@ -129,6 +129,14 @@ class LLMClient(
         # window, but the proxy sees the number the provider counted. Shared
         # by reference with call clones, like the bootstrap counts above.
         self._cli_observed_context_tokens_by_stream = {}
+        # How each native measurement may be advanced between observations.
+        # Persistent CLI sessions already contain appended messages (session),
+        # while stateless API measurements describe only the completed request
+        # and may be advanced by PawFlow messages until the next response usage.
+        self._observed_context_mode_by_stream = {}
+        # A value can remain numerically identical across two requests.  The
+        # revision still changes so live consumers can observe the new sample.
+        self._observed_context_revision_by_stream = {}
         # The window those prompt sizes are measured against, per (conversation,
         # agent). The Responses API never reports it, so for Codex it is derived
         # from the TUI's own "context left N%" status bar (see
@@ -196,6 +204,10 @@ class LLMClient(
             self._cli_bootstrap_tokens_by_stream)
         clone._cli_observed_context_tokens_by_stream = (
             self._cli_observed_context_tokens_by_stream)
+        clone._observed_context_mode_by_stream = (
+            self._observed_context_mode_by_stream)
+        clone._observed_context_revision_by_stream = (
+            self._observed_context_revision_by_stream)
         clone._cli_observed_context_window_by_stream = (
             self._cli_observed_context_window_by_stream)
         _active_key = getattr(self, '_active_api_key', None)

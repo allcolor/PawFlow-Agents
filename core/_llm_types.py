@@ -315,6 +315,10 @@ class LLMResponse:
     raw: Dict[str, Any] = field(default_factory=dict)
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
+    # False means tokens_in was filled by a local fallback, not provider usage.
+    # None keeps compatibility with callers constructing an explicitly counted
+    # response outside the built-in provider parsers.
+    input_usage_native: Optional[bool] = None
     thinking: str = ""
     thinking_signature: str = ""
     # See LLMMessage.reasoning_item: the turn's reasoning items, JSON-encoded,

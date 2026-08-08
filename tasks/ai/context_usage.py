@@ -211,17 +211,14 @@ def _gauge_client(conversation_id: str, agent_name: str, user_id: str,
         return None
 
 
-def _observed_cli_context_tokens(conversation_id: str, agent_name: str,
-                                 user_id: str,
-                                 active_ctx: Optional[Dict[str, Any]]) -> int:
+def _observed_context_measurement(conversation_id: str, agent_name: str,
+                                  user_id: str,
+                                  active_ctx: Optional[Dict[str, Any]]) -> tuple:
     """Return the prompt size the provider itself reported, or 0.
 
-    Only an observed CLI provider records this (see the Codex interactive
-    provider): PawFlow reads the native rollout's latest token-count event after
-    every exchange, falling back to the observed wire usage. That number is the
-    context window's real occupancy -- provider system prompt, tool schemas and
-    session history included -- none of which PawFlow can enumerate from its
-    own messages.
+    CLI providers record their persistent session occupancy. Stateless API
+    providers record the completed request's full native input usage; messages
+    appended after that sample are advanced locally until the next request.
 
     Unlike the bootstrap counts this is read WITHOUT an active context too, so
     the gauge survives a conversation switch: the value lives on the resolved
@@ -230,8 +227,15 @@ def _observed_cli_context_tokens(conversation_id: str, agent_name: str,
     client = _gauge_client(conversation_id, agent_name, user_id, active_ctx)
     counts = getattr(client, "_cli_observed_context_tokens_by_stream", None)
     if not isinstance(counts, dict):
-        return 0
-    return max(0, int(counts.get((conversation_id, agent_name), 0) or 0))
+        return 0, "", 0
+    key = (conversation_id, agent_name)
+    modes = getattr(client, "_observed_context_mode_by_stream", None)
+    revisions = getattr(client, "_observed_context_revision_by_stream", None)
+    return (
+        max(0, int(counts.get(key, 0) or 0)),
+        str(modes.get(key, "session") if isinstance(modes, dict) else "session"),
+        max(0, int(revisions.get(key, 0) or 0)) if isinstance(revisions, dict) else 0,
+    )
 
 
 def context_usage_for_messages(conversation_id: str, agent_name: str,
@@ -309,10 +313,9 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     bootstrap_prompt_tokens = (
         _cli_bootstrap_tokens(active_ctx, conversation_id, agent_name)
         if is_cli else 0)
-    observed_tokens = (
-        _observed_cli_context_tokens(
-            conversation_id, agent_name, user_id, active_ctx)
-        if is_cli else 0)
+    observed_tokens, observed_mode, observed_revision = (
+        _observed_context_measurement(
+            conversation_id, agent_name, user_id, active_ctx))
     # API providers: the provider context PawFlow sends is messages + the
     # provider system prompt + tool definitions. The gauge must count the
     # whole thing (the injected "Context: ~x/y" note does), so the system
@@ -433,6 +436,9 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
         usage["used"] = observed_tokens
         usage["pct"] = (observed_tokens / max_ctx) if max_ctx > 0 else 0.0
         usage["context_source_measured"] = True
+        usage["context_measurement_mode"] = observed_mode
+        usage["context_measurement_revision"] = observed_revision
+        usage["context_measurement_tokens"] = observed_tokens
     if active_ctx is not None:
         try:
             from tasks.ai.agent_loop import AgentLoopTask
@@ -460,6 +466,29 @@ def reset_cli_context_usage(conversation_id: str, agent_name: str, *,
     if not ((active_ctx and active_ctx.get("_is_cli_provider"))
             or provider in _CLI_CONTEXT_PROVIDERS):
         return None
+    key = (conversation_id, agent_name)
+    active_client = active_ctx.get("client") if active_ctx else None
+    gauge_client = _gauge_client(
+        conversation_id, agent_name, user_id, active_ctx)
+    for client in (active_client, gauge_client):
+        if client is None:
+            continue
+        for attr in (
+                "_cli_bootstrap_tokens_by_stream",
+                "_cli_observed_context_tokens_by_stream",
+                "_cli_observed_context_window_by_stream",
+                "_cc_context_window_by_stream",
+                "_observed_context_mode_by_stream",
+                "_observed_context_revision_by_stream"):
+            values = getattr(client, attr, None)
+            if isinstance(values, dict):
+                values.pop(key, None)
+    # Re-resolve the service after dropping provider-native maps. Ignore every
+    # runtime denominator for the cold gauge, including active_ctx's copied
+    # real_context_size: all of them describe the invalidated session.
+    svc_cfg, _real_window, provider = _service_config(
+        conversation_id, agent_name, user_id, active_ctx)
+    real_window = 0
     configured = int(svc_cfg.get("max_context_size", 0) or 0)
     if active_ctx and int(active_ctx.get("max_context_size") or 0) > 0:
         configured = int(active_ctx.get("max_context_size") or 0)
@@ -470,18 +499,6 @@ def reset_cli_context_usage(conversation_id: str, agent_name: str, *,
         conversation_id, agent_name, [], svc_cfg=cfg_for_count,
         real_window=real_window, provider=provider, source=source,
         cli_context_state="cold")
-    client = active_ctx.get("client") if active_ctx else None
-    token_counts = getattr(client, "_cli_bootstrap_tokens_by_stream", None)
-    if isinstance(token_counts, dict):
-        token_counts.pop((conversation_id, agent_name), None)
-    # The measured prompt size describes the session that was just
-    # invalidated. Left behind it would hold the gauge at the old window's
-    # occupancy until the next exchange reports a new one.
-    observed_counts = getattr(
-        _gauge_client(conversation_id, agent_name, user_id, active_ctx),
-        "_cli_observed_context_tokens_by_stream", None)
-    if isinstance(observed_counts, dict):
-        observed_counts.pop((conversation_id, agent_name), None)
     try:
         from tasks.ai.agent_loop import AgentLoopTask
         inst = AgentLoopTask._live_instance
@@ -545,6 +562,9 @@ def usage_event_payload(usage: Dict[str, Any]) -> Dict[str, Any]:
         "context_source": usage.get("source", "context_usage"),
         "context_message_count": usage.get("message_count", 0),
         "context_cache_mode": usage.get("cache_mode", ""),
+        "context_measurement_mode": usage.get("context_measurement_mode", ""),
+        "context_measurement_revision": int(
+            usage.get("context_measurement_revision", 0) or 0),
         "cli_context_state": usage.get("cli_context_state", ""),
         "updated_at": float(usage.get("updated_at", 0.0) or 0.0),
     }

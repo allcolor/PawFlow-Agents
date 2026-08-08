@@ -1419,6 +1419,9 @@ def test_cli_context_reset_clears_prompt_and_installs_cold_cache():
     client = SimpleNamespace(
         provider="codex-app-server",
         _cli_bootstrap_tokens_by_stream={("c", "assistant"): 12},
+        _cli_observed_context_tokens_by_stream={("c", "assistant"): 80_000},
+        _cli_observed_context_window_by_stream={("c", "assistant"): 272_000},
+        _cc_context_window_by_stream={("c", "assistant"): 200_000},
     )
     active_ctx = {
         "active_agent_name": "assistant",
@@ -1427,9 +1430,10 @@ def test_cli_context_reset_clears_prompt_and_installs_cold_cache():
         "_cli_has_session": True,
         "_cli_bootstrap_read_seen": True,
         "active_llm_provider": "codex-app-server",
+        "real_context_size": 272_000,
         "client": client,
         "resolved_svc": SimpleNamespace(
-            config={"max_context_size": 200000}),
+            config={"max_context_size": 800000}),
     }
     fake_exec = SimpleNamespace(
         _active_contexts={"c:assistant": active_ctx},
@@ -1447,6 +1451,10 @@ def test_cli_context_reset_clears_prompt_and_installs_cold_cache():
     assert active_ctx["_cli_bootstrap_read_seen"] is False
     assert active_ctx["_context_usage_cache"] == usage
     assert ("c", "assistant") not in client._cli_bootstrap_tokens_by_stream
+    assert ("c", "assistant") not in client._cli_observed_context_tokens_by_stream
+    assert ("c", "assistant") not in client._cli_observed_context_window_by_stream
+    assert ("c", "assistant") not in client._cc_context_window_by_stream
+    assert usage["max"] == 800000
 
 
 def test_persisted_cold_cli_gauge_survives_inactive_reload():

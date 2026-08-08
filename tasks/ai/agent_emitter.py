@@ -107,24 +107,29 @@ class StreamEmitter(AgentEmitter):
         self._context_usage_payload_sig = None
         self._context_usage_persist_sig = None
 
-    def _observed_context_measurement(self) -> int:
+    def _observed_context_measurement(self):
         """The prompt size the provider last reported, or 0.
 
-        Part of the heartbeat signature: for an observed CLI provider the
-        gauge can move with no new PawFlow message at all -- a long turn of
-        provider-side work revises the measurement on every message_start.
-        Keying the heartbeat on the message list alone made those updates
-        invisible until something happened to be appended.
+        Part of the heartbeat signature: a provider-native gauge can move with
+        no new PawFlow message at all. Keying the heartbeat on the message list
+        alone made those updates invisible until something was appended.
         """
         counts = getattr(
             self.ctx.get("client"), "_cli_observed_context_tokens_by_stream", None)
         if not isinstance(counts, dict):
-            return 0
+            return (0, 0)
         try:
-            return int(counts.get(
-                (self.conversation_id, self._agent_name), 0) or 0)
+            key = (self.conversation_id, self._agent_name)
+            revisions = getattr(
+                self.ctx.get("client"),
+                "_observed_context_revision_by_stream", None)
+            return (
+                int(counts.get(key, 0) or 0),
+                int(revisions.get(key, 0) or 0)
+                if isinstance(revisions, dict) else 0,
+            )
         except (TypeError, ValueError):
-            return 0
+            return (0, 0)
 
     def _context_usage_input_signature(self):
         measured = self._observed_context_measurement()
@@ -258,6 +263,7 @@ class StreamEmitter(AgentEmitter):
             int(payload.get("context_max", 0) or 0),
             int(payload.get("context_message_count", 0) or 0),
             payload.get("context_cache_mode") or "",
+            int(payload.get("context_measurement_revision", 0) or 0),
         )
         if reason == "heartbeat" and payload_sig == self._context_usage_payload_sig:
             self._context_usage_input_sig = input_sig

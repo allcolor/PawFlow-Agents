@@ -294,8 +294,12 @@ def context_usage_from_cache(messages: Iterable[Any], max_context_size: int,
                 out["source"] = source
                 out["updated_at"] = time.time()
                 return out
+            request_measurement = (
+                cache.get("context_source_measured")
+                and cache.get("context_measurement_mode") == "request")
             if (same_params and same_first and cached_used >= 0 and
-                    not cache.get("context_source_measured") and
+                    (not cache.get("context_source_measured")
+                     or request_measurement) and
                     0 < cached_n < n and
                     cache.get("last_marker") == _marker(msg_list[cached_n - 1])):
                 # cached_used already includes `overhead`; the delta is
@@ -310,12 +314,20 @@ def context_usage_from_cache(messages: Iterable[Any], max_context_size: int,
                 # would charge the serialized context a second time.
                 delta = _count(suffix, token_multiplier,
                                _bootstrap_body_call_ids(msg_list))
-                return context_usage_entry(
+                out = context_usage_entry(
                     msg_list, cached_used + delta, max_ctx,
                     source=source, token_multiplier=token_multiplier,
                     cache_mode="delta", overhead=overhead_i,
                     bootstrap_context_start=int(
                         cache.get("bootstrap_context_start", -1) or -1))
+                if request_measurement:
+                    for key in (
+                            "context_source_measured",
+                            "context_measurement_mode",
+                            "context_measurement_revision",
+                            "context_measurement_tokens"):
+                        out[key] = cache.get(key)
+                return out
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
@@ -337,7 +349,8 @@ def context_usage_append_delta(cache: Dict[str, Any], message: Any, *,
     if not isinstance(cache, dict):
         return None
     try:
-        if cache.get("context_source_measured"):
+        if (cache.get("context_source_measured")
+                and cache.get("context_measurement_mode", "session") != "request"):
             # `used` is not PawFlow's count here: it is the prompt size the
             # provider itself reported on its last observed exchange, and that
             # number ALREADY contains everything in its window -- including the

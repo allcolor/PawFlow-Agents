@@ -494,6 +494,7 @@ class LLMOpenaiResponsesMixin:
                             if rid in state.reasoning_items])
                 if state.reasoning_order else "")
             usage = state.usage or {}
+            input_usage_native = "input_tokens" in usage
             tokens_in = usage.get("input_tokens", 0) or 0
             tokens_out = usage.get("output_tokens", 0) or 0
             cached = ((usage.get("input_tokens_details") or {})
@@ -529,6 +530,7 @@ class LLMOpenaiResponsesMixin:
                 total_tokens=total_tokens,
                 thinking=thinking,
                 cache_read_tokens=cached,
+                input_usage_native=input_usage_native,
                 reasoning_item=reasoning_item,
             )
         finally:

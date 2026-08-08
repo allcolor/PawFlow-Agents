@@ -17,6 +17,7 @@ from typing import Any, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from core._llm_types import ColdStartRequired, DeltaContextRequired
+from core.llm_providers.context_observation import NativeContextObservationMixin
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +309,7 @@ def is_bootstrap_read_result(msg: Any, call_ids: Set[str]) -> bool:
     return str(getattr(msg, "tool_call_id", "") or "") in call_ids
 
 
-class LLMCliSharedMixin:
+class LLMCliSharedMixin(NativeContextObservationMixin):
     """Methods shared across CLI and HTTP providers."""
 
     def record_observed_cli_context(self, conversation_id: str,
@@ -328,19 +329,8 @@ class LLMCliSharedMixin:
         with call clones, so the clone that runs the turn and the resolver
         client the gauge reads expose one authoritative value.
         """
-        if not conversation_id or not agent_name:
-            return
-        try:
-            measured = int(tokens or 0)
-        except (TypeError, ValueError):
-            return
-        if measured <= 0:
-            return
-        counts = getattr(self, "_cli_observed_context_tokens_by_stream", None)
-        if not isinstance(counts, dict):
-            counts = {}
-            self._cli_observed_context_tokens_by_stream = counts
-        counts[(conversation_id, agent_name)] = measured
+        NativeContextObservationMixin._record_observed_context(
+            self, conversation_id, agent_name, tokens, mode="session")
 
     def record_observed_wire_usage(self, usage: Any, conversation_id: str,
                                    agent_name: str) -> None:

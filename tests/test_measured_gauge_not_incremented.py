@@ -28,13 +28,16 @@ class _Msg:
         self.tool_calls = []
 
 
-def _measured_cache(used: int, max_ctx: int) -> dict:
+def _measured_cache(used: int, max_ctx: int, mode: str = "session") -> dict:
     """What compute_context_usage stores once the measurement wins."""
     cache = context_usage_entry(
         [_Msg("x", "m1")], used, max_ctx, source="pawflow_context")
     cache["used"] = used
     cache["pct"] = used / max_ctx
     cache["context_source_measured"] = True
+    cache["context_measurement_mode"] = mode
+    cache["context_measurement_revision"] = 1
+    cache["context_measurement_tokens"] = used
     return cache
 
 
@@ -55,6 +58,16 @@ def test_append_delta_still_advances_a_counted_cache():
     assert out is not None
     assert out["used"] > 1_000
     assert out["cache_mode"] == "append_delta"
+
+
+def test_append_delta_advances_a_stateless_request_measurement():
+    cache = _measured_cache(used=50_000, max_ctx=100_000, mode="request")
+    out = context_usage_append_delta(
+        cache, _Msg("the response that joins the next prompt", "m2"),
+        source="append")
+    assert out is not None
+    assert out["used"] > 50_000
+    assert out["context_measurement_revision"] == 1
 
 
 def test_the_drift_compounds_without_the_guard():
@@ -105,6 +118,16 @@ def test_from_cache_does_not_add_a_suffix_onto_a_measured_base():
     assert out["cache_mode"] == "full", (
         "a measured cache is not a valid base for a suffix delta")
     assert out["used"] < 170_000, "the measured value was carried into a count"
+
+
+def test_from_cache_adds_suffix_onto_a_stateless_request_measurement():
+    msgs = [_Msg("x", "m1"), _Msg("y" * 4_000, "m2")]
+    measured = _measured_cache(used=50_000, max_ctx=100_000, mode="request")
+    out = context_usage_from_cache(
+        msgs, 100_000, measured, source="pawflow_context")
+    assert out["cache_mode"] == "delta"
+    assert out["used"] > 50_000
+    assert out["context_measurement_revision"] == 1
 
 
 def test_from_cache_still_deltas_a_counted_base():

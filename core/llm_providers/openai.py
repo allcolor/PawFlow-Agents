@@ -284,6 +284,7 @@ class LLMOpenaiMixin:
             )
 
             # Use real usage from API if available, else estimate
+            input_usage_native = "prompt_tokens" in usage_data
             tokens_in = usage_data.get("prompt_tokens", 0)
             tokens_out = usage_data.get("completion_tokens", 0)
             total_tokens = usage_data.get("total_tokens", 0)
@@ -316,6 +317,7 @@ class LLMOpenaiMixin:
                 total_tokens=total_tokens,
                 thinking=thinking,
                 cache_read_tokens=cached_tokens,
+                input_usage_native=input_usage_native,
             )
         finally:
             self._active_http_conn = None
@@ -725,4 +727,5 @@ class LLMOpenaiMixin:
             thinking=reasoning,
             raw=data,
             cache_read_tokens=cached_tokens,
+            input_usage_native="prompt_tokens" in usage,
         )

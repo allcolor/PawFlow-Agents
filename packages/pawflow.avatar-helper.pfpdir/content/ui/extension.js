@@ -98,8 +98,8 @@
     var panel = document.getElementById('resourcesPanel');
     var content = document.getElementById('resourcesContent');
     if (!panel || !content) throw new Error('PawFlow resources are unavailable');
-    panel.style.display = 'block';
-    content.style.display = 'block';
+    if (typeof setSidebarSection === 'function') setSidebarSection('resources');
+    else panel.classList.add('active');
     if (typeof loadResources === 'function') loadResources();
   }
 
@@ -146,8 +146,12 @@
   function openTarget(target) {
     targetSpec(target);
     var work;
-    if (target === 'sidebar' || target === 'conversations') {
+    if (target === 'sidebar') {
       openSidebar();
+      work = Promise.resolve();
+    } else if (target === 'conversations') {
+      openSidebar();
+      if (typeof setSidebarSection === 'function') setSidebarSection('conversations');
       work = Promise.resolve();
     } else if (target === 'resources' || target === 'pfp.repository') {
       openResources();

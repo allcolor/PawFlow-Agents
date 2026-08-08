@@ -363,6 +363,13 @@ their SSE handlers, including authoritative `cold` zero after compaction.
 
 The latest value is persisted under the conversation `context_usage` extra as a dict keyed by agent instance name: `{"<agent>": {"used": int, "max": int, "pct": float, "updated_at": float}}`. Persistence is per-agent and keyed on the instance name (not the definition), which means each Resource Panel agent card shows its own gauge and the header badge shows the gauge for `selectedAgent`.
 
+While an agent is actively working, the Active Agents panel also shows a
+`LIVE` badge after a warm CLI instance has been reused. The status applies to
+Claude Code, Claude Code Interactive, Codex app-server, Codex Interactive, and
+Gemini ACP. Interactive providers expose the badge without a restart control;
+the panel only renders that control for providers with a dedicated restart
+action.
+
 The persisted entry is what `compute_context_usage` returns while no agent is running, so it must be invalidated whenever the thing it describes disappears. A CLI session dies with the server: `_prepare_agent_context` therefore calls `reset_cli_context_usage` as soon as it finds a CLI provider with no live session, persists the zeroed entry, and publishes it. Codex interactive can detect the same condition during page hydration because every warm session has a wire measurement on the service client; no active turn and no measurement means a cold post-restart process, so `list_context_usage` returns and persists zero before the next turn. Without these resets, a restart redisplays the dead session's percentage against a provider window nothing has filled yet.
 
 **Two different quantities drive compaction, at two different moments, and both are correct where they apply.** While a CLI session is live, `_alc_maybe_auto_compact_after_append` evaluates `compact_threshold_pct` against `compute_context_usage` — the gauge itself. The provider window is what can overflow, so the provider window is what is watched, and a gauge reading below the threshold means no compaction will fire.

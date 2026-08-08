@@ -245,11 +245,12 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                     }
                     active_by_key[_row_key(_k, _aname, _task_id)] = _row
             active.extend(active_by_key.values())
-        # Live CLI sessions (Claude Code, Codex, Gemini). Enrich rows that
-        # are currently in the active stack. Warm idle sessions are exposed in
-        # the side-channel lists below, but must not create Active Agents rows.
+        # Live CLI sessions. Enrich rows that are currently in the active
+        # stack. Warm idle sessions are exposed in the side-channel lists
+        # below, but must not create Active Agents rows.
         cc_live_list = []
         cci_live_list = []
+        codex_interactive_live_list = []
         codex_live_list = []
         gemini_live_list = []
 
@@ -287,6 +288,23 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         except Exception:
             logger.debug("cci_live enrichment failed", exc_info=True)
         try:
+            from core.codex_interactive_pool import CodexInteractivePool
+            _codex_interactive_entries = (
+                CodexInteractivePool.instance().list_sessions_snapshot(
+                    user_id, conv_id)
+            )
+            _by_agent_codex_interactive = {
+                e["agent_name"]: e for e in _codex_interactive_entries
+            }
+            for row in active:
+                _ent = _by_agent_codex_interactive.get(row.get("agent_name"))
+                if _ent:
+                    _apply_live(row, _ent, "codex_interactive")
+            codex_interactive_live_list = _codex_interactive_entries
+        except Exception:
+            logger.debug(
+                "codex_interactive_live enrichment failed", exc_info=True)
+        try:
             from core.codex_live_registry import CodexLiveRegistry
             _cdx_entries = [
                 e for e in CodexLiveRegistry.instance().status()
@@ -320,6 +338,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             "active": active,
             "cc_live": cc_live_list,
             "cci_live": cci_live_list,
+            "codex_interactive_live": codex_interactive_live_list,
             "codex_live": codex_live_list,
             "gemini_live": gemini_live_list,
         }).encode())

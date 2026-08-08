@@ -398,12 +398,16 @@ def test_resource_panel_renders_with_no_conversation_selected():
     resources_js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     file_explorer_js = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
     conversations_js = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
+    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
 
     # The early hide-and-return on no conversation must be gone.
     assert "style.display = 'none'; return; }" not in resources_js
-    # The panel is shown and the conversation-scoped pfp fetch is guarded.
+    # The accordion header is always present without imperative display styles;
+    # hydration stays independent from which outer block is active.
     assert "var _noConv = !conversationId;" in resources_js
-    assert "if (_panel) _panel.style.display = 'block';" in resources_js
+    assert 'id="resourcesPanel" class="sidebar-section"' in template
+    assert 'id="resourcesPanel" class="sidebar-section" style="display:none"' not in template
+    assert "_panel.style.display = 'block'" not in resources_js
     assert "{ scope: 'user', conversation_id: conversationId || '' }" in resources_js
     assert "if (_noConv) {" in resources_js
     # _renderResourcesData still detects the no-conv case to drop conv-scoped sections.

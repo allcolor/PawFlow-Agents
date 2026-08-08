@@ -15,8 +15,6 @@ function _loadResourcesNow() {
   // conversation-scoped data fetch is skipped below. (Previously this returned
   // early and hid the whole panel, so a user with no conversation — e.g. a
   // freshly-created/technical user — could never see it.)
-  var _panel = document.getElementById('resourcesPanel');
-  if (_panel) _panel.style.display = 'block';
   var _noConv = !conversationId;
   // Fetch resources and services in parallel — merge then render.
   var _resData = null, _svcData = null, _pfpUserData = null, _pfpConvData = null;

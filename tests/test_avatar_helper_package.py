@@ -114,6 +114,11 @@ function classes(initial) {
     add: (value) => values.add(value),
     remove: (value) => values.delete(value),
     contains: (value) => values.has(value),
+    toggle: (value, force) => {
+      const enabled = force === undefined ? !values.has(value) : !!force;
+      if (enabled) values.add(value); else values.delete(value);
+      return enabled;
+    },
   };
 }
 
@@ -198,6 +203,10 @@ global.window = {
   },
 };
 global.loadResources = function () { elements.resourcesPanel.loaded = true; };
+global.setSidebarSection = function (name) {
+  elements.resourcesPanel.classList.toggle('active', name === 'resources');
+  elements.resourcesPanel.style.display = '';
+};
 global.pawflow = global.window.pawflow;
 
 eval(fs.readFileSync(process.argv[1], 'utf8'));
@@ -215,6 +224,9 @@ async function main() {
   });
   if (!guided.target.visible || elements.sidebar.classList.contains('collapsed')) {
     throw new Error('resources were not opened');
+  }
+  if (!elements.resourcesPanel.classList.contains('active')) {
+    throw new Error('resources accordion section was not activated');
   }
   if (!elements.resourcesPanel.classList.contains('pf-avatar-helper-focus')) {
     throw new Error('resources were not focused');

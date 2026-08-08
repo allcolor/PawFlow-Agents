@@ -272,28 +272,40 @@ function updateActivePanel() {
     if (ctxMax > 0) {
       ctxHtml = renderCtxGauge({ used: ctxUsed, max: ctxMax, pct: ctxPct }, { width: 60 });
     }
-    // Live-session badge + restart button: shown when ANY supported CLI
-    // (claude code / codex / gemini) is reusing a warm container for this
-    // agent. The first match wins for the badge label/tooltip; the restart
-    // button targets the matching CLI's restart action.
+    // Live-session badge: shown when any supported CLI is reusing a warm
+    // container for this agent. The first match wins for the badge label and
+    // tooltip. A restart button is added only when that provider exposes a
+    // restart action.
     let liveBadge = '';
     let restartBtn = '';
     const liveCli = info.ccLive ? 'cc'
+                  : info.cciLive ? 'cci'
                   : info.codexLive ? 'codex'
+                  : info.codexInteractiveLive ? 'codex-interactive'
                   : info.geminiLive ? 'gemini' : '';
     if (liveCli) {
       const lived = Math.round(
         liveCli === 'cc' ? (info.ccLivedSeconds || 0)
+        : liveCli === 'cci' ? (info.cciLivedSeconds || 0)
         : liveCli === 'codex' ? (info.codexLivedSeconds || 0)
+        : liveCli === 'codex-interactive'
+          ? (info.codexInteractiveLivedSeconds || 0)
         : (info.geminiLivedSeconds || 0));
       const reuseCount =
         liveCli === 'cc' ? (info.ccReuseCount || 0)
+        : liveCli === 'cci' ? (info.cciReuseCount || 0)
         : liveCli === 'codex' ? (info.codexReuseCount || 0)
+        : liveCli === 'codex-interactive'
+          ? (info.codexInteractiveReuseCount || 0)
         : (info.geminiReuseCount || 0);
       const livedStr = lived < 60 ? lived + 's'
         : Math.floor(lived / 60) + 'm' + (lived % 60) + 's';
       const cliLabel = liveCli === 'cc' ? 'Claude Code'
-                     : liveCli === 'codex' ? 'Codex' : 'Gemini';
+                     : liveCli === 'cci' ? 'Claude Code Interactive'
+                     : liveCli === 'codex' ? 'Codex'
+                     : liveCli === 'codex-interactive'
+                       ? 'Codex Interactive'
+                     : 'Gemini';
       const liveTitle = t('cliSessionReusedTitle', {
         cli: cliLabel,
         lived: livedStr,
@@ -305,10 +317,12 @@ function updateActivePanel() {
         + 'border-radius:3px;vertical-align:middle;">LIVE</span>';
       const restartFn = liveCli === 'cc' ? 'ccRestartSingle'
                       : liveCli === 'codex' ? 'codexRestartSingle'
-                      : 'geminiRestartSingle';
-      restartBtn = '<button class="btn-cc-restart" title="' + escapeAttr(t('restartCliTitle', { cli: cliLabel })) + '"'
-        + ' onclick="' + restartFn + '(' + jsStringArg(apiName) + ')"'
-        + '>&#x21BB;</button>';
+                      : liveCli === 'gemini' ? 'geminiRestartSingle' : '';
+      if (restartFn) {
+        restartBtn = '<button class="btn-cc-restart" title="' + escapeAttr(t('restartCliTitle', { cli: cliLabel })) + '"'
+          + ' onclick="' + restartFn + '(' + jsStringArg(apiName) + ')"'
+          + '>&#x21BB;</button>';
+      }
     }
     return '<div class="active-row">'
       + '<span class="a-spinner" style="color:' + color + '">\u2733</span>'
@@ -411,10 +425,18 @@ function syncActiveFromServer(force) {
         ccReuseCount: a.cc_reuse_count || 0,
         ccLivedSeconds: a.cc_lived_seconds || 0,
         ccIdleSeconds: a.cc_idle_seconds || 0,
+        cciLive: !!a.cci_live,
+        cciReuseCount: a.cci_reuse_count || 0,
+        cciLivedSeconds: a.cci_lived_seconds || 0,
+        cciIdleSeconds: a.cci_idle_seconds || 0,
         codexLive: !!a.codex_live,
         codexReuseCount: a.codex_reuse_count || 0,
         codexLivedSeconds: a.codex_lived_seconds || 0,
         codexIdleSeconds: a.codex_idle_seconds || 0,
+        codexInteractiveLive: !!a.codex_interactive_live,
+        codexInteractiveReuseCount: a.codex_interactive_reuse_count || 0,
+        codexInteractiveLivedSeconds: a.codex_interactive_lived_seconds || 0,
+        codexInteractiveIdleSeconds: a.codex_interactive_idle_seconds || 0,
         geminiLive: !!a.gemini_live,
         geminiReuseCount: a.gemini_reuse_count || 0,
         geminiLivedSeconds: a.gemini_lived_seconds || 0,

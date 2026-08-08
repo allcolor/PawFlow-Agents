@@ -115,6 +115,38 @@ function cmdListResources() {
   });
 }
 
+// ── Sidebar accordion ───────────────────────────────────────────
+function setSidebarSection(sectionName) {
+  if (sectionName !== 'conversations' && sectionName !== 'resources') return false;
+  ['conversations', 'resources'].forEach(function(name) {
+    const section = document.querySelector('[data-sidebar-section="' + name + '"]');
+    if (!section) return;
+    const isActive = name === sectionName;
+    section.classList.toggle('active', isActive);
+    const header = section.querySelector('[data-sidebar-header="' + name + '"]');
+    if (header) header.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+    const body = section.querySelector('.sidebar-section-body');
+    if (body) body.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    const chevron = section.querySelector('.sidebar-section-chevron');
+    if (chevron) chevron.textContent = isActive ? '\u25BC' : '\u25B6';
+  });
+  if (sectionName === 'resources' && typeof loadResources === 'function') loadResources();
+  return true;
+}
+
+function sidebarSectionHeaderKey(event, sectionName) {
+  if (!event || event.target !== event.currentTarget) return;
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  setSidebarSection(sectionName);
+}
+
+// Backward-compatible command/UI entry point. An active block never collapses
+// to an empty sidebar; selecting Resources always gives it the remaining height.
+function toggleResourcesSection() {
+  setSidebarSection('resources');
+}
+
 // ── Sidebar Resources ───────────────────────────────────────────
 function _scopeBadge(s) {
   if (!s) return '';

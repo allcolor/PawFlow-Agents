@@ -51,7 +51,23 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .sidebar-header .btn-new { background: #e94560; color: white; border: none; border-radius: 6px;
                             padding: 4px 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
 .sidebar-header .btn-new:hover { background: #c73a52; }
-.conv-list { flex: 1; overflow-y: auto; padding: 6px; }
+.sidebar-section { flex: 0 0 auto; min-height: 0; display: flex; flex-direction: column;
+                   overflow: hidden; transition: flex-grow 0.22s ease; }
+.sidebar-section.active { flex: 1 1 0; }
+.sidebar-section-header { flex: 0 0 auto; min-height: 42px; cursor: pointer; user-select: none; }
+.sidebar-section-header:focus-visible { outline: 2px solid #e94560; outline-offset: -2px; }
+.sidebar-section-body { flex: 0 0 0; min-height: 0; opacity: 0; overflow: hidden;
+                        transition: flex-grow 0.22s ease, opacity 0.16s ease; }
+.sidebar-section.active > .sidebar-section-body { flex: 1 1 0; opacity: 1; }
+.sidebar-conversations-body { display: flex; flex-direction: column; }
+.sidebar-resource-header { padding: 8px 14px; border-top: 1px solid #0f3460;
+                           border-bottom: 1px solid transparent; display: flex;
+                           align-items: center; gap: 5px; color: #8888aa; font-size: 11px; }
+.sidebar-section.active > .sidebar-resource-header { border-bottom-color: #0f3460; }
+.sidebar-section-chevron { width: 10px; flex: 0 0 10px; font-size: 10px; }
+.sidebar-resources-body { padding: 8px 14px; overflow-y: auto !important;
+                          scrollbar-width: thin; scrollbar-color: #333 transparent; }
+.conv-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
 .conv-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 4px;
              border: 1px solid transparent; position: relative; }
 .conv-item:hover { background: #16213e; border-color: #0f3460; }
@@ -85,7 +101,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
               margin-right: 6px; vertical-align: baseline; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .sidebar-settings { padding: 8px 14px; border-top: 1px solid #0f3460; flex-shrink: 0; }
-.sidebar-settings#resourcesPanel { flex-shrink: 1; max-height: 50%; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #333 transparent; }
 .sidebar-settings label { font-size: 11px; color: #6c6c8a; display: block; margin-bottom: 3px; }
 .sidebar-settings select { width: 100%; background: #1a1a2e; color: #c0c0d0; border: 1px solid #0f3460;
                             border-radius: 4px; padding: 4px 6px; font-size: 12px; cursor: pointer; }
@@ -952,22 +967,37 @@ if (typeof hljs !== 'undefined') {
 <body>
 <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">&#9776;</button>
 <div class="sidebar collapsed" id="sidebar">
-  <div class="sidebar-header">
-    <h2 data-i18n="conversations">Conversations</h2>
-    <div style="position:relative;display:inline-block;">
-      <button class="btn-new" style="border-radius:6px 0 0 6px" onclick="newChat()" data-i18n="newChat">+ New</button><button class="btn-new" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'" style="border-left:1px solid rgba(255,255,255,0.3);border-radius:0 6px 6px 0;padding:4px 6px;">▼</button>
-      <div style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#1a1a2e;border:1px solid #333;border-radius:6px;min-width:200px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.5);">
-        <div onclick="this.parentElement.style.display='none';newChat()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''" data-i18n="newConversation">New conversation</div>
-        <div onclick="this.parentElement.style.display='none';importConversation()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''" data-i18n="importConversation">Import conversation</div>
+  <div id="conversationsPanel" class="sidebar-section active" data-sidebar-section="conversations">
+    <div class="sidebar-header sidebar-section-header" data-sidebar-header="conversations"
+         role="button" tabindex="0" aria-controls="conversationsBody" aria-expanded="true"
+         onclick="setSidebarSection('conversations')"
+         onkeydown="sidebarSectionHeaderKey(event, 'conversations')">
+      <h2 data-i18n="conversations">Conversations</h2>
+      <div style="position:relative;display:inline-block;">
+        <button class="btn-new" style="border-radius:6px 0 0 6px" onclick="newChat()" data-i18n="newChat">+ New</button><button class="btn-new" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'" style="border-left:1px solid rgba(255,255,255,0.3);border-radius:0 6px 6px 0;padding:4px 6px;">▼</button>
+        <div style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#1a1a2e;border:1px solid #333;border-radius:6px;min-width:200px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.5);">
+          <div onclick="this.parentElement.style.display='none';newChat()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''" data-i18n="newConversation">New conversation</div>
+          <div onclick="this.parentElement.style.display='none';importConversation()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''" data-i18n="importConversation">Import conversation</div>
+        </div>
       </div>
     </div>
+    <div class="sidebar-section-body sidebar-conversations-body" id="conversationsBody" aria-hidden="false">
+      <div class="conv-list" id="convList"></div>
+    </div>
   </div>
-  <div class="conv-list" id="convList"></div>
-  <div class="sidebar-settings" id="resourcesPanel" style="display:none">
-    <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; <span data-i18n="resources">Resources</span></label>
-    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:var(--pf-muted);"></div>
-    <div data-pf-slot="resources_collection_ext" hidden></div>
-    <div data-pf-slot="resources_panel_ext"></div>
+  <div id="resourcesPanel" class="sidebar-section" data-sidebar-section="resources">
+    <div class="sidebar-section-header sidebar-resource-header" data-sidebar-header="resources"
+         role="button" tabindex="0" aria-controls="resourcesBody" aria-expanded="false"
+         onclick="setSidebarSection('resources')"
+         onkeydown="sidebarSectionHeaderKey(event, 'resources')">
+      <span class="sidebar-section-chevron" aria-hidden="true">&#x25B6;</span>
+      <span data-i18n="resources">Resources</span>
+    </div>
+    <div class="sidebar-section-body sidebar-resources-body" id="resourcesBody" aria-hidden="true">
+      <div id="resourcesContent" style="font-size:12px;color:var(--pf-muted);"></div>
+      <div data-pf-slot="resources_collection_ext" hidden></div>
+      <div data-pf-slot="resources_panel_ext"></div>
+    </div>
   </div>
   <div class="sidebar-settings" data-pf-slot="sidebar_bottom_ext"></div>
   <div class="sidebar-settings" data-pf-slot="sidebar_top_ext" style="order:-1"></div>

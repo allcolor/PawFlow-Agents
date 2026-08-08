@@ -376,7 +376,17 @@ someone else.
 | `use_tool` | Execute a tool by name. |
 | `pawflow_help` | Get platform help. |
 
-The web chat Resource Panel persists the expanded/collapsed tree state in the browser. On a first visit only `Agents` is open; after toggling sections, reloads restore the exact opened and closed sections.
+The web chat left sidebar is a two-block vertical accordion. `Conversations` is
+active by default and owns the available height while the `Resources` header
+stays at the bottom. Selecting `Resources` slides the conversation list closed,
+keeps its header at the top, and gives the complete remaining height to the
+resource tree. Exactly one block is active. Mouse, Enter, Space, `/flows`, and
+semantic UI helpers all use the same controller.
+
+Inside the active Resource Panel, the expanded/collapsed tree state persists in
+the browser. On a first visit only `Agents` is open; after toggling sections,
+reloads restore the exact opened and closed sections. This inner tree state is
+independent from the outer Conversations/Resources accordion.
 
 ## Tool and MCP Availability
 

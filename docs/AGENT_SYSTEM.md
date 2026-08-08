@@ -384,6 +384,11 @@ The persisted entry is what `compute_context_usage` returns while no agent is ru
 
 The whole stored agent context is measured at one place only: the cold-session branch of `_prepare_agent_context` (`_agentctx_p2`, gated on `not _cli_has_session`). That is the bootstrap moment, when the provider window is empty by definition and the quantity that matters is the size of what is about to be serialized into `initial_context.md`. A store above the threshold is squeezed before it is written.
 
+The cold-session compact takes `max_context_size`, `compact_threshold_pct`,
+`compact_target_tokens`, and token accounting from the selected agent's LLM
+service. The summarizer service supplies only the model that writes summaries;
+its own context budget must never replace the active agent service's budget.
+
 Cold and live sessions use the same configured `compact_threshold_pct`; there
 is no hidden cold-start threshold. A value of `0` disables proactive PawFlow
 compaction in both phases. Both `_should_proactive_compact` and the `_compact`

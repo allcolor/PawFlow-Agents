@@ -390,6 +390,60 @@ def test_compact_budget_uses_active_service_config_not_summarizer():
     assert "resolve_token_multiplier(_budget_cfg)" in _AGENT_COMPACTION
 
 
+def test_initial_compact_passes_active_service_budget_not_summarizer():
+    """A cold compact must keep the selected service's 15k target even when
+    the summarizer service still has the legacy 25k target.
+    """
+    from types import SimpleNamespace
+
+    from core.llm_client import LLMMessage
+    from tasks.ai.agent_context import AgentContextMixin
+
+    captured = {}
+
+    class _Harness(AgentContextMixin):
+        def _get_summarizer_client(self, *args, **kwargs):
+            return (
+                SimpleNamespace(config={"compact_target_tokens": 25_000}),
+                200_000,
+                "summarizer",
+            )
+
+        def _compact(self, messages, client, max_tokens, **kwargs):
+            captured.update(kwargs)
+            return messages
+
+    budget = {
+        "max_context_size": 200_000,
+        "compact_target_tokens": 15_000,
+    }
+    messages = [
+        LLMMessage(
+            role="user",
+            content="history",
+            conversation_id="conversation",
+        )
+    ]
+
+    result = _Harness()._auto_compact_messages(
+        messages,
+        "conversation",
+        "assistant",
+        "user",
+        budget_config=budget,
+    )
+
+    assert result is messages
+    assert captured["budget_config"] is budget
+    assert captured["budget_config"]["compact_target_tokens"] == 15_000
+
+
+def test_every_initial_compact_call_passes_the_active_service_budget():
+    """Private, shared, and preloaded cold contexts use one service budget."""
+    assert _AGENT_CONTEXT.count(
+        "budget_config=_svc_cfg_early") == 3
+
+
 def test_codex_forced_compact_passes_active_budget_config():
     """Codex compact_boundary uses the summarizer client, but must pass the
     codex appserver service config so compact_target_tokens=50k is honored.

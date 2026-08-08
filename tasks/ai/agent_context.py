@@ -204,7 +204,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                                user_id: str,
                                max_context: int = 200000,
                                compact_instructions: str = "",
-                               independent_context: bool = False) -> List[LLMMessage]:
+                               independent_context: bool = False,
+                               budget_config: dict | None = None) -> List[LLMMessage]:
         """Auto-compact if the context is past the service trigger threshold.
 
         Delegates to _compact which uses its own trigger_fraction (default
@@ -224,6 +225,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
             compact_instructions=compact_instructions,
             user_id=user_id,
             independent_context=independent_context,
+            budget_config=budget_config,
         )
 
     # ── Context operation pause/resume ─────────────────────────────────

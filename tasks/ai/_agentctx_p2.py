@@ -94,7 +94,8 @@ class _PACPhase2Mixin:
                 st._uid_dv = st.flowfile.get_attribute("http.auth.principal") or ""
                 st.messages = self._auto_compact_messages(
                     st.messages, st.conversation_id, st._context_agent, st._uid_dv,
-                    max_context=st._max_ctx)
+                    max_context=st._max_ctx,
+                    budget_config=st._svc_cfg_early)
             except (KeyError, TypeError) as deser_err:
                 logger.error(f"[context:{st.conversation_id[:8]}] context load failed: {deser_err}")
         else:
@@ -110,7 +111,8 @@ class _PACPhase2Mixin:
                 st._uid2 = st.flowfile.get_attribute("http.auth.principal") or ""
                 st.messages = self._auto_compact_messages(
                     st.messages, st.conversation_id, st._context_agent, st._uid2,
-                    max_context=st._max_ctx)
+                    max_context=st._max_ctx,
+                    budget_config=st._svc_cfg_early)
             else:
                 logger.warning(f"[context:{st.conversation_id[:8]}] store.load() returned None — "
                                f"starting fresh conversation")
@@ -143,7 +145,8 @@ class _PACPhase2Mixin:
                 st.messages = self._auto_compact_messages(
                     st.messages, st.preloaded_conversation_id or st.conversation_id or "",
                     st._context_agent, st._uid_pl, max_context=st._max_ctx,
-                    independent_context=st.independent_context)
+                    independent_context=st.independent_context,
+                    budget_config=st._svc_cfg_early)
         elif st.use_conv_store and st.conversation_id:
             if st._cli_has_session:
                 # Stateful CLI has an active session — it already has the

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.158] — 2026-08-08
+
+### Fixed
+
+- Claude Code Interactive now applies provider-prefix-aware Anthropic Messages
+  endpoint matching throughout the server-side turn coordinator and event
+  service, not only in the container proxy. Z.ai and other API-key providers
+  now arm request bookkeeping, clear stale Stop latches, track turn boundaries,
+  and adopt orphaned turns correctly. Optional wire logging follows the same
+  normalized endpoint rule. This supersedes the incomplete beta.157 fix.
+
 ## [1.0.0-beta.157] — 2026-08-08
 
 ### Fixed

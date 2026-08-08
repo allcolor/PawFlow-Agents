@@ -13,8 +13,10 @@ function cmdHelp(topic) {
       lines.push('<code>' + cmd + '</code> — ' + escapeHtml(h.short));
     }
     lines.push('', escapeHtml(t('helpCommandHint')).replace('/help <command>', '<code>/help &lt;command&gt;</code>'));
-    const el = addMsg('system', '');
-    el.innerHTML = lines.join('<br>');
+    showUiNotification(t('availableCommands'), {
+      title: t('availableCommands'), detailHtml: lines.join('<br>'),
+      openCenter: true, toast: false,
+    });
   } else {
     const helpParts = topic.split(/\s+/);
     if (helpParts[0] === 'call') {
@@ -38,8 +40,10 @@ function cmdHelp(topic) {
       '',
       '<pre style="margin:8px 0;white-space:pre-wrap;font-size:12px;background:rgba(255,255,255,0.05);padding:8px;border-radius:4px;">' + escapeHtml(h.detail) + '</pre>',
     ];
-    const el = addMsg('system', '');
-    el.innerHTML = lines.join('<br>');
+    showUiNotification(key, {
+      title: key, detailHtml: lines.join('<br>'),
+      openCenter: true, toast: false,
+    });
   }
 }
 
@@ -53,8 +57,10 @@ function cmdHelpToolList() {
       lines.push('  <code>' + t.name + paramStr + '</code> — ' + escapeHtml((t.description || '').substring(0, 80)));
     }
     lines.push('', escapeHtml(t('helpCallHint')).replace('/help call <toolname>', '<code>/help call &lt;toolname&gt;</code>'));
-    const el = addMsg('system', '');
-    el.innerHTML = lines.join('<br>');
+    showUiNotification(t('availableToolsForCall'), {
+      title: t('availableToolsForCall'), detailHtml: lines.join('<br>'),
+      openCenter: true, toast: false,
+    });
   });
 }
 
@@ -95,8 +101,10 @@ function cmdHelpTool(toolName) {
       }
     }
     lines.push('  <code>/call ' + tool.name + '(' + exArgs.join(', ') + ')</code>');
-    const el = addMsg('system', '');
-    el.innerHTML = lines.join('<br>');
+    showUiNotification('/call ' + tool.name, {
+      title: '/call ' + tool.name, detailHtml: lines.join('<br>'),
+      openCenter: true, toast: false,
+    });
   });
 }
 

@@ -216,7 +216,7 @@ def test_skill_draft_ui_labels_exist_in_every_locale():
         assert required <= catalog.keys(), locale_file.name
 
 
-def test_typing_indicators_use_sweeping_block_animation():
+def test_typing_and_context_progress_use_their_dedicated_surfaces():
     js = Path("tasks/io/chat_ui/typing.js").read_text(encoding="utf-8")
     template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
 
@@ -227,7 +227,10 @@ def test_typing_indicators_use_sweeping_block_animation():
     assert "raw.slice(0, idx) + '█' + raw.slice(idx + 1)" in js
     assert ".typing .verb { animation: none; }" in template
     assert "typingInterval = startTypingSweep('typing', '')" in js
-    assert "contextOpInterval = startTypingSweep('contextOpTyping', label)" in js
+    assert "showUiNotification(label" in js
+    assert "key: 'context-operation'" in js
+    assert "removeUiNotificationByKey('context-operation')" in js
+    assert "contextOpTyping" not in js
 
 
 def test_flow_template_graph_passes_conversation_id():

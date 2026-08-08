@@ -71,7 +71,7 @@ function connectSSE(cid, onReady, opts) {
   // Reset per-connection SSE state (declared in sse_state.js) and wire
   // event handlers (registered in sse_handlers_*.js) onto this socket.
   _sseCid = cid;
-  _taskBlocks = {}; _pendingToolResults = {}; _serviceInstallProgress = {};
+  _taskBlocks = {}; _pendingToolResults = {};
   thinkingElements = {}; delegateThinkingElements = {};
   _delegateGroups = {}; _delegateSubBlocks = {};
   btwElements = {}; btwTexts = {};

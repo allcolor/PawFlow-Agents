@@ -111,36 +111,38 @@ function addMsg(role, text, extra) {
       && extra.source.name === 'background') {
     role = 'tool_result';
   }
-  // PushNotification bell row: proactive attention signal from an agent.
-  // Rendered as a compact 🔔 line (not a full user bubble) so it doesn't
-  // clutter the transcript but stays visible on history reload. Append
-  // + return here — bypassing the generic role branches below.
+  // Legacy builds persisted proactive notifications as fake user messages.
+  // Runtime notifications no longer belong to the transcript, and replaying
+  // these rows would repopulate a notification center that is intentionally
+  // scoped to the current browser-tab lifetime.
   if (role === 'user' && extra && extra.source
       && extra.source.type === 'system'
       && extra.source.name === 'notification') {
-    const notifEl = document.createElement('div');
-    notifEl.className = 'msg notification-row';
-    notifEl.style.cssText = (
-      'background:#1a3a2a;color:#4ecdc4;border-left:3px solid #4ecdc4;'
-      + 'padding:6px 12px;margin:4px 0;border-radius:4px;'
-      + 'font-size:12.5px;display:flex;align-items:baseline;gap:8px;'
-    );
-    const fromAgent = displayAgentName(extra.source.agent || 'agent');
-    const notifSortTs = _messageSortTs(extra);
-    const timeHtml = makeTimeHtml(notifSortTs);
-    if (extra && extra.msg_id) notifEl.dataset.msgid = extra.msg_id;
-    notifEl.innerHTML = (
-      '<span style="font-size:14px;">🔔</span>'
-      + '<span style="font-weight:600;">' + escapeHtml(fromAgent) + ':</span>'
-      + '<span style="flex:1;">' + escapeHtml(text) + '</span>'
-      + timeHtml
-    );
-    const notifContainer = document.getElementById('messages');
-    const notifShouldScroll = isNearBottom();
-    _insertMessageChronologically(notifContainer, notifEl, notifSortTs, _hasRealSortTs(extra));
-    trimLiveDisplayWindowIfAutoscrolling(notifShouldScroll);
-    scrollBottom(notifShouldScroll);
-    return notifEl;
+    return null;
+  }
+  // Client-only notices have no durable message identity. Route them to the
+  // runtime notification center instead of making turn_view classify a DOM
+  // row after the fact. Persisted system/error messages keep their transcript
+  // position; actionable UI can opt in with extra.transcript.
+  const _runtimeNotice = (role === 'system' || role === 'error')
+    && !msgId
+    && !(extra && extra.raw_index !== undefined)
+    && !(extra && extra.transcript);
+  if (_runtimeNotice && typeof showUiNotification === 'function') {
+    return showUiNotification(text, {
+      level: role === 'error' ? 'error' : ((extra && extra.level) || 'info'),
+      title: extra && extra.title,
+      html: !!(extra && extra.html),
+      detailHtml: (extra && extra.detailHtml) || '',
+      detail: (extra && extra.detail) || '',
+      key: (extra && extra.key) || '',
+      source: extra && extra.source,
+      agent: (extra && extra.agent) || '',
+      ts: extra && extra.ts,
+      timeoutMs: extra && extra.timeoutMs,
+      toast: extra ? extra.toast : undefined,
+      openCenter: !!(extra && extra.openCenter),
+    });
   }
   if (role === 'tool_call' || role === 'tool') {
     const rawToolName = (extra && (extra.tool_name || extra.tool)) || text || '?';

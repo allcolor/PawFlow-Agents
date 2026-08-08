@@ -6,7 +6,6 @@
 // ── Task block grouping ─────────────────────────────────────────
 var _taskBlocks = {};
 var _pendingToolResults = {};
-var _serviceInstallProgress = {};
 // ── Extended thinking ──
 var thinkingElements = {};            // agentKey → {el, text, startTime}
 var delegateThinkingElements = {};    // taskId → {el, content, summary, text, startTime}
@@ -54,18 +53,15 @@ function _serviceInstallLabel(data) {
 
 function _upsertServiceInstallProgress(data) {
   const key = (data.service_type || 'service') + ':' + (data.service_id || 'default');
-  let row = _serviceInstallProgress[key];
   const text = _serviceInstallLabel(data);
-  if (!row || !row.isConnected) {
-    row = addMsg('system', text, { source: { type: 'system', name: 'service-install' } });
-    _serviceInstallProgress[key] = row;
-  } else {
-    row.textContent = text;
-  }
-  if (data.status === 'ready' || data.status === 'failed') {
-    setTimeout(() => { delete _serviceInstallProgress[key]; }, 5000);
-  }
-  scrollBottom();
+  const finished = data.status === 'ready' || data.status === 'failed';
+  showUiNotification(text, {
+    key: 'service-install:' + key,
+    level: data.status === 'failed' ? 'error' : (data.status === 'ready' ? 'success' : 'progress'),
+    title: data.status === 'failed' ? t('notificationError') : (finished ? t('notificationSuccess') : t('notificationProgress')),
+    timeoutMs: finished ? undefined : 0,
+    source: 'service-install',
+  });
 }
 
 

@@ -301,22 +301,17 @@ function hideTyping() {
   if (el) el.remove();
 }
 
-let contextOpInterval = null;
 function showContextOp(label) {
-  hideContextOp();
-  const el = document.createElement('div');
-  el.className = 'typing';
-  el.id = 'contextOpTyping';
-  el.dataset.transientUi = '1';
-  document.getElementById('messages').appendChild(el);
-  scrollBottom();
-  contextOpInterval = startTypingSweep('contextOpTyping', label);
+  showUiNotification(label, {
+    key: 'context-operation',
+    level: 'progress',
+    title: t('notificationProgress'),
+    timeoutMs: 0,
+  });
 }
 
 function hideContextOp() {
-  if (contextOpInterval) { clearInterval(contextOpInterval); contextOpInterval = null; }
-  const el = document.getElementById('contextOpTyping');
-  if (el) el.remove();
+  removeUiNotificationByKey('context-operation');
 }
 
 startActiveSync();

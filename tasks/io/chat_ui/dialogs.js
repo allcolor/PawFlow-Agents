@@ -78,18 +78,6 @@ function resolveToolApproval(requestId, choice, btn) {
   overlay.remove();
 }
 
-// ── Notification Toast ────────────────────────────────────────────
-function showNotification(data) {
-  const { message, urgency } = data;
-  const el = document.createElement('div');
-  el.style.cssText = 'position:fixed;top:16px;right:16px;background:#da3633;color:#fff;padding:12px 20px;border-radius:8px;z-index:10001;font-size:14px;max-width:400px;box-shadow:0 4px 12px rgba(0,0,0,0.4);cursor:pointer;';
-  if (urgency !== 'high') el.style.background = '#f0883e';
-  el.textContent = message;
-  el.onclick = () => el.remove();
-  document.body.appendChild(el);
-  setTimeout(() => { if (el.parentNode) el.remove(); }, 8000);
-}
-
 function appendExecOutput(data) {
   const { action, command, exit_code, stdout, stderr, duration_ms } = data;
   const el = document.createElement('div');

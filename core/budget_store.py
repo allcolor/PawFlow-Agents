@@ -327,13 +327,10 @@ def check_and_notify(ledger, *, user_id: str = "", conversation_id: str = "",
 
 def _notify(budget: Budget, spend: float, pct_threshold: int,
            conversation_id: str, agent_name: str) -> None:
-    """Post the threshold-crossing message into the triggering conversation.
+    """Publish a runtime-only threshold alert for the triggering conversation.
 
-    Same persist+SSE pattern as core.handlers.push_notification (stamped
-    system message + `new_message`/`notification` SSE events) so it renders
-    as a bell row and fires the same attention signals. No conversation to
-    post into (e.g. a user- or global-scoped budget crossed by a channel
-    with no conversation_id) is a silent no-op — logged only.
+    The browser accumulates the notification in memory. No conversation
+    message is persisted, so budget alerts never enter an agent context.
     """
     verb = "BLOCKED" if (pct_threshold >= 100 and budget.policy == "block") \
         else "reached"
@@ -344,32 +341,21 @@ def _notify(budget: Budget, spend: float, pct_threshold: int,
         logger.info("[budgets] %s (no conversation to notify)", message)
         return
     try:
-        import uuid as _uuid
-        from core.conversation_writer import ConversationWriter
-        from core.llm_client import stamp_message
-        msg_id = _uuid.uuid4().hex[:12]
-        stamped = stamp_message({
-            "role": "user",
+        from core.conversation_event_bus import ConversationEventBus
+        bus = ConversationEventBus.instance()
+        bus.publish_event(conversation_id, "notification", {
+            "msg_id": uuid.uuid4().hex[:12],
             "content": message,
-            "msg_id": msg_id,
-            "source": {"type": "system", "name": "notification",
-                      "agent": agent_name or "", "status": "proactive"},
-        }, conversation_id)
-        sse_events = [
-            {"type": "new_message", "cid": conversation_id, "data": {
-                "role": "user", "content": message, "msg_id": msg_id,
-                "source": stamped["source"]}},
-            {"type": "notification", "cid": conversation_id, "data": {
-                "msg_id": msg_id, "content": message,
-                "agent": agent_name or "", "status": "proactive",
-                "ts": time.time()}},
-            {"type": "budget.updated", "cid": conversation_id, "data": {
-                "budget_id": budget.id, "pct": pct_threshold,
-                "spend_usd": spend, "limit_usd": budget.limit_usd}},
-        ]
-        writer = ConversationWriter.for_conversation(conversation_id)
-        writer.enqueue_message(stamped, agent_name=agent_name or "",
-                               user_id="", sse_events=sse_events)
+            "agent": agent_name or "",
+            "status": "proactive",
+            "ts": time.time(),
+        })
+        bus.publish_event(conversation_id, "budget.updated", {
+            "budget_id": budget.id,
+            "pct": pct_threshold,
+            "spend_usd": spend,
+            "limit_usd": budget.limit_usd,
+        })
         logger.info("[budgets] %s", message)
     except Exception:
         logger.warning("[budgets] notification delivery failed for %s",

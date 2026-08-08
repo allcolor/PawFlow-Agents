@@ -111,18 +111,6 @@ function _sseWireB() {
     loadResources();
   });
 
-  eventSource.addEventListener('notification', (e) => {
-    lastSSEActivity = Date.now();
-    const data = JSON.parse(e.data);
-    const urgencyIcon = data.urgency === 'high' ? '\u{1F534}' : data.urgency === 'low' ? '\u{26AA}' : '\u{1F535}';
-    addMsg('system', urgencyIcon + ' ' + (data.message || ''));
-    scrollBottom();
-    // Browser notification if page is not visible
-    if (document.hidden && Notification.permission === 'granted') {
-      new Notification('PawFlow Agent', { body: data.message });
-    }
-  });
-
   eventSource.addEventListener('ask_user', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
@@ -136,7 +124,7 @@ function _sseWireB() {
       html += '</div>';
     }
     html += '</div>';
-    addMsg('system', html);
+    addMsg('system', html, { html: true, transcript: true });
     scrollBottom();
   });
 
@@ -571,12 +559,6 @@ function _sseWireB() {
     _openVncLoginDialog(data.session_id, data.service_id, data.token || '', null, data.cli || 'claude', data.scope || '');
   });
 
-  eventSource.addEventListener('notification', (e) => {
-    lastSSEActivity = Date.now();
-    const data = JSON.parse(e.data);
-    showNotification(data);
-  });
-
   eventSource.addEventListener('error_event', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
@@ -588,7 +570,7 @@ function _sseWireB() {
     // passing ts through, addMsg falls back to the browser's clock at
     // *replay* time, making an already-resolved, long-past error render as
     // if it just happened right now, with no relation to current activity.
-    addMsg('error', data.message || t('unknownError'), { ts: data.ts });
+    addMsg('error', data.message || t('unknownError'), { ts: data.ts, transcript: true });
     // Error could be from any agent — clear the agent's stream + active interaction
     const errAgent = data.agent_name || '';
     _finalizeLiveToolCalls(errAgent, '[Error]');

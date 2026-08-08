@@ -90,11 +90,13 @@ Cumulative daily/monthly caps, distinct from the per-agent-loop-invocation
   before the LLM call — the turn that crosses the line still completes,
   since its cost is only known once it's done).
 
-At 50/80/100% of the limit, a system notification is posted into the
-conversation that triggered the crossing (bell row + toast, same mechanism
-as the `PushNotification` tool), deduplicated per (budget, period) so it
-fires once per threshold per period. This runs from every ledger write
-(`UsageLedger.record`), across all channels — not just `chat`.
+At 50/80/100% of the limit, a runtime notification event is published for
+the conversation that triggered the crossing (notification-center entry,
+toast, and bell, using the same mechanism as `PushNotification`), deduplicated
+per (budget, period) so it fires once per threshold per period. The alert is
+not persisted as a conversation message and never enters agent context. This
+runs from every ledger write (`UsageLedger.record`), across all channels — not
+just `chat`.
 
 Managed from the dashboard's "Budgets" section (progress bars; add/delete
 form for admins) or directly via actions: `budget_list` (everyone — non-

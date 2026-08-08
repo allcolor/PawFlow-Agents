@@ -1,9 +1,8 @@
 """Tests for core.handlers.push_notification.PushNotificationHandler.
 
 Pawflow replacement for the Claude Code built-in `PushNotification`:
-persists the notification via ConversationWriter (so history replays it)
-and publishes a `notification` SSE event (so every live webchat client
-sees the bell + toast).
+publishes one runtime-only `notification` SSE event so every live webchat
+client sees the bell, toast, and in-memory notification-center entry.
 """
 
 import unittest
@@ -41,46 +40,35 @@ class TestPushNotificationHandler(unittest.TestCase):
         assert res.startswith("Error:")
         assert "conversation" in res.lower()
 
-    def test_execute_persists_and_publishes(self):
-        captured = {}
-        def _fake_enqueue(self_w, msg, agent_name="", user_id="",
-                         ttl=None, sse_events=None, wait=False):
-            captured["msg"] = msg
-            captured["agent"] = agent_name
-            captured["user"] = user_id
-            captured["sse"] = sse_events
+    def test_execute_publishes_without_persisting(self):
+        captured = []
 
-        with patch("core.conversation_writer.ConversationWriter.enqueue_message",
-                   _fake_enqueue):
+        def _fake_publish(_bus, conversation_id, event_type, data=None):
+            captured.append((conversation_id, event_type, data))
+
+        with patch(
+            "core.conversation_event_bus.ConversationEventBus.publish_event",
+            _fake_publish,
+        ), patch(
+            "core.conversation_writer.ConversationWriter.enqueue_message",
+            side_effect=AssertionError("notification must not be persisted"),
+        ):
             res = self.h.execute({"message": "build failed: 2 tests",
                                    "status": "proactive"})
 
         assert res.startswith("Notification delivered")
-        msg = captured["msg"]
-        assert msg["role"] == "user"
-        assert msg["content"] == "build failed: 2 tests"
-        assert msg["source"]["type"] == "system"
-        assert msg["source"]["name"] == "notification"
-        assert msg["source"]["agent"] == "qwen"
-        assert msg["source"]["status"] == "proactive"
-        assert captured["agent"] == "qwen"
-        assert captured["user"] == "alice"
-        # Two SSE events: new_message (renders the row) + notification
-        # (transient bell/toast/browser-notif).
-        assert len(captured["sse"]) == 2
-        types = [e["type"] for e in captured["sse"]]
-        assert types == ["new_message", "notification"]
-        nm_evt, notif_evt = captured["sse"]
-        assert nm_evt["data"]["role"] == "user"
-        assert nm_evt["data"]["content"] == "build failed: 2 tests"
-        assert nm_evt["data"]["source"]["name"] == "notification"
-        assert notif_evt["cid"] == "conv-abc"
-        assert notif_evt["data"]["content"] == "build failed: 2 tests"
-        assert notif_evt["data"]["agent"] == "qwen"
+        assert len(captured) == 1
+        conversation_id, event_type, data = captured[0]
+        assert conversation_id == "conv-abc"
+        assert event_type == "notification"
+        assert data["content"] == "build failed: 2 tests"
+        assert data["agent"] == "qwen"
+        assert data["status"] == "proactive"
+        assert data["msg_id"]
 
     def test_message_truncated_past_200_chars(self):
         long = "x" * 500
-        with patch("core.conversation_writer.ConversationWriter.enqueue_message",
+        with patch("core.conversation_event_bus.ConversationEventBus.publish_event",
                    lambda *a, **kw: None):
             res = self.h.execute({"message": long, "status": "proactive"})
         # Message is silently truncated, the call succeeds
@@ -88,26 +76,26 @@ class TestPushNotificationHandler(unittest.TestCase):
         # Execute again — the second call should still be within 200 chars
         PushNotificationHandler._last_fire.clear()  # skip cooldown
         captured = {}
-        def _cap(self_w, msg, **kw):
-            captured["msg"] = msg
-        with patch("core.conversation_writer.ConversationWriter.enqueue_message", _cap):
+        def _cap(_bus, _cid, _event_type, data=None):
+            captured["data"] = data
+        with patch("core.conversation_event_bus.ConversationEventBus.publish_event", _cap):
             self.h.execute({"message": long, "status": "proactive"})
-        assert len(captured["msg"]["content"]) <= 200
+        assert len(captured["data"]["content"]) <= 200
 
     def test_newlines_stripped_from_message(self):
         captured = {}
-        def _cap(self_w, msg, **kw):
-            captured["msg"] = msg
-        with patch("core.conversation_writer.ConversationWriter.enqueue_message", _cap):
+        def _cap(_bus, _cid, _event_type, data=None):
+            captured["data"] = data
+        with patch("core.conversation_event_bus.ConversationEventBus.publish_event", _cap):
             self.h.execute({"message": "line1\nline2\rline3",
                              "status": "proactive"})
-        assert "\n" not in captured["msg"]["content"]
-        assert "\r" not in captured["msg"]["content"]
-        assert "line1" in captured["msg"]["content"]
-        assert "line3" in captured["msg"]["content"]
+        assert "\n" not in captured["data"]["content"]
+        assert "\r" not in captured["data"]["content"]
+        assert "line1" in captured["data"]["content"]
+        assert "line3" in captured["data"]["content"]
 
     def test_rate_limit_blocks_rapid_fire(self):
-        with patch("core.conversation_writer.ConversationWriter.enqueue_message",
+        with patch("core.conversation_event_bus.ConversationEventBus.publish_event",
                    lambda *a, **kw: None):
             r1 = self.h.execute({"message": "a", "status": "proactive"})
             r2 = self.h.execute({"message": "b", "status": "proactive"})
@@ -120,7 +108,7 @@ class TestPushNotificationHandler(unittest.TestCase):
         h2 = PushNotificationHandler()
         h2.set_conversation_id("conv-xyz")  # different conv
         h2.set_agent_name("qwen")
-        with patch("core.conversation_writer.ConversationWriter.enqueue_message",
+        with patch("core.conversation_event_bus.ConversationEventBus.publish_event",
                    lambda *a, **kw: None):
             r1 = self.h.execute({"message": "a", "status": "proactive"})
             r2 = h2.execute({"message": "b", "status": "proactive"})
@@ -128,7 +116,7 @@ class TestPushNotificationHandler(unittest.TestCase):
         assert r2.startswith("Notification delivered")
 
     def test_rate_limit_clears_after_window(self):
-        with patch("core.conversation_writer.ConversationWriter.enqueue_message",
+        with patch("core.conversation_event_bus.ConversationEventBus.publish_event",
                    lambda *a, **kw: None):
             self.h.execute({"message": "a", "status": "proactive"})
             # Fake time jump past the 5s window

@@ -73,36 +73,15 @@ function _sseWireA() {
     }
   });
 
-  // ── Proactive notifications (PushNotification MCP tool) ──────────
-  // The backend publishes TWO events per notification:
-  //   - `new_message` — already handled above, renders the bell row.
-  //   - `notification` — handled here, transient side-channel: bell
-  //     sound, toast banner, tab-title flash, browser Notification API
-  //     when the tab is backgrounded.
-  // Rate-limiting lives server-side; we fire every event we receive.
+  // ── Proactive notifications and runtime alerts ─────────────────
+  // One event name is shared by proactive agent notifications
+  // (content/agent/status) and runtime alerts (message/urgency). Keep one
+  // normalizer so either payload produces exactly one runtime entry and toast.
   eventSource.addEventListener('notification', (e) => {
     lastSSEActivity = Date.now();
     let data = {};
     try { data = e.data ? JSON.parse(e.data) : {}; } catch (_err) { return; }
-    const message = data.content || '';
-    const fromAgent = data.agent || 'assistant';
-    if (!message) return;
-    if (!isNotificationsMuted()) {
-      try { playNotificationBell(); } catch (_err) { /* no AudioContext in old browsers */ }
-    }
-    showNotificationToast(fromAgent, message);
-    flashTabTitle('🔔 ' + fromAgent + ': ' + message.slice(0, 40));
-    if (document.hidden && typeof Notification !== 'undefined'
-        && Notification.permission === 'granted') {
-      try {
-        const n = new Notification(fromAgent + ' → you', {
-          body: message,
-          tag: 'pawflow-notif-' + (_sseCid || ''),
-          silent: isNotificationsMuted(),
-        });
-        n.onclick = () => { window.focus(); n.close(); };
-      } catch (_err) { /* Notification quota or API unavailable */ }
-    }
+    handleSseNotification(data);
   });
 
   eventSource.addEventListener('service_install_progress', (e) => {
@@ -755,11 +734,9 @@ function _sseWireA() {
         const afterMb = data.size_after !== undefined ? (data.size_after / 1048576).toFixed(1) : '?';
         const beforeCommits = data.commits_before !== undefined ? data.commits_before : '?';
         const afterCommits = data.commits_after !== undefined ? data.commits_after : '?';
-        const pruneEl = addMsg('system', 'Git history pruned: ' + beforeCommits + ' -> ' + afterCommits + ' commits, ' + beforeMb + ' MB -> ' + afterMb + ' MB.');
-        // Born of compact_progress, not of a message event -- which is how it
-        // escaped the simplified view and sat at top level, outside every
-        // block, for the rest of the conversation.
-        if (typeof turnViewIngest === 'function') turnViewIngest('system', {}, pruneEl);
+        addMsg('system', 'Git history pruned: ' + beforeCommits + ' -> ' + afterCommits + ' commits, ' + beforeMb + ' MB -> ' + afterMb + ' MB.', {
+          level: 'success', key: 'context-operation',
+        });
         return;
       }
       const agent = data.agent || 'shared';
@@ -783,15 +760,12 @@ function _sseWireA() {
       const tokAfter = data.tokens_after !== undefined ? data.tokens_after : '?';
       const tokTarget = data.target_tokens !== undefined ? data.target_tokens : null;
       const tokenText = tokTarget !== null ? (tokAfter + '/' + tokTarget) : tokAfter;
-      const compactEl = addMsg('system', t('contextCompactedStatus', {
+      addMsg('system', t('contextCompactedStatus', {
         agent: agent,
         before: total,
         after: after,
         tokens: tokenText,
-      }));
-      if (typeof turnViewIngest === 'function') {
-        turnViewIngest('system', { agent: agent }, compactEl);
-      }
+      }), { level: 'success', key: 'context-operation', agent: agent });
     } else if (data.stage === 'error') {
       hideContextOp();
       addMsg('error', t('contextOperationFailed', { error: data.error }));

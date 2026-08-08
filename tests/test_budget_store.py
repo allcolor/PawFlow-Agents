@@ -9,8 +9,8 @@ import pytest
 
 from core import FlowFile
 from core.budget_store import (
-    BudgetStore, BudgetExceededError, current_spend, period_bounds,
-    enforce_pre_turn, check_and_notify,
+    Budget, BudgetStore, BudgetExceededError, current_spend, period_bounds,
+    enforce_pre_turn, check_and_notify, _notify,
 )
 from core.usage_ledger import UsageLedger
 
@@ -223,22 +223,38 @@ class TestCheckAndNotify:
     def test_no_conversation_id_logs_only(self, store, monkeypatch):
         store.create(scope_type="user", scope_value="alice", period="daily",
                     limit_usd=10, policy="warn", created_by="admin")
-        writer_calls = []
-
-        class _FakeWriter:
-            def enqueue_message(self, *a, **k):
-                writer_calls.append((a, k))
-
-        class _FakeCW:
-            @staticmethod
-            def for_conversation(cid):
-                return _FakeWriter()
-        monkeypatch.setitem(
-            __import__("sys").modules, "core.conversation_writer",
-            type("m", (), {"ConversationWriter": _FakeCW}))
+        events = []
+        monkeypatch.setattr(
+            "core.conversation_event_bus.ConversationEventBus.publish_event",
+            lambda *args, **kwargs: events.append((args, kwargs)),
+        )
         check_and_notify(_FakeLedger(cost_usd=6), user_id="alice",
                          conversation_id="")
-        assert writer_calls == []
+        assert events == []
+
+    def test_threshold_delivery_is_runtime_only(self, monkeypatch):
+        budget = Budget(
+            id="budget-1", scope_type="user", scope_value="alice",
+            period="daily", limit_usd=10, policy="warn",
+        )
+        events = []
+
+        def _capture(_bus, cid, event_type, data=None):
+            events.append((cid, event_type, data))
+
+        monkeypatch.setattr(
+            "core.conversation_event_bus.ConversationEventBus.publish_event",
+            _capture,
+        )
+        _notify(budget, 8.0, 80, "conv-1", "assistant")
+
+        assert [event_type for _, event_type, _ in events] == [
+            "notification", "budget.updated",
+        ]
+        assert events[0][0] == "conv-1"
+        assert events[0][2]["content"].startswith("Budget alert:")
+        assert events[0][2]["agent"] == "assistant"
+        assert events[1][2]["pct"] == 80
 
 
 class TestCurrentSpend:

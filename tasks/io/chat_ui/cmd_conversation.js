@@ -287,8 +287,12 @@ function cmdDiff(text, parts) {
         if (l.startsWith('@@')) return '<span class="diff-hunk">' + escapeHtml(l) + '</span>';
         return '<span class="diff-ctx">' + escapeHtml(l) + '</span>';
       }).join('\n');
-      const el = addMsg('system', '');
-      el.innerHTML = '<pre class="diff">' + html + '</pre>';
+      showUiNotification('Conversation diff', {
+        title: 'Conversation diff',
+        detailHtml: '<pre class="diff">' + html + '</pre>',
+        openCenter: true,
+        toast: false,
+      });
     });
   return true;
 }

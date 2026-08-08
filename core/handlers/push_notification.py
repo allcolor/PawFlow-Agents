@@ -3,13 +3,13 @@ built-in `PushNotification`.
 
 Claude Code's built-in sends an OS desktop/mobile push (requires its own
 notification infra). In pawflow every client watches the same conversation
-over SSE, so a 'notification' is simply a specially-tagged message published
-on the conversation bus:
+over SSE, so a notification is a runtime event on the conversation bus:
 
-  - ConversationWriter persists it (row visible in transcript on reload)
   - SSE event `notification` fires on all connected webchat clients
-  - Front-end plays a bell sound, shows a toast, flashes the tab title,
-    and calls the browser Notification API when the tab is backgrounded.
+  - Front-end accumulates it in the tab-local notification center, plays a
+    bell, shows a toast, flashes the tab title, and calls the browser
+    Notification API when the tab is backgrounded
+  - Nothing is written to the transcript or agent context.
 
 Rate-limit: one notification per (conv, agent) per 5s. A buggy agent that
 loops on PushNotification cannot flood the webchat.
@@ -132,61 +132,21 @@ class PushNotificationHandler(ToolHandler):
                 )
             self._last_fire[rl_key] = now
 
-        # Persist + publish via the conversation writer so every connected
-        # client receives it and history replays it on reload. Role = user,
-        # source.type = system / name = notification — the renderer branches
-        # on this tag to produce the bell row.
-        from core.conversation_writer import ConversationWriter
-        from core.llm_client import stamp_message
-
+        # Runtime-only delivery: notifications must not become fake user
+        # messages or enter the LLM context. The event bus fans the event out
+        # to every live client; each browser tab owns its in-memory history.
+        from core.conversation_event_bus import ConversationEventBus
         msg_id = uuid.uuid4().hex[:12]
-        stamped = stamp_message({
-            "role": "user",
-            "content": message,
-            "msg_id": msg_id,
-            "source": {
-                "type": "system",
-                "name": "notification",
-                "agent": self._agent_name or "",
-                "status": status,
-            },
-        }, self._conversation_id)
-
-        # Two SSE events per notification, same post-write sequence:
-        #   1. new_message — renders the bell row in the transcript (with
-        #      source.name == 'notification', messages.js picks the right
-        #      render branch).
-        #   2. notification — triggers the *transient* attention signals
-        #      (bell sound, toast, browser notification, tab flash). No
-        #      DOM message payload here; pure side-channel.
-        new_message_evt = {
-            "type": "new_message",
-            "cid": self._conversation_id,
-            "data": {
-                "role": "user",
-                "content": message,
-                "msg_id": msg_id,
-                "source": stamped["source"],
-            },
-        }
-        notification_evt = {
-            "type": "notification",
-            "cid": self._conversation_id,
-            "data": {
+        ConversationEventBus.instance().publish_event(
+            self._conversation_id,
+            "notification",
+            {
                 "msg_id": msg_id,
                 "content": message,
                 "agent": self._agent_name or "",
                 "status": status,
                 "ts": time.time(),
             },
-        }
-
-        writer = ConversationWriter.for_conversation(self._conversation_id)
-        writer.enqueue_message(
-            stamped,
-            agent_name=self._agent_name or "",
-            user_id=self._user_id or "",
-            sse_events=[new_message_evt, notification_evt],
         )
 
         logger.info(

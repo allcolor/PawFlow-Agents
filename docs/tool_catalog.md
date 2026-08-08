@@ -355,7 +355,7 @@ someone else.
 | `ExitPlanMode` | Exit plan mode. |
 | `ask_user` | Ask the user a blocking question. |
 | `notify_user` | Notify the user. |
-| `PushNotification` | Send a push notification event. |
+| `PushNotification` | Send a runtime-only notification event. Web clients accumulate it in their tab-local notification center; it is not persisted in the transcript or agent context. |
 | `ScheduleWakeup` | Schedule an agent wakeup. |
 | `schedule_continuation` | Persist a delayed continuation wake-up for the current conversation. |
 | `read_parent_context` | Read parent task/agent context. |

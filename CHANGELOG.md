@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.150] — 2026-08-08
+
+### Added
+
+- The web chat now presents transient runtime notifications as temporary toasts
+  outside the transcript, with an unread badge and an in-memory notification
+  center in the header. The center supports details, clearing, responsive
+  layouts, reduced-motion preferences, and English, French, and Spanish
+  translations.
+
+### Changed
+
+- Compaction, terminal, desktop, help, UI error, service-install, proactive
+  agent, and budget notices now use the runtime notification channel instead of
+  creating chat rows. Proactive and budget notifications are SSE-only and no
+  longer persist messages or enter the LLM context.
+- Notification SSE handling is normalized through a single listener, including
+  keyed in-place updates for progress events.
+
 ## [1.0.0-beta.149] — 2026-08-08
 
 ### Fixed

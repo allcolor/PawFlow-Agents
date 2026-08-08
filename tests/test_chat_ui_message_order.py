@@ -74,9 +74,12 @@ def test_chat_bootstrap_auto_resumes_first_conversation_after_login():
     assert CONVERSATIONS_JS.index("action$('load_history', { conversation_id: cid") < CONVERSATIONS_JS.index("connectSSE(cid")
 
 
-def test_notification_rows_use_same_ordering_path():
-    assert "const notifSortTs = _messageSortTs(extra);" in MESSAGES_JS
-    assert "_insertMessageChronologically(notifContainer, notifEl, notifSortTs, _hasRealSortTs(extra));" in MESSAGES_JS
+def test_notifications_do_not_enter_message_ordering():
+    assert "extra.source.name === 'notification'" in MESSAGES_JS
+    assert "const _runtimeNotice = (role === 'system' || role === 'error')" in MESSAGES_JS
+    assert "return showUiNotification(text" in MESSAGES_JS
+    assert "notifSortTs" not in MESSAGES_JS
+    assert "notification-row" not in MESSAGES_JS
 
 
 def test_chronological_insert_never_compares_across_clock_domains():

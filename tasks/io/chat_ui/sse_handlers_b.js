@@ -653,6 +653,7 @@ function _sseWireB() {
   eventSource.addEventListener('theme', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    if (data.conversation_id && data.conversation_id !== conversationId) return;
     if (typeof applyThemeCss === 'function') applyThemeCss(data.css || '');
   });
 

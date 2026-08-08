@@ -272,6 +272,11 @@ function _sseWireA() {
   // Per-message metadata: attaches model/tokens to the correct element by msg_id
   eventSource.addEventListener('message_meta', (e) => {
     const data = JSON.parse(e.data);
+    const liveProvider = data.provider || (data.source && data.source.provider) || '';
+    if (data.agent_name && liveProvider
+        && typeof trackAgentProviderLive === 'function') {
+      trackAgentProviderLive(data.agent_name, liveProvider, data.task_id || '');
+    }
     // Single update path — setContextUsage enforces the monotonic
     // invariants (no demote-to-zero, no decrease without compact) and
     // mirrors the value to both `_contextUsage` (header / Resource

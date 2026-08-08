@@ -153,10 +153,18 @@ function trackAgentStart(agentName, msgPreview, taskId) {
     ccReuseCount: existing.ccReuseCount || 0,
     ccLivedSeconds: existing.ccLivedSeconds || 0,
     ccIdleSeconds: existing.ccIdleSeconds || 0,
+    cciLive: !!existing.cciLive,
+    cciReuseCount: existing.cciReuseCount || 0,
+    cciLivedSeconds: existing.cciLivedSeconds || 0,
+    cciIdleSeconds: existing.cciIdleSeconds || 0,
     codexLive: !!existing.codexLive,
     codexReuseCount: existing.codexReuseCount || 0,
     codexLivedSeconds: existing.codexLivedSeconds || 0,
     codexIdleSeconds: existing.codexIdleSeconds || 0,
+    codexInteractiveLive: !!existing.codexInteractiveLive,
+    codexInteractiveReuseCount: existing.codexInteractiveReuseCount || 0,
+    codexInteractiveLivedSeconds: existing.codexInteractiveLivedSeconds || 0,
+    codexInteractiveIdleSeconds: existing.codexInteractiveIdleSeconds || 0,
     geminiLive: !!existing.geminiLive,
     geminiReuseCount: existing.geminiReuseCount || 0,
     geminiLivedSeconds: existing.geminiLivedSeconds || 0,
@@ -168,6 +176,25 @@ function trackAgentStart(agentName, msgPreview, taskId) {
   }
   updateActivePanel();
 }
+
+function trackAgentProviderLive(agentName, provider, taskId) {
+  const key = activeAgentKey(agentName, taskId || '');
+  if (!key || !provider) return;
+  if (!activeInteractions[key]) trackAgentStart(agentName, '', taskId || '');
+  const fieldByProvider = {
+    'claude-code': 'ccLive',
+    'claude-code-interactive': 'cciLive',
+    'codex-app-server': 'codexLive',
+    'codex-interactive': 'codexInteractiveLive',
+    'gemini': 'geminiLive',
+  };
+  const field = fieldByProvider[provider];
+  if (!field) return;
+  activeInteractions[key][field] = true;
+  activeInteractions[key].updatedAt = Date.now();
+  updateActivePanel();
+}
+
 function trackAgentTool(agentName, toolName, taskId) {
   const key = activeAgentKey(agentName, taskId || '');
   if (!key) return;

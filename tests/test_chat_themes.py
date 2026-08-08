@@ -3,6 +3,8 @@
 import base64
 import io
 import json
+import shutil
+import subprocess
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -56,6 +58,18 @@ def test_conversation_theme_is_server_backed_across_browsers():
     assert "conversation_override: !!conversationOverride" in THEMES_JS
     assert "applyThemeRef(value || _themeGetGlobalRef(), true, !!value)" in THEMES_JS
     assert "CONV_THEME_COOKIE" not in THEMES_JS
+
+
+@pytest.mark.skipif(shutil.which("node") is None,
+                    reason="node is not available to run the JS suite")
+def test_conversation_theme_ignores_stale_mobile_response():
+    """A late response for the previous conversation must not replace CSS."""
+    spec = Path("tests/js/theme_conversation_spec.js")
+    proc = subprocess.run(
+        ["node", str(spec)], capture_output=True, text=True,
+        cwd=str(Path(__file__).resolve().parents[1]), timeout=30)
+    assert proc.returncode == 0, (
+        "JS suite failed:\n" + proc.stdout + proc.stderr)
 
 
 def _write_theme(scope, name, css="", title="", user_id="u1", conversation_id=""):

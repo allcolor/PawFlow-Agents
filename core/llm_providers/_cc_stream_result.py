@@ -245,8 +245,18 @@ class _CCStreamResultMixin:
             # same way the Codex interactive provider records its rollout
             # token_count, so compute_context_usage can use it as the
             # measured occupancy.
-            self.record_observed_cli_context(
-                _cw_key[0], _cw_key[1], _total_in)
+            # Partial stream events already recorded the richer exact
+            # input+cache+output occupancy. Do not overwrite it with
+            # result.usage, whose input side may omit cache fields.
+            # Older CLI versions without partial usage still get one exact
+            # terminal observation here.
+            if not st._latest_usage:
+                self.record_observed_cli_context(
+                    _cw_key[0], _cw_key[1], _total_in + _total_out)
+                self.publish_observed_context_usage(
+                    _cw_key[0], _cw_key[1], user_id=st.user_id,
+                    event_cid=st._event_cid,
+                    source="claude_code_native_result_usage")
             self._ccs_pub(st, "message_meta", {
                 "msg_id": _last_msg_id,
                 "agent_name": st.agent_name,

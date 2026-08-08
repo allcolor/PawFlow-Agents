@@ -61,13 +61,17 @@ function seedWarmGauge(updatedAt) {
 }
 
 seedWarmGauge(1);
+trackAgentStart('assistant');
 eventSource.emit('message_meta', {
   conversation_id: 'conv', agent_name: 'assistant',
   context_used: 0, context_max: 1000, context_pct: 0,
   cli_context_state: 'cold', updated_at: 2,
+  source: {provider: 'codex-interactive'},
 });
 assert.strictEqual(window._contextUsage.assistant.used, 0,
   'message_meta must carry cold CLI authority into setContextUsage');
+assert.strictEqual(activeInteractions.assistant.codexInteractiveLive, true,
+  'message_meta must show Codex Interactive LIVE before the 10s poll');
 
 seedWarmGauge(3);
 eventSource.emit('done', {

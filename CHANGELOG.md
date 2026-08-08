@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.149] — 2026-08-08
+
+### Fixed
+
+- Claude Code `cc -p` now updates the context gauge from exact native
+  `input_tokens + cache_read_input_tokens + cache_creation_input_tokens +
+  output_tokens` observations during the partial stream. Terminal usage cannot
+  overwrite a richer cache-inclusive measurement, and no text-length estimate
+  is used.
+- Codex Interactive's `LIVE` badge appears as soon as provider metadata reaches
+  the browser and remains stable when an incrementally prepared active context
+  is merged into the active-turn row.
+- Conversation theme responses and SSE events are scoped to the conversation
+  that requested them, preventing a late mobile response from replacing the
+  theme of the newly selected conversation.
+
 ## [1.0.0-beta.148] — 2026-08-08
 
 ### Fixed

@@ -15,6 +15,35 @@ logger = logging.getLogger(__name__)
 
 class _CCStreamLoopMixin:
     """Claude Code streaming dispatch loop + reader/watchdog daemons."""
+
+    def _ccs_record_native_usage(self, st, usage, *, reset: bool) -> None:
+        """Record and publish one exact Claude stream usage observation.
+
+        message_start carries the complete input side (including cache
+        reads/creation), while message_delta adds the cumulative output
+        count. Merge both native payloads so the context gauge tracks the
+        provider's exact in+out occupancy without estimating streamed text.
+        """
+        if not isinstance(usage, dict):
+            return
+        merged = {} if reset else dict(st._latest_usage or {})
+        merged.update(usage)
+        st._latest_usage = merged
+        total = 0
+        for field in (
+                "input_tokens", "cache_read_input_tokens",
+                "cache_creation_input_tokens", "output_tokens"):
+            try:
+                total += int(merged.get(field, 0) or 0)
+            except (TypeError, ValueError):
+                continue
+        if total <= 0:
+            return
+        self.record_observed_cli_context(st.conv_id, st.agent_name, total)
+        self.publish_observed_context_usage(
+            st.conv_id, st.agent_name, user_id=st.user_id,
+            event_cid=st._event_cid, source="claude_code_native_usage")
+
     def _ccs_dispatch_loop(self, st):
         while True:
             event = st._event_q.get()
@@ -39,13 +68,22 @@ class _CCStreamLoopMixin:
                         st._partial_current_msg_id = message_id
                     usage = message.get("usage")
                     if isinstance(usage, dict) and usage != st._latest_usage:
-                        st._latest_usage = dict(usage)
                         try:
-                            self.record_observed_wire_usage(
-                                usage, st.conv_id, st.agent_name)
+                            self._ccs_record_native_usage(
+                                st, usage, reset=True)
                         except Exception:
                             logger.debug(
                                 "[cc-stream] message_start usage record failed",
+                                exc_info=True)
+                elif payload_type == "message_delta":
+                    usage = payload.get("usage")
+                    if isinstance(usage, dict):
+                        try:
+                            self._ccs_record_native_usage(
+                                st, usage, reset=False)
+                        except Exception:
+                            logger.debug(
+                                "[cc-stream] message_delta usage record failed",
                                 exc_info=True)
                 elif payload_type == "content_block_delta":
                     delta = payload.get("delta") or {}
@@ -191,10 +229,11 @@ class _CCStreamLoopMixin:
                 # cost/result metadata.
                 _u = msg.get("usage")
                 if isinstance(_u, dict) and _u != st._latest_usage:
-                    st._latest_usage = _u
                     try:
-                        self.record_observed_wire_usage(
-                            _u, st.conv_id, st.agent_name)
+                        self._ccs_record_native_usage(
+                            st, _u, reset=not bool(
+                                msg_id
+                                and msg_id == st._partial_current_msg_id))
                     except Exception:
                         logger.debug(
                             "[cc-stream] live usage record failed", exc_info=True)

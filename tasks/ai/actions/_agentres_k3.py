@@ -455,6 +455,7 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                 try:
                     from core.conversation_event_bus import ConversationEventBus
                     ConversationEventBus.instance().publish_event(conv_id, "theme", {
+                        "conversation_id": conv_id,
                         "css": css,
                         "theme_ref": theme.get("ref", ref),
                     })

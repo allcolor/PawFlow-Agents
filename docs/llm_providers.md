@@ -60,6 +60,14 @@ provider measurements are authoritative. The local fallback counts the serialize
 PawFlow messages and never adds a tool result that reads `initial_context.md`,
 because that result is a second representation of those same messages.
 
+The non-interactive `claude-code` provider requests Claude Code partial stream
+events and updates its gauge only from native usage. `message_start` supplies
+the exact input side, including cache reads and cache creation, and
+`message_delta` supplies cumulative output tokens. PawFlow publishes their sum
+immediately and never estimates missing live output from text length. A terminal
+`result` is used only as a compatibility fallback when no partial usage was
+observed, so a cache-poor result cannot overwrite the richer live measurement.
+
 The read call and its result stay in the transcript, but every CLI serializer,
 compaction input, and local gauge drops the pair. Otherwise the next
 `initial_context.md` embeds a verbatim copy of the file the agent is already

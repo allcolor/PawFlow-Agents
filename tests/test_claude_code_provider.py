@@ -341,14 +341,11 @@ class TestStreamClaude(unittest.TestCase):
             self.assertEqual(tokens, ["Hello ", "world!"])
             # turn_callback receives the full turn text
             self.assertEqual(turns, ["Hello world!"])
-            # The provider's own prompt size (usage.input_tokens of the result
-            # event) must be recorded for the central gauge. Regression: it
-            # was not, so the claude-code gauge started at 0 and only grew by
-            # the delta of each appended message (used=13, 26, 52...) instead
-            # of the session's true occupancy.
+            # Without partial events, the terminal provider usage still records
+            # the exact input + output occupancy for the central gauge.
             self.assertEqual(
                 self.client._cli_observed_context_tokens_by_stream.get(
-                    ("test-conv", "test-agent")), 10)
+                    ("test-conv", "test-agent")), 15)
 
     def test_assistant_event_records_live_usage(self):
         """An assistant event carrying usage records it live for the gauge --
@@ -376,17 +373,14 @@ class TestStreamClaude(unittest.TestCase):
         recorded = []
         with patch.object(self.client, '_pool_popen',
                           return_value=(mock_proc, None)), \
-             patch.object(self.client, 'record_observed_wire_usage',
-                          side_effect=lambda u, c, a: recorded.append(u)):
+             patch.object(self.client, 'record_observed_cli_context',
+                          side_effect=lambda c, a, n: recorded.append(n)):
             self.client.complete_stream(
                 [LLMMessage(role="user", content="Hi", conversation_id="test_conv")])
-        # The assistant event's prompt usage (input + cache_read +
-        # cache_creation) was recorded live for the gauge, before `result`.
-        self.assertTrue(
-            any(u.get("input_tokens") == 6_000
-                and u.get("cache_read_input_tokens") == 12_000
-                and u.get("cache_creation_input_tokens") == 2_000
-                for u in recorded),
+        # The assistant event's exact input + cache + output occupancy was
+        # recorded live for the gauge, before result.
+        self.assertIn(
+            20_100, recorded,
             "assistant event usage was not recorded live: %r" % (recorded,))
 
     def test_partial_stream_events_drive_live_callbacks_without_replay(self):
@@ -422,8 +416,8 @@ class TestStreamClaude(unittest.TestCase):
         recorded = []
         with patch.object(self.client, "_pool_popen",
                           return_value=(mock_proc, None)), \
-             patch.object(self.client, "record_observed_wire_usage",
-                          side_effect=lambda u, c, a: recorded.append(dict(u))):
+             patch.object(self.client, "record_observed_cli_context",
+                          side_effect=lambda c, a, n: recorded.append(n)):
             self.client.complete_stream(
                 [LLMMessage(role="user", content="Hi",
                             conversation_id="test_conv")],
@@ -437,7 +431,60 @@ class TestStreamClaude(unittest.TestCase):
         self.assertEqual(
             [payload["text"] for kind, payload in persisted if kind == "text"],
             ["Hello world"])
-        self.assertTrue(any(item.get("input_tokens") == 123 for item in recorded))
+        self.assertIn(123, recorded)
+
+    def test_partial_usage_publishes_exact_input_and_output_live(self):
+        events = [
+            json.dumps({"type": "stream_event", "event": {
+                "type": "message_start", "message": {
+                    "id": "m-usage",
+                    "usage": {
+                        "input_tokens": 1_200,
+                        "cache_read_input_tokens": 8_000,
+                        "cache_creation_input_tokens": 300,
+                        "output_tokens": 0,
+                    }}}}),
+            json.dumps({"type": "stream_event", "event": {
+                "type": "content_block_delta", "index": 0,
+                "delta": {"type": "text_delta", "text": "Hello"}}}),
+            json.dumps({"type": "stream_event", "event": {
+                "type": "message_delta",
+                "usage": {"output_tokens": 37}}}),
+            json.dumps({"type": "assistant", "message": {
+                "id": "m-usage",
+                "usage": {
+                    "input_tokens": 1_200,
+                    "cache_read_input_tokens": 8_000,
+                    "cache_creation_input_tokens": 300,
+                },
+                "content": [{"type": "text", "text": "Hello"}]}}),
+            json.dumps({"type": "result", "result": "", "model": "sonnet",
+                        "usage": {"input_tokens": 1_200, "output_tokens": 37}}),
+        ]
+        mock_stdout = MagicMock()
+        mock_stdout.__iter__ = MagicMock(
+            return_value=iter([line + "\n" for line in events]))
+        mock_proc = MagicMock(stdout=mock_stdout, returncode=0)
+        observed = []
+        published = []
+        with patch.object(self.client, "_pool_popen",
+                          return_value=(mock_proc, None)), \
+             patch.object(
+                 self.client, "record_observed_cli_context",
+                 side_effect=lambda c, a, n: observed.append(n)), \
+             patch.object(
+                 self.client, "publish_observed_context_usage",
+                 side_effect=lambda c, a, **kw: published.append((c, a, kw))):
+            self.client.complete_stream(
+                [LLMMessage(role="user", content="Hi",
+                            conversation_id="test_conv")])
+
+        self.assertIn(9_500, observed)
+        self.assertIn(9_537, observed)
+        self.assertEqual(observed[-1], 9_537)
+        self.assertGreaterEqual(len(published), 2)
+        self.assertTrue(all(item[0:2] == ("test-conv", "test-agent")
+                            for item in published))
 
     def test_claude_command_requests_partial_messages(self):
         cmd = self.client._build_claude_cmd("sonnet")

@@ -237,19 +237,26 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                     # Extract task_id from key pattern conv::task::t_xxx:agent
                     _task_id = _task_id_from_key(_k)
                     _aname = ctx.get("active_agent_name", "")
-                    _row = {
+                    _key = _row_key(_k, _aname, _task_id)
+                    _row = dict(active_by_key.get(_key, {}))
+                    _row.update({
                         "agent_name": _aname,
                         "task_id": _task_id,
-                        "iteration": ctx.get("_iteration", 0),
-                        "round": ctx.get("_round", 0),
-                        "max_rounds": ctx.get("max_rounds", 0),
-                        "last_tool": ctx.get("_last_tool", ""),
-                        "duration_s": _time.time() - _started if _started else 0,
-                    }
+                        "iteration": ctx.get(
+                            "_iteration", _row.get("iteration", 0)),
+                        "round": ctx.get("_round", _row.get("round", 0)),
+                        "max_rounds": ctx.get(
+                            "max_rounds", _row.get("max_rounds", 0)),
+                        "last_tool": ctx.get(
+                            "_last_tool", _row.get("last_tool", "")),
+                        "duration_s": (
+                            _time.time() - _started if _started
+                            else _row.get("duration_s", 0)),
+                    })
                     _provider = ctx.get("active_llm_provider", "")
                     if _provider:
                         _row["active_llm_provider"] = _provider
-                    active_by_key[_row_key(_k, _aname, _task_id)] = _row
+                    active_by_key[_key] = _row
             active.extend(active_by_key.values())
         # The active turn owns the primary LIVE truth. Registry telemetry is
         # supplemental: a cold CLI process has reuse_count=0 but is still live

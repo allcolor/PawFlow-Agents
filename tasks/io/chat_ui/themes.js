@@ -4,6 +4,7 @@ const THEME_COOKIE = 'pawflow_theme_ref';
 const DEFAULT_THEME_REF = 'global:pawflow_dark';
 
 let _themeLoadSeq = 0;
+let _themeApplySeq = 0;
 let _activeThemeRef = window.PAWFLOW_INITIAL_THEME_REF || '';
 let _activeThemeContext = '';
 
@@ -51,6 +52,7 @@ function _themeValidRef(ref, refs, fallback) {
 
 async function loadThemeSelector() {
   const seq = ++_themeLoadSeq;
+  const requestedConversationId = conversationId || '';
   const globalSel = document.getElementById('themeSelect');
   const convSel = document.getElementById('conversationThemeSelect');
   const globalControl = document.getElementById('themeSelectControl');
@@ -58,9 +60,9 @@ async function loadThemeSelector() {
 
   try {
     const data = await rxjs.firstValueFrom(action$('list_chat_themes', {
-      conversation_id: conversationId || '',
+      conversation_id: requestedConversationId,
     }));
-    if (seq !== _themeLoadSeq) return;
+    if (seq !== _themeLoadSeq || requestedConversationId !== (conversationId || '')) return;
     if (data.error) { addMsg('error', data.error); return; }
 
     const themes = data.themes || [];
@@ -72,7 +74,7 @@ async function loadThemeSelector() {
     let globalRef = _themeValidRef(_themeGetGlobalRef(), globalRefs, DEFAULT_THEME_REF);
     if (globalRef !== _themeGetGlobalRef()) _themeSetGlobalRef(globalRef);
 
-    let convRef = conversationId && typeof data.conversation_theme_ref === 'string'
+    let convRef = requestedConversationId && typeof data.conversation_theme_ref === 'string'
       ? data.conversation_theme_ref : '';
     if (convRef && !allRefs.has(convRef)) {
       convRef = '';
@@ -89,28 +91,33 @@ async function loadThemeSelector() {
       convSel.innerHTML = '<option value="">' + escapeHtml(t('useGlobalTheme')) + '</option>'
         + themes.map(_themeOption).join('');
       convSel.value = convRef || '';
-      convSel.style.display = conversationId ? '' : 'none';
+      convSel.style.display = requestedConversationId ? '' : 'none';
       const label = document.getElementById('convThemeLabel');
-      if (label) label.style.display = conversationId ? '' : 'none';
+      if (label) label.style.display = requestedConversationId ? '' : 'none';
     }
 
     const effectiveRef = convRef || globalRef;
-    await applyThemeRef(effectiveRef, false, !!convRef);
+    await applyThemeRef(effectiveRef, false, !!convRef, requestedConversationId);
   } catch (e) {
     addMsg('error', t('themeLoadFailed', { error: e.message }));
   }
 }
 
-async function applyThemeRef(ref, force, conversationOverride) {
+async function applyThemeRef(ref, force, conversationOverride, requestedConversationId) {
+  const targetConversationId = requestedConversationId === undefined
+    ? (conversationId || '') : requestedConversationId;
+  const applySeq = ++_themeApplySeq;
   const nextRef = ref || DEFAULT_THEME_REF;
-  const contextKey = nextRef.indexOf('conversation:') === 0 ? (conversationId || '') : '';
+  const contextKey = nextRef.indexOf('conversation:') === 0 ? targetConversationId : '';
   if (!force && _activeThemeRef === nextRef && _activeThemeContext === contextKey
       && document.getElementById('custom-theme')) return;
   const res = await rxjs.firstValueFrom(action$('apply_chat_theme', {
-    conversation_id: conversationId || '',
+    conversation_id: targetConversationId,
     theme_ref: nextRef,
     conversation_override: !!conversationOverride,
   }));
+  if (applySeq !== _themeApplySeq
+      || targetConversationId !== (conversationId || '')) return;
   if (res.error) { addMsg('error', res.error); return; }
   _activeThemeRef = res.theme_ref || nextRef;
   _activeThemeContext = contextKey;

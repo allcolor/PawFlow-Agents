@@ -105,6 +105,62 @@ def test_list_active_enriches_both_interactive_provider_rows():
     assert payload["codex_interactive_live"] == [codex_interactive]
 
 
+def test_active_context_merge_keeps_codex_interactive_live_truth():
+    """A partial active context must not erase the provider on the turn row.
+
+    Context preparation populates ``_active_contexts`` incrementally.  During
+    that window, replacing the complete ``_active_turns`` row made a poll lose
+    ``active_llm_provider`` and the LIVE badge until the next registry sample.
+    """
+    from core import FlowFile
+    from tasks.ai.actions.usage import _handle_usage
+
+    fake_exec = SimpleNamespace(
+        _active_turns={
+            "conv-live:codex-agent": {
+                "agent_name": "codex-agent",
+                "active_llm_provider": "codex-interactive",
+                "started_at": 1,
+            },
+        },
+        _active_contexts={
+            "conv-live:codex-agent": {
+                "active_agent_name": "codex-agent",
+                "_started_at": 1,
+                # Deliberately not populated yet.
+            },
+        },
+        _active_contexts_lock=threading.Lock(),
+    )
+
+    with patch(
+        "tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec
+    ), patch(
+        "core.cc_live_registry.LiveSessionRegistry.instance"
+    ) as cc_registry, patch(
+        "core.claude_code_interactive_pool.InteractiveClaudeCodePool.instance"
+    ) as cci_pool, patch(
+        "core.codex_interactive_pool.CodexInteractivePool.instance"
+    ) as codex_interactive_pool, patch(
+        "core.codex_live_registry.CodexLiveRegistry.instance"
+    ) as codex_registry, patch(
+        "core.gemini_live_registry.GeminiLiveRegistry.instance"
+    ) as gemini_registry:
+        cc_registry.return_value.status.return_value = []
+        cci_pool.return_value.list_sessions_snapshot.return_value = []
+        codex_interactive_pool.return_value.list_sessions_snapshot.return_value = []
+        codex_registry.return_value.status.return_value = []
+        gemini_registry.return_value.status.return_value = []
+
+        out = _handle_usage(
+            SimpleNamespace(), "list_active",
+            {"conversation_id": "conv-live"}, _Store(), "user", FlowFile())
+
+    row = json.loads(out[0].get_content().decode("utf-8"))["active"][0]
+    assert row["active_llm_provider"] == "codex-interactive"
+    assert row["codex_interactive_live"] is True
+
+
 def test_active_agents_maps_and_renders_interactive_live_telemetry():
     assert "cciLive: !!a.cci_live" in ACTIVE_AGENTS_JS
     assert (
@@ -113,5 +169,6 @@ def test_active_agents_maps_and_renders_interactive_live_telemetry():
     )
     assert "info.cciLive ? 'cci'" in ACTIVE_AGENTS_JS
     assert "info.codexInteractiveLive ? 'codex-interactive'" in ACTIVE_AGENTS_JS
+    assert "function trackAgentProviderLive" in ACTIVE_AGENTS_JS
     assert "Claude Code Interactive" in ACTIVE_AGENTS_JS
     assert "Codex Interactive" in ACTIVE_AGENTS_JS

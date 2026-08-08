@@ -91,7 +91,7 @@ def generate_relay_id(username: str, directory: str) -> str:
 
 
 def api_call(server_url, method, path, body=None, session_token="",  # nosec B107
-             gateway_cookie="", on_token_refresh=None):
+             gateway_cookie="", gateway_key="", on_token_refresh=None):
     """HTTP request to PawFlow agent API (stdlib only).
 
     Args:
@@ -120,6 +120,8 @@ def api_call(server_url, method, path, body=None, session_token="",  # nosec B10
         headers["Authorization"] = f"Bearer {session_token}"
     if gateway_cookie:
         headers["Cookie"] = f"_pf_gw={gateway_cookie}"
+    if gateway_key:
+        headers["X-PawFlow-Gateway-Key"] = gateway_key
 
     payload = json.dumps(body).encode("utf-8") if body else None
     conn.request(method, path, body=payload, headers=headers)

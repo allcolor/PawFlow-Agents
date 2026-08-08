@@ -496,6 +496,10 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
         _send_page(handler, 403, b"Forbidden", "text/plain")
         return True
 
+    gateway_key = handler.headers.get("X-PawFlow-Gateway-Key", "")
+    if gateway_key and verify_secret(gateway_key, secret_refs):
+        return False
+
     cookie_header = handler.headers.get("Cookie", "")
     for part in cookie_header.split(";"):
         part = part.strip()

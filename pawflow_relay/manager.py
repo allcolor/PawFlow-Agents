@@ -369,6 +369,7 @@ def stop_workspace_runtime(name: str) -> Dict[str, Any]:
                 body={"action": "service_uninstall", "service_id": relay_id},
                 session_token=server.get("session_token", ""),
                 gateway_cookie=server.get("gateway_cookie", ""),
+                gateway_key=server.get("gateway_key", ""),
             )
             service_uninstalled = True
         except Exception:

@@ -183,7 +183,7 @@ A `.pfp` is signed with an ed25519 key whose public half is embedded in the mani
 
 ## Private Gateway
 
-The private gateway is configured as a `privateGateway` service and enabled for a listener through `httpListener.private_gateway_service_id`. Accepted challenge keys are explicit `secret_refs` on that service. The challenge skin is selected by the service `skin` field and resolved from repository resources under `data/repository/private_gateway_skin`. Each skin lives in a directory containing `skin.json` metadata and `template.html`; templates can use `{{ next_url }}`, `{{ error }}`, and `{{ cooldown }}` placeholders.
+The private gateway is configured as a `privateGateway` service and enabled for a listener through `httpListener.private_gateway_service_id`. Accepted challenge keys are explicit `secret_refs` on that service. HTTP and WebSocket clients may present a matching key in `X-PawFlow-Gateway-Key`; browser sessions continue to use the challenge cookie. The challenge skin is selected by the service `skin` field and resolved from repository resources under `data/repository/private_gateway_skin`. Each skin lives in a directory containing `skin.json` metadata and `template.html`; templates can use `{{ next_url }}`, `{{ error }}`, and `{{ cooldown }}` placeholders.
 
 ## Production Checklist
 

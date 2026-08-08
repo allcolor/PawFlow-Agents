@@ -108,6 +108,7 @@ class RelayThread(_RelayDockerMixin, _RelayHostHelperMixin):
             self.server_url, method, path, body=body,
             session_token=self.session_token,
             gateway_cookie=self.gateway_cookie,
+            gateway_key=self.gateway_key,
             on_token_refresh=self._handle_token_refresh,
         )
 

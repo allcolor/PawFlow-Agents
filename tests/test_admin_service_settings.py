@@ -1,3 +1,4 @@
+import io
 import json
 
 import pytest
@@ -92,6 +93,50 @@ def test_private_gateway_ws_accepts_gateway_key_header(monkeypatch):
         ("172.17.0.2", 50000),
     ) is True
 
+
+def test_private_gateway_http_accepts_gateway_key_header(monkeypatch):
+    import services.private_gateway as private_gateway
+    from core.config_value import ConfigValue
+
+    monkeypatch.setattr(
+        "core.expression._load_global_secrets",
+        lambda: {"relay_gateway": ConfigValue(value="open-sesame")},
+    )
+
+    class Handler:
+        command = "POST"
+        path = "/api/ui"
+        client_address = ("198.51.100.77", 50000)
+        headers = {"X-PawFlow-Gateway-Key": "open-sesame"}
+        rfile = io.BytesIO()
+        wfile = io.BytesIO()
+        server = None
+
+        def send_response(self, _status):
+            pass
+
+        def send_header(self, _name, _value):
+            pass
+
+        def end_headers(self):
+            pass
+
+    handled = private_gateway._check_request_inner(
+        Handler(), {
+            "enabled": True,
+            "secret_refs": "relay_gateway",
+            "skin": "matrix",
+        })
+
+    assert handled is False
+
+    Handler.headers = {"X-PawFlow-Gateway-Key": "wrong"}
+    assert private_gateway._check_request_inner(
+        Handler(), {
+            "enabled": True,
+            "secret_refs": "relay_gateway",
+            "skin": "matrix",
+        }) is True
 
 
 def test_private_gateway_cookie_is_bound_to_secret_refs():

@@ -117,6 +117,11 @@ The relay client stores server and workspace profiles outside the project tree:
 
 Profiles are split into `servers.json` and `workspaces.json`. Gateway keys and session tokens are currently stored in this local profile; the desktop client should migrate secrets to the OS keychain before a stable release.
 
+When a server profile has a Private Gateway key, relay HTTP lifecycle calls
+(`/api/ui`) send it in `X-PawFlow-Gateway-Key`. The same key already protects
+the relay WebSocket handshake. The challenge cookie remains supported for
+browser and previously authenticated client sessions.
+
 ## Relay Desktop
 
 The Electron Relay Desktop slice lives in `pawflow-relay-desktop/`. It uses the same local state as the CLI and manages:

@@ -8,6 +8,7 @@ import pytest
 from pawflow_relay import manager
 from pawflow_relay.manager_cli import main as relay_cli_main
 from pawflow_relay.thread import RelayThread, _host_abs_path, _relay_tools_dir
+from pawflow_relay.utils import api_call
 
 
 def test_relay_manager_stores_servers_and_workspaces(monkeypatch, tmp_path):
@@ -103,6 +104,67 @@ def test_relay_runtime_root_env_points_tools_to_packaged_runtime(monkeypatch, tm
     assert _relay_tools_dir() == str(runtime.resolve() / "tools")
 
 
+def test_relay_api_call_sends_private_gateway_key_header(monkeypatch):
+    requests = []
+
+    class Response:
+        status = 200
+
+        def read(self):
+            return b"{}"
+
+        def getheader(self, name, default=""):
+            return "application/json" if name == "Content-Type" else default
+
+    class Connection:
+        def __init__(self, host, port, context=None, timeout=0):
+            assert (host, port, timeout) == ("pawflow.example", 443, 30)
+
+        def request(self, method, path, body=None, headers=None):
+            requests.append((method, path, body, headers))
+
+        def getresponse(self):
+            return Response()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("http.client.HTTPSConnection", Connection)
+
+    assert api_call(
+        "https://pawflow.example",
+        "POST",
+        "/api/ui",
+        body={"action": "relay_list_available"},
+        session_token="session",
+        gateway_key="open-sesame",
+    ) == {}
+
+    assert requests[0][3]["Authorization"] == "Bearer session"
+    assert requests[0][3]["X-PawFlow-Gateway-Key"] == "open-sesame"
+
+
+def test_relay_thread_passes_gateway_key_to_http_api(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_api_call(*args, **kwargs):
+        captured.update(kwargs)
+        return {}
+
+    monkeypatch.setattr("pawflow_relay.thread.api_call", fake_api_call)
+    relay = RelayThread(
+        server_url="https://pawflow.example",
+        session_token="session",
+        username="user",
+        directory=str(tmp_path),
+        gateway_key="open-sesame",
+    )
+
+    relay._api("POST", "/api/ui", {"action": "relay_list_available"})
+
+    assert captured["gateway_key"] == "open-sesame"
+
+
 def test_relay_manager_stop_workspace_runtime_uninstalls_and_cleans_docker(monkeypatch, tmp_path):
     monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
     workspace = tmp_path / "repo"
@@ -139,6 +201,7 @@ def test_relay_manager_stop_workspace_runtime_uninstalls_and_cleans_docker(monke
     )
     assert calls[0][4]["session_token"] == "session"
     assert calls[0][4]["gateway_cookie"] == "gw"
+    assert calls[0][4]["gateway_key"] == "k"
     assert calls[1] == ("cleanup", share["relay_id"])
 
 

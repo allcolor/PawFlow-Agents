@@ -732,14 +732,34 @@ class CodexSessionMixin:
                 f'[plugins."{_toml_escape(_qualified)}"]\n'
                 "enabled = true\n"
             )
+        from core.cli_process_config import (
+            deep_merge, parse_codex_models, parse_toml_fragment)
+        try:
+            import tomllib
+        except ImportError:  # pragma: no cover - Python 3.10 only
+            import tomli as tomllib
+        import tomli_w
+
+        user_config = parse_toml_fragment(self)
+        managed_config = tomllib.loads(toml)
         codex_home = os.path.join(workdir, ".codex")
         os.makedirs(codex_home, exist_ok=True)
+        models = parse_codex_models(self)
+        if models is not None:
+            models_path = os.path.join(codex_home, "models.json")
+            with open(models_path, "w", encoding="utf-8") as f:
+                json.dump(models, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            os.chmod(models_path, 0o600)
+            rel = os.path.relpath(workdir, _get_sessions_base()).replace(
+                "\\", "/")
+            container_rel = rel.split("/", 1)[-1]
+            managed_config["model_catalog_json"] = (
+                f"/cc_sessions/{container_rel}/.codex/models.json")
         config_path = os.path.join(codex_home, "config.toml")
-        managed = (self._CODEX_MANAGED_BEGIN + "\n" + toml
-                   + self._CODEX_MANAGED_END + "\n")
         # Preserve content outside the managed markers (codex plugin state,
-        # user edits). The managed section goes FIRST so its top-level keys
-        # stay root-scoped — TOML cannot return to root after a table header.
+        # user edits) byte-for-byte. The explicit service fragment is the only
+        # user configuration merged structurally into PawFlow's managed block.
         preserved = ""
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -752,13 +772,18 @@ class CodexSessionMixin:
             # No markers: legacy fully-generated file — replaced wholesale.
         except FileNotFoundError:
             pass
-        content = managed + (("\n" + preserved + "\n") if preserved else "")
+        merged = deep_merge(user_config, managed_config)
+        serialized = tomli_w.dumps(merged)
+        content = (self._CODEX_MANAGED_BEGIN + "\n" + serialized
+                   + self._CODEX_MANAGED_END + "\n"
+                   + (("\n" + preserved + "\n") if preserved else ""))
         with open(config_path, "w", encoding="utf-8") as f:
             f.write(content)
         os.chmod(config_path, 0o600)
         logger.info("[codex] config.toml written: %s (relay=%s, plugins=%d, "
-                    "preserved=%d chars)", config_path, relay_url,
-                    len(self._codex_plugin_specs()), len(preserved))
+                    "custom=%d keys, models=%s)", config_path, relay_url,
+                    len(self._codex_plugin_specs()), len(user_config),
+                    "yes" if models is not None else "no")
         return config_path, internal_token
 
     def _codex_plugin_specs(self) -> list:

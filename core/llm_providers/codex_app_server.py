@@ -115,15 +115,18 @@ class LLMCodexAppServerMixin(
         container = container_name or pool.acquire(workspace_mount_args=workspace_mounts)
         _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         _session_dir = f"/cc_sessions/{_rel}"
-        _extra = {}
+        from core.cli_process_config import merge_cli_environment
+        _managed = {}
         if _env.get("CODEX_API_KEY"):
-            _extra["CODEX_API_KEY"] = _env["CODEX_API_KEY"]
+            _managed["CODEX_API_KEY"] = _env["CODEX_API_KEY"]
         if _env.get("OPENAI_API_KEY"):
-            _extra["OPENAI_API_KEY"] = _env["OPENAI_API_KEY"]
+            _managed["OPENAI_API_KEY"] = _env["OPENAI_API_KEY"]
         if _env.get("OPENAI_BASE_URL"):
-            _extra["OPENAI_BASE_URL"] = _env["OPENAI_BASE_URL"]
+            _managed["OPENAI_BASE_URL"] = _env["OPENAI_BASE_URL"]
         if _env.get("NODE_TLS_REJECT_UNAUTHORIZED"):
-            _extra["NODE_TLS_REJECT_UNAUTHORIZED"] = _env["NODE_TLS_REJECT_UNAUTHORIZED"]
+            _managed["NODE_TLS_REJECT_UNAUTHORIZED"] = _env["NODE_TLS_REJECT_UNAUTHORIZED"]
+        _extra = merge_cli_environment(
+            self, _managed, user_id, conversation_id)
         proc = pool.exec_codex(
             container, _session_dir, cmd,
             extra_env=_extra or None,

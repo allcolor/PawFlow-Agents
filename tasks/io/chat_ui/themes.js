@@ -1,7 +1,6 @@
 // -- Chat themes --------------------------------------------------------------
 
 const THEME_COOKIE = 'pawflow_theme_ref';
-const CONV_THEME_COOKIE = 'pawflow_conv_theme_refs';
 const DEFAULT_THEME_REF = 'global:pawflow_dark';
 
 let _themeLoadSeq = 0;
@@ -25,35 +24,6 @@ function _themeGetGlobalRef() {
 
 function _themeSetGlobalRef(ref) {
   _themeSetCookie(THEME_COOKIE, ref || DEFAULT_THEME_REF);
-}
-
-function _themeGetConversationMap() {
-  const raw = _themeGetCookie(CONV_THEME_COOKIE);
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch (_) {
-    return {};
-  }
-}
-
-function _themeSetConversationMap(map) {
-  _themeSetCookie(CONV_THEME_COOKIE, JSON.stringify(map || {}));
-}
-
-function _themeGetConversationRef(cid) {
-  if (!cid) return '';
-  const map = _themeGetConversationMap();
-  return typeof map[cid] === 'string' ? map[cid] : '';
-}
-
-function _themeSetConversationRef(cid, ref) {
-  if (!cid) return;
-  const map = _themeGetConversationMap();
-  if (ref) map[cid] = ref;
-  else delete map[cid];
-  _themeSetConversationMap(map);
 }
 
 function applyThemeCss(css) {
@@ -102,9 +72,9 @@ async function loadThemeSelector() {
     let globalRef = _themeValidRef(_themeGetGlobalRef(), globalRefs, DEFAULT_THEME_REF);
     if (globalRef !== _themeGetGlobalRef()) _themeSetGlobalRef(globalRef);
 
-    let convRef = conversationId ? _themeGetConversationRef(conversationId) : '';
+    let convRef = conversationId && typeof data.conversation_theme_ref === 'string'
+      ? data.conversation_theme_ref : '';
     if (convRef && !allRefs.has(convRef)) {
-      _themeSetConversationRef(conversationId, '');
       convRef = '';
     }
 
@@ -125,13 +95,13 @@ async function loadThemeSelector() {
     }
 
     const effectiveRef = convRef || globalRef;
-    await applyThemeRef(effectiveRef, false);
+    await applyThemeRef(effectiveRef, false, !!convRef);
   } catch (e) {
     addMsg('error', t('themeLoadFailed', { error: e.message }));
   }
 }
 
-async function applyThemeRef(ref, force) {
+async function applyThemeRef(ref, force, conversationOverride) {
   const nextRef = ref || DEFAULT_THEME_REF;
   const contextKey = nextRef.indexOf('conversation:') === 0 ? (conversationId || '') : '';
   if (!force && _activeThemeRef === nextRef && _activeThemeContext === contextKey
@@ -139,7 +109,7 @@ async function applyThemeRef(ref, force) {
   const res = await rxjs.firstValueFrom(action$('apply_chat_theme', {
     conversation_id: conversationId || '',
     theme_ref: nextRef,
-    conversation_override: false,
+    conversation_override: !!conversationOverride,
   }));
   if (res.error) { addMsg('error', res.error); return; }
   _activeThemeRef = res.theme_ref || nextRef;
@@ -159,8 +129,7 @@ function onGlobalThemeSelectChange(value) {
 
 function onConversationThemeSelectChange(value) {
   if (!conversationId) return;
-  _themeSetConversationRef(conversationId, value || '');
-  loadThemeSelector()
+  applyThemeRef(value || _themeGetGlobalRef(), true, !!value)
     .then(() => loadResources())
     .catch(e => addMsg('error', t('themeApplyFailed', { error: e.message })));
 }
@@ -264,9 +233,6 @@ function _deleteTheme(ref) {
   if (!confirm(t('deleteThemeConfirm', { theme: ref }))) return;
   action$('delete_chat_theme', { conversation_id: conversationId, theme_ref: ref }).subscribe(res => {
     if (res.error) { addMsg('error', res.error); return; }
-    if (conversationId && _themeGetConversationRef(conversationId) === ref) {
-      _themeSetConversationRef(conversationId, '');
-    }
     if (_themeGetGlobalRef() === ref) _themeSetGlobalRef(DEFAULT_THEME_REF);
     addMsg('system', t('themeDeleted'));
     loadThemeSelector();

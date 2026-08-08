@@ -389,6 +389,94 @@ class TestStreamClaude(unittest.TestCase):
                 for u in recorded),
             "assistant event usage was not recorded live: %r" % (recorded,))
 
+    def test_partial_stream_events_drive_live_callbacks_without_replay(self):
+        events = [
+            json.dumps({"type": "stream_event", "event": {
+                "type": "message_start", "message": {
+                    "id": "m-partial", "usage": {"input_tokens": 123}}}}),
+            json.dumps({"type": "stream_event", "event": {
+                "type": "content_block_delta", "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": "plan "}}}),
+            json.dumps({"type": "stream_event", "event": {
+                "type": "content_block_delta", "index": 1,
+                "delta": {"type": "text_delta", "text": "Hello "}}}),
+            json.dumps({"type": "stream_event", "event": {
+                "type": "content_block_delta", "index": 1,
+                "delta": {"type": "text_delta", "text": "world"}}}),
+            json.dumps({"type": "assistant", "message": {
+                "id": "m-partial", "usage": {"input_tokens": 123},
+                "content": [
+                    {"type": "thinking", "thinking": "plan "},
+                    {"type": "text", "text": "Hello world"},
+                ]}}),
+            json.dumps({"type": "result", "result": "", "model": "sonnet",
+                        "usage": {"input_tokens": 123, "output_tokens": 2}}),
+        ]
+        mock_stdout = MagicMock()
+        mock_stdout.__iter__ = MagicMock(
+            return_value=iter([line + "\n" for line in events]))
+        mock_proc = MagicMock(stdout=mock_stdout, returncode=0)
+        text_deltas = []
+        thinking_deltas = []
+        persisted = []
+        recorded = []
+        with patch.object(self.client, "_pool_popen",
+                          return_value=(mock_proc, None)), \
+             patch.object(self.client, "record_observed_wire_usage",
+                          side_effect=lambda u, c, a: recorded.append(dict(u))):
+            self.client.complete_stream(
+                [LLMMessage(role="user", content="Hi",
+                            conversation_id="test_conv")],
+                callback=text_deltas.append,
+                thinking_callback=thinking_deltas.append,
+                block_callback=lambda kind, payload: persisted.append(
+                    (kind, payload)),
+            )
+        self.assertEqual(text_deltas, ["Hello ", "world"])
+        self.assertEqual(thinking_deltas, ["plan "])
+        self.assertEqual(
+            [payload["text"] for kind, payload in persisted if kind == "text"],
+            ["Hello world"])
+        self.assertTrue(any(item.get("input_tokens") == 123 for item in recorded))
+
+    def test_claude_command_requests_partial_messages(self):
+        cmd = self.client._build_claude_cmd("sonnet")
+        self.assertIn("--include-partial-messages", cmd)
+
+    def test_complete_event_falls_back_per_stream_type_when_delta_is_missing(self):
+        events = [
+            json.dumps({"type": "stream_event", "event": {
+                "type": "message_start", "message": {
+                    "id": "m-fallback", "usage": {"input_tokens": 12}}}}),
+            json.dumps({"type": "stream_event", "event": {
+                "type": "content_block_delta", "index": 0,
+                "delta": {"type": "text_delta", "text": "live text"}}}),
+            json.dumps({"type": "assistant", "message": {
+                "id": "m-fallback", "usage": {"input_tokens": 12},
+                "content": [
+                    {"type": "thinking", "thinking": "complete thought"},
+                    {"type": "text", "text": "live text"},
+                ]}}),
+            json.dumps({"type": "result", "result": "", "model": "sonnet",
+                        "usage": {"input_tokens": 12, "output_tokens": 2}}),
+        ]
+        mock_stdout = MagicMock()
+        mock_stdout.__iter__ = MagicMock(
+            return_value=iter([line + "\n" for line in events]))
+        mock_proc = MagicMock(stdout=mock_stdout, returncode=0)
+        text_deltas = []
+        thinking_deltas = []
+        with patch.object(self.client, "_pool_popen",
+                          return_value=(mock_proc, None)):
+            self.client.complete_stream(
+                [LLMMessage(role="user", content="Hi",
+                            conversation_id="test_conv")],
+                callback=text_deltas.append,
+                thinking_callback=thinking_deltas.append,
+            )
+        self.assertEqual(text_deltas, ["live text"])
+        self.assertEqual(thinking_deltas, ["complete thought"])
+
     def _run_tool_turn(self, **stream_kwargs):
         """Drive a tool_use(m1) → tool_result → text(m2) stream and return
         whatever the provided callbacks captured. msg_id m1→m2 forces the
@@ -450,6 +538,21 @@ class TestStreamClaude(unittest.TestCase):
             turn_callback=lambda text, tc, *a: turn_tcs.extend(tc),
         )
         self.assertIn("tc1", [t.get("id") for t in turn_tcs])
+
+    def test_cc_p_observes_native_tool_call_and_result_for_todolist(self):
+        with open("core/llm_providers/_cc_stream_loop.py",
+                  encoding="utf-8") as source_file:
+            source = source_file.read()
+        tool_use = source[source.index('elif btype == "tool_use":'):
+                          source.index('elif btype == "thinking":')]
+        tool_result = source[source.index('elif etype == "user":'):
+                             source.index('elif etype == "content_block_delta":')]
+        self.assertIn("st._native_todo_adapter.observe({", tool_use)
+        self.assertIn('"type": "tool_use"', tool_use)
+        self.assertIn('"arguments": block.get("input", {})', tool_use)
+        self.assertIn("st._native_todo_adapter.observe({", tool_result)
+        self.assertIn('"type": "tool_result"', tool_result)
+        self.assertIn('"is_error": bool(block.get("is_error"))', tool_result)
 
     def _run_text_then_tool_turn(self, **stream_kwargs):
         """Drive thinking -> text -> tool_use within ONE message (CC emits

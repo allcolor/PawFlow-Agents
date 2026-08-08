@@ -24,7 +24,8 @@ class _CCStreamMixin:
     """The _stream_claude_code orchestrator (MRO mixin)."""
     def _stream_claude_code(
         self, messages, model, temperature, max_tokens, tools, callback=None,
-        turn_callback=None, block_callback=None, _is_auth_retry=False,
+        thinking_callback=None, turn_callback=None, block_callback=None,
+        _is_auth_retry=False,
         *,
         call_user_id: Optional[str] = None,
         call_conversation_id: Optional[str] = None,
@@ -56,6 +57,7 @@ class _CCStreamMixin:
         st = _CCStreamState()
         st.model = model
         st.callback = callback
+        st.thinking_callback = thinking_callback
         st.turn_callback = turn_callback
         st.block_callback = block_callback
         from core.llm_client import LLMClientError
@@ -440,7 +442,16 @@ class _CCStreamMixin:
         # tool_result handler can always recover the name — critical for
         # the compact_result short-circuit kill.
         st._stream_tc_names: Dict[str, str] = {}
+        from core.native_todo_adapter import NativeTodoAdapter
+        st._native_todo_adapter = NativeTodoAdapter(
+            st.user_id, st.conv_id, st.agent_name, "cc-p")
         st._current_msg_id: str = ""  # track message ID to detect incremental updates
+        # Message ids that emitted stream_event deltas. Their later complete
+        # assistant event is persisted, but must not replay the same text or
+        # thinking through the live callbacks.
+        st._partial_text_message_ids: set[str] = set()
+        st._partial_thinking_message_ids: set[str] = set()
+        st._partial_current_msg_id: str = ""
         # Latest usage observed on an assistant event — used to publish
         # a fresh context-fill % to the webchat. The `result` event's
         # usage may sum differently; the last assistant.message.usage
@@ -624,6 +635,7 @@ class _CCStreamMixin:
             logger.info("[claude-code] retrying after 401 token refresh")
             return self._stream_claude_code(
                 messages, st.model, temperature, max_tokens, tools, st.callback,
+                thinking_callback=st.thinking_callback,
                 turn_callback=st.turn_callback, block_callback=st.block_callback,
                 _is_auth_retry=True)
         except BaseException as _dispatch_exc:

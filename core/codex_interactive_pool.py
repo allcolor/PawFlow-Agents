@@ -183,6 +183,9 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
 
         (upstream_host, upstream_port, upstream_scheme, codex_base_url,
          listen_port) = self._codex_endpoint(client)
+        from core.cli_process_config import shell_cli_environment
+        cli_environment = shell_cli_environment(
+            client, user_id=user_id, conversation_id=conversation_id)
         cert_dir = Path(workdir) / ".pawflow_cci" / "certs"
         generate_leaf(cert_dir, common_name=upstream_host)
 
@@ -228,7 +231,9 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
                 if hasattr(client, "_cfg") else "",
                 session_token=session_token, event_url=event_url,
                 event_token=event_token, internal_token=internal_token,
-                codex_base_url=codex_base_url)
+                codex_base_url=codex_base_url,
+                cli_environment=cli_environment)
+
             state.claude_started = True
         except Exception:
             subprocess.run(
@@ -258,7 +263,8 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
     def _start_codex_tmux(self, *, name: str, container_workdir: str,
                           model: str, effort: str, session_token: str,
                           event_url: str, event_token: str,
-                          internal_token: str, codex_base_url: str = "") -> None:
+                          internal_token: str, codex_base_url: str = "",
+                          cli_environment: str = "") -> None:
         parts = container_workdir.lstrip("/").split("/")
         if len(parts) < 3 or parts[0] != "cc_sessions_host":
             raise ValueError(
@@ -304,7 +310,8 @@ class _CodexInteractiveSpawnMixin(_InteractiveContainerSpawnMixin):
             f"mkdir -p .codex && chown -R {self.run_uid}:{self.run_gid} .codex && ("
             f"{drop_privs} tmux kill-session -t pawflow 2>/dev/null || true; "
             f"{drop_privs} tmux new-session -d -s pawflow -x 220 -y 50 "
-            f"'env HOME={shlex.quote(ns_workdir)} USER=pawflow "
+            f"'env {cli_environment + ' ' if cli_environment else ''}"
+            f"HOME={shlex.quote(ns_workdir)} USER=pawflow "
             f"CODEX_HOME={shlex.quote(ns_workdir + '/.codex')} "
             f"PAWFLOW_CCI_SESSION_TOKEN={shlex.quote(session_token)} "
             f"PAWFLOW_CCI_EVENT_URL={shlex.quote(event_url)} "

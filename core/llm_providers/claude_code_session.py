@@ -861,6 +861,7 @@ class ClaudeCodeSessionMixin:
         claude_args.extend([
             "--input-format", "stream-json",
             "--output-format", "stream-json",
+            "--include-partial-messages",
         ])
         model = (model or "").strip()
         if model:

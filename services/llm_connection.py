@@ -658,6 +658,31 @@ class LLMConnectionService(BaseService):
                 "type": "string", "default": "2g",
                 "description": "Memory limit for container (e.g. '2g')",
             },
+            "cli_environment": {
+                "type": "string", "required": False, "default": "",
+                "multiline": True,
+                "description": (
+                    "CLI providers only: environment variables, one NAME=value "
+                    "per line. Values support PawFlow expressions and are "
+                    "resolved for the user/conversation when a CLI process starts."
+                ),
+            },
+            "codex_config_toml": {
+                "type": "string", "required": False, "default": "",
+                "multiline": True,
+                "description": (
+                    "Codex providers only: additional config.toml merged "
+                    "structurally with PawFlow's generated configuration."
+                ),
+            },
+            "codex_models_json": {
+                "type": "string", "required": False, "default": "",
+                "multiline": True,
+                "description": (
+                    "Codex providers only: models.json catalog used by custom "
+                    "model providers such as DeepSeek."
+                ),
+            },
             "effort": {
                 "type": "select", "default": "medium",
                 "options": ["low", "medium", "high", "max"],
@@ -729,6 +754,9 @@ class LLMConnectionService(BaseService):
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
                     "store":         {"visible": False},
+                    "cli_environment": {"visible": False},
+                    "codex_config_toml": {"visible": False},
+                    "codex_models_json": {"visible": False},
                 }
             },
             {
@@ -793,6 +821,9 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": True},
                     "claude_marketplaces": {"visible": True},
                     "extra_body":    {"visible": False},
+                    "cli_environment": {"visible": True},
+                    "codex_config_toml": {"visible": False},
+                    "codex_models_json": {"visible": False},
                 }
             },
             {
@@ -816,6 +847,9 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": True},
                     "claude_marketplaces": {"visible": True},
                     "extra_body":    {"visible": False},
+                    "cli_environment": {"visible": True},
+                    "codex_config_toml": {"visible": False},
+                    "codex_models_json": {"visible": False},
                 }
             },
             {
@@ -839,6 +873,9 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "cli_environment": {"visible": True},
+                    "codex_config_toml": {"visible": False},
+                    "codex_models_json": {"visible": False},
                 }
             },
             {
@@ -862,6 +899,9 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "cli_environment": {"visible": True},
+                    "codex_config_toml": {"visible": True},
+                    "codex_models_json": {"visible": True},
                 }
             },
             {
@@ -890,6 +930,9 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "cli_environment": {"visible": True},
+                    "codex_config_toml": {"visible": True},
+                    "codex_models_json": {"visible": True},
                 }
             },
             {
@@ -913,6 +956,9 @@ class LLMConnectionService(BaseService):
                     "claude_plugins": {"visible": False},
                     "claude_marketplaces": {"visible": False},
                     "extra_body":    {"visible": False},
+                    "cli_environment": {"visible": True},
+                    "codex_config_toml": {"visible": False},
+                    "codex_models_json": {"visible": False},
                 }
             },
             {

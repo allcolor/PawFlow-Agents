@@ -29,6 +29,45 @@ class _CCStreamLoopMixin:
             # with thinking blocks redacted (thinking="" + signature).
             logger.debug("[cc-raw] %s %.500s", etype, json.dumps(event))
 
+            if etype == "stream_event":
+                payload = event.get("event") or {}
+                payload_type = payload.get("type", "")
+                if payload_type == "message_start":
+                    message = payload.get("message") or {}
+                    message_id = str(message.get("id") or "")
+                    if message_id:
+                        st._partial_current_msg_id = message_id
+                    usage = message.get("usage")
+                    if isinstance(usage, dict) and usage != st._latest_usage:
+                        st._latest_usage = dict(usage)
+                        try:
+                            self.record_observed_wire_usage(
+                                usage, st.conv_id, st.agent_name)
+                        except Exception:
+                            logger.debug(
+                                "[cc-stream] message_start usage record failed",
+                                exc_info=True)
+                elif payload_type == "content_block_delta":
+                    delta = payload.get("delta") or {}
+                    delta_type = delta.get("type", "")
+                    if delta_type == "text_delta":
+                        text = delta.get("text", "")
+                        if text and st.callback:
+                            if st._partial_current_msg_id:
+                                st._partial_text_message_ids.add(
+                                    st._partial_current_msg_id)
+                            st.callback(text)
+                    elif delta_type == "thinking_delta":
+                        thinking = delta.get("thinking", "")
+                        if thinking and st.thinking_callback:
+                            if st._partial_current_msg_id:
+                                st._partial_thinking_message_ids.add(
+                                    st._partial_current_msg_id)
+                            st.thinking_callback(thinking)
+                # Partial events are display/usage telemetry only. The complete
+                # assistant event below remains the sole persistence source.
+                continue
+
             if etype == "system":
                 # Capture AND persist session_id from init event immediately.
                 # Must be in ConversationStore before any preempt triggers
@@ -136,6 +175,10 @@ class _CCStreamLoopMixin:
 
                 msg = event.get("message", {})
                 msg_id = msg.get("id", "")
+                partial_text_was_emitted = bool(
+                    msg_id and msg_id in st._partial_text_message_ids)
+                partial_thinking_was_emitted = bool(
+                    msg_id and msg_id in st._partial_thinking_message_ids)
                 # The assistant event carries the provider's real prompt usage
                 # (input + cache_read + cache_creation) -- the authoritative
                 # context occupancy, identical in scope to what the CCI proxy
@@ -173,7 +216,7 @@ class _CCStreamLoopMixin:
                         text = block.get("text", "")
                         if text:
                             st.content_parts.append(text)
-                            if st.callback:
+                            if st.callback and not partial_text_was_emitted:
                                 st.callback(text)
                             if st.block_callback:
                                 # Persist the assistant text live (as we
@@ -204,6 +247,12 @@ class _CCStreamLoopMixin:
                     elif btype == "tool_use":
                         logger.debug("[CC-RAW-TOOL] block=%s", json.dumps(block, default=str, ensure_ascii=False))
                         _block_id = block.get("id", "")
+                        st._native_todo_adapter.observe({
+                            "type": "tool_use",
+                            "tool_use_id": _block_id,
+                            "name": block.get("name", ""),
+                            "arguments": block.get("input", {}),
+                        })
                         _block_entry = {
                             "name": block.get("name", ""),
                             "arguments": block.get("input", {}),
@@ -345,6 +394,9 @@ class _CCStreamLoopMixin:
                             "[cc-stream] thinking block: len=%d sig=%s preview=%r",
                             len(thinking), _has_sig, thinking[:120])
                         if thinking:
+                            if (st.thinking_callback
+                                    and not partial_thinking_was_emitted):
+                                st.thinking_callback(thinking)
                             # Raw reasoning text exposed (rare now;
                             # Anthropic redacts by default). Persist
                             # verbatim.
@@ -384,6 +436,12 @@ class _CCStreamLoopMixin:
                         result_str = str(result_text) if result_text else "(no output)"
                         # Store for turn_callback persistence
                         if tc_id:
+                            st._native_todo_adapter.observe({
+                                "type": "tool_result",
+                                "tool_use_id": tc_id,
+                                "content": result_text,
+                                "is_error": bool(block.get("is_error")),
+                            })
                             st._tool_results[tc_id] = result_str
                             st._pending_tool_ids.discard(tc_id)
                             st._hb_state["last_tool_result_id"] = (

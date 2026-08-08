@@ -99,7 +99,14 @@ def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
     assert "list_linked_accounts" in state_js
     assert "list_linked_accounts" not in resources_js
     assert "linkedAccounts" not in resources_js
-    assert "&#x23FB;" in header
+
+    logout_start = header_controls.index('id="logoutBtn"')
+    logout_end = header_controls.index("</button>", logout_start)
+    logout_button = header_controls[logout_start:logout_end]
+    assert "&#x23FB;" not in logout_button
+    assert '<svg class="ami-icon"' in logout_button
+    assert 'viewBox="0 0 24 24"' in logout_button
+    assert "#logoutBtn svg.ami-icon" in TEMPLATE_HTML
 
 
 def test_header_account_actions_reuse_dock_tooltip_and_hover_zoom():

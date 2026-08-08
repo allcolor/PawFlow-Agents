@@ -226,6 +226,9 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                     "status": turn.get("status", "thinking"),
                     "message_preview": turn.get("message_preview", ""),
                 }
+                _provider = turn.get("active_llm_provider", "")
+                if _provider:
+                    _row["active_llm_provider"] = _provider
                 active_by_key[_row_key(_k, _aname, _task_id)] = _row
 
             for _k, ctx in _exec._active_contexts.items():
@@ -243,8 +246,26 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                         "last_tool": ctx.get("_last_tool", ""),
                         "duration_s": _time.time() - _started if _started else 0,
                     }
+                    _provider = ctx.get("active_llm_provider", "")
+                    if _provider:
+                        _row["active_llm_provider"] = _provider
                     active_by_key[_row_key(_k, _aname, _task_id)] = _row
             active.extend(active_by_key.values())
+        # The active turn owns the primary LIVE truth. Registry telemetry is
+        # supplemental: a cold CLI process has reuse_count=0 but is still live
+        # for the entire turn, and a registry sampling race must not clear it.
+        _provider_live_prefix = {
+            "claude-code": "cc",
+            "claude-code-interactive": "cci",
+            "codex-app-server": "codex",
+            "codex-interactive": "codex_interactive",
+            "gemini": "gemini",
+        }
+        for row in active:
+            _prefix = _provider_live_prefix.get(
+                row.get("active_llm_provider", ""))
+            if _prefix:
+                row[f"{_prefix}_live"] = True
         # Live CLI sessions. Enrich rows that are currently in the active
         # stack. Warm idle sessions are exposed in the side-channel lists
         # below, but must not create Active Agents rows.
@@ -256,7 +277,8 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
 
         def _apply_live(row, ent, prefix):
             reuse_count = int(ent.get("reuse_count", 0) or 0)
-            row[f"{prefix}_live"] = bool(ent.get("live")) and reuse_count > 0
+            row[f"{prefix}_live"] = bool(row.get(f"{prefix}_live")) or (
+                bool(ent.get("live")) and reuse_count > 0)
             row[f"{prefix}_idle_seconds"] = ent.get("idle_seconds", 0)
             row[f"{prefix}_reuse_count"] = reuse_count
             row[f"{prefix}_lived_seconds"] = ent.get("lived_seconds", 0)

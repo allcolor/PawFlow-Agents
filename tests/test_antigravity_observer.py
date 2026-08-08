@@ -761,7 +761,8 @@ def test_observer_tmux_starts_agy_without_prompt_injection(monkeypatch):
     monkeypatch.setattr("core.antigravity_observer_pool.subprocess.run", fake_run)
 
     AntigravityObserverPool()._start_agy_tmux(
-        name="container", container_workdir="/cc_sessions_host/u/c/a")
+        name="container", container_workdir="/cc_sessions_host/u/c/a",
+        cli_environment="CUSTOM='hello world'")
 
     assert calls[0][calls[0].index("unshare"):calls[0].index("bash")] == [
         "unshare", "-m", "--propagation", "unchanged", "--"]
@@ -771,6 +772,7 @@ def test_observer_tmux_starts_agy_without_prompt_injection(monkeypatch):
     assert "cd /cc_sessions/c/a" in shell
     assert "tmux new-session -d -s pawflow-agy" in shell
     assert "HOME=/cc_sessions/c/a" in shell
+    assert "CUSTOM='hello world' HOME=/cc_sessions/c/a" in shell
     assert "GEMINI_CLI_HOME=/cc_sessions/c/a" in shell
     assert "CASCADE_ENABLE_MCP_TOOLS=true" in shell
     assert "agy --dangerously-skip-permissions" in shell

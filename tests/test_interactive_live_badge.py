@@ -19,6 +19,7 @@ class _Store:
 
 def _session(agent_name, provider):
     return {
+        "conv_id": "conv-live",
         "agent_name": agent_name,
         "service_id": "svc",
         "container_name": "container-" + agent_name,
@@ -37,12 +38,19 @@ def test_list_active_enriches_both_interactive_provider_rows():
     fake_exec = SimpleNamespace(
         _active_turns={},
         _active_contexts={
+            "conv-live:cc-agent": {
+                "active_agent_name": "cc-agent",
+                "active_llm_provider": "claude-code",
+                "_started_at": 0,
+            },
             "conv-live:cci-agent": {
                 "active_agent_name": "cci-agent",
+                "active_llm_provider": "claude-code-interactive",
                 "_started_at": 0,
             },
             "conv-live:codex-agent": {
                 "active_agent_name": "codex-agent",
+                "active_llm_provider": "codex-interactive",
                 "_started_at": 0,
             },
         },
@@ -50,6 +58,8 @@ def test_list_active_enriches_both_interactive_provider_rows():
     )
     cci = _session("cci-agent", "claude-code-interactive")
     codex_interactive = _session("codex-agent", "codex-interactive")
+    cc = _session("cc-agent", "claude-code")
+    cc["reuse_count"] = 0
 
     with patch(
         "tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec
@@ -64,7 +74,7 @@ def test_list_active_enriches_both_interactive_provider_rows():
     ) as codex_registry, patch(
         "core.gemini_live_registry.GeminiLiveRegistry.instance"
     ) as gemini_registry:
-        cc_registry.return_value.status.return_value = []
+        cc_registry.return_value.status.return_value = [cc]
         cci_pool.return_value.list_sessions_snapshot.return_value = [cci]
         codex_interactive_pool.return_value.list_sessions_snapshot.return_value = [
             codex_interactive
@@ -89,6 +99,8 @@ def test_list_active_enriches_both_interactive_provider_rows():
     assert rows["cci-agent"]["cci_reuse_count"] == 1
     assert rows["codex-agent"]["codex_interactive_live"] is True
     assert rows["codex-agent"]["codex_interactive_reuse_count"] == 1
+    assert rows["cc-agent"]["cc_live"] is True
+    assert rows["cc-agent"]["cc_reuse_count"] == 0
     assert payload["cci_live"] == [cci]
     assert payload["codex_interactive_live"] == [codex_interactive]
 

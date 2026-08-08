@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.146] — 2026-08-08
+
+### Added
+
+- All six CLI providers can receive service-defined environment variables.
+  Values support PawFlow expressions resolved for the user and conversation
+  when the process starts, while PawFlow-managed runtime variables remain
+  authoritative.
+- Codex app-server and Codex Interactive services can merge an additional
+  `config.toml` and install a `models.json` catalog. This enables custom
+  providers such as DeepSeek without replacing PawFlow's MCP, trust, or
+  context-management configuration.
+- Claude Code `cc -p` now mirrors successful native TaskCreate and TaskUpdate
+  calls into the same PawFlow TodoStore used by Claude Code Interactive.
+
+### Fixed
+
+- Claude Code `cc -p` requests partial stream events and emits text and
+  thinking deltas live without replaying the completed blocks. Live provider
+  usage now reaches the context gauge during the turn.
+- The Active Agents `LIVE` badge now follows the provider of the active turn.
+  A cold `cc -p` process with `reuse_count=0`, or a registry sampling race,
+  can no longer make the badge disappear while the turn is still running.
+- Conversation themes are stored and loaded from conversation metadata instead
+  of a browser-local cookie map, so Chrome mobile and desktop apply the same
+  per-conversation theme and fall back to the browser-global theme only when no
+  override exists.
+- Opening the left sidebar on a narrow mobile viewport now keeps the composer
+  action dock behind the drawer instead of painting it across the resource menu.
+- The logout action now uses an inline power SVG instead of the optional U+23FB
+  font glyph, avoiding a missing-character box in Chrome on Android.
+- CCI hook events unrelated to native task tools no longer initialize the Todo
+  adapter, preventing identity-less hook connections from dropping their event.
+
 ## [1.0.0-beta.145] — 2026-08-08
 
 ### Fixed

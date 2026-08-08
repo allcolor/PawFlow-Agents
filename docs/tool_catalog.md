@@ -410,10 +410,11 @@ The web chat ships with built-in themes (`PawFlow Dark`, `Matrix`, `Mr.Robot`,
 `Amstrad CPC Blue Monochrome`, `ZX Spectrum`, `EGA`, `Nintendo`, `Sega`,
 `Ubuntu Linux`, `Steam`, `Blade Runner`, `Hell`, `Heaven`) and two selectors. The header
 selector controls the browser-global theme and stores its ref in a cookie. The
-conversation selector below the expiry control stores per-conversation theme
-refs in a cookie map, with `Use global theme` as the default. When switching
-conversation, the UI applies the conversation theme if one is linked; otherwise
-it falls back to the global theme. Themes are repository resources stored as
+conversation selector below the expiry control stores its ref in the
+conversation metadata on the server, with `Use global theme` as the default.
+The selection therefore follows the conversation across desktop and mobile
+browsers. When switching conversation, the UI applies the conversation theme if
+one is linked; otherwise it falls back to the browser-global theme. Themes are repository resources stored as
 directories under `data/repository/theme` using the normal scope hierarchy:
 `global/<name>/`, `users/<user>/<name>/`, or `users/<user>/<conversation>/<name>/`.
 Each theme directory contains `theme.json`, one or more CSS files, and optional

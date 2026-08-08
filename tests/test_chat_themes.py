@@ -16,6 +16,9 @@ from core.resource_store import ResourceStore
 from tasks.ai.actions.agent_resource import _handle_agent_resource
 
 
+THEMES_JS = Path("tasks/io/chat_ui/themes.js").read_text(encoding="utf-8")
+
+
 @pytest.fixture(autouse=True)
 def reset_repositories(tmp_path):
     ResourceStore.reset()
@@ -45,6 +48,14 @@ def _call(action, body, user_id="u1", admin=False):
     result = _handle_agent_resource(None, action, body, store, user_id, ff)
     assert result == [ff]
     return json.loads(ff.content.decode("utf-8"))
+
+
+def test_conversation_theme_is_server_backed_across_browsers():
+    """Mobile and desktop browsers must resolve the same conversation theme."""
+    assert "data.conversation_theme_ref" in THEMES_JS
+    assert "conversation_override: !!conversationOverride" in THEMES_JS
+    assert "applyThemeRef(value || _themeGetGlobalRef(), true, !!value)" in THEMES_JS
+    assert "CONV_THEME_COOKIE" not in THEMES_JS
 
 
 def _write_theme(scope, name, css="", title="", user_id="u1", conversation_id=""):
@@ -208,7 +219,7 @@ def test_theme_ui_selector_and_repository_entries_exist():
     assert "showThemeCreator" in resources
     assert "accept=\".css,.zip,text/css,application/zip\"" in themes_js
     assert "pawflow_theme_ref" in themes_js
-    assert "pawflow_conv_theme_refs" in themes_js
+    assert "conversation_theme_ref" in themes_js
     assert "global:pawflow_dark" in themes_js
     assert "onGlobalThemeSelectChange" in themes_js
     assert "onConversationThemeSelectChange" in themes_js

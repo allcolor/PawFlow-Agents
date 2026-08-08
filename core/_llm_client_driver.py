@@ -446,6 +446,7 @@ class _LLMClientDriverMixin:
                     call_conversation_id=call_conversation_id or "")
             elif self.provider == "claude-code":
                 result = self._stream_claude_code(messages, mdl, temperature, max_tokens, tools, callback,
+                                                  thinking_callback=thinking_callback,
                                                   turn_callback=turn_callback,
                                                   block_callback=block_callback,
                                                   call_user_id=call_user_id,

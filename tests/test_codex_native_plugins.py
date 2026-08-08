@@ -6,7 +6,10 @@ No Docker, no codex binary: _codex_setup_mcp_config is exercised directly
 against tmp_path with the relay lookup and token mint stubbed.
 """
 
+import json
 import os
+from pathlib import Path
+import tomllib
 
 import pytest
 
@@ -129,6 +132,45 @@ class TestConfigToml:
         _, content = _write_config(tmp_path)
         assert "[projects." not in content
 
+    def test_deepseek_fragment_merges_and_writes_session_model_catalog(
+            self, tmp_path, monkeypatch):
+        root = tmp_path / "sessions"
+        workdir = root / "u1" / "c1" / "a1"
+        workdir.mkdir(parents=True)
+        monkeypatch.setattr(
+            "core.llm_providers.codex_session._get_sessions_base",
+            lambda: str(root))
+        host = _Host({
+            "codex_config_toml": (
+                'model = "deepseek-v4-flash"\n'
+                'model_provider = "deepseek"\n'
+                '[model_providers.deepseek]\n'
+                'name = "DeepSeek"\n'
+                'base_url = "https://api.deepseek.com"\n'
+                '[mcp_servers.pawflow]\ncommand = "evil"\n'),
+            "codex_models_json": json.dumps({
+                "models": [{"slug": "deepseek-v4-flash"}],
+            }),
+        })
+        path, _token = host._codex_setup_mcp_config(
+            str(workdir), user_id="u1", conversation_id="c1",
+            agent_name="a1")
+
+        config = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+        assert config["model"] == "deepseek-v4-flash"
+        assert config["model_provider"] == "deepseek"
+        assert config["model_providers"]["deepseek"]["base_url"] == (
+            "https://api.deepseek.com")
+        assert config["mcp_servers"]["pawflow"]["command"] == (
+            "/usr/bin/python3")
+        assert config["model_auto_compact_token_limit"] == 999999999
+        assert config["model_catalog_json"] == (
+            "/cc_sessions/c1/a1/.codex/models.json")
+        models_path = workdir / ".codex" / "models.json"
+        assert json.loads(models_path.read_text(encoding="utf-8")) == {
+            "models": [{"slug": "deepseek-v4-flash"}],
+        }
+
     def test_file_permissions(self, tmp_path):
         path, _ = _write_config(tmp_path)
         assert oct(os.stat(path).st_mode & 0o777) == "0o600"
@@ -146,3 +188,20 @@ class TestServiceSchema:
                        if r["set"].get("codex_plugins", {}).get("visible")]
         # Both Codex CLI providers take native plugins; nothing else does.
         assert visible_for == [["codex-app-server"], ["codex-interactive"]]
+
+    def test_cli_environment_and_codex_fragments_are_scoped(self):
+        from services.llm_connection import LLMConnectionService
+        service = LLMConnectionService.__new__(LLMConnectionService)
+        schema = service.get_parameter_schema()
+        assert {"cli_environment", "codex_config_toml", "codex_models_json"} <= set(schema)
+        rules = service.get_parameter_rules()
+        env_visible = [r["when"]["provider"] for r in rules
+                       if r["set"].get("cli_environment", {}).get("visible")]
+        assert env_visible == [
+            ["claude-code"], ["claude-code-interactive"],
+            ["antigravity-interactive"], ["codex-app-server"],
+            ["codex-interactive"], ["gemini"],
+        ]
+        toml_visible = [r["when"]["provider"] for r in rules
+                        if r["set"].get("codex_config_toml", {}).get("visible")]
+        assert toml_visible == [["codex-app-server"], ["codex-interactive"]]

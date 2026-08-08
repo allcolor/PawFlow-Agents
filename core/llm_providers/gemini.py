@@ -587,7 +587,8 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
         container = container_name or pool.acquire(workspace_mount_args=workspace_mounts)
         rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         session_dir = f"/cc_sessions/{rel}"
-        extra = {}
+        from core.cli_process_config import merge_cli_environment
+        managed = {}
         for key in (
             "GEMINI_API_KEY",
             "GEMINI_BASE_URL",
@@ -598,7 +599,9 @@ class LLMGeminiMixin(_GeminiStreamMixin, _GeminiAcpProtocolMixin, GeminiSessionM
             "NODE_TLS_REJECT_UNAUTHORIZED",
         ):
             if env.get(key):
-                extra[key] = env[key]
+                managed[key] = env[key]
+        extra = merge_cli_environment(
+            self, managed, user_id, conversation_id)
         proc = pool.exec_gemini(
             container, session_dir, cmd,
             extra_env=extra or None,

@@ -48,6 +48,15 @@ def test_mobile_sidebar_toggle_stays_above_the_open_drawer():
     )
 
 
+def test_mobile_action_dock_stays_below_the_open_sidebar():
+    """The composer dock must not paint over the fixed mobile drawer."""
+    mobile = _mobile_block()
+    selector = "body:has(.sidebar:not(.collapsed)) .action-dock"
+    match = re.search(re.escape(selector) + r"\s*\{[^}]*z-index:\s*(\d+)", mobile)
+    assert match, "the mobile layout must override the desktop dock layer"
+    assert int(match.group(1)) < 150
+
+
 def test_mobile_bumps_the_type_scale_above_the_desktop_sizes():
     """Desktop uses 11-12px for technical/tool output, which is unreadable on a
     phone. Every size the mobile block sets must be larger than the desktop

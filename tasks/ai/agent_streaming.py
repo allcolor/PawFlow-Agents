@@ -686,6 +686,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     "status": "thinking",
                     "message_preview": _turn.get("message_preview", _user_text[:160]),
                     "max_rounds": ctx.get("max_rounds", 0),
+                    "active_llm_provider": ctx.get(
+                        "active_llm_provider", ""),
                     "generation": _starting_generation,
                 })
                 self._active_turns[_resolved_turn_key] = _turn

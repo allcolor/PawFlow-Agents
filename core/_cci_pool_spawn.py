@@ -167,6 +167,9 @@ class _InteractiveContainerSpawnMixin:
         (upstream_host, upstream_port, upstream_scheme,
          anthropic_base_url, listen_port) = self._anthropic_endpoint(client)
         anthropic_api_key = self._anthropic_api_key(client)
+        from core.cli_process_config import shell_cli_environment
+        cli_environment = shell_cli_environment(
+            client, user_id=user_id, conversation_id=conversation_id)
         generate_leaf(
             cert_dir,
             common_name=upstream_host,
@@ -233,6 +236,7 @@ class _InteractiveContainerSpawnMixin:
                 internal_token=internal_token,
                 anthropic_base_url=anthropic_base_url,
                 anthropic_api_key=anthropic_api_key,
+                cli_environment=cli_environment,
             )
             state.claude_started = True
         except Exception:
@@ -467,7 +471,8 @@ class _InteractiveContainerSpawnMixin:
                            session_token: str, event_url: str,
                            event_token: str, internal_token: str,
                            anthropic_base_url: str = "",
-                           anthropic_api_key: str = "") -> None:
+                           anthropic_api_key: str = "",
+                           cli_environment: str = "") -> None:
         parts = container_workdir.lstrip("/").split("/")
         if len(parts) < 3 or parts[0] != "cc_sessions_host":
             raise ValueError(
@@ -521,7 +526,8 @@ class _InteractiveContainerSpawnMixin:
             "tasks projects && ("
             f"{drop_privs} tmux kill-session -t pawflow 2>/dev/null || true; "
             f"{drop_privs} tmux new-session -d -s pawflow -x 220 -y 50 "
-            f"'env HOME={shlex.quote(ns_workdir)} USER=pawflow "
+            f"'env {cli_environment + ' ' if cli_environment else ''}"
+            f"HOME={shlex.quote(ns_workdir)} USER=pawflow "
             f"CLAUDE_CONFIG_DIR={shlex.quote(ns_workdir)} "
             f"NODE_EXTRA_CA_CERTS={shlex.quote(ca_path.replace(container_workdir, ns_workdir, 1))} "
             f"PAWFLOW_CCI_SESSION_TOKEN={shlex.quote(session_token)} "

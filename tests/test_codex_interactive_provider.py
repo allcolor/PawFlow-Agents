@@ -148,8 +148,10 @@ def test_codex_tmux_injects_custom_base_url_only_when_configured(monkeypatch):
         "internal_token": "internal",
     }
     spawn._start_codex_tmux(
-        **common, codex_base_url="https://gateway.example/prefix/v1")
+        **common, codex_base_url="https://gateway.example/prefix/v1",
+        cli_environment="CUSTOM='hello world'")
     assert "OPENAI_BASE_URL=https://gateway.example/prefix/v1" in commands[0][-1]
+    assert "CUSTOM='hello world' HOME=/cc_sessions/conv/agent" in commands[0][-1]
 
     commands.clear()
     spawn._start_codex_tmux(**common)

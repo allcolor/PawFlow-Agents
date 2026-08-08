@@ -2097,6 +2097,7 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
         event_url="wss://events",
         event_token="event-token",
         internal_token="internal-token",
+        cli_environment="CUSTOM='hello world'",
     )
 
     start_cmd = calls[0]
@@ -2113,6 +2114,7 @@ def test_interactive_pool_starts_tmux_in_normal_provider_namespace(monkeypatch):
     # the server-provisioned (server-owned, 755) workdir.
     assert "mkdir -p tasks projects && chown -R 1000:1000 tasks projects" in shell
     assert "HOME=/cc_sessions/c/a" in shell
+    assert "CUSTOM='hello world' HOME=/cc_sessions/c/a" in shell
     assert "CLAUDE_CONFIG_DIR=/cc_sessions/c/a" in shell
     assert "--mcp-config /cc_sessions/c/a/.mcp.json" in shell
     assert "--disallowedTools" in shell

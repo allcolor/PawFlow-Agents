@@ -259,6 +259,9 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
 
         cert_dir = Path(workdir) / ".pawflow_ag" / "certs"
         certs = generate_leaf(cert_dir, common_name=ANTIGRAVITY_BACKEND_HOST)
+        from core.cli_process_config import shell_cli_environment
+        cli_environment = shell_cli_environment(
+            setup_client, user_id=user_id, conversation_id=conversation_id)
         log_dir = Path(workdir) / ".pawflow_ag" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_id = uuid.uuid4().hex[:12]
@@ -272,7 +275,9 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             self._install_ca(name, physical_workdir)
             self._start_proxy(name=name, container_workdir=physical_workdir,
                               log_path=log_path, stderr_path=stderr_path, certs=certs)
-            self._start_agy_tmux(name=name, container_workdir=physical_workdir)
+            self._start_agy_tmux(
+                name=name, container_workdir=physical_workdir,
+                cli_environment=cli_environment)
         except Exception:
             subprocess.run(docker_cmd() + ["rm", "-f", name], capture_output=True, timeout=15)  # nosec B603
             raise
@@ -545,7 +550,8 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
         rel = Path(path).resolve().relative_to(self._base_dir().resolve())
         return "/cc_sessions/" + rel.as_posix()
 
-    def _start_agy_tmux(self, *, name: str, container_workdir: str) -> None:
+    def _start_agy_tmux(self, *, name: str, container_workdir: str,
+                        cli_environment: str = "") -> None:
         parts = container_workdir.lstrip("/").split("/")
         if len(parts) < 3 or parts[0] != "cc_sessions_host":
             raise ValueError(f"container_workdir must look like /cc_sessions_host/<user>/<conv>/<agent>; got {container_workdir!r}")
@@ -560,7 +566,8 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             f"cd {shlex.quote(ns_workdir)} && ("
             f"{drop_privs} tmux kill-session -t pawflow-agy 2>/dev/null || true; "
             f"{drop_privs} tmux new-session -d -s pawflow-agy -x 220 -y 50 "
-            f"'env HOME={shlex.quote(ns_workdir)} "
+            f"'env {cli_environment + ' ' if cli_environment else ''}"
+            f"HOME={shlex.quote(ns_workdir)} "
             f"GEMINI_CLI_HOME={shlex.quote(ns_workdir)} "
             f"CASCADE_ENABLE_MCP_TOOLS=true "
             f"USER=pawflow TERM=xterm-256color "

@@ -644,6 +644,24 @@ val = cache.get("key")
 | `azure_api_version` | string | No | - | Azure only: `api-version` query parameter |
 | `max_tokens` | integer | No | 1024 | Max tokens per response |
 | `temperature` | float | No | 0.7 | Temperature |
+| `cli_environment` | multiline string | No | - | CLI providers only: one `NAME=value` assignment per line; PawFlow expressions are resolved when the process starts. |
+| `codex_config_toml` | multiline string | No | - | Codex providers only: additional `config.toml` merged structurally into PawFlow's generated configuration. |
+| `codex_models_json` | multiline JSON | No | - | Codex providers only: a model catalog object containing a `models` array, written as `.codex/models.json`. |
+
+`cli_environment` is available for `claude-code`,
+`claude-code-interactive`, `antigravity-interactive`,
+`codex-app-server`, `codex-interactive`, and `gemini`. Empty values are
+preserved. Process-isolation variables such as `HOME`, provider home
+directories, `PAWFLOW_*`, and managed endpoint or credential values remain
+authoritative and cannot be replaced by this block.
+
+For Codex custom providers such as DeepSeek, put the provider/model selection in
+`codex_config_toml` and the corresponding model descriptors in
+`codex_models_json`. PawFlow writes the catalog beside the generated
+`config.toml` and supplies the container-visible `model_catalog_json` path.
+The custom TOML can add providers and models, while PawFlow's MCP bridge,
+internal authentication, trust policy, and context-management settings win on
+conflicting keys.
 
 **OpenAI-dialect providers** (`core/llm_providers/openai_dialects.py`): Azure
 OpenAI and GitHub Copilot send OpenAI chat-completions bodies, so they reuse

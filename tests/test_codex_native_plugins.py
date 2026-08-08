@@ -9,7 +9,11 @@ against tmp_path with the relay lookup and token mint stubbed.
 import json
 import os
 from pathlib import Path
-import tomllib
+
+try:
+    import tomllib
+except ImportError:  # pragma: no cover - exercised on Python 3.10
+    import tomli as tomllib
 
 import pytest
 

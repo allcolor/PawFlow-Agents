@@ -19,6 +19,8 @@ _CLI_BOOTSTRAP_CONTEXT_PATHS = (
     "/.pawflow_cci/initial_context.md",
     "/.pawflow_ag/initial_context.md",
 )
+_BOOTSTRAP_CONTEXT_HEADER_RE = re.compile(
+    r"(?:\A|\r?\n)# PawFlow Initial Context(?:\r?\n|\Z)")
 # 4: PawFlow's messages are always charged, and the bootstrap read body --
 # the same context in its serialized form -- never is. 3 did the opposite,
 # so every cached `used` written under it describes a different quantity.
@@ -64,21 +66,33 @@ def _tool_call_field(tool_call: Any, name: str) -> Any:
 
 
 def _is_cli_bootstrap_read(tool_call: Any) -> bool:
-    """Return whether a native provider tool accesses PawFlow's bootstrap file.
+    """Return whether any provider or MCP tool accesses the bootstrap file.
 
     The bootstrap body is a serialization of the PawFlow messages that the
-    gauge already counts.  Native reads are persisted for UI/history parity,
-    but counting their output would charge the same context a second time.
+    gauge already counts. Reads are persisted for UI/history parity, but their
+    transport is irrelevant: native file tools, MCP wrappers, and shell commands
+    can all return the same duplicate body.
     """
-    if str(_tool_call_field(tool_call, "tool_origin") or "").lower() != "native":
-        return False
     arguments = _tool_call_field(tool_call, "arguments")
+    if (isinstance(arguments, dict)
+            and arguments.get("_pawflow_bootstrap_read") is True):
+        return True
     try:
         rendered = json.dumps(arguments, sort_keys=True, ensure_ascii=False)
     except (TypeError, ValueError):
         rendered = str(arguments or "")
     normalized = re.sub(r"/+", "/", rendered.replace("\\", "/")).lower()
     return any(path in normalized for path in _CLI_BOOTSTRAP_CONTEXT_PATHS)
+
+
+def _is_opaque_cli_tool_call(tool_call: Any) -> bool:
+    """Whether PawFlow persisted a code-mode call without its script body."""
+    arguments = _tool_call_field(tool_call, "arguments")
+    try:
+        rendered = json.dumps(arguments, sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        rendered = str(arguments or "")
+    return "<code-mode script," in rendered
 
 
 def _message_source(msg: Any) -> Dict[str, Any]:
@@ -158,16 +172,33 @@ def _bootstrap_body_call_ids(messages: Iterable[Any]) -> set:
     native read ceiling is consumed page by page, and each page returns
     another slice of the same serialized context.
     """
+    msg_list = list(messages or [])
     call_ids = set()
-    for msg in messages or []:
+    opaque_call_ids = set()
+    for msg in msg_list:
         for tool_call in _message_tool_calls(msg):
-            if not _is_cli_bootstrap_read(tool_call):
-                continue
             call_id = str(
                 tool_call.get("id") if isinstance(tool_call, dict)
                 else getattr(tool_call, "id", "") or "")
             if call_id:
+                if _is_opaque_cli_tool_call(tool_call):
+                    opaque_call_ids.add(call_id)
+            if not _is_cli_bootstrap_read(tool_call):
+                continue
+            if call_id:
                 call_ids.add(call_id)
+    # Codex code mode elides its script before persistence, which can hide a
+    # shell read and its path. The linked result remains conclusive when it
+    # contains the bootstrap's exact first-line header.
+    for msg in msg_list:
+        if _message_role(msg) != "tool":
+            continue
+        call_id = _message_tool_call_id(msg)
+        if call_id not in opaque_call_ids:
+            continue
+        if _BOOTSTRAP_CONTEXT_HEADER_RE.search(
+                _content_text(_message_content(msg))):
+            call_ids.add(call_id)
     return call_ids
 
 
@@ -191,7 +222,6 @@ def _strip_for_count(messages: Iterable[Any],
     stripped = []
     for msg in msg_list:
         if _is_bootstrap_body(msg, call_ids):
-            stripped.append({"content": ""})
             continue
         stripped.append({"content": _content_text(_message_content(msg))})
     return stripped

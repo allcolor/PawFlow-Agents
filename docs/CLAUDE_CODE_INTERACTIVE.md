@@ -930,11 +930,13 @@ full.
 
 The same argument elision also hides the bootstrap path from the ordinary
 next-context deduplicator. A persisted code-mode row only says
-`<code-mode script, N chars>`; its linked result is therefore recognized by
-the exact `# PawFlow Initial Context` header at the start of a line. The call
-and result remain visible in the transcript, while neither is copied into the
-next cold bootstrap. Prefixing or quoting that title does not trigger the
-fallback.
+`<code-mode script, N chars>`, plus a boolean bootstrap-read marker when the
+original script accessed `initial_context.md`. The marker survives for every
+page of a paginated read. Older unmarked rows retain a narrow fallback: their
+linked result is recognized by the exact `# PawFlow Initial Context` header at
+the start of a line. The call and result remain visible in the transcript,
+while neither is copied into the next cold bootstrap. Prefixing or quoting that
+title does not trigger the fallback.
 
 Two things `publish_agent_event` has to get right for any of that to be worth
 anything.

@@ -211,6 +211,13 @@ class _CodexInteractiveTurnCoordinator(_CCITurnCoordinator):
         source = (args or {}).get("input")
         elided = dict(args or {})
         elided["input"] = f"<code-mode script, {len(str(source))} chars>"
+        # The full body is deliberately discarded, but the live block callback
+        # still needs to recognize every paginated read of initial_context.md.
+        # Preserve only that non-sensitive fact so the linked result can never
+        # be counted or serialized into the next cold bootstrap.
+        from tasks.ai.context_usage_cache import _is_cli_bootstrap_read
+        if _is_cli_bootstrap_read({"arguments": args}):
+            elided["_pawflow_bootstrap_read"] = True
         return elided
 
     def _displayable_result(self, block: dict, result: str) -> str:

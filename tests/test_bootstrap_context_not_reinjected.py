@@ -18,6 +18,8 @@ Two surfaces, two rules, and they are not the same rule:
 Deduplicating the first must never leak into the second.
 """
 
+import json
+
 import pytest
 
 from core.llm_client import LLMClient, LLMMessage, LLMToolCall
@@ -33,12 +35,25 @@ OPAQUE_EXEC_RESULT = (
 
 # Every shape the CLI providers use to open their own bootstrap file.
 BOOTSTRAP_CALLS = [
-    ("Read", {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md"}),
-    ("Read", {"file_path": "/cc_sessions/c/a/.pawflow_cli/initial_context.md"}),
-    ("view_file", {"path": "/cc_sessions/c/a/.pawflow_ag/initial_context.md"}),
-    ("read_file", {"path": r"C:\cc_sessions\c\a\.pawflow_cli\initial_context.md"}),
+    ("Read", {"file_path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md"}, "native"),
+    ("Read", {"file_path": "/cc_sessions/c/a/.pawflow_cli/initial_context.md"}, "native"),
+    ("view_file", {"path": "/cc_sessions/c/a/.pawflow_ag/initial_context.md"}, "native"),
+    ("read_file", {"path": r"C:\cc_sessions\c\a\.pawflow_cli\initial_context.md"}, "native"),
     ("codex_native_commandExecution",
-     {"command": "sed -n '1,240p' /cc_sessions/c/a/.pawflow_cli/initial_context.md"}),
+     {"command": "sed -n '1,240p' /cc_sessions/c/a/.pawflow_cli/initial_context.md"},
+     "native"),
+    ("mcp__pawflow__use_tool", {
+        "tool_name": "read",
+        "arguments_json": json.dumps({
+            "path": "/cc_sessions/c/a/.pawflow_cci/initial_context.md",
+        }),
+     }, "mcp"),
+    ("mcp__pawflow__use_tool", {
+        "tool_name": "bash",
+        "arguments_json": json.dumps({
+            "command": "sed -n '1,240p' /cc_sessions/c/a/.pawflow_cci/initial_context.md",
+        }),
+     }, "mcp"),
 ]
 
 
@@ -60,12 +75,13 @@ def _client():
     return LLMClient("claude-code-interactive")
 
 
-@pytest.mark.parametrize(("tool_name", "arguments"), BOOTSTRAP_CALLS)
-def test_bootstrap_pair_never_reaches_the_agent_context(tool_name, arguments):
+@pytest.mark.parametrize(("tool_name", "arguments", "origin"), BOOTSTRAP_CALLS)
+def test_bootstrap_pair_never_reaches_the_agent_context(
+        tool_name, arguments, origin):
     """Neither the call nor its result is serialized back into the context."""
     messages = (
         [LLMMessage(role="user", content="earlier", conversation_id="conv")]
-        + _pair(tool_name, arguments)
+        + _pair(tool_name, arguments, origin=origin)
         + [LLMMessage(role="assistant", content="an answer", conversation_id="conv"),
            LLMMessage(role="user", content="latest", conversation_id="conv")]
     )
@@ -101,6 +117,7 @@ def test_opaque_codex_code_mode_bootstrap_result_is_not_reinjected():
         + _pair(
             "exec",
             {"input": "<code-mode script, 249 chars>"},
+            origin="mcp",
             body=OPAQUE_EXEC_RESULT,
         )
         + [LLMMessage(role="assistant", content="an answer",
@@ -115,6 +132,29 @@ def test_opaque_codex_code_mode_bootstrap_result_is_not_reinjected():
     assert "code-mode script" not in body
     assert "earlier" in body
     assert "an answer" in body
+
+
+def test_marked_paginated_bootstrap_page_needs_no_header():
+    """Every page is excluded after the original script body is elided."""
+    messages = (
+        [LLMMessage(role="user", content="earlier", conversation_id="conv")]
+        + _pair(
+            "exec",
+            {
+                "input": "<code-mode script, 249 chars>",
+                "_pawflow_bootstrap_read": True,
+            },
+            origin="native",
+            body="middle page of serialized history without its first header",
+        )
+        + [LLMMessage(role="user", content="latest", conversation_id="conv")]
+    )
+
+    body = _client()._cli_context_before_latest_text(messages)
+
+    assert "middle page" not in body
+    assert "code-mode script" not in body
+    assert "earlier" in body
 
 
 def test_a_quoted_bootstrap_title_is_not_mistaken_for_the_file():
@@ -186,16 +226,13 @@ def test_cold_start_context_file_does_not_embed_its_own_previous_copy(tmp_path):
     assert "latest request" in written
 
 
-@pytest.mark.parametrize(("tool_name", "arguments"), BOOTSTRAP_CALLS)
-def test_gauge_still_counts_the_bootstrap_read_result(tool_name, arguments):
-    """The other half of the rule: dropped from context, still counted.
-
-    The result body is what actually fills the provider's window, so removing it
-    from serialization must never make the gauge stop charging for it.
-    """
+@pytest.mark.parametrize(("tool_name", "arguments", "origin"), BOOTSTRAP_CALLS)
+def test_gauge_never_double_counts_the_bootstrap_read_result(
+        tool_name, arguments, origin):
+    """The local gauge counts the stored messages, not their bootstrap copy."""
     from tasks.ai.context_usage_cache import context_usage_from_cache
 
-    call, result = _pair(tool_name, arguments)
+    call, result = _pair(tool_name, arguments, origin=origin)
     call.source = {
         "type": "agent",
         "name": "assistant",
@@ -211,13 +248,24 @@ def test_gauge_still_counts_the_bootstrap_read_result(tool_name, arguments):
     without_result = context_usage_from_cache(
         messages[:2], 200000, source="cold_cli_no_result")
 
-    # What the body costs on its own, as the reference charge.
-    body_alone = context_usage_from_cache(
-        [LLMMessage(role="user", content=BOOTSTRAP_BODY, conversation_id="c")],
-        200000, source="body_alone")
+    assert with_result["used"] == without_result["used"]
 
-    # The boundary is found, the serialized prefix is zeroed...
-    assert with_result["bootstrap_context_start"] == 1
-    # ...and the read result is charged its full weight, not discarded.
-    assert with_result["used"] > without_result["used"]
-    assert with_result["used"] >= body_alone["used"] * 0.9
+
+def test_gauge_drops_an_opaque_mcp_shell_bootstrap_result():
+    """A hidden shell path is recovered from the exact bootstrap header."""
+    from tasks.ai.context_usage_cache import context_usage_from_cache
+
+    call, result = _pair(
+        "exec", {"input": "<code-mode script, 249 chars>"},
+        origin="mcp", body=OPAQUE_EXEC_RESULT)
+    messages = [
+        LLMMessage(role="user", content="real context", conversation_id="conv"),
+        call,
+        result,
+    ]
+
+    with_result = context_usage_from_cache(messages, 200000, source="opaque")
+    without_result = context_usage_from_cache(
+        messages[:2], 200000, source="opaque_no_result")
+
+    assert with_result["used"] == without_result["used"]

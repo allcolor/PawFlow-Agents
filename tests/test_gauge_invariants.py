@@ -752,25 +752,27 @@ def test_cli_bootstrap_exclusion_survives_append_delta():
     assert full["used"] == after["used"]
 
 
-def test_non_native_bootstrap_read_result_stays_counted():
+def test_mcp_bootstrap_read_result_is_never_counted():
     from core.llm_client import LLMMessage, LLMToolCall
-    from tasks.ai.context_usage_cache import context_usage_from_cache
+    from tasks.ai.context_usage_cache import (
+        _is_cli_bootstrap_read, context_usage_from_cache)
 
     call_id = "mcp-read"
+    call = LLMMessage(
+        role="assistant",
+        conversation_id="conv-bootstrap",
+        tool_calls=[LLMToolCall(
+            id=call_id,
+            name="read",
+            arguments={
+                "path": "/workspace/.pawflow_cli/initial_context.md",
+            },
+            tool_origin="mcp",
+        )],
+    )
     usage = context_usage_from_cache(
         [
-            LLMMessage(
-                role="assistant",
-                conversation_id="conv-bootstrap",
-                tool_calls=[LLMToolCall(
-                    id=call_id,
-                    name="read",
-                    arguments={
-                        "path": "/workspace/.pawflow_cli/initial_context.md",
-                    },
-                    tool_origin="mcp",
-                )],
-            ),
+            call,
             LLMMessage(
                 role="tool",
                 conversation_id="conv-bootstrap",
@@ -782,8 +784,8 @@ def test_non_native_bootstrap_read_result_stays_counted():
         source="mcp_read",
     )
 
-    assert usage["bootstrap_context_start"] == -1
-    assert usage["used"] > 1000
+    assert _is_cli_bootstrap_read(call.tool_calls[0]) is True
+    assert usage["used"] <= 8
 
 
 def test_cli_block_callback_marks_one_cold_bootstrap_boundary():

@@ -55,29 +55,22 @@ not clear the logical provider session, so providers that can resume may do so o
 the next turn.
 
 CLI gauges follow the context actually present in the provider session. A compact
-or context edit invalidates that session and resets the gauge to zero. On the next
-cold turn, PawFlow first counts only the short injected bootstrap prompt. When the
-CLI reads `initial_context.md`, the native tool result becomes part of the gauge;
-the same serialized PawFlow messages are not counted a second time. This lifecycle
-applies to Claude Code, Claude Code interactive, Codex app-server, Codex
-interactive, Antigravity, and Gemini CLI. Direct API-provider gauges continue
-to count their request messages.
+or context edit invalidates that session and resets the gauge to zero. Live native
+provider measurements are authoritative. The local fallback counts the serialized
+PawFlow messages and never adds a tool result that reads `initial_context.md`,
+because that result is a second representation of those same messages.
 
-That read is kept out of the *next* cold start's context, and the two rules are
-not the same rule. The call and its result stay in the transcript and stay on the
-gauge — the body is literally what fills the provider's window, so it is charged
-for, and the serialized PawFlow messages preceding it are zeroed instead. But
-serializing that same body into the next `initial_context.md` would embed a
-verbatim copy of the file the agent is already reading, one layer deeper on every
-cold start; a 671 KB bootstrap file was found to be 16% copies of itself. So every
-CLI serializer drops the pair (`bootstrap_read_call_ids` in
-`core/llm_providers/cli_shared.py`). It normally uses the same visible-path
-predicate as the gauge (`_is_cli_bootstrap_read`). Codex Interactive code
-mode elides its script before persistence, including that path, so the
-serializer additionally recognizes the linked native result by the exact
-`# PawFlow Initial Context` first-line header. A mere quoted mention does not
-match. This fallback changes only the next serialized context; the transcript
-and provider-side gauge still retain the read.
+The read call and its result stay in the transcript, but every CLI serializer,
+compaction input, and local gauge drops the pair. Otherwise the next
+`initial_context.md` embeds a verbatim copy of the file the agent is already
+reading and the nesting deepens on every cold start. Detection is independent of
+transport: native file tools, PawFlow MCP wrappers, and visible shell commands all
+match the bootstrap path. If Codex code mode has elided the script and hidden that
+path before persistence, the linked result is recognized by the exact
+`# PawFlow Initial Context` first-line header. A quoted mention does not match.
+Before eliding such a script, PawFlow persists a boolean bootstrap-read marker;
+this identifies every page of a multi-command read even though only the first
+page contains the header.
 
 ## Agent Configuration
 

@@ -250,22 +250,24 @@ def bootstrap_read_call_ids(messages: List[Any]) -> Set[str]:
     the agent context drops it.
 
     Normally the same predicate as the gauge identifies the call from its
-    arguments. Codex Interactive code mode is the exception: before persistence
-    it deliberately replaces the script -- and therefore the bootstrap path --
-    with a size marker. Its linked result still contains the bootstrap's exact
-    first-line header, so use that as a narrow fallback for native calls.
+    arguments, regardless of whether it ran natively, through MCP, or through a
+    visible shell command. Codex Interactive code mode is the exception: before
+    persistence it deliberately replaces the script -- and therefore the
+    bootstrap path -- with a size marker. Its linked result still contains the
+    bootstrap's exact first-line header, so use that as a narrow fallback.
     """
-    from tasks.ai.context_usage_cache import _is_cli_bootstrap_read
+    from tasks.ai.context_usage_cache import (
+        _is_cli_bootstrap_read, _is_opaque_cli_tool_call)
 
     call_ids: Set[str] = set()
-    native_call_ids: Set[str] = set()
+    opaque_call_ids: Set[str] = set()
     for msg in messages or []:
         for tool_call in (getattr(msg, "tool_calls", None) or []):
             call_id = str(getattr(tool_call, "id", "") or "")
             if not call_id:
                 continue
-            if str(getattr(tool_call, "tool_origin", "") or "").lower() == "native":
-                native_call_ids.add(call_id)
+            if _is_opaque_cli_tool_call(tool_call):
+                opaque_call_ids.add(call_id)
             if _is_cli_bootstrap_read(tool_call):
                 call_ids.add(call_id)
 
@@ -273,7 +275,12 @@ def bootstrap_read_call_ids(messages: List[Any]) -> Set[str]:
         if str(getattr(msg, "role", "") or "") != "tool":
             continue
         call_id = str(getattr(msg, "tool_call_id", "") or "")
-        if not call_id or call_id not in native_call_ids:
+        source = getattr(msg, "source", None) or {}
+        if (call_id and isinstance(source, dict)
+                and source.get("context_usage_bootstrap_body") is True):
+            call_ids.add(call_id)
+            continue
+        if not call_id or call_id not in opaque_call_ids:
             continue
         content = getattr(msg, "content", "")
         text = msg.text_content if isinstance(content, list) else content

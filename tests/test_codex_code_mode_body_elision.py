@@ -57,6 +57,19 @@ def test_the_caller_s_dict_is_not_mutated():
     assert args["input"] == SCRIPT
 
 
+def test_paginated_bootstrap_script_keeps_only_a_read_marker():
+    script = (
+        'const r=await tools.exec_command({cmd:"sed -n \'241,520p\' '
+        '/cc_sessions/c/a/.pawflow_cci/initial_context.md"}); text(r.output);')
+    args = {"input": script}
+
+    out = _codex()._displayable_args("exec", args)
+
+    assert out["input"] == f"<code-mode script, {len(script)} chars>"
+    assert out["_pawflow_bootstrap_read"] is True
+    assert "_pawflow_bootstrap_read" not in args
+
+
 def test_a_real_tool_call_is_untouched():
     args = {"path": "/workspace/core/base_task.py", "offset": 1}
     assert _codex()._displayable_args("read", args) == args

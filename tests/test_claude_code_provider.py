@@ -350,6 +350,45 @@ class TestStreamClaude(unittest.TestCase):
                 self.client._cli_observed_context_tokens_by_stream.get(
                     ("test-conv", "test-agent")), 10)
 
+    def test_assistant_event_records_live_usage(self):
+        """An assistant event carrying usage records it live for the gauge --
+        parity with CCI's message_start.usage and codex-app-server's rollout
+        token_count -- not only at the terminal result. Regression for the
+        claude-code gauge falling back to an over-counting reconstruction
+        mid-turn (fake 85-100%) until `result` landed."""
+        events = [
+            json.dumps({"type": "assistant", "message": {
+                "id": "m1",
+                "content": [{"type": "text", "text": "thinking..."}],
+                "usage": {"input_tokens": 6_000,
+                          "cache_read_input_tokens": 12_000,
+                          "cache_creation_input_tokens": 2_000,
+                          "output_tokens": 100}}}),
+            json.dumps({"type": "result", "result": "", "model": "sonnet",
+                        "usage": {"input_tokens": 10, "output_tokens": 5}}),
+        ]
+        mock_stdout = MagicMock()
+        mock_stdout.__iter__ = MagicMock(
+            return_value=iter([line + "\n" for line in events]))
+        mock_proc = MagicMock()
+        mock_proc.stdout = mock_stdout
+        mock_proc.returncode = 0
+        recorded = []
+        with patch.object(self.client, '_pool_popen',
+                          return_value=(mock_proc, None)), \
+             patch.object(self.client, 'record_observed_wire_usage',
+                          side_effect=lambda u, c, a: recorded.append(u)):
+            self.client.complete_stream(
+                [LLMMessage(role="user", content="Hi", conversation_id="test_conv")])
+        # The assistant event's prompt usage (input + cache_read +
+        # cache_creation) was recorded live for the gauge, before `result`.
+        self.assertTrue(
+            any(u.get("input_tokens") == 6_000
+                and u.get("cache_read_input_tokens") == 12_000
+                and u.get("cache_creation_input_tokens") == 2_000
+                for u in recorded),
+            "assistant event usage was not recorded live: %r" % (recorded,))
+
     def _run_tool_turn(self, **stream_kwargs):
         """Drive a tool_use(m1) → tool_result → text(m2) stream and return
         whatever the provided callbacks captured. msg_id m1→m2 forces the

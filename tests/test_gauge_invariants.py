@@ -1266,6 +1266,51 @@ def test_cli_resumed_context_usage_uses_stored_context_plus_live_delta():
     assert usage["used"] > 0
 
 
+def test_claude_code_unmeasured_is_cold_not_reconstruction():
+    """cc -p measures only at end-of-turn, so during a turn it has no native
+    measurement. Reconstructing from PawFlow's transcript then over-counts (the
+    transcript is larger than cc -p's rolling window) and publishes a fake
+    near-full gauge, a matching "Context: ~x/y" note, and a premature compact.
+    An unmeasured claude-code must read cold (used=0) until its `result` lands.
+    """
+    from core.llm_client import LLMMessage
+    from tasks.ai.context_usage import compute_context_usage
+
+    stored = [
+        {"role": "user", "content": "stored user " * 200, "msg_id": "s1"},
+        {"role": "assistant", "content": "stored assistant " * 200, "msg_id": "s2"},
+    ]
+    live = [LLMMessage(role="user", content="live delta " * 20,
+                       conversation_id="conv-cc")]
+    fake_exec = SimpleNamespace(
+        _active_contexts={
+            "conv-cc:assistant": {
+                "active_agent_name": "assistant",
+                "messages": live,
+                "_is_cli_provider": True,
+                "_cli_has_session": True,
+                "active_llm_provider": "claude-code",
+                "resolved_svc": SimpleNamespace(config={"max_context_size": 10000}),
+            },
+        },
+        _active_contexts_lock=threading.Lock())
+
+    class _Store:
+        def resolve_owner(self, _cid):
+            return "user"
+
+        def load_agent_context(self, *_a, **_k):
+            return stored
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec):
+        usage = compute_context_usage(
+            "conv-cc", "assistant", user_id="user", store=_Store(), source="test")
+
+    assert usage["cli_context_state"] == "cold"
+    assert usage["used"] == 0
+    assert usage["message_count"] == 0
+
+
 def test_cold_cli_gauge_counts_the_context_it_will_serialize():
     """A cold CLI has not loaded initial_context.md yet — and that is fine.
 
@@ -2016,7 +2061,7 @@ def test_context_gauge_events_always_include_timestamp():
     assert '"context_used"' not in done_block
     assert '"context_pct"' not in done_block
     provider_live_usage = provider_src[
-        provider_src.index("Capture freshest provider usage"):
+        provider_src.index("The assistant event carries the provider's real prompt usage"):
         provider_src.index("Claude Code sends INCREMENTAL")]
     provider_result_meta = provider_src[
         provider_src.index("Cache CC's reported contextWindow"):

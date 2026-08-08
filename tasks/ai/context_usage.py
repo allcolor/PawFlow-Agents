@@ -343,6 +343,21 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
         provider == "codex-interactive"
         and active_ctx is None
         and observed_tokens <= 0)
+    # claude-code (-p) is the one CLI provider that measures its prompt only at
+    # end-of-turn (the usage lands in CC's terminal `result` event), so for the
+    # whole turn -- and the post-done flush lag -- it has no native measurement.
+    # In that window the gauge would reconstruct from PawFlow's stored
+    # transcript, which is NOT the provider's window: cc -p holds its own
+    # rolling session and PawFlow sends a bucketed subset, so the reconstruction
+    # over-counts and publishes a fake near-full percentage to three consumers
+    # at once -- the UI gauge, the "Context: ~x/y" note the LLM reads, and the
+    # auto-compact threshold (which can then fire a data-destroying premature
+    # compaction against a window that does not exist). Treat an unmeasured
+    # claude-code as cold (used=0, "measuring...") until its `result` lands; the
+    # measured value then overrides. CCI and codex measure mid-turn in ~1s, so
+    # they never hit this and keep their existing behaviour.
+    cold_cli_unmeasured = (
+        is_cli and observed_tokens <= 0 and provider == "claude-code")
     cli_context_state = ""
     if is_cli:
         if observed_tokens > 0:
@@ -362,7 +377,7 @@ def compute_context_usage(conversation_id: str, agent_name: str, *,
     if active_ctx and int(active_ctx.get("max_context_size") or 0) > 0:
         configured = int(active_ctx.get("max_context_size") or 0)
 
-    if cold_codex_restart:
+    if cold_cli_unmeasured:
         cfg_for_count = dict(svc_cfg)
         if configured > 0:
             cfg_for_count["max_context_size"] = configured

@@ -136,14 +136,25 @@ class _CCStreamLoopMixin:
 
                 msg = event.get("message", {})
                 msg_id = msg.get("id", "")
-                # Capture freshest provider usage for cost/result metadata.
-                # Do not publish it as the context gauge: the UI gauge is
-                # PawFlow active-context usage, produced by
-                # tasks.ai.context_usage, while provider prompt usage has a
-                # different scope and can legitimately diverge mid-turn.
+                # The assistant event carries the provider's real prompt usage
+                # (input + cache_read + cache_creation) -- the authoritative
+                # context occupancy, identical in scope to what the CCI proxy
+                # captures from message_start.usage and codex-app-server from its
+                # rollout token_count. Record it live on every assistant event so
+                # the gauge reflects the true mid-turn number (parity with the
+                # other CLI providers) instead of falling back to a
+                # reconstruction that over-counts PawFlow's transcript against the
+                # provider's own rolling window. Also kept in _latest_usage for
+                # cost/result metadata.
                 _u = msg.get("usage")
                 if isinstance(_u, dict) and _u != st._latest_usage:
                     st._latest_usage = _u
+                    try:
+                        self.record_observed_wire_usage(
+                            _u, st.conv_id, st.agent_name)
+                    except Exception:
+                        logger.debug(
+                            "[cc-stream] live usage record failed", exc_info=True)
 
                 # Claude Code sends INCREMENTAL updates for the same message:
                 # event 1: [thinking], event 2: [text], event 3: [tool_use]

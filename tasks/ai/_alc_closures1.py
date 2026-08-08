@@ -268,6 +268,18 @@ class _ALCClosures1Mixin:
         except Exception:
             logger.debug("[compact] auto threshold estimate failed", exc_info=True)
             return
+        # A CLI provider's reconstructed gauge (no native measurement yet) counts
+        # PawFlow's full transcript, which is larger than the provider's own
+        # rolling window, so it over-counts. Never destroy conversation history
+        # on an over-counting estimate: only a native measurement justifies
+        # compaction. (API providers resend the whole context every call, so
+        # their reconstruction is honest and still compacts.)
+        if st.ctx.get("_is_cli_provider") and not usage.get("context_source_measured"):
+            logger.info(
+                "[compact-check] %s role=%s provider=%s SKIP: gauge not natively "
+                "measured (used=%d is an over-counting reconstruction)",
+                reason, msg.role, st._client_provider, used)
+            return
         _cache_src = (
             "context_usage_cache" if st.ctx.get("_context_usage_cache")
             else ("auto_compact_usage_cache" if st.ctx.get("_auto_compact_usage_cache")

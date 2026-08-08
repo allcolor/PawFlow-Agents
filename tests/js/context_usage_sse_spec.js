@@ -70,8 +70,8 @@ eventSource.emit('message_meta', {
 });
 assert.strictEqual(window._contextUsage.assistant.used, 0,
   'message_meta must carry cold CLI authority into setContextUsage');
-assert.strictEqual(activeInteractions.assistant.codexInteractiveLive, true,
-  'message_meta must show Codex Interactive LIVE before the 10s poll');
+assert.strictEqual(activeInteractions.assistant.codexInteractiveLive, false,
+  'message_meta must not invent LIVE before reuse_count arrives in the poll');
 
 seedWarmGauge(3);
 eventSource.emit('done', {
@@ -81,5 +81,43 @@ eventSource.emit('done', {
 });
 assert.strictEqual(window._contextUsage.assistant.used, 0,
   'done must carry cold CLI authority into setContextUsage');
+
+// A provider may give the streaming preview a different id from the durable
+// new_message. The durable event must claim and re-key the preview, not create a
+// second row that remains duplicated in the simplified detail block.
+let addedMessages = 0;
+global.addMsg = () => { addedMessages += 1; return {}; };
+global.finalizeThinkingFromEvent = () => {};
+global.sourceBadge = () => '';
+global.renderMarkdown = value => String(value);
+global.turnViewIngest = (_role, _data, element) => element === preview;
+global._noteLiveHistoryAppend = () => {};
+global._seenMsgIds = new Set(['preview-id']);
+const previewClasses = new Set(['streaming']);
+const contentEl = {innerHTML: ''};
+const preview = {
+  dataset: {msgid: 'preview-id', transientUi: '1'},
+  classList: {
+    contains: name => previewClasses.has(name),
+    add: name => previewClasses.add(name),
+    remove: name => previewClasses.delete(name),
+  },
+  querySelector: selector => selector === '.msg-content' ? contentEl : null,
+};
+streams.assistant = {
+  el: preview, lastEl: null, text: 'preview', chunks: ['preview'],
+  msg_id: 'preview-id',
+};
+eventSource.emit('new_message', {
+  role: 'assistant', content: 'durable answer', agent_name: 'assistant',
+  msg_id: 'durable-id', message_count: 4,
+});
+assert.strictEqual(addedMessages, 0, 'durable message must reuse the preview row');
+assert.strictEqual(preview.dataset.msgid, 'durable-id', 'DOM row must carry durable id');
+assert.strictEqual(_seenMsgIds.has('preview-id'), false, 'transient id must leave dedup set');
+assert.strictEqual(_seenMsgIds.has('durable-id'), true, 'durable id must enter dedup set');
+assert.strictEqual(streams.assistant.msg_id, 'durable-id', 'stream state must carry durable id');
+assert.strictEqual(streams.assistant.el, null, 'claimed stream must be retired');
+assert.strictEqual(contentEl.innerHTML, 'durable answer', 'preview text must become durable text');
 
 console.log('context usage SSE lifecycle: ok');

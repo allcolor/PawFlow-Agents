@@ -140,7 +140,11 @@ def test_durable_grab_response_reconciles_its_token_bubble():
     src = (CHAT_UI / "sse_handlers_a.js").read_text(encoding="utf-8")
     listener = src[src.index("eventSource.addEventListener('new_message'"):]
     listener = listener[:listener.index("// ── Proactive notifications")]
-    assert "const existing = data.msg_id" in listener
+    assert "let existing = data.msg_id" in listener
+    assert "existing.dataset.msgid = data.msg_id" in listener
+    assert "_seenMsgIds.delete(previewMsgId)" in listener
+    assert "_seenMsgIds.add(data.msg_id)" in listener
+    assert "stream.msg_id = data.msg_id || stream.msg_id" in listener
     assert "existing.classList.remove('streaming')" in listener
     assert "existing.classList.add('finalized')" in listener
     assert "stream.el = null" in listener

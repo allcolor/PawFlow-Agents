@@ -31,6 +31,19 @@ function _sseWireA() {
       }
       if (existing) {
         if (data.role === 'assistant') {
+          // The claimed preview may carry a provider-side/transient id. Move
+          // every dedup identity to the durable id before retiring the stream;
+          // otherwise a replay cannot find this row and renders it again.
+          if (data.msg_id && existing.dataset) {
+            const previewMsgId = existing.dataset.msgid || '';
+            if (typeof _seenMsgIds !== 'undefined') {
+              if (previewMsgId && previewMsgId !== data.msg_id) {
+                _seenMsgIds.delete(previewMsgId);
+              }
+              _seenMsgIds.add(data.msg_id);
+            }
+            existing.dataset.msgid = data.msg_id;
+          }
           const contentEl = existing.querySelector('.msg-content');
           if (contentEl) {
             contentEl.innerHTML = sourceBadge(data.source || {})
@@ -42,6 +55,7 @@ function _sseWireA() {
           delete existing.dataset.transientUi;
           const stream = streams[(agent || '').toLowerCase()];
           if (stream && stream.el === existing) {
+            stream.msg_id = data.msg_id || stream.msg_id;
             stream.lastEl = existing;
             stream.el = null;
             stream.text = '';

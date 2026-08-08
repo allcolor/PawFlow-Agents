@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.151] — 2026-08-08
+
+### Fixed
+
+- Transcript view now reconstructs canonical tool-call rows from their stored
+  tool name and arguments instead of showing empty cards, and hides the separate
+  empty assistant anchors that only link canonical child rows.
+- Streaming assistant messages whose preview and durable IDs differ now reuse
+  the preview row while replacing its DOM, stream, and dedup identities with the
+  durable ID, preventing duplicate rows during the turn and after reconnection.
+- Active Agents `LIVE` badges now mean that a warm CLI process is being reused.
+  Cold starts no longer light the badge, and the server reuse-count poll is the
+  single source of truth instead of competing with provider metadata events.
+
 ## [1.0.0-beta.150] — 2026-08-08
 
 ### Added

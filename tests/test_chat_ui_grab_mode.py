@@ -145,6 +145,11 @@ def test_durable_grab_response_reconciles_its_token_bubble():
     assert "_seenMsgIds.delete(previewMsgId)" in listener
     assert "_seenMsgIds.add(data.msg_id)" in listener
     assert "stream.msg_id = data.msg_id || stream.msg_id" in listener
+    assert "_preview.lastEl && _preview.lastEl.isConnected" in listener
+    assert "_durableText === _previewText" in listener
+    assert "stream.el === existing || stream.lastEl === existing" in listener
+    assert "s.lastText = s.text" in src
+    assert "tcs.lastText = tcs.text" in src
     assert "existing.classList.remove('streaming')" in listener
     assert "existing.classList.add('finalized')" in listener
     assert "stream.el = null" in listener

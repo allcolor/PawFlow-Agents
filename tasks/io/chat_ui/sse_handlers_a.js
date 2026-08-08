@@ -27,6 +27,13 @@ function _sseWireA() {
         const _preview = streams[(agent || '').toLowerCase()];
         if (_preview && _preview.el && _preview.el.classList.contains('streaming')) {
           existing = _preview.el;
+        } else if (_preview && _preview.lastEl && _preview.lastEl.isConnected) {
+          // turn_complete/tool_call may retire the preview before its durable
+          // new_message arrives. Claim that just-finalized row only when the
+          // text proves it is the same message, never merely by agent name.
+          const _durableText = String(data.content || '').replace(/^\[[^\]]+\]:\s*/, '').trim();
+          const _previewText = String(_preview.lastText || '').replace(/^\[[^\]]+\]:\s*/, '').trim();
+          if (_durableText && _durableText === _previewText) existing = _preview.lastEl;
         }
       }
       if (existing) {
@@ -54,9 +61,10 @@ function _sseWireA() {
           existing.classList.add('finalized');
           delete existing.dataset.transientUi;
           const stream = streams[(agent || '').toLowerCase()];
-          if (stream && stream.el === existing) {
+          if (stream && (stream.el === existing || stream.lastEl === existing)) {
             stream.msg_id = data.msg_id || stream.msg_id;
             stream.lastEl = existing;
+            stream.lastText = '';
             stream.el = null;
             stream.text = '';
             stream.chunks = [];
@@ -259,6 +267,7 @@ function _sseWireA() {
       s.el.dataset.finalizedAgent = agent.toLowerCase();
       if (data.msg_id) s.el.dataset.msgid = data.msg_id;
       s.lastEl = s.el;
+      s.lastText = s.text;
       // Update metainfo with estimated tokens (real values come in done)
       if (data.source) {
         const existingMeta = s.el.querySelector('.msg-meta');
@@ -605,6 +614,7 @@ function _sseWireA() {
       tcs.el.classList.add('finalized');
       tcs.el.dataset.finalizedAgent = tcAgent.toLowerCase();
       tcs.lastEl = tcs.el;  // preserve for done handler
+      tcs.lastText = tcs.text;
       tcs.el = null; tcs.text = '';
     }
     trackAgentTool(tcAgent, data.tool, data.task_id || '');

@@ -89,6 +89,9 @@ The activity block changes from `Working` to `Completed`. The terminal assistant
 message is removed from the Messages tab if its streaming placeholder was
 there, then the same DOM node becomes the standalone final message immediately
 after the turn block. It must not be cloned or rendered twice.
+When `turn_complete` or a tool call precedes the durable `new_message`, the UI
+reconciles that event with the just-finalized streaming row by matching its
+normalized text; a different message from the same agent is never merged.
 
 If the user expanded the block, it stays expanded after completion. All
 intermediate messages, thinking, tool calls, and presented artifacts remain

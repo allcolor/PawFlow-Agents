@@ -96,6 +96,7 @@ global._seenMsgIds = new Set(['preview-id']);
 const previewClasses = new Set(['streaming']);
 const contentEl = {innerHTML: ''};
 const preview = {
+  isConnected: true,
   dataset: {msgid: 'preview-id', transientUi: '1'},
   classList: {
     contains: name => previewClasses.has(name),
@@ -119,5 +120,37 @@ assert.strictEqual(_seenMsgIds.has('durable-id'), true, 'durable id must enter d
 assert.strictEqual(streams.assistant.msg_id, 'durable-id', 'stream state must carry durable id');
 assert.strictEqual(streams.assistant.el, null, 'claimed stream must be retired');
 assert.strictEqual(contentEl.innerHTML, 'durable answer', 'preview text must become durable text');
+
+// Actual provider ordering can finalize the token preview first and publish the
+// durable row afterwards. The retired lastEl must be claimed when (and only
+// when) its saved text proves that both events describe the same message.
+addedMessages = 0;
+preview.dataset.msgid = 'late-preview-id';
+preview.dataset.rawText = '';
+previewClasses.delete('streaming');
+previewClasses.add('finalized');
+streams.assistant = {
+  el: null, lastEl: preview, lastText: 'late durable answer', text: '',
+  chunks: [preview], msg_id: 'late-preview-id',
+};
+global._seenMsgIds = new Set(['late-preview-id']);
+eventSource.emit('new_message', {
+  role: 'assistant', content: 'late durable answer', agent_name: 'assistant',
+  msg_id: 'late-durable-id', message_count: 5,
+});
+assert.strictEqual(addedMessages, 0, 'late durable message must reuse the retired preview');
+assert.strictEqual(preview.dataset.msgid, 'late-durable-id', 'retired preview must receive durable id');
+assert.strictEqual(streams.assistant.lastText, '', 'claimed preview text must be consumed');
+
+addedMessages = 0;
+streams.assistant = {
+  el: null, lastEl: preview, lastText: 'a genuinely different message',
+  text: '', chunks: [], msg_id: 'late-durable-id',
+};
+eventSource.emit('new_message', {
+  role: 'assistant', content: 'next durable answer', agent_name: 'assistant',
+  msg_id: 'next-durable-id', message_count: 6,
+});
+assert.strictEqual(addedMessages, 1, 'different text must create a distinct message row');
 
 console.log('context usage SSE lifecycle: ok');

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.145] — 2026-08-08
+
+### Fixed
+
+- A cold Codex Interactive gauge after a server restart is empty again instead
+  of reconstructing the dead TUI window from externalized PawFlow context. The
+  unmeasured Claude Code guard remains active alongside the restored Codex
+  restart guard.
+- The gauge diagnostic now attributes the full token cost, including message
+  overhead, when bootstrap read bodies are removed from context accounting.
+- The signed `pawflow.avatar-helper` bundled artifact and catalog index are
+  regenerated from the current sidebar-accordion source, restoring
+  byte-for-byte release reproducibility.
+
 ## [1.0.0-beta.144] — 2026-08-08
 
 ### Fixed

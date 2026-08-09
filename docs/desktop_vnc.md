@@ -72,6 +72,11 @@ Use `see(path="screen", local=true)` or `see(path="screenshot", local=true)` whe
 
 Set `PAWFLOW_SCREEN_MODE=cua` on the relay (host helper and/or container) to route screen actions through [cua-driver](https://github.com/trycua/cua) instead of pyautogui/xdotool. Desktop-capable relay images bundle the binary; on a host desktop install it with `curl -fsSL https://cua.ai/driver/install.sh | bash`. `PAWFLOW_CUA_BIN` overrides the binary path, `PAWFLOW_CUA_SESSION` names the overlay-cursor session (one tinted agent cursor per session — several agents can drive the same desktop visibly and independently).
 
+Relay Desktop packages, generated relay-image runtimes, and development mounts
+ship `screen_actions.py` together with `screen_actions_cua.py`. The default
+`pawflow` mode does not import the CUA backend; selecting `cua` requires the
+packaged backend module and never falls back silently to foreground input.
+
 What changes in CUA mode:
 
 - The real OS cursor never moves and focus is never stolen; `move` becomes an honest no-op.

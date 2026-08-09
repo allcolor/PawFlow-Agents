@@ -22,6 +22,7 @@ const toolFiles = [
   'fs_http.py',
   'audio_capture.py',
   'screen_actions.py',
+  'screen_actions_cua.py',
 ];
 
 function ensureDir(dir) {

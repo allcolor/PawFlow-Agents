@@ -50,15 +50,14 @@ def handle_screen_action(action: str, req: dict) -> dict:
     request timeout. The child process executes the direct implementation.
     """
     if os.environ.get(_CHILD_ENV) != "1":
+        mode = (os.environ.get("PAWFLOW_SCREEN_MODE") or "").strip().lower()
+        if mode != "cua":
+            return _screen_action_subprocess(action, req)
         try:
-            from tools.screen_actions_cua import (cua_mode_enabled,
-                                                  handle_screen_action_cua)
+            from tools.screen_actions_cua import handle_screen_action_cua
         except ImportError:
-            from screen_actions_cua import (cua_mode_enabled,
-                                            handle_screen_action_cua)
-        if cua_mode_enabled():
-            return handle_screen_action_cua(action, req)
-        return _screen_action_subprocess(action, req)
+            from screen_actions_cua import handle_screen_action_cua
+        return handle_screen_action_cua(action, req)
     return _handle_screen_action_direct(action, req)
 
 

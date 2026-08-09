@@ -180,6 +180,7 @@ def test_relay_desktop_prepare_runtime_script_declares_required_payload():
     assert "pawflow_relay_launcher.py" in script
     assert "fs_actions.py" in script
     assert "screen_actions.py" in script
+    assert "screen_actions_cua.py" in script
     assert "docker', 'pawflow_sdk', 'pawflow.py'" in script
     assert "config', 'relay_image_catalog.json'" in script
     assert "scripts', 'generate-relay-image.py'" in script
@@ -223,6 +224,7 @@ def test_relay_desktop_generated_runtime_has_required_payload():
     assert (runtime / "tools" / "pawflow_relay_launcher.py").is_file()
     assert (runtime / "tools" / "fs_actions.py").is_file()
     assert (runtime / "tools" / "screen_actions.py").is_file()
+    assert (runtime / "tools" / "screen_actions_cua.py").is_file()
     assert (runtime / "docker" / "pawflow_sdk" / "pawflow.py").is_file()
     assert (runtime / "config" / "relay_image_catalog.json").is_file()
     assert (runtime / "scripts" / "generate-relay-image.py").is_file()
@@ -235,7 +237,9 @@ def test_relay_desktop_generated_runtime_has_required_payload():
             sys.executable,
             "-c",
             "import pawflow_cli.auth; import pawflow_relay.manager_cli; "
-            "import fs_actions; import fs_http; import fs_mcp; import fs_exec",
+            "import fs_actions; import fs_http; import fs_mcp; import fs_exec; "
+            "from screen_actions import handle_screen_action; "
+            "assert handle_screen_action('screen_status', {})['mode'] == 'pawflow'",
         ],
         cwd=DESKTOP,
         env=env,

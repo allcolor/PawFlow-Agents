@@ -1,3 +1,4 @@
+import builtins
 import importlib.util
 from pathlib import Path
 
@@ -38,11 +39,41 @@ def test_screen_action_child_uses_script_when_not_frozen(monkeypatch):
     ]
 
 
+def test_default_mode_does_not_import_cua_backend(monkeypatch):
+    screen_actions = _load_screen_actions()
+    monkeypatch.delenv("PAWFLOW_SCREEN_MODE", raising=False)
+    monkeypatch.setattr(
+        screen_actions,
+        "_screen_action_subprocess",
+        lambda action, req: {"mode": "pawflow"},
+    )
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name in {"tools.screen_actions_cua", "screen_actions_cua"}:
+            raise AssertionError("default screen mode imported the CUA backend")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    assert screen_actions.handle_screen_action("screen_status", {}) == {
+        "mode": "pawflow"
+    }
+
+
 def test_relay_binary_entry_exposes_screen_action_child_route():
     entry = (ROOT / "pawflow-relay-desktop" / "scripts" / "relay-bin-entry.py").read_text(encoding="utf-8")
 
     assert "__pawflow_screen_action_child__" in entry
     assert "from screen_actions import _handle_screen_action_direct" in entry
+
+
+def test_docker_dev_mount_includes_cua_screen_backend():
+    thread = (
+        ROOT / "pawflow_relay" / "_thread_docker.py"
+    ).read_text(encoding="utf-8")
+
+    assert '(_tools_dir, "screen_actions_cua.py")' in thread
 
 
 def test_host_python_command_does_not_return_frozen_relay_binary(monkeypatch):

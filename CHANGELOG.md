@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.159] — 2026-08-09
+
+### Fixed
+
+- Relay Desktop, generated relay-image runtimes, and development mounts now
+  package the CUA screen backend alongside the main screen dispatcher. Local
+  `screen` actions no longer fail with `No module named 'screen_actions_cua'`
+  on packaged Windows relays. The default PawFlow screen mode also avoids
+  importing CUA unless that mode is explicitly selected.
+
 ## [1.0.0-beta.158] — 2026-08-08
 
 ### Fixed

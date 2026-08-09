@@ -1,4 +1,12 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = ROOT / "tests" / "js" / "file_explorer_spec.js"
 
 
 def test_file_explorer_status_does_not_shadow_translation_function():
@@ -21,3 +29,13 @@ def test_file_explorer_template_evaluates_i18n_labels():
     assert "${t('fileName')}" in src
     assert "${t('fileSize')}" in src
     assert "${t('modified')}" in src
+
+
+@pytest.mark.skipif(shutil.which("node") is None,
+                    reason="node is not available to run the JS suite")
+def test_file_explorer_preview_behaviour():
+    proc = subprocess.run(
+        ["node", str(SPEC)],
+        capture_output=True, text=True, cwd=str(ROOT), timeout=60)
+    assert proc.returncode == 0, (
+        "JS suite failed:\n" + proc.stdout + proc.stderr)

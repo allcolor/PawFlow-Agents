@@ -50,8 +50,14 @@ function renderMarkdown(text) {
   text = text.replace(/\x00CB(\d+)\x00/g, function(_, i) { return _codeBlocks[parseInt(i)]; });
   text = text.replace(/\x00IC(\d+)\x00/g, function(_, i) { return _inlineCodes[parseInt(i)]; });
   // Markdown links: [text](url) — must run BEFORE bare URL detection
-  text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function(_, label, url) {
-    const fileUrl = normalizePawFlowFileUrl(url);
+  text = text.replace(/\[([^\]]+)\]\(((?:https?:\/\/|fs:\/\/filestore\/)[^\s)]+)\)/g, function(_, label, url) {
+    const fsMatch = url.match(/^fs:\/\/filestore\/([a-f0-9]+)\/(.+)$/i);
+    const fileUrl = fsMatch
+      ? '/files/' + fsMatch[1] + '/' + fsMatch[2].split('/').map(function(part) {
+          try { return encodeURIComponent(decodeURIComponent(part)); }
+          catch (_err) { return encodeURIComponent(part); }
+        }).join('/')
+      : normalizePawFlowFileUrl(url);
     if (fileUrl.match(/\/files\/[a-f0-9]+\//)) {
       if (isImageFile(label) || isImageFile(url)) {
         return inlineImageHtml(fileUrl, label, '');

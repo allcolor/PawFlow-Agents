@@ -33,6 +33,17 @@ URL is `localhost`/private, no access flip is performed and the legacy
 Providers that read FileStore locally (`ACCEPTS_FILESTORE_URLS`) keep the
 `fs://filestore/...` reference unchanged and are never flipped.
 
+### Webchat preview routing
+
+The webchat resolves Markdown links using the canonical
+`fs://filestore/<id>/<name>` form to the authenticated, same-origin
+`/files/<id>/<name>` route. Relay file previews use
+`/fs/<service>/<path>`. Both routes are passed to the shared file viewer,
+which selects the image, video, audio, PDF, HTML, text, or unknown-binary view
+from the filename and response `Content-Type`. The relay file explorer does
+not read preview content through `fs_read_file` or decode binary files into a
+text pane.
+
 ## Image Tools
 
 | Tool | Purpose |

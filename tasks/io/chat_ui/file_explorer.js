@@ -311,22 +311,9 @@ function _feZipDir(name){
 }
 
 function _fePreview(name){
-  if(_fe.preview){_fe.preview.remove();_fe.preview=null;}
-  const p=document.createElement('div');p.className='fe-preview-pane';
-  p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)}</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><div class="fe-loading">${t('loading')}</div>`;
-  document.body.appendChild(p);_fe.preview=p;
-  action$('fs_read_file',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
-    if(d.error){p.querySelector('.fe-loading').textContent=t('errorMessage', { error: d.error });return;}
-    const ext=name.split('.').pop().toLowerCase();
-    const imgExts=['png','jpg','jpeg','gif','webp','svg','bmp','ico'];
-    if(imgExts.includes(ext)&&d.encoding==='base64'){
-      const mime=ext==='svg'?'image/svg+xml':'image/'+ext.replace('jpg','jpeg');
-      p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)}</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><img src="data:${mime};base64,${d.content}">`;
-    } else {
-      const text=d.encoding==='base64'?atob(d.content):d.content;
-      p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)} (${_feFmtSz(d.size)})</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><pre>${_feEsc(text.substring(0,50000))}</pre>`;
-    }
-  });
+  const httpUrl='/fs/'+encodeURIComponent(_fe.svc)+'/'
+    +_fePath(name).replace(/\\/g,'/').split('/').map(encodeURIComponent).join('/');
+  openFileViewer(httpUrl);
 }
 
 function _feSearch(q){

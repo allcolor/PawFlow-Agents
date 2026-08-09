@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.160] — 2026-08-09
+
+### Added
+
+- Added a phased native HTTP/2 server plan covering ALPN, direct and Caddy
+  deployments, transport-neutral routing/auth, SSE, WebSocket, uploads, flow
+  control, observability, performance gates, and removal of the legacy stdlib
+  transport after parity.
+
+### Fixed
+
+- The PawFlow HTTP origin now responds with persistent HTTP/1.1 instead of the
+  `BaseHTTPRequestHandler` HTTP/1.0 default. Framed responses reuse the same
+  upstream connection, unframed or streaming responses close explicitly, and
+  `/health` now has a content length. This removes the repeated connection and
+  TLS setup that made webchat hard reload assets wait several seconds behind
+  Caddy.
+- Relay Desktop installers now build with PyAutoGUI and Pillow, explicitly
+  include their dynamic modules in the frozen relay binary, and run the
+  packaged Windows `screen_status` route before artifacts are uploaded. Status
+  also probes the real dependencies, so a broken screen backend can no longer
+  report itself healthy.
+
 ## [1.0.0-beta.159] — 2026-08-09
 
 ### Fixed

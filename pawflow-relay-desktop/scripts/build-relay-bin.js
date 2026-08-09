@@ -13,6 +13,9 @@ const exePath = path.join(binDir, exeName);
 const runtimeToolHiddenImports = [
   'concurrent.futures',
   'difflib',
+  'PIL.Image',
+  'PIL.ImageGrab',
+  'pyautogui',
   'select',
   'selectors',
   'shlex',
@@ -48,7 +51,7 @@ function ensurePyInstaller() {
   });
   if (check.status === 0) return;
   console.error('PyInstaller is required to build the packaged relay binary.');
-  console.error(`Install it for this Python: ${pythonCommand()} -m pip install pyinstaller`);
+  console.error(`Install the desktop build requirements for this Python: ${pythonCommand()} -m pip install -r requirements-build.txt`);
   process.exit(check.status || 1);
 }
 

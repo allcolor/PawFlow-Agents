@@ -195,7 +195,7 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . pyinstaller
+          python -m pip install -e . -r pawflow-relay-desktop/requirements-build.txt
 
       - name: Install desktop dependencies
         working-directory: pawflow-relay-desktop
@@ -209,6 +209,23 @@ jobs:
       - name: Build Relay Desktop installers
         working-directory: pawflow-relay-desktop
         run: npm run ${{ matrix.npm_script }}
+
+      - name: Smoke-test packaged Windows screen backend
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = "pawflow-relay-desktop/runtime/bin/pawflow-relay.exe"
+          $raw = '{}' | & $binary __pawflow_screen_action_child__ screen_status
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged relay screen_status exited with code $LASTEXITCODE"
+          }
+          $status = $raw | ConvertFrom-Json
+          if ($status.error) {
+            throw "Packaged relay screen backend is unhealthy: $($status.error)"
+          }
+          if ($status.mode -ne 'pawflow') {
+            throw "Unexpected packaged relay screen mode: $($status.mode)"
+          }
 
       - uses: actions/upload-artifact@v7
         with:

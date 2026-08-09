@@ -85,6 +85,13 @@ def _handle_screen_action_direct(action: str, req: dict) -> dict:
 
 
 def _status_pawflow(req: dict) -> dict:
+    # A status response is a health check, not merely a mode label. Import the
+    # same runtime dependencies used by input and screenshot actions so a
+    # packaged relay cannot advertise a healthy backend that fails on first use.
+    _get_pyautogui()
+    from PIL import ImageGrab
+    if not callable(getattr(ImageGrab, "grab", None)):
+        raise RuntimeError("Pillow ImageGrab backend is unavailable")
     return {"mode": "pawflow",
             "note": "default backend (pyautogui/win32); set "
                     "PAWFLOW_SCREEN_MODE=cua for background computer use"}

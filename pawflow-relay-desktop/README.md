@@ -89,12 +89,13 @@ local server/workspace profiles; it launches `runtime/bin/pawflow-relay` (or
 `pawflow-relay.exe` on Windows) and falls back to `python -m pawflow_relay` only
 for source development.
 
-Build the relay binary with PyInstaller, then create an installer for the host
-platform:
+Install the dedicated build requirements, then create an installer for the host
+platform. They include PyInstaller plus the PyAutoGUI/Pillow runtime used by the
+default local screen backend; PyInstaller embeds them in the relay binary.
 
 ```bash
 cd pawflow-relay-desktop
-python -m pip install pyinstaller
+python -m pip install -r requirements-build.txt
 npm install
 npm run dist:linux   # AppImage + deb
 npm run dist:win     # NSIS exe + zip, from Windows
@@ -116,6 +117,11 @@ npm run dist:win
 `runtime/bin/`, then invokes `electron-builder`. Docker is still an external
 runtime dependency; the app detects Docker availability and reports startup or
 permission issues in the UI.
+
+Release CI invokes the packaged Windows binary's `screen_status` child route
+before uploading installers. The check imports the actual PyAutoGUI and Pillow
+backends, so an installer cannot be published with a mode label that works while
+screenshot or input actions fail because their modules were omitted.
 
 ## Shared State
 

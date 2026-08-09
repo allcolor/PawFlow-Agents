@@ -61,6 +61,19 @@ def test_default_mode_does_not_import_cua_backend(monkeypatch):
     }
 
 
+def test_default_status_reports_missing_pyautogui(monkeypatch):
+    screen_actions = _load_screen_actions()
+
+    def missing_pyautogui():
+        raise RuntimeError("pyautogui not installed")
+
+    monkeypatch.setattr(screen_actions, "_get_pyautogui", missing_pyautogui)
+
+    assert screen_actions._handle_screen_action_direct("screen_status", {}) == {
+        "error": "pyautogui not installed"
+    }
+
+
 def test_relay_binary_entry_exposes_screen_action_child_route():
     entry = (ROOT / "pawflow-relay-desktop" / "scripts" / "relay-bin-entry.py").read_text(encoding="utf-8")
 

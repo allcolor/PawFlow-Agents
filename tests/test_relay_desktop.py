@@ -204,6 +204,25 @@ def test_relay_desktop_prepare_runtime_script_declares_required_payload():
     assert "selectors" in build_bin
 
 
+def test_relay_desktop_packages_and_smoke_tests_default_screen_backend():
+    requirements = (DESKTOP / "requirements-build.txt").read_text(encoding="utf-8").lower()
+    build_bin = (DESKTOP / "scripts" / "build-relay-bin.js").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "release-assets.yml").read_text(encoding="utf-8")
+
+    assert "pyinstaller" in requirements
+    assert "pyautogui" in requirements
+    assert "pillow" in requirements
+    assert "'pyautogui'" in build_bin
+    assert "'PIL.Image'" in build_bin
+    assert "'PIL.ImageGrab'" in build_bin
+    relay_job = workflow.split("\n  relay-desktop:\n", 1)[1]
+    assert workflow.count("pawflow-relay-desktop/requirements-build.txt") == 1
+    assert "python -m pip install -e . -r pawflow-relay-desktop/requirements-build.txt" in relay_job
+    assert "Smoke-test packaged Windows screen backend" in workflow
+    assert "__pawflow_screen_action_child__ screen_status" in workflow
+    assert "ConvertFrom-Json" in workflow
+
+
 def test_relay_manager_cli_supports_desktop_json_contract():
     cli = (ROOT / "pawflow_relay" / "manager_cli.py").read_text(encoding="utf-8")
     main = (ROOT / "pawflow_relay" / "__main__.py").read_text(encoding="utf-8")
@@ -238,8 +257,7 @@ def test_relay_desktop_generated_runtime_has_required_payload():
             "-c",
             "import pawflow_cli.auth; import pawflow_relay.manager_cli; "
             "import fs_actions; import fs_http; import fs_mcp; import fs_exec; "
-            "from screen_actions import handle_screen_action; "
-            "assert handle_screen_action('screen_status', {})['mode'] == 'pawflow'",
+            "import screen_actions; import screen_actions_cua",
         ],
         cwd=DESKTOP,
         env=env,

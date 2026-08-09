@@ -44,6 +44,12 @@ _INSTANCE_ID = uuid.uuid4().hex[:12]
 class _RequestHandler(BaseHTTPRequestHandler):
     """Handler dispatching to the RouteRegistry on the server."""
 
+    # Caddy and other reverse proxies speak HTTP/1.1 to the PawFlow origin.
+    # BaseHTTPRequestHandler defaults to HTTP/1.0, which closes the upstream
+    # connection after every response and turns a webchat cold load into dozens
+    # of TCP/TLS handshakes. Framed responses can safely stay persistent.
+    protocol_version = "HTTP/1.1"
+
     _chat_js_cache_lock = threading.RLock()
     _chat_js_cache: Dict[str, Tuple[int, int, bytes]] = {}
 
@@ -55,6 +61,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
         prefix = (name.lower() + ":").encode("latin-1")
         return any(bytes(line).lower().startswith(prefix)
                    for line in getattr(self, "_headers_buffer", []))
+
+    def send_response(self, code, message=None):
+        self._pawflow_response_status = int(code)
+        super().send_response(code, message)
 
     def end_headers(self):
         path = getattr(self, "path", "").split("?", 1)[0]
@@ -68,6 +78,23 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
             if not self._header_sent("Cross-Origin-Opener-Policy"):
                 self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        status = getattr(self, "_pawflow_response_status", None)
+        bodyless = (
+            getattr(self, "command", "") == "HEAD"
+            or isinstance(status, int) and (100 <= status < 200 or status in {204, 304})
+        )
+        framed = (
+            self._header_sent("Content-Length")
+            or self._header_sent("Transfer-Encoding")
+        )
+        # An HTTP/1.1 body without length/chunking is delimited by connection
+        # close. Make that explicit and prevent the request loop from treating
+        # the next response as part of this body. Long-lived SSE/download
+        # streams intentionally follow this path and close only when they end.
+        if isinstance(status, int) and not bodyless and not framed:
+            if not self._header_sent("Connection"):
+                self.send_header("Connection", "close")
+            self.close_connection = True
         super().end_headers()
 
     def _check_global_rate_limit(self, path: str) -> bool:
@@ -267,15 +294,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/health":
             from core import __version__ as _pf_version
 
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            body = json.dumps({
                 "ok": True,
                 "version": str(_pf_version),
                 "instance": _INSTANCE_ID,
-            }).encode("utf-8"))
+            }).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         if not self._check_global_rate_limit(path):

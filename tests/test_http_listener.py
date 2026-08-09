@@ -1,5 +1,6 @@
 """Tests for HTTP Listener Service, httpReceiver, handleHTTPResponse, validateHTTPAuth."""
 
+import http.client
 import json
 import socket
 import threading
@@ -130,6 +131,54 @@ def test_code_routes_do_not_inject_x_frame_options():
     assert not any(name == "X-Frame-Options" for name, _ in code.sent_headers)
     assert ("Cross-Origin-Embedder-Policy", "require-corp") in code.sent_headers
     assert ("Cross-Origin-Opener-Policy", "same-origin") in code.sent_headers
+
+
+def test_http_1_1_unframed_response_closes_connection():
+    import io
+
+    class FakeHandler(_RequestHandler):
+        def send_header(self, name, value):
+            self.sent_headers.append((name, value))
+            self._headers_buffer.append(f"{name}: {value}".encode("latin-1"))
+
+    handler = object.__new__(FakeHandler)
+    handler.path = "/unframed"
+    handler.command = "GET"
+    handler._pawflow_response_status = 200
+    handler._headers_buffer = []
+    handler.sent_headers = []
+    handler.close_connection = False
+    handler.request_version = "HTTP/1.1"
+    handler.wfile = io.BytesIO()
+
+    handler.end_headers()
+
+    assert ("Connection", "close") in handler.sent_headers
+    assert handler.close_connection is True
+
+
+def test_http_1_1_framed_response_stays_persistent():
+    import io
+
+    class FakeHandler(_RequestHandler):
+        def send_header(self, name, value):
+            self.sent_headers.append((name, value))
+            self._headers_buffer.append(f"{name}: {value}".encode("latin-1"))
+
+    handler = object.__new__(FakeHandler)
+    handler.path = "/framed"
+    handler.command = "GET"
+    handler._pawflow_response_status = 200
+    handler._headers_buffer = [b"Content-Length: 2"]
+    handler.sent_headers = []
+    handler.close_connection = False
+    handler.request_version = "HTTP/1.1"
+    handler.wfile = io.BytesIO()
+
+    handler.end_headers()
+
+    assert not any(name == "Connection" for name, _ in handler.sent_headers)
+    assert handler.close_connection is False
 
 
 def test_request_action_label_extracts_api_ui_action_only():
@@ -661,6 +710,30 @@ class TestHTTPListenerService:
             assert resp.headers.get("Cache-Control") == "public, max-age=31536000, immutable"
             assert dispatched == []
         finally:
+            svc.disconnect()
+
+    def test_chat_js_assets_reuse_one_http_1_1_connection(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19935})
+        svc.connect()
+        conn = http.client.HTTPConnection("127.0.0.1", 19935, timeout=5)
+        headers = {"Cookie": f"pawflow_token={_create_test_session()}"}
+        try:
+            conn.request("GET", "/chat/js/i18n.js", headers=headers)
+            first_socket = conn.sock
+            first = conn.getresponse()
+            assert first.status == 200
+            assert first.version == 11
+            first.read()
+
+            conn.request("GET", "/chat/js/state.js", headers=headers)
+            second_socket = conn.sock
+            second = conn.getresponse()
+            assert second.status == 200
+            assert second.version == 11
+            assert second.read()
+            assert second_socket is first_socket
+        finally:
+            conn.close()
             svc.disconnect()
 
     def test_chat_js_nested_assets_are_served_without_flow_dispatch(self):

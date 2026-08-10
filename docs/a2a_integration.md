@@ -1,6 +1,8 @@
-# A2A Integration Design
+# A2A Integration
 
-This document describes how PawFlow should implement Agent2Agent (A2A) support as both an A2A server and an A2A client.
+This document describes PawFlow's implemented Agent2Agent (A2A) server,
+client, cross-conversation delegation, configuration UI, and planned protocol
+extensions.
 
 Sources used for this design:
 
@@ -18,6 +20,51 @@ PawFlow should support three A2A target modes:
 3. A generic remote A2A-compatible agent running on another runtime, framework, or architecture.
 
 The implementation should keep A2A separate from MCP. MCP exposes tools and resources. A2A exposes stateful agents and task lifecycles. PawFlow should support both because they cover different interoperability surfaces.
+
+## Implemented V1
+
+PawFlow currently implements the A2A 1.0 HTTP+JSON core:
+
+- Multiple agents from one PawFlow conversation can be published separately.
+- Each publication has its own Agent Card, Bearer keys, context policy, tasks,
+  and public label/description.
+- `message:send`, task lookup/listing, and cancellation are supported.
+- Send requests are asynchronous by default. A client can set
+  `configuration.returnImmediately=false` to wait for a terminal result.
+- PawFlow agents can call any configured remote HTTP+JSON A2A agent through
+  the `a2a` tool (`send`, `get`, and `cancel`).
+- `delegate` can target an agent in another writable PawFlow conversation,
+  directly or through a named local target.
+- A2A context IDs exposed to clients are opaque. Internal PawFlow conversation
+  IDs never appear in the protocol response.
+
+The V1 Agent Card advertises `streaming=false` and
+`pushNotifications=false`. Raw/base64 parts are rejected; text, structured
+JSON data, and URL parts are accepted. SSE streaming, push notifications,
+artifacts, and binary transfer remain roadmap items later in this document.
+
+### UI configuration
+
+Open **Resources → A2A → Publish agents and configure targets** in a
+conversation. The dialog provides two workflows:
+
+1. **Publish an agent**
+   - Select any agent attached to the current conversation.
+   - Set a public name and description.
+   - Choose `isolated` (recommended) or `shared` context policy.
+   - Copy the Agent Card URL or HTTP+JSON endpoint.
+   - Create and revoke client keys. A raw key is displayed once only.
+2. **Named targets**
+   - For another PawFlow conversation, select `Conversation — agent`; no raw
+     conversation ID is required. The alias is accepted by `delegate`.
+   - For a remote agent, enter an alias, its Agent Card URL, and optionally the
+     name of a PawFlow secret containing its Bearer key. The alias is accepted
+     by the `a2a` tool.
+   - Private/local network access is rejected by default. Enable it only for a
+     trusted endpoint or use a PawFlow relay URL.
+
+Only the conversation owner can manage publications, keys, and named targets.
+Runtime calls still pass through the normal conversation ACL and tool policy.
 
 ## Existing PawFlow Fit
 
@@ -40,7 +87,7 @@ A2A should therefore be an adapter layer over existing conversation and agent me
 | --- | --- |
 | Agent Card | Generated from a PawFlow agent resource plus conversation-scoped metadata. |
 | Agent Skill | Agent description, assigned skills, enabled tools, optional published flow capabilities. |
-| Context ID | PawFlow `conversation_id`. For the multi-client server pattern it maps to a per-client isolated ephemeral sub-conversation (see "Multi-Client Isolated Contexts"). For remote agents it can be an opaque remote context ID. |
+| Context ID | Opaque `ctx_*` identifier mapped server-side to either the parent conversation or an isolated `::a2a::` child context. |
 | Task ID | A PawFlow A2A task record linked to an initiating message ID and target agent. |
 | Message | PawFlow message rows with `role`, `content`, `source`, `msg_id`, `ts`, and `conversation_id`. |
 | Part: text | Plain message content. |
@@ -49,30 +96,16 @@ A2A should therefore be an adapter layer over existing conversation and agent me
 | Artifact | FileStore artifact plus metadata, linked to the A2A task. |
 | Task status | Derived from pending/running/completed/error/canceled/input-required/auth-required state. |
 
-The first implementation should persist a small A2A task index instead of inferring everything from transcript scans. Suggested path:
+The implementation persists A2A state in `data/system/a2a.sqlite3` (through
+`core.paths.SYSTEM_DIR`) instead of inferring task state from transcript scans.
+The database contains:
 
 ```text
-data/runtime/a2a_tasks/{user_id}/{conversation_id}/{task_id}.json
-```
-
-Each task record should include:
-
-```json
-{
-  "task_id": "...",
-  "context_id": "conversation-id",
-  "conversation_id": "conversation-id",
-  "agent_name": "assistant",
-  "user_id": "alice",
-  "created_msg_id": "...",
-  "last_msg_id": "...",
-  "state": "working",
-  "created_at": "...",
-  "updated_at": "...",
-  "remote": false,
-  "remote_agent_url": "",
-  "metadata": {}
-}
+a2a_publications  — agent publication and context policy
+a2a_api_keys      — hashed Bearer keys (raw values are never persisted)
+a2a_contexts      — opaque external-to-internal context mapping per client key
+a2a_tasks         — correlated runtime turn and A2A task state
+a2a_targets       — named local or remote targets used by the UI/tools
 ```
 
 Do not create anonymous fallbacks. Missing `conversation_id`, `agent_name`, `user_id`, or authentication scope must fail explicitly.
@@ -81,23 +114,20 @@ Do not create anonymous fallbacks. Missing `conversation_id`, `agent_name`, `use
 
 ### Public Endpoints
 
-Start with the HTTP+JSON or JSON-RPC binding. gRPC can come later.
-
-Suggested routes:
+Each publication uses the following A2A 1.0 HTTP+JSON routes:
 
 ```text
-GET  /.well-known/agent-card.json
-GET  /a2a/agents/{agent_name}/agent-card.json
-GET  /a2a/conversations/{conversation_id}/agents/{agent_name}/agent-card.json
-POST /a2a/conversations/{conversation_id}/agents/{agent_name}
-GET  /a2a/conversations/{conversation_id}/tasks/{task_id}
-GET  /a2a/conversations/{conversation_id}/tasks
-POST /a2a/conversations/{conversation_id}/tasks/{task_id}:cancel
-GET  /a2a/conversations/{conversation_id}/tasks/{task_id}:subscribe
-POST /a2a/conversations/{conversation_id}/tasks/{task_id}/push-configs
+GET  /a2a/{publication_id}/agent-card.json
+GET  /a2a/{publication_id}/extendedAgentCard
+POST /a2a/{publication_id}/message:send
+GET  /a2a/{publication_id}/tasks/{task_id}
+GET  /a2a/{publication_id}/tasks?contextId={context_id}
+POST /a2a/{publication_id}/tasks/{task_id}:cancel
 ```
 
-The well-known card should only expose public, instance-level agents. Conversation-scoped cards should require auth unless explicitly published.
+Agent Cards are public discovery metadata. Every task operation and the
+extended card require the publication's Bearer key. A listener-level Private
+Gateway, when configured, remains an additional outer security layer.
 
 ### Agent Card Generation
 
@@ -113,17 +143,17 @@ Do not leak private tools, relay paths, internal service IDs, provider session I
 
 ### Send Message
 
-`SendMessage` should validate the caller, target conversation, target agent, content modes, and accepted output modes. Then it should reuse the existing local agent path:
+`SendMessage` validates the publication, Bearer key, target agent, parts, and
+context ownership, then reuses the existing local agent runtime:
 
-1. Resolve and authorize `conversation_id` and `agent_name`.
-2. Validate the agent belongs to `conv_agents` with `require_agent_member(...)`.
-3. Convert A2A `Message.parts` into a PawFlow message.
-4. Stamp the message with `stamp_message(...)`.
-5. Persist using `ConversationWriter.for_conversation(conv_id).enqueue_message(...)`.
-6. Add to `PendingQueue.for_agent(conv_id, agent_name).enqueue(...)`.
-7. Create or update the A2A task record.
-8. Call `AgentLoopTask.wake_agent(conv_id, agent_name, delay=0.0)`.
-9. Return a `Task` immediately unless the request explicitly asks for blocking behavior.
+1. Resolve or create an opaque context owned by the authenticated key.
+2. Create an isolated child conversation when the publication requests it.
+3. Convert supported A2A parts into PawFlow text/URL attachments.
+4. Create the durable A2A task and correlated runtime turn ID.
+5. Submit through `AgentRuntimeAPI.submit_message(...)`.
+6. Persist provenance as `source.type=a2a` with `visibility=target_only`.
+7. Correlate the final `done`/`error_event` through `AgentResultWaiter` and
+   update the task to `completed` or `failed`.
 
 The PawFlow message should keep the invariant required by `ConversationStore`:
 
@@ -132,14 +162,13 @@ The PawFlow message should keep the invariant required by `ConversationStore`:
   "role": "user",
   "content": "...",
   "source": {
-    "type": "user",
-    "name": "a2a:<client-id>",
+    "type": "a2a",
+    "name": "A2A client",
     "target_agent": "assistant",
-    "a2a": {
-      "task_id": "...",
-      "message_id": "...",
-      "remote_context_id": "..."
-    }
+    "visibility": "target_only",
+    "publication_id": "a2ap_...",
+    "task_id": "task_...",
+    "context_id": "ctx_..."
   },
   "channel": "a2a"
 }

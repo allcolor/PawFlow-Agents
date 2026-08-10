@@ -234,7 +234,8 @@ class _CsAppendMixin:
                 #    conversation messages (filter_for_shared drops
                 #    tool results and context injections; strips
                 #    tool_calls but keeps text).
-                if src_type != "context":
+                if (src_type != "context"
+                        and source.get("visibility") != "target_only"):
                     _t0 = time.monotonic()
                     shared_candidates = self.filter_for_shared(canonical_rows)
                     _mark_timing("shared_filter", _t0)
@@ -438,7 +439,8 @@ class _CsAppendMixin:
                             self._stamp_line(cid, dict(row)))
                     touched_agents.add(route_agent)
 
-                if src_type != "context":
+                if (src_type != "context"
+                        and entry["source"].get("visibility") != "target_only"):
                     shared_candidates = self.filter_for_shared(canonical_rows)
                     if shared_candidates:
                         for shared_msg in (

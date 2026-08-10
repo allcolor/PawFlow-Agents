@@ -601,14 +601,30 @@ class _ALCClosures2Mixin:
                         output is routed privately back to the delegator.
                         """
         _delegate_src = None
+        _external_src = None
         for _m in reversed(_new_user_msgs or []):
             _src = getattr(_m, "source", None) or {}
+            if (isinstance(_src, dict)
+                    and _src.get("type") in {
+                        "a2a", "cross_conversation_delegate"}):
+                _external_src = _src
+                break
             if (isinstance(_src, dict)
                     and _src.get("type") == "agent_delegate"
                     and _src.get("kind") != "reply"
                     and _src.get("from")):
                 _delegate_src = _src
                 break
+        if _external_src:
+            st.ctx["_turn_mode"] = {
+                "type": "external_request",
+                "source_agent": _external_src.get("task_id", ""),
+                "source": dict(_external_src),
+            }
+            logger.info(
+                "[agent:%s] queued external request sets isolated next turn mode",
+                st.conversation_id[:8])
+            return True
         if not _delegate_src:
             return False
         _caller = _delegate_src.get("from", "") or ""

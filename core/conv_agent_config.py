@@ -43,8 +43,14 @@ AGENT_CONFIG_DEFAULTS = {
 def get_all_agent_configs(conv_id: str) -> Dict[str, Dict[str, Any]]:
     """Get all agent configs for a conversation."""
     from core.conversation_store import ConversationStore
-    return ConversationStore.instance().get_extra(
-        conv_id, CONV_AGENTS_KEY) or {}
+    store = ConversationStore.instance()
+    configs = store.get_extra(conv_id, CONV_AGENTS_KEY) or {}
+    if not configs:
+        from core.service_registry import _parent_conversation_id
+        parent_id = _parent_conversation_id(conv_id)
+        if parent_id:
+            configs = store.get_extra(parent_id, CONV_AGENTS_KEY) or {}
+    return configs
 
 
 def get_agent_config(conv_id: str, agent_name: str) -> Dict[str, Any]:

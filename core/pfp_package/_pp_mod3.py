@@ -67,7 +67,7 @@ def resolve_installed_flow_task_runtime(task_type: str, *, user_id: str,
     def _conversation_scope_ids(cid: str) -> list[str]:
         cid = str(cid or "")
         ids = [cid] if cid else []
-        for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
+        for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::"):
             if cid and marker in cid:
                 parent = cid.split(marker, 1)[0]
                 if parent and parent not in ids:
@@ -666,7 +666,7 @@ def _installed_package_records(user_id: str, conversation_id: str, scope: str) -
     roots = [_install_scope_dir(user_id, "", "user")]
     if scope == "conversation":
         conv_ids = []
-        for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
+        for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::"):
             if conversation_id and marker in conversation_id:
                 parent = conversation_id.split(marker, 1)[0]
                 if parent:

@@ -564,7 +564,7 @@ class LLMClaudeCodeMixin(
         # the delegate sees messages arriving in the main chat while it
         # works. The sub-conv itself has no multi-agent dialog of its own.
         _lookup_cid = conv_id
-        for _sep in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
+        for _sep in ("::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::"):
             if _sep in _lookup_cid:
                 _lookup_cid = _lookup_cid.split(_sep, 1)[0]
                 break

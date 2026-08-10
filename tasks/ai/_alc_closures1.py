@@ -427,6 +427,23 @@ class _ALCClosures1Mixin:
                 "kind": "reply",
                 "delegate_visibility": _delegate_visibility,
             }
+        elif (_tm.get("type") == "external_request"
+              and msg.role in ("assistant", "tool")):
+            _external = (_tm.get("source")
+                         if isinstance(_tm.get("source"), dict) else {})
+            _preserved = dict(msg.source) if isinstance(msg.source, dict) else {}
+            msg.source = {
+                **_preserved,
+                "type": _external.get("type", "a2a"),
+                "name": st.ctx.get("active_agent_name", "") or "agent",
+                "target_agent": st.ctx.get("active_agent_name", "") or "",
+                "visibility": "target_only",
+                "task_id": _external.get("task_id", ""),
+                "context_id": _external.get("context_id", ""),
+                "publication_id": _external.get("publication_id", ""),
+                "source_conversation_id": _external.get(
+                    "source_conversation_id", ""),
+            }
         if msg.role == "assistant" and st.conversation_id:
             try:
                 from core.agent_hooks import AgentHookRunner

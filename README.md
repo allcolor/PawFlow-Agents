@@ -329,6 +329,14 @@ configures Claude Code, Codex, and Agy while keeping API and gateway keys in one
 private local profile. See the [MCP client installation guide](docs/MCP_CLIENT_INSTALLER.md)
 and [Published Conversation MCP Servers](docs/PUBLISHED_MCP_SERVER.md).
 
+### Agent-to-Agent (A2A)
+
+Publish one or more conversation agents as authenticated A2A 1.0 HTTP+JSON
+endpoints, delegate to agents in other PawFlow conversations, or call a generic
+remote A2A agent with the built-in `a2a` tool. Resources → A2A provides guided
+publication, one-time keys, isolated/shared context policy, Agent Card copying,
+and named local or remote targets. See [A2A Integration](docs/a2a_integration.md).
+
 ## Pipeline Engine
 
 100+ tasks across 5 categories for data processing workflows:

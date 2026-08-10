@@ -61,7 +61,7 @@ _JS_MODULES = [
     # order is significant — resources.js (core: shared helpers + collapsed
     # state, runs top-level init) MUST stay first, the rest follow.
     "resources.js", "resources_pfp.js", "resources_flow_templates.js",
-    "resources_render.js", "resources_mcp_publish.js", "resources_menus.js",
+    "resources_render.js", "resources_mcp_publish.js", "resources_a2a.js", "resources_menus.js",
     "resources_flow_dialogs.js",
     "resources_resource_dialogs.js", "resources_create_dialogs.js",
     "resources_service_dialogs.js", "resources_service_login.js",

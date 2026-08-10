@@ -423,6 +423,64 @@ class _SpawnDeliveryMixin:
                 "for task %s", caller_agent, task_id)
             self._wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id)
 
+    def _deliver_cross_conversation_delegate(
+            self, from_agent, to_agent, message, user_id, source_conv_id,
+            target_conv_id, task_id):
+        """Submit a target-only turn in another writable conversation."""
+        from core.conversation_access import require_write
+        from core.conversation_store import ConversationStore
+        require_write(target_conv_id, user_id,
+                      store=ConversationStore.instance())
+        from core.conv_agent_config import require_agent_member
+        membership_error = require_agent_member(
+            target_conv_id, to_agent, user_id=user_id, auto_register=False)
+        if membership_error:
+            raise ValueError(membership_error)
+
+        from core.agent_runtime_api import AgentRequest, AgentRuntimeAPI
+        turn_id = "cross_delegate:" + task_id
+        source = {
+            "type": "cross_conversation_delegate",
+            "name": from_agent,
+            "from": from_agent,
+            "target_agent": to_agent,
+            "visibility": "target_only",
+            "source_conversation_id": source_conv_id,
+            "task_id": task_id,
+        }
+        submission = AgentRuntimeAPI.submit_message(AgentRequest(
+            user_id=user_id,
+            conversation_id=target_conv_id,
+            target_agent=to_agent,
+            message=message,
+            msg_id=turn_id,
+            channel="cross_conversation_delegate",
+            source_attributes={"message_source": json.dumps(source)},
+        ))
+
+        def _wait_and_return():
+            result = AgentRuntimeAPI.wait_for_done(
+                submission.conversation_id, submission.turn_id)
+            if result is None:
+                reply = (f"[Delegate result for task_id={task_id}] Agent "
+                         f"'{to_agent}' ended without a final result.")
+            elif result.error:
+                reply = (f"[Delegate result for task_id={task_id}] Agent "
+                         f"'{to_agent}' FAILED: {result.error}")
+            else:
+                reply = (f"[Delegate result for task_id={task_id}] Agent "
+                         f"'{to_agent}' in another conversation replied:\n\n"
+                         f"{result.response}")
+            self._deliver_to_caller(
+                source_conv_id, from_agent, user_id, reply,
+                "cross_delegate_result:" + task_id, task_id, to_agent, "")
+
+        threading.Thread(
+            target=_wait_and_return, daemon=True,
+            name=f"cross-delegate-{task_id}",
+        ).start()
+        return {"state": submission.status, "turn_id": submission.turn_id}
+
     @staticmethod
     def _preempt_caller(inst, conv_id, caller_agent, text, msg_id, source):
         """Append the delegate result to the caller's PendingQueue — the

@@ -61,7 +61,7 @@ def get_bindings(cid: str) -> Dict[str, Any]:
 
 def _binding_cids(cid: str) -> List[str]:
     cids = [cid]
-    for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
+    for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::"):
         if cid and marker in cid:
             parent = cid.split(marker, 1)[0]
             if parent and parent != cid:

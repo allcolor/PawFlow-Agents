@@ -159,6 +159,11 @@ class HTTPListenerService(BaseService):
                 and not HTTPListenerService.all_instances()):
             from services.mcp_server_endpoint import register_mcp_routes
             register_mcp_routes(self)
+        from core.a2a_store import A2AStore
+        if (A2AStore.instance().has_publications()
+                and not HTTPListenerService.all_instances()):
+            from services.a2a_server_endpoint import register_a2a_routes
+            register_a2a_routes(self)
         self._server: Optional[_HTTPServerWithRegistry] = None
         self._server_thread: Optional[threading.Thread] = None
         self._ref_count = 0

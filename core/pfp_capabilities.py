@@ -295,7 +295,7 @@ def _installed_package_records(user_id: str, conversation_id: str, scope: str) -
     roots = [_install_scope_dir(user_id, "", "user")]
     if scope == "conversation":
         conv_ids = []
-        for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
+        for marker in ("::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::"):
             if conversation_id and marker in conversation_id:
                 parent = conversation_id.split(marker, 1)[0]
                 if parent:

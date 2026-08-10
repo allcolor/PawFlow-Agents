@@ -778,6 +778,14 @@ class _PACPhase3Mixin:
                             "answering '" + st._caller + "'."
                         )
                         st.system_prompt += st._delegate_hint
+                elif (isinstance(st._ms, dict)
+                      and st._ms.get("type") in {
+                          "a2a", "cross_conversation_delegate"}):
+                    st._turn_mode = {
+                        "type": "external_request",
+                        "source_agent": st._ms.get("task_id", ""),
+                        "source": dict(st._ms),
+                    }
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 

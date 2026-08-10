@@ -679,6 +679,8 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ManageResourceHandler())
     registry.register(ManagePackageHandler())
     registry.register(SpawnAgentsHandler())
+    from core.handlers.a2a import A2AHandler
+    registry.register(A2AHandler())
     registry.register(FlashAgentHandler())
     registry.register(ShowFileHandler())
     registry.register(ReadParentContextHandler())

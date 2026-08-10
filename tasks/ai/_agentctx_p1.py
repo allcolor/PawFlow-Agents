@@ -314,7 +314,7 @@ class _PACPhase1Mixin:
             # Load dynamic tools (global + user + conv) for this user/conv.
             from core.tool_loader import load_tools_into_registry
             st._parent_cid = st.conversation_id
-            for st._sep in ("::task::", "::task_verify::", "::delegate::", "::flash::"):
+            for st._sep in ("::task::", "::task_verify::", "::delegate::", "::flash::", "::a2a::"):
                 if st._sep in st._parent_cid:
                     st._parent_cid = st._parent_cid.split(st._sep, 1)[0]
                     break

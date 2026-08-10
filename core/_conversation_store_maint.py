@@ -500,7 +500,9 @@ class _CsMaintMixin:
         result = []
         with self._cache_lock:
             for cid, c in self._cache.items():
-                if ":task:" in cid:
+                if any(marker in cid for marker in (
+                        "::task::", "::task_verify::", "::delegate::",
+                        "::flash::", "::a2a::")):
                     continue
                 if user_id and c.get("user_id") and c["user_id"] != user_id:
                     continue

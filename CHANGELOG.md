@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.165] — 2026-08-10
+
+### Added
+
+- Added A2A 1.0 HTTP+JSON agent publication with public Agent Cards,
+  per-publication hashed Bearer keys, opaque client contexts, durable tasks,
+  asynchronous send/get/list/cancel operations, and isolated or shared context
+  policies.
+- PawFlow agents can now delegate asynchronously to an agent in another
+  writable PawFlow conversation and call generic remote A2A agents through the
+  new `a2a` tool.
+- Resources → A2A now provides guided multi-agent publication, one-time key
+  lifecycle controls, copyable Agent Card/endpoints, and named local or remote
+  targets selected without raw conversation IDs.
+
 ## [1.0.0-beta.164] — 2026-08-10
 
 ### Fixed

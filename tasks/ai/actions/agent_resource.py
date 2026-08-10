@@ -34,6 +34,7 @@ from tasks.ai.actions._agentres_k3 import _handle_agentres_k3
 from tasks.ai.actions._agentres_k4 import _handle_agentres_k4
 from tasks.ai.actions._agentres_k5 import _handle_agentres_k5
 from tasks.ai.actions._agentres_k6 import _handle_agentres_k6
+from tasks.ai.actions._agentres_k7 import _handle_agentres_k7
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,14 @@ _ACTION_ROLES = {
     "mcp_server_disconnect_client": "write",
     "mcp_server_set_enabled": "write",
     "mcp_server_delete": "write",
+    # _agentres_k7 — owner-only A2A publications and named targets.
+    "a2a_get": "read",
+    "a2a_publication_configure": "write",
+    "a2a_publication_create_key": "write",
+    "a2a_publication_revoke_key": "write",
+    "a2a_publication_delete": "write",
+    "a2a_target_save": "write",
+    "a2a_target_delete": "write",
 }
 
 # `pfp_*` is one action per package operation, dispatched on the suffix.
@@ -189,7 +198,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         return _denied
     for _handler in (_handle_agentres_k1, _handle_agentres_k2, _handle_agentres_k3,
                      _handle_agentres_k4, _handle_agentres_k5,
-                     _handle_agentres_k6):
+                     _handle_agentres_k6, _handle_agentres_k7):
         _res = _handler(self, action, body, store, user_id, flowfile)
         if _res is not _UNHANDLED:
             return _res

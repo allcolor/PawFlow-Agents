@@ -245,12 +245,27 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         _uid = flowfile.get_attribute("http.auth.principal") or ""
         _stamped_user = None
         _skip_pre_persist = bool(flowfile.get_attribute("skip_pre_persist"))
+        _persisted_source = {"type": "user", "name": _uid,
+                             "target_agent": _target or None}
+        try:
+            _source_raw = flowfile.get_attribute("message_source") or ""
+            _source_value = (json.loads(_source_raw)
+                             if isinstance(_source_raw, str) and _source_raw
+                             else _source_raw)
+            if (isinstance(_source_value, dict)
+                    and _source_value.get("type") in {
+                        "a2a", "cross_conversation_delegate"}):
+                _persisted_source = dict(_source_value)
+                # Transport provenance is internal, but routing identity remains
+                # authoritative at the authenticated AgentRequest boundary.
+                _persisted_source["target_agent"] = _target or None
+        except Exception:
+            logger.debug("invalid internal message_source ignored", exc_info=True)
         if _user_text.strip() or _attachments_body:
             _stamped_user = stamp_message({
                 "role": "user",
                 "content": _user_text,
-                "source": {"type": "user", "name": _uid,
-                           "target_agent": _target or None},
+                "source": dict(_persisted_source),
                 "msg_id": _user_msg_id or None,
                 "channel": _channel,
             }, conversation_id)
@@ -330,8 +345,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 _stamped_user = stamp_message({
                     "role": "user",
                     "content": _user_text,
-                    "source": {"type": "user", "name": _uid,
-                               "target_agent": _target or None},
+                    "source": dict(_persisted_source),
                     "msg_id": _user_msg_id or None,
                     "channel": _channel,
                 }, conversation_id)
@@ -374,6 +388,13 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                         _incoming_mode = {
                             "type": "delegate_reply",
                             "source_agent": _ms.get("from", ""),
+                        }
+                    elif (isinstance(_ms, dict)
+                          and _ms.get("type") in {
+                              "a2a", "cross_conversation_delegate"}):
+                        _incoming_mode = {
+                            "type": "external_request",
+                            "source_agent": _ms.get("task_id", ""),
                         }
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)

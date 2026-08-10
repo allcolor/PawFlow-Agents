@@ -575,6 +575,14 @@ async function _renderResourcesData(data) {
     }
     repoHtml += _sectionFooter();
 
+    // ── A2A interoperability ──
+    repoHtml += _repoSectionHeader(t('a2aRepository'), '_a2a_repo');
+    if (!_isSectionCollapsed('_a2a_repo')) {
+      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="showA2AConfigDialog()">\u21C4 ' + escapeHtml(t('a2aConfigure')) + '</div>';
+      repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('a2aRepositoryHelp')) + '</div>';
+    }
+    repoHtml += _sectionFooter();
+
     // ── Agent Hooks Repository (runtime hooks selectable from conversation config) ──
     repoHtml += _repoSectionHeader(t('agentHooksRepository'), 'agent_hook', {
       createOnclick: "showResourceCreator('agent_hook')",

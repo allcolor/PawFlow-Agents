@@ -204,6 +204,14 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                                 "type": "string",
                                 "description": "Exact name of an existing agent (from available agents list)",
                             },
+                            "target": {
+                                "type": "string",
+                                "description": "Named local target configured in the A2A panel; use instead of agent/conversation_id",
+                            },
+                            "conversation_id": {
+                                "type": "string",
+                                "description": "Optional writable PawFlow conversation containing agent",
+                            },
                             "message": {
                                 "type": "string",
                                 "description": "The task/message to send to the agent",
@@ -238,7 +246,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                                 "description": "Only for context='isolated' or 'last:N': keep the sub-agent's sub-conversation after completion for later resume. Ignored in context='shared' (the target uses the main conv, nothing separate to persist).",
                             },
                         },
-                        "required": ["agent", "message"],
+                        "required": ["message"],
                     },
                     "description": "List of tasks to spawn",
                 },
@@ -260,7 +268,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
         tasks_spec, _err = validate_object_list(
             arguments.get("tasks"),
             param_name="tasks",
-            required_keys=["agent", "message"],
+            required_keys=["message"],
             example=('tasks=[{"agent": "<existing-agent-name>", '
                      '"message": "<text>", "id"?: "<optional>", '
                      '"context"?: "shared"|"isolated"|"last:N"}, ...]'),
@@ -319,6 +327,46 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
             agent_name = spec.get("agent", "")
             message = spec.get("message", "")
             task_id = spec.get("id", uuid.uuid4().hex[:8])
+            _target_conv_id = str(spec.get("conversation_id") or "").strip()
+            _target_alias = str(spec.get("target") or "").strip()
+            if _target_alias:
+                from core.a2a_store import A2AStore
+                _named_target = A2AStore.instance().get_target(
+                    _parent_conv_id, _target_alias)
+                if not _named_target:
+                    return f"Error: unknown delegate target alias '{_target_alias}'."
+                if _named_target.get("kind") != "local":
+                    return (f"Error: target '{_target_alias}' is remote A2A; "
+                            "use the a2a tool for remote agents.")
+                _target_conv_id = _named_target["target_conversation_id"]
+                agent_name = _named_target["target_agent"]
+            if not agent_name:
+                return "Error: each delegate task requires agent or a named target"
+            _target_conv_id = _target_conv_id or _parent_conv_id
+
+            if _target_conv_id != _parent_conv_id:
+                if spec.get("context", "shared") != "shared":
+                    return ("Error: cross-conversation delegates use the target "
+                            "agent's shared context; context must be 'shared'.")
+                try:
+                    _delivery = self._deliver_cross_conversation_delegate(
+                        _src_agent, agent_name, message, user_id,
+                        _raw_conv_id, _target_conv_id, task_id)
+                except Exception as exc:
+                    return f"Error: cross-conversation delegate failed: {exc}"
+                _injected_results.append({
+                    "task_id": task_id,
+                    "agent": agent_name,
+                    "target": _target_alias or _target_conv_id,
+                    "status": "delivered",
+                    "mode": "cross_conversation",
+                    "message": (
+                        f"Delegate delivered to '{agent_name}' in another "
+                        f"conversation ({_delivery['state']}). You will receive "
+                        f"'[Delegate result for task_id={task_id}]' asynchronously."
+                    ),
+                })
+                continue
 
             # Preempt path: a delegate for (_src_agent, agent_name) is
             # already running in this conversation — inject the message

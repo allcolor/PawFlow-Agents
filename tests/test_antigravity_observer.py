@@ -931,9 +931,13 @@ def test_antigravity_tmux_submit_does_not_replay_large_prompt_in_chunks(monkeypa
     payload = "x" * 513
 
     assert AntigravityObserverPool().send_text(state, payload) is True
-    flat = [cmd for cmd, _kw in calls]
+    tmux_calls = [
+        (cmd, kwargs) for cmd, kwargs in calls
+        if cmd[:2] == ["docker", "exec"]
+    ]
+    flat = [cmd for cmd, _kwargs in tmux_calls]
     assert flat[0][-6:] == ["tmux", "send-keys", "-t", "pawflow-agy:0.0", "-X", "cancel"]
-    assert calls[1][1]["input"] == payload.encode("utf-8")
+    assert tmux_calls[1][1]["input"] == payload.encode("utf-8")
     assert flat[2][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
     assert flat[3][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
     assert len(flat) == 4

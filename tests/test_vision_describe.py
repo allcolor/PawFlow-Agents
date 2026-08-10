@@ -639,6 +639,41 @@ def test_service_complete_applies_fallback_only_when_vision_disabled(monkeypatch
     assert svc._maybe_apply_vision_fallback(msgs, {}) is msgs
 
 
+def test_tool_result_force_mode_uses_vision_capable_active_service(monkeypatch):
+    import core.vision_describe as vd
+    from core.service_registry import ServiceRegistry
+
+    class VisionClient:
+        supports_vision = True
+
+    class VisionService:
+        TYPE = "llmConnection"
+        config = {}
+
+        def get_client(self):
+            return VisionClient()
+
+    class Registry:
+        def resolve(self, service_id, user_id="", conv_id=""):
+            assert service_id == "agent-vision"
+            return VisionService()
+
+    monkeypatch.setattr(ServiceRegistry, "get_instance", lambda: Registry())
+    monkeypatch.setattr(
+        vd, "describe_image_b64",
+        lambda service, mime, b64, **kwargs: "A blue application window.",
+    )
+    marker = "Image: screen.png\n__image_data__:image/png:aW1hZ2U="
+
+    assert vd.describe_tool_result_images(
+        marker, agent_svc="agent-vision") is None
+    described = vd.describe_tool_result_images(
+        marker, agent_svc="agent-vision", force=True)
+
+    assert "A blue application window." in described
+    assert "__image_data__:" not in described
+
+
 @pytest.mark.parametrize("streaming", [False, True])
 def test_agent_loop_direct_client_call_applies_service_vision_fallback(streaming):
     from core.llm_client import LLMMessage

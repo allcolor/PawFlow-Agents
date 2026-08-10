@@ -247,10 +247,86 @@ def _tool_schema(registry, tool_name: str) -> Any:
     return f"Error: unknown tool '{tool_name}'"
 
 
+def _image_marker_text(registry, tool_name: str, arguments: dict,
+                       result: Any) -> Optional[str]:
+    """Return a marker-form image result only for an image-producing tool."""
+    from core.handlers.meta_tools import resolve_result_shape_handler
+
+    handler = resolve_result_shape_handler(registry, tool_name, arguments)
+    if not handler or not getattr(handler, "_returns_images", False):
+        return None
+    if isinstance(result, str):
+        return result if "__image_data__:" in result else None
+    if not isinstance(result, list):
+        return None
+    lines = []
+    has_image = False
+    for block in result:
+        if not isinstance(block, dict):
+            continue
+        block_type = str(block.get("type") or "")
+        if block_type == "text":
+            lines.append(str(block.get("text") or ""))
+        elif block_type == "image" and block.get("data"):
+            mime = str(block.get("mimeType") or "image/png")
+            lines.append(f"__image_data__:{mime}:{block['data']}")
+            has_image = True
+    return "\n".join(lines) if has_image else None
+
+
+def _apply_published_image_output(server: Dict[str, Any], registry,
+                                  tool_name: str, arguments: dict,
+                                  result: Any) -> Any:
+    if str(server.get("image_output") or "native") != "describe":
+        return result
+    marker_text = _image_marker_text(registry, tool_name, arguments, result)
+    if marker_text is None:
+        return result
+    from core.conv_agent_config import get_agent_config
+    from core.vision_describe import describe_tool_result_images
+
+    agent_svc = str(get_agent_config(
+        server["conversation_id"], server["agent_name"]
+    ).get("llm_service") or "")
+    described = describe_tool_result_images(
+        marker_text, agent_svc=agent_svc,
+        user_id=server["owner_user_id"],
+        conversation_id=server["conversation_id"],
+        agent_name=server["agent_name"], force=True,
+    )
+    if described is None:
+        return (
+            "Error: MCP image output is set to describe, but the published "
+            "agent has no usable vision service. Configure its LLM or "
+            "vision_llm_service, or select native image output."
+        )
+    return described
+
+
+def _compact_content_for_transcript(blocks: list) -> str:
+    lines = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            lines.append(str(block))
+            continue
+        block_type = str(block.get("type") or "")
+        if block_type == "text":
+            text = str(block.get("text") or "")
+            if text:
+                lines.append(text)
+        elif block_type == "image":
+            mime = str(block.get("mimeType") or "image")
+            lines.append(f"[Image returned to MCP client: {mime}]")
+        elif block_type:
+            lines.append(f"[{block_type} content returned to MCP client]")
+    return "\n".join(lines) or "(no output)"
+
+
 def _encode_tool_content(registry, tool_name: str, arguments: dict,
                          result: Any) -> Tuple[list, bool, str]:
     if isinstance(result, list):
-        return result, False, json.dumps(result, ensure_ascii=False)
+        compact = _compact_content_for_transcript(result)
+        return result, compact.startswith("Error:"), compact
     text = str(result if result is not None and result != "" else "(no output)")
     handler = registry.get(tool_name)
     if (handler is not None and getattr(handler, "_returns_images", False)
@@ -264,7 +340,8 @@ def _encode_tool_content(registry, tool_name: str, arguments: dict,
             elif line.strip():
                 blocks.append({"type": "text", "text": line})
         if blocks:
-            return blocks, False, text
+            compact = _compact_content_for_transcript(blocks)
+            return blocks, compact.startswith("Error:"), compact
     return [{"type": "text", "text": text}], text.startswith("Error:"), text
 
 
@@ -352,6 +429,10 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
         executed_args = tool_args if isinstance(tool_args, dict) else {}
     else:
         result = f"Error: unknown tool '{name}'"
+
+    if name == "use_tool" and executed_name != "use_tool":
+        result = _apply_published_image_output(
+            server, registry, executed_name, executed_args, result)
 
     content, is_error, result_text = _encode_tool_content(
         registry, executed_name, executed_args, result)

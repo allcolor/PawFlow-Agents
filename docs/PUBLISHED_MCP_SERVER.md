@@ -12,6 +12,10 @@ other MCP clients.
 2. Open **Resources → MCP Repository**.
 3. Select **Publish/configure this conversation**.
 4. Choose an agent already attached to the conversation and save.
+   Select how image-producing tools such as `see` return their results:
+   **Native MCP images** sends images to the external client's active model;
+   **Text descriptions** uses the published agent's vision-capable LLM or its
+   configured delegated `vision_llm_service` and returns text only.
 5. Create an API key and copy it immediately. PawFlow stores only its SHA-256
    hash and never displays the raw key again.
 6. Copy the endpoint and CLI configuration from the dialog.
@@ -38,6 +42,12 @@ runs with the conversation owner's identity and that agent's configuration,
 through the normal PawFlow approval gate, hooks, secret resolution, redaction,
 and tool metrics. Calls and results are appended to the ordinary conversation
 transcript; no LLM turn is started.
+
+Native image output is the default and does not invoke PawFlow's LLM. In text
+description mode, only image-producing tool results invoke the configured
+vision service. The call fails explicitly if the published agent has no usable
+vision service. PawFlow persists the ordinary text and compact image metadata
+in the conversation transcript, never inline image base64 payloads.
 
 ## Local stdio bridge
 

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.164] — 2026-08-10
+
+### Fixed
+
+- Published MCP conversations now offer explicit native-image and text-description
+  output modes for image-producing tools such as `see`. Description mode uses
+  the bound agent's vision-capable LLM or delegated vision service, and reports
+  a clear error when neither is available.
+- Published MCP tool transcripts now persist compact image metadata instead of
+  inline base64 payloads, while native MCP clients still receive the complete
+  image content blocks.
+
 ## [1.0.0-beta.163] — 2026-08-10
 
 ### Added

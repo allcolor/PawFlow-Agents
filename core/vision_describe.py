@@ -702,7 +702,8 @@ def apply_vision_fallback(messages: List[Any], vision_service_id: str, *,
 
 def describe_tool_result_images(result: str, *, agent_svc: str = "",
                                 user_id: str = "", conversation_id: str = "",
-                                agent_name: str = "") -> Optional[str]:
+                                agent_name: str = "",
+                                force: bool = False) -> Optional[str]:
     """Describe the images inside a see/read tool result via delegated vision.
 
     ``see``/``read`` return ``__image_data__:`` markers so a vision-enabled
@@ -714,8 +715,10 @@ def describe_tool_result_images(result: str, *, agent_svc: str = "",
     results) and gives the text-only model the perception it needs.
 
     Returns the text-only result, or None when the caller should keep the
-    native multimodal result (no agent service, vision-enabled LLM, or no
-    resolvable delegated vision service).
+    native multimodal result. With ``force=True``, a vision-enabled active
+    service describes the images itself; a text-only service still delegates
+    to its configured ``vision_llm_service``. This is used by published MCP
+    servers whose external client requested text-only image output.
     """
     if not agent_svc or "__image_data__:" not in (result or ""):
         return None
@@ -727,19 +730,22 @@ def describe_tool_result_images(result: str, *, agent_svc: str = "",
             return None
         client = svc.get_client() if hasattr(svc, "get_client") else None
         if client is not None and getattr(client, "supports_vision", False):
-            return None  # Native vision path stays multimodal.
-        vision_id = str(
-            (getattr(svc, "config", {}) or {}).get(
-                "vision_llm_service", "") or "").strip()
-        if not vision_id:
-            return None
-        vision_svc, err = resolve_vision_service(
-            vision_id, user_id=user_id, conversation_id=conversation_id)
-        if not vision_svc:
-            logger.warning(
-                "see vision fallback unavailable for '%s': %s",
-                agent_svc, err)
-            return None
+            if not force:
+                return None  # Native vision path stays multimodal.
+            vision_svc = svc
+        else:
+            vision_id = str(
+                (getattr(svc, "config", {}) or {}).get(
+                    "vision_llm_service", "") or "").strip()
+            if not vision_id:
+                return None
+            vision_svc, err = resolve_vision_service(
+                vision_id, user_id=user_id, conversation_id=conversation_id)
+            if not vision_svc:
+                logger.warning(
+                    "see vision fallback unavailable for '%s': %s",
+                    agent_svc, err)
+                return None
     except Exception:
         logger.debug("see vision fallback setup failed", exc_info=True)
         return None

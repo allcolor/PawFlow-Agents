@@ -76,6 +76,7 @@ function _publishedMcpRender(state) {
     : ((typeof selectedAgent !== 'undefined' && selectedAgent) || agents[0] || '');
   const keys = server && Array.isArray(server.keys) ? server.keys : [];
   const endpoint = server ? _publishedMcpEndpoint(server.server_id) : '';
+  const imageOutput = server ? String(server.image_output || 'native') : 'native';
   const relay = server && server.client_active
     ? escapeHtml(t('mcpPublishClientActive', { client: server.active_client_name || 'CLI' }))
     : escapeHtml(t('mcpPublishNoClient'));
@@ -104,6 +105,12 @@ function _publishedMcpRender(state) {
     + '<select id="publishedMcpAgent" style="display:block;width:100%;margin-top:4px;">' + agentOptions + '</select></label>'
     + '<label style="display:flex;align-items:center;gap:7px;margin-bottom:12px;"><input id="publishedMcpEnabled" type="checkbox"'
     + ((!server || server.enabled) ? ' checked' : '') + '> ' + escapeHtml(t('mcpPublishEnabled')) + '</label>'
+    + '<label style="display:block;margin-bottom:12px;">' + escapeHtml(t('mcpPublishImageOutput'))
+    + '<select id="publishedMcpImageOutput" style="display:block;width:100%;margin-top:4px;">'
+    + '<option value="native"' + (imageOutput === 'native' ? ' selected' : '') + '>'
+    + escapeHtml(t('mcpPublishImageNative')) + '</option>'
+    + '<option value="describe"' + (imageOutput === 'describe' ? ' selected' : '') + '>'
+    + escapeHtml(t('mcpPublishImageDescribe')) + '</option></select></label>'
     + '<div style="display:flex;gap:8px;margin-bottom:14px;"><button type="button" onclick="_publishedMcpSave()">'
     + escapeHtml(server ? t('contextSave') : t('mcpPublishCreate')) + '</button>'
     + (server ? '<button type="button" onclick="_publishedMcpDelete()" style="color:var(--pf-danger);">'
@@ -144,6 +151,7 @@ function showPublishedMcpDialog() {
 function _publishedMcpSave() {
   const agent = document.getElementById('publishedMcpAgent')?.value || '';
   const enabled = !!document.getElementById('publishedMcpEnabled')?.checked;
+  const imageOutput = document.getElementById('publishedMcpImageOutput')?.value || 'native';
   if (!agent) {
     addMsg('error', t('mcpPublishSelectAgent'));
     return;
@@ -152,6 +160,7 @@ function _publishedMcpSave() {
     agent_name: agent,
     label: agent,
     enabled: enabled,
+    image_output: imageOutput,
   }, function(data) {
     _publishedMcpRender({ server: data.server || null });
     loadResources();

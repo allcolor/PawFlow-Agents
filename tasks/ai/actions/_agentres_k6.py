@@ -67,6 +67,11 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
     if action == "mcp_server_configure":
         agent_name = str(body.get("agent_name") or "").strip()
         enabled = bool(body.get("enabled", True))
+        image_output = str(body.get("image_output") or "native").strip().lower()
+        if image_output not in {"native", "describe"}:
+            return _reply(flowfile, {
+                "error": "image_output must be 'native' or 'describe'"
+            }, 400)
         from core.conv_agent_config import get_all_agent_configs
         configs = get_all_agent_configs(conversation_id) or {}
         needle = agent_name.lower()
@@ -88,6 +93,7 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
             owner, conversation_id, canonical,
             label=str(body.get("label") or canonical).strip(),
             enabled=enabled,
+            image_output=image_output,
         )
         from services.mcp_server_endpoint import ensure_mcp_routes
         ensure_mcp_routes()

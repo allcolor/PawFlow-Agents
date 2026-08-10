@@ -31,6 +31,12 @@ def _decoded(request):
 def test_store_hashes_keys_and_supports_revocation(tmp_path):
     store = MCPServerStore(tmp_path / "published.sqlite3")
     server = store.configure("alice", "conv-1", "agent-a")
+    assert server["image_output"] == "native"
+    server = store.configure(
+        "alice", "conv-1", "agent-a", image_output="describe")
+    assert server["image_output"] == "describe"
+    with pytest.raises(ValueError, match="image_output"):
+        store.configure("alice", "conv-1", "agent-a", image_output="automatic")
     raw, key = store.create_key(server["server_id"], "Codex")
 
     assert raw.startswith("pfmcp_")
@@ -70,6 +76,34 @@ def test_store_enforces_one_fresh_cli_and_expires_stale_lease(tmp_path):
     current = store.get(server_id)
     assert current["active_client_id"] == ""
     assert not current["client_active"]
+
+
+def test_store_migrates_existing_publications_to_native_image_output(tmp_path):
+    database = tmp_path / "published.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """CREATE TABLE mcp_servers (
+                   server_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL,
+                   conversation_id TEXT NOT NULL UNIQUE, agent_name TEXT NOT NULL,
+                   label TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+                   created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                   active_client_id TEXT NOT NULL DEFAULT '',
+                   active_client_name TEXT NOT NULL DEFAULT '',
+                   active_relay_id TEXT NOT NULL DEFAULT '',
+                   client_heartbeat_at REAL NOT NULL DEFAULT 0
+               )"""
+        )
+        connection.execute(
+            """INSERT INTO mcp_servers (
+                   server_id, owner_user_id, conversation_id, agent_name,
+                   label, enabled, created_at, updated_at)
+               VALUES ('srv-old', 'alice', 'conv-old', 'agent-a',
+                       'Old server', 1, 1, 1)"""
+        )
+
+    store = MCPServerStore(database)
+
+    assert store.get("srv-old")["image_output"] == "native"
 
 
 def test_link_relay_can_skip_automatic_default(monkeypatch):
@@ -212,6 +246,109 @@ def test_use_tool_runs_through_canonical_owner_agent_runtime(monkeypatch):
     assert calls["conversation_id"] == "conv-1"
     assert calls["agent_name"] == "agent-a"
     assert calls["name"] == "read"
+
+
+def test_native_image_stays_in_mcp_response_but_base64_is_not_persisted(monkeypatch):
+    image_data = "c2Vuc2l0aXZlLWltYWdlLWJ5dGVz"
+    persisted = {}
+
+    class ImageHandler:
+        _returns_images = True
+
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": "see", "description": "See", "parameters": {}}]
+
+        def get(self, name):
+            return ImageHandler() if name == "see" else None
+
+    class Runtime:
+        def _do_execute(self, request_id, name, arguments, user_id, conv_id, agent):
+            return {"type": "result", "request_id": request_id, "data": [
+                {"type": "text", "text": "Image: screen.png"},
+                {"type": "image", "mimeType": "image/png", "data": image_data},
+            ]}
+
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "image_output": "native",
+    }
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    monkeypatch.setattr(
+        endpoint, "_persist_tool_call",
+        lambda _server, _key, _name, _args, text, _call_id:
+            persisted.update(text=text),
+    )
+
+    result = endpoint._call_tool(server, {"key_id": "key-1"}, "use_tool", {
+        "tool_name": "see", "arguments_json": json.dumps({"path": "screen.png"}),
+    })
+
+    assert result["content"][1]["data"] == image_data
+    assert image_data not in persisted["text"]
+    assert persisted["text"] == (
+        "Image: screen.png\n[Image returned to MCP client: image/png]")
+
+
+def test_describe_image_output_uses_published_agent_vision_and_persists_text(
+        monkeypatch):
+    image_data = "aW1hZ2UtYnl0ZXM="
+    described_call = {}
+    persisted = {}
+
+    class ImageHandler:
+        _returns_images = True
+
+    class Registry:
+        def get_tool_definitions(self):
+            return []
+
+        def get(self, name):
+            return ImageHandler() if name == "see" else None
+
+    class Runtime:
+        def _do_execute(self, *args):
+            return {"data": [
+                {"type": "text", "text": "Image: screen.png"},
+                {"type": "image", "mimeType": "image/png", "data": image_data},
+            ]}
+
+    def describe(result, **kwargs):
+        described_call.update(result=result, **kwargs)
+        return "Image: screen.png\n\nA terminal showing passing tests."
+
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "image_output": "describe",
+    }
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda _cid, _agent: {"llm_service": "agent-vision"},
+    )
+    monkeypatch.setattr("core.vision_describe.describe_tool_result_images", describe)
+    monkeypatch.setattr(
+        endpoint, "_persist_tool_call",
+        lambda _server, _key, _name, _args, text, _call_id:
+            persisted.update(text=text),
+    )
+
+    result = endpoint._call_tool(server, {"key_id": "key-1"}, "use_tool", {
+        "tool_name": "see", "arguments_json": "{}",
+    })
+
+    assert result == {"content": [{"type": "text", "text":
+        "Image: screen.png\n\nA terminal showing passing tests."}], "isError": False}
+    assert described_call["agent_svc"] == "agent-vision"
+    assert described_call["force"] is True
+    assert described_call["user_id"] == "alice"
+    assert image_data in described_call["result"]
+    assert persisted["text"] == result["content"][0]["text"]
+    assert image_data not in persisted["text"]
 
 
 def test_remove_mcp_relay_unlinks_agent_binding_and_uninstalls(monkeypatch):
@@ -447,9 +584,11 @@ def test_reconfiguring_published_agent_releases_old_cli_relay(monkeypatch):
             calls.append(("release", server_id, client_id))
             return True
 
-        def configure(self, owner, conversation_id, agent_name, label="", enabled=True):
+        def configure(self, owner, conversation_id, agent_name, label="", enabled=True,
+                      image_output="native"):
             calls.append(("configure", owner, conversation_id, agent_name, enabled))
-            return dict(server, agent_name=agent_name, enabled=enabled)
+            return dict(server, agent_name=agent_name, enabled=enabled,
+                        image_output=image_output)
 
         def list_keys(self, _server_id):
             return []
@@ -484,6 +623,43 @@ def test_reconfiguring_published_agent_releases_old_cli_relay(monkeypatch):
         ("release", "srv-1", "cli-1"),
     ]
     assert calls[2] == ("configure", "alice", "conv-1", "agent-b", True)
+
+
+def test_configure_rejects_unknown_image_output(monkeypatch):
+    from tasks.ai.actions import _agentres_k6
+
+    class ConversationStore:
+        def resolve_owner(self, _conversation_id):
+            return "alice"
+
+    class Store:
+        def get_for_conversation(self, _conversation_id):
+            return None
+
+    class FlowFile:
+        def __init__(self):
+            self.attributes = {}
+
+        def set_content(self, content):
+            self.content = content
+
+        def set_attribute(self, key, value):
+            self.attributes[key] = value
+
+    monkeypatch.setattr(
+        MCPServerStore, "instance", classmethod(lambda cls: Store()))
+    flowfile = FlowFile()
+
+    _agentres_k6._handle_agentres_k6(
+        None, "mcp_server_configure", {
+            "conversation_id": "conv-1", "agent_name": "agent-a",
+            "image_output": "auto",
+        }, ConversationStore(), "alice", flowfile,
+    )
+
+    assert flowfile.attributes["http.response.status"] == "400"
+    assert json.loads(flowfile.content)["error"] == (
+        "image_output must be 'native' or 'describe'")
 
 
 def test_only_first_http_listener_restores_published_mcp_routes(monkeypatch):

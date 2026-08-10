@@ -22,6 +22,7 @@ import core.paths as _paths
 
 
 _CLIENT_LEASE_TTL_SECONDS = 120.0
+_IMAGE_OUTPUTS = frozenset({"native", "describe"})
 
 
 class MCPServerStore:
@@ -71,7 +72,8 @@ class MCPServerStore:
                     active_client_id TEXT NOT NULL DEFAULT '',
                     active_client_name TEXT NOT NULL DEFAULT '',
                     active_relay_id TEXT NOT NULL DEFAULT '',
-                    client_heartbeat_at REAL NOT NULL DEFAULT 0
+                    client_heartbeat_at REAL NOT NULL DEFAULT 0,
+                    image_output TEXT NOT NULL DEFAULT 'native'
                 );
                 CREATE INDEX IF NOT EXISTS idx_mcp_servers_owner_conversation
                     ON mcp_servers(owner_user_id, conversation_id);
@@ -91,6 +93,15 @@ class MCPServerStore:
                     ON mcp_api_keys(server_id, revoked_at);
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(mcp_servers)")
+            }
+            if "image_output" not in columns:
+                connection.execute(
+                    "ALTER TABLE mcp_servers ADD COLUMN "
+                    "image_output TEXT NOT NULL DEFAULT 'native'"
+                )
 
     @staticmethod
     def _server_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -110,9 +121,13 @@ class MCPServerStore:
         return data
 
     def configure(self, owner_user_id: str, conversation_id: str,
-                  agent_name: str, label: str = "", enabled: bool = True) -> Dict[str, Any]:
+                  agent_name: str, label: str = "", enabled: bool = True,
+                  image_output: str = "native") -> Dict[str, Any]:
         if not owner_user_id or not conversation_id or not agent_name:
             raise ValueError("owner_user_id, conversation_id and agent_name are required")
+        image_output = str(image_output or "").strip().lower()
+        if image_output not in _IMAGE_OUTPUTS:
+            raise ValueError("image_output must be 'native' or 'describe'")
         now = time.time()
         with self._lock, self._connect() as connection:
             row = connection.execute(
@@ -125,19 +140,21 @@ class MCPServerStore:
                 server_id = row["server_id"]
                 connection.execute(
                     """UPDATE mcp_servers
-                       SET agent_name = ?, label = ?, enabled = ?, updated_at = ?
+                       SET agent_name = ?, label = ?, enabled = ?, image_output = ?,
+                           updated_at = ?
                        WHERE server_id = ?""",
-                    (agent_name, label or agent_name, int(bool(enabled)), now, server_id),
+                    (agent_name, label or agent_name, int(bool(enabled)),
+                     image_output, now, server_id),
                 )
             else:
                 server_id = "srv_" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
                 connection.execute(
                     """INSERT INTO mcp_servers (
                            server_id, owner_user_id, conversation_id, agent_name,
-                           label, enabled, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                           label, enabled, image_output, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (server_id, owner_user_id, conversation_id, agent_name,
-                     label or agent_name, int(bool(enabled)), now, now),
+                     label or agent_name, int(bool(enabled)), image_output, now, now),
                 )
         result = self.get(server_id)
         if result is None:

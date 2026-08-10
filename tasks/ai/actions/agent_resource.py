@@ -33,6 +33,7 @@ from tasks.ai.actions._agentres_k2 import _handle_agentres_k2
 from tasks.ai.actions._agentres_k3 import _handle_agentres_k3
 from tasks.ai.actions._agentres_k4 import _handle_agentres_k4
 from tasks.ai.actions._agentres_k5 import _handle_agentres_k5
+from tasks.ai.actions._agentres_k6 import _handle_agentres_k6
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,15 @@ _ACTION_ROLES = {
     "update_agent_conv_config": "write",
     "remove_agent_from_conv": "write",
     "list_repo_agents": "read",
+    # _agentres_k6 — publication delegates the owner's tool authority, so all
+    # mutations are write-gated and then additionally owner-only in the handler.
+    "mcp_server_get": "read",
+    "mcp_server_configure": "write",
+    "mcp_server_create_key": "write",
+    "mcp_server_revoke_key": "write",
+    "mcp_server_disconnect_client": "write",
+    "mcp_server_set_enabled": "write",
+    "mcp_server_delete": "write",
 }
 
 # `pfp_*` is one action per package operation, dispatched on the suffix.
@@ -178,7 +188,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
     if _denied is not None:
         return _denied
     for _handler in (_handle_agentres_k1, _handle_agentres_k2, _handle_agentres_k3,
-                     _handle_agentres_k4, _handle_agentres_k5):
+                     _handle_agentres_k4, _handle_agentres_k5,
+                     _handle_agentres_k6):
         _res = _handler(self, action, body, store, user_id, flowfile)
         if _res is not _UNHANDLED:
             return _res

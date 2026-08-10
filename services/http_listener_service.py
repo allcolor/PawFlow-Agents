@@ -151,6 +151,14 @@ class HTTPListenerService(BaseService):
         self._ssl_keyfile_password = self.config.get("ssl_keyfile_password", "")
 
         self._registry = RouteRegistry()
+        # Restore inbound MCP routes only when a publication already exists.
+        # The first publication installs them dynamically on the main listener;
+        # ordinary flow/test listeners therefore keep an empty route registry.
+        from core.mcp_server_store import MCPServerStore
+        if (MCPServerStore.instance().has_servers()
+                and not HTTPListenerService.all_instances()):
+            from services.mcp_server_endpoint import register_mcp_routes
+            register_mcp_routes(self)
         self._server: Optional[_HTTPServerWithRegistry] = None
         self._server_thread: Optional[threading.Thread] = None
         self._ref_count = 0

@@ -32,7 +32,7 @@
   </header>
   <main>
     <section class="page-hero"><div class="container narrow" data-reveal><p class="eyebrow">How-tos</p><h1>Small recipes for the first useful PawFlow sessions.</h1><p class="hero-copy">Install the runtime, connect relays, configure providers, publish packages, and turn useful agent work into flows.</p></div></section>
-    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#desktop-novnc-audio">Desktop</a><a href="#multi-llm-aggregator">Multi-LLM</a><a href="#fault-tolerant-llm">LLM failover</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a><a href="#comfyui">ComfyUI</a></div></section>
+    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#published-mcp-client">MCP client</a><a href="#desktop-novnc-audio">Desktop</a><a href="#multi-llm-aggregator">Multi-LLM</a><a href="#fault-tolerant-llm">LLM failover</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a><a href="#comfyui">ComfyUI</a></div></section>
     <section class="section surface"><div class="container howto-list">
       <div class="howto-section" id="install" data-reveal><p class="eyebrow">Install and relays</p><h2>From first server to controlled workspaces.</h2></div>
       <article class="recipe process-recipe" id="install-wizard" data-reveal>
@@ -59,6 +59,21 @@
           <figure class="media-frame"><img src="assets/media/howtos/wizard-first-conversation.webp" onerror="this.onerror=null;this.src='assets/media/product/webchat-console.webp';this.onerror=function(){this.src='assets/feature-agent-flows.png';};" alt="First PawFlow conversation after install"><figcaption>First conversation.</figcaption></figure>
         </div>
         <p>PawFlow runs on the selected port, the wizard is complete, and the first conversation can call your chosen provider.</p>
+      </article>
+      <article class="recipe process-recipe" id="published-mcp-client" data-reveal>
+        <div class="recipe-meta">Published conversation, stdio, CC, Codex, Agy</div>
+        <h2>Install a published PawFlow conversation as a local MCP server</h2>
+        <p><strong>Objective:</strong> connect Claude Code, Codex, or Agy to one PawFlow conversation and share the client's project directory through a relay that never changes the conversation default.</p>
+        <div class="wizard-grid">
+          <div><strong>Windows</strong><span>Download the ZIP, extract it, then run <code>install.cmd</code> or <code>powershell -ExecutionPolicy Bypass -File .\install.ps1</code>.</span></div>
+          <div><strong>Linux and macOS</strong><span>Extract either archive, enter its directory, then run <code>./install.sh</code>.</span></div>
+          <div><strong>Secrets</strong><span>The publication API key and optional Private Gateway key live once in a private local profile, never in the CC, Codex, or Agy configuration.</span></div>
+          <div><strong>Concurrency</strong><span>One published conversation accepts one active client instance. Publish another conversation for a second simultaneous instance.</span></div>
+        </div>
+        <p><a class="button button-primary" href="#" data-release-download="mcpClientZip">Download ZIP <span data-release-asset></span></a> <a class="button button-secondary" href="#" data-release-download="mcpClientTar">Download tar.gz <span data-release-asset></span></a></p>
+        <ol><li>Open the target conversation, then Resources &rarr; MCP Repository &rarr; <strong>Publish/configure this conversation</strong>.</li><li>Select the attached agent, create an API key, and copy the endpoint and key immediately.</li><li>Extract the client archive and run the installer for the current OS.</li><li>Enter a server name, endpoint, hidden API key, optional hidden gateway key, local project directory, and the clients to configure: <code>cc</code>, <code>codex</code>, <code>agy</code>, or a comma-separated subset.</li><li>Choose read-only or read/write access and whether shell execution is allowed. The secure default leaves shell execution disabled.</li><li>Restart the client, confirm the MCP server is listed, then call <code>pawflow_relay_status</code>. It must report <code>auto_default: false</code>.</li></ol>
+        <p>The guided installer preserves unrelated client settings, backs up changed configurations, and is safe to rerun for upgrades or permission changes.</p>
+        <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/MCP_CLIENT_INSTALLER.md">Read the complete MCP client installation guide</a>
       </article>
       <article class="recipe process-recipe" id="desktop-novnc-audio" data-reveal>
         <div class="recipe-meta">Desktop, noVNC, audio, screen tools</div>
@@ -275,6 +290,6 @@ pawcode --dir .</code></pre></div>
     </div></section>
   </main>
   <footer class="site-footer"><div class="container footer-grid"><div><strong>PawFlow</strong><span>Recipes for the first useful workflow.</span></div><nav><a href="index.html">Home</a><a href="quickstart.html">Quickstart</a><a href="docs.html">Docs</a><a href="faq.html">FAQ</a><a href="https://github.com/allcolor/PawFlow-Agents" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/allcolor/PawFlow-Agents/issues" target="_blank" rel="noreferrer">Issues</a><a href="https://github.com/allcolor/PawFlow-Agents/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT License</a></nav></div></footer>
-  <script src="site.js?v=a24"></script>
+  <script src="site.js?v=a25"></script>
 </body>
 </html>

@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.163] — 2026-08-10
+
+### Added
+
+- Conversations can now be published as authenticated Streamable HTTP MCP
+  servers bound to one attached agent. Owner-only webchat controls create,
+  rotate, and revoke hashed API keys, expose connection details, manage the
+  active client lease, and remove the temporary CLI relay.
+- Added a local stdio bridge that proxies Claude Code, Codex, Agy, and other MCP
+  clients to a published conversation while sharing a client-selected project
+  directory through the normal PawFlow relay. The bridge exposes local
+  connect, disconnect, status, and reconnect tools.
+- Release assets now include reproducible universal MCP client ZIP and tar.gz
+  packages with guided Windows, Linux, and macOS installers. The wizard merges
+  user-level Claude Code, Codex, and Agy configuration, preserves unrelated
+  servers, creates backups, and keeps API and gateway keys in one private
+  profile instead of client configuration.
+
+### Changed
+
+- Relay bindings can opt out of automatic default selection. MCP CLI relays
+  always use this mode, so starting a client never changes the conversation or
+  agent relay chosen by the user.
+- A published conversation allows one active logical CLI instance with
+  heartbeat-based expiry. Concurrent clients require separate published
+  conversations, while reconnects from the same instance retain the lease.
+
+### Fixed
+
+- The bundled stdio bridge now propagates its runtime path to the relay
+  subprocess and skips Unix HOME ownership checks on Windows.
+- Release metadata now keeps the package version, project summary, changelog,
+  and website fallback aligned, preventing the documentation consistency check
+  from making every CI Python matrix fail.
+
 ## [1.0.0-beta.162] — 2026-08-10
 
 ### Added

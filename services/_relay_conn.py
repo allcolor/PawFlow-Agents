@@ -54,7 +54,14 @@ class _RelayConnMixin:
         listener = next(iter(instances.values()))
         route = f'/ws/relay/{self._service_id}'
         self._route_path = route
-        listener.register_route('GET', route, self._service_id, callback=None, ws_handler=self._handle_ws)
+        listener.register_route(
+            'GET', route, self._service_id, callback=None,
+            ws_handler=self._handle_ws,
+            # MCP CLI relays authenticate with the per-relay token in their
+            # first WS frame and do not possess a PawFlow browser session.
+            # PrivateGateway remains in front of public routes.
+            public=bool(self.config.get("mcp_external")),
+        )
         self._connection = listener
         self._initialized = True
         logger.info('RelayService %s registered on main listener path %s', self._service_id, route)

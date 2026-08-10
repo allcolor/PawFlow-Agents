@@ -279,12 +279,17 @@ async function _renderResourcesData(data) {
       if (_relayIds.length) {
         _relayIds.forEach(function(rid) {
           var scopes = _allRelays[rid];
-          var isConvDefault = _rbDefaults['*'] === rid || (!_rbDefaults['*'] && _relayIds.length === 1);
+          var det = _rbDetails[rid] || {};
+          var bindingAgent = scopes.length === 1 && scopes[0] !== '*' ? scopes[0] : '';
+          var isAgentDefault = !!bindingAgent && _rbDefaults[bindingAgent] === rid;
+          var isConvDefault = _rbDefaults['*'] === rid
+            || (!det.mcp_external && !_rbDefaults['*'] && _relayIds.length === 1);
+          var isDisplayedDefault = isConvDefault || isAgentDefault;
           var agentDefaults = [];
           Object.keys(_rbDefaults).forEach(function(scope) {
             if (scope !== '*' && _rbDefaults[scope] === rid) agentDefaults.push(scope);
           });
-          var star = isConvDefault ? ' \u2605' : '';
+          var star = isDisplayedDefault ? ' \u2605' : '';
           var agentTags = '';
           scopes.forEach(function(s) {
             if (s !== '*') agentTags += ' <span style="font-size:9px;color:var(--pf-accent);background:color-mix(in srgb, var(--pf-accent) 14%, var(--pf-panel));padding:1px 4px;border-radius:3px;">' + escapeHtml(s) + '</span>';
@@ -292,11 +297,10 @@ async function _renderResourcesData(data) {
           agentDefaults.forEach(function(a) {
             agentTags += ' <span style="font-size:9px;color:var(--pf-success);" title="' + escapeHtml(t('defaultForAgent', { agent: a })) + '">\u2605' + escapeHtml(a) + '</span>';
           });
-          var color = isConvDefault ? 'var(--pf-success)' : 'var(--pf-muted)';
-          var icon = isConvDefault ? '\u25C9' : '\u25CB';
-          var titleText = isConvDefault ? t('defaultRelay') : t('setDefaultRelay');
-          var clickDefault = isConvDefault ? '' : ' onclick="event.stopPropagation(); fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(rid) + '}); setTimeout(loadResources, 500)"';
-          var det = _rbDetails[rid] || {};
+          var color = isDisplayedDefault ? 'var(--pf-success)' : 'var(--pf-muted)';
+          var icon = isDisplayedDefault ? '\u25C9' : '\u25CB';
+          var titleText = isDisplayedDefault ? t('defaultRelay') : t('setDefaultRelay');
+          var clickDefault = isDisplayedDefault ? '' : ' onclick="event.stopPropagation(); fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(rid) + ',agent:' + _pfpJsArg(bindingAgent) + '}); setTimeout(loadResources, 500)"';
           // 🟢 connected / 🟡 connecting (enabled, dialing back / lazy) / 🔴 down.
           // Same tri-state the Services list uses for a relay's started dot.
           var connDot = det.connected ? '\u{1F7E2}' : (det.connecting ? '\u{1F7E1}' : '\u{1F534}');
@@ -306,14 +310,15 @@ async function _renderResourcesData(data) {
           var _rbDefaultLocal = (_rb.default_local || {})[rid] || {};
           var _detWithLocal = Object.assign({}, det, {_default_local: _rbDefaultLocal});
           var _detJson = _pfpAttr(JSON.stringify(_detWithLocal));
-          var defaultBadge = isConvDefault ? ' <span style="font-size:9px;color:var(--pf-success);">' + escapeHtml(t('defaultRelay')) + '</span>' : '';
-          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" onclick="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isConvDefault ? 'true' : 'false') + ');return false;" oncontextmenu="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isConvDefault ? 'true' : 'false') + ');return false;">'
+          var defaultBadge = isDisplayedDefault ? ' <span style="font-size:9px;color:var(--pf-success);">' + escapeHtml(isAgentDefault ? t('defaultForAgent', {agent: bindingAgent}) : t('defaultRelay')) + '</span>' : '';
+          var mcpBadge = det.mcp_external ? ' <span style="font-size:9px;color:var(--pf-accent);border:1px solid var(--pf-accent);padding:0 4px;border-radius:3px;">' + escapeHtml(t('mcpRelayBadge', {client: det.mcp_client_name || 'CLI'})) + '</span>' : '';
+          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" onclick="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isDisplayedDefault ? 'true' : 'false') + ',' + _pfpJsArg(bindingAgent) + ');return false;" oncontextmenu="_showRelayInfoDialog(' + _pfpJsArg(rid) + ',' + _detJson + ',' + (isDisplayedDefault ? 'true' : 'false') + ',' + _pfpJsArg(bindingAgent) + ');return false;">'
             + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + _pfpAttr(titleText) + '"' + clickDefault + '>' + icon + '</span>'
             + '<span style="font-size:11px;">' + connDot + '</span>'
-            + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>' + defaultBadge
+            + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>' + defaultBadge + mcpBadge
             + agentTags
             + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + _pfpAttr(t('unlink')) + '"'
-            + ' onclick="event.stopPropagation(); fireAction(\'relay_unlink\',{relay_id:' + _pfpJsArg(rid) + '}); setTimeout(loadResources, 500)">&times;</span>'
+            + ' onclick="event.stopPropagation(); fireAction(\'relay_unlink\',{relay_id:' + _pfpJsArg(rid) + ',agent:' + _pfpJsArg(bindingAgent) + '}); setTimeout(loadResources, 500)">&times;</span>'
             + '</div>' + pathInfo;
         });
       } else {
@@ -556,6 +561,7 @@ async function _renderResourcesData(data) {
     });
     if (!_isSectionCollapsed('_mcp_repo')) {
       const mcps = data.mcp_servers || [];
+      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="showPublishedMcpDialog()">\u21F1 ' + escapeHtml(t('mcpPublishConfigure')) + '</div>';
       repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 ' + escapeHtml(t('configureAvailability')) + '</div>';
       if (mcps.length) {
         mcps.forEach(m => {

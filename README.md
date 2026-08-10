@@ -316,6 +316,19 @@ Memory digests and diary entries are automatically injected into the system prom
 - Assign steps to different agents
 - Verify completed work before moving on
 
+### PawFlow as an MCP Server
+
+Publish an existing conversation and attached agent as an authenticated
+Streamable HTTP MCP endpoint. Claude Code, Codex, Gemini CLI/Agy, and other MCP
+clients can then use the conversation's PawFlow tools under the owner's normal
+permissions, hooks, and relay configuration. The optional local stdio bridge
+also shares the CLI's current project directory without changing the
+conversation's default relay. Release assets include a universal ZIP and
+tar.gz with guided installers for Windows, Linux, and macOS. The wizard
+configures Claude Code, Codex, and Agy while keeping API and gateway keys in one
+private local profile. See the [MCP client installation guide](docs/MCP_CLIENT_INSTALLER.md)
+and [Published Conversation MCP Servers](docs/PUBLISHED_MCP_SERVER.md).
+
 ## Pipeline Engine
 
 100+ tasks across 5 categories for data processing workflows:

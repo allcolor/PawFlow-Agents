@@ -6,7 +6,7 @@ const toggle = document.querySelector('[data-nav-toggle]');
 // version in sync with the latest release tag on a best-effort basis — the
 // live fetch below overrides it on every page load.
 const PAWFLOW_RELEASE = {
-  version: '1.0.0-beta.100',
+  version: '1.0.0-beta.163',
   repo: 'https://github.com/allcolor/PawFlow-Agents',
 };
 
@@ -14,6 +14,8 @@ const PAWFLOW_RELEASE = {
 // names). Used to build fallback URLs and to match live asset lists.
 const releaseAssets = (version) => ({
   installer: `pawflow-install-${version}.zip`,
+  mcpClientZip: `pawflow-mcp-client-${version}.zip`,
+  mcpClientTar: `pawflow-mcp-client-${version}.tar.gz`,
   pawcodeLinuxTar: `pawcode-${version}-linux-x86_64.tar.gz`,
   pawcodeLinuxZip: `pawcode-${version}-linux-x86_64.zip`,
   pawcodeWindowsZip: `pawcode-${version}-win-x86_64.zip`,
@@ -33,6 +35,8 @@ const releaseAssets = (version) => ({
 // renamed or re-versioned assets keep resolving without a website deploy.
 const ASSET_PATTERNS = {
   installer: /^pawflow-install-.*\.zip$/,
+  mcpClientZip: /^pawflow-mcp-client-.*\.zip$/,
+  mcpClientTar: /^pawflow-mcp-client-.*\.tar\.gz$/,
   pawcodeLinuxTar: /^pawcode-.*-linux-x86_64\.tar\.gz$/,
   pawcodeLinuxZip: /^pawcode-.*-linux-x86_64\.zip$/,
   pawcodeWindowsZip: /^pawcode-.*-win-x86_64\.zip$/,

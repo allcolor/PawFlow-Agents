@@ -144,7 +144,7 @@ function _showRelayLinkDialog() {
     document.body.appendChild(overlay);
   });
 }
-function _showRelayInfoDialog(relayId, details, isDefault) {
+function _showRelayInfoDialog(relayId, details, isDefault, bindingAgent) {
   if (typeof details === 'string') try { details = JSON.parse(details); } catch(e) { details = {}; }
   var d = details || {};
   var dl = d._default_local || {};
@@ -209,12 +209,12 @@ function _showRelayInfoDialog(relayId, details, isDefault) {
   var reconnectBtn = d.server_managed && _canEditScope(d.scope)
     ? '<button class="exec-approve" onclick="_reconnectServerRelay(this,' + _pfpJsArg(relayId) + ')">' + escapeHtml(t('reconnectRelay')) + '</button>'
     : '';
-  var defaultBtn = isDefault ? '' : '<button class="exec-approve" onclick="fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(relayId) + '}); this.closest(\'.exec-overlay\').remove(); setTimeout(loadResources, 500)">' + escapeHtml(t('setDefaultRelay')) + '</button>';
+  var defaultBtn = isDefault ? '' : '<button class="exec-approve" onclick="fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(relayId) + ',agent:' + _pfpJsArg(bindingAgent || '') + '}); this.closest(\'.exec-overlay\').remove(); setTimeout(loadResources, 500)">' + escapeHtml(t('setDefaultRelay')) + '</button>';
   overlay.innerHTML = '<div class="exec-dialog" style="min-width:340px;">'
     + '<h3>' + escapeHtml(t('relayTitle', { id: relayId })) + '</h3>'
     + infoHtml + localHtml
     + '<div class="exec-btns">'
-    + '<button class="exec-deny" onclick="fireAction(\'relay_unlink\',{relay_id:' + _pfpJsArg(relayId) + '}); this.closest(\'.exec-overlay\').remove(); setTimeout(loadResources, 500)">' + escapeHtml(t('unlink')) + '</button>'
+    + '<button class="exec-deny" onclick="fireAction(\'relay_unlink\',{relay_id:' + _pfpJsArg(relayId) + ',agent:' + _pfpJsArg(bindingAgent || '') + '}); this.closest(\'.exec-overlay\').remove(); setTimeout(loadResources, 500)">' + escapeHtml(t('unlink')) + '</button>'
     + reconnectBtn
     + defaultBtn
     + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('close')) + '</button></div>'

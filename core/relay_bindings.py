@@ -121,7 +121,8 @@ def get_default(cid: str, agent: str = "") -> Optional[str]:
     return None
 
 
-def link_relay(cid: str, relay_id: str, agent: str = "", user_id: str = "") -> bool:
+def link_relay(cid: str, relay_id: str, agent: str = "", user_id: str = "",
+               auto_default: bool = True) -> bool:
     """Link a relay to a conversation (optionally to a specific agent)."""
     if user_id:
         _assert_relay_service(relay_id, user_id=user_id, conv_id=cid)
@@ -132,9 +133,11 @@ def link_relay(cid: str, relay_id: str, agent: str = "", user_id: str = "") -> b
     if relay_id in scope_list:
         return False
     scope_list.append(relay_id)
-    # Auto-set default if first relay in this scope
+    # Interactive/manual links preserve the historic first-relay default.
+    # MCP CLI relays pass auto_default=False: registering a workspace must
+    # never override the relay deliberately selected by the conversation owner.
     defaults = b.setdefault("default", {})
-    if scope not in defaults:
+    if auto_default and scope not in defaults:
         defaults[scope] = relay_id
     _get_store().set_extra(cid, _EXTRA_KEY, b)
     _invalidate_cli_after_mount_change(cid, agent)
@@ -250,6 +253,10 @@ def list_available_relays(user_id: str = "", conv_id: str = "") -> List[Dict[str
                     (sdef.config or {}).get("server_local_exec")),
                 "server_managed": bool(
                     (sdef.config or {}).get("server_managed")),
+                "mcp_external": bool(
+                    (sdef.config or {}).get("mcp_external")),
+                "mcp_client_name": str(
+                    (sdef.config or {}).get("mcp_client_name") or ""),
                 "scope": sdef.scope,
             })
     except Exception:

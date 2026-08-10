@@ -69,10 +69,21 @@ jobs:
       - name: Build minimal install zip
         run: bash scripts/build-pawflow-install-zip.sh --version "$VERSION"
 
+      - name: Build universal MCP client installers
+        run: python scripts/build-mcp-client-installer.py --version "$VERSION"
+
       - uses: actions/upload-artifact@v7
         with:
           name: pawflow-install-zip
           path: dist/pawflow-installers/*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mcp-client-installers
+          path: |
+            dist/mcp-client-installers/*.zip
+            dist/mcp-client-installers/*.tar.gz
           if-no-files-found: error
 
   pawcode:

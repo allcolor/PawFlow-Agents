@@ -241,6 +241,18 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
             "themes": themes_out,
             "voices": voices_out,
         }
+        if conv_id:
+            try:
+                from core.mcp_server_store import MCPServerStore
+                _published = MCPServerStore.instance().get_for_conversation(conv_id)
+                if _published:
+                    _published = dict(_published)
+                    _published["key_count"] = len(
+                        MCPServerStore.instance().list_keys(_published["server_id"]))
+                result["mcp_published_server"] = _published
+            except Exception:
+                logger.debug("list_resources: published MCP status failed", exc_info=True)
+                result["mcp_published_server"] = None
         # Task instances for this conversation
         if conv_id:
             all_tasks = extras_snapshot.get("agent_tasks") or {}
@@ -344,6 +356,12 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                             "server_managed": bool(
                                 (_sdef.config or {}).get("server_managed"))
                             if _sdef is not None else False,
+                            "mcp_external": bool(
+                                (_sdef.config or {}).get("mcp_external"))
+                            if _sdef is not None else False,
+                            "mcp_client_name": str(
+                                (_sdef.config or {}).get("mcp_client_name") or "")
+                            if _sdef is not None else "",
                             "scope": getattr(_sdef, "scope", "")
                             if _sdef is not None else "",
                             "connected": _connected,

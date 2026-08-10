@@ -51,6 +51,8 @@ def _ensure_home_writable() -> None:
     Native (non-container) installs typically have HOME already owned
     by the user; this is a fast no-op there.
     """
+    if not hasattr(os, "geteuid"):
+        return
     home = os.environ.get("HOME", "")
     if not home or not os.path.isdir(home):
         return
@@ -338,6 +340,8 @@ def worker_main():
                            capture_output=True, timeout=10)
         finally:
             _cleanup()
+
+
     else:
         sys.stderr.write(
             f"[FSRelay] Entering direct mode: gateway_cookie="
@@ -360,3 +364,7 @@ def worker_main():
                         skills_mount=args.skills_mount)
         finally:
             _cleanup()
+
+
+if __name__ == "__main__":
+    worker_main()

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.167] — 2026-08-10
+
+### Fixed
+
+- Made Enter insert a newline in the mobile webchat composer, leaving the
+  visible Send button as the only mobile submit action. The same contract now
+  keeps Grab-mode terminal drafts synchronized, with localized mobile hints.
+- Routed remote VNC sessions through the relay's authenticated outbound
+  WebSocket, including host-screen sessions whose noVNC backend runs outside
+  the relay container.
+
 ## [1.0.0-beta.166] — 2026-08-10
 
 ### Fixed

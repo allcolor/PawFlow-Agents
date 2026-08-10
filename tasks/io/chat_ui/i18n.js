@@ -79,6 +79,7 @@ function _builtinEnglishCatalog() {
     languageTitle: 'Language', languageEn: 'English', languageFr: 'French', languageEs: 'Spanish',
     pageTitle: 'PawFlow Agent Chat', ready: 'Ready', send: 'Send', logout: 'Logout',
     placeholder: 'Type a message... (Enter to send, Shift+Enter for newline)',
+    placeholderMobile: 'Type a message... (Enter for newline, tap Send to send)',
     placeholderDisabled: 'Create a conversation first (click + New)',
     conversations: 'Conversations', newChat: '+ New', resources: 'Resources',
   };
@@ -122,6 +123,22 @@ function _setTitle(selector, value) {
 function _setPlaceholder(selector, value) {
   const el = document.querySelector(selector);
   if (el) el.placeholder = value;
+}
+
+/** The narrow layout uses a touch-first composer: Enter edits, Send submits. */
+function composerEnterCreatesNewline() {
+  try {
+    return !!(window.matchMedia
+      && window.matchMedia('(max-width: 768px)').matches);
+  } catch (_err) {
+    return Number(window.innerWidth || 0) <= 768;
+  }
+}
+
+function _setComposerPlaceholder() {
+  _setPlaceholder(
+    '#input',
+    t(composerEnterCreatesNewline() ? 'placeholderMobile' : 'placeholder'));
 }
 
 function _applyGenericI18n(root) {
@@ -169,7 +186,6 @@ function applyI18n(root) {
   document.title = t('pageTitle');
   _setText('#status', t('ready'));
   _setText('#sendBtn', t('send'));
-  _setPlaceholder('#input', t('placeholder'));
   _setTitle('.btn-attach', t('promptLibraryTitle'));
   _setTitle('#fileAttachBtn', t('attachTitle'));
   _setTitle('#stopBtn', t('stopTitle'));
@@ -190,6 +206,9 @@ function applyI18n(root) {
   }
   _renderLanguageSelect();
   _applyGenericI18n(root || document);
+  // Generic data-i18n processing applies the desktop placeholder first.
+  // Override it last when the viewport uses the mobile composer contract.
+  _setComposerPlaceholder();
 }
 
 function setLanguage(lang) {
@@ -206,6 +225,7 @@ function setLanguage(lang) {
 }
 
 _initI18n();
+window.addEventListener('resize', _setComposerPlaceholder);
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => applyI18n(document));
 } else {

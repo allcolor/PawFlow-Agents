@@ -976,6 +976,7 @@
   "permissionModeTitle": "Tool permission mode",
   "permissionReadOnly": "Read-only",
   "placeholder": "Type a message... (Enter to send, Shift+Enter for newline)",
+  "placeholderMobile": "Type a message... (Enter for newline, tap Send to send)",
   "placeholderDisabled": "Create a conversation first (click + New)",
   "plan": "plan",
   "planApproved": "Plan approved",

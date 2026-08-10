@@ -108,6 +108,30 @@ def test_desktop_ws_open_forwards_browser_headers(backend):
     assert b"X-Custom: yes" in backend.handshake_request
 
 
+def test_desktop_ws_open_reaches_host_screen_via_host_helper(
+        backend, monkeypatch):
+    original_create_connection = dt.socket.create_connection
+    addresses = []
+
+    def _create_connection(address, timeout):
+        addresses.append(address)
+        return original_create_connection(
+            ("127.0.0.1", address[1]), timeout=timeout)
+
+    monkeypatch.setenv("PAWFLOW_HOST_HELPER", "192.0.2.25:48123")
+    monkeypatch.setattr(dt.socket, "create_connection", _create_connection)
+
+    assert dt.desktop_ws_open(
+        _state(),
+        {"session_id": "d-host", "port": backend.port,
+         "ws_path": "/websockify", "local_screen": True},
+        lambda _f: None,
+    ) == {"ok": True}
+    backend.wait_connected()
+    assert addresses == [("192.0.2.25", backend.port)]
+    assert f"Host: 192.0.2.25:{backend.port}".encode() in backend.handshake_request
+
+
 def test_desktop_ws_open_streams_data_with_opcode(backend):
     st = _state()
     frames = []

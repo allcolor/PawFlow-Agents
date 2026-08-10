@@ -44,13 +44,18 @@ def desktop_ws_open(state, msg, send_frame):
     _ws_port = msg.get("port", 0)
     _ws_path = msg.get("ws_path", "/")
     _ws_headers = msg.get("headers", {})
+    _ws_host = "127.0.0.1"
+    if msg.get("local_screen"):
+        _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
+        if _host_helper:
+            _ws_host = _host_helper.rsplit(":", 1)[0] or _ws_host
     if not _ws_sid or not _ws_port:
         return {"ok": False, "error": "Missing session_id or port"}
     try:
         _ws_key = base64.b64encode(os.urandom(16)).decode()
         _hdr_lines = [
             f"GET {_ws_path} HTTP/1.1",
-            f"Host: 127.0.0.1:{_ws_port}",
+            f"Host: {_ws_host}:{_ws_port}",
             "Upgrade: websocket",
             "Connection: Upgrade",
             f"Sec-WebSocket-Key: {_ws_key}",
@@ -62,8 +67,8 @@ def desktop_ws_open(state, msg, send_frame):
                             "sec-websocket-key", "sec-websocket-version"):
                 _hdr_lines.append(f"{_hk}: {_hv}")
         _handshake = "\r\n".join(_hdr_lines) + "\r\n\r\n"
-        sys.stderr.write(f"[FSRelay] desktop_ws_open connecting to 127.0.0.1:{_ws_port} path={_ws_path[:80]}\n")
-        _vnc_sock = socket.create_connection(("127.0.0.1", _ws_port), timeout=10)
+        sys.stderr.write(f"[FSRelay] desktop_ws_open connecting to {_ws_host}:{_ws_port} path={_ws_path[:80]}\n")
+        _vnc_sock = socket.create_connection((_ws_host, _ws_port), timeout=10)
         _vnc_sock.sendall(_handshake.encode())
         _resp = b""
         while b"\r\n\r\n" not in _resp:

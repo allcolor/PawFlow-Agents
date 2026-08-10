@@ -8,13 +8,18 @@ The proxy does not interpret frames — it relays raw bytes in both
 directions until one side closes.
 """
 
+import base64
 import json
 import logging
 import socket
 import struct
 import threading
+import time
+import uuid
 
 logger = logging.getLogger(__name__)
+
+_WS_MAX_FRAME_BYTES = 64 * 1024 * 1024
 
 
 def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
@@ -43,6 +48,12 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
             client_sock.close()
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        return
+
+    with _lock:
+        session = _sessions.get(session_id)
+    if session and session.get("relay_service") is not None:
+        _vnc_ws_relay_proxy(client_sock, session_id, session, meta or {})
         return
 
     # Look up the target host:port for this session
@@ -148,6 +159,94 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
     logger.info("VNC proxy: session %s disconnected", session_id)
 
 
+def _vnc_ws_relay_proxy(client_sock, session_id: str, session: dict,
+                        meta: dict):
+    """Tunnel one browser VNC WebSocket through the relay connection."""
+    relay_service = session["relay_service"]
+    relay_id = session.get("relay_id", "")
+    port = int(session.get("port") or 0)
+    ws_session_id = uuid.uuid4().hex[:12]
+
+    headers = {}
+    for key, value in meta.get("headers", {}).items():
+        if key.lower() in (
+                "host", "upgrade", "connection", "sec-websocket-key",
+                "sec-websocket-accept", "sec-websocket-version",
+                "sec-websocket-extensions"):
+            continue
+        headers[key] = value
+    headers["Host"] = f"127.0.0.1:{port}"
+    headers["Sec-WebSocket-Protocol"] = "binary"
+
+    with _lock:
+        current = _sessions.get(session_id)
+        if current is None:
+            _ws_close(client_sock, 4001, "Unknown session")
+            return
+        current["vnc_ws_sessions"][ws_session_id] = {
+            "browser_sock": client_sock,
+        }
+
+    try:
+        result = relay_service._request(
+            "desktop_ws_open",
+            session_id=ws_session_id,
+            port=port,
+            ws_path="/websockify",
+            headers=headers,
+            local_screen=bool(session.get("local_screen")),
+        )
+        if not isinstance(result, dict) or not result.get("ok"):
+            detail = (result.get("error", "Unknown")
+                      if isinstance(result, dict) else str(result))
+            with _lock:
+                current = _sessions.get(session_id)
+                if current:
+                    current["vnc_ws_sessions"].pop(ws_session_id, None)
+            _ws_close(client_sock, 4002, f"Failed: {detail}")
+            return
+    except Exception as exc:
+        logger.warning("VNC relay tunnel open failed for %s: %s", relay_id, exc)
+        with _lock:
+            current = _sessions.get(session_id)
+            if current:
+                current["vnc_ws_sessions"].pop(ws_session_id, None)
+        _ws_close(client_sock, 4002, f"Failed: {exc}")
+        return
+
+    logger.info("VNC relay tunnel connected: relay=%s session=%s port=%d",
+                relay_id, ws_session_id, port)
+    try:
+        while True:
+            opcode, payload = _ws_recv_frame(client_sock)
+            if opcode == 0x08:
+                break
+            _send_command_to_relay(relay_service, {
+                "action": "desktop_ws_send",
+                "session_id": ws_session_id,
+                "data": base64.b64encode(payload).decode("ascii"),
+                "opcode": opcode,
+            })
+    except Exception as exc:
+        logger.debug("VNC relay browser loop ended for %s: %s",
+                     ws_session_id, exc)
+    finally:
+        _send_command_to_relay(relay_service, {
+            "action": "desktop_ws_close",
+            "session_id": ws_session_id,
+        })
+        with _lock:
+            current = _sessions.get(session_id)
+            if current:
+                current["vnc_ws_sessions"].pop(ws_session_id, None)
+        try:
+            client_sock.close()
+        except Exception:
+            logger.debug("Ignored exception", exc_info=True)
+        logger.info("VNC relay tunnel disconnected: relay=%s session=%s",
+                    relay_id, ws_session_id)
+
+
 # -- Session registry (maps session_id → Docker port) --
 
 _sessions: dict = {}  # session_id → {"port": int, ...}
@@ -179,7 +278,7 @@ def register_session(session_id: str, port: int, *,
         session_id=login_session_id,
         ttl_seconds=ttl_seconds)
     with _lock:
-        _sessions[session_id] = {
+        entry = {
             "port": port,
             "owner_user_id": owner_user_id,
             "conversation_id": conversation_id,
@@ -187,12 +286,29 @@ def register_session(session_id: str, port: int, *,
             "capability_token": token,
             **kwargs,
         }
+        entry.setdefault("vnc_ws_sessions", {})
+        _sessions[session_id] = entry
     return token
 
 
 def unregister_session(session_id: str):
     with _lock:
-        _sessions.pop(session_id, None)
+        session = _sessions.pop(session_id, None)
+    if session:
+        relay_service = session.get("relay_service")
+        for ws_session_id, ws_session in list(
+                session.get("vnc_ws_sessions", {}).items()):
+            if relay_service is not None:
+                _send_command_to_relay(relay_service, {
+                    "action": "desktop_ws_close",
+                    "session_id": ws_session_id,
+                })
+            browser_sock = ws_session.get("browser_sock")
+            if browser_sock:
+                try:
+                    browser_sock.close()
+                except Exception:
+                    logger.debug("Ignored exception", exc_info=True)
     try:
         from core.capability_routes import revoke_route_tokens
         revoke_route_tokens(session_id)
@@ -264,6 +380,118 @@ def _get_vnc_target(session_id: str) -> tuple:
     if not entry:
         return ("127.0.0.1", 0)
     return (entry.get("host", "127.0.0.1"), entry["port"])
+
+
+def dispatch_vnc_ws_data(relay_id: str, ws_session_id: str,
+                         data_b64: str, opcode: int = 2):
+    """Forward a VNC frame received from a relay to its browser socket."""
+    with _lock:
+        ws_session = None
+        for session in _sessions.values():
+            if session.get("relay_id") != relay_id:
+                continue
+            ws_session = session.get("vnc_ws_sessions", {}).get(ws_session_id)
+            if ws_session:
+                break
+    if not ws_session or not ws_session.get("browser_sock"):
+        logger.debug("desktop_ws_data: no browser for relay=%s session=%s",
+                     relay_id, ws_session_id)
+        return
+    try:
+        payload = base64.b64decode(data_b64)
+        ws_session["browser_sock"].sendall(
+            _ws_build_frame(payload, opcode=opcode))
+    except Exception as exc:
+        logger.warning("desktop_ws_data send failed: %s", exc)
+
+
+def dispatch_vnc_ws_close(relay_id: str, ws_session_id: str):
+    """Close the browser socket when the relay-side VNC socket closes."""
+    with _lock:
+        ws_session = None
+        for session in _sessions.values():
+            if session.get("relay_id") != relay_id:
+                continue
+            ws_session = session.get("vnc_ws_sessions", {}).pop(
+                ws_session_id, None)
+            if ws_session:
+                break
+    if ws_session and ws_session.get("browser_sock"):
+        _ws_close(ws_session["browser_sock"], 1000, "Backend closed")
+
+
+def _send_command_to_relay(relay_service, command: dict):
+    """Send a fire-and-forget desktop command through a connected relay."""
+    import asyncio
+    from services.filesystem_service import _ws_send_frame
+
+    with relay_service._relay_pool_lock:
+        pool = relay_service._relay_pool[:]
+    if not pool:
+        return
+    payload = json.dumps({
+        "type": "command",
+        "request_id": uuid.uuid4().hex[:8],
+        **command,
+    }).encode("utf-8")
+    last_error = None
+    for connection in reversed(pool):
+        writer = connection["writer"]
+        loop = connection["loop"]
+        send_lock = connection.get("send_lock")
+
+        async def _send(w=writer, lock=send_lock):
+            if lock is not None:
+                async with lock:
+                    await _ws_send_frame(w, payload)
+            else:
+                await _ws_send_frame(w, payload)
+
+        try:
+            asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
+            return
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        logger.warning("VNC relay command send failed: %s", last_error)
+
+
+def _ws_build_frame(data: bytes, opcode: int = 0x02) -> bytes:
+    frame = bytes([0x80 | opcode])
+    length = len(data)
+    if length < 126:
+        return frame + bytes([length]) + data
+    if length < 65536:
+        return frame + bytes([126]) + struct.pack("!H", length) + data
+    return frame + bytes([127]) + struct.pack("!Q", length) + data
+
+
+def _ws_recv_frame(sock) -> tuple[int, bytes]:
+    def _recv_exact(length: int) -> bytes:
+        data = b""
+        while len(data) < length:
+            chunk = sock.recv(length - len(data))
+            if not chunk:
+                raise ConnectionError("WS connection closed")
+            data += chunk
+        return data
+
+    header = _recv_exact(2)
+    opcode = header[0] & 0x0F
+    masked = bool(header[1] & 0x80)
+    length = header[1] & 0x7F
+    if length == 126:
+        length = struct.unpack("!H", _recv_exact(2))[0]
+    elif length == 127:
+        length = struct.unpack("!Q", _recv_exact(8))[0]
+    if length > _WS_MAX_FRAME_BYTES:
+        raise ConnectionError(f"WS frame too large: {length} bytes")
+    mask = _recv_exact(4) if masked else b""
+    payload = _recv_exact(length)
+    if masked:
+        payload = bytes(byte ^ mask[index % 4]
+                        for index, byte in enumerate(payload))
+    return opcode, payload
 
 
 # noVNC local fallback directories (checked in order)

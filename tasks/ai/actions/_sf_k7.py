@@ -76,7 +76,9 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         _relay_addr = (
                             "127.0.0.1" if _server_local
                             else getattr(svc, '_relay_addr', None) or '127.0.0.1')
-                        if not _novnc_backend_http_ready(_relay_addr, _novnc_port):
+                        if (_server_local
+                                and not _novnc_backend_http_ready(
+                                    _relay_addr, _novnc_port)):
                             logger.warning(
                                 "[open_desktop] already-running local noVNC is not reachable at %s:%s; restarting %s",
                                 _relay_addr, _novnc_port, relay_id)
@@ -91,11 +93,18 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                     if _novnc_port:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session
+                        _session_kwargs = {
+                            "owner_user_id": user_id,
+                            "login_session_id": _login_sid,
+                        }
+                        if _server_local:
+                            _session_kwargs["host"] = _relay_addr
+                        else:
+                            _session_kwargs.update(
+                                relay_service=svc, relay_id=relay_id,
+                                local_screen=True)
                         _vtok = register_session(
-                            _sid, _novnc_port,
-                            owner_user_id=user_id,
-                            login_session_id=_login_sid,
-                            host=_relay_addr)
+                            _sid, _novnc_port, **_session_kwargs)
                         _ensure_vnc_routes(flowfile)
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
@@ -120,12 +129,15 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         return [flowfile]
                 else:
                     _backend_host, _backend_port = _server_relay_proxy_target(relay_id, 6080)
+                    _direct_backend = bool(_backend_port)
                     logger.info("[open_desktop] already running, backend=%s:%s for %s",
                                 _backend_host, _backend_port, relay_id)
                     if not _backend_port and status.get("novnc_port"):
                         _backend_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
                         _backend_port = status.get("novnc_port")
-                    if _backend_port and not _novnc_backend_http_ready(_backend_host, _backend_port):
+                    if (_direct_backend and _backend_port
+                            and not _novnc_backend_http_ready(
+                                _backend_host, _backend_port)):
                         logger.warning(
                             "[open_desktop] already-running noVNC is not reachable at %s:%s; restarting %s",
                             _backend_host, _backend_port, relay_id)
@@ -137,11 +149,17 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                     if _backend_port:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session
+                        _session_kwargs = {
+                            "owner_user_id": user_id,
+                            "login_session_id": _login_sid,
+                        }
+                        if _direct_backend:
+                            _session_kwargs["host"] = _backend_host
+                        else:
+                            _session_kwargs.update(
+                                relay_service=svc, relay_id=relay_id)
                         _vtok = register_session(
-                            _sid, _backend_port,
-                            owner_user_id=user_id,
-                            login_session_id=_login_sid,
-                            host=_backend_host)
+                            _sid, _backend_port, **_session_kwargs)
                         _ensure_vnc_routes(flowfile)
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
@@ -187,26 +205,40 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                 # For local relays connecting from the same machine, use the port directly
                 session_id = f"{_session_prefix}_{relay_id}"
                 from services.vnc_proxy import register_session
+                _session_kwargs = {
+                    "owner_user_id": user_id,
+                    "login_session_id": _login_sid,
+                }
+                if _server_local:
+                    _session_kwargs["host"] = _relay_addr
+                else:
+                    _session_kwargs.update(
+                        relay_service=svc, relay_id=relay_id,
+                        local_screen=True)
                 _vtok = register_session(
-                    session_id, host_port,
-                    owner_user_id=user_id,
-                    login_session_id=_login_sid,
-                    host=_relay_addr)
+                    session_id, host_port, **_session_kwargs)
             else:
                 # Managed relay containers are reached over Docker networking;
                 # remote host relays expose the returned noVNC port on their
                 # relay address.
                 backend_host, backend_port = _server_relay_proxy_target(relay_id, 6080)
+                direct_backend = bool(backend_port)
                 if not backend_port:
                     backend_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
                     backend_port = novnc_port
                 session_id = f"{_session_prefix}_{relay_id}"
                 from services.vnc_proxy import register_session
+                _session_kwargs = {
+                    "owner_user_id": user_id,
+                    "login_session_id": _login_sid,
+                }
+                if direct_backend:
+                    _session_kwargs["host"] = backend_host
+                else:
+                    _session_kwargs.update(
+                        relay_service=svc, relay_id=relay_id)
                 _vtok = register_session(
-                    session_id, backend_port,
-                    owner_user_id=user_id,
-                    login_session_id=_login_sid,
-                    host=backend_host)
+                    session_id, backend_port, **_session_kwargs)
 
             _ensure_vnc_routes(flowfile)
 

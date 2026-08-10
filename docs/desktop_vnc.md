@@ -28,7 +28,10 @@ Examples:
 /desktop close
 ```
 
-The browser opens a noVNC session connected through PawFlow's VNC proxy.
+The browser opens a noVNC session connected through PawFlow's VNC proxy. For a
+remote relay, the proxy carries VNC WebSocket frames over the relay's existing
+outbound authenticated connection; the PawFlow server never needs direct TCP
+reachability to the relay host or its dynamic noVNC port.
 
 ## Runtime Supervision
 
@@ -89,7 +92,15 @@ Platform expectations: Windows and macOS are supported by cua-driver (macOS need
 
 ## VNC Proxy
 
-PawFlow's VNC proxy relays WebSocket frames between the browser and a noVNC/websockify backend. It is used for Docker desktop sessions and server-side login containers. The proxy checks session auth and maps a session id to the backend host/port.
+PawFlow's VNC proxy relays WebSocket frames between the browser and a
+noVNC/websockify backend. Directly reachable server-managed desktops use the
+backend host/port path. Remote Docker and local-host desktops use the relay
+WebSocket tunnel (`desktop_ws_open`, `desktop_ws_send`, and
+`desktop_ws_close`), so NAT and host firewalls do not need to expose noVNC.
+When the desktop mirrors the relay host screen, the relay worker connects to
+the host address already advertised by `PAWFLOW_HOST_HELPER`; containerized
+desktops continue to use the worker's loopback interface.
+The proxy checks session auth before either transport is opened.
 
 The proxied noVNC page also injects a small PawFlow bridge for native desktop ergonomics. Browser clipboard reads and writes are connected to noVNC clipboard events so ordinary OS copy/paste shortcuts work in the remote desktop without a separate PawFlow clipboard panel. Docker virtual desktops start `autocutsel` when available to keep X11 `CLIPBOARD` and `PRIMARY` selections synchronized with desktop applications. The same bridge handles repeated keydown events for repeatable keys such as Backspace so holding the key behaves like a local desktop session.
 

@@ -68,21 +68,19 @@ def test_shift_enter_mirrors_the_newline_locally_and_in_the_grabbed_tui():
     """The browser draft stays readable while the TUI receives Ctrl+Enter."""
     grab = (CHAT_UI / "grab.js").read_text(encoding="utf-8")
     assert "const _GRAB_CTRL_ENTER = '\\x1b[13;5u'" in grab
+    helper = grab[grab.index("function _grabInsertNewline(input)"):]
+    helper = helper[:helper.index("\n}", helper.index("_grab.sentDraft")) + 2]
+    assert "_grabWrite(_GRAB_CTRL_ENTER)" in helper
+    assert "_composerInsertNewline(input)" in helper
+    assert "_grab.sentDraft = input.value" in helper
     key = grab[grab.index("function grabHandleKey"):]
     key = key[:key.index("\n// A conversation")]
-    shift_enter = "e.key === 'Enter' && e.shiftKey"
-    plain_enter = "e.key === 'Enter' && !e.shiftKey"
-    assert shift_enter in key
-    assert "_grabWrite(_GRAB_CTRL_ENTER)" in key
-    assert "_composerInsertNewline(input)" in key
-    assert "_grab.sentDraft = input.value" in key
-    shift_block = key[key.index(shift_enter):key.index(plain_enter)]
+    assert "e.shiftKey || (plainEnter && composerEnterCreatesNewline())" in key
+    shift_block = key[key.index("if (e.key === 'Enter'"):]
+    shift_block = shift_block[:shift_block.index("if (plainEnter)")]
     assert "_grabFlush(input)" not in shift_block
-    assert shift_block.index("_grabWrite(_GRAB_CTRL_ENTER)") < shift_block.index(
-        "_composerInsertNewline(input)"
-    )
-    assert plain_enter in key
-    assert key.index(shift_enter) < key.index(plain_enter)
+    assert "_grabInsertNewline(input)" in shift_block
+    assert key.index("_grabInsertNewline(input)") < key.index("if (plainEnter)")
 
     attach = (CHAT_UI / "attachments.js").read_text(encoding="utf-8")
     body = attach[attach.index("function handleKey(e)"):]

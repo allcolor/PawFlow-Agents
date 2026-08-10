@@ -976,6 +976,7 @@
   "permissionModeTitle": "Modo de permisos de herramientas",
   "permissionReadOnly": "Solo lectura",
   "placeholder": "Escribe un mensaje... (Enter para enviar, Shift+Enter para nueva línea)",
+  "placeholderMobile": "Escribe un mensaje... (Enter para una nueva línea, pulsa Enviar para enviar)",
   "placeholderDisabled": "Crea primero una conversación (haz clic en + Nuevo)",
   "plan": "plan",
   "planApproved": "Plan aprobado",

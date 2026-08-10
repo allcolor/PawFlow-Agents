@@ -976,6 +976,7 @@
   "permissionModeTitle": "Mode d'autorisation des outils",
   "permissionReadOnly": "Lecture seule",
   "placeholder": "Écrivez un message... (Entrée pour envoyer, Maj+Entrée pour retour à la ligne)",
+  "placeholderMobile": "Écrivez un message... (Entrée pour une nouvelle ligne, appuyez sur Envoyer pour envoyer)",
   "placeholderDisabled": "Créez d'abord une conversation (cliquez sur + Nouveau)",
   "plan": "plan",
   "planApproved": "Plan approuvé",

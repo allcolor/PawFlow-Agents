@@ -1403,8 +1403,9 @@ def test_server_relay_desktop_uses_container_ip_without_published_host():
     assert "def _get_relay_published_port" in src
     assert '_dkr_cmd() + ["port", cname, str(container_port)]' in src
     assert "return _docker_published_host(), published_port" in src
-    assert "host=_backend_host" in open_desktop
-    assert "host=backend_host" in open_desktop
+    assert '_session_kwargs["host"] = _backend_host' in open_desktop
+    assert '_session_kwargs["host"] = backend_host' in open_desktop
+    assert "relay_service=svc, relay_id=relay_id" in open_desktop
     assert 'register_audio_source(_sid, "127.0.0.1", _ahp' not in open_desktop
     assert 'register_audio_source(session_id, "127.0.0.1", _audio_host_port' not in open_desktop
     assert 'status.get("novnc_port")' in open_desktop

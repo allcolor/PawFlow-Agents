@@ -1,9 +1,13 @@
 """Structural assertions for the chat UI's mobile (narrow viewport) layout."""
 
+import json
 import re
 from pathlib import Path
 
 TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+ATTACHMENTS_JS = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
+GRAB_JS = Path("tasks/io/chat_ui/grab.js").read_text(encoding="utf-8")
+I18N_JS = Path("tasks/io/chat_ui/i18n.js").read_text(encoding="utf-8")
 
 
 def _mobile_block() -> str:
@@ -93,3 +97,35 @@ def test_mobile_bubbles_use_the_available_width():
     mobile = _mobile_block()
     assert re.search(r"\.msg\s*\{[^}]*max-width:\s*9\d%", mobile)
     assert re.search(r"\.technical-group,\s*\.delegate-block\s*\{[^}]*max-width:\s*100%", mobile)
+
+
+def test_mobile_enter_inserts_a_newline_and_only_send_submits():
+    """A touch keyboard has no Shift key, so mobile Enter must edit the draft."""
+    assert "window.matchMedia('(max-width: 768px)').matches" in I18N_JS
+    key = ATTACHMENTS_JS[ATTACHMENTS_JS.index("function handleKey(e)"):]
+    enter = key[key.index("if (e.key === 'Enter') {"):]
+    enter = enter[:enter.index("\n  }", enter.index("send();"))]
+    assert "composerEnterCreatesNewline()" in enter
+    assert "_composerInsertNewline(input)" in enter
+    assert enter.index("_composerInsertNewline(input)") < enter.index("send();")
+
+
+def test_mobile_enter_keeps_grabbed_tui_and_web_draft_in_sync():
+    helper = GRAB_JS[GRAB_JS.index("function _grabInsertNewline(input)"):]
+    helper = helper[:helper.index("\n}", helper.index("_grab.sentDraft")) + 2]
+    assert "_grabWrite(_GRAB_CTRL_ENTER)" in helper
+    assert "_composerInsertNewline(input)" in helper
+    key = GRAB_JS[GRAB_JS.index("function grabHandleKey(e)"):]
+    assert "plainEnter && composerEnterCreatesNewline()" in key
+    assert key.index("_grabInsertNewline(input)") < key.index("grabSend();")
+
+
+def test_mobile_composer_hint_is_localized_and_applied_last():
+    for locale in ("en", "fr", "es"):
+        catalog = json.loads(
+            Path(f"tasks/io/chat_ui/i18n/{locale}.json").read_text(
+                encoding="utf-8"))
+        assert catalog["placeholderMobile"]
+    apply = I18N_JS[I18N_JS.index("function applyI18n(root)"):]
+    apply = apply[:apply.index("\n}", apply.index("_setComposerPlaceholder")) + 2]
+    assert apply.index("_applyGenericI18n") < apply.index("_setComposerPlaceholder")

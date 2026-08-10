@@ -286,6 +286,14 @@ function grabSend() {
   input.focus();
 }
 
+/** Mirror one composer newline into both the grabbed TUI and the web draft. */
+function _grabInsertNewline(input) {
+  _grabWriteComposerText(_grabUnsentText(input));
+  _grabWrite(_GRAB_CTRL_ENTER);
+  _composerInsertNewline(input);
+  _grab.sentDraft = input.value;
+}
+
 /** Composer keys while grabbed. Returns true when the event was consumed. */
 function grabHandleKey(e) {
   if (!grabActive()) return false;
@@ -298,19 +306,19 @@ function grabHandleKey(e) {
     _grabWrite('\x1b');
     return true;
   }
-  // Shift+Enter never submits. Flush the line being typed, then ask Codex,
-  // Claude Code or Antigravity to create the newline in its own composer.
-  if (e.key === 'Enter' && e.shiftKey) {
+  // Shift+Enter never submits. In the mobile layout plain Enter has the same
+  // editing contract: only the visible Send button submits the prompt.
+  const plainEnter = e.key === 'Enter'
+    && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+  if (e.key === 'Enter'
+      && (e.shiftKey || (plainEnter && composerEnterCreatesNewline()))) {
     e.preventDefault();
-    _grabWriteComposerText(_grabUnsentText(input));
-    _grabWrite(_GRAB_CTRL_ENTER);
-    _composerInsertNewline(input);
-    _grab.sentDraft = input.value;
+    _grabInsertNewline(input);
     return true;
   }
   // Only an unmodified Enter submits. Other modified Enter chords fall back to
   // the webchat newline handler when the browser reports their modifiers.
-  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (plainEnter) {
     e.preventDefault();
     grabSend();
     return true;

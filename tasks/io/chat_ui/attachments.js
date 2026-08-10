@@ -727,6 +727,10 @@ function handleKey(e) {
   if (e.key === 'Enter') {
     e.preventDefault();
     _hideSkillAutocomplete();
+    if (composerEnterCreatesNewline()) {
+      _composerInsertNewline(input);
+      return;
+    }
     send();
     return;
   }

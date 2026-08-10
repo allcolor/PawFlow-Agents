@@ -181,6 +181,10 @@ controls:
   conversation and opens the existing controls in a modal.
 - The task-tab dock remains fixed at the right edge. On narrow screens the three
   composer zones stack and the action dock keeps bounded horizontal scrolling.
+- In that narrow mobile layout, plain Enter inserts a newline because touch
+  keyboards do not expose Shift+Enter. Sending is explicit through the visible
+  Send button. Desktop keeps Enter-to-send, and Grab mirrors either newline
+  gesture into the attached terminal without submitting the prompt.
 
 These are presentation moves only. Existing element IDs and event handlers remain
 the behavioral contract for authentication, themes, localization, permissions,

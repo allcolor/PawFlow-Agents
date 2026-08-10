@@ -77,6 +77,14 @@ def _tc_conversation(tc_id: str, claimed_cid: str = "") -> str:
     except Exception:
         logger.debug("background owner lookup failed for tc %s", tc_id[:8],
                      exc_info=True)
+    try:
+        from core.external_call_router import conversation_for_call
+        owner = conversation_for_call(tc_id)
+        if owner:
+            return owner
+    except Exception:
+        logger.debug("external call owner lookup failed for tc %s", tc_id[:8],
+                     exc_info=True)
     return ""
 
 

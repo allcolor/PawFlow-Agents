@@ -517,14 +517,19 @@ class _CsAppendMixin:
         if not _to:
             return set()
         _kind = src.get("kind")
-        touched_agents = {self._canon_agent(_from)}
+        _external_transport = src.get("external_transport", "")
+        touched_agents = set()
 
         # FROM's own ctx — [delegate <from> → <to>]:
-        _for_from = dict(msg)
-        _for_from["content"] = self._prefix_content(
-            _for_from.get("content", ""),
-            f"[delegate {_from} → {_to}]:")
-        self._append_ctx_file(cid, _from, [_for_from])
+        # An external caller has no PawFlow agent context. For an external
+        # reply, _from is the real target agent and still keeps its own output.
+        if not _external_transport or _kind == "reply":
+            _for_from = dict(msg)
+            _for_from["content"] = self._prefix_content(
+                _for_from.get("content", ""),
+                f"[delegate {_from} → {src.get('to_label') or _to}]:")
+            self._append_ctx_file(cid, _from, [_for_from])
+            touched_agents.add(self._canon_agent(_from))
 
         _visibility = src.get("delegate_visibility") or "final_reply"
         _reply_self_only = (_kind == "reply" and _visibility == "self_only")
@@ -533,13 +538,18 @@ class _CsAppendMixin:
         # Delegate reply internals (tool calls/results and intermediate
         # assistant blocks) stay in the responder's context only. The caller
         # receives just the final synthesized reply.
-        if not _reply_self_only:
+        if not _reply_self_only and not (
+                _kind == "reply" and _external_transport):
             _for_to = dict(msg)
             if _for_to.get("role") == "assistant":
                 _for_to["role"] = "user"
             if _kind == "reply":
                 _attr = (f"Here is agent '{_from}''s reply to your "
                          f"delegate:")
+            elif _external_transport:
+                _attr = (
+                    f"Here is a message from "
+                    f"'{src.get('from_label') or _from}':")
             else:
                 _attr = f"Here is a message from agent '{_from}':"
             _for_to["content"] = self._prefix_content(
@@ -549,6 +559,11 @@ class _CsAppendMixin:
 
         # Replies stay private between from/to — don't leak to shared.
         if _kind == "reply":
+            return touched_agents
+
+        # External requests are target-only. The published agent configuration
+        # supplies capabilities but is neither the sender nor a result target.
+        if _external_transport:
             return touched_agents
 
         # Request broadcasts to shared + other agents (not from/to,

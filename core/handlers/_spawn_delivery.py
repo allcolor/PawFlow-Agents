@@ -80,7 +80,8 @@ class _SpawnDeliveryMixin:
 
     def _deliver_shared_delegate(self, from_agent: str, to_agent: str,
                                  message: str, user_id: str,
-                                 conv_id: str = "") -> Dict[str, str]:
+                                 conv_id: str = "",
+                                 task_id: str = "") -> Dict[str, str]:
         """Persist a private delegate message and trigger the target.
 
         Routing (via ConversationStore.append_message):
@@ -127,7 +128,16 @@ class _SpawnDeliveryMixin:
             "type": "agent_delegate",
             "from": from_agent,
             "to": to_agent,
+            "target_agent": to_agent,
+            "task_id": task_id,
         }
+        _external_owner = getattr(self._local, "external_owner", None)
+        if _external_owner:
+            _src.update({
+                "external_transport": _external_owner.get("transport", ""),
+                "external_call_id": _external_owner.get("call_id", ""),
+                "from_label": _external_owner.get("display_name", ""),
+            })
         # Persist via ConversationWriter.append_message — the unified
         # router reads source.type == "agent_delegate" and routes the
         # message privately to (transcript + from ctx + to ctx) with
@@ -222,6 +232,25 @@ class _SpawnDeliveryMixin:
         """
         import uuid as _uuid
         try:
+            from core.external_call_router import complete_task
+            if complete_task(result.task_id, {
+                    "task_id": result.task_id,
+                    "agent": result.agent_name,
+                    "status": result.status,
+                    "response": result.response or "",
+                    "error": result.error or "",
+                    "question": result.question or "",
+                    "duration_ms": result.duration_ms,
+                    "tokens_in": result.tokens_in,
+                    "tokens_out": result.tokens_out,
+                    "model": result.model or "",
+                    "tools_called": list(result.tools_called or []),
+            }):
+                logger.info(
+                    "[bg-delegate] result for task %s returned to external caller",
+                    result.task_id)
+                return
+
             # 1. Persist the full result to the FileStore — the caller
             #    can `read` it if the short summary isn't enough.
             _full_text_parts = [
@@ -464,13 +493,31 @@ class _SpawnDeliveryMixin:
             if result is None:
                 reply = (f"[Delegate result for task_id={task_id}] Agent "
                          f"'{to_agent}' ended without a final result.")
+                payload = {
+                    "task_id": task_id, "agent": to_agent,
+                    "status": "completed", "response": reply,
+                    "error": "",
+                }
             elif result.error:
                 reply = (f"[Delegate result for task_id={task_id}] Agent "
                          f"'{to_agent}' FAILED: {result.error}")
+                payload = {
+                    "task_id": task_id, "agent": to_agent,
+                    "status": "failed", "response": "",
+                    "error": result.error,
+                }
             else:
                 reply = (f"[Delegate result for task_id={task_id}] Agent "
                          f"'{to_agent}' in another conversation replied:\n\n"
                          f"{result.response}")
+                payload = {
+                    "task_id": task_id, "agent": to_agent,
+                    "status": "completed", "response": result.response,
+                    "error": "",
+                }
+            from core.external_call_router import complete_task
+            if complete_task(task_id, payload):
+                return
             self._deliver_to_caller(
                 source_conv_id, from_agent, user_id, reply,
                 "cross_delegate_result:" + task_id, task_id, to_agent, "")

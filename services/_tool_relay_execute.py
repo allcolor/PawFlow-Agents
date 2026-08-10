@@ -83,7 +83,9 @@ class _ToolRelayExecuteMixin:
                         arguments, user_id: str,
                         conversation_id: str, agent_name: str,
                         relay_received_at: float = 0.0,
-                        dispatch_started_at: float = 0.0) -> dict:
+                        dispatch_started_at: float = 0.0,
+                        external_call_id: str = "",
+                        late_result_callback=None) -> dict:
         handle_started = dispatch_started_at or time.perf_counter()
         relay_received_at = relay_received_at or handle_started
         # Defensive: arguments may arrive as JSON string (double-encoded by LLM)
@@ -219,26 +221,37 @@ class _ToolRelayExecuteMixin:
             _set_current_cancel_event(cancel_event)
             _set_current_kill_hooks(kill_hooks)
             try:
-                for attempt in range(1, _RELAY_TRANSPORT_RETRY_ATTEMPTS + 1):
-                    try:
-                        _result_holder[0] = self._do_execute(
-                            request_id, tool_name, arguments,
-                            user_id, conversation_id, agent_name)
-                        break
-                    except Exception as e:
-                        if (not _is_relay_transport_error(e)
-                                or attempt >= _RELAY_TRANSPORT_RETRY_ATTEMPTS):
-                            _result_holder[0] = {
-                                "type": "result", "request_id": request_id,
-                                "data": f"Error: {e}"}
+                if external_call_id:
+                    from core.external_call_router import call_scope
+                    _scope = call_scope(external_call_id)
+                else:
+                    from contextlib import nullcontext
+                    _scope = nullcontext()
+                with _scope:
+                    for attempt in range(
+                            1, _RELAY_TRANSPORT_RETRY_ATTEMPTS + 1):
+                        try:
+                            _result_holder[0] = self._do_execute(
+                                request_id, tool_name, arguments,
+                                user_id, conversation_id, agent_name)
                             break
-                        logger.warning(
-                            "[tool-relay] relay transport error during %s "
-                            "request=%s; retrying in %.1fs (attempt %d/%d): %s",
-                            tool_name, request_id,
-                            _RELAY_TRANSPORT_RETRY_DELAY_SECONDS,
-                            attempt, _RELAY_TRANSPORT_RETRY_ATTEMPTS, e)
-                        time.sleep(_RELAY_TRANSPORT_RETRY_DELAY_SECONDS)
+                        except Exception as e:
+                            if (not _is_relay_transport_error(e)
+                                    or attempt
+                                    >= _RELAY_TRANSPORT_RETRY_ATTEMPTS):
+                                _result_holder[0] = {
+                                    "type": "result",
+                                    "request_id": request_id,
+                                    "data": f"Error: {e}"}
+                                break
+                            logger.warning(
+                                "[tool-relay] relay transport error during %s "
+                                "request=%s; retrying in %.1fs "
+                                "(attempt %d/%d): %s",
+                                tool_name, request_id,
+                                _RELAY_TRANSPORT_RETRY_DELAY_SECONDS,
+                                attempt, _RELAY_TRANSPORT_RETRY_ATTEMPTS, e)
+                            time.sleep(_RELAY_TRANSPORT_RETRY_DELAY_SECONDS)
             except Exception as e:
                 _result_holder[0] = {"type": "result", "request_id": request_id,
                                       "data": f"Error: {e}"}
@@ -302,26 +315,33 @@ class _ToolRelayExecuteMixin:
                     if _was_cancelled and not _payload:
                         _payload = "[Cancelled before any output]"
                     try:
-                        import core.background_tool as _bg
-                        # Register lazily so _inject_result has context
-                        # (we don't use a real Future here — the exec is
-                        # already captured in _holder).
-                        with _bg._lock:
-                            _bg._backgrounded[_tc] = {
-                                "future": None,
-                                "conversation_id": _conv,
-                                "agent_name": _agent,
-                                "tool_name": _tool,
-                                "user_id": _uid,
-                                "is_claude_code": True,
-                                "started_at": started_at,
-                                "status": "cancelled" if _was_cancelled else "done",
-                                "result": _payload,
-                            }
-                        _bg._inject_result(_tc, _payload, is_cancel=_was_cancelled)
+                        if late_result_callback is not None:
+                            late_result_callback(_payload, _was_cancelled)
+                        else:
+                            import core.background_tool as _bg
+                            # Register lazily so _inject_result has context
+                            # (we don't use a real Future here — the exec is
+                            # already captured in _holder).
+                            with _bg._lock:
+                                _bg._backgrounded[_tc] = {
+                                    "future": None,
+                                    "conversation_id": _conv,
+                                    "agent_name": _agent,
+                                    "tool_name": _tool,
+                                    "user_id": _uid,
+                                    "is_claude_code": True,
+                                    "started_at": started_at,
+                                    "status": (
+                                        "cancelled"
+                                        if _was_cancelled else "done"),
+                                    "result": _payload,
+                                }
+                            _bg._inject_result(
+                                _tc, _payload, is_cancel=_was_cancelled)
                     except Exception as _ie:
-                        logger.error("[tool-relay] bg inject failed for %s: %s",
-                                     _tc, _ie)
+                        logger.error(
+                            "[tool-relay] bg result delivery failed for %s: %s",
+                            _tc, _ie)
 
                 threading.Thread(
                     target=_watch_bg_completion,

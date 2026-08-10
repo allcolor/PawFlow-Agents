@@ -248,6 +248,153 @@ def test_use_tool_runs_through_canonical_owner_agent_runtime(monkeypatch):
     assert calls["name"] == "read"
 
 
+@pytest.mark.parametrize("tool_name", ["delegate", "flash_delegate"])
+def test_async_mcp_tool_returns_final_result_to_external_caller(
+        monkeypatch, tool_name):
+    from core import external_call_router
+
+    external_call_router.reset_for_tests()
+    seen = {}
+
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": tool_name, "description": tool_name,
+                     "parameters": {}}]
+
+        def get(self, _name):
+            return None
+
+    class Runtime:
+        def _do_execute(self, _request_id, name, arguments,
+                        _user_id, _conv_id, agent):
+            owner = external_call_router.current_owner()
+            task_id = arguments["tasks"][0]["id"]
+            seen.update(owner=owner, arguments=arguments, agent=agent)
+            assert external_call_router.complete_task(task_id, {
+                "task_id": task_id,
+                "agent": agent,
+                "status": "completed",
+                "response": "final answer for Claude Code",
+                "error": "",
+            })
+            if name == "flash_delegate":
+                return {"data": json.dumps({
+                    "status": "spawned",
+                    "flash_agents": [{"task_id": task_id}],
+                })}
+            return {"data": json.dumps([{
+                "task_id": task_id, "status": "delivered",
+            }])}
+
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+    }
+    task = (
+        {"name": "audit", "prompt": "Audit.", "message": "Check it"}
+        if tool_name == "flash_delegate"
+        else {"agent": "agent-a", "message": "Check it"}
+    )
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    monkeypatch.setattr(endpoint, "_persist_tool_call_start", lambda *_args: None)
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda *_args: {"llm_service": "configured-service"})
+
+    result = endpoint._call_tool(
+        server, {"key_id": "key-1", "label": "Claude Code"},
+        "use_tool", {
+            "tool_name": tool_name,
+            "arguments_json": json.dumps({"tasks": [task]}),
+        },
+        session_id="session-1", mcp_request_id=7,
+    )
+
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["task_results"][0]["response"] == (
+        "final answer for Claude Code")
+    assert seen["agent"] == "agent-a"
+    assert seen["owner"]["transport"] == "published_mcp"
+    assert seen["owner"]["source_id"].startswith("published_mcp_")
+    assert seen["owner"]["source_id"] != "agent-a"
+    assert seen["owner"]["llm_service"] == "configured-service"
+    assert seen["arguments"]["tasks"][0]["id"].startswith("pmcp_")
+
+
+def test_backgrounded_published_mcp_tool_waits_for_late_result(monkeypatch):
+    from core import external_call_router
+
+    external_call_router.reset_for_tests()
+
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": "slow", "description": "Slow",
+                     "parameters": {}}]
+
+        def get(self, _name):
+            return None
+
+    class Runtime:
+        def _handle_execute(self, request_id, name, arguments,
+                            user_id, conversation_id, agent_name, **kwargs):
+            assert request_id.startswith("pmcp_")
+            assert name == "slow"
+            assert arguments == {"value": 1}
+            assert (user_id, conversation_id, agent_name) == (
+                "alice", "conv-1", "agent-a")
+            kwargs["late_result_callback"]("late result for Claude Code", False)
+            return {"data": (
+                f"[Running in background (tc_id={request_id})]\n"
+                "Continue your work.")}
+
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+    }
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    monkeypatch.setattr(endpoint, "_persist_tool_call_start", lambda *_args: None)
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda *_args: {"llm_service": "configured-service"})
+
+    result = endpoint._call_tool(
+        server, {"key_id": "key-1", "label": "Claude Code"},
+        "use_tool", {
+            "tool_name": "slow",
+            "arguments_json": json.dumps({"value": 1}),
+        },
+        session_id="session-1", mcp_request_id=8,
+    )
+
+    assert result == {
+        "content": [{"type": "text",
+                     "text": "late result for Claude Code"}],
+        "isError": False,
+    }
+
+
+def test_external_call_retry_reuses_retained_background_result():
+    from core import external_call_router
+
+    external_call_router.reset_for_tests()
+    external_call_router.register_call(
+        "pmcp_retry", "conv-1", "published_mcp_client",
+        "Claude Code", "configured-service")
+    assert external_call_router.complete_call(
+        "pmcp_retry", "completed before retry")
+
+    external_call_router.register_call(
+        "pmcp_retry", "conv-1", "published_mcp_client",
+        "Claude Code", "configured-service")
+
+    assert external_call_router.wait_for_call_result(
+        "pmcp_retry", timeout=0) == "completed before retry"
+
+
 def test_native_image_stays_in_mcp_response_but_base64_is_not_persisted(monkeypatch):
     image_data = "c2Vuc2l0aXZlLWltYWdlLWJ5dGVz"
     persisted = {}
@@ -696,6 +843,9 @@ def test_published_mcp_ui_is_loaded_and_translated():
     assert '"resources_mcp_publish.js"' in serve
     assert "showPublishedMcpDialog()" in render
     assert module.exists()
+    source = module.read_text(encoding="utf-8")
+    assert "t('close')" in source
+    assert "contextClose" not in source
 
     for language in ("en", "fr", "es"):
         catalog = json.loads(

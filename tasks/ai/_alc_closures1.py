@@ -426,6 +426,10 @@ class _ALCClosures1Mixin:
                 # it like a fresh inbound request.
                 "kind": "reply",
                 "delegate_visibility": _delegate_visibility,
+                "task_id": _tm.get("task_id", ""),
+                "external_transport": _tm.get("external_transport", ""),
+                "external_call_id": _tm.get("external_call_id", ""),
+                "to_label": _tm.get("source_label", ""),
             }
         elif (_tm.get("type") == "external_request"
               and msg.role in ("assistant", "tool")):

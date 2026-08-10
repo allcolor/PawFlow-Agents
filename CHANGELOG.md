@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.166] — 2026-08-10
+
+### Fixed
+
+- Published MCP `delegate` and `flash_delegate` calls now return their final
+  asynchronous results to the originating MCP client instead of waking the
+  configured PawFlow capability-profile agent. Delegating to that configured
+  agent itself is now valid.
+- Backgrounding a published MCP tool in PawFlow now preserves the external MCP
+  caller as result owner: the UI detaches while the original `tools/call`
+  remains subscribed to the real late result.
+- The A2A and published-MCP dialogs now render the translated Close label
+  instead of the raw `contextClose` translation key.
+
 ## [1.0.0-beta.165] — 2026-08-10
 
 ### Added

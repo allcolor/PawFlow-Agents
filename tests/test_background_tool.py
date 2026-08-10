@@ -252,11 +252,13 @@ def test_enqueue_late_binds_existing_tool_relay_inflight():
 
 def test_background_flags_pending_and_tries_tool_relay():
     _reset_state()
-    with patch("services.tool_relay_service.ToolRelayService.background_by_tc_id") as m:
+    with patch("services.tool_relay_service.ToolRelayService.background_by_tc_id") as m, \
+         patch("core.external_call_router.mark_background") as external:
         m.return_value = False
         assert bg.background("toolu_X") is True
         assert "toolu_X" in bg._pending_bg
         m.assert_called_once_with("toolu_X")
+        external.assert_called_once_with("toolu_X")
 
 
 def test_args_hash_is_deterministic():

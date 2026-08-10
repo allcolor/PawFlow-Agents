@@ -1401,6 +1401,59 @@ class TestAppendMessage:
                 "tool output" in str(msg.get("content", ""))
                 for msg in shared)
 
+    def test_external_delegate_routes_only_to_real_target(self, conv):
+        store, cid, uid = conv
+        store.set_extra(cid, "conv_agents", {
+            "published": {"definition": "published", "llm_service": "llm"},
+            "target": {"definition": "target", "llm_service": "llm"},
+        }, user_id=uid)
+        store.save_agent_context(cid, "published", [])
+        store.save_agent_context(cid, "target", [])
+        store._reload_cache(cid)
+        external_id = "published_mcp:pmcp_1"
+        source = {
+            "type": "agent_delegate",
+            "from": external_id,
+            "from_label": "Claude Code",
+            "to": "target",
+            "target_agent": "target",
+            "task_id": "pmcp_1_1",
+            "external_transport": "published_mcp",
+            "external_call_id": "pmcp_1",
+        }
+
+        request = _msg(role="user", content="external request", source=source)
+        store.append_message(
+            cid, request, agent_name=external_id, user_id=uid)
+
+        target_ctx = store.load_agent_context(cid, "target")
+        published_ctx = store.load_agent_context(cid, "published")
+        shared = store.load_agent_context(cid, "")
+        external_ctx = store.load_agent_context(cid, external_id)
+        assert target_ctx and any(
+            "Claude Code" in str(msg.get("content", ""))
+            and "external request" in str(msg.get("content", ""))
+            for msg in target_ctx)
+        assert not published_ctx or not any(
+            "external request" in str(msg.get("content", ""))
+            for msg in published_ctx)
+        assert not shared or not any(
+            "external request" in str(msg.get("content", ""))
+            for msg in shared)
+        assert not external_ctx
+
+        reply = _msg(role="assistant", content="external answer",
+                     source={**source, "from": "target", "to": external_id,
+                             "kind": "reply", "to_label": "Claude Code"})
+        store.append_message(
+            cid, reply, agent_name="target", user_id=uid)
+        published_ctx = store.load_agent_context(cid, "published")
+        external_ctx = store.load_agent_context(cid, external_id)
+        assert not published_ctx or not any(
+            "external answer" in str(msg.get("content", ""))
+            for msg in published_ctx)
+        assert not external_ctx
+
     def test_broadcast_to_other_agents(self, conv):
         store, cid, uid = conv
         store.set_extra(cid, "conv_agents", {

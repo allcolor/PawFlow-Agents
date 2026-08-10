@@ -85,6 +85,31 @@ class TestRunningDelegateInjection:
         final_drain = final_drain[:final_drain.index("# Unregister claude-code client")]
         assert "_apply_queued_delegate_turn_mode(_new_user_msgs)" in final_drain
 
+    def test_external_mcp_caller_can_delegate_to_published_agent_itself(self):
+        from core import external_call_router
+
+        external_call_router.reset_for_tests()
+        external_call_router.register_call(
+            "pmcp_call", "conv1", "published_mcp:pmcp_call",
+            "Claude Code", "svc_a")
+        external_call_router.set_expected_tasks("pmcp_call", ["task-1"])
+        h = _make_handler(conversation_id="conv1", source_agent="agentA")
+        with external_call_router.call_scope("pmcp_call"), \
+             patch("core.agent_executor.get_live_delegate", return_value=None), \
+             patch.object(
+                 h, "_deliver_shared_delegate",
+                 return_value={"state": "idle (waking)"}) as deliver:
+            result = h.execute({"tasks": [{
+                "id": "task-1", "agent": "agentA", "message": "Do it",
+            }]})
+
+        assert "cannot delegate to yourself" not in result
+        assert "delivered" in result
+        assert deliver.call_args.kwargs["from_agent"] == (
+            "published_mcp:pmcp_call")
+        assert deliver.call_args.kwargs["to_agent"] == "agentA"
+        assert deliver.call_args.kwargs["task_id"] == "task-1"
+
 
 class TestFlashDelegate:
     def test_flash_delegate_builds_ephemeral_agent_task(self):

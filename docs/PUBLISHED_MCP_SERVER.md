@@ -40,8 +40,23 @@ X-PawFlow-Gateway-Key: <PAWFLOW_GATEWAY_KEY>
 The API key selects exactly one published conversation and agent. Each tool call
 runs with the conversation owner's identity and that agent's configuration,
 through the normal PawFlow approval gate, hooks, secret resolution, redaction,
-and tool metrics. Calls and results are appended to the ordinary conversation
-transcript; no LLM turn is started.
+and tool metrics. The selected agent is a capability profile, not the caller:
+the MCP client owns the call and receives its result. Calls and results are
+appended to the ordinary conversation transcript as display-only audit rows;
+they are not injected into the selected agent's context.
+
+`delegate` and `flash_delegate` remain asynchronous inside PawFlow, but the
+published MCP adapter keeps the originating `tools/call` open until every
+delegated task has produced its final result. A client may therefore delegate
+to the selected published agent itself. The answer is returned to the MCP
+client, not injected into or used to wake the capability-profile agent.
+
+The same ownership rule applies when a running call is detached with PawFlow's
+**Background** control. PawFlow stops treating the operation as foreground UI
+work, while the originating MCP request remains subscribed to the real late
+result. The placeholder is never returned as the final MCP result. Replaying
+the same request id in the same MCP session reuses the call and its retained
+result instead of starting another operation.
 
 Native image output is the default and does not invoke PawFlow's LLM. In text
 description mode, only image-producing tool results invoke the configured
@@ -163,4 +178,5 @@ The Streamable HTTP endpoint currently advertises two MCP tools:
 
 The wrapper keeps the MCP tool list small while exposing the exact set available
 to the bound conversation and agent. MCP sessions expire after eight hours of
-inactivity. Server-initiated SSE is not currently supported.
+inactivity. Server-initiated SSE is not currently supported; asynchronous and
+background results are completed through their original `tools/call` response.

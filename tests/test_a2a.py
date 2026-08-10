@@ -306,6 +306,9 @@ def test_a2a_ui_is_loaded_and_translated():
     assert '"resources_a2a.js"' in serve
     assert "showA2AConfigDialog()" in render
     assert module.exists()
+    source = module.read_text(encoding="utf-8")
+    assert "t('close')" in source
+    assert "contextClose" not in source
     for language in ("en", "fr", "es"):
         catalog = json.loads((
             root / f"tasks/io/chat_ui/i18n/{language}.json").read_text(encoding="utf-8"))

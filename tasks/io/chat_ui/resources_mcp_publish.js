@@ -135,7 +135,7 @@ function _publishedMcpRender(state) {
       + '<button type="button" onclick="_publishedMcpCopy(\'publishedMcpConfig\')">' + escapeHtml(t('copy')) + '</button>'
       + '</div>' : '')
     + '<div class="exec-btns" style="margin-top:14px;"><button class="exec-deny" type="button" onclick="_publishedMcpClose()">'
-    + escapeHtml(t('contextClose')) + '</button></div></div>';
+    + escapeHtml(t('close')) + '</button></div></div>';
 }
 
 function showPublishedMcpDialog() {

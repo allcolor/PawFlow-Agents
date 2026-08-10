@@ -544,40 +544,65 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                     if (st._tm_end.get("type") == "delegate_reply"
                             and st._src_agent and st._reply_text):
                         try:
-                            from core.handlers.resource_agent import SpawnAgentsHandler
-                            from tasks.ai.agent_loop import AgentLoopTask
-                            import uuid as _uuid_dr
-                            st._inst = AgentLoopTask._live_instance
-                            st._self_name = st.ctx.get("active_agent_name", "") or ""
-                            st._reply_src = {
-                                "type": "agent_delegate",
-                                "from": st._self_name,
-                                "to": st._src_agent,
-                                "kind": "reply",
-                            }
-                            st._reply_mid = _uuid_dr.uuid4().hex[:12]
-                            st._caller_key = (
-                                f"{st.conversation_id}:{st._src_agent}"
-                                if st._src_agent else st.conversation_id)
-                            st._running = False
-                            if st._inst:
-                                with st._inst._active_contexts_lock:
-                                    st._running = st._caller_key in st._inst._active_contexts
-                            if st._inst and st._running:
+                            st._external_delivered = False
+                            st._delegate_task_id = (
+                                st._tm_end.get("task_id") or "")
+                            if st._delegate_task_id:
+                                from core.external_call_router import complete_task
+                                st._external_delivered = complete_task(
+                                    st._delegate_task_id, {
+                                        "task_id": st._delegate_task_id,
+                                        "agent": st.ctx.get(
+                                            "active_agent_name", "") or "",
+                                        "status": "completed",
+                                        "response": st._reply_text,
+                                        "error": "",
+                                    })
+                            if st._external_delivered:
                                 logger.info(
-                                    "[delegate-reply] caller '%s' running — preempt",
-                                    st._src_agent)
-                                SpawnAgentsHandler._preempt_caller(
-                                    st._inst, st.conversation_id, st._src_agent,
-                                    st._reply_text, st._reply_mid, st._reply_src)
-                            elif st._inst:
-                                logger.info(
-                                    "[delegate-reply] caller '%s' idle — wake",
-                                    st._src_agent)
-                                SpawnAgentsHandler._wake_caller(
-                                    st._inst, st.conversation_id, st._src_agent,
-                                    st.user_id, st.response_content, st._reply_mid,
-                                    source=st._reply_src)
+                                    "[delegate-reply] task %s returned to "
+                                    "external caller",
+                                    st._delegate_task_id)
+                            else:
+                                from core.handlers.resource_agent import SpawnAgentsHandler
+                                from tasks.ai.agent_loop import AgentLoopTask
+                                import uuid as _uuid_dr
+                                st._inst = AgentLoopTask._live_instance
+                                st._self_name = st.ctx.get(
+                                    "active_agent_name", "") or ""
+                                st._reply_src = {
+                                    "type": "agent_delegate",
+                                    "from": st._self_name,
+                                    "to": st._src_agent,
+                                    "kind": "reply",
+                                }
+                                st._reply_mid = _uuid_dr.uuid4().hex[:12]
+                                st._caller_key = (
+                                    f"{st.conversation_id}:{st._src_agent}"
+                                    if st._src_agent else st.conversation_id)
+                                st._running = False
+                                if st._inst:
+                                    with st._inst._active_contexts_lock:
+                                        st._running = (
+                                            st._caller_key
+                                            in st._inst._active_contexts)
+                                if st._inst and st._running:
+                                    logger.info(
+                                        "[delegate-reply] caller '%s' running "
+                                        "— preempt", st._src_agent)
+                                    SpawnAgentsHandler._preempt_caller(
+                                        st._inst, st.conversation_id,
+                                        st._src_agent, st._reply_text,
+                                        st._reply_mid, st._reply_src)
+                                elif st._inst:
+                                    logger.info(
+                                        "[delegate-reply] caller '%s' idle "
+                                        "— wake", st._src_agent)
+                                    SpawnAgentsHandler._wake_caller(
+                                        st._inst, st.conversation_id,
+                                        st._src_agent, st.user_id,
+                                        st.response_content, st._reply_mid,
+                                        source=st._reply_src)
                         except Exception as _dre:
                             logger.error(
                                 "[delegate-reply] wake/preempt failed: %s", _dre,

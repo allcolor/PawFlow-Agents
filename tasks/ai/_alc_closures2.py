@@ -631,11 +631,19 @@ class _ALCClosures2Mixin:
         st.ctx["_turn_mode"] = {
             "type": "delegate_reply",
             "source_agent": _caller,
+            "task_id": _delegate_src.get("task_id", ""),
+            "external_transport": _delegate_src.get(
+                "external_transport", ""),
+            "external_call_id": _delegate_src.get(
+                "external_call_id", ""),
+            "source_label": _delegate_src.get("from_label", ""),
         }
+        _caller_label = (
+            _delegate_src.get("from_label", "") or _caller)
         _hint = (
-            "\n\nDELEGATE MODE: Agent '" + _caller + "' is "
+            "\n\nDELEGATE MODE: '" + _caller_label + "' is "
                             "waiting for your answer. Write your response as "
-                            "normal text; it will be routed back to '" + _caller + "' "
+                            "normal text; it will be routed back to '" + _caller_label + "' "
                             "automatically as a private reply. Do NOT call "
                             "delegate() yourself to answer."
         )

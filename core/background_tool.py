@@ -180,6 +180,11 @@ def background(tc_id: str) -> bool:
         ToolRelayService.background_by_tc_id(tc_id)
     except Exception as e:
         logger.debug("[bg-tool] tool-relay bg routing skipped: %s", e)
+    try:
+        from core.external_call_router import mark_background
+        mark_background(tc_id)
+    except Exception as e:
+        logger.debug("[bg-tool] external-call bg routing skipped: %s", e)
     logger.info("[bg-tool] flagged %s for background", tc_id)
     return True
 

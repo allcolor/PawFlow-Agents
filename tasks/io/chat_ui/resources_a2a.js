@@ -124,7 +124,7 @@ function _a2aRender(state) {
     + '<label style="display:flex;gap:6px;align-items:center;margin-top:6px;"><input id="a2aAllowPrivate" type="checkbox"> ' + escapeHtml(t('a2aAllowPrivate')) + '</label></div>'
     + '<button type="button" style="margin:8px 0;" onclick="_a2aSaveTarget()">' + escapeHtml(t('a2aAddTarget')) + '</button>'
     + _a2aTargetRows(_a2aState.targets || [])
-    + '<div class="exec-btns" style="margin-top:14px;"><button class="exec-deny" type="button" onclick="_a2aClose()">' + escapeHtml(t('contextClose')) + '</button></div></div>';
+    + '<div class="exec-btns" style="margin-top:14px;"><button class="exec-deny" type="button" onclick="_a2aClose()">' + escapeHtml(t('close')) + '</button></div></div>';
 }
 
 function showA2AConfigDialog() {

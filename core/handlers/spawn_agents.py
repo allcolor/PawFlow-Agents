@@ -114,8 +114,25 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
         back on the thread-local so event routing and result delivery see a
         consistent identity.
         """
+        try:
+            from core.external_call_router import current_owner
+            external_owner = current_owner()
+        except Exception:
+            external_owner = None
+        if external_owner:
+            src_agent = external_owner["source_id"]
+            src_svc = external_owner.get("llm_service", "") or ""
+            self._local.source_agent = src_agent
+            self._local.source_llm_service = src_svc
+            self._local.external_owner = external_owner
+            return src_agent, src_svc
+
+        self._local.external_owner = None
         src_agent = getattr(self._local, 'source_agent', '') or ''
         src_svc = getattr(self._local, 'source_llm_service', '') or ''
+        if src_agent.startswith("published_mcp_"):
+            src_agent = ""
+            src_svc = ""
         if not src_agent:
             src_agent = self._agent_name or ''
         if src_agent and not src_svc:
@@ -435,7 +452,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                 _deliver_info = self._deliver_shared_delegate(
                     from_agent=_src_agent, to_agent=agent_name,
                     message=message, user_id=user_id,
-                    conv_id=_parent_conv_id)
+                    conv_id=_parent_conv_id, task_id=task_id)
                 _injected_results.append({
                     "task_id": task_id,
                     "agent": agent_name,

@@ -345,22 +345,29 @@ def _encode_tool_content(registry, tool_name: str, arguments: dict,
     return [{"type": "text", "text": text}], text.startswith("Error:"), text
 
 
-def _persist_tool_call(server: Dict[str, Any], key: Dict[str, Any],
-                       tool_name: str, arguments: dict, result_text: str,
-                       tool_call_id: str) -> None:
-    from core.conversation_writer import ConversationWriter
-    from core.llm_client import stamp_message
-
-    conversation_id = server["conversation_id"]
-    source = {
+def _mcp_call_source(server: Dict[str, Any], key: Dict[str, Any],
+                     tool_call_id: str) -> Dict[str, Any]:
+    return {
         "type": "mcp_client",
         "name": key.get("label") or key.get("prefix") or "MCP client",
         "key_id": key.get("key_id", ""),
         "server_id": server["server_id"],
+        "external_call_id": tool_call_id,
     }
+
+
+def _persist_tool_call_start(server: Dict[str, Any], key: Dict[str, Any],
+                             tool_name: str, arguments: dict,
+                             tool_call_id: str) -> None:
+    from core.conversation_writer import ConversationWriter
+    from core.llm_client import stamp_message
+
+    conversation_id = server["conversation_id"]
+    source = _mcp_call_source(server, key, tool_call_id)
     writer = ConversationWriter.for_conversation(conversation_id)
     call_message = stamp_message({
         "role": "assistant", "content": "", "source": source,
+        "display_only": True,
         "tool_calls": [{
             "id": tool_call_id, "name": tool_name, "arguments": arguments,
         }],
@@ -374,9 +381,21 @@ def _persist_tool_call(server: Dict[str, Any], key: Dict[str, Any],
             "source": "mcp", "ts": time.time(),
         }}], wait=True,
     )
+
+
+def _persist_tool_result(server: Dict[str, Any], key: Dict[str, Any],
+                         tool_name: str, result_text: str,
+                         tool_call_id: str) -> None:
+    from core.conversation_writer import ConversationWriter
+    from core.llm_client import stamp_message
+
+    conversation_id = server["conversation_id"]
+    source = _mcp_call_source(server, key, tool_call_id)
+    writer = ConversationWriter.for_conversation(conversation_id)
     result_message = stamp_message({
         "role": "tool", "content": result_text,
         "tool_call_id": tool_call_id, "source": source,
+        "display_only": True,
     }, conversation_id)
     writer.enqueue_message(
         result_message, agent_name=server["agent_name"],
@@ -389,8 +408,91 @@ def _persist_tool_call(server: Dict[str, Any], key: Dict[str, Any],
     )
 
 
+def _persist_tool_call(server: Dict[str, Any], key: Dict[str, Any],
+                       tool_name: str, arguments: dict, result_text: str,
+                       tool_call_id: str) -> None:
+    """Persist completion for a call whose live row was already written."""
+    _persist_tool_result(
+        server, key, tool_name, result_text, tool_call_id)
+
+
+_EXTERNAL_ASYNC_TOOLS = {"delegate", "flash_delegate"}
+
+
+def _external_call_id(server: Dict[str, Any], session_id: str,
+                      request_id: Any) -> str:
+    if session_id and request_id is not None:
+        raw = (
+            f"{server.get('server_id', '')}|{session_id}|"
+            f"{json.dumps(request_id, sort_keys=True, default=str)}"
+        )
+        return "pmcp_" + uuid.uuid5(uuid.NAMESPACE_URL, raw).hex[:20]
+    return "pmcp_" + uuid.uuid4().hex[:20]
+
+
+def _external_source_id(server: Dict[str, Any],
+                        key: Dict[str, Any]) -> str:
+    raw = (
+        f"{server.get('server_id', '')}|"
+        f"{key.get('key_id', '')}"
+    )
+    return "published_mcp_" + uuid.uuid5(
+        uuid.NAMESPACE_URL, raw).hex[:20]
+
+
+def _prepare_external_async_arguments(tool_name: str, arguments: dict,
+                                      call_id: str) -> Tuple[dict, list]:
+    if tool_name not in _EXTERNAL_ASYNC_TOOLS:
+        return arguments, []
+    prepared = dict(arguments)
+    tasks = arguments.get("tasks")
+    if not isinstance(tasks, list):
+        return prepared, []
+    prepared_tasks = []
+    task_ids = []
+    for index, raw in enumerate(tasks):
+        if not isinstance(raw, dict):
+            prepared_tasks.append(raw)
+            continue
+        spec = dict(raw)
+        task_id = f"{call_id}_{index + 1}"
+        spec["id"] = task_id
+        prepared_tasks.append(spec)
+        task_ids.append(task_id)
+    prepared["tasks"] = prepared_tasks
+    return prepared, task_ids
+
+
+def _task_ids_from_ack(result: Any) -> list:
+    value = result
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return []
+    found = []
+
+    def _visit(item):
+        if isinstance(item, dict):
+            if item.get("task_id"):
+                found.append(str(item["task_id"]))
+            for task_id in item.get("task_ids") or []:
+                if task_id:
+                    found.append(str(task_id))
+            for key in ("flash_agents", "injected"):
+                for child in item.get(key) or []:
+                    _visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                _visit(child)
+
+    _visit(value)
+    return list(dict.fromkeys(found))
+
+
 def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
-               name: str, arguments: Any) -> Dict[str, Any]:
+               name: str, arguments: Any, session_id: str = "",
+               mcp_request_id: Any = None) -> Dict[str, Any]:
     registry = _registry(server)
     args = arguments if isinstance(arguments, dict) else {}
     executed_name = name
@@ -418,13 +520,83 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
             elif not isinstance(tool_args, dict):
                 result = f"Error: arguments for {tool_name} must be a JSON object"
             else:
-                tool_call_id = uuid.uuid4().hex[:12]
-                execution = _runtime()._do_execute(
-                    tool_call_id, tool_name, tool_args,
-                    server["owner_user_id"], server["conversation_id"],
-                    server["agent_name"],
+                tool_call_id = _external_call_id(
+                    server, session_id, mcp_request_id)
+                tool_args, expected_task_ids = (
+                    _prepare_external_async_arguments(
+                        tool_name, tool_args, tool_call_id))
+                from core.conv_agent_config import get_agent_config
+                agent_service = str(get_agent_config(
+                    server["conversation_id"], server["agent_name"]
+                ).get("llm_service") or "")
+                from core import external_call_router
+                external_call_router.register_call(
+                    tool_call_id, server["conversation_id"],
+                    source_id=_external_source_id(server, key),
+                    display_name=(
+                        key.get("label") or key.get("prefix")
+                        or "MCP client"),
+                    llm_service=agent_service,
                 )
-                result = execution.get("data") if isinstance(execution, dict) else execution
+                if expected_task_ids:
+                    external_call_router.set_expected_tasks(
+                        tool_call_id, expected_task_ids)
+                try:
+                    _persist_tool_call_start(
+                        server, key, tool_name, tool_args, tool_call_id)
+                except Exception:
+                    logger.error(
+                        "Could not persist published MCP tool call start",
+                        exc_info=True)
+
+                def _late_result_callback(payload, was_cancelled):
+                    external_call_router.complete_call(
+                        tool_call_id,
+                        "[Cancelled by user]" if was_cancelled else payload)
+
+                runtime = _runtime()
+                if hasattr(runtime, "_handle_execute"):
+                    execution = runtime._handle_execute(
+                        tool_call_id, tool_name, tool_args,
+                        server["owner_user_id"], server["conversation_id"],
+                        server["agent_name"],
+                        external_call_id=tool_call_id,
+                        late_result_callback=_late_result_callback,
+                    )
+                else:
+                    with external_call_router.call_scope(tool_call_id):
+                        execution = runtime._do_execute(
+                            tool_call_id, tool_name, tool_args,
+                            server["owner_user_id"],
+                            server["conversation_id"],
+                            server["agent_name"],
+                        )
+                result = (
+                    execution.get("data")
+                    if isinstance(execution, dict) else execution)
+
+                if (isinstance(result, str)
+                        and result.startswith("[Running in background")):
+                    result = (
+                        external_call_router.wait_for_call_result(
+                            tool_call_id) or "")
+
+                if (tool_name in _EXTERNAL_ASYNC_TOOLS
+                        and not (
+                            isinstance(result, str)
+                            and result.startswith("Error:"))):
+                    actual_task_ids = _task_ids_from_ack(result)
+                    if actual_task_ids:
+                        expected_task_ids = (
+                            external_call_router.set_expected_tasks(
+                                tool_call_id, actual_task_ids))
+                    if expected_task_ids:
+                        task_results = (
+                            external_call_router.wait_for_results(tool_call_id))
+                        result = json.dumps({
+                            "status": "completed",
+                            "task_results": task_results or [],
+                        }, ensure_ascii=False)
         executed_name = tool_name or "use_tool"
         executed_args = tool_args if isinstance(tool_args, dict) else {}
     else:
@@ -437,15 +609,17 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
     content, is_error, result_text = _encode_tool_content(
         registry, executed_name, executed_args, result)
     # Schema discovery is read-only protocol chatter; only real executions
-    # belong in the ordinary conversation transcript.
+    # belong in the ordinary conversation transcript. Call/result rows are
+    # display-only because the published agent supplies capabilities but is not
+    # the external caller.
     if name == "use_tool" and executed_name != "use_tool":
         try:
             _persist_tool_call(
                 server, key, executed_name, executed_args, result_text,
-                locals().get("tool_call_id") or uuid.uuid4().hex[:12],
-            )
+                locals().get("tool_call_id") or uuid.uuid4().hex[:12])
         except Exception:
-            logger.error("Could not persist published MCP tool call", exc_info=True)
+            logger.error(
+                "Could not persist published MCP tool result", exc_info=True)
     return {"content": content, "isError": bool(is_error)}
 
 
@@ -472,7 +646,9 @@ def _dispatch_session_message(server: Dict[str, Any], key: Dict[str, Any],
         name = str(params.get("name") or "")
         if not name:
             return _rpc_error(request_id, -32602, "Tool name is required")
-        result = _call_tool(server, key, name, params.get("arguments") or {})
+        result = _call_tool(
+            server, key, name, params.get("arguments") or {},
+            session_id=session_id, mcp_request_id=request_id)
         return _rpc_result(request_id, result) if request_id is not None else None
     return (
         _rpc_error(request_id, -32601, f"Method not found: {method}")

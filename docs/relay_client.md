@@ -73,6 +73,14 @@ for the new container to come up and connect back. If it is not, the request
 still fails — but the relay is on its way back, and the next tool call finds it
 connected instead of needing a server restart.
 
+An editable managed server relay also exposes **Reconnect** in its webchat relay
+details dialog. This explicit action immediately replaces the disposable relay
+container even when its WebSocket still appears connected. It never invokes
+relay cleanup: the scoped workspace, home volume, service definition, and relay
+bindings are preserved. Global relays require an administrator, and standalone
+Relay Desktop clients do not expose this action because PawFlow does not own
+their process lifecycle.
+
 ## CLI
 
 The standalone relay client is exposed as `pawflow-relay` when installed from the Python package, or as `python -m pawflow_relay` from a checkout.

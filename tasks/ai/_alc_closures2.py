@@ -278,14 +278,8 @@ class _ALCClosures2Mixin:
             logger.info(
                 "[agent:%s] interrupted — sending %s STOP via tmux only",
                 st.conversation_id[:8], st._client_provider)
-            try:
-                _turn_cb = st._claude_code_turn_callback
-            except NameError:
-                _turn_cb = None
-            try:
-                _block_cb = st._cli_block_callback
-            except NameError:
-                _block_cb = None
+            _turn_cb = getattr(st, "_claude_code_turn_callback", None)
+            _block_cb = getattr(st, "_cli_block_callback", None)
             if st._client_provider == "antigravity-interactive":
                 _interrupt_fn = st.client.interrupt_antigravity_interactive
             elif st._client_provider == "codex-interactive":

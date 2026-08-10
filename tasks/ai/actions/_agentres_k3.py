@@ -341,6 +341,11 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                             "server_local_exec": bool(
                                 (_sdef.config or {}).get("server_local_exec"))
                             if _sdef is not None else False,
+                            "server_managed": bool(
+                                (_sdef.config or {}).get("server_managed"))
+                            if _sdef is not None else False,
+                            "scope": getattr(_sdef, "scope", "")
+                            if _sdef is not None else "",
                             "connected": _connected,
                             "connecting": _connecting,
                         }

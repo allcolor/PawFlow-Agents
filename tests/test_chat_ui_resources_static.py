@@ -119,6 +119,17 @@ def test_relay_install_hides_token_parameter():
     assert "Managed server relays generate this token server-side" in relay_src
 
 
+def test_relay_info_dialog_reconnects_only_editable_managed_server_relays():
+    src = Path(
+        "tasks/io/chat_ui/resources_flow_templates.js").read_text(
+            encoding="utf-8")
+
+    assert "d.server_managed && _canEditScope(d.scope)" in src
+    assert "function _reconnectServerRelay" in src
+    assert "action$('relay_reconnect'" in src
+    assert "t('reconnectRelay')" in src
+
+
 def test_agent_attach_dialog_has_only_explicit_close_handlers():
     js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     start = js.index("async function showAddAgentToConvDialog")

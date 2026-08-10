@@ -1214,6 +1214,51 @@ def test_cc_interactive_interrupt_turn_sends_only_stop_transport():
     assert "role=\"user\"" not in cci_branch
 
 
+def test_interactive_interrupt_before_callbacks_are_initialized():
+    from types import SimpleNamespace
+
+    from tasks.ai._alc_closures2 import _ALCClosures2Mixin
+    from tasks.ai.agent_exceptions import _InterruptComplete
+
+    captured = {}
+
+    def interrupt(_command, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            content="", tokens_in=1, tokens_out=2,
+            cache_read_tokens=3, cache_creation_tokens=4, model="test")
+
+    st = SimpleNamespace(
+        _client_provider="codex-interactive",
+        conversation_id="conv-1",
+        client=SimpleNamespace(
+            interrupt_codex_interactive=interrupt,
+            _last_turn_msg_id="",
+        ),
+        user_id="user-1",
+        ctx={"active_agent_name": "assistant"},
+        model="",
+        emitter=SimpleNamespace(
+            is_streaming=False,
+            get_token_callback=lambda _silent: None,
+            get_thinking_callback=lambda _silent: None,
+        ),
+        response_content="",
+        total_tokens_in=0,
+        total_tokens_out=0,
+        total_cache_read=0,
+        total_cache_write=0,
+        final_model="",
+        _schedule_cc_turn_gauge_patch=lambda *_args: None,
+    )
+
+    with pytest.raises(_InterruptComplete):
+        _ALCClosures2Mixin()._alc_run_interrupt_turn(st)
+
+    assert captured["turn_callback"] is None
+    assert captured["block_callback"] is None
+
+
 def test_cci_interrupt_no_session_is_noop_not_error():
     # Interrupt landing on a compact boundary: the provider compact already
     # killed the CCI session, so _cci_session_state returns None. The interrupt

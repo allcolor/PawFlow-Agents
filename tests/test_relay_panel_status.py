@@ -107,6 +107,18 @@ def test_server_local_capability_is_exposed_to_the_webchat(monkeypatch):
     assert det["server_local_exec"] is True
 
 
+def test_server_managed_scope_is_exposed_to_the_webchat(monkeypatch):
+    conv = "convA12345678"
+    reg = _FakeRegistry("convRelay", "conv", conv)
+    reg._sdef.config["server_managed"] = True
+
+    data = _list_resources(monkeypatch, reg, conv)
+
+    det = data["relay_bindings"]["details"]["convRelay"]
+    assert det["server_managed"] is True
+    assert det["scope"] == "conv"
+
+
 def test_enabled_relay_not_yet_connected_reports_connecting(monkeypatch):
     # The startup window the user hit: definition resolves and is enabled,
     # but the relay pool has no connection yet (managed container dialing

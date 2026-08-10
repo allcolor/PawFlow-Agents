@@ -87,6 +87,27 @@ class _RelayConnMixin:
                          self._service_id, e, exc_info=True)
             raise
 
+    def restart_managed_relay(self) -> bool:
+        """Explicitly replace this PawFlow-managed relay container.
+
+        The server relay manager replaces only the disposable container. Its
+        workspace directory, home volume, service definition and bindings stay
+        intact. Standalone relays are owned by Relay Desktop and are rejected.
+        """
+        if not self.config.get("server_managed"):
+            raise ValueError(
+                f"Relay '{self._service_id}' is not a managed server relay")
+        if not self._managed_respawn_lock.acquire(blocking=False):
+            raise RuntimeError(
+                f"Relay '{self._service_id}' reconnect is already in progress")
+        try:
+            self._managed_respawn_at = time.monotonic()
+            self._managed_disconnected_at = 0.0
+            self._start_managed_server_relay()
+            return True
+        finally:
+            self._managed_respawn_lock.release()
+
     def ensure_managed_relay_alive(self) -> bool:
         """Re-create this service's managed relay when it is disconnected.
 

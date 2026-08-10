@@ -392,6 +392,83 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     # ── /relay ──
+    if action == "relay_reconnect":
+        conv_id = (
+            body.get("conversation_id", "")
+            or flowfile.get_attribute("http.conversation_id")
+            or ""
+        )
+        relay_id = body.get("relay_id", "").strip()
+        if not conv_id or not relay_id:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id and relay_id are required",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+
+        from core.service_registry import ServiceRegistry
+
+        registry = ServiceRegistry.get_instance()
+        definition = registry.resolve_definition(
+            relay_id, user_id=user_id, conv_id=conv_id)
+        if definition is None or definition.service_type != "relay":
+            flowfile.set_content(json.dumps({
+                "error": f"Relay '{relay_id}' not found",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        if not (definition.config or {}).get("server_managed"):
+            flowfile.set_content(json.dumps({
+                "error": (
+                    f"Relay '{relay_id}' is not a managed server relay; "
+                    "reconnect it from Relay Desktop"
+                ),
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        roles = flowfile.get_attribute("http.auth.roles") or ""
+        if definition.scope == "global" and "admin" not in roles:
+            flowfile.set_content(json.dumps({
+                "error": "Admin role required to reconnect a global relay",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+
+        service = registry.get_live_instance_cached(
+            definition.scope, definition.scope_id, relay_id)
+        if service is None:
+            try:
+                service = registry.get_live_instance(
+                    definition.scope, definition.scope_id, relay_id)
+            except Exception as exc:
+                flowfile.set_content(json.dumps({
+                    "error": f"Could not start relay '{relay_id}': {exc}",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "500")
+                return [flowfile]
+        if service is None or not hasattr(service, "restart_managed_relay"):
+            flowfile.set_content(json.dumps({
+                "error": f"Managed server relay '{relay_id}' is unavailable",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "503")
+            return [flowfile]
+        try:
+            service.restart_managed_relay()
+        except Exception as exc:
+            flowfile.set_content(json.dumps({
+                "error": f"Could not reconnect relay '{relay_id}': {exc}",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "500")
+            return [flowfile]
+
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "reconnecting": True,
+            "relay_id": relay_id,
+            "message": f"Relay '{relay_id}' is reconnecting.",
+        }).encode())
+        return [flowfile]
+
     if action == "relay_status":
         conv_id = body.get("conversation_id", "")
         if not conv_id:

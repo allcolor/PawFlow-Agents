@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.162] — 2026-08-10
+
+### Added
+
+- The webchat relay details dialog can now explicitly reconnect an editable
+  managed server relay. The action replaces only its disposable container and
+  preserves the relay workspace, home volume, definition, and bindings;
+  standalone Relay Desktop clients remain operator-managed.
+
+### Fixed
+
+- Interactive Claude Code, Antigravity, and Codex STOP turns no longer crash
+  when an interrupt arrives before per-turn callbacks have been initialized.
+- Managed relay runtime ownership repair no longer follows dangling symlinks
+  and tolerates entries that disappear concurrently while the runtime tree is
+  being traversed.
+
 ## [1.0.0-beta.161] — 2026-08-10
 
 ### Changed

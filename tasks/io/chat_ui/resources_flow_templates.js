@@ -206,16 +206,38 @@ function _showRelayInfoDialog(relayId, details, isDefault) {
 
   var overlay = document.createElement('div');
   overlay.className = 'exec-overlay';
+  var reconnectBtn = d.server_managed && _canEditScope(d.scope)
+    ? '<button class="exec-approve" onclick="_reconnectServerRelay(this,' + _pfpJsArg(relayId) + ')">' + escapeHtml(t('reconnectRelay')) + '</button>'
+    : '';
   var defaultBtn = isDefault ? '' : '<button class="exec-approve" onclick="fireAction(\'relay_default\',{relay_id:' + _pfpJsArg(relayId) + '}); this.closest(\'.exec-overlay\').remove(); setTimeout(loadResources, 500)">' + escapeHtml(t('setDefaultRelay')) + '</button>';
   overlay.innerHTML = '<div class="exec-dialog" style="min-width:340px;">'
     + '<h3>' + escapeHtml(t('relayTitle', { id: relayId })) + '</h3>'
     + infoHtml + localHtml
     + '<div class="exec-btns">'
     + '<button class="exec-deny" onclick="fireAction(\'relay_unlink\',{relay_id:' + _pfpJsArg(relayId) + '}); this.closest(\'.exec-overlay\').remove(); setTimeout(loadResources, 500)">' + escapeHtml(t('unlink')) + '</button>'
+    + reconnectBtn
     + defaultBtn
     + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('close')) + '</button></div>'
     + '</div>';
   document.body.appendChild(overlay);
+}
+
+function _reconnectServerRelay(button, relayId) {
+  button.disabled = true;
+  button.textContent = t('reconnectingRelay');
+  action$('relay_reconnect', {relay_id: relayId}).subscribe(function(data) {
+    if (data.error) {
+      addMsg('error', data.error);
+      button.disabled = false;
+      button.textContent = t('reconnectRelay');
+      return;
+    }
+    addMsg('system', data.message || t('reconnectingRelay'));
+    var overlay = button.closest('.exec-overlay');
+    if (overlay) overlay.remove();
+    setTimeout(loadResources, 300);
+    setTimeout(loadResources, 2000);
+  });
 }
 
 function _setRelayLocal(relayId, local, agent) {

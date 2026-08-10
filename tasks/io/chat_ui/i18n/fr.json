@@ -970,6 +970,8 @@
   "rejectionReasonPrompt": "Raison du rejet :",
   "relayBrowserAuthorizeHint": "Une fenêtre de navigateur devrait s’ouvrir sur la machine du relay. Autorisez là-bas.",
   "relayId": "ID du relay",
+  "reconnectRelay": "Reconnecter",
+  "reconnectingRelay": "Reconnexion...",
   "relaySupportsBothModes": "Le relay {relay} supporte les deux modes.",
   "relayTitle": "Relay : {id}",
   "relays": "Relays",

@@ -149,6 +149,28 @@ def test_an_operator_run_relay_is_never_touched(manager):
     assert mgr.spawned == []
 
 
+def test_explicit_restart_replaces_a_managed_relay_even_when_connected(manager):
+    mgr = manager(running=True)
+    svc = _managed_service()
+    with svc._relay_pool_lock:
+        svc._relay_pool.append({"writer": object()})
+
+    assert svc.restart_managed_relay() is True
+
+    assert len(mgr.spawned) == 1
+    assert svc._managed_respawn_at > 0.0
+
+
+def test_explicit_restart_rejects_operator_run_relays(manager):
+    mgr = manager(running=True)
+    svc = RelayService({"_service_id": "laptop", "token": "tok"})
+
+    with pytest.raises(ValueError, match="managed server relay"):
+        svc.restart_managed_relay()
+
+    assert mgr.spawned == []
+
+
 def test_a_burst_of_failures_asks_for_one_container_start(manager):
     """Every in-flight tool call fails at once; one respawn must follow."""
     mgr = manager(running=False)

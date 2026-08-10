@@ -106,13 +106,62 @@ def test_server_relay_runtime_chown_uses_host_runner_uid_gid(monkeypatch, tmp_pa
     (root / "child" / "file.txt").write_text("x", encoding="utf-8")
     monkeypatch.setenv("PAWFLOW_RUN_UID", "1234")
     monkeypatch.setenv("PAWFLOW_RUN_GID", "5678")
-    monkeypatch.setattr(srm.os, "chown", lambda path, uid, gid: calls.append((str(path), uid, gid)))
+    monkeypatch.setattr(
+        srm.os,
+        "chown",
+        lambda path, uid, gid, *, follow_symlinks=True:
+            calls.append((str(path), uid, gid)),
+    )
 
     srm._chown_for_host_runner(root)
 
     assert (str(root), 1234, 5678) in calls
     assert (str(root / "child"), 1234, 5678) in calls
     assert (str(root / "child" / "file.txt"), 1234, 5678) in calls
+
+
+def test_server_relay_runtime_chown_does_not_follow_dangling_symlinks(
+        monkeypatch, tmp_path):
+    calls = []
+    root = tmp_path / "runtime"
+    root.mkdir()
+    dangling = root / "python"
+    dangling.symlink_to(tmp_path / "missing-python")
+    monkeypatch.setenv("PAWFLOW_RUN_UID", "1234")
+    monkeypatch.setenv("PAWFLOW_RUN_GID", "5678")
+
+    def fake_chown(path, uid, gid, *, follow_symlinks=True):
+        if str(path) == str(dangling) and follow_symlinks:
+            raise FileNotFoundError(path)
+        calls.append((str(path), uid, gid, follow_symlinks))
+
+    monkeypatch.setattr(srm.os, "chown", fake_chown)
+
+    srm._chown_for_host_runner(root)
+
+    assert (str(dangling), 1234, 5678, False) in calls
+
+
+def test_server_relay_runtime_chown_tolerates_disappearing_entries(
+        monkeypatch, tmp_path):
+    calls = []
+    root = tmp_path / "runtime"
+    root.mkdir()
+    vanished = root / "vanished.txt"
+    vanished.write_text("gone", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_RUN_UID", "1234")
+    monkeypatch.setenv("PAWFLOW_RUN_GID", "5678")
+
+    def fake_chown(path, uid, gid, *, follow_symlinks=True):
+        if str(path) == str(vanished):
+            raise FileNotFoundError(path)
+        calls.append((str(path), uid, gid, follow_symlinks))
+
+    monkeypatch.setattr(srm.os, "chown", fake_chown)
+
+    srm._chown_for_host_runner(root)
+
+    assert (str(root), 1234, 5678, False) in calls
 
 
 def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tmp_path):

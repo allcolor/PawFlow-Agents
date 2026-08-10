@@ -89,13 +89,20 @@ def _chown_for_host_runner(path: Path) -> None:
     if owner is None:
         return
     uid, gid = owner
+
+    def chown_entry(entry: str | Path) -> None:
+        try:
+            os.chown(entry, uid, gid, follow_symlinks=False)
+        except FileNotFoundError:
+            logger.debug("Relay runtime path disappeared during chown: %s", entry)
+
     try:
         for root, dirs, files in os.walk(path):
-            os.chown(root, uid, gid)
+            chown_entry(root)
             for name in dirs:
-                os.chown(os.path.join(root, name), uid, gid)
+                chown_entry(os.path.join(root, name))
             for name in files:
-                os.chown(os.path.join(root, name), uid, gid)
+                chown_entry(os.path.join(root, name))
     except PermissionError:
         logger.warning("Could not chown relay runtime path %s to %s:%s", path, uid, gid)
 

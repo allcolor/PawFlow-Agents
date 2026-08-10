@@ -405,14 +405,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # WebSocket upgrades are intercepted in _HTTPServerWithRegistry.process_request
         # BEFORE reaching this handler — so no WS detection needed here.
 
-        # Read body
+        # Binary uploads are consumed incrementally from rfile. Keep this
+        # fast-path before the generic body read: moving it below would load the
+        # complete upload into RAM before the streaming handler sees it.
         content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length) if content_length > 0 else b""
-
-        # ── Fast-path: /api/upload (multipart file upload → FileStore) ──
         if method == "POST" and path == "/api/upload":
-            self._handle_upload(body, session)
+            from services._http_upload_stream import handle_upload_stream
+            handle_upload_stream(self, content_length, session, query)
             return
+
+        # Read ordinary request bodies after all streaming fast-paths.
+        body = self.rfile.read(content_length) if content_length > 0 else b""
 
         # Collect headers
         headers = {k: v for k, v in self.headers.items()}
@@ -589,94 +592,6 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(req.response_body)
         req.mark("send")
         _emit_timing_summary(req)
-
-    def _handle_upload(self, body: bytes, session):
-        """Fast-path handler for POST /api/upload.
-
-        Parses multipart/form-data, stores each file in FileStore,
-        returns JSON with file IDs. No FlowFile pipeline needed.
-        """
-        from email.parser import BytesParser
-        from core.file_store import FileStore
-        from core.file_ttl import resolve_ttl_seconds
-
-        user_id = ""
-        if session and session is not True:
-            user_id = getattr(session, "username", "") or ""
-
-        ct = self.headers.get("Content-Type", "")
-        if "multipart/form-data" not in ct:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"error": "Expected multipart/form-data"}')
-            return
-
-        # Parse multipart without the removed cgi module
-        header = f"Content-Type: {ct}\r\n\r\n".encode()
-        msg = BytesParser().parsebytes(header + body)
-
-        # Extract optional conversation_id and explicit TTL from form fields
-        conv_id = ""
-        ttl = 0
-        for part in msg.walk():
-            if part.get_content_disposition() == "form-data" and not part.get_filename():
-                name = part.get_param("name", header="content-disposition") or ""
-                if name == "conversation_id":
-                    conv_id = (part.get_payload(decode=True) or b"").decode().strip()
-                elif name == "ttl":
-                    try:
-                        ttl = int((part.get_payload(decode=True) or b"").decode().strip() or "0")
-                    except ValueError:
-                        ttl = 0
-        if ttl <= 0:
-            ttl = resolve_ttl_seconds(
-                conversation_id=conv_id,
-                conv_keys=("webchat_upload_ttl_seconds", "attachment_ttl_seconds"),
-                env_key="PAWFLOW_WEBCHAT_UPLOAD_TTL_SECONDS",
-                default=3600,
-            )
-        else:
-            ttl = max(60, ttl)
-
-        store = FileStore.instance()
-        results = []
-        for part in msg.walk():
-            disp = part.get_content_disposition()
-            if disp != "form-data":
-                continue
-            filename = part.get_filename()
-            if not filename:
-                continue
-            raw = part.get_payload(decode=True)
-            if raw is None:
-                continue
-            mime = part.get_content_type() or "application/octet-stream"
-            fid = store.store(
-                filename, raw, mime,
-                user_id=user_id or "_anonymous",
-                conversation_id=conv_id or "_upload",
-                ttl=ttl,
-                category="upload",
-            )
-            results.append({
-                "file_id": fid,
-                "filename": filename,
-                "mime_type": mime,
-                "size": len(raw),
-                "url": f"/files/{fid}/{filename}",
-            })
-            logger.info("Upload: %s (%s, %d bytes) -> %s",
-                        filename, mime, len(raw), fid)
-
-        resp = json.dumps({"ok": True, "files": results}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(resp)))
-        if hasattr(self, "_renew_cookie") and self._renew_cookie:
-            self.send_header("Set-Cookie", self._renew_cookie)
-        self.end_headers()
-        self.wfile.write(resp)
 
     # Handle all HTTP methods
     do_GET = _handle

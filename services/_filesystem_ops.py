@@ -386,6 +386,35 @@ class _RelayFsOpsMixin:
                            data=base64.b64encode(chunk).decode("ascii"),
                            done=done, local=local)
 
+    def write_file_stream(self, path: str, chunks, expected_size: int,
+                          local: bool = False) -> int:
+        """Write bounded chunks without ever joining the complete file."""
+        written = 0
+        index = 0
+        for chunk in chunks:
+            if not chunk:
+                continue
+            written += len(chunk)
+            if written > expected_size:
+                raise ValueError("Upload stream exceeded Content-Length")
+            self._request(
+                "write_file_chunked", path, index=index,
+                data=base64.b64encode(chunk).decode("ascii"),
+                done=written == expected_size, local=local,
+                # This action appends every index after zero. If the relay wrote
+                # a chunk but its response was lost, replaying it after reconnect
+                # would silently duplicate bytes. Fail the temporary upload
+                # instead; its caller removes it and never publishes corruption.
+                _retry_on_disconnect=False)
+            index += 1
+        if written != expected_size:
+            raise ValueError(
+                f"Upload stream size mismatch: {written} != {expected_size}")
+        if expected_size == 0:
+            self._request("write_file", path, content="", base64=True,
+                          local=local)
+        return written
+
     def delete_file(self, path: str, local: bool = False):
         self._request("delete_file", path, local=local)
 

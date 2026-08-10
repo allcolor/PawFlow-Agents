@@ -27,7 +27,10 @@ MEDIA_ACTIONS = Path("tasks/ai/actions/media.py").read_text(encoding="utf-8")
 ATTACHMENTS_JS = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
 FILES_PANEL_JS = Path("tasks/io/chat_ui/files_panel.js").read_text(encoding="utf-8")
 SECRETS_JS = Path("tasks/io/chat_ui/secrets.js").read_text(encoding="utf-8")
-HTTP_LISTENER = "".join(Path(_f).read_text(encoding="utf-8") for _f in ("services/http_listener_service.py", "services/_http_base.py", "services/_http_request.py", "services/_http_server.py"))
+HTTP_LISTENER = "".join(Path(_f).read_text(encoding="utf-8") for _f in (
+    "services/http_listener_service.py", "services/_http_base.py",
+    "services/_http_request.py", "services/_http_server.py",
+    "services/_http_upload_stream.py"))
 
 
 def test_client_unwrap_reads_arguments_json_like_server():
@@ -290,8 +293,11 @@ def test_files_panel_batch_actions_and_attachment_upload_ttl_are_owned_locally()
     assert "action$('delete_files'" in FILES_PANEL_JS
     assert "function clearAllConversationFiles()" in FILES_PANEL_JS
     assert "action$('clear_store'" in FILES_PANEL_JS
-    assert "fd.append('ttl', String(ttlVal));" in ATTACHMENTS_JS
-    assert "function uploadFileToStore(file)" in ATTACHMENTS_JS
+    assert "xhr.send(file);" in ATTACHMENTS_JS
+    assert "new FormData()" not in ATTACHMENTS_JS
+    assert "function uploadFileToStore(file, onProgress)" in ATTACHMENTS_JS
+    assert "att-upload-progress" in ATTACHMENTS_JS
+    assert "Number.isFinite(f.progress)" in ATTACHMENTS_JS
     assert "function handleFiles(fileList)" in ATTACHMENTS_JS
     assert "function handleFiles(fileList)" not in FILES_PANEL_JS
     assert "handleFileRowSelection(e, f.file_id)" in SECRETS_JS

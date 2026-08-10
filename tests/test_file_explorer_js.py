@@ -31,6 +31,31 @@ def test_file_explorer_template_evaluates_i18n_labels():
     assert "${t('modified')}" in src
 
 
+def test_file_explorer_streams_uploads_and_keeps_mobile_toolbar_visible():
+    src = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
+    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+
+    upload = src[src.index("async function _feUploadFiles(files)"):src.index("\nfunction _feCopyToStore")]
+    assert "uploadFileToRelay(" in upload
+    assert "FileReader" not in upload
+    assert "readAsDataURL" not in upload
+    assert "base64" not in upload
+    assert "if(_fe.overlay)_feNav(_fe.path);" in upload
+    mobile = template[template.index("@media (max-width:768px){", template.index("/* File Explorer */")):]
+    assert ".fe-toolbar{display:grid;" in mobile
+    assert ".fe-panel{width:100%;max-width:none;height:100dvh;" in mobile
+
+
+@pytest.mark.skipif(shutil.which("node") is None,
+                    reason="node is not available to run the JS suite")
+def test_file_explorer_is_valid_javascript():
+    proc = subprocess.run(
+        ["node", "--check", "tasks/io/chat_ui/file_explorer.js"],
+        capture_output=True, text=True, cwd=str(ROOT), timeout=60)
+    assert proc.returncode == 0, (
+        "JavaScript syntax check failed:\n" + proc.stdout + proc.stderr)
+
+
 @pytest.mark.skipif(shutil.which("node") is None,
                     reason="node is not available to run the JS suite")
 def test_file_explorer_preview_behaviour():

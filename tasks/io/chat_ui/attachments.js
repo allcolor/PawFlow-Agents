@@ -30,6 +30,10 @@ function renderAttachments() {
       const icons = {'application/pdf': '\u{1F4C4}', 'text/plain': '\u{1F4DD}', 'text/html': '\u{1F310}', 'text/markdown': '\u{1F4DD}'};
       el.innerHTML = '<span class="att-icon">' + (icons[f.mime_type] || '\u{1F4CE}') + '</span>';
     }
+    if (f.uploading) {
+      const progress = Number.isFinite(f.progress) ? f.progress : 0;
+      el.innerHTML += '<span class="att-upload-progress">' + progress + '%</span>';
+    }
     el.innerHTML += '<span class="att-name">' + escapeHtml(f.filename) + (f.uploading ? ' ⏳' : '') + '</span>'
       + '<button class="att-remove" type="button" aria-label="Remove ' + escapeHtml(f.filename)
       + '" onclick="removeFile(' + i + ')">\u00d7</button>';
@@ -64,21 +68,51 @@ function renderUserAttachments(attachments) {
   return html;
 }
 
-// Upload a file via multipart to /api/upload, returns
-// {file_id, filename, mime_type, size, url}. Keep the upload path beside the
-// attachment entry points: a transient failure in an unrelated sidebar module
-// must not disable paste or drag-and-drop for the whole page.
-async function uploadFileToStore(file) {
-  const fd = new FormData();
-  fd.append('file', file);
-  if (typeof currentConvId !== 'undefined' && currentConvId) fd.append('conversation_id', currentConvId);
+// Upload the native File as the raw request body. XHR streams the Blob and
+// reports network progress; no FileReader, multipart copy, or whole-file base64
+// representation is created in browser memory.
+function _uploadRawFile(file, params, onProgress) {
+  return new Promise((resolve, reject) => {
+    const query = new URLSearchParams(params || {});
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload?' + query.toString());
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    const auth = getAuthHeaders()['Authorization'] || '';
+    if (auth) xhr.setRequestHeader('Authorization', auth);
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable && typeof onProgress === 'function') {
+        onProgress(Math.min(100, Math.round(event.loaded * 100 / event.total)));
+      }
+    };
+    xhr.onerror = () => reject(new Error(t('uploadFailed')));
+    xhr.onabort = () => reject(new Error(t('uploadFailed')));
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText || '{}'); }
+      catch (_err) { reject(new Error('HTTP ' + xhr.status)); return; }
+      if (xhr.status < 200 || xhr.status >= 300 || !data.ok
+          || !data.files || !data.files.length) {
+        reject(new Error(data.error || 'HTTP ' + xhr.status));
+        return;
+      }
+      resolve(data.files[0]);
+    };
+    xhr.send(file);
+  });
+}
+
+async function uploadFileToStore(file, onProgress) {
+  const params = { filename: file.name };
+  if (typeof currentConvId !== 'undefined' && currentConvId) params.conversation_id = currentConvId;
   const ttlSelect = document.getElementById('ttlSelect');
   const ttlVal = ttlSelect ? parseInt(ttlSelect.value, 10) : 0;
-  if (ttlVal > 0) fd.append('ttl', String(ttlVal));
-  const resp = await fetch('/api/upload', { method: 'POST', body: fd, headers: {'Authorization': getAuthHeaders()['Authorization'] || ''}, credentials: 'same-origin' });
-  const data = await resp.json();
-  if (!data.ok || !data.files || !data.files.length) throw new Error(data.error || t('uploadFailed'));
-  return data.files[0];
+  if (ttlVal > 0) params.ttl = String(ttlVal);
+  return _uploadRawFile(file, params, onProgress);
+}
+
+function uploadFileToRelay(file, service, path, onProgress) {
+  return _uploadRawFile(file, { service, path }, onProgress);
 }
 
 function handleFiles(fileList) {
@@ -97,14 +131,17 @@ function handleFiles(fileList) {
       textReader.readAsText(file);
       continue;
     }
-    // Upload via multipart (no size limit, no base64 OOM)
+    // Stream the attachment without a whole-file browser representation.
     const mime = file.type || 'application/octet-stream';
     const isImage = mime.startsWith('image/');
-    const placeholder = { filename: file.name, mime_type: mime, uploading: true };
+    const placeholder = { filename: file.name, mime_type: mime, uploading: true, progress: 0 };
     if (isImage) placeholder.dataUrl = URL.createObjectURL(file);
     pendingFiles.push(placeholder);
     renderAttachments();
-    uploadFileToStore(file).then(info => {
+    uploadFileToStore(file, percent => {
+      placeholder.progress = percent;
+      renderAttachments();
+    }).then(info => {
       const entry = pendingFiles.find(f => f === placeholder);
       if (entry) {
         entry.file_id = info.file_id;

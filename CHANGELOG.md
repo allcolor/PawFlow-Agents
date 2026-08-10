@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.161] — 2026-08-10
+
+### Changed
+
+- Webchat attachment and relay File Manager uploads now stream the browser's
+  native file body in bounded chunks instead of building multipart, FileReader,
+  or whole-file base64 copies. FileStore and relay destinations publish
+  atomically after the declared content length is complete, and both upload
+  surfaces report native progress.
+- The File Manager now uses a full-screen mobile layout that keeps its toolbar,
+  search, upload status, and horizontally scrollable file table usable on narrow
+  displays.
+
+### Fixed
+
+- Canonical FileStore links in chat now resolve through the authenticated
+  same-origin file route, and relay previews use the shared media viewer instead
+  of decoding binary files through the text-oriented filesystem read action.
+
 ## [1.0.0-beta.160] — 2026-08-09
 
 ### Added

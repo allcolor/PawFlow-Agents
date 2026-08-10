@@ -1,5 +1,5 @@
 // ── File Explorer ──────────────────────────────────────────────────
-let _fe={overlay:null,svc:'',path:'.',entries:[],clip:null,sel:new Set(),svcs:[],ctx:null,preview:null,sort:{col:'name',asc:true}};
+let _fe={overlay:null,svc:'',path:'.',entries:[],clip:null,sel:new Set(),svcs:[],ctx:null,preview:null,sort:{col:'name',asc:true},upload:{active:false,text:'',error:false}};
 
 function openExplorer(){
   if(_fe.overlay)return;
@@ -88,6 +88,12 @@ function _feStatus(){
   const c=document.getElementById('feCount');
   const cl=document.getElementById('feClip');
   if(c){
+    if(_fe.upload.active||_fe.upload.text){
+      c.textContent=_fe.upload.text;
+      c.classList.toggle('fe-upload-error',_fe.upload.error);
+      return;
+    }
+    c.classList.remove('fe-upload-error');
     let statusText=t('itemsCount', { n: _fe.entries.length });
     if(_fe.sel.size>0)statusText+=' (' + t('itemsSelected', { n: _fe.sel.size }) + ')';
     c.textContent=statusText;
@@ -265,26 +271,27 @@ function _feUpload(){
   inp.click();
 }
 
-function _feUploadFiles(files){
+async function _feUploadFiles(files){
   const count=files.length;
-  const status=document.getElementById('feCount');
-  let done=0;
-  let idx=0;
-  const uploadNext = () => {
-    if (idx >= count) { _feNav(_fe.path); return; }
-    const f = files[idx];
-    if(status)status.textContent=`Uploading ${++done}/${count}: ${f.name}`;
-    const rd=new FileReader();
-    rd.onload=()=>{
-      const b64=rd.result.split(',')[1];
-      action$('fs_write_file',{service:_fe.svc,path:_fePath(f.name),content:b64,encoding:'base64'}).subscribe(() => {
-        idx++;
-        uploadNext();
+  for(let idx=0;idx<count;idx++){
+    const f=files[idx];
+    _fe.upload={active:true,error:false,text:t('uploadingFile',{file:f.name})+' 0%'};
+    _feStatus();
+    try{
+      await uploadFileToRelay(f,_fe.svc,_fePath(f.name),percent=>{
+        _fe.upload.text=t('uploadingFile',{file:f.name})+' '+percent+'% ('+(idx+1)+'/'+count+')';
+        _feStatus();
       });
-    };
-    rd.readAsDataURL(f);
-  };
-  uploadNext();
+    }catch(error){
+      _fe.upload={active:false,error:true,text:t('uploadFailedFor',{file:f.name,error:error.message})};
+      _feStatus();
+      addMsg('error',_fe.upload.text);
+      return;
+    }
+  }
+  _fe.upload={active:false,error:false,text:t('itemsCount',{n:count})+' — '+t('upload')+' ✓'};
+  if(_fe.overlay)_feNav(_fe.path);
+  else _feStatus();
 }
 
 function _feCopyToStore(name){

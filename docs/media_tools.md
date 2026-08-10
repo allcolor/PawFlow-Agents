@@ -44,6 +44,16 @@ from the filename and response `Content-Type`. The relay file explorer does
 not read preview content through `fs_read_file` or decode binary files into a
 text pane.
 
+Webchat uploads use a raw single-file HTTP body. The HTTP listener consumes it
+in bounded chunks before the generic request-body reader: attachments are
+written incrementally to a temporary FileStore path and published atomically,
+while relay uploads forward the same bounded stream to a temporary relay path
+and rename it only after the declared `Content-Length` is complete. The browser
+never creates a multipart copy, `FileReader` buffer, or whole-file base64 value.
+Both the attachment preview and relay File Manager show native upload progress.
+Closing only the File Manager does not cancel an active request; closing or
+reloading the webchat tab does.
+
 ## Image Tools
 
 | Tool | Purpose |

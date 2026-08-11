@@ -117,5 +117,9 @@ class TestPromptWiring:
         assert "reflection_trigger.BLOCK_TITLE" in src
 
     def test_conversation_search_is_advertised_to_the_agent(self):
-        src = self.SRC.read_text("utf-8")
-        assert "conversation_search" in src
+        from core.tool_selection import build_tool_selection_hint
+
+        hint = build_tool_selection_hint({
+            "remember", "semantic_recall", "conversation_search", "read_history",
+        })
+        assert "conversation_search" in hint

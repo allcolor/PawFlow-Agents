@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.170] — 2026-08-11
+
+### Fixed
+
+- Collected the complete `winpty` package in Windows Relay Desktop builds,
+  including the helper executables required after PTY creation, so host-local
+  terminals remain interactive instead of closing on their first input.
+- Replaced the packaged Windows PTY import check with an interactive
+  spawn/write/read smoke test that catches incomplete native bundles during the
+  release workflow.
+
 ## [1.0.0-beta.169] — 2026-08-11
 
 ### Fixed

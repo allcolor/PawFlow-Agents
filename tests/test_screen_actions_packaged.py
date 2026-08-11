@@ -1,6 +1,9 @@
 import builtins
 import importlib.util
+import json
 from pathlib import Path
+import sys
+import types
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,6 +12,18 @@ ROOT = Path(__file__).resolve().parents[1]
 def _load_screen_actions():
     path = ROOT / "tools" / "screen_actions.py"
     spec = importlib.util.spec_from_file_location("screen_actions_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_relay_binary_entry():
+    path = (
+        ROOT / "pawflow-relay-desktop" / "scripts" / "relay-bin-entry.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "relay_binary_entry_under_test", path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -79,6 +94,59 @@ def test_relay_binary_entry_exposes_screen_action_child_route():
 
     assert "__pawflow_screen_action_child__" in entry
     assert "from screen_actions import _handle_screen_action_direct" in entry
+
+
+def test_windows_terminal_backend_check_exercises_interactive_io(
+        monkeypatch, capsys):
+    entry = _load_relay_binary_entry()
+    sentinel = b"__PAWFLOW_WINPTY_INTERACTIVE_OK__"
+
+    class FileObject:
+        def settimeout(self, timeout):
+            assert timeout == 0.25
+
+        def recv(self, size):
+            assert size == 4096
+            return sentinel
+
+    class Process:
+        fileobj = FileObject()
+
+        def __init__(self):
+            self.writes = []
+            self.closed = False
+
+        def write(self, data):
+            self.writes.append(data)
+            return len(data)
+
+        def close(self, force=False):
+            self.closed = force
+
+    process = Process()
+
+    class PtyProcess:
+        @classmethod
+        def spawn(cls, command, dimensions):
+            assert command == ["C:/Windows/System32/cmd.exe"]
+            assert dimensions == (24, 80)
+            return process
+
+    monkeypatch.setitem(
+        sys.modules, "winpty", types.SimpleNamespace(PtyProcess=PtyProcess))
+    monkeypatch.setenv("COMSPEC", "C:/Windows/System32/cmd.exe")
+
+    assert entry._windows_terminal_backend_check() == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result == {
+        "ok": True,
+        "backend": "PtyProcess",
+        "interactive": True,
+    }
+    assert process.writes == [
+        "echo __PAWFLOW_WINPTY_INTERACTIVE_OK__\r\n"]
+    assert process.closed is True
 
 
 def test_docker_dev_mount_includes_cua_screen_backend():

@@ -161,6 +161,12 @@ prepares the runtime payload, creates a PyInstaller relay executable under
 app launches the embedded relay binary and uses the Python fallback only for
 source checkouts.
 
+Windows builds collect the complete `winpty` package, including its native DLLs
+and helper executables. The release workflow then opens a packaged PTY, writes an
+interactive probe through it, and reads the probe back. Importing `PtyProcess`
+alone is not a sufficient packaging check because missing helper executables can
+leave the module importable while every spawned terminal exits immediately.
+
 Windows builder hosts need symlink creation enabled because Electron Builder's
 `winCodeSign` cache contains symlinks. Use Windows Developer Mode or an elevated
 PowerShell, clear `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign` after a

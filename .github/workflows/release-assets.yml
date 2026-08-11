@@ -242,7 +242,9 @@ jobs:
             throw "Packaged relay winpty check exited with code $LASTEXITCODE"
           }
           $ptyStatus = $ptyRaw | ConvertFrom-Json
-          if (-not $ptyStatus.ok -or $ptyStatus.backend -ne 'PtyProcess') {
+          if (-not $ptyStatus.ok -or
+              $ptyStatus.backend -ne 'PtyProcess' -or
+              -not $ptyStatus.interactive) {
             throw "Packaged relay Windows terminal backend is unavailable"
           }
 

@@ -29,12 +29,45 @@ def _screen_action_child(action: str) -> int:
 
 
 def _windows_terminal_backend_check() -> int:
-    """Verify that the packaged Windows host-terminal backend is importable."""
+    """Verify that the packaged Windows PTY can spawn, write, and read."""
+    import socket
+    import time
+
     from winpty import PtyProcess
+
+    shell = os.environ.get("COMSPEC")
+    if not shell:
+        raise RuntimeError("COMSPEC is required for the Windows PTY check")
+
+    sentinel = b"__PAWFLOW_WINPTY_INTERACTIVE_OK__"
+    process = PtyProcess.spawn([shell], dimensions=(24, 80))
+    received = bytearray()
+    try:
+        process.fileobj.settimeout(0.25)
+        process.write(f"echo {sentinel.decode('ascii')}\r\n")
+        deadline = time.monotonic() + 5
+        while sentinel not in received and time.monotonic() < deadline:
+            try:
+                chunk = process.fileobj.recv(4096)
+            except socket.timeout:
+                continue
+            if not chunk:
+                break
+            received.extend(chunk)
+    finally:
+        try:
+            process.close(force=True)
+        except Exception:
+            pass
+
+    if sentinel not in received:
+        raise RuntimeError(
+            "Packaged Windows PTY did not echo the interactive probe")
 
     sys.stdout.write(json.dumps({
         "ok": True,
         "backend": PtyProcess.__name__,
+        "interactive": True,
     }))
     return 0
 

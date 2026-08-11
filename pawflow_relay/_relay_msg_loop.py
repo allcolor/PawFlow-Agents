@@ -276,14 +276,26 @@ class ConnSession:
 
     def _run_command(self, _msg, _rid, _sock, _send_fn):
         _action = _msg.get("action", "?")
-        # Streaming callback for exec_stream
+        # Streaming callbacks use distinct wire message types.  The HTTP
+        # callback is required by _relay_actions.http_proxy: without it the
+        # action deliberately rejects the buffering inline contract.
         _on_output = None
-        if _msg.get("action") == "exec_stream":
+        if _action == "exec_stream":
             def _on_output(stream, data):
                 _frame = json.dumps({
                     "type": "exec_output",
                     "request_id": _rid,
                     "stream": stream,
+                    "data": data,
+                }).encode("utf-8")
+                with self.send_lock:
+                    _send_fn(_sock, _frame)
+        elif _action in ("http_proxy", "http_fetch"):
+            def _on_output(kind, data):
+                _frame = json.dumps({
+                    "type": "http_response",
+                    "request_id": _rid,
+                    "kind": kind,
                     "data": data,
                 }).encode("utf-8")
                 with self.send_lock:

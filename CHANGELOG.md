@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.168] — 2026-08-11
+
+### Fixed
+
+- Restored remote-relay noVNC HTTP delivery by streaming relay HTTP responses
+  back to the server, while keeping the authenticated WebSocket tunnel for VNC
+  frames.
+- Made remote host-screen sessions load their noVNC UI assets from the relay
+  runtime instead of requiring a separate noVNC installation on Windows.
+- Routed remote desktop audio through the outbound relay connection while
+  preserving the direct path used by server-managed desktops.
+
 ## [1.0.0-beta.167] — 2026-08-10
 
 ### Fixed

@@ -653,6 +653,36 @@ def _serve_novnc_local(pending_req, sub_path: str) -> bool:
     return False
 
 
+def _serve_novnc_from_relay(pending_req, relay_service,
+                            sub_path: str) -> bool:
+    """Serve a noVNC UI asset from the relay runtime, not the host helper."""
+    import base64
+
+    safe_path = _os.path.normpath(str(sub_path or "")).lstrip(
+        _os.sep).lstrip("/")
+    try:
+        result = relay_service._request("novnc_asset", path=safe_path)
+        body_b64 = result.get("body", "") if isinstance(result, dict) else ""
+        if not body_b64:
+            return False
+        body = base64.b64decode(body_b64, validate=True)
+        body = _patch_novnc_static_body(safe_path, body)
+        if getattr(pending_req, "method", "GET") == "HEAD":
+            body = b""
+        pending_req.complete(200, {
+            "Content-Type": result.get(
+                "content_type", "application/octet-stream"),
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+        }, body)
+        return True
+    except Exception:
+        logger.debug("Relay noVNC asset fetch failed for %s",
+                     safe_path, exc_info=True)
+        return False
+
+
 def _check_http_session_auth(pending_req) -> bool:
     """Check session auth for direct HTTP callbacks (not flow-based).
 
@@ -683,6 +713,111 @@ def _check_http_session_auth(pending_req) -> bool:
         return False
 
 
+def _vnc_http_relay_proxy(pending_req, session_id: str, session: dict,
+                          sub_path: str) -> None:
+    """Fetch one noVNC HTTP asset through the session's outbound relay."""
+    relay_service = session["relay_service"]
+    relay_id = session.get("relay_id", "")
+    port = int(session.get("port") or 0)
+    proxied_path = "/" + str(sub_path or "").lstrip("/")
+    query = getattr(pending_req, "query_string", "") or ""
+    if query:
+        proxied_path += "?" + query
+
+    # noVNC does not need the PawFlow browser cookies.  Keep the upstream
+    # request deliberately small and avoid forwarding Accept-Encoding so the
+    # two PawFlow noVNC patches always see the uncompressed asset body.
+    headers = {"Host": f"127.0.0.1:{port}"}
+
+    try:
+        from services._relay_http_response import RelayHttpResponseStream
+
+        if (session.get("local_screen")
+                and _is_novnc_static_path(sub_path)
+                and _serve_novnc_from_relay(
+                    pending_req, relay_service, sub_path)):
+            return
+
+        def _open_stream():
+            label = f"vnc-http-{session_id[:8]}"
+            if session.get("local_screen"):
+                # Host-screen websockify runs on the user's machine, outside
+                # the relay container.  local=True routes localhost through
+                # the relay host helper, just like desktop_ws_open does.
+                return RelayHttpResponseStream.for_fetch(
+                    relay_service,
+                    url=f"http://127.0.0.1:{port}{proxied_path}",
+                    method="GET",
+                    headers=headers,
+                    body=b"",
+                    local=True,
+                    timeout=10,
+                    label=label,
+                ).start()
+            # Containerized desktop websockify is in the relay runtime's
+            # localhost namespace.
+            return RelayHttpResponseStream.for_local_port(
+                relay_service,
+                port=port,
+                method="GET",
+                req_path=proxied_path,
+                headers=headers,
+                body=b"",
+                timeout=10,
+                label=label,
+            ).start()
+
+        deadline = time.time() + 8
+        while True:
+            stream = _open_stream()
+            stream.wait_ready()
+            if not stream.error or time.time() >= deadline:
+                break
+            stream.discard()
+            time.sleep(0.2)
+
+        if stream.error:
+            detail = stream.error
+            stream.discard()
+            if (_is_novnc_static_path(sub_path)
+                    and _serve_novnc_local(pending_req, sub_path)):
+                return
+            pending_req.complete(502, {"Content-Type": "application/json"},
+                                 json.dumps({"error": detail}).encode())
+            return
+
+        status = int(stream.status)
+        body = b"".join(stream.iter_bytes())
+        if status >= 400 and _is_novnc_static_path(sub_path):
+            if _serve_novnc_local(pending_req, sub_path):
+                return
+
+        body = _patch_novnc_static_body(sub_path, body)
+        response_headers = dict(stream.headers)
+        content_type = next((
+            value for key, value in response_headers.items()
+            if key.lower() == "content-type"
+        ), "application/octet-stream")
+        response_headers = {
+            key: value for key, value in response_headers.items()
+            if key.lower() != "content-type"
+        }
+        response_headers["Content-Type"] = content_type
+        response_headers.update({
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+        })
+        if getattr(pending_req, "method", "GET") == "HEAD":
+            body = b""
+        pending_req.complete(status, response_headers, body)
+    except Exception as exc:
+        logger.warning("VNC relay HTTP error for %s (relay=%s port=%d): %s",
+                       session_id, relay_id, port, exc)
+        pending_req.complete(502, {"Content-Type": "application/json"},
+                             json.dumps({"error": str(exc)}).encode())
+
+
 def vnc_http_proxy(pending_req):
     """HTTP proxy callback for noVNC static files.
 
@@ -708,13 +843,16 @@ def vnc_http_proxy(pending_req):
             err["status"], err["headers"], err["body"].encode("utf-8"))
         return
 
+    with _lock:
+        session = _sessions.get(session_id)
     host, port = _get_vnc_target(session_id)
     if not port:
         pending_req.complete(404, {"Content-Type": "application/json"},
                              b'{"error": "Unknown VNC session"}')
         return
 
-    if _is_novnc_static_path(sub_path) and _serve_novnc_local(pending_req, sub_path):
+    if session and session.get("relay_service") is not None:
+        _vnc_http_relay_proxy(pending_req, session_id, session, sub_path)
         return
 
     # Proxy to backend (Docker container or local relay)

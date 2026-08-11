@@ -534,6 +534,23 @@ class _RelayConnMixin:
             except Exception as e:
                 logger.debug('desktop_ws_close dispatch failed: %s', e,
                              exc_info=True)
+        elif mtype == 'desktop_audio_data':
+            try:
+                from services.audio_proxy import dispatch_audio_data
+                dispatch_audio_data(service._service_id,
+                                    msg.get('session_id', ''),
+                                    msg.get('data', ''))
+            except Exception as e:
+                logger.debug('desktop_audio_data dispatch failed: %s', e,
+                             exc_info=True)
+        elif mtype == 'desktop_audio_close':
+            try:
+                from services.audio_proxy import dispatch_audio_close
+                dispatch_audio_close(service._service_id,
+                                     msg.get('session_id', ''))
+            except Exception as e:
+                logger.debug('desktop_audio_close dispatch failed: %s', e,
+                             exc_info=True)
         elif mtype == 'ping':
             async with send_lock:
                 await _ws_send_frame(

@@ -32,6 +32,17 @@ The browser opens a noVNC session connected through PawFlow's VNC proxy. For a
 remote relay, the proxy carries VNC WebSocket frames over the relay's existing
 outbound authenticated connection; the PawFlow server never needs direct TCP
 reachability to the relay host or its dynamic noVNC port.
+The noVNC HTTP assets and framed Opus desktop audio use that same outbound
+connection. For a remote local-screen session, PawFlow reads the UI assets from
+the relay runtime's bundled noVNC tree and sends them through the relay; the host
+helper only runs the VNC server and WebSocket bridge. Windows therefore does not
+need a separate noVNC installation. Server-managed desktops remain on their
+direct Docker host/port path; the relay tunnel is selected only for remote relay
+sessions.
+The HTTP proxy normalizes response-header names case-insensitively so
+websockify's `Content-type` value is preserved as the single canonical
+`Content-Type`; HTML and JavaScript assets therefore render instead of being
+treated as downloads.
 
 ## Runtime Supervision
 
@@ -115,6 +126,10 @@ Related implementation:
 - `tools/screen_actions.py`
 
 ## Audio Notes
+
+Remote desktop audio is packetized at the relay and forwarded over the
+authenticated relay WebSocket. A server-managed relay instead keeps the direct
+TCP audio path to its published Docker port.
 
 Docker desktop audio can be affected by host clock drift, especially on WSL2. If audio plays too fast or too slow relative to video, install and run `chrony` in the WSL2 distro so the Linux clock stays synced with the Windows host.
 

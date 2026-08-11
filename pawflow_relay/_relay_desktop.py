@@ -26,6 +26,7 @@ Frame shapes (unchanged):
 import base64
 import json
 import logging
+import mimetypes
 import os
 import socket
 import subprocess  # nosec B404
@@ -36,6 +37,41 @@ from pathlib import Path
 from pawflow_relay._relay_ws_proto import encode_masked_frame, read_ws_frame
 
 _log = logging.getLogger(__name__)
+
+
+def novnc_asset(msg):
+    """Return one noVNC UI asset shipped in the relay runtime."""
+    raw_path = str(msg.get("path") or "").replace("\\", "/")
+    parts = Path(raw_path).parts
+    allowed = (
+        raw_path in {"vnc.html", "vnc_lite.html"}
+        or raw_path.startswith(("app/", "core/", "vendor/", "include/"))
+    )
+    if (not raw_path or raw_path.startswith("/") or ".." in parts
+            or not allowed):
+        return {"ok": False, "error": "Invalid noVNC asset path"}
+
+    roots = [
+        os.environ.get("PAWFLOW_NOVNC_WEB", ""),
+        "/usr/share/novnc",
+        "/usr/local/share/novnc",
+    ]
+    for root in roots:
+        if not root:
+            continue
+        base = Path(root).resolve()
+        candidate = (base / raw_path).resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            content_type = mimetypes.guess_type(candidate.name)[0]
+            return {"ok": True, "data": {
+                "body": base64.b64encode(candidate.read_bytes()).decode("ascii"),
+                "content_type": content_type or "application/octet-stream",
+            }}
+    return {"ok": False, "error": "noVNC asset not found in relay runtime"}
 
 
 def desktop_ws_open(state, msg, send_frame):
@@ -158,6 +194,103 @@ def desktop_ws_close(state, msg):
             _ws_sess["sock"].close()
         except Exception:
             _log.debug("Ignored exception", exc_info=True)
+    return {"ok": True}
+
+
+def _audio_recv_exact(sock, size, stop):
+    data = b""
+    while len(data) < size and not stop.is_set():
+        try:
+            chunk = sock.recv(size - len(data))
+        except socket.timeout:
+            continue
+        if not chunk:
+            return b""
+        data += chunk
+    return data if len(data) == size else b""
+
+
+def audio_stream_open(state, msg, send_frame):
+    """Stream framed Opus packets from desktop audio over the relay WS."""
+    session_id = msg.get("session_id", "")
+    port = int(msg.get("port") or 0)
+    host = "127.0.0.1"
+    if msg.get("local_screen"):
+        host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
+        if host_helper:
+            host = host_helper.rsplit(":", 1)[0] or host
+    if not session_id or not port:
+        return {"ok": False, "error": "Missing session_id or port"}
+
+    audio_stream_close(state, {"session_id": session_id})
+    try:
+        backend = socket.create_connection((host, port), timeout=10)
+        backend.settimeout(1.0)
+        stop = threading.Event()
+        entry = {"sock": backend, "stop": stop}
+        state.desktop_audio_sessions[session_id] = entry
+
+        def _reader():
+            try:
+                while not stop.is_set():
+                    header = _audio_recv_exact(backend, 2, stop)
+                    if not header:
+                        break
+                    packet_size = int.from_bytes(header, "big")
+                    if not packet_size:
+                        continue
+                    packet = _audio_recv_exact(backend, packet_size, stop)
+                    if not packet:
+                        break
+                    send_frame(json.dumps({
+                        "type": "desktop_audio_data",
+                        "session_id": session_id,
+                        "data": base64.b64encode(packet).decode("ascii"),
+                    }).encode("utf-8"))
+            except Exception:
+                _log.debug("Desktop audio relay reader failed", exc_info=True)
+            finally:
+                current = state.desktop_audio_sessions.get(session_id)
+                if current is entry:
+                    state.desktop_audio_sessions.pop(session_id, None)
+                try:
+                    backend.close()
+                except Exception:
+                    _log.debug("Ignored exception", exc_info=True)
+                try:
+                    send_frame(json.dumps({
+                        "type": "desktop_audio_close",
+                        "session_id": session_id,
+                    }).encode("utf-8"))
+                except Exception:
+                    _log.debug("Ignored exception", exc_info=True)
+
+        reader = threading.Thread(
+            target=_reader, daemon=True,
+            name=f"desktop-audio-{session_id[:12]}")
+        entry["reader"] = reader
+        reader.start()
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": f"audio_stream_open error: {exc}"}
+
+
+def audio_stream_close(state, msg):
+    """Close one relay-side desktop audio stream."""
+    session_id = msg.get("session_id", "")
+    entry = state.desktop_audio_sessions.pop(session_id, None)
+    if entry:
+        entry["stop"].set()
+        backend = entry.get("sock")
+        if backend:
+            try:
+                backend.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                _log.debug("Ignored exception", exc_info=True)
+            try:
+                backend.close()
+            except Exception:
+                _log.debug("Ignored exception", exc_info=True)
     return {"ok": True}
 
 

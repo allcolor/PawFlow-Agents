@@ -63,6 +63,23 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
             _session_prefix = "local_desktop" if local_screen else "desktop"
             _local_kwargs = {"local": True} if _server_local else {}
 
+            def _register_desktop_audio(session_id, host, port, login_sid,
+                                        *, direct, host_screen=False):
+                from services.audio_proxy import register_audio_source
+                kwargs = {
+                    "owner_user_id": user_id,
+                    "login_session_id": login_sid,
+                }
+                if not direct:
+                    kwargs.update(
+                        relay_service=svc,
+                        relay_id=relay_id,
+                        local_screen=bool(host_screen),
+                    )
+                    host = ""
+                return register_audio_source(
+                    session_id, host, port, **kwargs)
+
             # Check if already running (idempotent)
             status = svc._request("desktop_status", **_local_kwargs)
             logger.info("[open_desktop] desktop_status for %s: %s (key=%s)", relay_id, status, _action_status_key)
@@ -109,14 +126,13 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
                         try:
-                            from services.audio_proxy import register_audio_source
                             _audio_port = status.get(
                                 "audio_port" if _server_local
                                 else "local_screen_audio_port")
                             if _audio_port:
-                                _audio_token = register_audio_source(_sid, _relay_addr, _audio_port,
-                                                                     owner_user_id=user_id,
-                                                                     login_session_id=_login_sid)
+                                _audio_token = _register_desktop_audio(
+                                    _sid, _relay_addr, _audio_port, _login_sid,
+                                    direct=_server_local, host_screen=True)
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         flowfile.set_content(json.dumps({
@@ -164,15 +180,15 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
                         # Re-register audio for already-running desktop
                         _audio_token = ""  # nosec B105
                         try:
-                            from services.audio_proxy import register_audio_source
                             _audio_host, _audio_port = _server_relay_proxy_target(relay_id, 6180)
+                            _direct_audio = bool(_audio_port)
                             if not _audio_port and status.get("audio_port"):
                                 _audio_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
                                 _audio_port = status.get("audio_port")
                             if _audio_port:
-                                _audio_token = register_audio_source(_sid, _audio_host, _audio_port,
-                                                                     owner_user_id=user_id,
-                                                                     login_session_id=_login_sid)
+                                _audio_token = _register_desktop_audio(
+                                    _sid, _audio_host, _audio_port, _login_sid,
+                                    direct=_direct_audio)
                         except Exception:
                             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
                         flowfile.set_content(json.dumps({
@@ -245,23 +261,23 @@ def _handle_sf_k7(self, action, body, store, user_id, flowfile, _helpers):
             # Register audio source if available
             _audio_token = ""  # nosec B105
             try:
-                from services.audio_proxy import register_audio_source
                 if local_screen:
                     # Local relay: audio_capture runs on relay host
                     _audio_port = result.get("audio_port") if isinstance(result, dict) else None
                     if _audio_port:
-                        _audio_token = register_audio_source(session_id, _relay_addr, _audio_port,
-                                                             owner_user_id=user_id,
-                                                             login_session_id=_login_sid)
+                        _audio_token = _register_desktop_audio(
+                            session_id, _relay_addr, _audio_port, _login_sid,
+                            direct=_server_local, host_screen=True)
                 else:
                     _audio_host, _audio_port = _server_relay_proxy_target(relay_id, 6180)
+                    _direct_audio = bool(_audio_port)
                     if not _audio_port and isinstance(result, dict) and result.get("audio_port"):
                         _audio_host = getattr(svc, '_relay_addr', None) or '127.0.0.1'
                         _audio_port = result.get("audio_port")
                     if _audio_port:
-                        _audio_token = register_audio_source(session_id, _audio_host, _audio_port,
-                                                             owner_user_id=user_id,
-                                                             login_session_id=_login_sid)
+                        _audio_token = _register_desktop_audio(
+                            session_id, _audio_host, _audio_port, _login_sid,
+                            direct=_direct_audio)
             except Exception as _ae:
                 logger.debug("[open_desktop] Audio registration skipped: %s", _ae)
 

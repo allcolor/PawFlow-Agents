@@ -6,6 +6,7 @@ the health/cleanup/watchdog helpers are unit-tested with fake processes.
 State is a SimpleNamespace carrying the desktop_* fields the functions
 touch.
 """
+import base64
 import types
 
 
@@ -45,6 +46,30 @@ class FakeProc:
 
 def test_novnc_http_ready_false_without_port():
     assert dt.novnc_http_ready(_state(), port=0) is False
+
+
+def test_novnc_asset_reads_relay_runtime(monkeypatch, tmp_path):
+    root = tmp_path / "novnc"
+    (root / "app").mkdir(parents=True)
+    (root / "vnc.html").write_text("<html>relay UI</html>", encoding="utf-8")
+    (root / "app" / "ui.js").write_text("export default {};", encoding="utf-8")
+    monkeypatch.setenv("PAWFLOW_NOVNC_WEB", str(root))
+
+    html = dt.novnc_asset({"path": "vnc.html"})
+    assert html["ok"] is True
+    assert base64.b64decode(html["data"]["body"]) == b"<html>relay UI</html>"
+    assert html["data"]["content_type"] == "text/html"
+
+    js = dt.novnc_asset({"path": "app/ui.js"})
+    assert js["ok"] is True
+    assert js["data"]["content_type"] in {
+        "text/javascript", "application/javascript"}
+
+
+def test_novnc_asset_rejects_non_ui_and_traversal_paths(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAWFLOW_NOVNC_WEB", str(tmp_path))
+    assert dt.novnc_asset({"path": "../../etc/passwd"})["ok"] is False
+    assert dt.novnc_asset({"path": "secrets.txt"})["ok"] is False
 
 
 def test_desktop_is_healthy(monkeypatch):

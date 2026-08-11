@@ -4,6 +4,7 @@ Backend protocol (TCP): 2-byte big-endian length + Opus payload.
 Browser protocol (WebSocket): binary frames containing raw Opus packets.
 """
 
+import base64
 import logging
 import select
 import socket
@@ -11,22 +12,27 @@ import struct
 import collections
 import threading
 import time
+import uuid
 from typing import Dict, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
-_audio_sources: Dict[str, Tuple[str, int]] = {}
+_audio_sources: Dict[str, dict] = {}
 _audio_tokens: Dict[str, str] = {}
 _audio_lock = threading.Lock()
 # Active proxy sessions: session_id -> [(stop_event, backend_socket), ...]
 _active_proxies: Dict[str, list] = {}
+_active_relay_proxies: Dict[str, list] = {}
 
 
 def register_audio_source(session_id: str, host: str, port: int,
                           *, owner_user_id: str = "",
                           conversation_id: str = "",
                           login_session_id: str = "",
-                          ttl_seconds: int = 86400) -> str:
+                          ttl_seconds: int = 86400,
+                          relay_service=None,
+                          relay_id: str = "",
+                          local_screen: bool = False) -> str:
     """Register an audio source and mint its capability token.
 
     Returns the token (URL-safe). Caller embeds it in the WS URL
@@ -48,10 +54,22 @@ def register_audio_source(session_id: str, host: str, port: int,
     # Kill any stale proxies from a previous session with the same ID
     with _audio_lock:
         old_proxies = _active_proxies.pop(session_id, [])
-        _audio_sources[session_id] = (host, port)
+        old_relay_proxies = _active_relay_proxies.pop(session_id, [])
+        _audio_sources[session_id] = {
+            "host": host,
+            "port": port,
+            "relay_service": relay_service,
+            "relay_id": relay_id,
+            "local_screen": bool(local_screen),
+        }
         _audio_tokens[session_id] = token
     _kill_proxies(old_proxies)
-    logger.info("Audio proxy: registered %s -> %s:%d", session_id, host, port)
+    _kill_relay_proxies(old_relay_proxies)
+    if relay_service is not None:
+        logger.info("Audio proxy: registered %s through relay %s port %d",
+                    session_id, relay_id, port)
+    else:
+        logger.info("Audio proxy: registered %s -> %s:%d", session_id, host, port)
     return token
 
 
@@ -67,7 +85,9 @@ def unregister_audio_source(session_id: str):
         _audio_sources.pop(session_id, None)
         _audio_tokens.pop(session_id, None)
         proxies = _active_proxies.pop(session_id, [])
+        relay_proxies = _active_relay_proxies.pop(session_id, [])
     _kill_proxies(proxies)
+    _kill_relay_proxies(relay_proxies)
     try:
         from core.capability_routes import revoke_route_tokens
         revoke_route_tokens(session_id)
@@ -79,7 +99,9 @@ def kill_audio_proxies(session_id: str):
     """Kill all active audio proxy threads for a session."""
     with _audio_lock:
         proxies = _active_proxies.pop(session_id, [])
+        relay_proxies = _active_relay_proxies.pop(session_id, [])
     _kill_proxies(proxies)
+    _kill_relay_proxies(relay_proxies)
 
 
 def _kill_proxies(proxies):
@@ -97,9 +119,34 @@ def _kill_proxies(proxies):
         logger.info("Audio proxy: killed %d active proxy(ies)", len(proxies))
 
 
+def _kill_relay_proxies(proxies):
+    if not proxies:
+        return
+    from services.vnc_proxy import _send_command_to_relay
+    for proxy in proxies:
+        proxy["stop"].set()
+        _send_command_to_relay(proxy["relay_service"], {
+            "action": "desktop_audio_close",
+            "session_id": proxy["relay_session_id"],
+        })
+        try:
+            proxy["browser_sock"].close()
+        except Exception:
+            logger.debug("Ignored exception", exc_info=True)
+    logger.info("Audio proxy: killed %d active relay proxy(ies)", len(proxies))
+
+
 def _get_audio_target(session_id: str) -> Tuple[str, int]:
     with _audio_lock:
-        return _audio_sources.get(session_id, ("", 0))
+        source = _audio_sources.get(session_id)
+    if not source:
+        return ("", 0)
+    return (source.get("host", ""), source.get("port", 0))
+
+
+def _get_audio_source(session_id: str) -> Optional[dict]:
+    with _audio_lock:
+        return _audio_sources.get(session_id)
 
 
 def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
@@ -126,11 +173,130 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         return
 
+    source = _get_audio_source(session_id)
+    if source and source.get("relay_service") is not None:
+        _audio_ws_relay_proxy(client_sock, session_id, source)
+        return
+
     target_host, target_port = _get_audio_target(session_id)
     if not target_port:
         _ws_close(client_sock, 4001, "No audio source")
         return
+    _audio_ws_direct_proxy(client_sock, session_id, target_host, target_port)
 
+
+def _audio_ws_relay_proxy(client_sock, session_id: str, source: dict):
+    """Stream desktop audio packets through an outbound relay connection."""
+    relay_service = source["relay_service"]
+    relay_id = source.get("relay_id", "")
+    relay_session_id = uuid.uuid4().hex[:12]
+    stop = threading.Event()
+    proxy = {
+        "relay_service": relay_service,
+        "relay_id": relay_id,
+        "relay_session_id": relay_session_id,
+        "browser_sock": client_sock,
+        "stop": stop,
+    }
+    with _audio_lock:
+        if _audio_sources.get(session_id) is not source:
+            _ws_close(client_sock, 4001, "No audio source")
+            return
+        _active_relay_proxies.setdefault(session_id, []).append(proxy)
+
+    try:
+        result = relay_service._request(
+            "desktop_audio_open",
+            session_id=relay_session_id,
+            port=int(source.get("port") or 0),
+            local_screen=bool(source.get("local_screen")),
+        )
+        if not isinstance(result, dict) or not result.get("ok"):
+            detail = (result.get("error", "Unknown")
+                      if isinstance(result, dict) else str(result))
+            _ws_close(client_sock, 4002, f"Failed: {detail}")
+            return
+
+        logger.info("Audio relay tunnel connected: relay=%s session=%s port=%d",
+                    relay_id, relay_session_id, source.get("port", 0))
+        client_sock.settimeout(1.0)
+        while not stop.is_set():
+            try:
+                data = client_sock.recv(4096)
+                if not data:
+                    break
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+    except Exception as exc:
+        logger.warning("Audio relay tunnel open failed for %s: %s", relay_id, exc)
+        _ws_close(client_sock, 4002, f"Failed: {exc}")
+    finally:
+        from services.vnc_proxy import _send_command_to_relay
+        _send_command_to_relay(relay_service, {
+            "action": "desktop_audio_close",
+            "session_id": relay_session_id,
+        })
+        with _audio_lock:
+            entries = _active_relay_proxies.get(session_id, [])
+            if proxy in entries:
+                entries.remove(proxy)
+            if not entries:
+                _active_relay_proxies.pop(session_id, None)
+        try:
+            client_sock.close()
+        except Exception:
+            logger.debug("Ignored exception", exc_info=True)
+        logger.info("Audio relay tunnel disconnected: relay=%s session=%s",
+                    relay_id, relay_session_id)
+
+
+def dispatch_audio_data(relay_id: str, relay_session_id: str,
+                        data_b64: str) -> None:
+    """Forward one relay-side Opus packet to its browser WebSocket."""
+    with _audio_lock:
+        proxy = next((item for proxies in _active_relay_proxies.values()
+                      for item in proxies
+                      if item["relay_session_id"] == relay_session_id
+                      and item["relay_id"] == relay_id),
+                     None)
+    if not proxy:
+        logger.debug("desktop_audio_data: no browser for relay=%s session=%s",
+                     relay_id, relay_session_id)
+        return
+    try:
+        from services.vnc_proxy import _ws_build_frame
+        proxy["browser_sock"].sendall(
+            _ws_build_frame(base64.b64decode(data_b64), opcode=0x02))
+    except Exception as exc:
+        logger.warning("desktop_audio_data send failed: %s", exc)
+        proxy["stop"].set()
+
+
+def dispatch_audio_close(relay_id: str, relay_session_id: str) -> None:
+    """Close the browser audio socket when its relay-side stream ends."""
+    proxy = None
+    with _audio_lock:
+        for session_id, proxies in list(_active_relay_proxies.items()):
+            source = _audio_sources.get(session_id, {})
+            if source.get("relay_id") != relay_id:
+                continue
+            proxy = next((item for item in proxies
+                          if item["relay_session_id"] == relay_session_id), None)
+            if proxy:
+                proxies.remove(proxy)
+                if not proxies:
+                    _active_relay_proxies.pop(session_id, None)
+                break
+    if proxy:
+        proxy["stop"].set()
+        _ws_close(proxy["browser_sock"], 1000, "Audio backend closed")
+
+
+def _audio_ws_direct_proxy(client_sock, session_id: str,
+                           target_host: str, target_port: int) -> None:
+    """Preserve the direct TCP path used by server-managed desktops."""
     try:
         backend_sock = socket.create_connection((target_host, target_port), timeout=5)
         backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)

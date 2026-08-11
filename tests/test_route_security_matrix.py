@@ -282,6 +282,8 @@ def test_vnc_register_then_verify_owner(cap_db):
 
 
 def test_vnc_http_proxy_serves_novnc_static_locally(cap_db, tmp_path, monkeypatch):
+    import urllib.error
+
     from services import vnc_proxy
 
     base = tmp_path / "novnc"
@@ -291,10 +293,11 @@ def test_vnc_http_proxy_serves_novnc_static_locally(cap_db, tmp_path, monkeypatc
     (base / "app" / "sounds" / "bell.oga").write_bytes(b"ogg")
     monkeypatch.setattr(vnc_proxy, "_NOVNC_LOCAL_DIRS", [str(base)])
 
-    def _unexpected_urlopen(*args, **kwargs):
-        raise AssertionError("static noVNC assets should not hit the backend")
+    def _unavailable_backend(request, **kwargs):
+        raise urllib.error.HTTPError(
+            request.full_url, 405, "websockify has no web root", {}, None)
 
-    monkeypatch.setattr("urllib.request.urlopen", _unexpected_urlopen)
+    monkeypatch.setattr("urllib.request.urlopen", _unavailable_backend)
     tok = vnc_proxy.register_session(
         "vnc-static", 6080, owner_user_id="alice", login_session_id="login-1")
     req = _FakePendingReq(

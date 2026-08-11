@@ -35,9 +35,12 @@ from pawflow_relay._relay_codeserver import (
     cs_ws_close as _cs_ws_close,
 )
 from pawflow_relay._relay_desktop import (
+    novnc_asset as _dt_novnc_asset,
     desktop_ws_open as _dt_ws_open,
     desktop_ws_send as _dt_ws_send,
     desktop_ws_close as _dt_ws_close,
+    audio_stream_open as _dt_audio_open,
+    audio_stream_close as _dt_audio_close,
     start_desktop as _dt_start_desktop,
     stop_desktop as _dt_stop_desktop,
     desktop_status as _dt_desktop_status,
@@ -202,6 +205,10 @@ def _h_desktop_status(ctx, msg, on_output=None):
     return _dt_desktop_status(ctx.state)
 
 
+def _h_novnc_asset(ctx, msg, on_output=None):
+    return _dt_novnc_asset(msg)
+
+
 def _h_desktop_ws_open(ctx, msg, on_output=None):
     if not ctx.allow_exec:
         return _EXEC_DENIED
@@ -218,6 +225,20 @@ def _h_desktop_ws_send(ctx, msg, on_output=None):
 
 def _h_desktop_ws_close(ctx, msg, on_output=None):
     return _dt_ws_close(ctx.state, msg)
+
+
+def _h_audio_stream_open(ctx, msg, on_output=None):
+    if not ctx.allow_exec:
+        return _EXEC_DENIED
+
+    def _audio_send(_frame):
+        with ctx.send_lock:
+            ctx.ws_frame_send(ctx.ws_sock_ref[0], _frame)
+    return _dt_audio_open(ctx.state, msg, _audio_send)
+
+
+def _h_audio_stream_close(ctx, msg, on_output=None):
+    return _dt_audio_close(ctx.state, msg)
 
 
 def _h_script_hash(ctx, msg, on_output=None):
@@ -243,9 +264,12 @@ _DISPATCH = {
     "start_desktop": _h_start_desktop,
     "stop_desktop": _h_stop_desktop,
     "desktop_status": _h_desktop_status,
+    "novnc_asset": _h_novnc_asset,
     "desktop_ws_open": _h_desktop_ws_open,
     "desktop_ws_send": _h_desktop_ws_send,
     "desktop_ws_close": _h_desktop_ws_close,
+    "desktop_audio_open": _h_audio_stream_open,
+    "desktop_audio_close": _h_audio_stream_close,
     "script_hash": _h_script_hash,
     "update_scripts": _h_update_scripts,
 }

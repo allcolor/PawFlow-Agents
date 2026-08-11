@@ -1,12 +1,15 @@
 """Relay HTTP responses stay chunked and disk-backed end to end."""
 
 import base64
+import json
 import os
 import threading
+from types import SimpleNamespace
 
 import pytest
 
 from pawflow_relay import _relay_actions
+from pawflow_relay._relay_msg_loop import ConnSession
 from services._relay_http_response import RelayHttpResponseStream
 
 
@@ -56,6 +59,36 @@ def test_relay_http_proxy_reads_and_emits_bounded_chunks(monkeypatch):
     assert emitted[0][0] == "start"
     assert base64.b64decode(emitted[1][1]) == b"video-part"
     assert emitted[2] == ("end", None)
+
+
+def test_relay_message_loop_emits_http_response_frames():
+    sent = []
+    session = ConnSession.__new__(ConnSession)
+    session.send_lock = threading.Lock()
+    session.inflight_lock = threading.Lock()
+    session.inflight_cmds = {"req-http": {"action": "http_proxy"}}
+    session.socket_diag = {}
+
+    def execute_command(message, on_output=None):
+        assert message["action"] == "http_proxy"
+        assert on_output is not None
+        on_output("start", {"status": 200, "headers": {}})
+        on_output("chunk", base64.b64encode(b"vnc-html").decode("ascii"))
+        on_output("end", None)
+        return {"ok": True}
+
+    session.execute_command = execute_command
+    session._run_command(
+        {"action": "http_proxy"}, "req-http", SimpleNamespace(),
+        lambda _sock, frame: sent.append(frame))
+
+    messages = [json.loads(frame.decode("utf-8"))
+                for frame in sent]
+    assert [message["type"] for message in messages] == [
+        "http_response", "http_response", "http_response", "result"]
+    assert [message.get("kind") for message in messages[:3]] == [
+        "start", "chunk", "end"]
+    assert messages[1]["data"] == base64.b64encode(b"vnc-html").decode("ascii")
 
 
 def test_server_stream_spools_chunks_to_disk_and_removes_the_file():

@@ -19,7 +19,8 @@ from pawflow_relay import _relay_desktop as dt
 
 
 def _state():
-    return types.SimpleNamespace(desktop_ws_sessions={})
+    return types.SimpleNamespace(
+        desktop_ws_sessions={}, desktop_audio_sessions={})
 
 
 def _wait(predicate, timeout=5.0, interval=0.02):
@@ -199,3 +200,28 @@ def test_desktop_ws_close_removes_session(backend):
     assert dt.desktop_ws_close(st, {"session_id": "d1"}) == {"ok": True}
     assert "d1" not in st.desktop_ws_sessions
     assert dt.desktop_ws_close(st, {"session_id": "nope"}) == {"ok": True}
+
+
+def test_desktop_audio_stream_forwards_framed_opus_packet(monkeypatch):
+    relay_sock, backend_sock = socket.socketpair()
+    frames = []
+    state = _state()
+    monkeypatch.setattr(
+        dt.socket, "create_connection",
+        lambda address, timeout: relay_sock)
+
+    assert dt.audio_stream_open(
+        state, {"session_id": "audio-1", "port": 6180},
+        lambda frame: frames.append(json.loads(frame.decode("utf-8")))) == {
+            "ok": True}
+    packet = b"opus-packet"
+    backend_sock.sendall(len(packet).to_bytes(2, "big") + packet)
+
+    assert _wait(lambda: any(
+        frame.get("type") == "desktop_audio_data"
+        and base64.b64decode(frame["data"]) == packet
+        for frame in frames))
+    assert dt.audio_stream_close(
+        state, {"session_id": "audio-1"}) == {"ok": True}
+    assert "audio-1" not in state.desktop_audio_sessions
+    backend_sock.close()

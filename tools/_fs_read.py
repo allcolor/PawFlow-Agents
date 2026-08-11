@@ -4,11 +4,19 @@ fs_actions.py (list/read/pdf/notebook/stat/exists/search/write/chunked).
 import base64
 import json
 import logging
+import os
+import shutil
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
-from _fs_paths import MAX_FILE_SIZE, _expand_glob_braces, _rel
+from _fs_paths import (
+    MAX_FILE_SIZE,
+    _expand_glob_braces,
+    _rel,
+    _resolve_tool_path,
+)
 
 
 def action_list_dir(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
@@ -376,6 +384,34 @@ def action_project_init(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 # ── Chunked read/write (for large files) ─────────────────────────
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB per chunk
+
+
+def action_copy_file(root_dir: str, path: str,
+                     req: Dict[str, Any]) -> Any:
+    """Copy a file on one relay surface without routing bytes via the server."""
+    source = Path(path)
+    if not source.is_file():
+        raise FileNotFoundError(f"Source file not found: {req.get('path', path)}")
+    raw_dest = str(req.get("dest_path") or "")
+    if not raw_dest:
+        raise ValueError("dest_path is required")
+    target = _resolve_tool_path(
+        root_dir, raw_dest,
+        allow_host_absolute=bool(req.get("local")))
+    if source.resolve() == target:
+        return {"path": _rel(str(target), root_dir), "size": source.stat().st_size}
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(
+        f".{target.name}.pawflow-copy-{uuid.uuid4().hex}.part")
+    try:
+        with source.open("rb") as inp, temporary.open("wb") as out:
+            shutil.copyfileobj(inp, out, length=4 * 1024 * 1024)
+        size = temporary.stat().st_size
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"path": _rel(str(target), root_dir), "size": size}
 
 
 def action_read_file_chunked(root_dir: str, path: str, req: Dict[str, Any]) -> Any:

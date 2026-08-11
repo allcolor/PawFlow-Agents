@@ -28,7 +28,20 @@ def _screen_action_child(action: str) -> int:
     return 0
 
 
+def _windows_terminal_backend_check() -> int:
+    """Verify that the packaged Windows host-terminal backend is importable."""
+    from winpty import PtyProcess
+
+    sys.stdout.write(json.dumps({
+        "ok": True,
+        "backend": PtyProcess.__name__,
+    }))
+    return 0
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "__pawflow_screen_action_child__":
         raise SystemExit(_screen_action_child(sys.argv[2]))
+    if len(sys.argv) > 1 and sys.argv[1] == "__pawflow_winpty_check__":
+        raise SystemExit(_windows_terminal_backend_check())
     raise SystemExit(main() or 0)

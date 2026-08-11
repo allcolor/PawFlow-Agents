@@ -196,6 +196,10 @@ def test_filestore_list_hides_transient_stt_and_tts(tmp_path):
 
 def test_fs_read_file_resolves_filesystem_service(monkeypatch):
     class DummyFs:
+        def stat(self, path):
+            assert path == "image.png"
+            return type("Entry", (), {"size": 9})()
+
         def read_file(self, path):
             assert path == "image.png"
             return b"png-bytes"

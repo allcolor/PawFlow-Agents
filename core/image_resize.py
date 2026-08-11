@@ -96,6 +96,52 @@ def resize_image_for_vision(data: bytes, mime: str = "",
     return out, "image/jpeg"
 
 
+def resize_image_path_for_vision(path, mime: str = "",
+                                 *, max_dim: int = MAX_DIM,
+                                 max_bytes: int = MAX_BYTES) -> tuple[bytes, str]:
+    """Decode an image from disk and return a bounded vision payload.
+
+    Large source files are never read wholesale before decoding.  The original
+    bytes are read only when the file already fits ``max_bytes``; otherwise
+    Pillow re-encodes the decoded image directly into the bounded output.
+    """
+    source = Path(path)
+    size = source.stat().st_size
+    try:
+        from PIL import Image
+    except ImportError:
+        if size > max_bytes:
+            raise ValueError("Pillow is required to process this large image")
+        return source.read_bytes(), mime
+
+    try:
+        with Image.open(source) as opened:
+            w, h = opened.size
+            if max(w, h) <= max_dim and size <= max_bytes:
+                return source.read_bytes(), mime
+            image = opened.copy()
+    except Exception as exc:
+        if size > max_bytes:
+            raise ValueError("Large image could not be decoded safely") from exc
+        return source.read_bytes(), mime
+
+    if max(w, h) > max_dim:
+        scale = max_dim / float(max(w, h))
+        if w >= h:
+            target = (max_dim, max(1, round(h * scale)))
+        else:
+            target = (max(1, round(w * scale)), max_dim)
+        image = image.resize(target, Image.LANCZOS)
+    if image.mode in ("RGBA", "P", "LA"):
+        image = image.convert("RGB")
+    output = io.BytesIO()
+    image.save(output, format="JPEG", quality=85)
+    data = output.getvalue()
+    logger.info("resized image path for vision: %dx%d (%d bytes) -> %dx%d (%d bytes)",
+                w, h, size, image.size[0], image.size[1], len(data))
+    return data, "image/jpeg"
+
+
 def write_vision_image(out_dir, stem: str, data: bytes, *, mime: str = "",
                        filename: str = "") -> str:
     """Downscale ``data`` and write it as ``<stem><suffix>`` under ``out_dir``.

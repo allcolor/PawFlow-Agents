@@ -237,6 +237,14 @@ jobs:
           if ($status.mode -ne 'pawflow') {
             throw "Unexpected packaged relay screen mode: $($status.mode)"
           }
+          $ptyRaw = & $binary __pawflow_winpty_check__
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged relay winpty check exited with code $LASTEXITCODE"
+          }
+          $ptyStatus = $ptyRaw | ConvertFrom-Json
+          if (-not $ptyStatus.ok -or $ptyStatus.backend -ne 'PtyProcess') {
+            throw "Packaged relay Windows terminal backend is unavailable"
+          }
 
       - uses: actions/upload-artifact@v7
         with:

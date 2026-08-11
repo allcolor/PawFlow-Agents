@@ -47,7 +47,7 @@ def test_read_uses_rtk_for_relay_text_output(monkeypatch):
     result = handler.execute({"source": "fs_test", "path": "README.md", "limit": 20})
 
     assert result == "compact read\n"
-    assert relay.native_calls[0][0] == "read_file"
+    assert relay.native_calls == []
     assert relay.commands[0][1] == "rtk read README.md --line-numbers --max-lines 20"
 
 

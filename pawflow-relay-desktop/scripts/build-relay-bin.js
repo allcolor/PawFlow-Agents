@@ -24,6 +24,7 @@ const runtimeToolHiddenImports = [
   'urllib.request',
   'uuid',
 ];
+const platformHiddenImports = process.platform === 'win32' ? ['winpty'] : [];
 
 function pythonCommand() {
   return process.env.PAWFLOW_RELAY_PYTHON || process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
@@ -79,6 +80,7 @@ run(pythonCommand(), [
   '--hidden-import', 'pawflow_relay.worker',
   '--hidden-import', 'pawflow_cli.auth',
   ...runtimeToolHiddenImports.flatMap((name) => ['--hidden-import', name]),
+  ...platformHiddenImports.flatMap((name) => ['--hidden-import', name]),
   entry,
 ], {
   env: {

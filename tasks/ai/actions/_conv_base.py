@@ -1,14 +1,18 @@
 """AgentLoopTask actions — conversation"""
 
 import json
+import io
 import logging
+import os
 import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
 
 logger = logging.getLogger(__name__)
+_ARCHIVE_JSON_MAX_BYTES = 8 * 1024 * 1024
 
 
 # Sentinel: a cluster handler returns this when `action` is not one it owns,
@@ -105,11 +109,22 @@ def _zip_rel_path(name: str, prefix: str = "") -> Optional[Path]:
     return rel
 
 
+def _read_zip_member_bounded(zf, name: str,
+                             max_bytes: int = _ARCHIVE_JSON_MAX_BYTES) -> bytes:
+    """Read one JSON metadata member under an explicit memory ceiling."""
+    with zf.open(name) as source:
+        data = source.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(f"Archive metadata is too large: {name}")
+    return data
+
+
 def _archive_manifest(zf) -> Dict[str, Any]:
     if "manifest.json" not in zf.namelist():
         return {}
     try:
-        return json.loads(zf.read("manifest.json").decode("utf-8"))
+        return json.loads(
+            _read_zip_member_bounded(zf, "manifest.json").decode("utf-8"))
     except Exception:
         return {}
 
@@ -127,9 +142,11 @@ def _extract_conversation_members(zf, conv_dir: Path) -> None:
         dest = conv_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         if rel.suffix == ".jsonl":
-            text = zf.read(name).decode("utf-8", errors="replace")
-            SegmentedJsonl(dest).replace_lines(
-                line + "\n" for line in text.splitlines() if line.strip())
+            with zf.open(name) as source:
+                text = io.TextIOWrapper(source, encoding="utf-8", errors="replace")
+                SegmentedJsonl(dest).replace_lines(
+                    line if line.endswith("\n") else line + "\n"
+                    for line in text if line.strip())
             continue
         with zf.open(name) as src, dest.open("wb") as out:
             shutil.copyfileobj(src, out, length=1024 * 1024)
@@ -165,28 +182,43 @@ def _patch_conversation_files(conv_dir: Path, cid: str, user_id: str,
             continue
         if path.suffix == ".json":
             try:
+                if path.stat().st_size > _ARCHIVE_JSON_MAX_BYTES:
+                    raise ValueError("JSON metadata exceeds import size limit")
                 data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
                 logger.debug("Skipped non-JSON archive file %s: %s", path, exc)
             else:
                 patched = _patch_json_identity(data, cid, user_id, file_id_map)
                 path.write_text(json.dumps(patched, ensure_ascii=False, indent=2), encoding="utf-8")
         elif path.suffix == ".jsonl":
-            lines = []
             changed = False
-            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    lines.append(line)
-                    continue
-                patched = _patch_json_identity(row, cid, user_id, file_id_map)
-                lines.append(json.dumps(patched, ensure_ascii=False))
-                changed = True
-            if changed:
-                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            fd, temp_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", suffix=".part", dir=str(path.parent))
+            try:
+                with path.open("r", encoding="utf-8", errors="replace") as source, \
+                        os.fdopen(fd, "w", encoding="utf-8") as output:
+                    fd = -1
+                    for line in source:
+                        if not line.strip():
+                            continue
+                        try:
+                            row = json.loads(line)
+                        except json.JSONDecodeError:
+                            output.write(line if line.endswith("\n") else line + "\n")
+                            continue
+                        patched = _patch_json_identity(
+                            row, cid, user_id, file_id_map)
+                        output.write(json.dumps(
+                            patched, ensure_ascii=False) + "\n")
+                        changed = True
+                if changed:
+                    os.replace(temp_name, path)
+                else:
+                    Path(temp_name).unlink(missing_ok=True)
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                Path(temp_name).unlink(missing_ok=True)
 
 
 def _ensure_import_summarizer_binding(cid: str, user_id: str) -> Dict[str, str]:
@@ -269,7 +301,8 @@ def _restore_filestore_archive(zf, cid: str, user_id: str,
     import uuid as _uuid
     from core.file_store import FileStore
     try:
-        entries = json.loads(zf.read("filestore/index.json").decode("utf-8"))
+        entries = json.loads(_read_zip_member_bounded(
+            zf, "filestore/index.json").decode("utf-8"))
     except Exception as e:
         raise ValueError(f"Invalid FileStore index: {e}")
     if file_id_policy not in ("preserve", "remap", "preserve_or_remap"):

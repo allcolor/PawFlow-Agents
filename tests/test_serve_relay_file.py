@@ -5,6 +5,7 @@ Used by the chat UI to inline media stored on the user's relay
 """
 
 from unittest.mock import patch
+from types import SimpleNamespace
 
 
 from tasks import register_all_tasks
@@ -70,7 +71,10 @@ def test_file_not_found_returns_404():
     ff = _make_ff("relay1", "missing.png")
 
     class _Svc:
-        def read_file(self, path):
+        def iter_file_chunks(self, path):
+            yield b""
+
+        def stat(self, path):
             raise FileNotFoundError(path)
 
     with patch("tasks.io.serve_relay_file.find_fs_service", return_value=_Svc()):
@@ -83,7 +87,10 @@ def test_permission_denied_returns_403():
     ff = _make_ff("relay1", "secret.png")
 
     class _Svc:
-        def read_file(self, path):
+        def iter_file_chunks(self, path):
+            yield b""
+
+        def stat(self, path):
             raise PermissionError(path)
 
     with patch("tasks.io.serve_relay_file.find_fs_service", return_value=_Svc()):
@@ -97,9 +104,13 @@ def test_image_served_with_correct_content_type():
     payload = b"\x89PNG\r\n\x1a\nfake"
 
     class _Svc:
-        def read_file(self, path):
+        def stat(self, path):
             assert path == "assets/hero.png"
-            return payload
+            return SimpleNamespace(size=len(payload))
+
+        def iter_file_chunks(self, path):
+            assert path == "assets/hero.png"
+            yield payload
 
     with patch("tasks.io.serve_relay_file.find_fs_service", return_value=_Svc()):
         out = task.execute(ff)[0]
@@ -115,8 +126,13 @@ def test_audio_served_with_audio_mime():
     ff = _make_ff("relay1", "speech.mp3")
 
     class _Svc:
-        def read_file(self, path):
-            return b"ID3\x04\x00fake-mp3-bytes"
+        payload = b"ID3\x04\x00fake-mp3-bytes"
+
+        def stat(self, path):
+            return SimpleNamespace(size=len(self.payload))
+
+        def iter_file_chunks(self, path):
+            yield self.payload
 
     with patch("tasks.io.serve_relay_file.find_fs_service", return_value=_Svc()):
         out = task.execute(ff)[0]
@@ -129,8 +145,13 @@ def test_video_served_with_video_mime():
     ff = _make_ff("relay1", "clip.mp4")
 
     class _Svc:
-        def read_file(self, path):
-            return b"\x00\x00\x00\x18ftypmp42fake"
+        payload = b"\x00\x00\x00\x18ftypmp42fake"
+
+        def stat(self, path):
+            return SimpleNamespace(size=len(self.payload))
+
+        def iter_file_chunks(self, path):
+            yield self.payload
 
     with patch("tasks.io.serve_relay_file.find_fs_service", return_value=_Svc()):
         out = task.execute(ff)[0]
@@ -138,15 +159,26 @@ def test_video_served_with_video_mime():
     assert out.get_attribute("http.response.header.Content-Type") == "video/mp4"
 
 
-def test_string_payload_is_encoded():
+def test_large_payload_is_spilled_without_read_file(monkeypatch):
     task = _new_task()
-    ff = _make_ff("relay1", "note.txt")
+    ff = _make_ff("relay1", "large.bin")
+    payload = b"x" * 40
 
     class _Svc:
-        def read_file(self, path):
-            return "hello world"  # str, not bytes
+        def stat(self, path):
+            return SimpleNamespace(size=len(payload))
 
+        def iter_file_chunks(self, path):
+            yield payload[:17]
+            yield payload[17:]
+
+        def read_file(self, path):
+            raise AssertionError("whole-file reads are forbidden")
+
+    import core.stream as stream
+    monkeypatch.setattr(stream, "SPILL_THRESHOLD", 10)
     with patch("tasks.io.serve_relay_file.find_fs_service", return_value=_Svc()):
         out = task.execute(ff)[0]
     assert out.get_attribute("http.response.status") == "200"
-    assert out.get_content() == b"hello world"
+    assert out.is_content_on_disk
+    assert out.size() == len(payload)

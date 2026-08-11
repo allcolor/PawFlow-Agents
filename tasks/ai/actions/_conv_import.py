@@ -12,6 +12,7 @@ from tasks.ai.actions._conv_base import (
     _patch_conversation_files,
     _ensure_import_summarizer_binding,
     _restore_filestore_archive,
+    _read_zip_member_bounded,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,24 +51,24 @@ def _handle_conv_import(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.file_store import FileStore
         fs = FileStore.instance()
-        result = fs.get(file_id, user_id=user_id)
-        if result is None:
+        source_path = fs.get_disk_path(file_id, user_id=user_id)
+        if source_path is None:
             flowfile.set_content(json.dumps({"error": "Upload not found or expired"}).encode())
             return [flowfile]
-        _fname, raw, _ct = result
-        # Delete the uploaded file from FileStore — we copy raw to temp
-        fs.delete(file_id, user_id=user_id)
         temp_id = uuid.uuid4().hex[:16]
         temp_dir = Path(tempfile.gettempdir()) / f"pf_import_{temp_id}"
         temp_dir.mkdir(parents=True, exist_ok=True)
-        (temp_dir / "raw").write_bytes(raw)
+        raw_file = temp_dir / "raw"
+        import shutil
+        with source_path.open("rb") as source, raw_file.open("wb") as output:
+            shutil.copyfileobj(source, output, length=1024 * 1024)
+        fs.delete(file_id, user_id=user_id)
         agents_found = []
         message_count = 0
         if fmt == "pawflow":
             import zipfile
-            import io
             try:
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                with zipfile.ZipFile(raw_file) as zf:
                     names = zf.namelist()
                     transcript_name = "transcript.jsonl" if "transcript.jsonl" in names else "conversation/transcript.jsonl"
                     if transcript_name not in names:
@@ -75,20 +76,27 @@ def _handle_conv_import(self, action, body, store, user_id, flowfile):
                         return [flowfile]
                     manifest = _archive_manifest(zf)
                     # Count messages
-                    for line in zf.read(transcript_name).decode("utf-8", errors="replace").splitlines():
-                        if line.strip():
-                            message_count += 1
+                    import io
+                    with zf.open(transcript_name) as transcript_source:
+                        transcript = io.TextIOWrapper(
+                            transcript_source, encoding="utf-8", errors="replace")
+                        for line in transcript:
+                            if line.strip():
+                                message_count += 1
                     # Extract agents from extras.json
                     extras_name = "extras.json" if "extras.json" in names else "conversation/extras.json"
                     if extras_name in names:
-                        extras = json.loads(zf.read(extras_name))
+                        extras = json.loads(
+                            _read_zip_member_bounded(zf, extras_name))
                         conv_agents = extras.get("conv_agents", {})
                         for name, cfg in conv_agents.items():
                             agents_found.append({"name": name, "definition": cfg.get("definition", name)})
                     filestore_entries = []
                     if "filestore/index.json" in names:
                         try:
-                            filestore_entries = json.loads(zf.read("filestore/index.json").decode("utf-8"))
+                            filestore_entries = json.loads(
+                                _read_zip_member_bounded(
+                                    zf, "filestore/index.json").decode("utf-8"))
                         except Exception:
                             filestore_entries = []
                     bucket_count = len([
@@ -104,10 +112,10 @@ def _handle_conv_import(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": "Invalid zip file"}).encode())
                 return [flowfile]
         elif fmt == "claude_code":
-            text = raw.decode("utf-8", errors="replace")
-            for line in text.splitlines():
-                if line.strip():
-                    message_count += 1
+            with raw_file.open("r", encoding="utf-8", errors="replace") as source:
+                for line in source:
+                    if line.strip():
+                        message_count += 1
             agents_found = [{"name": "claude", "definition": "claude"}]
         flowfile.set_content(json.dumps({
             "ok": True, "temp_id": temp_id, "format": fmt,
@@ -168,16 +176,14 @@ def _handle_conv_import(self, action, body, store, user_id, flowfile):
         if not raw_file.exists():
             flowfile.set_content(json.dumps({"error": "Import data expired"}).encode())
             return [flowfile]
-        raw = raw_file.read_bytes()
         cid = _uuid.uuid4().hex[:16] + _uuid.uuid4().hex[:16]
         conv_dir = store._store_dir / store._safe_name(user_id) / store._safe_name(cid)
         conv_dir.mkdir(parents=True, exist_ok=True)
         if fmt == "pawflow":
             import zipfile
-            import io
             filestore_result = {"restored": 0, "bytes": 0, "file_id_map": {}}
             try:
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                with zipfile.ZipFile(raw_file) as zf:
                     _extract_conversation_members(zf, conv_dir)
                     filestore_result = _restore_filestore_archive(
                         zf, cid, user_id, restore_filestore, file_id_policy)
@@ -225,7 +231,6 @@ def _handle_conv_import(self, action, body, store, user_id, flowfile):
             # tool_result) are expanded into proper tool_call / tool
             # messages so the UI renders them like native PawFlow traces
             # instead of empty bubbles.
-            text = raw.decode("utf-8", errors="replace")
             transcript_lines = []
             import uuid as _u2
             import re as _re
@@ -281,7 +286,12 @@ def _handle_conv_import(self, action, body, store, user_id, flowfile):
                     return "\n".join(p for p in parts if p)
                 return json.dumps(c, ensure_ascii=False)
             base_ts = time.time() - 1.0
-            for idx, line in enumerate(text.splitlines()):
+            def _raw_lines():
+                with raw_file.open(
+                        "r", encoding="utf-8", errors="replace") as source:
+                    yield from source
+
+            for idx, line in enumerate(_raw_lines()):
                 line = line.strip()
                 if not line:
                     continue

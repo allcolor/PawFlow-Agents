@@ -15,9 +15,54 @@ import logging
 import threading
 import weakref
 from pathlib import Path
-from typing import Optional, BinaryIO, Dict
+from typing import Optional, BinaryIO, Dict, Iterable
 
 logger = logging.getLogger(__name__)
+
+
+class IterableBytesReader:
+    """Expose an iterable of byte chunks as a bounded ``read(size)`` stream.
+
+    The unbounded ``read()`` form is intentionally rejected: this adapter is
+    for streaming consumers and must never become a hidden whole-file join.
+    """
+
+    def __init__(self, chunks: Iterable[bytes]):
+        self._iterator = iter(chunks)
+        self._buffer = b""
+        self._finished = False
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            raise ValueError("IterableBytesReader requires a bounded read size")
+        if size == 0:
+            return b""
+        while len(self._buffer) < size and not self._finished:
+            try:
+                chunk = next(self._iterator)
+            except StopIteration:
+                self._finished = True
+                break
+            if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                raise TypeError("stream chunk must be bytes")
+            if chunk:
+                self._buffer += bytes(chunk)
+        result = self._buffer[:size]
+        self._buffer = self._buffer[size:]
+        return result
+
+    def close(self):
+        close = getattr(self._iterator, "close", None)
+        if callable(close):
+            close()
+        self._buffer = b""
+        self._finished = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
 
 # Default threshold: content larger than this spills to disk
 SPILL_THRESHOLD = 1 * 1024 * 1024  # 1 MB

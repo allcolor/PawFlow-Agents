@@ -1,15 +1,41 @@
-"""copy — Copy files between filesystem services, FileStore, and agent workdir."""
+"""copy — Stream files between filesystem services, FileStore, and workdirs."""
 
-import logging
 import mimetypes
 import os
-import re
 import shutil
-from typing import Any, Dict
+import tempfile
+import uuid
+from pathlib import Path
+from typing import Any, Dict, Iterator
 
 from core.handlers._fs_base import BaseFsHandler
 
-logger = logging.getLogger(__name__)
+
+_COPY_CHUNK_SIZE = 4 * 1024 * 1024
+
+
+def _iter_path(path: Path) -> Iterator[bytes]:
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(_COPY_CHUNK_SIZE)
+            if not chunk:
+                return
+            yield chunk
+
+
+def _copy_path_atomic(source: Path, target: Path) -> int:
+    """Copy one disk file with bounded memory and atomic publication."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(
+        f".{target.name}.pawflow-copy-{uuid.uuid4().hex}.part")
+    try:
+        with source.open("rb") as inp, temporary.open("wb") as out:
+            shutil.copyfileobj(inp, out, length=_COPY_CHUNK_SIZE)
+        size = temporary.stat().st_size
+        os.replace(temporary, target)
+        return size
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 class CopyHandler(BaseFsHandler):
@@ -22,13 +48,10 @@ class CopyHandler(BaseFsHandler):
     def description(self):
         return (
             "Copy a file between filesystem services and FileStore. "
+            "Transfers are streamed with bounded memory; copies within one "
+            "relay or host execute directly on that filesystem. "
             "source_service/dest_service: relay name, 'filestore', or omit "
-            "for default. Use this to UPLOAD into the FileStore from a relay "
-            "path — the read-only `/filestore` FUSE mount can't accept writes "
-            "directly (`cp ... /filestore/...` returns EROFS), so call `copy` "
-            "with `dest_service=\"filestore\"` instead. The new file_id is "
-            "returned in the result and the file becomes visible at "
-            "`/filestore/<conv_id>/<file_id>/<filename>` immediately afterwards."
+            "for default. Use this to upload into FileStore from a relay path."
         )
 
     @property
@@ -58,107 +81,130 @@ class CopyHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
-
-        source_path = arguments.get("source_path", "")
-        dest_path = arguments.get("dest_path", "") or source_path
+        source_path = str(arguments.get("source_path") or "")
+        dest_path = str(arguments.get("dest_path") or source_path)
         if not source_path:
             return "Error: 'source_path' is required"
 
-        src_svc_name = arguments.get("source_service", "")
-        dst_svc_name = arguments.get("dest_service", "")
-
-        # Resolve source
-        src_svc, src_workdir = self._resolve(src_svc_name)
-        # Resolve dest
-        dst_svc, dst_workdir = self._resolve(dst_svc_name)
-
+        src_name = str(arguments.get("source_service") or "")
+        dst_name = str(arguments.get("dest_service") or "")
+        src_svc, src_workdir = self._resolve(src_name)
+        dst_svc, dst_workdir = self._resolve(dst_name)
         if src_svc is None and src_workdir is None:
-            return self._no_target_error(src_svc_name)
+            return self._no_target_error(src_name)
         if dst_svc is None and dst_workdir is None:
-            return self._no_target_error(dst_svc_name)
+            return self._no_target_error(dst_name)
 
+        local = self._resolve_local(arguments)
         try:
-            _local = bool(arguments.get("local", False))
-            if dst_svc == "filestore" and src_svc is None and src_workdir:
-                full = self._sandbox_path(source_path, src_workdir)
-                if not os.path.exists(full):
-                    return f"Error: '{source_path}' not found in workspace"
-                fid = self._store_path_in_filestore(full, dest_path)
-                return f"Copied {os.path.basename(source_path)} to FileStore: {fid}"
+            if (src_svc not in (None, "filestore")
+                    and src_svc is dst_svc
+                    and hasattr(src_svc, "copy_file")):
+                result = src_svc.copy_file(
+                    source_path, dest_path, local=local)
+                size = int((result or {}).get("size", 0))
+                return self._success(source_path, dest_path, size)
 
-            if src_svc == "filestore" and dst_svc is None and dst_workdir:
-                src_disk = self._filestore_disk_path(source_path)
-                if isinstance(src_disk, str):
-                    return src_disk
-                full = self._sandbox_path(dest_path, dst_workdir)
-                os.makedirs(os.path.dirname(full), exist_ok=True)
-                with open(src_disk, "rb") as inp, open(full, "wb") as out:
-                    shutil.copyfileobj(inp, out, length=1024 * 1024)
-                return f"Copied {source_path} → {dest_path}"
+            source_disk = self._source_disk_path(
+                src_svc, src_workdir, source_path)
+            if isinstance(source_disk, str):
+                return source_disk
 
-            # Read from source
-            data = self._read_bytes(src_svc, src_workdir, source_path, local=_local)
-            if isinstance(data, str):
-                return data  # error message
+            if source_disk is not None:
+                return self._copy_from_disk(
+                    source_disk, dst_svc, dst_workdir, source_path,
+                    dest_path, local)
 
-            # Write to dest
-            self._write_bytes(dst_svc, dst_workdir, dest_path, data, local=_local)
-            fname = source_path.rsplit("/", 1)[-1] if "/" in source_path else source_path
-            return f"Copied {fname} ({len(data):,} bytes): {source_path} → {dest_path}"
-        except Exception as e:
-            return f"Error copying: {e}"
+            if not hasattr(src_svc, "copy_file_to_local"):
+                return (
+                    "Error copying: source filesystem does not support "
+                    "streaming downloads")
 
-    def _read_bytes(self, svc, workdir, path, local: bool = False):
-        """Read raw bytes from source."""
+            if dst_workdir:
+                target = Path(self._sandbox_path(dest_path, dst_workdir))
+                result = src_svc.copy_file_to_local(
+                    source_path, str(target), local=local)
+                return self._success(
+                    source_path, dest_path, int(result.get("written", 0)))
+
+            with tempfile.TemporaryDirectory(
+                    prefix="pawflow-copy-") as temporary:
+                staged = Path(temporary) / "payload"
+                result = src_svc.copy_file_to_local(
+                    source_path, str(staged), local=local)
+                written = int(result.get("written", staged.stat().st_size))
+                if dst_svc == "filestore":
+                    file_id = self._store_path_in_filestore(staged, dest_path)
+                    return (
+                        f"Copied {self._name(source_path)} ({written:,} bytes) "
+                        f"to FileStore: {file_id}")
+                self._stream_path_to_service(
+                    dst_svc, staged, dest_path, local)
+                return self._success(source_path, dest_path, written)
+        except Exception as exc:
+            return f"Error copying: {exc}"
+
+    def _source_disk_path(self, svc, workdir, path):
         if svc == "filestore":
-            disk_path = self._filestore_disk_path(path)
-            if isinstance(disk_path, str):
-                return disk_path
-            with open(disk_path, "rb") as f:
-                return f.read()
-
+            return self._filestore_disk_path(path)
         if workdir:
-            full = self._sandbox_path(path, workdir)
-            if not os.path.exists(full):
+            full = Path(self._sandbox_path(path, workdir))
+            if not full.is_file():
                 return f"Error: '{path}' not found in workspace"
-            with open(full, "rb") as f:
-                return f.read()
+            return full
+        return None
 
-        return svc.read_file(path, local=local)
+    def _copy_from_disk(self, source: Path, dst_svc, dst_workdir,
+                        source_path: str, dest_path: str,
+                        local: bool) -> str:
+        size = source.stat().st_size
+        if dst_svc == "filestore":
+            file_id = self._store_path_in_filestore(source, dest_path)
+            return (
+                f"Copied {self._name(source_path)} ({size:,} bytes) "
+                f"to FileStore: {file_id}")
+        if dst_workdir:
+            target = Path(self._sandbox_path(dest_path, dst_workdir))
+            size = _copy_path_atomic(source, target)
+        else:
+            self._stream_path_to_service(
+                dst_svc, source, dest_path, local)
+        return self._success(source_path, dest_path, size)
 
-    def _write_bytes(self, svc, workdir, path, data, local: bool = False):
-        """Write raw bytes to dest."""
-        if svc == "filestore":
-            from core.file_store import FileStore
-            fname = path.rsplit("/", 1)[-1] if "/" in path else path
-            mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
-            fid = FileStore.instance().store(
-                fname, data, mime,
-                user_id=self._user_id,
-                conversation_id=getattr(self, '_conversation_id', '') or '')
-            return fid
+    @staticmethod
+    def _stream_path_to_service(svc, source: Path, dest_path: str,
+                                local: bool) -> None:
+        writer = getattr(svc, "write_file_stream", None)
+        if not callable(writer):
+            raise RuntimeError(
+                "destination filesystem does not support streaming uploads")
+        writer(
+            dest_path, _iter_path(source),
+            expected_size=source.stat().st_size, local=local)
 
-        if workdir:
-            full = self._sandbox_path(path, workdir)
-            os.makedirs(os.path.dirname(full), exist_ok=True)
-            with open(full, "wb") as f:
-                f.write(data)
-            return path
+    @staticmethod
+    def _name(path: str) -> str:
+        return path.replace("\\", "/").rsplit("/", 1)[-1]
 
-        svc.write_file(path, data, local=local)
-        return path
+    @classmethod
+    def _success(cls, source_path: str, dest_path: str, size: int) -> str:
+        return (
+            f"Copied {cls._name(source_path)} ({size:,} bytes): "
+            f"{source_path} → {dest_path}")
 
-    def _store_path_in_filestore(self, source_path: str, dest_path: str) -> str:
+    def _store_path_in_filestore(self, source_path: Path,
+                                  dest_path: str) -> str:
         from core.file_store import FileStore
 
-        fname = dest_path.rsplit("/", 1)[-1] if "/" in dest_path else dest_path
-        mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+        filename = self._name(dest_path)
+        mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         return FileStore.instance().store_file(
-            fname, source_path, mime,
+            filename, str(source_path), mime,
             user_id=self._user_id,
-            conversation_id=getattr(self, '_conversation_id', '') or '')
+            conversation_id=self._conversation_id)
 
     def _filestore_disk_path(self, path):
+        import re
         from core.file_store import FileStore
 
         store = FileStore.instance()
@@ -171,4 +217,4 @@ class CopyHandler(BaseFsHandler):
                 disk_path = store.get_disk_path(found, user_id=self._user_id)
         if disk_path is None:
             return f"Error: '{file_id}' not found in FileStore"
-        return disk_path
+        return Path(disk_path)

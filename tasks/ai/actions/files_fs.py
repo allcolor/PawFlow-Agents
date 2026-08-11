@@ -1,6 +1,8 @@
 """AgentLoopTask actions — files fs"""
 
 import json
+_FS_UI_MAX_READ_BYTES = 4 * 1024 * 1024
+
 import logging
 
 
@@ -561,7 +563,13 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            data = _fs_svc.read_file(body.get("path", ""))
+            read_path = body.get("path", "")
+            entry = _fs_svc.stat(read_path)
+            if int(entry.size) > _FS_UI_MAX_READ_BYTES:
+                raise ValueError(
+                    "File is too large for the editor response; use copy or "
+                    "download it as a streamed file")
+            data = _fs_svc.read_file(read_path)
             # Try UTF-8, fallback to base64
             try:
                 text = data.decode("utf-8")
@@ -632,8 +640,9 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             new_path = body.get("new_path", "")
             if not old_path or not new_path:
                 raise ValueError("Missing old_path or new_path")
-            data = _fs_svc.read_file(old_path)
-            _fs_svc.write_file(new_path, data)
+            if not hasattr(_fs_svc, "copy_file"):
+                raise RuntimeError("Filesystem service does not support direct copies")
+            _fs_svc.copy_file(old_path, new_path)
             _fs_svc.delete_file(old_path)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
@@ -663,9 +672,27 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            data = src_svc.read_file(body.get("source_path", ""))
-            dst_svc.write_file(body.get("dest_path", ""), data)
-            flowfile.set_content(json.dumps({"ok": True, "size": len(data)}).encode())
+            import tempfile as _tmp_fsc
+            from pathlib import Path as _Path_fsc
+            source_path = body.get("source_path", "")
+            dest_path = body.get("dest_path", "")
+            if src_svc is dst_svc and hasattr(src_svc, "copy_file"):
+                result = src_svc.copy_file(source_path, dest_path) or {}
+                size = int(result.get("size", 0))
+            else:
+                if not hasattr(src_svc, "copy_file_to_local"):
+                    raise RuntimeError("Source service does not support streaming downloads")
+                if not hasattr(dst_svc, "write_file_stream"):
+                    raise RuntimeError("Destination service does not support streaming uploads")
+                with _tmp_fsc.TemporaryDirectory(prefix="pawflow-fs-copy-") as temporary:
+                    staged = _Path_fsc(temporary) / "payload"
+                    result = src_svc.copy_file_to_local(source_path, str(staged)) or {}
+                    size = int(result.get("written", staged.stat().st_size))
+                    with staged.open("rb") as source:
+                        chunks = iter(lambda: source.read(4 * 1024 * 1024), b"")
+                        dst_svc.write_file_stream(
+                            dest_path, chunks, expected_size=size)
+            flowfile.set_content(json.dumps({"ok": True, "size": size}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
@@ -684,14 +711,20 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
+            import tempfile as _tmp_fcs
+            from pathlib import Path as _Path_fcs
             fpath = body.get("path", "")
-            data = _fs_svc.read_file(fpath)
             fname = fpath.rsplit("/", 1)[-1] if "/" in fpath else fpath
             mime = _mt_fcs.guess_type(fname)[0] or "application/octet-stream"
             from core.file_store import FileStore
-            fid = FileStore.instance().store(fname, data, mime,
-                                              user_id=user_id, conversation_id=_conv_id)
-            flowfile.set_content(json.dumps({"ok": True, "file_id": fid, "url": f"/files/{fid}/{fname}", "filename": fname, "size": len(data)}).encode())
+            with _tmp_fcs.TemporaryDirectory(prefix="pawflow-fs-store-") as temporary:
+                staged = _Path_fcs(temporary) / "payload"
+                result = _fs_svc.copy_file_to_local(fpath, str(staged)) or {}
+                size = int(result.get("written", staged.stat().st_size))
+                fid = FileStore.instance().store_file(
+                    fname, str(staged), mime,
+                    user_id=user_id, conversation_id=_conv_id)
+            flowfile.set_content(json.dumps({"ok": True, "file_id": fid, "url": f"/files/{fid}/{fname}", "filename": fname, "size": size}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
@@ -724,27 +757,40 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
+            import shlex as _shlex_zip
+            import tempfile as _tmp_zip
+            import uuid as _uuid_zip
+            from pathlib import Path as _Path_zip
             dir_path = body.get("path", ".")
             # Sanitize dir_path for use as a filename
             _safe_name = dir_path.strip("/").replace("/", "_").replace("..", "") or "workspace"
             zip_name = f"{_safe_name}.zip"
-            tmp_zip = f"/tmp/pawflow_zip_{zip_name}"  # nosec B108 - relay-local zip scratch path.
+            tmp_zip = f"/tmp/pawflow_zip_{_uuid_zip.uuid4().hex}.zip"  # nosec B108
             # Build zip inside the relay via exec
-            zip_cmd = f"cd '{dir_path}' && zip -r '{tmp_zip}' . && cat '{tmp_zip}' | base64"
+            zip_cmd = (f"cd {_shlex_zip.quote(dir_path)} && "
+                       f"zip -r {_shlex_zip.quote(tmp_zip)} .")
             result = _fs_svc.exec(".", zip_cmd, 120)
             if result.get("returncode", 1) != 0:
                 raise RuntimeError(result.get("stderr", "zip failed"))
-            import base64 as _b64
-            zip_bytes = _b64.b64decode(result["stdout"].strip())
             from core.file_store import FileStore
-            fid = FileStore.instance().store(zip_name, zip_bytes, "application/zip",
-                                              user_id=user_id, conversation_id=_conv_id)
+            with _tmp_zip.TemporaryDirectory(prefix="pawflow-zip-store-") as temporary:
+                staged = _Path_zip(temporary) / zip_name
+                copied = _fs_svc.copy_file_to_local(tmp_zip, str(staged)) or {}
+                size = int(copied.get("written", staged.stat().st_size))
+                fid = FileStore.instance().store_file(
+                    zip_name, str(staged), "application/zip",
+                    user_id=user_id, conversation_id=_conv_id)
+            try:
+                _fs_svc.delete_file(tmp_zip)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "Failed to remove relay zip scratch file", exc_info=True)
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "file_id": fid,
                 "url": f"/files/{fid}/{zip_name}",
                 "filename": zip_name,
-                "size": len(zip_bytes),
+                "size": size,
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

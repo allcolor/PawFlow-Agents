@@ -649,6 +649,8 @@ Show git diff via the filesystem relay. Displays color-coded output.
 ```
 
 Open an xterm.js terminal tab connected to a PTY on the relay. Multiple terminals can be open simultaneously.
+Relay Desktop bundles the Windows PTY backend used by host-local terminals; no
+separate Python or `pywinpty` installation is required.
 
 ```
 /terminal              -- open on first relay

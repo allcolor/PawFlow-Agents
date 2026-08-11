@@ -359,28 +359,21 @@ class BaseFsHandler(ToolHandler):
         from core.file_store import FileStore
         store = FileStore.instance()
         file_id = self._filestore_id_from_path(path)
-        entry = store.get(file_id, user_id=self._user_id)
-        if not entry:
-            found = store.find_by_name(file_id)
+        disk_path = store.get_disk_path(file_id, user_id=self._user_id)
+        if disk_path is None:
+            found = store.find_by_name(file_id, user_id=self._user_id)
             if found:
-                entry = store.get(found, user_id=self._user_id)
-        if not entry:
+                file_id = found
+                disk_path = store.get_disk_path(
+                    file_id, user_id=self._user_id)
+        metadata = store.get_metadata(file_id) if disk_path else None
+        if disk_path is None or metadata is None:
             return f"Error: '{file_id}' not found in FileStore"
-        fname, data, ct = entry
-        if ct and ct.startswith("image/"):
-            import base64 as _b64
-            from core.image_resize import resize_image_for_vision
-            data, ct = resize_image_for_vision(data, ct)
-            b64 = _b64.b64encode(data).decode("ascii")
-            url = f"fs://filestore/{file_id}/{fname}"
-            return f"Image: {url}\n__image_data__:{ct}:{b64}"
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            return f"Binary file: {fname} ({len(data):,} bytes, {ct})"
-        if mode == "outline":
-            return self._format_outline_read(fname, text)
-        return self._format_text_read(fname, text, offset, limit)
+        fname = metadata["filename"]
+        return self._read_disk_path(
+            disk_path, path, fname, offset, limit, mode,
+            content_type=metadata.get("content_type", ""),
+            image_label=f"fs://filestore/{file_id}/{fname}")
 
     def _filestore_list(self) -> str:
         """List all files in server FileStore."""
@@ -412,17 +405,21 @@ class BaseFsHandler(ToolHandler):
     def _filestore_exists(self, path: str) -> str:
         from core.file_store import FileStore
         file_id = self._filestore_id_from_path(path)
-        entry = FileStore.instance().get(file_id, user_id=self._user_id)
-        return "true" if entry else "false"
+        disk_path = FileStore.instance().get_disk_path(
+            file_id, user_id=self._user_id)
+        return "true" if disk_path is not None else "false"
 
     def _filestore_stat(self, path: str) -> str:
         from core.file_store import FileStore
         file_id = self._filestore_id_from_path(path)
-        entry = FileStore.instance().get(file_id, user_id=self._user_id)
-        if not entry:
+        store = FileStore.instance()
+        disk_path = store.get_disk_path(file_id, user_id=self._user_id)
+        metadata = store.get_metadata(file_id) if disk_path else None
+        if not metadata:
             return f"Error: '{file_id}' not found in FileStore"
-        fname, data, ct = entry
-        return json.dumps({"name": fname, "size": len(data), "content_type": ct})
+        return json.dumps({
+            "name": metadata["filename"], "size": metadata["size"],
+            "content_type": metadata["content_type"]})
 
     # ── Workdir operations (local server filesystem) ──
 
@@ -434,29 +431,131 @@ class BaseFsHandler(ToolHandler):
             return f"Error: '{path}' not found in workspace"
         if os.path.isdir(full):
             return self._workdir_list(path)
-        with open(full, "rb") as f:
-            data = f.read()
         fname = os.path.basename(full)
-        # Track reads so failed edit retries can be cleared after a fresh view.
-        from core.handlers._edit_guard import track_read
-        track_read(self._user_id, self._conversation_id,
-                   self._agent_name, path, data)
+        return self._read_disk_path(full, path, fname, offset, limit, mode)
+
+    def _read_disk_path(self, full, display_path: str, fname: str,
+                        offset: int = 0, limit: int = 0,
+                        mode: str = "full", content_type: str = "",
+                        image_label: str = "") -> str:
+        """Read one local path with bounded memory and paginated text output."""
+        import hashlib
+        from pathlib import Path
+
+        source = Path(full)
+        size = source.stat().st_size
         _img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp")
-        if any(fname.lower().endswith(ext) for ext in _img_exts):
+        lower = fname.lower()
+        if content_type.startswith("image/") or any(
+                lower.endswith(ext) for ext in _img_exts):
             import base64 as _b64
             import mimetypes as _mimetypes
             mime = _mimetypes.guess_type(fname)[0] or "image/png"
-            from core.image_resize import resize_image_for_vision
-            data, mime = resize_image_for_vision(data, mime)
+            from core.image_resize import resize_image_path_for_vision
+            data, mime = resize_image_path_for_vision(source, mime)
             b64 = _b64.b64encode(data).decode("ascii")
-            return f"Image: {fname} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            return f"(binary file, {len(data)} bytes)"
+            label = image_label or fname
+            return f"Image: {label} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
+
+        _media_exts = (".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv",
+                       ".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac")
+        if any(lower.endswith(ext) for ext in _media_exts):
+            return f"Binary media file: {fname} ({size:,} bytes) — use see()"
+
         if mode == "outline":
+            max_outline = 4 * 1024 * 1024
+            with source.open("rb") as handle:
+                data = handle.read(max_outline + 1)
+            if len(data) > max_outline:
+                return (f"Error: '{fname}' is too large for outline mode "
+                        f"({size:,} bytes; max {max_outline:,})")
+            from core.handlers._edit_guard import track_read
+            track_read(self._user_id, self._conversation_id,
+                       self._agent_name, display_path, data)
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                return f"(binary file, {size} bytes)"
             return self._format_outline_read(fname, text)
-        return self._format_text_read(fname, text, offset, limit)
+
+        start = max(0, offset - 1) if offset > 0 else 0
+        wanted = max(1, limit or 2000)
+        end = start + wanted
+        max_output = self._tool_result_max_chars
+        selected = []
+        current = bytearray()
+        current_truncated = False
+        captured_bytes = 0
+        line_index = 0
+        total_chars = 0
+        digest = hashlib.sha256()
+        saw_nul = False
+
+        def consume(part: bytes, line_end: bool):
+            nonlocal current_truncated, line_index, total_chars, captured_bytes
+            total_chars += len(part) + (1 if line_end else 0)
+            if start <= line_index < end and captured_bytes < max_output:
+                remaining = max_output - captured_bytes
+                current.extend(part[:remaining])
+                captured_bytes += min(len(part), remaining)
+                if len(part) > remaining:
+                    current_truncated = True
+            elif start <= line_index < end and part:
+                current_truncated = True
+            if line_end:
+                if start <= line_index < end:
+                    text = current.decode("utf-8", errors="replace")
+                    if current_truncated:
+                        text += " [line truncated]"
+                    selected.append((line_index + 1, text))
+                current.clear()
+                current_truncated = False
+                line_index += 1
+
+        with source.open("rb") as handle:
+            while True:
+                chunk = handle.read(64 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                if line_index == 0 and b"\x00" in chunk[:4096]:
+                    saw_nul = True
+                parts = chunk.split(b"\n")
+                for index, part in enumerate(parts):
+                    consume(part, index < len(parts) - 1)
+        consume(b"", False)
+        if start <= line_index < end:
+            text = current.decode("utf-8", errors="replace")
+            if current_truncated:
+                text += " [line truncated]"
+            selected.append((line_index + 1, text))
+        total_lines = line_index + 1
+
+        from core.handlers._edit_guard import track_read_hash
+        track_read_hash(self._user_id, self._conversation_id,
+                        self._agent_name, display_path, digest.hexdigest())
+        if saw_nul:
+            return f"(binary file, {size} bytes)"
+
+        output = []
+        output_chars = 0
+        for number, text in selected:
+            rendered = f"{number:4d}\t{text}\n"
+            if output and output_chars + len(rendered) > max_output:
+                break
+            output.append(rendered)
+            output_chars += len(rendered)
+        page_end = output[-1].split("\t", 1)[0].strip() if output else str(start)
+        has_more = int(page_end or 0) < total_lines
+        header = f"[{fname}: {total_lines} lines, {total_chars:,} chars"
+        if start > 0 or has_more:
+            header += f", showing lines {start + 1}-{page_end}"
+        if has_more:
+            header += (f" — use offset={int(page_end or 0) + 1} to read next page"
+                       f" (MUST paginate, max {max_output} chars/page)")
+        header += "]"
+        body_budget = max(0, max_output - len(header) - 1)
+        return header + "\n" + "".join(output)[:body_budget]
 
     def _workdir_write(self, path: str, content: str) -> str:
         full = self._sandbox_path(path, self._workdir)

@@ -2,6 +2,8 @@
 
 import json
 import logging
+import tempfile
+from pathlib import Path
 from typing import Any, Dict
 
 from core.handlers._fs_base import BaseFsHandler
@@ -135,44 +137,41 @@ class ReadHandler(BaseFsHandler):
         if svc is None:
             return self._no_target_error(source)
 
-        # Service — delegate
+        # Service — select a bounded path before transferring any content.
+        fname = path.replace("\\", "/").rsplit("/", 1)[-1]
+        lower = fname.lower()
+        local = bool(arguments.get("local", False))
+        _img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp")
+        _vid_exts = (".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv")
+        _aud_exts = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac")
+
+        is_special = (any(lower.endswith(ext) for ext in
+                          _img_exts + _vid_exts + _aud_exts)
+                      or lower.endswith((".pdf", ".ipynb")))
+        if not is_special and mode != "outline" and offset <= 1:
+            rtk_args = ["rtk", "read", path, "--line-numbers"]
+            if limit:
+                rtk_args.extend(["--max-lines", str(limit)])
+            rtk_output = self._relay_exec_rtk(
+                svc, ".", rtk_args, arguments)
+            if rtk_output is not None:
+                return rtk_output
+
         try:
-            data = svc.read_file(path, local=bool(arguments.get("local", False)))
+            entry = svc.stat(path, local=local)
         except Exception as e:
             return f"Error reading '{path}': {e}"
 
-        # Track reads so failed edit retries can be cleared after a fresh view.
-        from core.handlers._edit_guard import track_read
-        track_read(self._user_id, self._conversation_id,
-                   self._agent_name, path,
-                   data if isinstance(data, (bytes, bytearray)) else b"")
-
-        fname = path.rsplit("/", 1)[-1] if "/" in path else path
-
-        # Images — same multimodal contract as see(). ToolRelayService turns
-        # this marker into native MCP image content for Claude Code.
-        _img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp")
-        if any(fname.lower().endswith(ext) for ext in _img_exts):
-            import base64
-            import mimetypes
-            mime = mimetypes.guess_type(fname)[0] or "image/png"
-            from core.image_resize import resize_image_for_vision
-            data, mime = resize_image_for_vision(bytes(data), mime)
-            b64 = base64.b64encode(data).decode("ascii")
-            return f"Image: {fname} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
-
         # Video/audio — hint to use see()
-        _vid_exts = (".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv")
-        _aud_exts = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac")
-        if any(fname.lower().endswith(ext) for ext in _vid_exts):
-            return (f"Video file: {fname} ({len(data):,} bytes)\n"
+        if any(lower.endswith(ext) for ext in _vid_exts):
+            return (f"Video file: {fname} ({int(entry.size):,} bytes)\n"
                     f"[To view frames from this video, use see(path=\"{path}\") instead of read]")
-        if any(fname.lower().endswith(ext) for ext in _aud_exts):
-            return (f"Audio file: {fname} ({len(data):,} bytes)\n"
+        if any(lower.endswith(ext) for ext in _aud_exts):
+            return (f"Audio file: {fname} ({int(entry.size):,} bytes)\n"
                     f"[To transcribe this audio, use see(path=\"{path}\") instead of read]")
 
         # PDF auto-redirect
-        if fname.lower().endswith(".pdf"):
+        if lower.endswith(".pdf"):
             max_pages = int(arguments.get("pages", "50").split("-")[-1]) if arguments.get("pages") else 50
             result = svc._request("read_pdf", path, max_pages=max_pages)
             if isinstance(result, dict) and "pages" in result:
@@ -183,7 +182,7 @@ class ReadHandler(BaseFsHandler):
             return json.dumps(result)
 
         # Notebook auto-redirect
-        if fname.lower().endswith(".ipynb"):
+        if lower.endswith(".ipynb"):
             result = svc._request("read_notebook", path)
             if isinstance(result, dict) and "cells" in result:
                 lines = [f"Notebook: {result.get('total_cells', '?')} cells "
@@ -198,24 +197,14 @@ class ReadHandler(BaseFsHandler):
                 return "\n".join(lines)
             return json.dumps(result)
 
-        # Text file
+        if not hasattr(svc, "copy_file_to_local"):
+            return "Error: filesystem service does not support streaming reads"
         try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            return f"(binary file, {len(data)} bytes)"
-
-        if mode == "outline":
-            return self._format_outline_read(fname, text)
-
-        # RTK compact read for relay-backed text files. Preserve native
-        # pagination when callers request a non-zero offset/range because RTK
-        # currently supports max/tail lines, not arbitrary start lines.
-        if offset <= 1:
-            rtk_args = ["rtk", "read", path, "--line-numbers"]
-            if limit:
-                rtk_args.extend(["--max-lines", str(limit)])
-            rtk_output = self._relay_exec_rtk(svc, ".", rtk_args, arguments)
-            if rtk_output is not None:
-                return rtk_output
-
-        return self._format_text_read(fname, text, offset, limit)
+            with tempfile.TemporaryDirectory(
+                    prefix="pawflow-read-") as temporary:
+                staged = Path(temporary) / (Path(fname).name or "payload")
+                svc.copy_file_to_local(path, str(staged), local=local)
+                return self._read_disk_path(
+                    staged, path, fname, offset, limit, mode)
+        except Exception as e:
+            return f"Error reading '{path}': {e}"

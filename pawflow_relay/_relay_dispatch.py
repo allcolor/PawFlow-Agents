@@ -56,7 +56,7 @@ from pawflow_relay._relay_actions import (
 
 # Actions refused in readonly mode (mirrors the relay HTTP write set).
 _WRITE_ACTIONS = frozenset({
-    "write_file", "delete_file", "mkdir", "find_replace", "edit", "exec",
+    "write_file", "copy_file", "delete_file", "mkdir", "find_replace", "edit", "exec",
 })
 
 # Host-level actions forwarded to the host helper when running in Docker.

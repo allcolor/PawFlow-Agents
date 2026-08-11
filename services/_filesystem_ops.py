@@ -315,29 +315,27 @@ class _RelayFsOpsMixin:
         return [FilesystemEntry(**e) if isinstance(e, dict) else e for e in data]
 
     def read_file(self, path: str, local: bool = False) -> bytes:
-        try:
-            data = self._request("read_file", path, local=local)
-            if isinstance(data, dict) and "content" in data:
-                return base64.b64decode(data["content"])
-            return data.encode("utf-8") if isinstance(data, str) else data
-        except Exception as e:
-            if "too large" in str(e).lower():
-                return self._read_chunked(path, local=local)
-            raise
+        data = self._request("read_file", path, local=local)
+        if isinstance(data, dict) and "content" in data:
+            return base64.b64decode(data["content"])
+        return data.encode("utf-8") if isinstance(data, str) else data
 
-    def _read_chunked(self, path: str, local: bool = False) -> bytes:
-        """Read a large file in chunks via the relay."""
-        first = self._request("read_file_chunked", path, local=local)
-        chunks = [base64.b64decode(first["data"])]
-        total_chunks = first.get("total_chunks", 1)
-        chunk_size = first.get("chunk_size", 1024 * 1024)
-        for i in range(1, total_chunks):
-            chunk = self._request("read_chunk", path, index=i, chunk_size=chunk_size,
-                                  local=local)
-            chunks.append(base64.b64decode(chunk["data"]))
+    def iter_file_chunks(self, path: str, local: bool = False,
+                         chunk_size: int = 4 * 1024 * 1024):
+        """Yield one relay file incrementally with a bounded decoded buffer."""
+        first = self._request(
+            "read_file_chunked", path, local=local,
+            chunk_size=chunk_size)
+        total_chunks = int(first.get("total_chunks", 1) or 1)
+        actual_chunk_size = int(first.get("chunk_size", chunk_size) or chunk_size)
+        yield base64.b64decode(first.get("data") or "")
+        for index in range(1, total_chunks):
+            chunk = self._request(
+                "read_chunk", path, index=index,
+                chunk_size=actual_chunk_size, local=local)
+            yield base64.b64decode(chunk.get("data") or "")
             if chunk.get("done"):
                 break
-        return b"".join(chunks)
 
     def copy_file_to_local(self, path: str, local_path: str,
                            local: bool = False) -> dict:
@@ -347,24 +345,26 @@ class _RelayFsOpsMixin:
         target = Path(local_path).expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
 
-        first = self._request("read_file_chunked", path, local=local)
-        total_chunks = int(first.get("total_chunks", 1) or 1)
-        chunk_size = int(first.get("chunk_size", 1024 * 1024) or 1024 * 1024)
         written = 0
-        with target.open("wb") as handle:
-            data = base64.b64decode(first.get("data") or "")
-            handle.write(data)
-            written += len(data)
-            for index in range(1, total_chunks):
-                chunk = self._request(
-                    "read_chunk", path, index=index,
-                    chunk_size=chunk_size, local=local)
-                data = base64.b64decode(chunk.get("data") or "")
-                handle.write(data)
-                written += len(data)
-                if chunk.get("done"):
-                    break
+        temporary = target.with_name(
+            f".{target.name}.pawflow-download-{uuid.uuid4().hex}.part")
+        try:
+            with temporary.open("wb") as handle:
+                for data in self.iter_file_chunks(path, local=local):
+                    if not data:
+                        continue
+                    handle.write(data)
+                    written += len(data)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
         return {"path": str(target), "written": written}
+
+    def copy_file(self, source_path: str, dest_path: str,
+                  local: bool = False) -> dict:
+        """Copy within one relay/host without transferring file bytes."""
+        return self._request(
+            "copy_file", source_path, dest_path=dest_path, local=local)
 
     def write_file(self, path: str, content: bytes, local: bool = False):
         if len(content) > 50 * 1024 * 1024:  # > 50MB → chunked

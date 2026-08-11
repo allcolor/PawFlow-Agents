@@ -70,12 +70,16 @@ class ServeRelayFileTask(BaseTask):
             return self._error(flowfile, 404,
                                f"Service '{service_name}' not found or not "
                                f"accessible to user '{user_id}'.")
-        if not hasattr(svc, "read_file"):
+        if not hasattr(svc, "iter_file_chunks"):
             return self._error(flowfile, 400,
                                f"Service '{service_name}' does not support "
-                               f"file reads.")
+                               f"streaming file reads.")
         try:
-            data = svc.read_file(rel_path)
+            entry = svc.stat(rel_path)
+            size = int(entry.size)
+            from core.stream import IterableBytesReader
+            with IterableBytesReader(svc.iter_file_chunks(rel_path)) as source:
+                flowfile.set_content_from_stream(source, size_hint=size)
         except FileNotFoundError:
             return self._error(flowfile, 404,
                                f"File '{rel_path}' not found on '{service_name}'.")
@@ -83,25 +87,21 @@ class ServeRelayFileTask(BaseTask):
             return self._error(flowfile, 403,
                                f"Access denied to '{rel_path}' on '{service_name}'.")
         except Exception as e:
-            logger.warning("serveRelayFile: read_file(%s, %s) failed: %s",
+            logger.warning("serveRelayFile: stream(%s, %s) failed: %s",
                            service_name, rel_path, e)
             return self._error(flowfile, 502,
                                f"Read failed on '{service_name}': {e}")
 
-        if not isinstance(data, (bytes, bytearray)):
-            data = str(data).encode("utf-8")
-
         fname = rel_path.rsplit("/", 1)[-1] if "/" in rel_path else rel_path
         content_type = mimetypes.guess_type(fname)[0] or "application/octet-stream"
 
-        flowfile.set_content(bytes(data))
         flowfile.set_attribute("http.response.status", "200")
         flowfile.set_attribute("http.response.header.Content-Type", content_type)
         flowfile.set_attribute(
             "http.response.header.Content-Disposition",
             f'inline; filename="{fname}"')
         flowfile.set_attribute("http.response.header.Content-Length",
-                               str(len(data)))
+                               str(size))
         return [flowfile]
 
     @staticmethod

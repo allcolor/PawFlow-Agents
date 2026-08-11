@@ -2,8 +2,13 @@ from core.handlers.read import ReadHandler
 
 
 class _Svc:
-    def read_file(self, path, local=False):
-        return b"image-bytes"
+    def stat(self, path, local=False):
+        return type("Entry", (), {"size": 11})()
+
+    def copy_file_to_local(self, path, target, local=False):
+        from pathlib import Path
+        Path(target).write_bytes(b"image-bytes")
+        return {"written": 11}
 
 
 def test_read_image_from_filesystem_service_returns_vision_marker(monkeypatch):
@@ -18,12 +23,21 @@ def test_read_image_from_filesystem_service_returns_vision_marker(monkeypatch):
 
 
 class _BigSvc:
-    def read_file(self, path, local=False):
+    def _payload(self):
         import io
         from PIL import Image
         buf = io.BytesIO()
         Image.new("RGB", (4000, 2250), (10, 120, 200)).save(buf, format="PNG")
         return buf.getvalue()
+
+    def stat(self, path, local=False):
+        return type("Entry", (), {"size": len(self._payload())})()
+
+    def copy_file_to_local(self, path, target, local=False):
+        from pathlib import Path
+        data = self._payload()
+        Path(target).write_bytes(data)
+        return {"written": len(data)}
 
 
 def test_read_oversized_image_is_downscaled_to_vision_ceiling(monkeypatch):

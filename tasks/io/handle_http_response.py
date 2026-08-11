@@ -35,6 +35,15 @@ def _iter_file_chunks(path: Path, chunk_size: int = 1024 * 1024):
             yield chunk
 
 
+def _iter_stream_chunks(stream, chunk_size: int = 1024 * 1024):
+    with stream:
+        while True:
+            chunk = stream.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+
 class HandleHTTPResponseTask(BaseTask):
     """Send an HTTP response for a pending request."""
 
@@ -110,6 +119,8 @@ class HandleHTTPResponseTask(BaseTask):
         body = b""
         if file_path_attr:
             stream = _iter_file_chunks(Path(file_path_attr))
+        elif flowfile.is_content_on_disk:
+            stream = _iter_stream_chunks(flowfile.get_content_stream())
         else:
             body_attr = flowfile.get_attribute("http.response.body")
             if body_attr is not None:

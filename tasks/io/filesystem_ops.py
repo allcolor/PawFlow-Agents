@@ -60,13 +60,22 @@ class FilesystemOpsTask(BaseTask):
             flowfile.set_content(json.dumps([asdict(e) for e in entries], default=str).encode())
 
         elif action == "read_file":
-            data = svc.read_file(path)
-            flowfile.set_content(data)
+            if not hasattr(svc, "iter_file_chunks"):
+                raise TaskError("Filesystem service does not support streaming reads")
+            entry = svc.stat(path)
+            from core.stream import IterableBytesReader
+            with IterableBytesReader(svc.iter_file_chunks(path)) as source:
+                flowfile.set_content_from_stream(source, size_hint=int(entry.size))
             flowfile.set_attribute("filename", posixpath.basename(path))
-            flowfile.set_attribute("fileSize", str(len(data)))
+            flowfile.set_attribute("fileSize", str(flowfile.size()))
 
         elif action == "write_file":
-            svc.write_file(path, flowfile.get_content())
+            writer = getattr(svc, "write_file_stream", None)
+            if not callable(writer):
+                raise TaskError("Filesystem service does not support streaming writes")
+            with flowfile.get_content_stream() as source:
+                writer(path, iter(lambda: source.read(4 * 1024 * 1024), b""),
+                       expected_size=flowfile.size())
 
         elif action == "delete_file":
             svc.delete_file(path)

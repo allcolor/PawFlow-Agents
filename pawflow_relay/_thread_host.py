@@ -403,35 +403,69 @@ class _RelayHostHelperMixin:
                 def _kill():
                     proc.kill()
             else:
-                from winpty import PtyProcess
-                pty_proc = PtyProcess.spawn([shell], cwd=self.directory,
-                                            dimensions=(rows, cols))
+                try:
+                    from winpty import PtyProcess
+                except (ImportError, OSError) as exc:
+                    # Older Relay Desktop artifacts omitted pywinpty. Keep
+                    # host-local terminals usable until the client is updated.
+                    self._log(
+                        "[Relay] winpty unavailable; using redirected "
+                        f"terminal process: {exc}")
+                    proc = _sp.Popen(  # nosec B603
+                        [shell], stdin=_sp.PIPE, stdout=_sp.PIPE,
+                        stderr=_sp.STDOUT, cwd=self.directory, bufsize=0,
+                        creationflags=getattr(
+                            _sp, "CREATE_NEW_PROCESS_GROUP", 0))
 
-                def _read():
-                    pty_proc.fileobj.settimeout(0.1)
-                    try:
-                        data = pty_proc.fileobj.recv(4096)
+                    def _read():
+                        data = proc.stdout.read(4096)
                         if not data:
                             raise EOFError
                         return data
-                    except socket.timeout:
-                        return b""
-                    except OSError:
-                        raise EOFError
 
-                def _write(data):
-                    pty_proc.write(data.decode("utf-8", errors="replace")
-                                   if isinstance(data, bytes) else data)
+                    def _write(data):
+                        payload = (data if isinstance(data, bytes)
+                                   else data.encode("utf-8"))
+                        proc.stdin.write(payload)
+                        proc.stdin.flush()
 
-                def _resize(c, r):
-                    pty_proc.setwinsize(r, c)
+                    def _resize(c, r):
+                        return None
 
-                def _kill():
-                    try:
-                        import signal as _sig
-                        pty_proc.kill(_sig.SIGTERM)
-                    except Exception:
-                        logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+                    def _kill():
+                        proc.kill()
+                else:
+                    pty_proc = PtyProcess.spawn(
+                        [shell], cwd=self.directory,
+                        dimensions=(rows, cols))
+
+                    def _read():
+                        pty_proc.fileobj.settimeout(0.1)
+                        try:
+                            data = pty_proc.fileobj.recv(4096)
+                            if not data:
+                                raise EOFError
+                            return data
+                        except socket.timeout:
+                            return b""
+                        except OSError:
+                            raise EOFError
+
+                    def _write(data):
+                        pty_proc.write(
+                            data.decode("utf-8", errors="replace")
+                            if isinstance(data, bytes) else data)
+
+                    def _resize(c, r):
+                        pty_proc.setwinsize(r, c)
+
+                    def _kill():
+                        try:
+                            import signal as _sig
+                            pty_proc.kill(_sig.SIGTERM)
+                        except Exception:
+                            logging.getLogger(__name__).debug(
+                                "Ignored exception", exc_info=True)
 
             # Store session for write/resize/close from separate TCP calls
             if not hasattr(self, '_local_terminals'):

@@ -2,6 +2,7 @@
 
 import logging
 import re
+from pathlib import Path
 from typing import Any, Dict
 
 from core.handlers._fs_base import BaseFsHandler
@@ -122,20 +123,27 @@ class WriteHandler(BaseFsHandler):
         url_match = re.search(r'/files/([a-f0-9]{12})', file_id)
         if url_match:
             file_id = url_match.group(1)
-        entry = store.get(file_id, user_id=self._user_id)
-        if not entry:
-            found = store.find_by_name(file_id)
+        disk_path = store.get_disk_path(file_id, user_id=self._user_id)
+        if disk_path is None:
+            found = store.find_by_name(file_id, user_id=self._user_id)
             if found:
-                entry = store.get(found, user_id=self._user_id)
-        if not entry:
+                file_id = found
+                disk_path = store.get_disk_path(
+                    file_id, user_id=self._user_id)
+        metadata = store.get_metadata(file_id) if disk_path else None
+        if disk_path is None or metadata is None:
             return f"Error: file_id '{file_id}' not found in FileStore"
-        fname, data, _ct = entry
+        fname = metadata["filename"]
+        size = int(metadata["size"])
         if workdir:
-            import os
-            full = self._sandbox_path(path, workdir)
-            os.makedirs(os.path.dirname(full), exist_ok=True)
-            with open(full, "wb") as f:
-                f.write(data)
-            return f"Copied {fname} ({len(data):,} bytes) to {path}"
-        svc.write_file(path, data, local=local)
-        return f"Copied {fname} ({len(data):,} bytes) to {path}"
+            from core.handlers.copy import _copy_path_atomic
+            full = Path(self._sandbox_path(path, workdir))
+            size = _copy_path_atomic(Path(disk_path), full)
+            return f"Copied {fname} ({size:,} bytes) to {path}"
+        writer = getattr(svc, "write_file_stream", None)
+        if not callable(writer):
+            return "Error: destination filesystem does not support streaming uploads"
+        from core.handlers.copy import _iter_path
+        writer(path, _iter_path(Path(disk_path)), expected_size=size,
+               local=local)
+        return f"Copied {fname} ({size:,} bytes) to {path}"

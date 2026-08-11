@@ -38,7 +38,7 @@ from _fs_read import (  # noqa: E402,F401
     action_list_dir, action_mkdir, action_project_context,
     action_project_init, action_read_chunk, action_read_file,
     action_read_file_chunked, action_read_notebook, action_read_pdf,
-    action_search, action_stat, action_write_file,
+    action_search, action_stat, action_write_file, action_copy_file,
     action_write_file_chunked,
 )
 from _fs_grep import action_grep  # noqa: E402,F401
@@ -69,7 +69,7 @@ from fs_http import action_http_fetch  # noqa: E402,F401
 
 # Actions that require write access
 WRITE_ACTIONS = frozenset({
-    "write_file", "delete_file", "mkdir", "find_replace", "edit",
+    "write_file", "copy_file", "delete_file", "mkdir", "find_replace", "edit",
     "batch_edit", "apply_patch",
     "exec", "exec_stream",
     "edit_notebook",
@@ -85,6 +85,7 @@ ACTIONS = {
     "read_pdf": action_read_pdf,
     "read_notebook": action_read_notebook,
     "write_file": action_write_file,
+    "copy_file": action_copy_file,
     "delete_file": action_delete_file,
     "mkdir": action_mkdir,
     "stat": action_stat,

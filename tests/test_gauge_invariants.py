@@ -977,7 +977,8 @@ def test_open_desktop_backend_does_not_emit_audio_session_without_token():
         "_sf_k7.py",
         "_sf_k8.py",
         "_sf_k9.py"))
-    assert "_audio_token = register_audio_source" in src
+    assert "return register_audio_source(" in src
+    assert "_audio_token = _register_desktop_audio(" in src
     assert '"audio_session": session_id if _audio_token else ""' in src
     assert '"audio_session": _sid if _audio_token else ""' in src
     assert '"audio_session": session_id,\n                "audio_token": _audio_lookup_token(session_id)' not in src

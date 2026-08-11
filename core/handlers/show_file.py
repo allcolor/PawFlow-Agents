@@ -5,6 +5,8 @@ Re-exported from core.handlers.resource_agent for import stability.
 
 import json
 import logging
+import tempfile
+from pathlib import Path
 from typing import Any, Dict
 
 from core.tool_handler import ToolHandler
@@ -100,31 +102,41 @@ class ShowFileHandler(ToolHandler):
             url_match = _re_sf.search(r'/files/([a-f0-9]{12})', file_id)
             if url_match:
                 file_id = url_match.group(1)
-            result = store.get(file_id, user_id=self._user_id)
-            if not result:
+            disk_path = store.get_disk_path(file_id, user_id=self._user_id)
+            if disk_path is None:
                 # Try by name
                 found_id = store.find_by_name(file_id, user_id=self._user_id)
                 if found_id:
-                    result = store.get(found_id, user_id=self._user_id)
                     file_id = found_id
-            if not result:
+                    disk_path = store.get_disk_path(
+                        file_id, user_id=self._user_id)
+            metadata = store.get_metadata(file_id) if disk_path else None
+            if not metadata:
                 return f"Error: File ID '{file_id}' not found."
-            fname, data, content_type = result
+            fname = metadata["filename"]
+            content_type = metadata["content_type"]
+            size = int(metadata["size"])
         elif fs_path:
             # Read from filesystem service, cache in FileStore
             svc = self._find_fs_service(fs_service) if fs_service else None
             if not svc:
                 return f"Error: Filesystem service '{fs_service}' not found or not connected."
-            try:
-                data = svc.read_file(fs_path)
-            except Exception as e:
-                return f"Error reading '{fs_path}' from {fs_service}: {e}"
             fname = fs_path.rsplit("/", 1)[-1] if "/" in fs_path else fs_path
             content_type = mimetypes.guess_type(fname)[0] or "application/octet-stream"
-            # Store in FileStore for the viewer URL
-            file_id = store.store(fname, data, content_type=content_type,
-                                  user_id=self._user_id,
-                                  conversation_id=getattr(self, '_conversation_id', '') or '')
+            try:
+                with tempfile.TemporaryDirectory(
+                        prefix="pawflow-show-file-") as temporary:
+                    staged = Path(temporary) / "payload"
+                    result = svc.copy_file_to_local(fs_path, str(staged))
+                    size = int((result or {}).get(
+                        "written", staged.stat().st_size))
+                    file_id = store.store_file(
+                        fname, str(staged), content_type=content_type,
+                        user_id=self._user_id,
+                        conversation_id=getattr(
+                            self, '_conversation_id', '') or '')
+            except Exception as e:
+                return f"Error reading '{fs_path}' from {fs_service}: {e}"
         elif filename:
             # Search by filename in FileStore
             found = None
@@ -142,15 +154,18 @@ class ShowFileHandler(ToolHandler):
                         f"Use path+service to show files from a filesystem service.")
             file_id = found["file_id"]
             fname = found["filename"]
-            result = store.get(file_id, user_id=self._user_id)
-            if not result:
+            disk_path = store.get_disk_path(file_id, user_id=self._user_id)
+            metadata = store.get_metadata(file_id) if disk_path else None
+            if not metadata:
                 return f"Error: Could not load file '{filename}'."
-            fname, data, content_type = result
+            fname = metadata["filename"]
+            content_type = metadata["content_type"]
+            size = int(metadata["size"])
         else:
             return "Error: Provide file_id, filename, or path+service."
 
         url = f"fs://filestore/{file_id}/{fname}"
-        size_kb = len(data) / 1024
+        size_kb = size / 1024
 
         # Return a special marker that the chat UI will intercept
         return json.dumps({

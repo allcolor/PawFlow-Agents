@@ -9,6 +9,8 @@ to multimodal message content (image_url, etc.).
 
 import logging
 import os
+import tempfile
+from pathlib import Path
 from typing import Any, Dict
 
 from core.handlers._fs_base import BaseFsHandler
@@ -72,42 +74,41 @@ class SeeHandler(BaseFsHandler):
         if _svc_name:
             source = _svc_name
 
-        fname = path.rsplit("/", 1)[-1] if "/" in path else path
+        fname = path.replace("\\", "/").rsplit("/", 1)[-1]
         ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
 
-        # Read the file
+        # Resolve or stage the source as a disk path. Arbitrary media files are
+        # never materialized as one bytes object on the PawFlow server.
         svc, workdir = self._resolve(source)
         try:
-            if svc == "filestore":
-                data = self._read_filestore_bytes(path)
-            elif workdir:
-                full = self._sandbox_path(path, workdir)
-                with open(full, "rb") as f:
-                    data = f.read()
-            elif svc:
-                data = svc.read_file(path, local=bool(arguments.get("local", False)))
-            else:
-                return self._no_target_error(source)
+            with tempfile.TemporaryDirectory(
+                    prefix="pawflow-see-") as temporary:
+                if svc == "filestore":
+                    source_path = self._filestore_path(path)
+                elif workdir:
+                    source_path = Path(self._sandbox_path(path, workdir))
+                elif svc:
+                    source_path = Path(temporary) / f"source.{ext or 'bin'}"
+                    svc.copy_file_to_local(
+                        path, str(source_path),
+                        local=bool(arguments.get("local", False)))
+                else:
+                    return self._no_target_error(source)
+
+                size = source_path.stat().st_size
+                if size == 0:
+                    return f"Error: '{path}' is empty"
+                if ext in _IMG_EXTS:
+                    return self._see_image_path(fname, source_path, ext)
+                if ext in _VID_EXTS:
+                    max_frames = int(arguments.get("max_frames", 5) or 5)
+                    return self._see_video(fname, source_path, size, max_frames)
+                if ext in _AUD_EXTS:
+                    return self._see_audio(fname, source_path, size)
+                return (f"Error: unsupported file type '{ext}' for see. "
+                        "Use read() for text files.")
         except Exception as e:
             return f"Error reading '{path}': {e}"
-
-        if not data:
-            return f"Error: '{path}' is empty"
-
-        # Image → inject as multimodal
-        if ext in _IMG_EXTS:
-            return self._see_image(fname, data, ext)
-
-        # Video → extract frames
-        if ext in _VID_EXTS:
-            max_frames = int(arguments.get("max_frames", 5) or 5)
-            return self._see_video(fname, data, max_frames)
-
-        # Audio → transcribe
-        if ext in _AUD_EXTS:
-            return self._see_audio(fname, data, ext)
-
-        return f"Error: unsupported file type '{ext}' for see. Use read() for text files."
 
     def _see_screen(self, arguments: Dict[str, Any]) -> str:
         """Capture screen and return as multimodal image.
@@ -199,22 +200,30 @@ class SeeHandler(BaseFsHandler):
         # see does NOT store in FileStore — it only passes data to LLM vision
         return f"Image: {fname} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
 
-    def _see_video(self, fname: str, data: bytes, max_frames: int) -> str:
+    def _see_image_path(self, fname: str, path: Path, ext: str) -> str:
+        """Return a bounded image payload decoded directly from a disk path."""
+        import base64
+        import mimetypes
+        from core.image_resize import resize_image_path_for_vision
+
+        mime = mimetypes.guess_type(fname)[0] or f"image/{ext}"
+        data, mime = resize_image_path_for_vision(path, mime)
+        encoded = base64.b64encode(data).decode("ascii")
+        return (f"Image: {fname} ({len(data):,} bytes, {mime})\n"
+                f"__image_data__:{mime}:{encoded}")
+
+    def _see_video(self, fname: str, source_path: Path, size: int,
+                   max_frames: int) -> str:
         """Extract key frames from video, return as image sequence."""
         import tempfile
         import subprocess  # nosec B404
         import base64
 
-        # Write to temp file
-        tmp = tempfile.NamedTemporaryFile(suffix=f".{fname.rsplit('.', 1)[-1]}", delete=False)
         try:
-            tmp.write(data)
-            tmp.close()
-
             # Get duration
             probe = subprocess.run(  # nosec B603, B607
                 ["ffprobe", "-v", "quiet", "-print_format", "json",
-                 "-show_format", tmp.name],
+                 "-show_format", str(source_path)],
                 capture_output=True, text=True, timeout=10)
             import json
             duration = 0
@@ -225,89 +234,80 @@ class SeeHandler(BaseFsHandler):
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
             if duration <= 0:
-                return f"Video: {fname} ({len(data):,} bytes) — could not determine duration"
+                return f"Video: {fname} ({size:,} bytes) — could not determine duration"
 
             # Extract frames at evenly spaced intervals
             interval = max(1, duration / max_frames)
             frames = []
-            for i in range(min(max_frames, int(duration))):
-                ts = i * interval
-                frame_path = f"{tmp.name}_frame_{i}.jpg"
-                subprocess.run(  # nosec B603, B607
-                    ["ffmpeg", "-ss", str(ts), "-i", tmp.name,
-                     "-frames:v", "1", "-q:v", "3", frame_path, "-y"],
-                    capture_output=True, timeout=10)
-                if os.path.exists(frame_path):
-                    with open(frame_path, "rb") as f:
-                        frame_data = f.read()
-                    b64 = base64.b64encode(frame_data).decode("ascii")
-                    frames.append(f"__image_data__:image/jpeg:{b64}")
-                    os.unlink(frame_path)
+            with tempfile.TemporaryDirectory(
+                    prefix="pawflow-see-frames-") as frame_dir:
+                for i in range(min(max_frames, int(duration))):
+                    ts = i * interval
+                    frame_path = Path(frame_dir) / f"frame_{i}.jpg"
+                    subprocess.run(  # nosec B603, B607
+                        ["ffmpeg", "-ss", str(ts), "-i", str(source_path),
+                         "-frames:v", "1", "-q:v", "3", str(frame_path), "-y"],
+                        capture_output=True, timeout=10)
+                    if frame_path.exists():
+                        from core.image_resize import resize_image_path_for_vision
+                        frame_data, frame_mime = resize_image_path_for_vision(
+                            frame_path, "image/jpeg")
+                        b64 = base64.b64encode(frame_data).decode("ascii")
+                        frames.append(f"__image_data__:{frame_mime}:{b64}")
 
             if not frames:
-                return f"Video: {fname} ({len(data):,} bytes, {duration:.1f}s) — ffmpeg frame extraction failed"
+                return f"Video: {fname} ({size:,} bytes, {duration:.1f}s) — ffmpeg frame extraction failed"
 
-            result = f"Video: {fname} ({len(data):,} bytes, {duration:.1f}s, {len(frames)} frames extracted)\n"
+            result = f"Video: {fname} ({size:,} bytes, {duration:.1f}s, {len(frames)} frames extracted)\n"
             result += "\n".join(frames)
             return result
 
         except FileNotFoundError:
-            return f"Video: {fname} ({len(data):,} bytes) — ffmpeg not available for frame extraction"
+            return f"Video: {fname} ({size:,} bytes) — ffmpeg not available for frame extraction"
         except Exception as e:
-            return f"Video: {fname} ({len(data):,} bytes) — frame extraction failed: {e}"
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            return f"Video: {fname} ({size:,} bytes) — frame extraction failed: {e}"
 
-    def _see_audio(self, fname: str, data: bytes, ext: str) -> str:
+    def _see_audio(self, fname: str, source_path: Path, size: int) -> str:
         """Transcribe audio file."""
-        import tempfile
         import subprocess  # nosec B404
 
-        tmp = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
         try:
-            tmp.write(data)
-            tmp.close()
-
             # Try whisper CLI
             subprocess.run(  # nosec B603, B607
-                ["whisper", tmp.name, "--model", "base", "--output_format", "txt",
-                 "--output_dir", os.path.dirname(tmp.name)],
+                ["whisper", str(source_path), "--model", "base",
+                 "--output_format", "txt",
+                 "--output_dir", str(source_path.parent)],
                 capture_output=True, text=True, timeout=120)
 
-            txt_path = tmp.name.rsplit(".", 1)[0] + ".txt"
-            if os.path.exists(txt_path):
-                with open(txt_path, "r", encoding="utf-8") as f:
-                    transcript = f.read()
-                os.unlink(txt_path)
-                return f"Audio transcription of {fname} ({len(data):,} bytes):\n\n{transcript}"
+            txt_path = source_path.with_suffix(".txt")
+            if txt_path.exists():
+                with txt_path.open("r", encoding="utf-8") as handle:
+                    transcript = handle.read(500_001)
+                txt_path.unlink(missing_ok=True)
+                if len(transcript) > 500_000:
+                    transcript = transcript[:500_000] + "\n[transcript truncated]"
+                return f"Audio transcription of {fname} ({size:,} bytes):\n\n{transcript}"
 
-            return f"Audio: {fname} ({len(data):,} bytes) — whisper transcription produced no output"
+            return f"Audio: {fname} ({size:,} bytes) — whisper transcription produced no output"
 
         except FileNotFoundError:
-            return f"Audio: {fname} ({len(data):,} bytes) — whisper not available for transcription"
+            return f"Audio: {fname} ({size:,} bytes) — whisper not available for transcription"
         except subprocess.TimeoutExpired:
-            return f"Audio: {fname} ({len(data):,} bytes) — transcription timed out"
+            return f"Audio: {fname} ({size:,} bytes) — transcription timed out"
         except Exception as e:
-            return f"Audio: {fname} ({len(data):,} bytes) — transcription failed: {e}"
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            return f"Audio: {fname} ({size:,} bytes) — transcription failed: {e}"
 
-    def _read_filestore_bytes(self, path: str) -> bytes:
-        """Read raw bytes from FileStore."""
+    def _filestore_path(self, path: str) -> Path:
+        """Resolve an authorized FileStore entry without reading its content."""
         from core.file_store import FileStore
         store = FileStore.instance()
         file_id = self._filestore_id_from_path(path)
-        entry = store.get(file_id, user_id=self._user_id)
-        if not entry:
-            found = store.find_by_name(file_id)
+        disk_path = store.get_disk_path(file_id, user_id=self._user_id)
+        if disk_path is None:
+            found = store.find_by_name(file_id, user_id=self._user_id)
             if found:
-                entry = store.get(found, user_id=self._user_id)
-        if not entry:
+                disk_path = store.get_disk_path(
+                    found, user_id=self._user_id)
+        if disk_path is None:
             raise FileNotFoundError(f"'{file_id}' not found in FileStore")
-        return entry[1]
+        return Path(disk_path)

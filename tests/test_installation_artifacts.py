@@ -6,6 +6,26 @@ import zipfile
 from unittest.mock import MagicMock
 
 
+def test_relay_desktop_packages_the_windows_terminal_backend():
+    requirements = Path(
+        "pawflow-relay-desktop/requirements-build.txt").read_text(
+            encoding="utf-8")
+    build_script = Path(
+        "pawflow-relay-desktop/scripts/build-relay-bin.js").read_text(
+            encoding="utf-8")
+    entry = Path(
+        "pawflow-relay-desktop/scripts/relay-bin-entry.py").read_text(
+            encoding="utf-8")
+    workflow = Path(".github/workflows/release-assets.yml").read_text(
+        encoding="utf-8")
+
+    assert 'pywinpty>=3.0.5; sys_platform == "win32"' in requirements
+    assert "process.platform === 'win32' ? ['winpty'] : []" in build_script
+    assert "'--hidden-import', name" in build_script
+    assert "__pawflow_winpty_check__" in entry
+    assert "__pawflow_winpty_check__" in workflow
+
+
 def test_model_caches_live_on_the_persistent_mount():
     """A cache in the container layer is re-downloaded on every recreate.
 

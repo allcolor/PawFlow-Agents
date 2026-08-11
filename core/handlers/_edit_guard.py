@@ -79,12 +79,18 @@ def _have_identity(user_id, conv_id, agent_name, path) -> bool:
 def track_read(user_id: str, conv_id: str, agent_name: str,
                 path: str, content: bytes):
     """Record that this agent has read this file (with content hash)."""
+    track_read_hash(
+        user_id, conv_id, agent_name, path, _hash_content(content))
+
+
+def track_read_hash(user_id: str, conv_id: str, agent_name: str,
+                    path: str, content_hash: str):
+    """Record a read using a digest computed incrementally by the caller."""
     if not _have_identity(user_id, conv_id, agent_name, path):
         return
     key = (user_id, conv_id, agent_name, _canon(path))
-    h = _hash_content(content)
     with _LOCK:
-        _READ_HASHES[key] = h
+        _READ_HASHES[key] = content_hash
         _prune_if_full(_READ_HASHES)
         # A fresh read clears this agent's failed-edit streak for this path.
         _clear_failed_for_path(user_id, conv_id, agent_name, path)

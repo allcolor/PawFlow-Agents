@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.169] — 2026-08-11
+
+### Fixed
+
+- Streamed filesystem, FileStore, relay, HTTP-response, and conversation-import
+  transfers through disk-backed paths or bounded chunks instead of materializing
+  complete files and ZIP members in server memory.
+- Bounded file reads, media inspection, and vision-image resizing while
+  preserving pagination, edit-conflict hashes, FileStore metadata, and relay
+  text-read behavior.
+- Packaged and smoke-tested the Windows PTY backend in Relay Desktop so
+  host-local terminals no longer fail with a missing `winpty` module; older
+  artifacts now degrade to a redirected terminal process.
+
 ## [1.0.0-beta.168] — 2026-08-11
 
 ### Fixed

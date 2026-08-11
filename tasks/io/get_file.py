@@ -60,16 +60,20 @@ class GetFileTask(BaseTask):
             if not fnmod.fnmatch(entry.name, self.file_filter):
                 continue
             path = f"{self.input_directory}/{entry.name}".replace("\\", "/")
-            content = svc.read_file(path)
+            if not hasattr(svc, "iter_file_chunks"):
+                raise TaskError("Filesystem service does not support streaming reads")
             ff = self.create_flowfile(
-                content=content,
+                content=b"",
                 attributes={
                     'filename': entry.name,
                     'path': self.input_directory,
-                    'fileSize': str(len(content)),
+                    'fileSize': str(entry.size),
                 },
                 parent_flowfile=flowfile,
             )
+            from core.stream import IterableBytesReader
+            with IterableBytesReader(svc.iter_file_chunks(path)) as source:
+                ff.set_content_from_stream(source, size_hint=int(entry.size))
             results.append(ff)
             if not self.keep_source:
                 svc.delete_file(path)
@@ -99,17 +103,20 @@ class GetFileTask(BaseTask):
         for f in store.list_files(user_id=user_id, conversation_id=conv_id):
             if not fnmod.fnmatch(f["filename"], self.file_filter):
                 continue
-            result = store.get(f["file_id"], user_id=user_id)
-            if result:
+            disk_path = store.get_disk_path(f["file_id"], user_id=user_id)
+            if disk_path is not None:
                 ff = self.create_flowfile(
-                    content=result[1],
+                    content=b"",
                     attributes={
                         'filename': f["filename"],
-                        'fileSize': str(len(result[1])),
+                        'fileSize': str(f["size"]),
                         'file_id': f["file_id"],
                     },
                     parent_flowfile=flowfile,
                 )
+                with disk_path.open("rb") as source:
+                    ff.set_content_from_stream(
+                        source, size_hint=int(f["size"]))
                 results.append(ff)
         return results if results else [flowfile]
 

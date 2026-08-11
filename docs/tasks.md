@@ -337,9 +337,12 @@ For a fuller agent-facing catalog, including internal/control tools, see
 | `tool.semantic_recall` | Recall memories by semantic similarity |
 | `tool.forget` | Delete a memory |
 | `tool.check_duplicate` | Check if a memory already exists |
-| `tool.memory_navigate` | Navigate and browse agent memory |
 | `tool.diary_write` | Write a diary entry |
 | `tool.diary_read` | Read diary entries |
+| `tool.todolist` | Manage durable work state for one conversation agent |
+| `tool.scratchpad` | Manage expiring working notes for one conversation agent |
+| `tool.project_graph` | Inspect relay-scoped AST code structure |
+| `tool.project_wiki` | Inspect or maintain the relay-scoped sourced project wiki |
 | `tool.assign_task` | Assign a recurring task to an agent |
 | `tool.notify_user` | Send a notification to the user |
 | `tool.ask_user` | Ask the user a question and wait for a reply |

@@ -25,12 +25,13 @@
 |----------|-------------|
 | [Task Catalog](tasks.md) | Built-in flow tasks and `tool.*` flow task adapter |
 | [Agent Tool Catalog](tool_catalog.md) | Agent-facing tools grouped by purpose |
+| [Agent Tool Selection](TOOL_SELECTION.md) | Decision guide for overlapping tool families: files, delegation, work orchestration, continuations, and state |
 | [Services Catalog](services.md) | Service types: LLM, relay, media, messaging, auth, storage |
 | [PawFlow Packages](PFP_PACKAGES.md) | Signed `.pfp` package format, install plan, export/build workflow, and security model |
 | [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md) | Build and test package tools/services locally with `dev-load`, media artifacts, and runtime SDK patterns |
 | [PFP Publisher Guide](PFP_PUBLISHER_GUIDE.md) | Registry publishing, release versioning, SHA pinning, and key rotation |
 | [Marketplace and Package Registries](marketplace.md) | PFP registries, skill marketplace import, review model, and UI/CLI entry points |
-| [Cognitive Tools](COGNITIVE_TOOLS.md) | Memory, Knowledge Graph, Diary, Project Graph |
+| [Cognitive Tools](COGNITIVE_TOOLS.md) | Memory, Knowledge Graph, Diary, Todo, Scratchpad, Project Graph, and Project Wiki |
 | [Usage & Cost Tracking](usage_tracking.md) | Persistent per-event token/cost ledger, channels, query actions, exports |
 | [Skill Learning Loop](LEARNING_LOOP_PLAN.md) | Agent-created skills, drafts from compaction, usage stats, curator task |
 | [Expression Language](EXPRESSION_LANGUAGE.md) | `${scope.key}` syntax, operators, cascade |

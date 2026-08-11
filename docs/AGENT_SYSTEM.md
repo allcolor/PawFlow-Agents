@@ -186,8 +186,15 @@ The system prompt is assembled in layers during `_prepare_agent_context()`:
 5. **Behavior rules** -- Narration requirement, read_history hint, resilience style.
 6. **Relay context** -- Connected relay services, filesystem roots, docker/local modes.
 7. **Identity suffix** -- Ephemeral model/provider/service metadata (injected at call time, never persisted).
-8. **Cognitive digests** -- memory, diary, knowledge graph, relay-scoped project structure, and project-wiki freshness. On CLI providers they are appended here; on API providers they are **not** part of the system prompt at all (see *Prompt cache prefix* below).
-9. **Cognitive tools hint** -- Summary of available cognitive tools (memory, knowledge graph, diary, project graph, project wiki) so the agent knows what is available.
+8. **Dynamic cognition/work state** -- memory, diary, knowledge graph,
+   relay-scoped project structure/wiki freshness, todo state, and a content-free
+   scratchpad topic hint. On CLI providers these are serialized into the cold
+   bootstrap; on API providers they are **not** part of the system prompt (see
+   *Prompt cache prefix* below).
+9. **Availability-aware tool-selection hint** -- A compact comparison of the
+   ambiguous delegation, work, waiting, and cognition families, generated from
+   `core/tool_selection.py` using only tools present in this agent's filtered
+   registry. Exact parameters remain lazy.
 10. **Plan mode directive** -- If plan mode is active, forces the agent to call `create_plan` before executing tools.
 11. **Claude Code rules** -- For CC providers, rules about using MCP tools exclusively.
 
@@ -204,10 +211,12 @@ merged into the *last user message* by `_alc_inject_dynamic_metadata()`, after
 all cache breakpoints:
 
 - the current date/time and the context-usage gauge;
-- the cognitive digests (memory, diary, KG, project structure), which are
+- the cognitive digests (memory, diary, KG, project structure/wiki), which are
   rebuilt from live stores and therefore move on any `remember`,
   `diary_write`, `kg_add` or graph rebuild.
 - the active durable todo list, which changes on each `todolist` mutation.
+- the scratchpad hint (count, expiry, topics only), which changes on each
+  `scratchpad` mutation. Scratchpad note bodies are never injected.
 
 CLI providers keep the digests and todo state in the cold-start bootstrap file;
 the same text would otherwise be echoed in the prompt handed to the CLI binary,
@@ -230,6 +239,20 @@ recently completed items in dynamic context. A cold CLI session receives the
 same block in `initial_context.md` before the Bootstrap Contract. A warm CLI
 session is not reprompted solely because todo state changed; the agent can query
 the authoritative store through the tool.
+
+### Scratchpad
+
+`scratchpad` is temporary working state, not a second memory or todo system.
+It stores expiring notes in
+`data/runtime/scratchpads/scratchpads.sqlite3`, scoped by the required
+`(user_id, conversation_id, agent_name)` tuple. Notes support CRUD, text search,
+tags, pagination, and TTLs from 1 to 720 hours.
+
+The note body is never injected into a model prompt. A non-empty scope contributes
+only a compact hint containing the count, earliest expiry, and up to five topic
+labels. The model calls `list` or `get` when a topic is relevant after
+compaction or resume. Todo remains the authoritative incomplete-work ledger;
+memory stores durable facts; diary stores durable first-person agent experience.
 
 Claude Code interactive may use its native `TaskCreate` and `TaskUpdate`
 tools. The event service records the native call, waits for its successful
@@ -691,8 +714,15 @@ Agents can override the relay per call with `relay="<service-id>"`. The meta-too
 ### Meta-tools (Lazy Tools)
 
 Instead of sending all tool schemas to the LLM (which can consume thousands of tokens), PawFlow uses two meta-tools:
-- `get_tool_schema()` -- The agent calls this to discover available tools.
+- `get_tool_schema(tool_name=...)` -- Return one exact tool contract.
+- `get_tool_schema(family=...)` -- Compare the tools actually available in
+  one routing family. With no selector it lists available tools and families.
 - `use_tool(tool_name, arguments_json)` -- The provider-facing execution contract. `arguments_json` is a JSON object string matching the target tool schema.
+
+The permanent `## Tool selection` block and these family comparisons share
+the declarative `TOOL_FAMILIES` registry. A family or route is omitted from the
+prompt when the agent lacks the relevant tools; the prompt never teaches an
+agent to call a tool filtered out by its permissions.
 
 `UseToolHandler` still accepts legacy/internal `arguments` objects for compatibility, but the exposed schema deliberately avoids nested free-form objects because some OpenAI-compatible backends drop them and repeatedly call tools with `{}`.
 

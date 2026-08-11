@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
 **Last updated**: 2026-08-11
-**Package version**: `1.0.0b171` (beta.171)
+**Package version**: `1.0.0b172` (beta.172)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
@@ -11,7 +11,10 @@ PawFlow is no longer a simple workflow-engine MVP. The repository now hosts a se
 
 The current core value is twofold:
 
-1. **Tool-equipped autonomous agents**: multi-agent conversations, multiple LLM providers, tool-use loop, persistent memory, knowledge graph, agent diary, project graph, plans, delegation, streaming.
+1. **Tool-equipped autonomous agents**: multi-agent conversations, multiple LLM
+   providers, tool-use loop, persistent memory, knowledge graph, agent diary,
+   relay-scoped project graph/wiki, todo and scratchpad work state, plans,
+   delegation, streaming.
 2. **Pipeline engine**: DAG execution over FlowFiles, task catalog, triggers, backpressure, checkpoints, crash recovery, provenance, and IO/data/control integrations.
 
 ## What lives in the repository
@@ -25,7 +28,7 @@ The current core value is twofold:
     providers `claude-code-interactive`, `codex-interactive`, and
     `antigravity-interactive`, plus the legacy `claude-code` (`cc -p`) and
     `codex-app-server` agent transports retained for existing configurations;
-  - memory, knowledge graph, diary, project graph;
+  - memory, knowledge graph, diary, project graph/wiki, todo, and scratchpad;
   - conversation, plan, token, file, relay, and tool-handler management;
   - storage backends and security/context helpers.
 
@@ -78,7 +81,8 @@ The current core value is twofold:
 
 - internal architecture;
 - agent system;
-- cognitive tools: memory, KG, diary, project graph;
+- cognitive/work-state tools: memory, KG, diary, todo, scratchpad, project
+  graph, and project wiki;
 - expression language;
 - slash commands;
 - task catalog;
@@ -118,8 +122,9 @@ The README also advertises:
 - Tool-use loop and tool execution via the relay.
 - Multi-agent and delegation.
 - Structured plans with steps, assignment, and verification.
-- Persistent memory, semantic recall, knowledge graph, agent diary.
-- AST/tree-sitter-based project graph.
+- Persistent memory, semantic recall, knowledge graph, and agent diary.
+- Durable todo state and expiring pull-only scratchpad notes.
+- Relay-scoped AST/tree-sitter project graph and sourced project wiki.
 - Multiple LLM providers and an OpenAI-compatible endpoint.
 - Permission modes and tool-access control per configuration.
 
@@ -164,7 +169,9 @@ The README also advertises:
 2. **Modular architecture**: clear separation between agent core, engine, tasks, services, relay, and clients.
 3. **Broad integration surface**: files, shell, web, messaging, cloud storage, databases, media, OAuth.
 4. **Credible self-hosted approach**: the relay avoids granting the server permanent direct access to the user's filesystem.
-5. **Agent continuity tooling**: memory, KG, diary, plans, and project graph go beyond stateless chat.
+5. **Agent continuity tooling**: memory, KG, diary, todo, scratchpad, project
+   graph/wiki, and plans go beyond stateless chat without collapsing different
+   scopes and lifetimes into one store.
 6. **Meaningful test coverage**: the repository ships a real pytest suite, not just a demo script.
 
 ## Watch-outs

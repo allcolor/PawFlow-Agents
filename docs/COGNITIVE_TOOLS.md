@@ -1,8 +1,11 @@
 # Cognitive Tools
 
-PawFlow provides five persistent cognitive systems that give agents long-term memory, structured knowledge, personal reflection, codebase structure, and sourced project documentation. These systems work together to make agents context-aware across conversations, capable of tracking evolving facts, and able to reason about code structure.
+PawFlow provides five persistent cognitive systems plus two scoped work-state
+layers. The distinction matters: durable facts, an agent's experience, unfinished
+work, and temporary evidence have different owners, lifetimes, and retrieval
+rules.
 
-**The five systems:**
+**The five persistent systems and two work-state layers:**
 
 | System | Purpose | Storage |
 |---|---|---|
@@ -11,12 +14,16 @@ PawFlow provides five persistent cognitive systems that give agents long-term me
 | **Agent Diary** | Per-agent journal of observations and decisions | `data/memories/{user}/diary_{agent}.jsonl` |
 | **Project Graph** | AST-based code structure graph (17 languages) | `data/runtime/graphs/{safe_user}/{safe_relay}/graph.json` |
 | **Project Wiki** | LLM-maintained Markdown with source-hash provenance | `data/runtime/project_wikis/{safe_user}/{safe_relay}/` |
+| **Todo List** | Authoritative unfinished work for one conversation agent | `data/runtime/todolists/todos.sqlite3` |
+| **Scratchpad** | Expiring working evidence and resume notes for one conversation agent | `data/runtime/scratchpads/scratchpads.sqlite3` |
 
 A procedural layer — the **skill loop** — closes learning into reusable artifacts: agents are instructed (via a `## Skill loop` system-prompt block) to crystallize novel multi-step procedures into skills with `manage_resource` and to fix skills that proved wrong during use; each completed compaction bucket or rollup can produce a structured `skill-draft` memory; recurrence in a different conversation automatically promotes the procedure to a user skill; the Memories UI still exposes pending drafts for reviewed promotion or deletion; `load_skill` tracks usage and suggests scope promotion; and the `skillCurator` flow task produces review-first maintenance reports. See [LEARNING_LOOP_PLAN.md](LEARNING_LOOP_PLAN.md).
 
 They are interconnected:
 
-- **Memory digest** and **diary digest** are injected into the agent's system prompt at the start of every conversation turn.
+- **Memory** and **diary** digests are injected dynamically on API turns and
+  serialized into cold CLI bootstraps. Scratchpad note bodies are never injected;
+  only a count, expiry, and up to five topic labels are shown.
 - When a memory is stored, the system cross-checks the **knowledge graph** for contradictions and warns the agent.
 - **Auto-extraction** triggers periodically pull facts from conversation text into both memory and KG.
 - The **project graph** and **project wiki** are relay-scoped, refreshed asynchronously for the active relay, and shared by every conversation and agent using that project.
@@ -35,7 +42,7 @@ Memories are classified by category:
 |---|---|---|
 | **`category`** | Memory type | `facts`, `events`, `discoveries`, `preferences`, `advice` |
 
-Categories are browsable via the `memory_navigate` tool.
+Categories can be filtered directly with `recall(category=...)`.
 
 ### 1.2 Scopes
 
@@ -200,41 +207,22 @@ Most connected entities:
   Docker (7 connections)
 ```
 
-### 2.7 Hyperedges
-
-Hyperedges detect group relationships where one entity has the same predicate pointing to 3 or more objects. For example:
-
-```
-> kg_hyperedges()
-Group relationships:
-  PawFlow -> depends_on -> [tree-sitter, pytest, cryptography, Pydantic] (4 objects)
-  AuthGateway -> supports_provider -> [Google, GitHub, Microsoft, X, Facebook] (5 objects)
-```
-
-### 2.8 Surprises
-
-The surprises algorithm scores triples for unexpectedness based on:
-- **Cross-entity-type bonus** (+2): Subject and object have different entity types.
-- **Low confidence bonus** (+2-3): INFERRED gets +2, AMBIGUOUS gets +3.
-- **Peripheral-to-hub bonus** (+2): One end has <= 2 connections and the other has >= 5.
-
-Higher scores indicate more surprising connections.
-
-### 2.9 Community Detection
-
-Uses label propagation (no external dependencies) to cluster strongly connected entities. Returns `{community_id: [entity_names]}` ordered by size. The text report includes cohesion scores (ratio of intra-community edges to total edges of community members).
-
 ---
 
 ## 3. Agent Diary
 
-The diary is a per-agent personal journal that persists across conversations. Unlike memories (which store facts about the user/project), the diary stores the agent's own observations, decisions, and learnings.
+The diary is a per-agent journal that persists across conversations. Unlike
+memories (facts about the user/project/world), it stores the agent's own
+first-person decisions, lessons, recurring failure patterns, and reflections.
+Write after a non-obvious choice or a lesson likely to improve future work, not
+as a routine turn log. Use the todo list for unfinished work and the scratchpad
+for temporary evidence.
 
 ### 3.1 Entry Types
 
 | Type | When to use |
 |---|---|
-| `observation` | Something the agent noticed (default) |
+| `observation` | A recurring or consequential pattern the agent noticed (default) |
 | `decision` | A choice the agent made and why |
 | `learning` | A lesson learned from experience |
 | `reflection` | Higher-level thinking about patterns |
@@ -253,16 +241,14 @@ The diary is a per-agent personal journal that persists across conversations. Un
 
 The 10 most recent diary entries are built into a compact digest (max 600 characters) and injected into the system prompt under `## Your diary (past observations)`. Each entry's text is truncated to 100 chars.
 
-### 3.3 Difference vs Memory
+### 3.3 Difference vs Memory, Todo, and Scratchpad
 
-| Aspect | Memory | Diary |
-|---|---|---|
-| **About** | Facts about the user, project, world | Agent's own reflections |
-| **Scope** | global / agent / conversation / private | Always per-agent |
-| **Taxonomy** | Category | Entry type + tags |
-| **Recall** | Searchable by query, tags, category | Read chronologically |
-| **Storage** | JSON (one file per user) | JSONL (one file per agent per user) |
-| **Digest** | Multi-tier (L0-L4) | Last 10 entries |
+| Layer | Put this here | Scope / lifetime | Context behavior |
+|---|---|---|---|
+| **Memory** | Durable facts/preferences/events about user, project, or world | Configurable visibility; persistent | Digest plus explicit keyword/semantic recall |
+| **Diary** | Agent's durable decisions, lessons, patterns, reflections | User + agent; persistent across conversations | Last 10 entries injected; older/type-filtered entries via `diary_read` |
+| **Todo** | Authoritative unfinished work and verification state | User + conversation + agent; durable until completed | Active and recent completed items injected |
+| **Scratchpad** | Temporary evidence, hypotheses, local decisions, resume cues | User + conversation + agent; TTL 1-720 hours | Only topics/count/expiry hinted; note bodies require `list` or `get` |
 
 ---
 
@@ -378,47 +364,23 @@ removed from normal reads automatically.
 
 ---
 
-## 6. Memory Navigate
+## 6. Work-State Routing
 
-The `memory_navigate` tool provides 3 actions to browse the memory taxonomy:
+Use `todolist` before meaningful multi-step or long-running work and keep its
+status authoritative. Use `scratchpad` only when the work needs transient
+evidence or a resume note that should expire.
 
-### 6.1 Actions
+| Situation | Tool |
+|---|---|
+| Work must resume after compaction/restart and completion matters | `todolist` |
+| Evidence or a hypothesis is useful only inside the current conversation agent | `scratchpad` |
+| A lesson should improve this agent's work in future conversations | `diary_write` |
+| A fact should be available as durable user/project/world knowledge | `remember` or `kg_add` |
 
-| Action | Description | Parameters |
-|---|---|---|
-| **`list_categories`** | List memory type categories with counts | -- |
-| **`get_taxonomy`** | Full `{category: count}` overview | -- |
-| **`graph_stats`** | Overall statistics: totals, category counts, ended count, category distribution | -- |
-
-### 6.2 Examples
-
-**Browsing categories:**
-
-```
-> memory_navigate(action="list_categories")
-Categories (5):
-- advice (4 memories)
-- discoveries (7 memories)
-- events (12 memories)
-- facts (42 memories)
-- preferences (15 memories)
-```
-
-**Getting stats:**
-
-```
-> memory_navigate(action="graph_stats")
-Total memories: 80
-Categories: 5
-Ended (obsolete): 3
-Active: 77
-Category distribution:
-  advice: 4
-  discoveries: 7
-  events: 12
-  facts: 42
-  preferences: 15
-```
+Scratchpad bodies are deliberately pull-only. When the injected Scratchpad Hint
+names a relevant topic, call `scratchpad(action="list", query="...")` or
+`scratchpad(action="get", note_id="...")`. Update existing notes rather than
+duplicating them, and delete obsolete notes before their TTL when possible.
 
 ---
 
@@ -495,7 +457,10 @@ reflection is written.
 
 ## 8. System Prompt Injection
 
-At every conversation turn, three cognitive blocks are appended to the agent's system prompt:
+The static system prompt contains one canonical routing block,
+`## Tool selection`. Mutable data stays out of the cached
+prefix: API providers append it to the latest user turn, while a cold CLI session
+serializes it into `initial_context.md`.
 
 ### 8.1 Persistent Memory Digest
 
@@ -505,24 +470,21 @@ Injected under `## Persistent memory`. Contains the multi-tier digest (L0-L4 + K
 
 Injected under `## Your diary (past observations)`. Contains the last 10 diary entries (truncated). Max 600 characters. Only present if the agent has diary entries.
 
-### 8.3 Cognitive Tools Hint
+### 8.3 Availability-Aware Tool-Selection Hint
 
-Always injected under `## Cognitive tools`. Tells the agent what tools are available:
+Generated from `core/tool_selection.py` using the active agent's filtered tool
+registry. It names the selection boundary and positive trigger for every
+cognitive/work-state route that is actually available, alongside the ambiguous
+delegation, orchestration, and waiting families. Families with fewer than two
+available routes are omitted from the permanent hint. Use
+`get_tool_schema(family="cognition")` for the complete available comparison;
+the individual tool schema remains the source of truth for parameters.
 
-```
-You have persistent memory, knowledge graph, diary, and code analysis tools:
-- Memory: remember to store facts (with category), recall to search, forget to delete,
-  memory_navigate to browse categories
-- Knowledge Graph: kg_add to store relationships (subject->predicate->object),
-  kg_query to find facts about an entity, query_graph for BFS/DFS traversal,
-  kg_god_nodes/kg_surprises/kg_communities for analysis
-- Diary: diary_write for personal observations/decisions/learnings,
-  diary_read to review past entries
-- Project Graph: automatically indexes the active relay; use
-  project_graph query/report/node to explore code structure
-- Project Wiki: automatically maintains sourced project documentation; use
-  project_wiki query/page/status/lint to inspect knowledge and freshness
-```
+### 8.4 Todo and Scratchpad Context
+
+Active todo state is injected automatically. Scratchpad note content is never
+injected; a non-empty scratchpad contributes only a compact hint with note count,
+earliest expiry, and up to five topic labels.
 
 ---
 
@@ -538,6 +500,8 @@ All paths are relative to the PawFlow data directory:
 | Project graph | `data/runtime/graphs/{safe_user}/{safe_relay}/graph.json` | JSON with `nodes`, `edges`, `metadata` |
 | Project wiki | `data/runtime/project_wikis/{safe_user}/{safe_relay}/` | Markdown pages plus JSON manifest |
 | Conversation index | `data/runtime/conversation_index/{user_id}.db` | SQLite FTS5, derived from transcripts |
+| Todo list | `data/runtime/todolists/todos.sqlite3` | SQLite, scoped by user/conversation/agent |
+| Scratchpad | `data/runtime/scratchpads/scratchpads.sqlite3` | SQLite with TTL, scoped by user/conversation/agent |
 
 All writes use the atomic tmp-then-replace pattern: write to `.tmp` file first, then `replace()` to the final path. The conversation index is the exception and deliberately so: it is SQLite (WAL), and it is *derived* data — deleting the file costs the next search one rebuild and loses nothing.
 
@@ -545,9 +509,9 @@ All writes use the atomic tmp-then-replace pattern: write to `.tmp` file first, 
 
 ## 10. Tool Reference
 
-Complete table of all 21 cognitive tools with their parameters:
+The runtime registry currently exposes 20 cognitive and work-state tools.
 
-### Memory Tools (6)
+### Memory Tools (5)
 
 | # | Tool | Parameters | Description |
 |---|---|---|---|
@@ -556,35 +520,30 @@ Complete table of all 21 cognitive tools with their parameters:
 | 3 | **`semantic_recall`** | `query` (string, required), `limit` (integer), `category` (enum) | Search memories by meaning via vector embeddings |
 | 4 | **`forget`** | `memory_id` (string, required) | Delete a specific memory by ID |
 | 5 | **`check_duplicate`** | `text` (string, required), `category` (string) | Check if a similar memory already exists |
-| 6 | **`memory_navigate`** | `action` (enum: list_categories/get_taxonomy/graph_stats, required) | Browse memory taxonomy structure |
-
-### Knowledge Graph Tools (8)
+### Knowledge Graph Tools (7)
 
 | # | Tool | Parameters | Description |
 |---|---|---|---|
-| 7 | **`kg_add`** | `subject` (string, required), `predicate` (string, required), `object` (string, required), `valid_from` (string), `confidence` (enum: EXTRACTED/INFERRED/AMBIGUOUS), `source` (string) | Add a fact triple with contradiction detection |
-| 8 | **`kg_query`** | `entity` (string, required), `as_of` (string), `direction` (enum: outgoing/incoming/both) | Query all facts about an entity |
-| 9 | **`kg_invalidate`** | `subject` (string, required), `predicate` (string, required), `object` (string, required), `ended` (string) | Mark a fact as no longer valid |
-| 10 | **`kg_timeline`** | `entity` (string), `limit` (integer) | Chronological history of facts |
-| 11 | **`kg_stats`** | _(none)_ | Summary statistics: entity count, triple count, relationship types |
-| 12 | **`query_graph`** | `question` (string, required), `mode` (enum: bfs/dfs), `depth` (integer), `max_results` (integer) | BFS/DFS traversal from matching entities |
-| 13 | **`kg_god_nodes`** | `limit` (integer) | Most connected entities ranked by degree |
-| 14 | **`kg_surprises`** | `limit` (integer) | Surprising cross-domain connections ranked by score |
-| 15 | **`kg_hyperedges`** | _(none)_ | Group relationships (3+ objects for same subject+predicate) |
-| 16 | **`kg_communities`** | _(none)_ | Detect entity clusters via label propagation |
+| 6 | **`kg_add`** | `subject`, `predicate`, `object` (required), `valid_from`, `confidence`, `source` | Add a fact triple with contradiction detection |
+| 7 | **`kg_query`** | `entity` (required), `as_of`, `direction` | Query all facts about an entity |
+| 8 | **`kg_invalidate`** | `subject`, `predicate`, `object` (required), `ended` | Mark a fact as no longer valid |
+| 9 | **`kg_timeline`** | `entity`, `limit` | Chronological history of facts |
+| 10 | **`kg_stats`** | _(none)_ | Summary statistics |
+| 11 | **`query_graph`** | `question` (required), `mode`, `depth`, `max_results` | BFS/DFS traversal from matching entities |
+| 12 | **`kg_god_nodes`** | `limit` | Most connected entities |
 
 ### Diary Tools (2)
 
 | # | Tool | Parameters | Description |
 |---|---|---|---|
-| 17 | **`diary_write`** | `entry` (string, required), `type` (enum: observation/decision/learning/reflection), `tags` (string[]) | Write a diary entry |
-| 18 | **`diary_read`** | `limit` (integer), `type` (enum: observation/decision/learning/reflection) | Read recent diary entries (newest first) |
+| 13 | **`diary_write`** | `entry` (required), `type`, `tags` | Write a durable agent-experience entry |
+| 14 | **`diary_read`** | `limit`, `type`, `agents` | Read recent own or explicitly selected same-user agent entries |
 
 ### Project Graph Tools (1, with 4 actions)
 
 | # | Tool | Parameters | Description |
 |---|---|---|---|
-| 19 | **`project_graph`** | `action` (enum: build/query/report/node, required), `path` (string), `question` (string), `depth` (integer), `source` (string) | Build, query, or report on codebase structure |
+| 15 | **`project_graph`** | `action` (build/query/report/node), `path`, `question`, `depth`, `source` | Inspect relay-scoped code structure |
 
 **Action breakdown:**
 
@@ -595,17 +554,25 @@ Complete table of all 21 cognitive tools with their parameters:
 | `report` | _(none)_ | Summary with god nodes, stats, confidence breakdown |
 | `node` | `question` (node label) | Details about a specific code entity |
 
-### Project Wiki Tools (1, with 7 actions)
+### Project Wiki Tools (1, with 10 actions)
 
 | # | Tool | Parameters | Description |
 |---|---|---|---|
-| 20 | **`project_wiki`** | `action` (enum: status/query/page/lint/refresh/upsert/acknowledge, required), `source`, `path`, `question`, `slug`, `title`, `summary`, `content`, `sources`, `limit`, `local` | Query, inspect, refresh, or repair the relay-scoped project wiki |
+| 16 | **`project_wiki`** | `action` (status/pages/query/page/page_data/lint/refresh/upsert/delete/acknowledge), plus action-specific fields | Query, inspect, refresh, or repair the relay-scoped project wiki |
 
-### Conversation Search (1)
+### Work-State Tools (2)
 
 | # | Tool | Parameters | Description |
 |---|---|---|---|
-| 21 | **`conversation_search`** | `query` (string, required), `agent` (string), `limit` (integer, max 50), `include_current` (boolean), `summarize` (boolean) | Full-text search over the raw text of the user's past conversations |
+| 17 | **`todolist`** | `action` (create/update/list/get), plus action-specific fields | Authoritative durable work state for one conversation agent |
+| 18 | **`scratchpad`** | `action` (create/update/get/list/delete/clear), note fields, TTL, pagination | Expiring pull-only working notes for one conversation agent |
+
+### Learning and Conversation Search (2)
+
+| # | Tool | Parameters | Description |
+|---|---|---|---|
+| 19 | **`learn`** | `limit` | Extract user preferences and communication patterns from raw messages |
+| 20 | **`conversation_search`** | `query` (required), `agent`, `limit`, `include_current`, `summarize` | Search raw text of past conversations |
 
 This is the counterpart of `recall`, not a duplicate of it. `recall` searches
 memories — what an agent decided at the time was worth keeping. This searches
@@ -619,13 +586,15 @@ conversations are in their index. See
 [tool_catalog.md](tool_catalog.md#searching-past-conversations) for the full
 behaviour.
 
-### Summary: 21 Tools Total
+### Summary: 20 Exposed Tools
 
-- 6 memory tools (`remember`, `recall`, `semantic_recall`, `forget`, `check_duplicate`, `memory_navigate`)
-- 10 knowledge graph tools (`kg_add`, `kg_query`, `kg_invalidate`, `kg_timeline`, `kg_stats`, `query_graph`, `kg_god_nodes`, `kg_surprises`, `kg_hyperedges`, `kg_communities`)
+- 5 memory tools (`remember`, `recall`, `semantic_recall`, `forget`, `check_duplicate`)
+- 7 knowledge graph tools (`kg_add`, `kg_query`, `kg_invalidate`, `kg_timeline`, `kg_stats`, `query_graph`, `kg_god_nodes`)
 - 2 diary tools (`diary_write`, `diary_read`)
 - 1 project graph tool with 4 actions (`project_graph`)
-- 1 project wiki tool with 7 actions (`project_wiki`)
+- 1 project wiki tool with 10 actions (`project_wiki`)
+- 2 work-state tools (`todolist`, `scratchpad`)
+- 1 learning tool (`learn`)
 - 1 conversation search tool (`conversation_search`)
 
 **Note on `end_memory`**: Ending a memory (marking it as no longer valid without deleting it) is done via the `MemoryStore.end_memory()` API method. There is no dedicated tool exposed to agents for this -- agents should use `forget` to remove obsolete memories or manage temporal validity through the knowledge graph's `kg_invalidate` instead.

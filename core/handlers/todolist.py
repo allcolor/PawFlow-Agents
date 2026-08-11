@@ -26,8 +26,11 @@ class TodoListHandler(ToolHandler):
         return (
             "Manage your durable working todo list. Use it to record concrete "
             "work that must survive long tasks, context compaction, provider "
-            "restarts, and cold sessions. Actions: create, update, list, get. "
-            "This is lightweight work state, not an orchestrated plan.")
+            "restarts, and cold sessions. Create items before meaningful multi-step "
+            "work, mark the active item in_progress, and complete it promptly. Use "
+            "scratchpad for temporary notes, memory for durable facts, and create_plan "
+            "when user approval or step orchestration is required. Actions: create, "
+            "update, list, get.")
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -37,19 +40,34 @@ class TodoListHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": ["create", "update", "list", "get"],
+                    "description": (
+                        "create: new pending item; update: mutate an item by task_id; "
+                        "get: fetch one item by task_id; list: paginated search/filter"),
                 },
-                "task_id": {"type": "string"},
-                "subject": {"type": "string"},
-                "description": {"type": "string"},
-                "active_form": {"type": "string"},
-                "status": {"type": "string", "enum": list(TODO_STATUSES)},
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-                "offset": {"type": "integer", "minimum": 0},
-                "owner": {"type": "string"},
-                "blocks": {"type": "array", "items": {"type": "string"}},
-                "blocked_by": {"type": "array", "items": {"type": "string"}},
-                "metadata": {"type": "object"},
+                "task_id": {"type": "string",
+                            "description": "Required for update/get; returned by create"},
+                "subject": {"type": "string",
+                            "description": "Required for create; concise outcome"},
+                "description": {"type": "string",
+                                "description": "Success criteria and resume details"},
+                "active_form": {"type": "string",
+                                "description": "Present-tense activity shown while active"},
+                "status": {"type": "string", "enum": list(TODO_STATUSES),
+                           "description": "Filter for list or new status for update"},
+                "query": {"type": "string",
+                          "description": "Text filter for list"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100,
+                          "description": "Page size for list (default 20)"},
+                "offset": {"type": "integer", "minimum": 0,
+                           "description": "Pagination offset for list"},
+                "owner": {"type": "string",
+                          "description": "Optional responsible agent/person label"},
+                "blocks": {"type": "array", "items": {"type": "string"},
+                           "description": "Task IDs blocked by this item"},
+                "blocked_by": {"type": "array", "items": {"type": "string"},
+                              "description": "Task IDs that block this item"},
+                "metadata": {"type": "object",
+                             "description": "Small structured resume metadata"},
             },
             "required": ["action"],
         }

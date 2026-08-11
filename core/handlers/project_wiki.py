@@ -40,10 +40,18 @@ class ProjectWikiHandler(BaseFsHandler):
         return {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": [
-                    "status", "pages", "query", "page", "page_data", "lint",
-                    "refresh", "upsert", "delete", "acknowledge",
-                ]},
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "status", "pages", "query", "page", "page_data", "lint",
+                        "refresh", "upsert", "delete", "acknowledge",
+                    ],
+                    "description": (
+                        "status: freshness summary; pages: list index; query: ranked "
+                        "search; page/page_data: read one page; lint: validate; refresh: "
+                        "rescan relay sources; upsert: write sourced page; delete: remove "
+                        "page; acknowledge: clear processed source markers"),
+                },
                 "source": {"type": "string",
                            "description": "Relay ID; omit for the active default relay."},
                 "path": {"type": "string",
@@ -56,7 +64,8 @@ class ProjectWikiHandler(BaseFsHandler):
                             "description": "Markdown body without frontmatter."},
                 "sources": {"type": "array", "items": {"type": "string"},
                             "description": "Current relay-relative source paths."},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 25},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 25,
+                          "description": "Maximum results for pages/query"},
                 "local": {"type": "boolean",
                           "description": "Use the relay host surface."},
             },

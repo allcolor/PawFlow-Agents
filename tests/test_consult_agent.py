@@ -124,6 +124,12 @@ class TestConsultAgent:
 
 
 class TestIntegrationSurface:
+    def test_description_prevents_recursive_self_consultation(self, handler):
+        description = handler.description
+        assert "thin interfaces" in description
+        assert "do not call consult_agent recursively" in description
+        assert "Use this for anything substantial" not in description
+
     def test_registered_in_default_registry(self):
         from core.tool_registry import create_default_registry
         names = {h.name for h in create_default_registry().list_tools()}

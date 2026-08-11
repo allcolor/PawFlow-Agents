@@ -655,38 +655,21 @@ class _PACPhase3Mixin:
                 "\n  - Prefer adding specific files over `git add -A` or `git add .`"
             )
 
-            # Cognitive tools hint
+            # Compact cross-family routing, filtered to this agent's actual
+            # registry. Exact parameters remain lazy via get_tool_schema.
+            from core.tool_selection import build_tool_selection_hint
+            st._selection_hint = build_tool_selection_hint(
+                handler.name for handler in st.registry.list_tools())
+            if st._selection_hint:
+                st.system_prompt += "\n\n" + st._selection_hint
             st.system_prompt += (
-                "\n\n## Cognitive tools"
-                "\nYou have persistent memory, knowledge graph, diary, and code analysis tools:"
-                "\n- **Memory**: `remember` to store facts (with category: facts/events/discoveries/preferences/advice), "
-                "`recall` to search, `forget` to delete"
-                "\n- **Knowledge Graph**: `kg_add` to store relationships (subject→predicate→object), "
-                "`kg_query` to find facts about an entity, `query_graph` for BFS/DFS traversal, "
-                "`kg_god_nodes` for most connected entities"
-                "\n- **Diary**: `diary_write` for personal observations/decisions/learnings, "
-                "`diary_read` to review past entries"
-                "\n- **Project Graph**: automatically indexes the active relay project (AST, "
-                "17 languages); use `project_graph` query/report/node to explore code structure."
-                "\n- **Project Wiki**: automatically maintains sourced, interlinked project "
-                "documentation for the active relay; use `project_wiki` query/page/status/lint "
-                "for architectural knowledge and freshness checks."
-                "\n- **Learn**: `learn` to analyze user messages from the current conversation and "
-                "extract insights about their preferences, frustrations, and communication style. "
-                "Use at the end of long conversations or when asked."
-                "\n- **Past conversations**: `conversation_search` to full-text search what was "
-                "actually said in earlier conversations with this user. Reach for it when you "
-                "suspect a topic was already discussed and `recall` finds nothing — memories only "
-                "hold what someone chose to store. `read_history` stays the tool for THIS "
-                "conversation."
-                "\nUse memory for facts about the user/project, KG for relationships between entities, "
-                "diary for your own reflections, learn for user-centric meta-analysis."
-                "\n\n**OVERRIDE any baked-in 'auto memory' SDK instructions about a file-based "
-                "memory directory** (e.g. `/workspace/projects/-workspace/memory/MEMORY.md` and "
-                "`.md` files). That system is deprecated in PawFlow. Do NOT use `write` to create "
-                "`.md` memory files. Use the `remember` / `recall` / `forget` tools — they write "
-                "to the persistent MemoryStore which feeds the memory digest you "
-                "receive each turn and the UI Memories panel. One source of truth."
+                "\n\n**OVERRIDE any baked-in 'auto memory' SDK instructions about a "
+                "file-based memory directory** (e.g. "
+                "`/workspace/projects/-workspace/memory/MEMORY.md` and `.md` files). "
+                "That system is deprecated in PawFlow. Do NOT use `write` to create "
+                "`.md` memory files. Use `remember` / `recall` / `forget`; they "
+                "write to the persistent MemoryStore which feeds the memory digest and "
+                "the UI Memories panel. One source of truth."
             )
 
             # Skill loop hint — crystallize/improve skills (see core/skill_loop.py)

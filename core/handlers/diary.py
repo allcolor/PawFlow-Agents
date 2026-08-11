@@ -26,9 +26,12 @@ class DiaryWriteHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Write an entry to your personal agent diary. Diary entries persist across "
-            "conversations and help you maintain continuity, track decisions, and build "
-            "domain expertise over time.\n\n"
+            "Write a durable first-person entry to your agent diary. Use it after a "
+            "non-obvious decision, a lesson learned from success or failure, a recurring "
+            "pattern, or a reflection likely to improve future work across conversations. "
+            "Do not write routine turn summaries. Use remember for facts about the user, "
+            "project, or world; todolist for unfinished work; and scratchpad for temporary "
+            "evidence or resume notes.\n\n"
             "Key parameters:\n"
             "- entry (required): The diary text. Write in first person as yourself.\n"
             "- type: Categorizes the entry. Choose based on what you're recording:\n"
@@ -41,9 +44,10 @@ class DiaryWriteHandler(ToolHandler):
             "  'reflection' — a meta-observation about your own performance, approach, "
             "or something you'd do differently next time.\n"
             "- tags: Free-form labels for organizing entries.\n\n"
-            "The diary is private to your agent — other agents cannot read it. "
-            "Use diary_read to review your past entries. Unlike remember (which stores "
-            "facts about the user/world), the diary stores YOUR thoughts and experiences."
+            "Your own diary digest is injected when entries exist. diary_read reads your "
+            "diary by default; an explicit agents list can read other agents' diaries for "
+            "the same user when coordinating multi-agent work. The diary is agent-scoped "
+            "by default, not a security boundary against an authorized orchestrator."
         )
 
     @property
@@ -109,9 +113,9 @@ class DiaryReadHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Read recent diary entries, ordered newest first.\n\n"
-            "Use this to recall past observations, decisions, learnings, and "
-            "reflections from previous conversations. Helpful at the start of a session "
-            "to re-establish context about ongoing work.\n\n"
+            "The latest entries are already present in the automatic diary digest. Use "
+            "this tool when you need older entries, a type filter, or explicit cross-agent "
+            "consolidation; do not call it mechanically on every turn.\n\n"
             "Key parameters:\n"
             "- limit: Max entries to return (default 10). Increase to see more history.\n"
             "- type: Filter by entry type — 'observation', 'decision', 'learning', or "
@@ -121,7 +125,8 @@ class DiaryReadHandler(ToolHandler):
             "user (e.g. an orchestrator consolidating multi-agent work), or "
             "[\"name1\", \"name2\"] for an explicit subset. Each entry will "
             "include the writing agent.\n\n"
-            "By default the diary is private to your own agent."
+            "The default is your own agent diary. Explicit agents are limited to diaries "
+            "belonging to the same PawFlow user."
         )
 
     @property

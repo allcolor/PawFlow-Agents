@@ -278,31 +278,70 @@ class GetToolSchemaHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Retrieve the full JSON schema (name, description, parameters) for a\n"
-            "tool by name. This is the first step in the lazy tool discovery pattern.\n\n"
+            "tool by name, or compare available tools in one routing family. "
+            "This is the first step in the lazy tool discovery pattern.\n\n"
             "Instead of receiving all tool schemas upfront (which can exceed context\n"
             "limits), you start with only get_tool_schema and use_tool. Use this\n"
             "tool to inspect any tool's parameters BEFORE calling it via use_tool.\n\n"
             "Parameters:\n"
-            "  tool_name -- exact name of the tool to inspect.\n\n"
+            "  tool_name -- exact name of one tool to inspect.\n"
+            "  family -- compare tools in delegation, work, waiting, cognition, "
+            "files, discovery, or resources.\n"
+            "Provide at most one. Omit both to list available tools and families.\n\n"
             "Returns the tool's name, display_name, description, and full parameter\n"
-            "schema. If the tool does not exist, returns the list of all available\n"
-            "tool names so you can pick the right one.\n\n"
+            "schema, or an availability-filtered family comparison.\n\n"
             "Workflow: get_tool_schema(tool_name='X') -> read the schema ->\n"
             "use_tool(tool_name='X', arguments={...}) with correct arguments."
         )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
+        from core.tool_selection import TOOL_FAMILIES
         return {
             "type": "object",
             "properties": {
                 "tool_name": {"type": "string", "description": "Name of the tool to inspect"},
+                "family": {
+                    "type": "string",
+                    "enum": sorted(TOOL_FAMILIES),
+                    "description": (
+                        "Tool family to compare using only tools available "
+                        "in this registry"),
+                },
             },
-            "required": ["tool_name"],
+            "required": [],
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        name = arguments.get("tool_name", "")
+        name = str(arguments.get("tool_name", "") or "").strip()
+        family = str(arguments.get("family", "") or "").strip().lower()
+        registry_handlers = self._registry.list_tools()
+        available_handlers = [
+            handler for handler in registry_handlers
+            if handler.name not in ("get_tool_schema", "use_tool")]
+        available_names = [handler.name for handler in available_handlers]
+        registry_names = [handler.name for handler in registry_handlers]
+        if name and family:
+            return json.dumps({
+                "error": "Provide either tool_name or family, not both",
+            })
+        if family:
+            from core.tool_selection import render_tool_family
+            return json.dumps(
+                render_tool_family(family, registry_names), indent=2)
+        if not name:
+            from core.tool_selection import TOOL_FAMILIES
+            return json.dumps({
+                "available_tools": [
+                    {
+                        "name": handler.name,
+                        "display_name": handler.display_name,
+                        "description": handler.description[:160],
+                    }
+                    for handler in available_handlers
+                ],
+                "available_families": sorted(TOOL_FAMILIES),
+            }, indent=2)
         # LLMs sometimes prefix the MCP namespace by mistake (they call
         # use_tool(tool_name="mcp__pawflow__get_tool_schema") instead of
         # calling get_tool_schema directly). Strip the prefix and — if
@@ -318,10 +357,8 @@ class GetToolSchemaHandler(ToolHandler):
             })
         handler = self._registry.get(name)
         if not handler:
-            available = [h.name for h in self._registry.list_tools()
-                         if h.name not in ("get_tool_schema", "use_tool")]
             return json.dumps({"error": f"Unknown tool '{_raw}'",
-                               "available": available})
+                               "available": available_names})
         return json.dumps({
             "name": handler.name,
             "display_name": handler.display_name,

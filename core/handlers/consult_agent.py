@@ -57,10 +57,12 @@ class ConsultAgentHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Delegate a task or question to this conversation's agent brain "
-            "— its full configured model, system prompt and knowledge — and "
-            "return its answer. Use this for anything substantial: "
-            "reasoning, analysis, drafting, decisions, domain questions. "
+            "Ask this conversation's configured agent brain for a tool-free, "
+            "one-shot answer. This is intended for thin interfaces such as realtime "
+            "voice helpers that need to hand substantial reasoning, analysis, "
+            "drafting, decisions, or domain questions to the full agent model. If "
+            "you are already that full agent handling the conversation turn, answer "
+            "directly and do not call consult_agent recursively. "
             "You stay the interface: relay the returned answer (summarize "
             "it for speech if you are a voice session). The delegate "
             "receives the recent conversation context automatically; put "

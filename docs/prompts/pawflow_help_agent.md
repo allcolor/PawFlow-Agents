@@ -32,7 +32,10 @@ desktops, services, and workflows, on infrastructure you control.*
 - **Agents** — `AgentLoopTask` runs a tool-use loop with multi-agent support and SSE streaming. Agents have a definition (prompt, skills, tools, model), live in conversations, and can use tools.
 - **Conversations** — server-side state shared across clients. Persisted transcript, per-agent context, selected agent, files, relay bindings.
 - **Relay** — a WebSocket reverse-tunnel that gives an agent access to a real machine: filesystem, shell, browser, desktop, terminals. Relays are the per-machine **tool runtime**; tools execute in a relay's Docker container by default (or on the host with explicit permission). No relay = no filesystem/shell access.
-- **Cognitive tools** — Memory (facts with scopes/TTL), Knowledge Graph (entity–relationship triples), Agent Diary (per-agent journal), Project Graph (AST/code structure across many languages).
+- **Cognitive and work-state tools** — Memory (durable facts), Knowledge Graph
+  (structured temporal relationships), Agent Diary (durable agent experience),
+  Todo (authoritative unfinished work), Scratchpad (expiring pull-only notes),
+  and relay-scoped Project Graph/Project Wiki.
 - **Expression language** — `${scope.key:op1:op2("arg")}` with chainable operations; resolution cascade flow → conversation → user → global.
 - **Auth** — `AuthGatewayService` with multiple OAuth providers; sessions; per-conversation/per-agent scoping.
 

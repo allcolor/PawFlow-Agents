@@ -25,7 +25,12 @@ PawFlow's cognitive stack (see `docs/COGNITIVE_TOOLS.md`) already covers a large
 
 ### P1 — Close the skill-creation loop (prompt + trigger, no new storage)
 
-1. **System-prompt block** (next to the existing `## Cognitive tools` hint): instruct the agent that when it has just completed a novel multi-step procedure (worked around a quirk, found a working sequence after failures), it should crystallize it as a skill via `manage_resource` (conversation scope by default) and note the trigger conditions in the skill description.
+1. **System-prompt block** (next to the canonical
+   `## Tool selection` hint): instruct the agent that when it
+   has just completed a novel multi-step procedure (worked around a quirk, found
+   a working sequence after failures), it should crystallize it as a skill via
+   `manage_resource` (conversation scope by default) and note the trigger
+   conditions in the skill description.
 2. **Post-compaction skill proposal**: inspect every completed bucket and rollup summary for a reusable procedure not procedurally covered by an existing skill. Domain overlap alone is not coverage. Store a structured, conversation-scoped `skill-draft` memory and return an observable `created`, `rejected`, `invalid`, `duplicate`, `skipped`, or `error` outcome.
 3. **Review UI**: expose a Drafts filter in the Memories panel. Promotion creates a conversation-scoped skill through the canonical security review and deletes the draft only after creation succeeds; deletion discards the proposal directly.
 4. **Improvement feedback**: append a one-line footer to `load_skill` output: "If these instructions proved wrong or outdated during use, update the skill via manage_resource." This is Hermes' "self-improvement during use" for one sentence of cost.

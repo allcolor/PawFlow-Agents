@@ -173,7 +173,8 @@ or deleting the publication does the same.
 
 The Streamable HTTP endpoint currently advertises two MCP tools:
 
-- `get_tool_schema`: list PawFlow tools or return one full schema;
+- `get_tool_schema`: list PawFlow tools/families, return one full schema, or
+  compare an availability-filtered routing family;
 - `use_tool`: execute a named PawFlow tool with `arguments_json`.
 
 The wrapper keeps the MCP tool list small while exposing the exact set available

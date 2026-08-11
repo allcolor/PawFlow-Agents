@@ -26,10 +26,12 @@ class ScratchpadHandler(ToolHandler):
         return (
             "Manage temporary working notes that survive compaction and provider "
             "restarts for the current user/conversation/agent only. Contents are "
-            "never injected automatically. Use for transient evidence, hypotheses, "
-            "decisions and resume cues; use todolist for authoritative tasks and "
-            "memory for durable facts. Notes expire automatically. Actions: create, "
-            "update, get, list, delete, clear.")
+            "never injected automatically; only a compact topic/count hint appears in "
+            "context. Use list/get when that hint reports relevant notes, and create or "
+            "update notes for transient evidence, hypotheses, local decisions, and resume "
+            "cues. Use todolist for authoritative tasks, memory for durable facts, and "
+            "diary for durable first-person lessons. Notes expire automatically. "
+            "Actions: create, update, get, list, delete, clear.")
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -37,16 +39,28 @@ class ScratchpadHandler(ToolHandler):
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": [
-                    "create", "update", "get", "list", "delete", "clear"]},
-                "note_id": {"type": "string"},
-                "topic": {"type": "string"},
-                "content": {"type": "string"},
-                "tags": {"type": "array", "items": {"type": "string"}},
+                    "create", "update", "get", "list", "delete", "clear"],
+                    "description": (
+                        "create: add a note; update: mutate by note_id; get: read one; "
+                        "list: paginated text search; delete: remove one; clear: remove "
+                        "all notes in the current scope")},
+                "note_id": {"type": "string",
+                            "description": "Required for update/get/delete"},
+                "topic": {"type": "string",
+                          "description": "Short non-sensitive label shown in context hints"},
+                "content": {"type": "string",
+                            "description": "Temporary note body; never auto-injected"},
+                "tags": {"type": "array", "items": {"type": "string"},
+                         "description": "Searchable labels"},
                 "ttl_hours": {"type": "integer", "minimum": 1,
-                              "maximum": MAX_TTL_HOURS},
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-                "offset": {"type": "integer", "minimum": 0},
+                              "maximum": MAX_TTL_HOURS,
+                              "description": "Hours until expiry (default 168, max 720)"},
+                "query": {"type": "string",
+                          "description": "Search topic, content, and tags for list"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100,
+                          "description": "Page size for list (default 20)"},
+                "offset": {"type": "integer", "minimum": 0,
+                           "description": "Pagination offset for list"},
             },
             "required": ["action"],
         }

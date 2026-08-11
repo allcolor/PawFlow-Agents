@@ -53,7 +53,10 @@ Use it when a hosted coding assistant is too boxed-in, a workflow tool is too ri
 PawFlow gives agents a real operating surface without handing your workspace to a vendor-controlled agent cloud.
 
 - **Relay-backed tools**: read, edit, grep, run commands, browse, control desktops, generate media, and inspect projects through explicit relay routes.
-- **Durable context**: conversations, shared context, per-agent context, memory, knowledge graphs, diaries, project graphs, files, and buckets survive restarts.
+- **Purpose-built context**: conversations, memory, knowledge graphs, agent
+  diaries, relay-scoped project graphs and wikis, durable todo state, expiring
+  scratchpads, files, and buckets each keep their own scope and lifetime across
+  restarts.
 - **Skill learning loop**: agents crystallize hard-won procedures into skills, update skills that proved wrong during use, and get conservative skill drafts proposed from compaction summaries; skill usage is tracked and a `skillCurator` flow task produces review-first maintenance reports — nothing is archived or promoted without your confirmation.
 - **Encryption at rest (opt-in)**: per-conversation passphrase encryption of message content, thinking, and tool I/O (and conv-scoped relay workspaces via CryFS); keys live in RAM only, so a stopped server leaves only ciphertext on disk. Off by default and transparent to conversations that don't use it.
 - **Multi-provider agents**: mix Codex interactive, Claude Code interactive, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation. The old Codex app-server and Claude Code `-p` agent transports remain available only for legacy configurations.
@@ -291,16 +294,48 @@ This lets a model such as GLM 5.2 inspect uploads and use `screen`/`see`/`read` 
 
 ### Cognitive Systems
 
-Agents have persistent memory that survives across conversations:
+Agents have persistent cognition plus scoped work state:
 
 | System | Purpose | Storage |
 |--------|---------|--------|
 | **Memory** | Facts, preferences, events organized in wing/hall/room taxonomy | `data/memories/{user}.json` |
 | **Knowledge Graph** | Entity-relationship triples with temporal validity | `data/knowledge_graphs/{user}.json` |
 | **Agent Diary** | Personal observations, decisions, learnings per agent | `data/memories/{user}/diary_{agent}.jsonl` |
-| **Project Graph** | AST-based code structure graph (17 languages via tree-sitter) | `data/graphs/{user}/{conv}/graph.json` |
+| **Project Graph** | Relay-scoped AST structure (17 languages via tree-sitter) | `data/runtime/graphs/{safe_user}/{safe_relay}/graph.json` |
+| **Project Wiki** | Relay-scoped sourced Markdown maintained from project changes | `data/runtime/project_wikis/{safe_user}/{safe_relay}/` |
+| **Todo List** | Authoritative unfinished work for one conversation agent | `data/runtime/todolists/todos.sqlite3` |
+| **Scratchpad** | Expiring evidence, hypotheses, and resume cues for one conversation agent | `data/runtime/scratchpads/scratchpads.sqlite3` |
 
-Memory digests and diary entries are automatically injected into the system prompt.
+Memory and diary digests plus active todo state are injected into turn context.
+Scratchpad bodies are deliberately pull-only: the agent sees a compact topic/count
+hint and calls `scratchpad` to retrieve relevant notes. See
+[Cognitive Tools](docs/COGNITIVE_TOOLS.md) for the memory/KG/diary/todo/scratchpad
+decision guide.
+
+### Tool Selection at a Glance
+
+| If the agent needs to... | Use |
+|---|---|
+| Ask an existing agent in this conversation | `delegate` |
+| Run independent temporary work in parallel | `flash_delegate` |
+| Get a tool-free one-shot second opinion | `consult_agent` |
+| Call a configured remote agent | `a2a` |
+| Track its own unfinished work | `todolist` |
+| Orchestrate approved multi-step work | plan tools |
+| Run a predefined autonomous recurring job | `assign_task` |
+| Wait briefly for a command | `Monitor` |
+| End the turn and resume long-running work later | `schedule_continuation` |
+| Check again at a specific or recurring time | `ScheduleWakeup` |
+
+The full [Agent Tool Selection guide](docs/TOOL_SELECTION.md) also distinguishes
+file/search/edit tools, artifacts, user questions and notifications, cognitive
+stores, resources, packages, skills, tasks, and flows.
+
+Agents receive a compact `## Tool selection` map filtered to their actual
+tool registry. They can request a complete comparison on demand with
+`get_tool_schema(family="delegation")`, then inspect exact parameters with
+`get_tool_schema(tool_name="delegate")`. The full Markdown guide is not
+copied into every prompt.
 
 ### Multi-Agent
 
@@ -446,7 +481,7 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 |----------|-------------|
 | [Architecture](docs/architecture.md) | Internal architecture, FlowFile, components |
 | [Agent System](docs/AGENT_SYSTEM.md) | Agent loop, context, plans, multi-agent, streaming |
-| [Cognitive Tools](docs/COGNITIVE_TOOLS.md) | Memory, KG, diary, project graph (21 tools) |
+| [Cognitive Tools](docs/COGNITIVE_TOOLS.md) | Memory, KG, diary, todo, scratchpad, project graph/wiki (20 exposed tools) |
 | [Skill Learning Loop](docs/LEARNING_LOOP_PLAN.md) | Agent-created skills, drafts from compaction, usage stats, curator task |
 | [Expression Language](docs/EXPRESSION_LANGUAGE.md) | 40+ operators, scopes, cascade |
 | [Slash Commands](docs/SLASH_COMMANDS.md) | All webchat commands |

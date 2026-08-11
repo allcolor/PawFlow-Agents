@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.172] — 2026-08-11
+
+### Added
+
+- Added a declarative, availability-aware tool-routing registry. Agents now
+  receive a compact `## Tool selection` block filtered to their allowed tools;
+  `get_tool_schema(family=...)` returns the same family's detailed comparison
+  on demand, while `tool_name=...` remains the exact schema contract.
+- Added one cross-family tool-selection guide, linked from the README and public
+  website, covering delegation, todo/plan/task/flow ownership, file and artifact
+  tools, passive continuation versus scheduled wake-up, and user interaction.
+
+### Changed
+
+- Replaced the generic cognitive-tool prompt with canonical routing rules for
+  memory, knowledge graph, diary, todo, scratchpad, project graph/wiki, learning,
+  and history search; diary now has explicit write triggers and no longer claims
+  cross-agent reads are impossible.
+- Completed action and parameter hints for todo, scratchpad, and project wiki,
+  and aligned README, technical docs, help-agent context, and website guidance
+  with the 20 cognitive/work-state tools actually exposed by the runtime.
+- Removed documentation promises for unregistered `memory_navigate`,
+  `kg_surprises`, `kg_hyperedges`, and `kg_communities` tools.
+- Clarified that `consult_agent` is a tool-free bridge for thin interfaces, not
+  a recursive self-delegation mechanism for a full agent turn.
+
 ## [1.0.0-beta.171] — 2026-08-11
 
 ### Added

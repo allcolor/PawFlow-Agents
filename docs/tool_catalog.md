@@ -2,7 +2,10 @@
 
 PawFlow exposes tools to agents through `ToolHandler` classes. Most tools are also available inside flows as `tool.<name>` tasks through `ToolTaskAdapter`.
 
-This catalog is grouped by purpose. Use `get_tool_schema(tool_name)` at runtime for the exact JSON schema of a tool.
+This catalog is grouped by purpose. Use
+`get_tool_schema(tool_name="<name>")` at runtime for one exact JSON schema,
+or `get_tool_schema(family="<family>")` to compare the tools actually
+available to the current agent.
 
 ## Argument Handling
 
@@ -265,11 +268,12 @@ pages before image results before video results.
 | `semantic_recall` | Semantic memory recall. |
 | `forget` | Delete a memory. |
 | `check_duplicate` | Detect duplicate memories. |
-| `memory_navigate` | Browse memory taxonomy. |
 | `learn` | Extract learnings from conversation. |
 | `conversation_search` | Full-text search across the user's past conversations (raw messages, not extracted memories). Read-only, approval-exempt, allowed in read-only mode. Encrypted conversations are never indexed and never appear in results. See [Searching past conversations](#searching-past-conversations). |
 | `diary_write` | Write an agent diary entry. |
 | `diary_read` | Read diary entries. |
+| `todolist` | Manage authoritative unfinished work scoped to the current conversation agent. |
+| `scratchpad` | Manage expiring pull-only working notes scoped to the current conversation agent. |
 | `kg_add` | Add knowledge graph triples. |
 | `kg_query` | Query graph facts. |
 | `kg_invalidate` | Expire graph facts. |
@@ -373,7 +377,7 @@ someone else.
 | `link_resource` | Link/unlink relay/resource binding. |
 | `create_tool` | Register a dynamic tool. |
 | `delete_tool` | Delete a dynamic tool. |
-| `get_tool_schema` | Inspect a tool schema. |
+| `get_tool_schema` | Inspect one tool schema, compare an availability-filtered family, or list available tools/families. |
 | `use_tool` | Execute a tool by name. |
 | `pawflow_help` | Get platform help. |
 

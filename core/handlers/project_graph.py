@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProjectGraphHandler(BaseFsHandler):
-    """Build and query the structural graph of a project codebase.
+    """Build and query the structural graph of a relay project.
 
     Extends BaseFsHandler to get relay/filesystem service access.
     Build fetches code via relay, AST parsing runs server-side.
@@ -33,7 +33,8 @@ class ProjectGraphHandler(BaseFsHandler):
     @property
     def description(self) -> str:
         return (
-            "Structural code graph of the current project codebase.\n"
+            "Structural code graph of the current relay project. The relay ID is "
+            "the project ID, so the graph is shared across conversations and agents.\n"
             "Nodes = code entities (functions, classes, modules, imports), "
             "edges = relationships (calls, imports, contains, inherits) extracted "
             "via tree-sitter AST. 17 languages: Python, JS/TS/TSX, Go, Rust, Java, "
@@ -57,7 +58,8 @@ class ProjectGraphHandler(BaseFsHandler):
             " - <5 file question — the report overhead isn't worth it.\n"
             " - When you've just edited code and the graph hasn't been rebuilt — "
             "the cache is stale; read the file directly.\n\n"
-            "Actions:\n"
+            "The graph is built and refreshed automatically in the background. "
+            "Use these actions for inspection or recovery.\n\nActions:\n"
             "- build: AST-parses the workspace via the relay. INCREMENTAL: only "
             "files whose mtime changed are re-parsed; deleted files have their "
             "nodes/edges garbage-collected. First build is full; subsequent builds "
@@ -68,9 +70,9 @@ class ProjectGraphHandler(BaseFsHandler):
             "language distribution. Quick overview after build.\n"
             "- node: Detail on one entity — file, location, type, neighbour edges. "
             "Pass the label in `question`.\n\n"
-            "PASSIVE DIGEST: when a graph exists for the conv, a one-line summary "
+            "PASSIVE DIGEST: when a graph exists for the active relay, a one-line summary "
             "(entity count, language mix, top god nodes) is auto-injected into "
-            "the system prompt under '## Project structure' — so you have basic "
+            "the turn context under '## Project structure' — so you have basic "
             "awareness without any tool call.\n\n"
             "Parameters:\n"
             "- action (required): build / query / report / node.\n"
@@ -109,31 +111,30 @@ class ProjectGraphHandler(BaseFsHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         action = arguments.get("action", "")
-        if not self._user_id or not self._conversation_id:
-            return "Error: user_id and conversation_id required"
+        if not self._user_id:
+            return "Error: user_id required"
+        source = str(arguments.get("source") or "")
+        svc = self._find_service(source)
+        if svc is None:
+            return self._no_target_error(source)
+        relay_id = str(getattr(svc, "_service_id", "") or source)
+        if not relay_id:
+            return "Error: resolved relay has no service ID"
 
         from core.project_graph import ProjectGraph
-        pg = ProjectGraph.for_conversation(self._user_id, self._conversation_id)
+        pg = ProjectGraph.for_relay(self._user_id, relay_id)
 
         if action == "build":
             path = arguments.get("path", ".")
             # Resolve filesystem service (relay) via BaseFsHandler
-            source = arguments.get("source", "")
-            svc, workdir = self._resolve(source)
-            if svc == "filestore":
-                return "Error: project_graph build requires a relay, not filestore"
-            if svc is None and workdir is None:
-                return "Error: no relay connected. Connect a relay to index the codebase."
-            if workdir:
-                return "Error: project_graph build requires a relay filesystem service"
             # Build via relay
             result = pg.build_from_relay(
                 svc, path, local=bool(arguments.get("local", False)))
             status = result.get("status", "?")
-            if status == "built":
+            if status in ("built", "unchanged"):
                 return (f"Project graph built: {result.get('nodes', 0)} nodes, "
                         f"{result.get('edges', 0)} edges "
-                        f"({result.get('files', 0)} files indexed)")
+                        f"({result.get('files', 0)} files indexed, relay={relay_id})")
             return f"Graph build: {status} — {result.get('reason', '')}"
 
         if action == "query":

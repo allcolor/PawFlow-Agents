@@ -1,7 +1,9 @@
 # PawFlow MCP Client Installer
 
-The PawFlow MCP client package connects Claude Code, Codex, or Agy to one
-published PawFlow conversation through a local stdio bridge. The bridge also
+The PawFlow MCP client package connects one local client instance to one
+published PawFlow conversation and agent through a local stdio bridge. It
+provides isolated launchers for Claude Code, Codex, and Agy/Gemini, plus
+configuration fragments for any MCP-compatible stdio client. The bridge also
 registers the selected project directory as that conversation's CLI relay
 without changing the conversation's default relay.
 
@@ -11,7 +13,8 @@ without changing the conversation's default relay.
 - A published conversation URL ending in `/mcp/srv_...`.
 - A PawFlow MCP API key created for that publication.
 - The Private Gateway key when the PawFlow deployment uses the gateway.
-- Claude Code, Codex, or Agy already installed on the client workstation.
+- Claude Code, Codex, Agy/Gemini, or another MCP-compatible client already
+  installed on the client workstation.
 
 A publication accepts one active client instance. Create another published
 conversation when two client instances must run at the same time.
@@ -75,8 +78,9 @@ The default relay is read/write with shell execution disabled. File edits are
 therefore available, while commands remain denied until the operator explicitly
 enables them.
 
-Restart every configured client after installation. The MCP server appears
-under the name chosen in the wizard.
+The installer prints one launch command for every selected client. Always start
+that instance with the printed command. Starting the client normally does not
+activate the PawFlow session.
 
 ## Installed files
 
@@ -88,26 +92,49 @@ The runtime is installed per user:
 | macOS | `~/Library/Application Support/PawFlow/MCP` |
 | Linux | `$XDG_DATA_HOME/pawflow/mcp` or `~/.local/share/pawflow/mcp` |
 
-Secrets are written once to `profiles/NAME.json` under that runtime. On
+Secrets are written once to `sessions/NAME/profile.json` under that runtime. On
 POSIX systems the installer applies mode `0600` to the profile and `0700` to
-its directory. MCP client configurations contain only the Python executable,
-launcher path, profile path, and project directory; they do not duplicate API
-or gateway keys.
+its directory. Generated MCP configurations contain only the Python executable,
+launcher path, private profile path, and project directory; they do not duplicate
+API or gateway keys.
 
-The installer updates these user configurations:
+Each server name creates one isolated session directory:
 
-| Client | Configuration |
+| File | Purpose |
 |---|---|
-| Claude Code (`cc`) | `~/.claude.json`, `mcpServers.NAME` |
-| Codex | `~/.codex/config.toml`, a marked `mcp_servers.NAME` block |
-| Agy | `~/.gemini/antigravity-cli/settings.json` and `mcp_config.json`, plus Gemini-compatible user files |
+| `session.json` | Non-secret manifest used by the client launcher. |
+| `profile.json` | Private endpoint, API keys, relay directory, and permissions. |
+| `claude.mcp.json` | Strict per-invocation Claude Code MCP configuration. |
+| `agy-home/` | Isolated Agy/Gemini home and MCP configuration. |
+| `mcp.json` | Generic `{"mcpServers": {...}}` configuration. |
+| `entry.json` | One generic stdio server entry for clients with their own envelope format. |
 
-Existing JSON properties and unrelated MCP servers are preserved. Changed
-configuration files receive timestamped `.bak-*` copies. Re-running the same
-installation is idempotent and does not create backups when content is
-unchanged. The Codex block is bracketed by PawFlow markers; an existing
-unmanaged table with the same name must be renamed or removed first to avoid
-ambiguous TOML.
+The installer never reads or writes the user's global Claude Code, Codex, Agy,
+or Gemini configuration. Re-running the same server name replaces only that
+PawFlow session bundle. Use a different name for a different published
+conversation or agent.
+
+## Launch one isolated instance
+
+The generated launcher enforces one session bundle per local process:
+
+- **Claude Code:** launches `claude --mcp-config SESSION/claude.mcp.json
+  --strict-mcp-config`, so global MCP servers are excluded from that instance.
+- **Codex:** launches with `-C PROJECT` and a per-invocation `-c
+  mcp_servers=...` override containing only the selected PawFlow publication.
+- **Agy/Gemini:** launches with `HOME` and `USERPROFILE` set to
+  `SESSION/agy-home`, isolating both its MCP settings and client state. Complete
+  the client login once inside that isolated home when required.
+
+Arguments after the launch command are forwarded to the underlying client. For
+example, append `-- --model sonnet` to the generated Claude Code command.
+
+For another MCP-compatible client, create a dedicated client profile or
+per-invocation configuration and point it at `SESSION/mcp.json`. If the client
+expects only one server object rather than an `mcpServers` map, use
+`SESSION/entry.json`. Do not merge that file into a shared global profile:
+one running local instance must load exactly one session configuration, and that
+session maps to exactly one PawFlow conversation and agent.
 
 ## Non-interactive installation
 
@@ -131,9 +158,10 @@ and `--python` support managed or test installations.
 
 ## Verify the connection
 
-1. Restart the client.
-2. List MCP servers using the client's normal MCP status command.
-3. Start one client instance in the configured project.
+1. Copy the session-bound launch command printed by the installer.
+2. Start one client instance with that command in the configured project.
+3. List MCP servers using the client's normal MCP status command and confirm
+   that the selected PawFlow server is the only PawFlow publication loaded.
 4. Call `pawflow_relay_status`. It reports the local process, published server,
    relay ID, permissions, and `auto_default: false` without returning secrets.
 5. Call a read-only PawFlow tool, then test writes or shell execution only if
@@ -146,7 +174,7 @@ The bridge exposes four local lifecycle tools:
 ## Reconfigure or update
 
 Run the installer again with the same server name. It replaces the bundled
-runtime and updates the private profile and selected client entries. Unrelated
+runtime and that session's private profile and generated configurations. Global
 client configuration remains untouched.
 
 To change only the project directory or permissions, run the wizard again.
@@ -162,10 +190,11 @@ Close every active instance first so the publication lease can be released.
   installer. Verify the Private Gateway key separately.
 - Relay connection failure: confirm the shared directory exists locally and
   that outbound HTTPS/WebSocket traffic can reach PawFlow.
-- Codex duplicate table error: remove or rename the unmanaged
-  `[mcp_servers.NAME]` table, then reinstall.
-- Invalid JSON configuration: restore the timestamped backup or fix the JSON;
-  the installer never overwrites a file it cannot parse.
+- Agy/Gemini asks for authentication: complete login inside the isolated
+  session launched by PawFlow; credentials from the normal global home are
+  intentionally not reused.
+- A generic client also loads another PawFlow publication: use a dedicated
+  profile or per-invocation config rather than merging `mcp.json` globally.
 
 ## Build release archives
 

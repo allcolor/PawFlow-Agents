@@ -355,6 +355,7 @@ For a fuller agent-facing catalog, including internal/control tools, see
 | `tool.security_scan` | Run a security scan |
 | `tool.screen` | Capture a screenshot |
 | `tool.project_graph` | Query or update the project knowledge graph |
+| `tool.project_wiki` | Query or repair the sourced wiki for the active relay project |
 | `tool.kg_add` | Add nodes/edges to the knowledge graph |
 | `tool.kg_query` | Query the knowledge graph |
 | `tool.kg_invalidate` | Invalidate knowledge graph entries |

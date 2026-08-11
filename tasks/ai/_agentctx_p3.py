@@ -487,14 +487,26 @@ class _PACPhase3Mixin:
         if not st._is_cli_provider:
             try:
                 from core.todo_store import TodoStore
-                _add_digest(
-                    "Durable Todo List",
-                    TodoStore.instance().context_text(
-                        st.user_id, st.conversation_id,
-                        st._active_agent_name))
+                from core.scratchpad_store import ScratchpadStore
+                _scope = (st.user_id, st.conversation_id, st._active_agent_name)
+                _add_digest("Durable Todo List",
+                            TodoStore.instance().context_text(*_scope))
+                _add_digest("Scratchpad Hint",
+                            ScratchpadStore.instance().context_hint(*_scope))
             except Exception:
                 logging.getLogger(__name__).debug(
-                    "Failed to build durable todo context", exc_info=True)
+                    "Failed to build transient work context", exc_info=True)
+
+        st._project_relay_id = st._pg = st._project_wiki = ""
+        try:
+            from core.project_context import prepare_active_project_context
+            st._project_relay_id, st._pg, st._project_wiki = (
+                prepare_active_project_context(
+                st.user_id, st.conversation_id or "",
+                st._active_agent_name, llm_client=st.client))
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Failed to prepare active project context", exc_info=True)
 
         if st._cli_has_session:
             logger.info(
@@ -584,26 +596,16 @@ class _PACPhase3Mixin:
             # block below in any case. We append explicit usage triggers
             # because without them the agent defaults to read+grep instead
             # of leveraging the indexed graph.
+            if st._pg:
+                from core.project_context import PROJECT_GRAPH_USAGE_HINT
+                _add_digest("Project structure", st._pg)
+                st.system_prompt += PROJECT_GRAPH_USAGE_HINT
+
+            # Inject project-wiki freshness and usage guidance. Unlike the AST
+            # graph, an initialized wiki can be useful even while some pages
+            # are stale, so the digest explicitly tells the model to validate.
             try:
-                from core.project_graph_digest import build_project_graph_digest
-                st._pg = build_project_graph_digest(st.user_id, st.conversation_id or "")
-                if st._pg:
-                    _add_digest("Project structure", st._pg)
-                    # The guidance itself is static: it stays in the prefix,
-                    # gated on a graph existing at all.
-                    st.system_prompt += (
-                        "\n\n**Reach for `project_graph` BEFORE read/grep when:**"
-                        "\n- User mentions a function/class/module by name"
-                        " → `project_graph(action='node', question='X')` for location + neighbours."
-                        "\n- 'where is X used', 'what calls Y', 'what depends on Z'"
-                        " → `project_graph(action='query', question='X')` returns AST call sites"
-                        " (no false matches in comments/strings)."
-                        "\n- Refactor/rename touching a public API → query first to scope blast radius."
-                        "\n- Onboarding to an unfamiliar area → `action='report'` for god nodes + stats."
-                        "\n**Skip it for:** single-file edit you already have open, text/comment search,"
-                        " non-code files (md/json/yaml), scopes <5 files, or when the graph is stale"
-                        " (rebuild via UI ‘+’ menu → Project Graph)."
-                    )
+                _add_digest("Project wiki", st._project_wiki)
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
@@ -664,9 +666,11 @@ class _PACPhase3Mixin:
                 "`kg_god_nodes` for most connected entities"
                 "\n- **Diary**: `diary_write` for personal observations/decisions/learnings, "
                 "`diary_read` to review past entries"
-                "\n- **Project Graph**: `project_graph` with action=build to index a codebase (AST, "
-                "17 languages), then action=query/report/node to explore code structure. "
-                "Only build when asked — it fetches all code files via relay."
+                "\n- **Project Graph**: automatically indexes the active relay project (AST, "
+                "17 languages); use `project_graph` query/report/node to explore code structure."
+                "\n- **Project Wiki**: automatically maintains sourced, interlinked project "
+                "documentation for the active relay; use `project_wiki` query/page/status/lint "
+                "for architectural knowledge and freshness checks."
                 "\n- **Learn**: `learn` to analyze user messages from the current conversation and "
                 "extract insights about their preferences, frustrations, and communication style. "
                 "Use at the end of long conversations or when asked."

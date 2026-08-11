@@ -142,6 +142,9 @@ PLANS_DIR = RUNTIME_DIR / "plans"
 # Durable per-agent todo lists
 TODOLISTS_DIR = RUNTIME_DIR / "todolists"
 
+# Ephemeral per-agent scratchpads
+SCRATCHPADS_DIR = RUNTIME_DIR / "scratchpads"
+
 # Claude Code sessions
 CLAUDE_SESSIONS_DIR = RUNTIME_DIR / "sessions" / "claude"
 
@@ -153,6 +156,9 @@ GEMINI_SESSIONS_DIR = RUNTIME_DIR / "sessions" / "gemini"
 
 # Project graphs (AST cache)
 GRAPHS_DIR = RUNTIME_DIR / "graphs"
+
+# LLM-maintained project wikis, scoped by relay identity
+PROJECT_WIKIS_DIR = RUNTIME_DIR / "project_wikis"
 
 # Conversation full-text indexes, one SQLite file per user
 # (core/conversation_index.py). Derived data: safe to delete, rebuilt on

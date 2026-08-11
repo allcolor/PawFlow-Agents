@@ -19,22 +19,23 @@ class TestProjectGraphDigest(unittest.TestCase):
         ProjectGraph._instances = {}
         self._tmp.cleanup()
 
-    def _seed_graph(self, user, conv, payload):
-        path = Path(self._tmp.name) / user / conv / "graph.json"
+    def _seed_graph(self, user, relay, payload):
+        path = Path(self._tmp.name) / user / relay / "graph.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload))
-        # Force ProjectGraph.for_conversation to land here
-        ProjectGraph._instances[f"{user}::{conv}"] = ProjectGraph(str(path))
+        # Force ProjectGraph.for_relay to land here
+        ProjectGraph._instances[f"{user}::{relay}"] = ProjectGraph(
+            str(path), user_id=user, relay_id=relay)
 
     def test_no_graph_returns_empty(self):
-        # Conv has no graph file at all
+        # Relay has no graph file at all
         self.assertEqual(build_project_graph_digest("u", "c"), "")
 
     def test_empty_graph_returns_empty(self):
         self._seed_graph("u", "c", {"nodes": [], "edges": []})
         self.assertEqual(build_project_graph_digest("u", "c"), "")
 
-    def test_no_user_or_conv(self):
+    def test_no_user_or_relay(self):
         self.assertEqual(build_project_graph_digest("", "c"), "")
         self.assertEqual(build_project_graph_digest("u", ""), "")
 

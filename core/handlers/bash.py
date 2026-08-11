@@ -312,6 +312,9 @@ class BashHandler(BaseFsHandler):
             result = svc.exec(
                 path, command, local=bool(arguments.get("local", False)),
                 **_exec_kwargs)
+            if int(result.get("returncode", 0) or 0) == 0:
+                self._schedule_project_refresh(
+                    svc, "<bash>", local=bool(arguments.get("local", False)))
             output = result.get("stdout", "")
             if result.get("stderr"):
                 output += "\nSTDERR:\n" + result["stderr"]
@@ -397,6 +400,10 @@ class BashHandler(BaseFsHandler):
                     output += "\nSTDERR:\n" + result["stderr"]
                 if result.get("returncode", 0) != 0:
                     output += f"\n(exit code: {result['returncode']})"
+                elif svc and svc != "filestore" and not workdir:
+                    self._schedule_project_refresh(
+                        svc, "<background-bash>",
+                        local=bool(arguments.get("local", False)))
                 _write_output(output or "(no output)")
             except Exception as e:
                 try:

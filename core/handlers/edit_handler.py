@@ -133,7 +133,9 @@ class EditHandler(BaseFsHandler):
                                       start_line=start_line, end_line=end_line,
                                       new_string=new_string,
                                       local=bool(arguments.get("local", False)))
-                self._note_write(result.get("path", path))
+                self._note_write(
+                    result.get("path", path), service=svc,
+                    local=bool(arguments.get("local", False)))
                 return (f"Edited {result.get('path', path)}: "
                         f"replaced lines {start_line}-{end_line} "
                         f"({result.get('lines_removed', 0)} removed, "
@@ -150,7 +152,9 @@ class EditHandler(BaseFsHandler):
                     # gets refused by check_duplicate_failure.
                     record_edit_failure(_uid, _cid, _agent, path, old_string)
                     return f"Error editing '{path}': {e}"
-                self._note_write(result.get("path", path))
+                self._note_write(
+                    result.get("path", path), service=svc,
+                    local=bool(arguments.get("local", False)))
                 diff = result.get("diff", [])
                 if diff:
                     match_type = result.get("match_type")

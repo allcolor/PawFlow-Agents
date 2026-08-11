@@ -90,8 +90,74 @@ class TestSkillDraftProposal:
             conversation_id="c1") == "created"
         assert propose_skill_draft_from_summary(
             "u1", "s2", llm_client=_FakeClient(payload),
-            conversation_id="c2") == "duplicate"
+            conversation_id="c1") == "duplicate"
         assert len(mem_store.list_all("u1")) == 1
+
+    def test_cross_conversation_recurrence_auto_promotes(
+            self, mem_store, tmp_path, monkeypatch):
+        from core import paths
+        from core.repository import ScopedRepository
+        from core.resource_store import ResourceStore
+
+        monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+        ScopedRepository.reset()
+        ResourceStore.reset()
+        payload = {"skill": {
+            "name": "restart-service",
+            "description": "Restart a service after configuration changes",
+            "steps": ["validate config", "restart service", "check health"],
+            "trigger": "service configuration changed",
+        }}
+        assert propose_skill_draft_from_summary(
+            "u1", "first", llm_client=_FakeClient(payload),
+            conversation_id="c1") == "created"
+        assert propose_skill_draft_from_summary(
+            "u1", "second", llm_client=_FakeClient(payload),
+            conversation_id="c2") == "promoted"
+
+        learned = ResourceStore.instance().get(
+            "skill", "restart-service", "u1")
+        assert learned is not None
+        assert learned["metadata"]["auto_created"] is True
+        assert learned["metadata"]["confirmed_conversations"] == ["c1", "c2"]
+        assert "1. validate config" in learned["instructions"]
+        assert mem_store.list_all("u1") == []
+        ResourceStore.reset()
+        ScopedRepository.reset()
+
+    def test_same_name_different_procedure_does_not_auto_promote(
+            self, mem_store, tmp_path, monkeypatch):
+        from core import paths
+        from core.repository import ScopedRepository
+        from core.resource_store import ResourceStore
+
+        monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+        ScopedRepository.reset()
+        ResourceStore.reset()
+        first = {"skill": {
+            "name": "restart-service",
+            "description": "Restart the service after configuration changes",
+            "steps": ["validate config", "restart service", "check health"],
+            "trigger": "service configuration changed",
+        }}
+        collision = {"skill": {
+            "name": "restart-service",
+            "description": "Recover the service after a database outage",
+            "steps": ["restore database", "start service", "verify records"],
+            "trigger": "database recovery completed",
+        }}
+        assert propose_skill_draft_from_summary(
+            "u1", "first", llm_client=_FakeClient(first),
+            conversation_id="c1") == "created"
+
+        assert propose_skill_draft_from_summary(
+            "u1", "second", llm_client=_FakeClient(collision),
+            conversation_id="c2") == "duplicate"
+        assert ResourceStore.instance().get(
+            "skill", "restart-service", "u1") is None
+        assert len(mem_store.list_all("u1")) == 1
+        ResourceStore.reset()
+        ScopedRepository.reset()
 
     def test_no_client_is_noop(self, mem_store):
         assert propose_skill_draft_from_summary("u1", "s") == "skipped"

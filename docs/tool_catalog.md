@@ -145,7 +145,8 @@ either way.
 | `screen` | Screenshot/click/type/key/scroll/mouse-position against local or Docker desktop. |
 | `browser` | Browser automation action through the browser service. |
 | `see` | Analyze an image, video, or audio artifact. |
-| `project_graph` | Build/query the code structure graph. |
+| `project_graph` | Query or manually rebuild the automatically maintained relay-scoped AST graph. |
+| `project_wiki` | Query, inspect, lint, refresh, or repair the automatically maintained relay-scoped project wiki. |
 
 When `PAWFLOW_USE_RTK` is set to a truthy value (`1`, `true`, `yes`, `on`) and
 the selected relay target has the `rtk` binary, PawFlow uses RTK for compatible

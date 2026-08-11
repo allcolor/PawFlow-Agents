@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.171] — 2026-08-11
+
+### Added
+
+- Added a relay-scoped Project Wiki with source-hash provenance, automatic
+  bounded refreshes, stale-page protection, query/page/status/lint actions, and
+  a webchat browser/editor.
+- Added a bounded SQLite Scratchpad isolated by user, conversation, and agent,
+  with mandatory TTLs, search, CRUD actions, compact context hints, and a
+  webchat editor.
+- Added connected webchat panels and slash commands for browsing Project Graph,
+  Project Wiki, and Scratchpad state.
+- Added per-session MCP client bundles and launch commands for Claude Code,
+  Codex, Agy/Gemini, plus generic stdio MCP configuration fragments.
+
+### Changed
+
+- Made Project Graph and Project Wiki derived state follow the active relay
+  project, refresh after successful relay mutations, and reset cleanly when the
+  selected project root changes.
+- Promoted recurring skill drafts across distinct conversations through the
+  validated user-scope resource path while retaining review and failure safety.
+- Stopped the standalone MCP installer from reading or modifying global client
+  configuration. One launched local client instance now loads one isolated
+  PawFlow session mapped to exactly one published conversation and agent.
+
 ## [1.0.0-beta.170] — 2026-08-11
 
 ### Fixed

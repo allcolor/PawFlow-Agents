@@ -118,7 +118,9 @@ class BatchEditHandler(BaseFsHandler):
                     # Both forms: the relay reports its own paths, which may
                     # not be spelled the way the reading agent spelled them.
                     for _changed in {*(e.get("path", "") for e in edits), *files}:
-                        self._note_write(_changed)
+                        self._note_write(
+                            _changed, service=svc,
+                            local=bool(arguments.get("local", False)))
                 lines = [
                     f"Batch edited {result.get('files_modified_count', len(files))} file(s), "
                     f"{result.get('edits_applied', len(edits))} edit(s), "

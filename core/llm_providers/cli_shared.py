@@ -589,6 +589,11 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
             user_id, conversation_id, agent_name)
         if todo_context:
             body.extend(["## Durable Todo List", "", todo_context, ""])
+        from core.scratchpad_store import ScratchpadStore
+        scratchpad_hint = ScratchpadStore.instance().context_hint(
+            user_id, conversation_id, agent_name)
+        if scratchpad_hint:
+            body.extend(["## Scratchpad Hint", "", scratchpad_hint, ""])
         body.extend([
             "## Bootstrap Contract",
             "",

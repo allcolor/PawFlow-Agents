@@ -19,6 +19,8 @@ function showProjectGraphOverlay() {
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">Project Graph</h3>'
     + '<button onclick="pgBuild()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Build</button>'
     + '<button onclick="pgReport()" style="background:#1b4332;color:#52b788;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Report</button>'
+    + '<button onclick="document.getElementById(\'pgOverlay\').remove();showProjectWikiOverlay()" style="background:#2a2a4a;color:#a0a0c0;border:1px solid #444;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Wiki</button>'
+    + '<button onclick="document.getElementById(\'pgOverlay\').remove();showScratchpadOverlay()" style="background:#2a2a4a;color:#a0a0c0;border:1px solid #444;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Scratchpad</button>'
     + '<button onclick="document.getElementById(\'pgOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:auto">&times;</button>'
     + '</div>'
     + '<div style="display:flex;gap:6px;margin-bottom:10px">'

@@ -109,7 +109,9 @@ class WriteHandler(BaseFsHandler):
                                     service_name=service_name)
             svc.write_file(path, content.encode("utf-8"),
                            local=bool(arguments.get("local", False)))
-            self._note_write(path, content.encode("utf-8"))
+            self._note_write(
+                path, content.encode("utf-8"), service=svc,
+                local=bool(arguments.get("local", False)))
             return f"Written {len(content)} chars to {path}"
         except Exception as e:
             return f"Error writing '{path}': {e}"
@@ -146,4 +148,5 @@ class WriteHandler(BaseFsHandler):
         from core.handlers.copy import _iter_path
         writer(path, _iter_path(Path(disk_path)), expected_size=size,
                local=local)
+        self._note_write(path, service=svc, local=local)
         return f"Copied {fname} ({size:,} bytes) to {path}"

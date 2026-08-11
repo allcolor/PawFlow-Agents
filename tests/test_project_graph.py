@@ -165,12 +165,14 @@ def test_has_graph(tmp_path):
     assert pg.has_graph()
 
 
-def test_for_conversation(tmp_path):
-    pg1 = ProjectGraph.for_conversation("user1", "conv1")
-    pg2 = ProjectGraph.for_conversation("user1", "conv1")
+def test_for_relay_is_project_scoped(tmp_path, monkeypatch):
+    from core import paths
+    monkeypatch.setattr(paths, "GRAPHS_DIR", tmp_path / "graphs")
+    pg1 = ProjectGraph.for_relay("user1", "relay1")
+    pg2 = ProjectGraph.for_relay("user1", "relay1")
     assert pg1 is pg2
 
-    pg3 = ProjectGraph.for_conversation("user1", "conv2")
+    pg3 = ProjectGraph.for_relay("user1", "relay2")
     assert pg3 is not pg1
 
 
@@ -227,6 +229,36 @@ def test_incremental_unchanged_keeps_graph(tmp_path):
     assert result["nodes"] == 1
     assert pg.nodes[0]["id"] == "a"
     assert pg._graph["metadata"]["files"] == {"a.py": 100}
+
+
+def test_root_change_discards_old_graph_and_sends_empty_known_map(tmp_path):
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    pg._graph = {
+        "nodes": [{"id": "old", "label": "Old", "source_file": "old.py"}],
+        "edges": [{"source": "old", "target": "gone", "source_file": "old.py"}],
+        "metadata": {"root": ".", "files": {"old.py": 100}},
+    }
+    svc = _make_relay_mock({
+        "stdout": json.dumps({
+            "status": "built",
+            "nodes": [{"id": "new", "label": "New", "source_file": "new.py"}],
+            "edges": [],
+            "all_files": ["new.py"],
+            "parsed_files": ["new.py"],
+            "removed": [],
+            "mtimes": {"new.py": 200},
+            "total_files": 1,
+        }),
+        "stderr": "", "returncode": 0,
+    })
+
+    result = pg.build_from_relay(svc, "new-root")
+
+    assert result["status"] == "built"
+    assert [node["id"] for node in pg.nodes] == ["new"]
+    assert pg.edges == []
+    assert pg._graph["metadata"]["root"] == "new-root"
+    assert json.loads(svc.exec.call_args.kwargs["env"]["PAWFLOW_GRAPH_KNOWN"]) == {}
 
 
 def test_incremental_replaces_reparsed_file(tmp_path):

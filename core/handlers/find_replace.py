@@ -64,7 +64,9 @@ class FindReplaceHandler(BaseFsHandler):
                                       multiline=multiline,
                                       local=bool(arguments.get("local", False)))
             if int(result.get("replacements", 0) or 0) > 0:
-                self._note_write(result.get("path", path))
+                self._note_write(
+                    result.get("path", path), service=svc,
+                    local=bool(arguments.get("local", False)))
             return f"Replaced {result.get('replacements', 0)} occurrences in {result.get('path', path)}"
         except Exception as e:
             return f"Error: {e}"

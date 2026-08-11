@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -166,10 +167,13 @@ def _write_json(path: Path, value: dict, *, secret: bool = False,
 def _replace_runtime(bundle_root: Path, install_root: Path) -> None:
     source = bundle_root / "runtime"
     launcher_source = bundle_root / "launcher.py"
+    client_source = bundle_root / "client.py"
     if not (source / "pawflow_relay" / "mcp_stdio.py").is_file():
         raise ValueError(f"Bundle runtime is incomplete: {source}")
     if not launcher_source.is_file():
         raise ValueError(f"Bundle launcher is missing: {launcher_source}")
+    if not client_source.is_file():
+        raise ValueError(f"Bundle client launcher is missing: {client_source}")
     install_root.mkdir(parents=True, exist_ok=True)
     target = install_root / "runtime"
     staged = install_root / f".runtime-new-{os.getpid()}-{time.time_ns()}"
@@ -197,6 +201,15 @@ def _replace_runtime(bundle_root: Path, install_root: Path) -> None:
         stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
         | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH,
     )
+    client_target = install_root / "run-client.py"
+    tmp_client = install_root / f".client-{os.getpid()}-{time.time_ns()}.py"
+    shutil.copy2(client_source, tmp_client)
+    os.replace(tmp_client, client_target)
+    _safe_chmod(
+        client_target,
+        stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
+        | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH,
+    )
 
 
 def _entry(install_root: Path, profile_path: Path, python: str,
@@ -215,170 +228,49 @@ def _entry(install_root: Path, profile_path: Path, python: str,
     }
 
 
-def _install_claude(home: Path, name: str, entry: dict) -> tuple[Path, Path | None]:
-    path = home / ".claude.json"
-    config = _load_json(path, {})
-    servers = config.get("mcpServers")
-    if servers is None:
-        servers = {}
-    if not isinstance(servers, dict):
-        raise ValueError(f"mcpServers must be an object in {path}")
-    servers[name] = entry
-    config["mcpServers"] = servers
-    _changed, backup = _write_json(path, config)
-    return path, backup
-
-
-def _toml_string(value: str) -> str:
-    return json.dumps(value, ensure_ascii=True)
-
-
-def _codex_block(name: str, entry: dict) -> str:
-    args = ", ".join(_toml_string(str(value)) for value in entry["args"])
-    return (
-        f"# BEGIN PAWFLOW MCP: {name}\n"
-        f"[mcp_servers.{_toml_string(name)}]\n"
-        f"command = {_toml_string(entry['command'])}\n"
-        f"args = [{args}]\n"
-        f"cwd = {_toml_string(entry['cwd'])}\n"
-        f"# END PAWFLOW MCP: {name}\n"
-    )
-
-
-def _install_codex(home: Path, name: str, entry: dict) -> tuple[Path, Path | None]:
-    path = home / ".codex" / "config.toml"
-    text = path.read_text(encoding="utf-8") if path.exists() else ""
-    marker = re.compile(
-        rf"(?ms)^# BEGIN PAWFLOW MCP: {re.escape(name)}\n.*?"
-        rf"^# END PAWFLOW MCP: {re.escape(name)}\n?"
-    )
-    block = _codex_block(name, entry)
-    if marker.search(text):
-        updated = marker.sub(block, text, count=1)
-    else:
-        header = re.compile(
-            rf"(?m)^\[mcp_servers\.(?:{re.escape(name)}|"
-            rf"{re.escape(_toml_string(name))})\]\s*$")
-        if header.search(text):
-            raise ValueError(
-                f"{path} already contains an unmanaged MCP server named {name!r}; "
-                "remove or rename that table before installing")
-        updated = text
-        if updated and not updated.endswith("\n"):
-            updated += "\n"
-        if updated:
-            updated += "\n"
-        updated += block
-    _changed, backup = _atomic_write(path, updated)
-    return path, backup
-
-
-def _append_unique(values: object, additions: Iterable[str]) -> list[str]:
-    result = [str(value) for value in values] if isinstance(values, list) else []
-    for addition in additions:
-        if addition not in result:
-            result.append(addition)
-    return result
-
-
 def _agy_list_entry(name: str, entry: dict) -> dict:
     return {"serverName": name, **entry, "disabled": False}
 
 
-def _install_agy(home: Path, name: str, entry: dict) -> list[tuple[Path, Path | None]]:
-    results: list[tuple[Path, Path | None]] = []
-    gemini = home / ".gemini"
+def _write_agy_home(session_dir: Path, name: str, entry: dict) -> list[Path]:
+    """Write an isolated Agy/Gemini home for one local client instance."""
+    results: list[Path] = []
+    gemini = session_dir / "agy-home" / ".gemini"
     cli_dir = gemini / "antigravity-cli"
-
     cli_settings_path = cli_dir / "settings.json"
-    cli_settings = _load_json(cli_settings_path, {})
-    cli_servers = cli_settings.get("mcpServers")
-    if cli_servers is None:
-        cli_servers = {}
-    if not isinstance(cli_servers, dict):
-        raise ValueError(f"mcpServers must be an object in {cli_settings_path}")
-    cli_servers[name] = entry
-    cli_settings["mcpServers"] = cli_servers
-    cli_settings["allowMCPServers"] = _append_unique(
-        cli_settings.get("allowMCPServers"), [name])
-    mcp_policy = cli_settings.get("mcp")
-    if not isinstance(mcp_policy, dict):
-        mcp_policy = {}
-    mcp_policy["allowed"] = _append_unique(mcp_policy.get("allowed"), [name])
-    cli_settings["mcp"] = mcp_policy
-    permissions = cli_settings.get("permissions")
-    if not isinstance(permissions, dict):
-        permissions = {}
-    permissions["allow"] = _append_unique(
-        permissions.get("allow"),
-        [f"mcp({name}/*)", f"mcp_{name}_*"],
-    )
-    cli_settings["permissions"] = permissions
-    _changed, backup = _write_json(cli_settings_path, cli_settings)
-    results.append((cli_settings_path, backup))
-
+    settings = {
+        "mcpServers": {name: entry},
+        "allowMCPServers": [name],
+        "mcp": {"allowed": [name]},
+        "permissions": {"allow": [f"mcp({name}/*)", f"mcp_{name}_*"]},
+    }
+    _write_json(cli_settings_path, settings, backup=False)
+    results.append(cli_settings_path)
     list_path = cli_dir / "mcp_config.json"
-    list_config = _load_json(list_path, {})
-    rows = list_config.get("mcpServers")
-    if rows is None:
-        rows = []
-    if not isinstance(rows, list):
-        raise ValueError(f"mcpServers must be an array in {list_path}")
-    rows = [
-        row for row in rows
-        if not isinstance(row, dict) or str(row.get("serverName") or "") != name
-    ]
-    rows.append(_agy_list_entry(name, entry))
-    list_config["mcpServers"] = rows
-    _changed, backup = _write_json(list_path, list_config)
-    results.append((list_path, backup))
-
+    _write_json(
+        list_path, {"mcpServers": [_agy_list_entry(name, entry)]},
+        backup=False)
+    results.append(list_path)
     settings_path = gemini / "settings.json"
-    settings = _load_json(settings_path, {})
-    settings_servers = settings.get("mcpServers")
-    if settings_servers is None:
-        settings_servers = {}
-    if not isinstance(settings_servers, dict):
-        raise ValueError(f"mcpServers must be an object in {settings_path}")
-    settings_servers[name] = entry
-    settings["mcpServers"] = settings_servers
-    settings_permissions = settings.get("permissions")
-    if not isinstance(settings_permissions, dict):
-        settings_permissions = {}
-    settings_permissions["allow"] = _append_unique(
-        settings_permissions.get("allow"),
-        [f"mcp({name}/*)", f"mcp_{name}_*"],
-    )
-    settings["permissions"] = settings_permissions
-    _changed, backup = _write_json(settings_path, settings)
-    results.append((settings_path, backup))
-
+    _write_json(settings_path, settings, backup=False)
+    results.append(settings_path)
     root_config_path = gemini / "mcp_config.json"
-    root_config = _load_json(root_config_path, {})
-    root_servers = root_config.get("mcpServers")
-    if root_servers is None:
-        root_servers = {}
-    if not isinstance(root_servers, dict):
-        raise ValueError(f"mcpServers must be an object in {root_config_path}")
-    root_servers[name] = entry
-    root_config["mcpServers"] = root_servers
-    _changed, backup = _write_json(root_config_path, root_config)
-    results.append((root_config_path, backup))
+    _write_json(
+        root_config_path, {"mcpServers": {name: entry}}, backup=False)
+    results.append(root_config_path)
     return results
 
 
 def install(request: InstallRequest, *, bundle_root: Path,
-            install_root: Path | None = None, home: Path | None = None,
-            python: str | None = None) -> dict:
+            install_root: Path | None = None, python: str | None = None) -> dict:
     request = _validate_request(request)
     bundle_root = bundle_root.resolve()
-    home = (home or Path.home()).expanduser().resolve()
     install_root = (install_root or default_install_root()).expanduser().resolve()
     python = python or sys.executable
     _replace_runtime(bundle_root, install_root)
 
-    profile_dir = install_root / "profiles"
-    profile_path = profile_dir / f"{request.name}.json"
+    session_dir = install_root / "sessions" / request.name
+    profile_path = session_dir / "profile.json"
     profile = {
         "version": 1,
         "url": request.url.rstrip("/"),
@@ -390,32 +282,62 @@ def install(request: InstallRequest, *, bundle_root: Path,
     }
     _write_json(profile_path, profile, secret=True, backup=False)
 
+    relay_dir = request.relay_dir.expanduser().resolve()
+    entries = {
+        client: _entry(install_root, profile_path, python, relay_dir, client)
+        for client in request.clients
+    }
+    generic_entry = {
+        **_entry(install_root, profile_path, python, relay_dir, "cc"),
+    }
+    generic_entry["args"][-1] = "MCP Client"
     configs: list[str] = []
-    backups: list[str] = []
-    for client in request.clients:
-        entry = _entry(
-            install_root, profile_path, python,
-            request.relay_dir.expanduser(), client)
-        if client == "cc":
-            path, backup = _install_claude(home, request.name, entry)
-            pairs = [(path, backup)]
-        elif client == "codex":
-            path, backup = _install_codex(home, request.name, entry)
-            pairs = [(path, backup)]
-        else:
-            pairs = _install_agy(home, request.name, entry)
-        for path, backup in pairs:
-            configs.append(str(path))
-            if backup:
-                backups.append(str(backup))
+    generic_path = session_dir / "mcp.json"
+    entry_path = session_dir / "entry.json"
+    _write_json(generic_path, {"mcpServers": {
+        request.name: generic_entry}}, backup=False)
+    _write_json(entry_path, generic_entry, backup=False)
+    configs.extend([str(generic_path), str(entry_path)])
+    config_map = {"generic": str(generic_path)}
+    if "cc" in entries:
+        cc_path = session_dir / "claude.mcp.json"
+        _write_json(
+            cc_path, {"mcpServers": {request.name: entries["cc"]}},
+            backup=False)
+        config_map["cc"] = str(cc_path)
+        configs.append(str(cc_path))
+    if "agy" in entries:
+        agy_paths = _write_agy_home(session_dir, request.name, entries["agy"])
+        config_map["agy_home"] = str(session_dir / "agy-home")
+        configs.extend(str(path) for path in agy_paths)
+    session_path = session_dir / "session.json"
+    session = {
+        "version": 1,
+        "name": request.name,
+        "relay_dir": str(relay_dir),
+        "clients": list(request.clients),
+        "entries": entries,
+        "configs": config_map,
+    }
+    _write_json(session_path, session, backup=False)
+    configs.append(str(session_path))
+    client_launcher = install_root / "run-client.py"
+    launch_commands = {
+        client: [
+            str(Path(python).resolve()), str(client_launcher),
+            "--session", str(session_path), "--client", client,
+        ]
+        for client in request.clients
+    }
     return {
         "name": request.name,
         "install_root": str(install_root),
         "profile": str(profile_path),
         "clients": list(request.clients),
         "configs": configs,
-        "backups": backups,
-        "relay_dir": str(request.relay_dir.expanduser().resolve()),
+        "session": str(session_path),
+        "launch_commands": launch_commands,
+        "relay_dir": str(relay_dir),
         "readonly": request.readonly,
         "allow_exec": request.allow_exec,
     }
@@ -461,7 +383,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key-env", default="PAWFLOW_MCP_API_KEY")
     parser.add_argument("--gateway-key-env", default="PAWFLOW_GATEWAY_KEY")
     parser.add_argument("--install-dir")
-    parser.add_argument("--home")
     parser.add_argument("--python", default=sys.executable)
     return parser
 
@@ -506,7 +427,6 @@ def main(argv: list[str] | None = None) -> int:
             request,
             bundle_root=Path(__file__).resolve().parent,
             install_root=Path(args.install_dir) if args.install_dir else None,
-            home=Path(args.home) if args.home else None,
             python=args.python,
         )
     except (OSError, ValueError) as exc:
@@ -517,12 +437,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Private profile: {result['profile']}")
     print(f"Configured clients: {', '.join(result['clients'])}")
     print(f"Shared directory: {result['relay_dir']}")
-    if result["backups"]:
-        print("Backups:")
-        for path in result["backups"]:
-            print(f"  {path}")
-    print("Restart each configured client before using the new MCP server.")
-    print("Only one client instance may use a published conversation at a time.")
+    print("Session-bound launch commands:")
+    for client, command in result["launch_commands"].items():
+        print(f"  {client}: {subprocess.list2cmdline(command)}")
+    print("Use these launch commands instead of starting the client normally.")
+    print("One session bundle maps to exactly one published conversation and agent.")
     return 0
 
 

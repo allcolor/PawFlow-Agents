@@ -79,7 +79,9 @@ class ApplyPatchHandler(BaseFsHandler):
                     # Both forms: the relay reports its own paths, which may
                     # not be spelled the way the reading agent spelled them.
                     for _changed in {path, *files}:
-                        self._note_write(_changed)
+                        self._note_write(
+                            _changed, service=svc,
+                            local=bool(arguments.get("local", False)))
                 stats = result.get("stats", "") or ""
                 output = result.get("output", "") or ""
                 if files:

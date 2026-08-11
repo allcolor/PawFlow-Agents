@@ -61,18 +61,18 @@
         <p>PawFlow runs on the selected port, the wizard is complete, and the first conversation can call your chosen provider.</p>
       </article>
       <article class="recipe process-recipe" id="published-mcp-client" data-reveal>
-        <div class="recipe-meta">Published conversation, stdio, CC, Codex, Agy</div>
+        <div class="recipe-meta">Published conversation, stdio, CC, Codex, Agy/Gemini, generic MCP</div>
         <h2>Install a published PawFlow conversation as a local MCP server</h2>
-        <p><strong>Objective:</strong> connect Claude Code, Codex, or Agy to one PawFlow conversation and share the client's project directory through a relay that never changes the conversation default.</p>
+        <p><strong>Objective:</strong> bind one Claude Code, Codex, Agy/Gemini, or generic MCP client instance to exactly one PawFlow conversation and agent, while sharing its project directory through a relay that never changes the conversation default.</p>
         <div class="wizard-grid">
           <div><strong>Windows</strong><span>Download the ZIP, extract it, then run <code>install.cmd</code> or <code>powershell -ExecutionPolicy Bypass -File .\install.ps1</code>.</span></div>
           <div><strong>Linux and macOS</strong><span>Extract either archive, enter its directory, then run <code>./install.sh</code>.</span></div>
-          <div><strong>Secrets</strong><span>The publication API key and optional Private Gateway key live once in a private local profile, never in the CC, Codex, or Agy configuration.</span></div>
+          <div><strong>Isolation</strong><span>The installer never changes global CC, Codex, Agy, or Gemini settings. It creates one private session bundle and prints the command that must launch that instance.</span></div>
           <div><strong>Concurrency</strong><span>One published conversation accepts one active client instance. Publish another conversation for a second simultaneous instance.</span></div>
         </div>
         <p><a class="button button-primary" href="#" data-release-download="mcpClientZip">Download ZIP <span data-release-asset></span></a> <a class="button button-secondary" href="#" data-release-download="mcpClientTar">Download tar.gz <span data-release-asset></span></a></p>
-        <ol><li>Open the target conversation, then Resources &rarr; MCP Repository &rarr; <strong>Publish/configure this conversation</strong>.</li><li>Select the attached agent, create an API key, and copy the endpoint and key immediately.</li><li>Extract the client archive and run the installer for the current OS.</li><li>Enter a server name, endpoint, hidden API key, optional hidden gateway key, local project directory, and the clients to configure: <code>cc</code>, <code>codex</code>, <code>agy</code>, or a comma-separated subset.</li><li>Choose read-only or read/write access and whether shell execution is allowed. The secure default leaves shell execution disabled.</li><li>Restart the client, confirm the MCP server is listed, then call <code>pawflow_relay_status</code>. It must report <code>auto_default: false</code>.</li></ol>
-        <p>The guided installer preserves unrelated client settings, backs up changed configurations, and is safe to rerun for upgrades or permission changes.</p>
+        <ol><li>Open the target conversation, then Resources &rarr; MCP Repository &rarr; <strong>Publish/configure this conversation</strong>.</li><li>Select the attached agent, create an API key, and copy the endpoint and key immediately.</li><li>Extract the client archive and run the installer for the current OS.</li><li>Enter a unique session name, endpoint, hidden API key, optional hidden gateway key, local project directory, and the clients to prepare: <code>cc</code>, <code>codex</code>, <code>agy</code>, or a comma-separated subset.</li><li>Choose read-only or read/write access and whether shell execution is allowed. The secure default leaves shell execution disabled.</li><li>Start the client with the session-bound command printed by the installer, confirm the MCP server is listed, then call <code>pawflow_relay_status</code>. It must report <code>auto_default: false</code>.</li></ol>
+        <p>For any other MCP-compatible stdio client, use the generated <code>mcp.json</code> or <code>entry.json</code> in a dedicated client profile. Never merge it into a shared global profile: one local process must load one PawFlow session bundle.</p>
         <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/MCP_CLIENT_INSTALLER.md">Read the complete MCP client installation guide</a>
       </article>
       <article class="recipe process-recipe" id="desktop-novnc-audio" data-reveal>

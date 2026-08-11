@@ -620,4 +620,14 @@ const HELP_DATA = {
       + '  /graph report            \u2014 Show graph report (stats, god nodes)\n'
       + '  /graph query <question>  \u2014 Search graph for matching edges',
   },
+  '/wiki': {
+    usage: '/wiki',
+    short: 'Open the relay-scoped Project Wiki',
+    detail: 'Search, inspect, edit, refresh and lint the Project Wiki shared by every conversation and agent using the active relay.',
+  },
+  '/scratchpad': {
+    usage: '/scratchpad',
+    short: 'Open the selected agent scratchpad',
+    detail: 'Search, create, edit and expire temporary working notes scoped to the selected conversation agent.',
+  },
 };

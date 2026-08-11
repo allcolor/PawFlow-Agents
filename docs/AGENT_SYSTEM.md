@@ -186,8 +186,8 @@ The system prompt is assembled in layers during `_prepare_agent_context()`:
 5. **Behavior rules** -- Narration requirement, read_history hint, resilience style.
 6. **Relay context** -- Connected relay services, filesystem roots, docker/local modes.
 7. **Identity suffix** -- Ephemeral model/provider/service metadata (injected at call time, never persisted).
-8. **Cognitive digests** -- memory, diary, knowledge graph and project structure. On CLI providers they are appended here; on API providers they are **not** part of the system prompt at all (see *Prompt cache prefix* below).
-9. **Cognitive tools hint** -- Summary of available cognitive tools (memory, knowledge graph, diary, project graph) so the agent knows what is available.
+8. **Cognitive digests** -- memory, diary, knowledge graph, relay-scoped project structure, and project-wiki freshness. On CLI providers they are appended here; on API providers they are **not** part of the system prompt at all (see *Prompt cache prefix* below).
+9. **Cognitive tools hint** -- Summary of available cognitive tools (memory, knowledge graph, diary, project graph, project wiki) so the agent knows what is available.
 10. **Plan mode directive** -- If plan mode is active, forces the agent to call `create_plan` before executing tools.
 11. **Claude Code rules** -- For CC providers, rules about using MCP tools exclusively.
 
@@ -676,7 +676,8 @@ Each handler type receives different parameters:
 - **Sub-agent delegation** (`SpawnAgentsHandler`): LLM client, client resolver, SSE event callback, available agent names list, source agent identity.
 - **Script execution** (`ExecuteScriptHandler`): `base_url`, filesystem service resolver for `fs://` URLs.
 - **Identity tools** (`LinkIdentityHandler`): `user_id`.
-- **Knowledge graph, diary, project graph**: `user_id`, `agent_name`, `conversation_id`, filesystem service.
+- **Knowledge graph and diary**: `user_id`, `agent_name`, `conversation_id`.
+- **Project graph and project wiki**: `user_id`, `agent_name`, `conversation_id`, and the active relay filesystem service; persistent state is keyed by user and relay ID.
 
 ### Relay Resolution
 

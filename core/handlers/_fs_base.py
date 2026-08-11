@@ -337,7 +337,27 @@ class BaseFsHandler(ToolHandler):
 
     # ── Cross-agent conflict notices ──
 
-    def _note_write(self, path: str, new_content: bytes = None):
+    def _schedule_project_refresh(self, service, path: str,
+                                  local: bool = False) -> None:
+        """Debounce automatic graph/wiki maintenance for a relay mutation."""
+        if service is None or service == "filestore":
+            return
+        relay_id = str(getattr(service, "_service_id", "") or "")
+        if not relay_id:
+            return
+        try:
+            from core.project_maintenance import schedule_project_maintenance
+            schedule_project_maintenance(
+                user_id=self._user_id, relay_id=relay_id, service=service,
+                conversation_id=self._conversation_id,
+                agent_name=self._agent_name, local=bool(local),
+                changed_path=path, force=True)
+        except Exception:
+            logger.debug("[project-maint] schedule failed for %s", path,
+                         exc_info=True)
+
+    def _note_write(self, path: str, new_content: bytes = None,
+                    service=None, local: bool = False):
         """Flag ``path`` as changed for every other agent that had read it.
 
         Pass ``new_content`` when the bytes now on disk are already in hand:
@@ -350,6 +370,7 @@ class BaseFsHandler(ToolHandler):
                        self._agent_name, path, new_content)
         except Exception:
             logger.debug("[read-conflict] note failed for %s", path, exc_info=True)
+        self._schedule_project_refresh(service, path, local=local)
 
     # ── FileStore operations ──
 

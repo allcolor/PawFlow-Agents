@@ -39,6 +39,10 @@ def _fake_bundle(tmp_path: Path) -> Path:
         (ROOT / "scripts" / "mcp-client-launcher.py").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    (bundle / "client.py").write_text(
+        (ROOT / "scripts" / "mcp-session-launcher.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     return bundle
 
 
@@ -55,7 +59,7 @@ def _request(installer, relay_dir: Path):
     )
 
 
-def test_installer_merges_all_clients_without_copying_secrets(tmp_path):
+def test_installer_creates_instance_bundle_without_global_config(tmp_path):
     installer = _load_script("install-mcp-client.py", "pawflow_mcp_client_installer_test")
     home = tmp_path / "home"
     home.mkdir()
@@ -68,11 +72,11 @@ def test_installer_merges_all_clients_without_copying_secrets(tmp_path):
         json.dumps({"keep": True, "mcpServers": {"other": {"command": "other"}}}),
         encoding="utf-8",
     )
+    original_claude = (home / ".claude.json").read_text(encoding="utf-8")
     result = installer.install(
         _request(installer, relay_dir),
         bundle_root=bundle,
         install_root=install_root,
-        home=home,
         python=sys.executable,
     )
 
@@ -84,55 +88,45 @@ def test_installer_merges_all_clients_without_copying_secrets(tmp_path):
     if os.name != "nt":
         assert stat.S_IMODE(profile_path.stat().st_mode) == 0o600
 
-    claude = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
-    assert claude["keep"] is True
-    assert claude["mcpServers"]["other"]["command"] == "other"
+    assert (home / ".claude.json").read_text(encoding="utf-8") == original_claude
+    assert not (home / ".codex").exists()
+    assert not (home / ".gemini").exists()
+
+    session_path = Path(result["session"])
+    session = json.loads(session_path.read_text(encoding="utf-8"))
+    assert session["name"] == "pawflow-work"
+    assert session["clients"] == ["cc", "codex", "agy"]
+    claude = json.loads(
+        Path(session["configs"]["cc"]).read_text(encoding="utf-8"))
     claude_entry = claude["mcpServers"]["pawflow-work"]
     assert claude_entry["type"] == "stdio"
     assert claude_entry["command"] == str(Path(sys.executable).resolve())
     assert "--profile" in claude_entry["args"]
-
-    codex = (home / ".codex" / "config.toml").read_text(encoding="utf-8")
-    assert codex.count("# BEGIN PAWFLOW MCP: pawflow-work") == 1
-    assert '[mcp_servers."pawflow-work"]' in codex
-
+    assert Path(session["configs"]["agy_home"]).parent == session_path.parent
     agy_settings = json.loads(
-        (home / ".gemini" / "antigravity-cli" / "settings.json").read_text(
-            encoding="utf-8"))
+        (Path(session["configs"]["agy_home"]) / ".gemini"
+         / "antigravity-cli" / "settings.json").read_text(encoding="utf-8"))
     assert agy_settings["allowMCPServers"] == ["pawflow-work"]
     assert agy_settings["mcp"]["allowed"] == ["pawflow-work"]
     assert agy_settings["permissions"]["allow"] == [
         "mcp(pawflow-work/*)", "mcp_pawflow-work_*"]
-    agy_list = json.loads(
-        (home / ".gemini" / "antigravity-cli" / "mcp_config.json").read_text(
-            encoding="utf-8"))
-    assert agy_list["mcpServers"][0]["serverName"] == "pawflow-work"
-    assert agy_list["mcpServers"][0]["disabled"] is False
-
     client_text = "\n".join(
         Path(path).read_text(encoding="utf-8") for path in result["configs"])
     assert "mcp-secret-value" not in client_text
     assert "gateway-secret-value" not in client_text
-    assert len(result["backups"]) == 1
-    assert Path(result["backups"][0]).name.startswith(".claude.json.bak-")
+    assert set(result["launch_commands"]) == {"cc", "codex", "agy"}
 
     repeated = installer.install(
         _request(installer, relay_dir),
         bundle_root=bundle,
         install_root=install_root,
-        home=home,
         python=sys.executable,
     )
-    assert repeated["backups"] == []
-    assert (home / ".codex" / "config.toml").read_text(
-        encoding="utf-8").count("# BEGIN PAWFLOW MCP: pawflow-work") == 1
-    agy_repeated = json.loads(
-        (home / ".gemini" / "antigravity-cli" / "mcp_config.json").read_text(
-            encoding="utf-8"))
-    assert len(agy_repeated["mcpServers"]) == 1
+    assert repeated["session"] == result["session"]
+    assert (home / ".claude.json").read_text(encoding="utf-8") == original_claude
 
 
-def test_installer_refuses_invalid_endpoint_and_unmanaged_codex_table(tmp_path):
+def test_installer_refuses_invalid_endpoint_but_ignores_global_codex(tmp_path):
     installer = _load_script("install-mcp-client.py", "pawflow_mcp_client_installer_invalid")
     relay_dir = tmp_path / "project"
     relay_dir.mkdir()
@@ -149,7 +143,6 @@ def test_installer_refuses_invalid_endpoint_and_unmanaged_codex_table(tmp_path):
             request,
             bundle_root=_fake_bundle(tmp_path),
             install_root=tmp_path / "installed",
-            home=tmp_path / "home",
         )
 
     home = tmp_path / "valid-home"
@@ -164,13 +157,55 @@ def test_installer_refuses_invalid_endpoint_and_unmanaged_codex_table(tmp_path):
         relay_dir=relay_dir,
         clients=("codex",),
     )
-    with pytest.raises(ValueError, match="unmanaged"):
-        installer.install(
-            valid,
-            bundle_root=_fake_bundle(tmp_path),
-            install_root=tmp_path / "installed-valid",
-            home=home,
-        )
+    original = config.read_text(encoding="utf-8")
+    result = installer.install(
+        valid,
+        bundle_root=_fake_bundle(tmp_path),
+        install_root=tmp_path / "installed-valid",
+    )
+    assert Path(result["session"]).is_file()
+    assert config.read_text(encoding="utf-8") == original
+
+
+def test_session_launcher_builds_strict_per_instance_commands(tmp_path):
+    launcher = _load_script(
+        "mcp-session-launcher.py", "pawflow_mcp_session_launcher_test")
+    relay_dir = tmp_path / "project"
+    relay_dir.mkdir()
+    cc_config = tmp_path / "claude.mcp.json"
+    cc_config.write_text("{}", encoding="utf-8")
+    agy_home = tmp_path / "agy-home"
+    entry = {
+        "command": "/usr/bin/python3",
+        "args": ["bridge.py", "--profile", "profile.json"],
+        "cwd": str(relay_dir),
+    }
+    session = tmp_path / "session.json"
+    session.write_text(json.dumps({
+        "name": "pawflow-work", "relay_dir": str(relay_dir),
+        "entries": {"cc": entry, "codex": entry, "agy": entry},
+        "configs": {"cc": str(cc_config), "agy_home": str(agy_home)},
+    }), encoding="utf-8")
+
+    cc, _env, cwd = launcher.build_launch(
+        session, "cc", ["--model", "sonnet"], binary="claude")
+    assert cc[:4] == [
+        "claude", "--mcp-config", str(cc_config), "--strict-mcp-config"]
+    assert cc[-2:] == ["--model", "sonnet"]
+    assert cwd == str(relay_dir)
+
+    codex, _env, _cwd = launcher.build_launch(
+        session, "codex", [], binary="codex")
+    assert codex[:3] == ["codex", "-C", str(relay_dir)]
+    override = codex[codex.index("-c") + 1]
+    assert override.startswith("mcp_servers={")
+    assert "pawflow-work" in override
+
+    agy, env, _cwd = launcher.build_launch(
+        session, "agy", [], binary="agy")
+    assert agy == ["agy"]
+    assert env["HOME"] == str(agy_home)
+    assert env["USERPROFILE"] == str(agy_home)
 
 
 def test_relay_home_ownership_check_is_a_noop_without_geteuid(monkeypatch):
@@ -253,6 +288,7 @@ def test_builder_creates_reproducible_safe_zip_and_tar(tmp_path):
         f"{root}/install.cmd",
         f"{root}/install.ps1",
         f"{root}/launcher.py",
+        f"{root}/client.py",
         f"{root}/README.md",
         f"{root}/LICENSE",
         f"{root}/VERSION",
@@ -281,6 +317,8 @@ def test_release_workflow_and_website_publish_mcp_client_archives():
         encoding="utf-8")
     docs_hub = (ROOT / "pawflow-website" / "docs.html").read_text(
         encoding="utf-8")
+    guide = (ROOT / "docs" / "MCP_CLIENT_INSTALLER.md").read_text(
+        encoding="utf-8")
 
     assert "python scripts/build-mcp-client-installer.py --version" in workflow
     assert "dist/mcp-client-installers/*.zip" in workflow
@@ -290,3 +328,7 @@ def test_release_workflow_and_website_publish_mcp_client_archives():
     assert 'data-release-download="mcpClientZip"' in howto
     assert "MCP_CLIENT_INSTALLER.md" in howto
     assert "howtos.html#published-mcp-client" in docs_hub
+    assert "never reads or writes the user's global" in guide
+    assert "SESSION/mcp.json" in guide
+    assert "session-bound command printed by the installer" in howto
+    assert "preserves unrelated client settings" not in howto

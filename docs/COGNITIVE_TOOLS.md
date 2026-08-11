@@ -1,24 +1,25 @@
 # Cognitive Tools
 
-PawFlow provides four persistent cognitive systems that give agents long-term memory, structured knowledge, personal reflection, and codebase understanding. These systems work together to make agents context-aware across conversations, capable of tracking evolving facts, and able to reason about code structure.
+PawFlow provides five persistent cognitive systems that give agents long-term memory, structured knowledge, personal reflection, codebase structure, and sourced project documentation. These systems work together to make agents context-aware across conversations, capable of tracking evolving facts, and able to reason about code structure.
 
-**The four systems:**
+**The five systems:**
 
 | System | Purpose | Storage |
 |---|---|---|
 | **Memory** | Persistent facts, preferences, events | `data/memories/{user}.json` |
 | **Knowledge Graph** | Entity-relationship triples with temporal validity | `data/knowledge_graphs/{user}.json` |
 | **Agent Diary** | Per-agent journal of observations and decisions | `data/memories/{user}/diary_{agent}.jsonl` |
-| **Project Graph** | AST-based code structure graph (17 languages) | `data/graphs/{user}/{conv_id}/graph.json` |
+| **Project Graph** | AST-based code structure graph (17 languages) | `data/runtime/graphs/{safe_user}/{safe_relay}/graph.json` |
+| **Project Wiki** | LLM-maintained Markdown with source-hash provenance | `data/runtime/project_wikis/{safe_user}/{safe_relay}/` |
 
-A fifth, procedural layer — the **skill loop** — closes learning into reusable artifacts: agents are instructed (via a `## Skill loop` system-prompt block) to crystallize novel multi-step procedures into skills with `manage_resource` and to fix skills that proved wrong during use; each completed compaction bucket or rollup can produce a structured `skill-draft` memory; the Memories UI exposes pending drafts for reviewed promotion or deletion; `load_skill` tracks usage and suggests scope promotion; and the `skillCurator` flow task produces review-first maintenance reports. See [LEARNING_LOOP_PLAN.md](LEARNING_LOOP_PLAN.md).
+A procedural layer — the **skill loop** — closes learning into reusable artifacts: agents are instructed (via a `## Skill loop` system-prompt block) to crystallize novel multi-step procedures into skills with `manage_resource` and to fix skills that proved wrong during use; each completed compaction bucket or rollup can produce a structured `skill-draft` memory; recurrence in a different conversation automatically promotes the procedure to a user skill; the Memories UI still exposes pending drafts for reviewed promotion or deletion; `load_skill` tracks usage and suggests scope promotion; and the `skillCurator` flow task produces review-first maintenance reports. See [LEARNING_LOOP_PLAN.md](LEARNING_LOOP_PLAN.md).
 
 They are interconnected:
 
 - **Memory digest** and **diary digest** are injected into the agent's system prompt at the start of every conversation turn.
 - When a memory is stored, the system cross-checks the **knowledge graph** for contradictions and warns the agent.
 - **Auto-extraction** triggers periodically pull facts from conversation text into both memory and KG.
-- The **project graph** is built via the relay (user's machine) and queried server-side for code navigation.
+- The **project graph** and **project wiki** are relay-scoped, refreshed asynchronously for the active relay, and shared by every conversation and agent using that project.
 
 ---
 
@@ -267,11 +268,11 @@ The 10 most recent diary entries are built into a compact digest (max 600 charac
 
 ## 4. Project Graph
 
-The project graph builds a structural code graph from a codebase using tree-sitter AST extraction. Files are fetched via the relay (running on the user's machine), and AST parsing runs server-side.
+The project graph builds a structural code graph from a codebase using tree-sitter AST extraction. The relay ID is the project identity, so one cached graph is shared across conversations and agents attached to that relay. Extraction runs on the relay where the source files live.
 
 ### 4.1 Build via Relay
 
-The `build` action runs as a single relay exec; the extraction script
+Initial context preparation schedules a background build automatically. Successful relay writes and shell commands schedule a debounced incremental refresh. The manual `build` action remains available for recovery or an explicit root change. Each build runs as a single relay exec; the extraction script
 walks the workspace, AST-parses changed files via tree-sitter, and
 returns a JSON delta the server merges into the cached graph.
 
@@ -320,11 +321,68 @@ The `source` parameter on the `build` action specifies which relay/filesystem se
 
 ---
 
-## 5. Memory Navigate
+## 5. Project Wiki
+
+The project wiki is a persistent set of generated Markdown pages for one
+`(user, relay)` project. Source files remain on the relay. PawFlow stores only
+SHA-256 source metadata, generated pages, an index, an append-only activity log,
+and exact source provenance for every factual page.
+
+Context preparation and successful relay mutations schedule the same coalesced
+background worker as the Project Graph. The worker scans source hashes, selects
+one bounded batch of changed high-signal files, and makes one ephemeral LLM call.
+The first scan seeds root configuration, architecture documentation, and central
+graph files instead of enqueueing an entire large repository. Later additions,
+changes, and removals become pending automatically.
+
+Changing the selected project root performs a full derived-state reset: the AST
+graph is rebuilt, old generated wiki pages and pending entries are removed, and
+the new root is seeded again from high-signal sources.
+
+The LLM receives untrusted source text and affected existing pages, returns
+validated JSON, and may update up to twelve pages. A page is written with the
+current SHA-256 digest of every cited source. If any batched source changes while
+the LLM call is running, the response is marked `superseded`, no page is written,
+and the newer source remains pending for the next worker run.
+
+The `project_wiki` tool provides manual inspection and recovery:
+
+| Action | Purpose |
+|---|---|
+| `status` | Show source/page counts, pending changes, scan limits, and stale pages. |
+| `query` | Rank generated pages by full-text relevance. |
+| `page` | Read one page by slug. |
+| `lint` | Report stale pages, missing links/files, orphans, and uncited pages. |
+| `refresh` | Rescan source hashes manually. |
+| `upsert` | Create or replace a page with current source citations. |
+| `acknowledge` | Clear processed sources; stale cited sources are refused. |
+
+Agents receive a compact wiki status digest on each prepared turn. They should
+query the wiki before broad architectural exploration and validate stale claims
+against live source files.
+
+### 5.1 Webchat Panels and Scratchpad
+
+The webchat **Agent tools** menu exposes three connected project panels. The same
+panels can be opened with `/graph`, `/wiki`, and `/scratchpad`.
+
+| Panel | Available actions |
+|---|---|
+| **Project Graph** | Build or refresh the derived AST index, view its report, search nodes and edges, and inspect a node's source location and neighbors. The graph is read-only because source code is its source of truth. |
+| **Project Wiki** | List and search pages, render Markdown, create or edit a page, delete a page, refresh source metadata, and run lint checks. |
+| **Scratchpad** | List and search working notes, create or edit a note with tags and a required TTL, delete one note, or clear the selected conversation agent's notes. |
+
+Project Graph and Project Wiki follow the active relay project. Scratchpad notes
+are isolated by user, conversation, and selected agent, and expired notes are
+removed from normal reads automatically.
+
+---
+
+## 6. Memory Navigate
 
 The `memory_navigate` tool provides 3 actions to browse the memory taxonomy:
 
-### 5.1 Actions
+### 6.1 Actions
 
 | Action | Description | Parameters |
 |---|---|---|
@@ -332,7 +390,7 @@ The `memory_navigate` tool provides 3 actions to browse the memory taxonomy:
 | **`get_taxonomy`** | Full `{category: count}` overview | -- |
 | **`graph_stats`** | Overall statistics: totals, category counts, ended count, category distribution | -- |
 
-### 5.2 Examples
+### 6.2 Examples
 
 **Browsing categories:**
 
@@ -364,9 +422,9 @@ Category distribution:
 
 ---
 
-## 6. Auto-Triggers
+## 7. Auto-Triggers
 
-### 6.1 Periodic Auto-Save (Every ~15 Messages)
+### 7.1 Periodic Auto-Save (Every ~15 Messages)
 
 The `_maybe_auto_save_memories` method runs after each agent response. It checks if 15 new user messages have accumulated since the last save. When triggered:
 
@@ -375,7 +433,7 @@ The `_maybe_auto_save_memories` method runs after each agent response. It checks
 3. Uses the `summarizer_service` LLM to extract structured facts.
 4. Stores extracted facts via `auto_extract_memories()` with tag `auto-extracted`.
 
-### 6.2 Post-Compaction Extraction
+### 7.2 Post-Compaction Extraction
 
 When a conversation is compacted (context window overflow), `_auto_extract_memories` is called with the compaction summary. The extraction uses an LLM prompt asking for 3-5 key facts as JSON:
 
@@ -388,29 +446,33 @@ When a conversation is compacted (context window overflow), `_auto_extract_memor
 
 If no LLM is available, a heuristic fallback scans for decision/preference indicator words.
 
-### 6.3 Summarizer Service
+### 7.3 Summarizer Service
 
 Both auto-triggers use the `summarizer_service` -- a lightweight LLM configured for extraction tasks. It is resolved via `_get_summarizer_client()` using the user's service configuration.
 
-### 6.4 Skill Draft Proposals
+### 7.4 Skill Draft Proposals
 
 Every completed compaction bucket and rollup summary is also inspected for one
 repeatable operational procedure. Coverage requires an existing skill to target
 the same outcome; a broad skill about the same product or domain does not suppress
 a release, deployment, migration, validation, or recovery procedure.
 
-The proposer records an INFO outcome for every attempt (`created`, `rejected`,
-`invalid`, `duplicate`, or `skipped`) and a WARNING with traceback for `error`.
+The proposer records an INFO outcome for every attempt (`created`, `promoted`,
+`rejected`, `invalid`, `duplicate`, or `skipped`) and a WARNING with traceback for `error`.
 Created proposals are conversation-scoped memories tagged `skill-draft` with a
 bounded structured payload. In the Memories panel, **Skill drafts** filters these
 entries. **Promote** submits the generated instructions through the canonical
 skill security review and creates a conversation-scoped skill; PawFlow deletes
 the draft only after creation succeeds. The normal delete action rejects a draft.
-Drafts are never silently installed or promoted to a broader scope.
+A first occurrence stays a draft. If the same normalized procedure is extracted
+from another conversation, PawFlow creates a user-scoped skill through the
+validated `ResourceStore` path and removes the draft only after creation succeeds.
+One conversation cannot confirm its own draft, and validation, name collisions,
+or storage failures leave the draft intact.
 
 ---
 
-### 6.1 Reflection nudge
+### 7.5 Reflection nudge
 
 The diary accepts a `reflection` entry type that nothing ever asked for: agents
 write observations and decisions as they work, and the synthesis across them
@@ -431,19 +493,19 @@ reflection is written.
 
 ---
 
-## 7. System Prompt Injection
+## 8. System Prompt Injection
 
 At every conversation turn, three cognitive blocks are appended to the agent's system prompt:
 
-### 7.1 Persistent Memory Digest
+### 8.1 Persistent Memory Digest
 
 Injected under `## Persistent memory`. Contains the multi-tier digest (L0-L4 + KG god nodes). Max 1200 characters. Only present if the user has stored memories.
 
-### 7.2 Diary Digest
+### 8.2 Diary Digest
 
 Injected under `## Your diary (past observations)`. Contains the last 10 diary entries (truncated). Max 600 characters. Only present if the agent has diary entries.
 
-### 7.3 Cognitive Tools Hint
+### 8.3 Cognitive Tools Hint
 
 Always injected under `## Cognitive tools`. Tells the agent what tools are available:
 
@@ -456,13 +518,15 @@ You have persistent memory, knowledge graph, diary, and code analysis tools:
   kg_god_nodes/kg_surprises/kg_communities for analysis
 - Diary: diary_write for personal observations/decisions/learnings,
   diary_read to review past entries
-- Project Graph: project_graph with action=build to index a codebase (AST,
-  17 languages), then action=query/report/node to explore code structure
+- Project Graph: automatically indexes the active relay; use
+  project_graph query/report/node to explore code structure
+- Project Wiki: automatically maintains sourced project documentation; use
+  project_wiki query/page/status/lint to inspect knowledge and freshness
 ```
 
 ---
 
-## 8. Storage Paths
+## 9. Storage Paths
 
 All paths are relative to the PawFlow data directory:
 
@@ -471,14 +535,15 @@ All paths are relative to the PawFlow data directory:
 | Memory store | `data/memories/{user_id}.json` | JSON array of MemoryEntry objects |
 | Knowledge graph | `data/knowledge_graphs/{user_id}.json` | JSON with `entities` and `triples` |
 | Agent diary | `data/memories/{user_id}/diary_{agent_name}.jsonl` | JSONL, one record per line |
-| Project graph | `data/graphs/{user_id}/{conv_id}/graph.json` | JSON with `nodes`, `edges`, `metadata` |
+| Project graph | `data/runtime/graphs/{safe_user}/{safe_relay}/graph.json` | JSON with `nodes`, `edges`, `metadata` |
+| Project wiki | `data/runtime/project_wikis/{safe_user}/{safe_relay}/` | Markdown pages plus JSON manifest |
 | Conversation index | `data/runtime/conversation_index/{user_id}.db` | SQLite FTS5, derived from transcripts |
 
 All writes use the atomic tmp-then-replace pattern: write to `.tmp` file first, then `replace()` to the final path. The conversation index is the exception and deliberately so: it is SQLite (WAL), and it is *derived* data — deleting the file costs the next search one rebuild and loses nothing.
 
 ---
 
-## 9. Tool Reference
+## 10. Tool Reference
 
 Complete table of all 21 cognitive tools with their parameters:
 
@@ -530,11 +595,17 @@ Complete table of all 21 cognitive tools with their parameters:
 | `report` | _(none)_ | Summary with god nodes, stats, confidence breakdown |
 | `node` | `question` (node label) | Details about a specific code entity |
 
+### Project Wiki Tools (1, with 7 actions)
+
+| # | Tool | Parameters | Description |
+|---|---|---|---|
+| 20 | **`project_wiki`** | `action` (enum: status/query/page/lint/refresh/upsert/acknowledge, required), `source`, `path`, `question`, `slug`, `title`, `summary`, `content`, `sources`, `limit`, `local` | Query, inspect, refresh, or repair the relay-scoped project wiki |
+
 ### Conversation Search (1)
 
 | # | Tool | Parameters | Description |
 |---|---|---|---|
-| 20 | **`conversation_search`** | `query` (string, required), `agent` (string), `limit` (integer, max 50), `include_current` (boolean), `summarize` (boolean) | Full-text search over the raw text of the user's past conversations |
+| 21 | **`conversation_search`** | `query` (string, required), `agent` (string), `limit` (integer, max 50), `include_current` (boolean), `summarize` (boolean) | Full-text search over the raw text of the user's past conversations |
 
 This is the counterpart of `recall`, not a duplicate of it. `recall` searches
 memories — what an agent decided at the time was worth keeping. This searches
@@ -548,12 +619,13 @@ conversations are in their index. See
 [tool_catalog.md](tool_catalog.md#searching-past-conversations) for the full
 behaviour.
 
-### Summary: 20 Tools Total
+### Summary: 21 Tools Total
 
 - 6 memory tools (`remember`, `recall`, `semantic_recall`, `forget`, `check_duplicate`, `memory_navigate`)
 - 10 knowledge graph tools (`kg_add`, `kg_query`, `kg_invalidate`, `kg_timeline`, `kg_stats`, `query_graph`, `kg_god_nodes`, `kg_surprises`, `kg_hyperedges`, `kg_communities`)
 - 2 diary tools (`diary_write`, `diary_read`)
 - 1 project graph tool with 4 actions (`project_graph`)
+- 1 project wiki tool with 7 actions (`project_wiki`)
 - 1 conversation search tool (`conversation_search`)
 
 **Note on `end_memory`**: Ending a memory (marking it as no longer valid without deleting it) is done via the `MemoryStore.end_memory()` API method. There is no dedicated tool exposed to agents for this -- agents should use `forget` to remove obsolete memories or manage temporal validity through the knowledge graph's `kg_invalidate` instead.

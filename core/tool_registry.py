@@ -639,12 +639,16 @@ def create_default_registry() -> ToolRegistry:
     registry.register(DiaryReadHandler())
     from core.handlers.todolist import TodoListHandler
     registry.register(TodoListHandler())
+    from core.handlers.scratchpad import ScratchpadHandler
+    registry.register(ScratchpadHandler())
     from core.handlers.learn import LearnHandler
     registry.register(LearnHandler())
     from core.handlers.conversation_search import ConversationSearchHandler
     registry.register(ConversationSearchHandler())
     from core.handlers.project_graph import ProjectGraphHandler
     registry.register(ProjectGraphHandler())
+    from core.handlers.project_wiki import ProjectWikiHandler
+    registry.register(ProjectWikiHandler())
 
     # Knowledge Graph handlers
     from core.handlers.knowledge_graph import (

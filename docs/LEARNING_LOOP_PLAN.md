@@ -13,7 +13,7 @@ PawFlow's cognitive stack (see `docs/COGNITIVE_TOOLS.md`) already covers a large
 | Structured knowledge | — (none) | Knowledge graph: temporal triples, contradiction detection, BFS/DFS, communities — **no Hermes equivalent** |
 | Agent self-reflection | — (implicit in memory) | Agent diary (observation/decision/learning/reflection), digest injected — **no Hermes equivalent** |
 | Skills as artifacts | SKILL.md files, ~90 bundled, Skills Hub | Skills repository (global/user/conversation scopes), marketplace import (Codex, Anthropic, HermesHub, OpenClaw), signed `.pfp` distribution, RO FUSE mount + CLI bind mounts |
-| Agent-created skills | ✅ core feature, nudged | ✅ bucket and rollup summaries propose structured conversation-scoped drafts; the Memories UI exposes Drafts with reviewed promotion or deletion |
+| Agent-created skills | ✅ core feature, nudged | ✅ bucket and rollup summaries propose structured drafts; independent recurrence in another conversation automatically promotes the procedure to a user skill; the Memories UI exposes remaining drafts for reviewed promotion or deletion |
 | Skill self-improvement | ✅ agent edits skills that failed | ✅ `load_skill` asks agents to update instructions that proved wrong and records usage |
 | Curator (usage, staleness, archival, LLM review) | ✅ background process | ✅ `skillCurator` produces review-first maintenance reports from usage and staleness data |
 | Cross-session recall | FTS5 search over past sessions + LLM summarization | ✅ `conversation_search` (P4): FTS5 over raw transcripts, optional `summarize` via `summarizer_service`. `recall` still covers extracted memories |
@@ -29,6 +29,7 @@ PawFlow's cognitive stack (see `docs/COGNITIVE_TOOLS.md`) already covers a large
 2. **Post-compaction skill proposal**: inspect every completed bucket and rollup summary for a reusable procedure not procedurally covered by an existing skill. Domain overlap alone is not coverage. Store a structured, conversation-scoped `skill-draft` memory and return an observable `created`, `rejected`, `invalid`, `duplicate`, `skipped`, or `error` outcome.
 3. **Review UI**: expose a Drafts filter in the Memories panel. Promotion creates a conversation-scoped skill through the canonical security review and deletes the draft only after creation succeeds; deletion discards the proposal directly.
 4. **Improvement feedback**: append a one-line footer to `load_skill` output: "If these instructions proved wrong or outdated during use, update the skill via manage_resource." This is Hermes' "self-improvement during use" for one sentence of cost.
+5. **Cross-conversation confirmation**: keep the first qualifying procedure as a draft. If the same normalized procedure recurs in another conversation, create a user-scoped skill through `ResourceStore` and delete the draft only after creation succeeds. Repeated rollups from one conversation cannot self-confirm.
 
 Deliverable: prompts only + one extraction-prompt change. Highest story value ("agents write and maintain their own skills") for the lowest cost.
 
@@ -59,7 +60,7 @@ A lightweight periodic trigger (same cadence family as auto-save) prompting the 
 
 | Phase | Effort | Dependencies | Status |
 |---|---|---|---|
-| P1 prompts + extraction change | Small (days) | none | **Done 2026-07-16; hardened 2026-08-05** — `core/skill_loop.py`, hint injected in `tasks/ai/_agentctx_p3.py`, observable structured drafts proposed from `core/_bg_bucket_build.py` (bucket + rollup), review UI in `tasks/io/chat_ui/memories.js`, footer via `load_skill` |
+| P1 prompts + extraction change | Small (days) | none | **Done 2026-07-16; hardened 2026-08-11** — `core/skill_loop.py`, hint injected in `tasks/ai/_agentctx_p3.py`, observable structured drafts proposed from `core/_bg_bucket_build.py` (bucket + rollup), automatic promotion after independent cross-conversation recurrence, review UI in `tasks/io/chat_ui/memories.js`, footer via `load_skill` |
 | P2 stats + promotion | Small/medium | P1 | **Done 2026-07-16** — `core/skill_stats.py` (`data/runtime/skill_stats.json`), promotion suggestion in `core/handlers/skills.py` |
 | P3 curator flow | Medium | P2 (needs stats) | **Done 2026-07-16** — `skillCurator` task (`tasks/system/skill_curator.py`), report-only; schedule with a cron trigger |
 | P4 conversation FTS | Medium | none (parallel) | **Done 2026-07-29** — `core/conversation_index.py` (SQLite FTS5, one DB per user under `data/runtime/conversation_index/`), `conversation_search` tool (`core/handlers/conversation_search.py`), approval-exempt and read-only-mode allowed |

@@ -4,11 +4,13 @@ Uses the integrated graphify pipeline (core/graphify/) for AST extraction
 across 17 languages via tree-sitter. Build runs as a single exec on the
 relay — the extraction script runs where the code is, results are sent back.
 
-Storage: data/graphs/{user}/{conv_id}/graph.json
+Storage: data/graphs/{user}/{relay_id}/graph.json
 """
 
 import json
+import hashlib
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -158,13 +160,15 @@ print(json.dumps({
 
 
 class ProjectGraph:
-    """Persistent code structure graph for a conversation workspace."""
+    """Persistent code structure graph for one relay project."""
 
     _instances: Dict[str, "ProjectGraph"] = {}
     _lock = threading.Lock()
 
-    def __init__(self, graph_path: str):
+    def __init__(self, graph_path: str, user_id: str = "", relay_id: str = ""):
         self._path = Path(graph_path)
+        self.user_id = user_id
+        self.relay_id = relay_id
         self._graph: Dict[str, Any] = {"nodes": [], "edges": [], "metadata": {}}
         self._load()
 
@@ -182,15 +186,29 @@ class ProjectGraph:
         tmp.replace(self._path)
 
     @classmethod
-    def for_conversation(cls, user_id: str, conv_id: str) -> "ProjectGraph":
-        key = f"{user_id}::{conv_id}"
+    def for_relay(cls, user_id: str, relay_id: str) -> "ProjectGraph":
+        if not user_id:
+            raise ValueError("user_id is required for project graph storage")
+        if not relay_id:
+            raise ValueError("relay_id is required for project graph storage")
+        key = f"{user_id}::{relay_id}"
         if key not in cls._instances:
             with cls._lock:
                 if key not in cls._instances:
-                    safe_user = user_id.replace("/", "_").replace("\\", "_")
-                    safe_conv = conv_id.replace(":", "_")
-                    path = Path(str(_paths.GRAPHS_DIR)) / safe_user / safe_conv / "graph.json"
-                    cls._instances[key] = cls(str(path))
+                    def _safe(value: str) -> str:
+                        clean = re.sub(
+                            r"[^A-Za-z0-9._-]+", "-", value).strip(".-")[:48]
+                        digest = hashlib.sha256(
+                            value.encode("utf-8")).hexdigest()[:12]
+                        return f"{clean or 'scope'}-{digest}"
+                    path = (
+                        Path(str(_paths.GRAPHS_DIR))
+                        / _safe(user_id)
+                        / _safe(relay_id)
+                        / "graph.json"
+                    )
+                    cls._instances[key] = cls(
+                        str(path), user_id=user_id, relay_id=relay_id)
         return cls._instances[key]
 
     @property
@@ -223,8 +241,11 @@ class ProjectGraph:
         try:
             # What we know from the cached graph: per-file mtimes from
             # metadata.files. The relay script reads this via env var.
+            old_meta = self._graph.get("metadata", {}) or {}
+            root_changed = bool(
+                old_meta.get("root") and old_meta.get("root") != root_path)
             known_files: Dict[str, int] = (
-                self._graph.get("metadata", {}).get("files", {}) or {})
+                {} if root_changed else old_meta.get("files", {}) or {})
             script_name = ".pawflow_graph_extract.py"
             fs_service.write_file(script_name, _RELAY_EXTRACT_SCRIPT.encode("utf-8"),
                                   local=local)
@@ -291,10 +312,10 @@ class ProjectGraph:
             # disk (orphan GC).
             gone = parsed_files | removed
 
-            kept_nodes = [n for n in self.nodes
-                          if n.get("source_file", "") not in gone]
-            kept_edges = [e for e in self.edges
-                          if e.get("source_file", "") not in gone]
+            kept_nodes = [] if root_changed else [
+                n for n in self.nodes if n.get("source_file", "") not in gone]
+            kept_edges = [] if root_changed else [
+                e for e in self.edges if e.get("source_file", "") not in gone]
             merged_nodes = kept_nodes + new_nodes
             merged_edges = kept_edges + new_edges
 
@@ -302,6 +323,7 @@ class ProjectGraph:
                 "nodes": merged_nodes, "edges": merged_edges,
                 "metadata": {
                     "root": root_path,
+                    "relay_id": self.relay_id,
                     "total_files": data.get("total_files", len(new_mtimes)),
                     "node_count": len(merged_nodes),
                     "edge_count": len(merged_edges),

@@ -36,7 +36,8 @@ _WRAPPER_TOOL_NAMES = {
 }
 
 _RELAY_SOURCE_TOOLS = {
-    "read", "grep", "glob", "list_dir", "stat", "exists", "see", "project_graph",
+    "read", "grep", "glob", "list_dir", "stat", "exists", "see",
+    "project_graph", "project_wiki",
 }
 _RELAY_DESTINATION_TOOLS = {"write"}
 _RELAY_FILESYSTEM_TOOLS = {

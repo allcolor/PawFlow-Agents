@@ -1,7 +1,6 @@
-"""AgentLoopTask actions — diary, knowledge graph, and project graph UI actions.
+"""AgentLoopTask actions for cognitive webchat panels.
 
-Handles action requests from the webchat UI panels (diary.js, knowledge_graph.js,
-project_graph.js). Each action maps to the corresponding handler.
+Handles diary, knowledge graph, project graph/wiki and scratchpad requests.
 """
 
 import json
@@ -9,6 +8,25 @@ import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_project_graph(user_id, body):
+    """Return the active relay-scoped graph and its live execution surface."""
+    conv_id = body.get("conversation_id", "")
+    from core.project_context import resolve_active_project
+    relay_id, service, local = resolve_active_project(
+        user_id, conv_id, body.get("agent_name", ""))
+    if not relay_id:
+        raise ValueError("No active relay project for this conversation")
+    from core.project_graph import ProjectGraph
+    return ProjectGraph.for_relay(user_id, relay_id), service, local, relay_id
+
+
+def _resolve_project_wiki(user_id, body):
+    """Return the wiki sharing the active relay project identity."""
+    _graph, service, local, relay_id = _resolve_project_graph(user_id, body)
+    from core.project_wiki import ProjectWiki
+    return ProjectWiki.for_relay(user_id, relay_id), service, local, relay_id
 
 
 def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
@@ -130,31 +148,14 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
         try:
-            from core.relay_bindings import get_default, get_linked_all
-            relay_id = get_default(conv_id) or ""
-            if not relay_id:
-                _linked = get_linked_all(conv_id)
-                relay_id = _linked[0] if _linked else ""
-            if not relay_id:
-                flowfile.set_content(json.dumps({
-                    "error": ("No relay linked to this conversation. "
-                              "Link a relay before building the project graph."),
-                }).encode())
-                return [flowfile]
-            from core.service_registry import ServiceRegistry
-            # Resolve across conv > user > global so conv-scoped relay
-            # services are found too (same walk as relay link/terminal).
-            svc = ServiceRegistry.get_instance().resolve(
-                relay_id, user_id=user_id, conv_id=conv_id)
+            pg, svc, local, relay_id = _resolve_project_graph(user_id, body)
             if svc is None:
                 flowfile.set_content(json.dumps({
                     "error": f"Relay '{relay_id}' is not connected.",
                 }).encode())
                 return [flowfile]
-            from core.project_graph import ProjectGraph
-            pg = ProjectGraph.for_conversation(user_id, conv_id)
             path = body.get("path", ".") or "."
-            result = pg.build_from_relay(svc, path)
+            result = pg.build_from_relay(svc, path, local=local)
             flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
         except Exception as e:
             logger.exception("project_graph_build failed")
@@ -167,8 +168,7 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
         try:
-            from core.project_graph import ProjectGraph
-            pg = ProjectGraph.for_conversation(user_id, conv_id)
+            pg, _svc, _local, _relay_id = _resolve_project_graph(user_id, body)
             if not pg.has_graph():
                 flowfile.set_content(json.dumps({
                     "report": "No project graph built yet.",
@@ -193,8 +193,7 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
                 {"error": "conversation_id and question are required"}).encode())
             return [flowfile]
         try:
-            from core.project_graph import ProjectGraph
-            pg = ProjectGraph.for_conversation(user_id, conv_id)
+            pg, _svc, _local, _relay_id = _resolve_project_graph(user_id, body)
             results = pg.query(question, depth=int(body.get("depth", 3) or 3))
             flowfile.set_content(json.dumps({
                 "edges": results, "count": len(results),
@@ -211,8 +210,7 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
                 {"error": "conversation_id and label are required"}).encode())
             return [flowfile]
         try:
-            from core.project_graph import ProjectGraph
-            pg = ProjectGraph.for_conversation(user_id, conv_id)
+            pg, _svc, _local, _relay_id = _resolve_project_graph(user_id, body)
             node = pg.get_node(label)
             if node:
                 flowfile.set_content(json.dumps(node, ensure_ascii=False).encode())
@@ -220,6 +218,105 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": f"Node '{label}' not found"}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    # ── Project Wiki ───────────────────────────────────────────────
+
+    if action.startswith("project_wiki_"):
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps(
+                {"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            wiki, service, local, relay_id = _resolve_project_wiki(user_id, body)
+            subaction = action.removeprefix("project_wiki_")
+            if subaction == "status":
+                result = wiki.status()
+            elif subaction == "pages":
+                result = {"pages": wiki.list_pages(
+                    str(body.get("query") or "")), "relay_id": relay_id}
+            elif subaction == "query":
+                result = {"pages": wiki.query(
+                    str(body.get("query") or ""),
+                    limit=int(body.get("limit", 25) or 25)),
+                    "relay_id": relay_id}
+            elif subaction == "page":
+                result = wiki.get_page_data(str(body.get("slug") or ""))
+            elif subaction == "save":
+                result = wiki.upsert_page(
+                    str(body.get("slug") or body.get("title") or ""),
+                    str(body.get("title") or ""),
+                    str(body.get("summary") or ""),
+                    str(body.get("content") or ""),
+                    body.get("sources") or [])
+            elif subaction == "delete":
+                slug = str(body.get("slug") or "")
+                result = {"slug": slug, "deleted": wiki.delete_page(slug)}
+            elif subaction == "lint":
+                result = wiki.lint()
+            elif subaction == "refresh":
+                if service is None:
+                    raise ValueError(f"Relay '{relay_id}' is not connected")
+                result = wiki.scan_from_relay(
+                    service, str(body.get("path") or "."), local=local)
+            else:
+                raise ValueError(f"Unknown project wiki UI action: {subaction}")
+            flowfile.set_content(json.dumps(
+                result, ensure_ascii=False).encode())
+        except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+        return [flowfile]
+
+    # ── Scratchpad ─────────────────────────────────────────────────
+
+    if action.startswith("scratchpad_"):
+        conv_id = body.get("conversation_id", "")
+        agent = body.get("agent_name", "")
+        if not conv_id or not agent:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id and agent_name are required",
+            }).encode())
+            return [flowfile]
+        try:
+            from core.scratchpad_store import ScratchpadStore
+            scratchpad = ScratchpadStore.instance()
+            scope = (user_id, conv_id, agent)
+            subaction = action.removeprefix("scratchpad_")
+            if subaction == "list":
+                result = scratchpad.list_page(
+                    *scope, query=str(body.get("query") or ""),
+                    limit=int(body.get("limit", 50) or 50),
+                    offset=int(body.get("offset", 0) or 0))
+            elif subaction == "get":
+                result = scratchpad.get(
+                    *scope, str(body.get("note_id") or ""))
+                if result is None:
+                    raise ValueError("scratchpad note not found")
+            elif subaction == "save":
+                note_id = str(body.get("note_id") or "")
+                if note_id:
+                    changes = {key: body[key] for key in (
+                        "topic", "content", "tags", "ttl_hours") if key in body}
+                    result = scratchpad.update(*scope, note_id, **changes)
+                else:
+                    result = scratchpad.create(
+                        *scope, topic=body.get("topic", ""),
+                        content=body.get("content", ""),
+                        tags=body.get("tags"),
+                        ttl_hours=body.get("ttl_hours"))
+            elif subaction == "delete":
+                note_id = str(body.get("note_id") or "")
+                result = {"note_id": note_id,
+                          "deleted": scratchpad.delete(*scope, note_id)}
+            elif subaction == "clear":
+                result = {"deleted": scratchpad.clear(*scope)}
+            else:
+                raise ValueError(f"Unknown scratchpad UI action: {subaction}")
+            flowfile.set_content(json.dumps(
+                result, ensure_ascii=False).encode())
+        except (TypeError, ValueError) as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
         return [flowfile]
 
     # ── Learn ──────────────────────────────────────────────────────

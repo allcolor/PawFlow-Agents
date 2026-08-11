@@ -87,23 +87,23 @@ def _lang_from_path(rel_path: str) -> str:
     return _EXT_TO_LANG.get(ext, "")
 
 
-def build_project_graph_digest(user_id: str, conv_id: str,
+def build_project_graph_digest(user_id: str, relay_id: str,
                                  max_chars: int = 600,
                                  top_god: int = 5,
                                  top_modules: int = 5) -> str:
     """Build a compact project-graph summary for system-prompt injection.
 
-    Returns "" when no graph has been built for this conv.
+    Returns "" when no graph has been built for this relay project.
     Output sections (each line, ordered for skim-friendliness):
       1. counts + language breakdown,
       2. top modules by entity density (where the action is),
       3. project-specific god nodes (filtered to drop builtin noise).
     """
-    if not user_id or not conv_id:
+    if not user_id or not relay_id:
         return ""
     try:
         from core.project_graph import ProjectGraph
-        pg = ProjectGraph.for_conversation(user_id, conv_id)
+        pg = ProjectGraph.for_relay(user_id, relay_id)
     except Exception:
         logger.debug("[pg-digest] load failed", exc_info=True)
         return ""

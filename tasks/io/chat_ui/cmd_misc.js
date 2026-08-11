@@ -648,6 +648,16 @@ function cmdGraph(text, parts) {
   return true;
 }
 
+function cmdWiki(text, parts) {
+  showProjectWikiOverlay();
+  return true;
+}
+
+function cmdScratchpad(text, parts) {
+  showScratchpadOverlay();
+  return true;
+}
+
 function cmdRelay(text, parts) {
   var sub = (parts[1] || '').toLowerCase();
   if (!sub || sub === 'status') {

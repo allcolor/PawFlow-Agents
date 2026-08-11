@@ -8,7 +8,8 @@ Two pieces:
   existing skill, and stores the draft as a conversation-scoped memory
   (tag ``skill-draft``) so the agent sees it in its digest and can decide
   to create the skill via ``manage_resource``. Drafts are never
-  auto-installed.
+  promoted automatically only when the same procedure recurs in a different
+  conversation.
 """
 
 import json
@@ -38,9 +39,9 @@ SKILL_LOOP_HINT = (
     "\n- **Improve**: if a loaded skill's instructions proved wrong or "
     "outdated during use, update that skill via `manage_resource` right "
     "after the task — do not leave it broken for the next run."
-    "\n- **Drafts**: memories tagged `skill-draft` are proposals extracted "
-    "from past conversations; create the skill if the procedure recurs, "
-    "otherwise `forget` the draft."
+    "\n- **Automatic learning**: the first qualifying procedure becomes a "
+    "`skill-draft`; recurrence in a different conversation promotes it to a "
+    "user skill automatically. Delete drafts that are not useful."
 )
 
 SKILL_IMPROVE_FOOTER = (
@@ -87,8 +88,8 @@ def propose_skill_draft_from_summary(
 ) -> str:
     """Best-effort: store at most one skill-draft memory from a summary.
 
-    Return one of ``created``, ``rejected``, ``invalid``, ``duplicate``,
-    ``skipped``, or ``error``. Never raises.
+    Return one of ``created``, ``promoted``, ``rejected``, ``invalid``,
+    ``duplicate``, ``skipped``, or ``error``. Never raises.
     """
     if not user_id or not summary or llm_client is None:
         return "skipped"
@@ -101,7 +102,25 @@ def propose_skill_draft_from_summary(
                 outcome, user_id[:8], conversation_id[:8])
             return outcome
         text = _draft_memory_text(draft)
-        if _draft_exists(user_id, draft["name"]):
+        existing_draft = _find_draft(user_id, draft["name"])
+        if existing_draft is not None:
+            first_cid = str(getattr(existing_draft, "conversation_id", "") or "")
+            if (conversation_id and first_cid
+                    and conversation_id != first_cid
+                    and _same_procedure(existing_draft, draft)
+                    and _auto_promote_skill(
+                        user_id, draft, first_cid, conversation_id)):
+                try:
+                    from core.memory_store import MemoryStore
+                    MemoryStore.instance().forget(
+                        user_id, str(getattr(existing_draft, "id", "")))
+                except Exception:
+                    logger.debug("[skill-loop] promoted draft cleanup failed",
+                                 exc_info=True)
+                logger.info(
+                    "[skill-loop] proposal outcome=promoted name=%s user=%s",
+                    draft["name"], user_id[:8])
+                return "promoted"
             logger.info(
                 "[skill-loop] proposal outcome=duplicate name=%s user=%s cid=%s",
                 draft["name"], user_id[:8], conversation_id[:8])
@@ -232,11 +251,74 @@ def _one_line(value) -> str:
 
 
 def _draft_exists(user_id: str, name: str) -> bool:
+    return _find_draft(user_id, name) is not None
+
+
+def _find_draft(user_id: str, name: str):
     try:
         from core.memory_store import MemoryStore
         prefix = f"Skill draft: `{name}`"
-        return any(
-            getattr(e, "text", "").startswith(prefix)
-            for e in MemoryStore.instance().list_all(user_id))
+        return next((
+            e for e in MemoryStore.instance().list_all(user_id)
+            if getattr(e, "text", "").startswith(prefix)
+        ), None)
     except Exception:
+        return None
+
+
+def _same_procedure(existing_entry, candidate: dict) -> bool:
+    """Require stable trigger and steps, not merely an LLM-generated name."""
+    existing = parse_skill_draft_memory(
+        str(getattr(existing_entry, "text", "") or ""))
+    if existing is None:
+        return False
+
+    def _normalized(value) -> str:
+        return _one_line(value).casefold()
+
+    existing_trigger = existing.get("trigger") or existing.get("description")
+    candidate_trigger = candidate.get("trigger") or candidate.get("description")
+    return (
+        _normalized(existing_trigger) == _normalized(candidate_trigger)
+        and [_normalized(step) for step in existing["steps"]]
+        == [_normalized(step) for step in candidate["steps"]]
+    )
+
+
+def _auto_promote_skill(user_id: str, draft: dict,
+                        first_conversation_id: str,
+                        confirming_conversation_id: str) -> bool:
+    """Create a learned user skill after cross-conversation recurrence."""
+    try:
+        from core.resource_store import ResourceStore
+        store = ResourceStore.instance()
+        name = draft["name"]
+        if store.get_any("skill", name, user_id,
+                         conversation_id=confirming_conversation_id):
+            return False
+        trigger = draft.get("trigger") or draft["description"]
+        steps = "\n".join(
+            f"{index}. {step}" for index, step in enumerate(draft["steps"], 1))
+        instructions = (
+            f"# {name}\n\n"
+            f"## When to use\n\n{trigger}\n\n"
+            f"## Procedure\n\n{steps}\n\n"
+            "Validate the outcome and update this skill if the procedure "
+            "proves incomplete or outdated."
+        )
+        store.create("skill", name, user_id, {
+            "description": draft["description"],
+            "instructions": instructions,
+            "metadata": {
+                "learned_by": "skill-loop",
+                "auto_created": True,
+                "confirmed_conversations": [
+                    first_conversation_id, confirming_conversation_id],
+            },
+            "_created_by": "skill-loop",
+        })
+        return True
+    except Exception:
+        logger.warning("[skill-loop] automatic promotion failed name=%s user=%s",
+                       draft.get("name", ""), user_id[:8], exc_info=True)
         return False

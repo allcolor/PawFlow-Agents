@@ -40,21 +40,21 @@ def _run_tmux(target: str, state_path: str,
               message_id: str, content: str) -> dict:
     if not _SAFE_TARGET.fullmatch(target):
         raise ValueError("invalid tmux target")
-    check = subprocess.run(  # nosec B603
+    check = subprocess.run(  # nosec B603 B607 - fixed tmux executable/argv
         ["tmux", "has-session", "-t", target],
         capture_output=True, timeout=5)
     if check.returncode:
         raise RuntimeError("tmux session is not running")
     buffer_name = "pfmcp_" + re.sub(
         r"[^A-Za-z0-9_.-]", "_", message_id)[:80]
-    loaded = subprocess.run(  # nosec B603
+    loaded = subprocess.run(  # nosec B603 B607 - fixed tmux executable/argv
         ["tmux", "load-buffer", "-b", buffer_name, "-"],
         input=content.encode("utf-8"), capture_output=True, timeout=15)
     if loaded.returncode:
         raise RuntimeError(
             loaded.stderr.decode("utf-8", errors="replace")[:500]
             or "tmux load-buffer failed")
-    pasted = subprocess.run(  # nosec B603
+    pasted = subprocess.run(  # nosec B603 B607 - fixed tmux executable/argv
         ["tmux", "paste-buffer", "-p", "-b", buffer_name, "-t", target],
         capture_output=True, timeout=10)
     if pasted.returncode:
@@ -62,7 +62,7 @@ def _run_tmux(target: str, state_path: str,
             pasted.stderr.decode("utf-8", errors="replace")[:500]
             or "tmux paste-buffer failed")
     append_injected_marker(state_path, message_id, content)
-    submitted = subprocess.run(  # nosec B603
+    submitted = subprocess.run(  # nosec B603 B607 - fixed tmux executable/argv
         ["tmux", "send-keys", "-t", target, "Enter"],
         capture_output=True, timeout=10)
     if submitted.returncode:

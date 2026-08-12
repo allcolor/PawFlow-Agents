@@ -309,7 +309,8 @@ class MCPServerStore:
 
     def set_terminal(self, server_id: str, client_id: str,
                      session_id: str, kind: str, target: str,
-                     secret: str = "", state_path: str = "") -> bool:
+                     secret: Optional[str] = None,
+                     state_path: str = "") -> bool:
         if not session_id or not target:
             raise ValueError("session_id and target are required")
         with self._lock, self._connect() as connection:
@@ -319,7 +320,7 @@ class MCPServerStore:
                        terminal_target = ?, terminal_secret = ?,
                        terminal_state_path = ?, updated_at = ?
                    WHERE server_id = ? AND active_client_id = ?""",
-                (session_id, kind, target, secret, state_path, time.time(),
+                (session_id, kind, target, secret or "", state_path, time.time(),
                  server_id, client_id),
             )
         return bool(cur.rowcount)

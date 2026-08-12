@@ -127,7 +127,8 @@ class RelayController:
                  readonly: bool = False, allow_exec: bool = False,
                  allow_service_tunnels: bool = False,
                  terminal_session_id: str = "", terminal_kind: str = "",
-                 terminal_target: str = "", terminal_secret: str = "",
+                 terminal_target: str = "",
+                 terminal_secret: Optional[str] = None,
                  terminal_state_path: str = "") -> None:
         self.bridge = bridge
         self.root = root.resolve()

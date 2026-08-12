@@ -775,6 +775,7 @@ ipcMain.handle('relay:add-workspace', async (_event, input) => {
     '--docker-image', input.dockerImage || defaultRelayImageName(),
   ];
   if (Boolean(input.allowLocal)) args.push('--allow-local');
+  if (Boolean(input.allowServiceTunnels)) args.push('--allow-service-tunnels');
   if (!Boolean(input.allowExec)) args.push('--no-exec');
   if (input.allowRemoteDesktop === false) args.push('--no-remote-desktop');
   const result = await runRelayClientJson(args);

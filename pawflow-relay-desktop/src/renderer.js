@@ -248,6 +248,7 @@ function renderWorkspacePanel(share) {
   const allowExecChecked = share?.allow_exec === false ? '' : 'checked';
   const allowRemoteDesktopChecked = share?.allow_remote_desktop === false ? '' : 'checked';
   const allowLocalChecked = share?.allow_local ? 'checked' : '';
+  const allowServiceTunnelsChecked = share?.allow_service_tunnels ? 'checked' : '';
   const startDisabled = running ? 'disabled' : '';
   const stopDisabled = running ? '' : 'disabled';
   const workspaceButtons = isNew ? '' : [
@@ -289,6 +290,7 @@ function renderWorkspacePanel(share) {
         <label class="toggle"><input name="allowExec" type="checkbox" ${allowExecChecked} /><span></span><strong>Allow exec</strong></label>
         <label class="toggle"><input name="allowRemoteDesktop" type="checkbox" ${allowRemoteDesktopChecked} /><span></span><strong>Allow remote desktop</strong></label>
         <label class="toggle"><input name="allowLocal" type="checkbox" ${allowLocalChecked} /><span></span><strong>Allow local access</strong></label>
+        <label class="toggle"><input name="allowServiceTunnels" type="checkbox" ${allowServiceTunnelsChecked} /><span></span><strong>Allow service tunnels (FRP)</strong></label>
       </div>
       ${workspaceInfo(share, running)}
       <div class="actions">
@@ -522,6 +524,7 @@ async function saveWorkspace(event) {
   input.allowLocal = form.elements.allowLocal.checked;
   input.allowExec = form.elements.allowExec.checked;
   input.allowRemoteDesktop = form.elements.allowRemoteDesktop.checked;
+  input.allowServiceTunnels = form.elements.allowServiceTunnels.checked;
   try {
     const saved = await window.pawflowRelay.addWorkspace(input);
     toast(`Saved relay ${saved.name}`);

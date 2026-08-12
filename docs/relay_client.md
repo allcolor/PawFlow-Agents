@@ -135,9 +135,16 @@ browser and previously authenticated client sessions.
 The Electron Relay Desktop slice lives in `pawflow-relay-desktop/`. It uses the same local state as the CLI and manages:
 
 - server profiles: URL, private gateway key, login status;
-- workspace shares: path, read/write mode, relay image/profile, local execution permission;
+- workspace shares: path, read/write mode, relay image/profile, local execution
+  permission, and opt-in FRP service-tunnel permission;
 - running relay processes and logs;
 - Docker relay images and custom image builds.
+
+Enable **Allow service tunnels (FRP)** on each relay that may participate in a
+tunnel, then restart that relay so it advertises the capability. Tunnel
+creation and lifecycle controls are in the webchat **Resources → Service
+Tunnels** section; Relay Desktop controls the local relay permission, not the
+user-scoped tunnel records.
 
 Stopping a relay from the desktop UI, or quitting the tray app, stops the
 launcher process and also performs relay runtime cleanup: the registered relay

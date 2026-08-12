@@ -169,6 +169,32 @@ def test_registry_toggle_updates_definition_and_live_instance_without_reconnect(
     assert saved == [("user", "alice")]
 
 
+def test_registry_tunnel_toggle_updates_managed_relay_without_reconnect(
+        monkeypatch):
+    registry = ServiceRegistry()
+    definition = ServiceDef(
+        "Managed", "relay", scope="user", scope_id="alice",
+        config={"server_managed": True})
+    live = SimpleNamespace(config={"server_managed": True})
+    registry._loaded.add("alice")
+    registry._definitions["alice"] = {"Managed": definition}
+    registry._live_instances["alice"] = {"Managed": live}
+    saved = []
+    monkeypatch.setattr(
+        registry, "_save",
+        lambda scope, scope_id: saved.append((scope, scope_id)))
+    monkeypatch.setattr(
+        registry, "_disconnect_one",
+        lambda *_args: pytest.fail("toggle must not disconnect the relay"))
+
+    registry.set_managed_relay_service_tunnels(
+        "user", "alice", "Managed", True)
+
+    assert definition.config["allow_service_tunnels"] is True
+    assert live.config["allow_service_tunnels"] is True
+    assert saved == [("user", "alice")]
+
+
 def test_admin_api_lists_and_toggles_only_managed_relays(monkeypatch):
     from tasks.ai.actions.admin_settings import _handle_admin_settings
 
@@ -195,6 +221,10 @@ def test_admin_api_lists_and_toggles_only_managed_relays(monkeypatch):
                 self, scope, scope_id, service_id, enabled):
             calls.append((scope, scope_id, service_id, enabled))
 
+        def set_managed_relay_service_tunnels(
+                self, scope, scope_id, service_id, enabled):
+            calls.append(("tunnels", scope, scope_id, service_id, enabled))
+
     registry = Registry()
     monkeypatch.setattr(
         "core.service_registry.ServiceRegistry.get_instance", lambda: registry)
@@ -205,6 +235,7 @@ def test_admin_api_lists_and_toggles_only_managed_relays(monkeypatch):
     payload = json.loads(listed[0].get_content())
     assert [relay["service_id"] for relay in payload["relays"]] == ["Managed"]
     assert payload["relays"][0]["server_local_exec"] is False
+    assert payload["relays"][0]["allow_service_tunnels"] is False
 
     toggled = _handle_admin_settings(None, "admin_server_relay_local_exec_set", {
         "service_id": "Managed",
@@ -215,26 +246,40 @@ def test_admin_api_lists_and_toggles_only_managed_relays(monkeypatch):
     assert json.loads(toggled[0].get_content())["ok"] is True
     assert calls == [("user", "alice", "Managed", True)]
 
+    toggled = _handle_admin_settings(
+        None, "admin_server_relay_service_tunnels_set", {
+            "service_id": "Managed",
+            "scope": "user",
+            "scope_id": "alice",
+            "enabled": True,
+        }, None, "admin", _flowfile())
+    assert json.loads(toggled[0].get_content())["ok"] is True
+    assert calls[-1] == ("tunnels", "user", "alice", "Managed", True)
+
 
 def test_non_admin_cannot_list_or_toggle_server_local_access():
     from tasks.ai.actions.admin_settings import _handle_admin_settings
 
     for action in (
             "admin_server_relays_list",
-            "admin_server_relay_local_exec_set"):
+            "admin_server_relay_local_exec_set",
+            "admin_server_relay_service_tunnels_set"):
         result = _handle_admin_settings(
             None, action, {}, None, "alice", _flowfile("user"))
         assert result[0].get_attribute("http.response.status") == "403"
 
 
-def test_generic_service_update_cannot_set_server_local_exec():
+@pytest.mark.parametrize(
+    "protected_key", ["server_local_exec", "allow_service_tunnels"])
+def test_generic_service_update_cannot_set_server_relay_permissions(
+        protected_key):
     from tasks.ai.actions.service_flow import _handle_service_flow
 
     body = {
         "action": "update_service",
         "service_id": "Managed",
         "scope": "user",
-        "config": {"server_local_exec": True},
+        "config": {protected_key: True},
     }
     flowfile = FlowFile(
         content=json.dumps(body).encode(),
@@ -254,7 +299,9 @@ def test_admin_ui_exposes_server_relay_toggle():
     assert "openAdminServerRelaysDialog()" in template
     assert "admin_server_relays_list" in admin_js
     assert "admin_server_relay_local_exec_set" in admin_js
+    assert "admin_server_relay_service_tunnels_set" in admin_js
     assert "local=true" in admin_js
+    assert "Allow tunnels (FRP)" in admin_js
 
 
 def test_terminal_and_desktop_mode_picker_accepts_server_local_relays():

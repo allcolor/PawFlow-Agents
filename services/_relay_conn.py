@@ -87,6 +87,8 @@ class _RelayConnMixin:
                 scope_id=scope_id,
                 user_id=user_id,
                 kind=str(self.config.get("server_kind") or "workspace"),
+                allow_service_tunnels=bool(
+                    self.config.get("allow_service_tunnels")),
             )
             self._managed_container_started = True
         except Exception as e:

@@ -306,6 +306,7 @@ def worker_main():
             docker_run_args += ["-e", "PAWFLOW_RELAY_INSECURE=1"]
         docker_run_args += [
             "--init",
+            "-e", "TINI_SUBREAPER=1",
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", args.docker_cpus,
             "--memory", args.docker_memory,

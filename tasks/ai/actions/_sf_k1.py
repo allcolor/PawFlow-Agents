@@ -422,6 +422,8 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                 config.setdefault("mode", "readwrite")
                 config["server_managed"] = True
                 config.setdefault("server_kind", "workspace")
+                config["server_local_exec"] = False
+                config["allow_service_tunnels"] = False
                 managed_server_relay = True
             description = body.get("description", "")
             from core.service_registry import ServiceRegistry
@@ -499,6 +501,8 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                                     scope_id=scope_id,
                                     user_id=user_id,
                                     kind=str(config.get("server_kind") or "workspace"),
+                                    allow_service_tunnels=bool(
+                                        config.get("allow_service_tunnels")),
                                 )
                                 if live_svc is not None:
                                     setattr(live_svc, "_managed_container_started", True)

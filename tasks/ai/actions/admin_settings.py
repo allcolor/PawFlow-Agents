@@ -103,6 +103,8 @@ def _managed_server_relays():
                 "conversation_title": conv_index.get(conv_id, {}).get("title", ""),
                 "connected": registry.is_connected(scope, scope_id, service_id),
                 "server_local_exec": bool(config.get("server_local_exec")),
+                "allow_service_tunnels": bool(
+                    config.get("allow_service_tunnels")),
             })
     return relays
 
@@ -531,6 +533,34 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
             "ok": True,
             "service_id": service_id,
             "server_local_exec": enabled,
+        })
+
+    if action == "admin_server_relay_service_tunnels_set":
+        denied = _require_admin(flowfile)
+        if denied:
+            return denied
+        service_id = str(body.get("service_id", "") or "").strip()
+        scope = str(body.get("scope", "") or "").strip()
+        scope_id = str(body.get("scope_id", "") or "")
+        if (not service_id or scope not in {"global", "user", "conv"}
+                or (scope != "global" and not scope_id)):
+            return _json(
+                flowfile,
+                {"error": "service_id, a valid scope, and its scope_id are required"},
+                "400")
+        if "enabled" not in body or not isinstance(body.get("enabled"), bool):
+            return _json(flowfile, {"error": "enabled must be a boolean"}, "400")
+        enabled = body["enabled"]
+        try:
+            from core.service_registry import ServiceRegistry
+            ServiceRegistry.get_instance().set_managed_relay_service_tunnels(
+                scope, scope_id, service_id, enabled)
+        except (KeyError, ValueError) as exc:
+            return _json(flowfile, {"error": str(exc)}, "400")
+        return _json(flowfile, {
+            "ok": True,
+            "service_id": service_id,
+            "allow_service_tunnels": enabled,
         })
 
     if action == "admin_check_updates":

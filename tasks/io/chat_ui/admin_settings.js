@@ -66,12 +66,17 @@ function openAdminServerRelaysDialog() {
         + '<input type="checkbox"' + (r.server_local_exec ? ' checked' : '')
         + ' onchange=\'adminSetServerRelayLocalExec(this,' + adminJsArg(r.service_id) + ','
         + adminJsArg(r.scope) + ',' + adminJsArg(r.scope_id) + ')\'>'
-        + '<span>Allow <code>local=true</code></span></label></td></tr>';
+        + '<span>Allow <code>local=true</code></span></label></td>'
+        + '<td><label style="display:flex;align-items:center;gap:7px;cursor:pointer;">'
+        + '<input type="checkbox"' + (r.allow_service_tunnels ? ' checked' : '')
+        + ' onchange=\'adminSetServerRelayServiceTunnels(this,' + adminJsArg(r.service_id) + ','
+        + adminJsArg(r.scope) + ',' + adminJsArg(r.scope_id) + ')\'>'
+        + '<span>Allow tunnels (FRP)</span></label></td></tr>';
     }).join('');
     var body = '<div style="padding:9px;border:1px solid var(--pf-danger);border-radius:6px;color:var(--pf-text);font-size:12px;line-height:1.5;">'
       + '<strong>Privileged access.</strong> When enabled, agents using this relay can read files and run commands inside the PawFlow server container, including access to its Docker socket and logs. The setting is off by default and changes immediately without restarting the relay.</div>';
     body += relays.length
-      ? '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr><th style="text-align:left;">Relay</th><th style="text-align:left;">Status</th><th style="text-align:left;">Server-local execution</th></tr></thead><tbody>' + rows + '</tbody></table>'
+      ? '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr><th style="text-align:left;">Relay</th><th style="text-align:left;">Status</th><th style="text-align:left;">Server-local execution</th><th style="text-align:left;">Service tunnels</th></tr></thead><tbody>' + rows + '</tbody></table>'
       : '<div style="color:var(--pf-muted);">No managed server relay is installed.</div>';
     _adminOverlay('Server relays', body, '');
   });
@@ -93,6 +98,26 @@ function adminSetServerRelayLocalExec(input, serviceId, scope, scopeId) {
       return;
     }
     addMsg('system', 'Server-local execution ' + (enabled ? 'enabled' : 'disabled') + ' for ' + serviceId + '.');
+  });
+}
+
+function adminSetServerRelayServiceTunnels(input, serviceId, scope, scopeId) {
+  var enabled = !!input.checked;
+  input.disabled = true;
+  action$('admin_server_relay_service_tunnels_set', {
+    service_id: serviceId,
+    scope: scope,
+    scope_id: scopeId,
+    enabled: enabled,
+  }).subscribe(function(data) {
+    input.disabled = false;
+    if (data.error) {
+      input.checked = !enabled;
+      addMsg('error', data.error);
+      return;
+    }
+    addMsg('system', 'Service tunnels ' + (enabled ? 'enabled' : 'disabled')
+      + ' for ' + serviceId + '. Reconnect the relay to apply this capability.');
   });
 }
 

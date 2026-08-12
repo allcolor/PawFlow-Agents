@@ -14,7 +14,7 @@ import pytest
 from services.filesystem_service import RelayService
 
 
-def _managed_service(service_id="MyWorkspace"):
+def _managed_service(service_id="MyWorkspace", allow_service_tunnels=False):
     return RelayService({
         "_service_id": service_id,
         "token": "tok",
@@ -23,6 +23,7 @@ def _managed_service(service_id="MyWorkspace"):
         "server_scope_id": "allcolor",
         "server_user_id": "allcolor",
         "server_kind": "workspace",
+        "allow_service_tunnels": allow_service_tunnels,
     })
 
 
@@ -39,10 +40,12 @@ class _Manager:
         return self.running
 
     def spawn_service_relay(self, relay_id, token, *, scope, scope_id,
-                            user_id, kind="workspace", internal_token=""):
+                            user_id, kind="workspace", internal_token="",
+                            allow_service_tunnels=False):
         self.spawned.append({
             "relay_id": relay_id, "token": token, "scope": scope,
             "scope_id": scope_id, "user_id": user_id, "kind": kind,
+            "allow_service_tunnels": allow_service_tunnels,
         })
         return {"relay_id": relay_id}
 
@@ -75,7 +78,16 @@ def test_gone_container_is_respawned_with_the_services_own_identity(manager):
     assert mgr.spawned == [{
         "relay_id": "MyWorkspace", "token": "tok", "scope": "user",
         "scope_id": "allcolor", "user_id": "allcolor", "kind": "workspace",
+        "allow_service_tunnels": False,
     }]
+
+
+def test_respawn_passes_enabled_service_tunnel_capability(manager):
+    mgr = manager(running=False)
+    svc = _managed_service(allow_service_tunnels=True)
+
+    assert svc.ensure_managed_relay_alive() is True
+    assert mgr.spawned[0]["allow_service_tunnels"] is True
 
 
 def test_a_connected_relay_is_left_alone_without_spending_cooldown(manager):

@@ -150,6 +150,7 @@ class ServerRelayManager:
             "--detach",
             "--name", container_name,
             "--init",
+            "--env", "TINI_SUBREAPER=1",
             "--volume", f"{runtime_host_dir}:{_ws_mount_target}",
             "--volume", f"pawflow_home_{relay_id}:/home/pawflow",
             "--volume", f"{code_host_dir}:{_TOOLS_IN_CONTAINER}:ro",
@@ -297,6 +298,7 @@ class ServerRelayManager:
         user_id: str,
         kind: str = _KIND_WORKSPACE,
         internal_token: str = "",
+        allow_service_tunnels: bool = False,
     ) -> Dict[str, Any]:
         """Spawn a managed server relay container for an installed relay service."""
         kind = _validate_kind(kind)
@@ -346,6 +348,7 @@ class ServerRelayManager:
             "--detach",
             "--name", container_name,
             "--init",
+            "--env", "TINI_SUBREAPER=1",
             "--volume", f"{runtime_host_dir}:{relay_workspace}",
             "--volume", f"{home_volume}:/home/pawflow",
             "--volume", f"{code_host_dir}:{_TOOLS_IN_CONTAINER}:ro",
@@ -391,6 +394,8 @@ class ServerRelayManager:
             relay_image,
             "python3", _SCRIPT_IN_CONTAINER,
         ])
+        if allow_service_tunnels:
+            docker_run_args.append("--allow-service-tunnels")
         cmd = docker_cmd() + ["run"] + docker_run_args
         # The command carries relay and internal-auth tokens in --env values.
         # Logging it exposes live credentials; the container identity is enough

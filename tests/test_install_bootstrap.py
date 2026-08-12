@@ -1150,7 +1150,10 @@ def test_install_relay_server_generates_token_server_side(monkeypatch):
                 "server_user_id": user_id,
             }
 
-        def spawn_service_relay(self, relay_id, token, *, scope, scope_id, user_id, kind="workspace", internal_token=""):
+        def spawn_service_relay(
+                self, relay_id, token, *, scope, scope_id, user_id,
+                kind="workspace", internal_token="",
+                allow_service_tunnels=False):
             calls.append({
                 "relay_id": relay_id,
                 "token": token,
@@ -1158,6 +1161,7 @@ def test_install_relay_server_generates_token_server_side(monkeypatch):
                 "scope_id": scope_id,
                 "user_id": user_id,
                 "kind": kind,
+                "allow_service_tunnels": allow_service_tunnels,
             })
             return {"relay_id": relay_id}
 
@@ -1200,6 +1204,7 @@ def test_install_relay_server_generates_token_server_side(monkeypatch):
             "scope_id": "alice",
             "user_id": "alice",
             "kind": "workspace",
+            "allow_service_tunnels": False,
         }]
     finally:
         ServiceRegistry.reset()

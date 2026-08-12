@@ -413,7 +413,7 @@ def test_agent_pool_containers_keep_tini_as_pid_one():
         assert '"infinity"' in src
 
 
-def test_container_launchers_request_docker_init():
+def test_relay_container_launchers_support_nested_tini_as_subreaper():
     for path in (
         "core/server_relay_manager.py",
         "pawflow_relay/cli.py",
@@ -432,6 +432,8 @@ def test_container_launchers_request_docker_init():
         else:
             src = Path(path).read_text(encoding="utf-8")
         assert '"--init"' in src
+        if "fs_exec.py" not in path:
+            assert '"TINI_SUBREAPER=1"' in src
 
     docker_utils = Path("core/docker_utils.py").read_text(encoding="utf-8")
     assert "def _with_docker_init" in docker_utils

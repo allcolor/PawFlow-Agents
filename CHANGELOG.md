@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.176] — 2026-08-12
+
+### Fixed
+
+- Registered the official relay image's nested `tini` as a child subreaper when
+  relay launchers also request Docker's init process, removing the misleading
+  non-PID-1 warning while preserving zombie reaping for generated relay images.
+- Exposed the existing opt-in FRP service-tunnel permission in Relay Desktop and
+  wired it through workspace persistence to the relay launcher.
+- Added the matching admin-only **Allow tunnels (FRP)** control for managed
+  server relays, persisted per relay and applied on reconnect.
+
 ## [1.0.0-beta.175] — 2026-08-12
 
 ### Added

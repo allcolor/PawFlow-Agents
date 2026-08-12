@@ -86,6 +86,12 @@ the service-tunnel process through the local host helper; managed server relays
 run it in their managed relay container. The relay dispatcher refuses all
 service-tunnel actions when the dedicated permission is off.
 
+For Relay Desktop, enable **Allow service tunnels (FRP)** in the relay settings.
+For a PawFlow-managed server relay, an administrator enables **Allow tunnels
+(FRP)** under **Server settings → Server relays**, then reconnects that relay so
+the replacement container advertises the capability. Both settings default to
+off.
+
 ## Create and use a tunnel
 
 1. Open the webchat Resources panel and select **Service Tunnels**.

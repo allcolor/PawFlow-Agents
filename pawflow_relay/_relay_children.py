@@ -92,6 +92,7 @@ class ChildRelayManager:
                     "run", "-d",
                     "--name", _child_container,
                     "--init",
+                    "-e", "TINI_SUBREAPER=1",
                     "-v", f"{_translate_path(_to_host_path(sr_root))}:/workspace",
                     "-w", "/workspace",
                     "--cpus", docker.cpus, "--memory", docker.memory,

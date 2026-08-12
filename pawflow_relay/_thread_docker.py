@@ -214,6 +214,10 @@ class _RelayDockerMixin:
                 "run", "--rm",
                 "--name", self._docker_container,
                 "--init",
+                # The official relay image already starts tini. Docker's
+                # --init becomes PID 1, so register the nested tini as a
+                # subreaper instead of emitting its non-PID-1 warning.
+                "-e", "TINI_SUBREAPER=1",
                 "--env-file", _env_file_container,
                 "-v", f"{translate_path(to_host_path(self.directory))}:/workspace",
                 "-v", f"pawflow_home_{self.relay_id}:/home/pawflow",

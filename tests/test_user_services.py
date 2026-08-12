@@ -985,7 +985,10 @@ class TestAgentServiceActions:
                     "server_user_id": user_id,
                 }
 
-            def spawn_service_relay(self, relay_id, token, *, scope, scope_id, user_id, kind="workspace", internal_token=""):
+            def spawn_service_relay(
+                    self, relay_id, token, *, scope, scope_id, user_id,
+                    kind="workspace", internal_token="",
+                    allow_service_tunnels=False):
                 calls.append({
                     "relay_id": relay_id,
                     "token": token,
@@ -993,6 +996,7 @@ class TestAgentServiceActions:
                     "scope_id": scope_id,
                     "user_id": user_id,
                     "kind": kind,
+                    "allow_service_tunnels": allow_service_tunnels,
                 })
                 return {"relay_id": relay_id, "workspace_dir": f"data/runtime/relay/{user_id}"}
 
@@ -1012,7 +1016,10 @@ class TestAgentServiceActions:
             "service_type": "relay",
             "service_name": "MyWorkspace",
             "scope": "user",
-            "config": {},
+            "config": {
+                "server_local_exec": True,
+                "allow_service_tunnels": True,
+            },
         })
 
         result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
@@ -1023,6 +1030,8 @@ class TestAgentServiceActions:
         assert sdef is not None
         assert sdef.service_type == "relay"
         assert sdef.config["server_managed"] is True
+        assert sdef.config["server_local_exec"] is False
+        assert sdef.config["allow_service_tunnels"] is False
         assert sdef.config["token"]
         assert sdef.config["server_container_name"] == "pawflow-relay-srv-MyWorkspace"
         assert sdef.config["server_workspace_dir"] == "data/runtime/relay/testuser"
@@ -1038,6 +1047,7 @@ class TestAgentServiceActions:
             "scope_id": "testuser",
             "user_id": "testuser",
             "kind": "workspace",
+            "allow_service_tunnels": False,
         }]
 
     def test_service_install_relay_with_token_stays_external_listener(self, monkeypatch):

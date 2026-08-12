@@ -11,6 +11,13 @@ def test_managed_relay_spawn_log_does_not_include_secret_command():
     assert 'logger.info("Spawning managed server relay service: %s", container_name)' in source
 
 
+def test_managed_server_relay_passes_opt_in_tunnel_capability_to_launcher():
+    source = inspect.getsource(srm.ServerRelayManager.spawn_service_relay)
+
+    assert "allow_service_tunnels: bool = False" in source
+    assert 'docker_run_args.append("--allow-service-tunnels")' in source
+
+
 def test_server_minimal_relay_has_distinct_stable_identity():
     conv_id = "abcdef1234567890fedcba"
 

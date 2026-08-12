@@ -142,6 +142,10 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "Docker unavailable" in renderer
     assert "selectDirectory" in renderer
     assert "allowExec" in renderer
+    assert 'name="allowServiceTunnels"' in renderer
+    assert "Allow service tunnels (FRP)" in renderer
+    assert "input.allowServiceTunnels = form.elements.allowServiceTunnels.checked" in renderer
+    assert "if (Boolean(input.allowServiceTunnels)) args.push('--allow-service-tunnels')" in main
     assert "allowRemoteDesktop" in renderer
     assert "Allow local access" in renderer
     assert "showContextMenu" in renderer

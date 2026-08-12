@@ -31,6 +31,12 @@ not a development language preset; it is the minimum runtime PawFlow needs:
 - Docker runtime requirements: `SYS_ADMIN`, `/dev/fuse`, and
   `apparmor:unconfined`
 
+Relay launchers request Docker's init process for generated images. The official
+relay image also embeds `tini`, so launchers set `TINI_SUBREAPER=1`: its nested
+`tini` reaps relay descendants without warning even though Docker's init owns
+PID 1. The variable is harmless for generated images that rely only on Docker's
+init process.
+
 The base must stay small, but it cannot drop Python or FUSE without breaking
 relay functionality.
 

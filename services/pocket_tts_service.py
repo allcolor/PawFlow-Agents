@@ -30,7 +30,7 @@ from core.service_install import (
     write_install_state,
 )
 from services.base_audio_generation import BaseAudioGenerationService
-from services.base_tts import BaseTTSService
+from services.base_voice_clone import BaseVoiceCloneService
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def _raw_config(config: dict, key: str, default=""):
         return default
 
 
-class PocketTTSService(BaseAudioGenerationService, BaseTTSService):
+class PocketTTSService(BaseAudioGenerationService, BaseVoiceCloneService):
     TYPE = "pocketTTS"
     VERSION = "1.0.0"
     NAME = "Pocket TTS Local"
@@ -433,6 +433,21 @@ class PocketTTSService(BaseAudioGenerationService, BaseTTSService):
             raise ServiceError("Pocket TTS returned empty audio")
         logger.info("[POCKET_TTS] tts ok: %d bytes (%s)", len(audio_bytes), content_type)
         return {"audio_bytes": audio_bytes, "content_type": content_type or _CONTENT_TYPE, "source_url": ""}
+
+    def clone_speak(self, text: str = "", reference_audio_url: str = "",
+                    reference_text: str = "", language: str = "",
+                    reference_audio_bytes: bytes = None, **kwargs) -> dict:
+        """Synthesize with a per-call reference sample (zero-shot cloning)."""
+        del reference_text
+        if not reference_audio_bytes and not reference_audio_url:
+            raise ServiceError("clone_speak requires reference audio")
+        return self.text_to_speech(
+            text=text,
+            language=language,
+            reference_audio_url=reference_audio_url,
+            reference_audio_bytes=reference_audio_bytes,
+            **kwargs,
+        )
 
     def generate(self, prompt: str = "", text: str = "", voice: str = "",
                  **kwargs) -> dict:

@@ -27,7 +27,9 @@ in the FileStore under category `voice_clone_ref`, and a
 `voice_clones` entry is persisted in the ScopedRepository at
 `scope=user`. For paradigm A providers (see below) the sample is
 also uploaded to the provider and a stable `voice_id` is cached in
-the entry.
+the entry. Canonical `fs://filestore` references are read directly
+through the owner-scoped FileStore ACL; they are never resolved through
+HTTP or exposed publicly merely to register a clone.
 
 ### `speak(voice, text[, language, destination, path])`
 
@@ -59,7 +61,7 @@ config — the sample is never re-sent. Quota-bounded by the
 ElevenLabs plan (Starter 10, Creator 30, Pro 160) — deleting a
 clone calls `DELETE /v1/voices/{voice_id}` to free the slot.
 
-### Paradigm B — zero-shot per request (Fish Audio, WaveSpeedAI)
+### Paradigm B — zero-shot per request (Fish Audio, Pocket TTS, WaveSpeedAI)
 
 `services/fish_audio_voice_clone_service.py` — every `speak` call
 posts `/v1/tts` with the raw reference audio (base64) and the
@@ -68,6 +70,12 @@ no up-front registration step. `ensure_voice_id` returns `""`,
 `delete_voice_id` is a no-op. Cheap and stateless, at the cost of
 re-uploading the sample on every call. Good default for one-off
 or short-lived clones.
+
+`services/pocket_tts_service.py` — runs Kyutai Pocket TTS locally and
+implements the same zero-shot `clone_speak` contract. PawFlow reads the
+owner-scoped FileStore reference once, stores the registered sample, and sends
+its bytes directly as the daemon's multipart `voice_wav` field on each cache
+miss. No public reference URL or provider-side voice resource is required.
 
 `services/wavespeed_voice_clone_service.py` — every `speak` call
 submits a WaveSpeedAI prediction using the configured voice-clone

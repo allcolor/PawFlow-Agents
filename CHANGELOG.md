@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.178] — 2026-08-12
+
+### Fixed
+
+- Registered Pocket TTS as a zero-shot voice-clone service so voices created
+  with `clone_voice` can be synthesized through the normal `speak` path.
+- Loaded canonical FileStore voice references through the owner-scoped ACL,
+  rejected missing or malformed references, and preserved authoritative
+  filenames and MIME types when registering reusable samples.
+
+### Security
+
+- Kept owner-scoped FileStore voice samples private during clone registration
+  instead of creating temporary public gateway-key URLs.
+
 ## [1.0.0-beta.177] — 2026-08-12
 
 ### Fixed

@@ -7,6 +7,7 @@ import urllib.parse
 import pytest
 
 from core import ServiceError
+from services.base_voice_clone import BaseVoiceCloneService
 from services.pocket_tts_service import PocketTTSService
 
 
@@ -66,6 +67,38 @@ def test_pocket_tts_speak_uploads_reference_audio_bytes(monkeypatch):
     assert b'name="voice_wav"; filename="reference.wav"' in captured["body"]
     assert b"RIFFDATA" in captured["body"]
     assert b'name="voice_url"' not in captured["body"]
+
+
+def test_pocket_tts_implements_zero_shot_voice_clone_contract(monkeypatch):
+    svc = PocketTTSService({})
+    captured = {}
+
+    def fake_urlopen(req, timeout=None, context=None):
+        captured["body"] = req.data
+        return _Resp(b"CLONED")
+
+    monkeypatch.setattr(svc, "ensure_connected", lambda: None)
+    monkeypatch.setattr(
+        "services.pocket_tts_service.urllib.request.urlopen", fake_urlopen)
+
+    assert isinstance(svc, BaseVoiceCloneService)
+    out = svc.clone_speak(
+        text="Hello Steve",
+        reference_audio_bytes=b"STEVE-RIFF",
+        reference_text="ignored by Pocket TTS",
+        language="en",
+    )
+
+    assert out["audio_bytes"] == b"CLONED"
+    assert b'name="voice_wav"; filename="reference.wav"' in captured["body"]
+    assert b"STEVE-RIFF" in captured["body"]
+
+
+def test_pocket_tts_clone_speak_requires_reference_audio():
+    svc = PocketTTSService({})
+
+    with pytest.raises(ServiceError, match="reference audio"):
+        svc.clone_speak(text="Hello")
 
 
 def test_pocket_tts_rejects_remote_voice_url_by_default(monkeypatch):

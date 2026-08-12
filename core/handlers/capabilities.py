@@ -144,9 +144,9 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
 
         name = (arguments.get("name") or "").strip()
         ref_url_raw = arguments.get("reference_audio_url") or ""
-        ref_url = self._rewrite(ref_url_raw, service=svc)
-        if not name or not ref_url:
+        if not name or not ref_url_raw:
             return ("Error: `name` and `reference_audio_url` are required")
+        ref_url = ref_url_raw
 
         reference_text = arguments.get("reference_text") or ""
         language = arguments.get("language") or ""
@@ -156,15 +156,31 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
         provider = _provider_identity(svc)
         provider_version = _provider_version(svc)
 
-        # Download reference audio so we can hash it.
+        # Load reference audio so we can hash it. Canonical FileStore URLs are
+        # internal references, not network URLs, and must retain user-scoped
+        # access checks instead of being passed to urllib.
+        source_filename = ""
         try:
-            import urllib.request
-            req = urllib.request.Request(
-                ref_url, headers={"User-Agent": "PawFlow-Agent/1.0"})
-            with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 - reference audio URLs are user-provided HTTP(S) media inputs.
-                ref_bytes = resp.read()
-                ref_ct = resp.headers.get("Content-Type",
-                                           "application/octet-stream")
+            if ref_url_raw.startswith("fs://filestore/"):
+                from core.file_store import FileStore
+                file_id = ref_url_raw.split("/", 4)[3]
+                if not file_id:
+                    return "Error: malformed FileStore reference"
+                stored = FileStore.instance().get(
+                    file_id, user_id=self._user_id)
+                if stored is None:
+                    return ("Error: FileStore reference not found or access "
+                            "denied")
+                source_filename, ref_bytes, ref_ct = stored
+            else:
+                import urllib.request
+                ref_url = self._rewrite(ref_url_raw, service=svc)
+                req = urllib.request.Request(
+                    ref_url, headers={"User-Agent": "PawFlow-Agent/1.0"})
+                with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 - reference audio URLs are user-provided HTTP(S) media inputs.
+                    ref_bytes = resp.read()
+                    ref_ct = resp.headers.get("Content-Type",
+                                               "application/octet-stream")
         except Exception as e:
             return f"Error downloading reference_audio_url: {e}"
 
@@ -188,7 +204,9 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
         try:
             from core.file_store import FileStore
             store = FileStore.instance()
-            filename = ref_url_raw.rstrip("/").split("/")[-1] or "reference.mp3"
+            filename = (source_filename
+                        or ref_url_raw.rstrip("/").split("/")[-1]
+                        or "reference.mp3")
             ref_fid = store.store(
                 filename=filename,
                 content=ref_bytes,

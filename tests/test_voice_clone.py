@@ -321,6 +321,97 @@ def test_clone_voice_handler_registers_new_voice(monkeypatch):
     assert "mavoix" in out2
 
 
+def test_clone_voice_handler_reads_owner_scoped_filestore_reference(monkeypatch):
+    from core.file_store import FileStore
+    from core.handlers.capabilities import CloneVoiceHandler
+
+    svc = _fish()
+    h = CloneVoiceHandler()
+    _wire_handler(h, svc, user_id="u_filestore", conv="c_filestore")
+
+    class _Store:
+        def get(self, file_id, user_id=""):
+            assert file_id == "abc123def456"
+            assert user_id == "u_filestore"
+            return ("steve.wav", b"WAV-BYTES", "audio/wav")
+
+        def store(self, **kwargs):
+            assert kwargs["filename"] == "steve.wav"
+            assert kwargs["content"] == b"WAV-BYTES"
+            assert kwargs["content_type"] == "audio/wav"
+            assert kwargs["user_id"] == "u_filestore"
+            return "stored123456"
+
+    monkeypatch.setattr(FileStore, "instance", classmethod(lambda cls: _Store()))
+    monkeypatch.setattr(
+        "core.media_share.TemporaryPublicRefs.public_url",
+        lambda *_args, **_kwargs: pytest.fail(
+            "owner-scoped FileStore reads must not create public URLs"),
+    )
+
+    out = h.execute({
+        "name": "steve",
+        "reference_audio_url":
+            "fs://filestore/abc123def456/spoofed-name.wav",
+    })
+
+    assert "Voice clone registered" in out
+    assert "steve" in out
+
+
+def test_clone_voice_handler_rejects_missing_filestore_reference(monkeypatch):
+    from core.file_store import FileStore
+    from core.handlers.capabilities import CloneVoiceHandler
+
+    class _Store:
+        def get(self, file_id, user_id=""):
+            assert file_id == "missing123456"
+            assert user_id == "u_missing"
+            return None
+
+    monkeypatch.setattr(FileStore, "instance", classmethod(lambda cls: _Store()))
+    monkeypatch.setattr(
+        "core.media_share.TemporaryPublicRefs.public_url",
+        lambda *_args, **_kwargs: pytest.fail(
+            "denied FileStore reads must not create public URLs"),
+    )
+    h = CloneVoiceHandler()
+    _wire_handler(h, _fish(), user_id="u_missing", conv="c_missing")
+
+    out = h.execute({
+        "name": "missing",
+        "reference_audio_url":
+            "fs://filestore/missing123456/reference.wav",
+    })
+
+    assert "not found or access denied" in out
+
+
+def test_clone_voice_handler_rejects_malformed_filestore_reference(monkeypatch):
+    from core.file_store import FileStore
+    from core.handlers.capabilities import CloneVoiceHandler
+
+    class _Store:
+        def get(self, *_args, **_kwargs):
+            pytest.fail("malformed FileStore URLs must be rejected before lookup")
+
+    monkeypatch.setattr(FileStore, "instance", classmethod(lambda cls: _Store()))
+    monkeypatch.setattr(
+        "core.media_share.TemporaryPublicRefs.public_url",
+        lambda *_args, **_kwargs: pytest.fail(
+            "malformed FileStore URLs must not create public URLs"),
+    )
+    h = CloneVoiceHandler()
+    _wire_handler(h, _fish(), user_id="u_malformed", conv="c_malformed")
+
+    out = h.execute({
+        "name": "malformed",
+        "reference_audio_url": "fs://filestore//reference.wav",
+    })
+
+    assert "malformed FileStore reference" in out
+
+
 def test_clone_voice_missing_params():
     from core.handlers.capabilities import CloneVoiceHandler
     h = CloneVoiceHandler()

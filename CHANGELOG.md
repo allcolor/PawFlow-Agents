@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.177] — 2026-08-12
+
+### Fixed
+
+- Synchronized the documented package version with the shipped release version.
+
 ## [1.0.0-beta.176] — 2026-08-12
 
 ### Fixed

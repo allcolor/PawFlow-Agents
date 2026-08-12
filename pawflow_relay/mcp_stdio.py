@@ -124,7 +124,11 @@ class HTTPBridge:
 
 class RelayController:
     def __init__(self, bridge: HTTPBridge, root: Path, client_name: str,
-                 readonly: bool = False, allow_exec: bool = False) -> None:
+                 readonly: bool = False, allow_exec: bool = False,
+                 allow_service_tunnels: bool = False,
+                 terminal_session_id: str = "", terminal_kind: str = "",
+                 terminal_target: str = "", terminal_secret: str = "",
+                 terminal_state_path: str = "") -> None:
         self.bridge = bridge
         self.root = root.resolve()
         if not self.root.is_dir():
@@ -133,6 +137,12 @@ class RelayController:
         self.client_id = "cli_" + secrets.token_urlsafe(18)
         self.readonly = bool(readonly)
         self.allow_exec = bool(allow_exec)
+        self.allow_service_tunnels = bool(allow_service_tunnels)
+        self.terminal_session_id = str(terminal_session_id or "")
+        self.terminal_kind = str(terminal_kind or "")
+        self.terminal_target = str(terminal_target or "")
+        self.terminal_secret = str(terminal_secret or "")
+        self.terminal_state_path = str(terminal_state_path or "")
         self._process: Optional[subprocess.Popen] = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -173,9 +183,12 @@ class RelayController:
             env["PAWFLOW_RELAY_RUNTIME_ROOT"] = runtime_root
             # The token and local path stay out of argv.  stderr is inherited for
             # diagnostics; stdout must never share the MCP JSON-RPC channel.
+            command = [sys.executable, "-m", "pawflow_relay.cli"]
+            if self.allow_service_tunnels:
+                command.append("--allow-service-tunnels")
             try:
                 self._process = subprocess.Popen(  # nosec B603
-                    [sys.executable, "-m", "pawflow_relay.cli"],
+                    command,
                     env=env, stdin=subprocess.DEVNULL,
                     stdout=sys.stderr, stderr=sys.stderr,
                 )
@@ -186,6 +199,26 @@ class RelayController:
                 })
                 raise
             self._relay_id = relay_id
+            if self.terminal_session_id:
+                try:
+                    self.bridge.control("terminal", {
+                        "client_id": self.client_id,
+                        "operation": "register",
+                        "session_id": self.terminal_session_id,
+                        "kind": self.terminal_kind,
+                        "target": self.terminal_target,
+                        "secret": self.terminal_secret,
+                        "state_path": self.terminal_state_path,
+                    })
+                except Exception:
+                    self._process.terminate()
+                    self._process.wait(timeout=5)
+                    self._process = None
+                    self.bridge.control("disconnect", {
+                        "client_id": self.client_id,
+                        "release_client": True,
+                    })
+                    raise
             self._ensure_heartbeat()
             return {
                 "connected": True,
@@ -194,6 +227,7 @@ class RelayController:
                 "root": str(self.root),
                 "readonly": self.readonly,
                 "allow_exec": self.allow_exec,
+                "allow_service_tunnels": self.allow_service_tunnels,
                 "auto_default": False,
             }
 
@@ -256,8 +290,11 @@ class RelayController:
             "root": str(self.root),
             "readonly": self.readonly,
             "allow_exec": self.allow_exec,
+            "allow_service_tunnels": self.allow_service_tunnels,
             "auto_default": False,
             "server": remote,
+            "terminal_session_id": self.terminal_session_id,
+            "terminal_kind": self.terminal_kind,
         }
 
     def reconnect(self) -> Dict[str, Any]:
@@ -283,6 +320,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--client-name", default=os.environ.get("PAWFLOW_MCP_CLIENT_NAME", "CLI"))
     parser.add_argument("--readonly", action="store_true")
     parser.add_argument("--allow-exec", action="store_true")
+    parser.add_argument(
+        "--allow-service-tunnels", action="store_true",
+        help="Allow explicitly approved FRP TCP service tunnels")
+    parser.add_argument("--terminal-session-id", default=os.environ.get(
+        "PAWFLOW_MCP_TERMINAL_SESSION_ID", ""))
+    parser.add_argument("--terminal-kind", default=os.environ.get(
+        "PAWFLOW_MCP_TERMINAL_KIND", ""))
+    parser.add_argument("--terminal-target", default=os.environ.get(
+        "PAWFLOW_MCP_TERMINAL_TARGET", ""))
+    parser.add_argument("--terminal-secret", default=os.environ.get(
+        "PAWFLOW_MCP_TERMINAL_SECRET", ""))
+    parser.add_argument("--terminal-state-path", default=os.environ.get(
+        "PAWFLOW_MCP_TERMINAL_STATE_PATH", ""))
     return parser
 
 
@@ -297,6 +347,12 @@ def main(argv=None) -> int:
     relay = RelayController(
         bridge, Path(args.relay_dir), args.client_name,
         readonly=args.readonly, allow_exec=args.allow_exec,
+        allow_service_tunnels=args.allow_service_tunnels,
+        terminal_session_id=args.terminal_session_id,
+        terminal_kind=args.terminal_kind,
+        terminal_target=args.terminal_target,
+        terminal_secret=args.terminal_secret,
+        terminal_state_path=args.terminal_state_path,
     )
     try:
         state = relay.connect()

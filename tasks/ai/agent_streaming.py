@@ -372,6 +372,52 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     "conversation_id": conversation_id})
             return True
 
+        # A published external agent owns its local TUI. The canonical row may
+        # have been persisted immediately above (web/A2A) or by the private
+        # delegate delivery path before this wake (skip_pre_persist=1). Route
+        # both shapes; persistence ownership must not decide runtime routing.
+        if _stamped_user is not None and not _already_active:
+            from services.mcp_terminal_router import (
+                route_published_terminal_prompt)
+            _external_routed = route_published_terminal_prompt(
+                conversation_id, _target, _user_text,
+                str(_stamped_user.get("msg_id") or ""),
+                channel=_channel, attachments=_attachments_body)
+            if _external_routed is True:
+                logger.info(
+                    "[agent:%s] routed webchat prompt to published MCP terminal "
+                    "agent=%s msg_id=%s", conversation_id[:8], _target,
+                    _stamped_user.get("msg_id", ""))
+                ack = json.dumps({
+                    "status": "accepted",
+                    "conversation_id": conversation_id,
+                    "message_count": _ack_message_count(),
+                    "server_start_time": SERVER_START_TIME,
+                    # AgentRuntimeAPI/A2A callers may now correlate the eventual
+                    # send_agent_message response with this request msg_id.
+                    "wait_for_done": True,
+                    "external_terminal": True,
+                })
+                flowfile.set_content(ack.encode("utf-8"))
+                flowfile.set_attribute("agent.conversation_id", conversation_id)
+                flowfile.set_attribute("agent.streaming", "true")
+                return [flowfile]
+            if _external_routed is False:
+                from services.mcp_terminal_router import (
+                    complete_published_terminal_target)
+                complete_published_terminal_target(
+                    conversation_id, _target,
+                    str(_stamped_user.get("msg_id") or ""), "",
+                    error="Published MCP terminal is unavailable")
+                flowfile.set_content(json.dumps({
+                    "error": "Published MCP terminal is unavailable",
+                    "code": "external_mcp_terminal_unavailable",
+                    "conversation_id": conversation_id,
+                }).encode("utf-8"))
+                flowfile.set_attribute("http.response.status", "503")
+                flowfile.set_attribute("agent.conversation_id", conversation_id)
+                return [flowfile]
+
         _fast_restart_after_preempt = False
         if _already_active:
             # Sticky-mode rule: only preempt the running turn if the

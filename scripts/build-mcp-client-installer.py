@@ -34,7 +34,7 @@ TOOL_FILES = (
     "screen_actions.py",
     "screen_actions_cua.py",
 )
-EXECUTABLES = {"install.sh", "install.py", "launcher.py", "client.py"}
+EXECUTABLES = {"install.sh", "install.py", "launcher.py", "client.py", "hook.py"}
 
 
 def project_version() -> str:
@@ -69,6 +69,7 @@ def create_layout(version: str) -> Path:
     shutil.copy2(ROOT / "scripts" / "install-mcp-client.py", layout / "install.py")
     shutil.copy2(ROOT / "scripts" / "mcp-client-launcher.py", layout / "launcher.py")
     shutil.copy2(ROOT / "scripts" / "mcp-session-launcher.py", layout / "client.py")
+    shutil.copy2(ROOT / "scripts" / "mcp-client-hook.py", layout / "hook.py")
     shutil.copy2(ROOT / "scripts" / "install-mcp-client.sh", layout / "install.sh")
     shutil.copy2(ROOT / "scripts" / "install-mcp-client.cmd", layout / "install.cmd")
     shutil.copy2(ROOT / "scripts" / "install-mcp-client.ps1", layout / "install.ps1")

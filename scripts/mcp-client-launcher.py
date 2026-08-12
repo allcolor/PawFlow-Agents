@@ -53,6 +53,16 @@ def main(argv: list[str] | None = None) -> int:
         bridge_args.append("--readonly")
     if profile.get("allow_exec"):
         bridge_args.append("--allow-exec")
+    if profile.get("allow_service_tunnels"):
+        bridge_args.append("--allow-service-tunnels")
+    for env_name, option in (
+            ("PAWFLOW_MCP_TERMINAL_SESSION_ID", "--terminal-session-id"),
+            ("PAWFLOW_MCP_TERMINAL_KIND", "--terminal-kind"),
+            ("PAWFLOW_MCP_TERMINAL_TARGET", "--terminal-target"),
+            ("PAWFLOW_MCP_TERMINAL_STATE_PATH", "--terminal-state-path")):
+        value = os.environ.get(env_name, "")
+        if value:
+            bridge_args.extend([option, value])
     return bridge_main(bridge_args)
 
 

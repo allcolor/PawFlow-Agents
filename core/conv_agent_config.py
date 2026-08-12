@@ -29,7 +29,14 @@ CONV_AGENTS_KEY = "conv_agents"
 AGENT_CONFIG_DEFAULTS = {
     "definition": "",
     "params": {},
+    # "llm" runs through PawFlow's agent loop. "external_mcp" is operated by
+    # a published MCP client and must never start a PawFlow LLM turn.
+    "runtime_kind": "llm",
     "llm_service": "",
+    # Optional LLM-capable service used only by flash_delegate. This lets
+    # externally-operated agents keep their non-LLM runtime service while
+    # delegating flash work through a regular LLM service.
+    "flash_delegate_llm_service": "",
     "model": "",
     "tools": [],
     "max_depth": 1000,
@@ -102,15 +109,23 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
                       model: str = "",
                       tools: Optional[List[str]] = None,
                       max_depth: int = 1000,
-                      skills: Optional[List[str]] = None) -> Dict[str, Any]:
+                      skills: Optional[List[str]] = None,
+                      flash_delegate_llm_service: str = "",
+                      runtime_kind: str = "llm") -> Dict[str, Any]:
     """Add an agent instance to a conversation.
 
     instance_name: the key in conv_agents (chosen by user, unique per conv).
     definition: the repository .md template name (required).
     params: dict of values injected into the definition prompt as ${agent.key}.
-    llm_service is required — an agent without an LLM service cannot run.
+    llm_service is required for llm agents. external_mcp agents are operated by
+    their published client and do not require a PawFlow LLM service.
+    flash_delegate_llm_service optionally overrides the service used by
+    flash_delegate; when empty, flash agents inherit llm_service.
     """
-    if not llm_service:
+    runtime_kind = str(runtime_kind or "llm").strip()
+    if runtime_kind not in {"llm", "external_mcp"}:
+        raise ValueError("runtime_kind must be 'llm' or 'external_mcp'")
+    if runtime_kind == "llm" and not llm_service:
         raise ValueError(
             f"llm_service is required when adding agent '{instance_name}' to conversation")
     if not definition:
@@ -119,7 +134,9 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
     config = {
         "definition": definition,
         "params": params or {},
+        "runtime_kind": runtime_kind,
         "llm_service": llm_service,
+        "flash_delegate_llm_service": flash_delegate_llm_service,
         "model": model,
         "tools": tools or [],
         "max_depth": max_depth,

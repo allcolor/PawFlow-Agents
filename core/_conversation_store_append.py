@@ -114,6 +114,28 @@ class _CsAppendMixin:
         # Update cache
         self._reload_cache(cid)
 
+    def append_message_if_absent(self, cid: str, msg: Dict,
+                                 agent_name: str = "", user_id: str = "",
+                                 ttl: int = 0) -> bool:
+        """Atomically append a message unless its msg_id already exists.
+
+        This is the durable idempotence boundary for external transports. The
+        duplicate check and append share the same per-conversation reentrant
+        lock, so concurrent retries cannot both persist the same message.
+        """
+        msg_id = str((msg or {}).get("msg_id") or "").strip()
+        if not msg_id:
+            raise ValueError("msg_id is required for idempotent append")
+        lock = self._get_conv_lock(cid)
+        with lock:
+            existing = self.load(cid, user_id=user_id) or []
+            if any(str(row.get("msg_id") or "") == msg_id
+                   for row in existing):
+                return False
+            self.append_message(
+                cid, msg, agent_name=agent_name, user_id=user_id, ttl=ttl)
+            return True
+
     def append_message(self, cid: str, msg: Dict, agent_name: str = "",
                        user_id: str = "", ttl: int = 0) -> None:
         """Persist one message to every target file it belongs in.

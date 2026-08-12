@@ -73,6 +73,11 @@ class MCPServerStore:
                     active_client_name TEXT NOT NULL DEFAULT '',
                     active_relay_id TEXT NOT NULL DEFAULT '',
                     client_heartbeat_at REAL NOT NULL DEFAULT 0,
+                    terminal_session_id TEXT NOT NULL DEFAULT '',
+                    terminal_kind TEXT NOT NULL DEFAULT '',
+                    terminal_target TEXT NOT NULL DEFAULT '',
+                    terminal_secret TEXT NOT NULL DEFAULT '',
+                    terminal_state_path TEXT NOT NULL DEFAULT '',
                     image_output TEXT NOT NULL DEFAULT 'native'
                 );
                 CREATE INDEX IF NOT EXISTS idx_mcp_servers_owner_conversation
@@ -102,15 +107,25 @@ class MCPServerStore:
                     "ALTER TABLE mcp_servers ADD COLUMN "
                     "image_output TEXT NOT NULL DEFAULT 'native'"
                 )
+            for name in (
+                    "terminal_session_id", "terminal_kind", "terminal_target",
+                    "terminal_secret", "terminal_state_path"):
+                if name not in columns:
+                    connection.execute(
+                        f"ALTER TABLE mcp_servers ADD COLUMN "
+                        f"{name} TEXT NOT NULL DEFAULT ''")
 
     @staticmethod
     def _server_row(row: sqlite3.Row) -> Dict[str, Any]:
         data = dict(row)
+        data.pop("terminal_secret", None)
         data["enabled"] = bool(data.get("enabled"))
         heartbeat = float(data.get("client_heartbeat_at") or 0)
         data["client_active"] = bool(
             data.get("active_client_id")
             and heartbeat > time.time() - _CLIENT_LEASE_TTL_SECONDS)
+        data["terminal_ready"] = bool(
+            data["client_active"] and data.get("terminal_session_id"))
         return data
 
     @staticmethod
@@ -280,7 +295,10 @@ class MCPServerStore:
                 raise RuntimeError("MCP server already has an active CLI instance")
             connection.execute(
                 """UPDATE mcp_servers SET active_client_id = ?, active_client_name = ?,
-                       active_relay_id = ?, client_heartbeat_at = ?, updated_at = ?
+                       active_relay_id = ?, client_heartbeat_at = ?,
+                       terminal_session_id = '', terminal_kind = '',
+                       terminal_target = '', terminal_secret = '',
+                       terminal_state_path = '', updated_at = ?
                    WHERE server_id = ?""",
                 (client_id, client_name or "CLI", relay_id, now, now, server_id),
             )
@@ -288,6 +306,52 @@ class MCPServerStore:
         if result is None:
             raise RuntimeError("MCP client lease was not persisted")
         return result
+
+    def set_terminal(self, server_id: str, client_id: str,
+                     session_id: str, kind: str, target: str,
+                     secret: str = "", state_path: str = "") -> bool:
+        if not session_id or not target:
+            raise ValueError("session_id and target are required")
+        with self._lock, self._connect() as connection:
+            cur = connection.execute(
+                """UPDATE mcp_servers
+                   SET terminal_session_id = ?, terminal_kind = ?,
+                       terminal_target = ?, terminal_secret = ?,
+                       terminal_state_path = ?, updated_at = ?
+                   WHERE server_id = ? AND active_client_id = ?""",
+                (session_id, kind, target, secret, state_path, time.time(),
+                 server_id, client_id),
+            )
+        return bool(cur.rowcount)
+
+    def clear_terminal(self, server_id: str, client_id: str = "") -> bool:
+        query = (
+            """UPDATE mcp_servers
+               SET terminal_session_id = '', terminal_kind = '',
+                   terminal_target = '', terminal_secret = '',
+                   terminal_state_path = '', updated_at = ?
+               WHERE server_id = ?"""
+        )
+        params: tuple = (time.time(), server_id)
+        if client_id:
+            query += " AND active_client_id = ?"
+            params += (client_id,)
+        with self._lock, self._connect() as connection:
+            cur = connection.execute(query, params)
+        return bool(cur.rowcount)
+
+    def get_terminal_registration(self, server_id: str) -> Dict[str, Any]:
+        """Return private terminal routing fields for server-side injection."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """SELECT active_client_id, active_relay_id,
+                          client_heartbeat_at, terminal_session_id,
+                          terminal_kind, terminal_target, terminal_secret,
+                          terminal_state_path
+                   FROM mcp_servers WHERE server_id = ?""",
+                (server_id,),
+            ).fetchone()
+        return dict(row) if row else {}
 
     def heartbeat_client(self, server_id: str, client_id: str) -> bool:
         with self._lock, self._connect() as connection:
@@ -302,7 +366,10 @@ class MCPServerStore:
         with self._lock, self._connect() as connection:
             cur = connection.execute(
                 """UPDATE mcp_servers SET active_client_id = '', active_client_name = '',
-                       active_relay_id = '', client_heartbeat_at = 0, updated_at = ?
+                       active_relay_id = '', client_heartbeat_at = 0,
+                       terminal_session_id = '', terminal_kind = '',
+                       terminal_target = '', terminal_secret = '',
+                       terminal_state_path = '', updated_at = ?
                    WHERE server_id = ? AND active_client_id = ?""",
                 (time.time(), server_id, client_id),
             )
@@ -323,6 +390,9 @@ class MCPServerStore:
                     """UPDATE mcp_servers
                        SET active_client_id = '', active_client_name = '',
                            active_relay_id = '', client_heartbeat_at = 0,
+                           terminal_session_id = '', terminal_kind = '',
+                           terminal_target = '', terminal_secret = '',
+                           terminal_state_path = '',
                            updated_at = ?
                        WHERE active_client_id != '' AND client_heartbeat_at < ?""",
                     (time.time(), cutoff),

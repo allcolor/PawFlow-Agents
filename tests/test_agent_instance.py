@@ -23,6 +23,8 @@ class TestAgentConfigDefaults:
         assert "params" in AGENT_CONFIG_DEFAULTS
         assert AGENT_CONFIG_DEFAULTS["definition"] == ""
         assert AGENT_CONFIG_DEFAULTS["params"] == {}
+        assert AGENT_CONFIG_DEFAULTS["runtime_kind"] == "llm"
+        assert AGENT_CONFIG_DEFAULTS["flash_delegate_llm_service"] == ""
 
 
 class TestAddAgentToConv:
@@ -43,10 +45,12 @@ class TestAddAgentToConv:
                 llm_service="claude_svc",
                 definition="researcher",
                 params={"name": "Alice", "specialty": "biology"},
+                flash_delegate_llm_service="flash_svc",
             )
             assert cfg["definition"] == "researcher"
             assert cfg["params"] == {"name": "Alice", "specialty": "biology"}
             assert cfg["llm_service"] == "claude_svc"
+            assert cfg["flash_delegate_llm_service"] == "flash_svc"
             stored = _stored["conv_agents"]["Alice"]
             assert stored["definition"] == "researcher"
             assert stored["params"]["name"] == "Alice"
@@ -60,6 +64,20 @@ class TestAddAgentToConv:
         with pytest.raises(ValueError, match="llm_service is required"):
             add_agent_to_conv("conv1", "Alice",
                              llm_service="", definition="researcher")
+
+    def test_external_mcp_agent_does_not_require_llm_service(self):
+        mock_store, _stored = self._make_store_mock()
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=mock_store):
+            cfg = add_agent_to_conv(
+                "conv1", "External",
+                llm_service="", definition="external",
+                runtime_kind="external_mcp",
+                flash_delegate_llm_service="flash_svc",
+            )
+        assert cfg["runtime_kind"] == "external_mcp"
+        assert cfg["llm_service"] == ""
+        assert _stored["conv_agents"]["External"]["runtime_kind"] == "external_mcp"
 
 
 class TestGetAgentConfig:

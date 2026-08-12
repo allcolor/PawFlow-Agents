@@ -530,6 +530,12 @@ function _showAgentConvConfigDialog(agentName) {
       return '<option value="' + escapeHtml(s.service_id) + '"' + sel + '>'
         + escapeHtml(s.service_id) + ' (' + escapeHtml(s.provider || '') + ')</option>';
     }).join('');
+    var flashServiceOpts = '<option value="">' + escapeHtml(t('flashDelegateLlmInherit')) + '</option>'
+      + services.map(function(s) {
+          var sel = s.service_id === cfg.flash_delegate_llm_service ? ' selected' : '';
+          return '<option value="' + escapeHtml(s.service_id) + '"' + sel + '>'
+            + escapeHtml(s.service_id) + ' (' + escapeHtml(s.provider || '') + ')</option>';
+        }).join('');
     var toolsStr = Array.isArray(cfg.tools) ? cfg.tools.join(', ') : (cfg.tools || '');
     var overlay = document.createElement('div');
     overlay.id = 'agentConvConfigOverlay';
@@ -564,6 +570,9 @@ function _showAgentConvConfigDialog(agentName) {
     html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
       + '<select id="acc-llm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
       + serviceOpts + '</select></div>'
+      + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('flashDelegateLlmService')) + '</label>'
+      + '<select id="acc-flash-llm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
+      + flashServiceOpts + '</select></div>'
       + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('modelOverride')) + '</label>'
       + '<input id="acc-model" value="' + escapeHtml(cfg.model || '') + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>'
       + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('toolsCommaSeparated')) + '</label>'
@@ -594,6 +603,7 @@ function _showAgentConvConfigDialog(agentName) {
     document.body.appendChild(overlay);
     document.getElementById('acc-save').onclick = function() {
       var llm = document.getElementById('acc-llm').value;
+      var flashLlm = document.getElementById('acc-flash-llm').value;
       var model = document.getElementById('acc-model').value;
       var tools = document.getElementById('acc-tools').value
         .split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
@@ -604,7 +614,8 @@ function _showAgentConvConfigDialog(agentName) {
       panel.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
       });
-      var newCfg = { llm_service: llm, model: model, tools: tools,
+      var newCfg = { llm_service: llm, flash_delegate_llm_service: flashLlm,
+                     model: model, tools: tools,
                      max_depth: depth, params: params };
       if (rtSel) newCfg.realtime_voice_service = rtSel.value;
       action$('update_agent_conv_config', {

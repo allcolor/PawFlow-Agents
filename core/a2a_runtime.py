@@ -131,6 +131,13 @@ def send_message(publication: Dict[str, Any], key: Dict[str, Any],
     """Submit an A2A SendMessageRequest and return a Task."""
     if not publication.get("enabled"):
         raise PermissionError("This A2A publication is disabled")
+    from core.conv_agent_config import get_agent_config
+    agent_config = get_agent_config(
+        publication["conversation_id"], publication["agent_name"]) or {}
+    if (agent_config.get("runtime_kind") == "external_mcp"
+            and publication.get("context_policy") != "shared"):
+        raise ValueError(
+            "external_mcp A2A publications require shared context")
     message = body.get("message") if isinstance(body, dict) else None
     text, attachments = _message_text(message)
     requested_context = str((message or {}).get("contextId") or "").strip()

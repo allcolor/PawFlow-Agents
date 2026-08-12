@@ -120,13 +120,20 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         definition = body.get("definition", "").strip()
         inst_params = body.get("params") or {}
         llm_service = body.get("llm_service", "").strip()
+        runtime_kind = str(body.get("runtime_kind") or "llm").strip()
         if not conv_id or not instance_name or not definition:
             flowfile.set_content(json.dumps({
                 "error": "Missing conversation_id, instance_name, or definition",
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        if not llm_service:
+        if runtime_kind not in {"llm", "external_mcp"}:
+            flowfile.set_content(json.dumps({
+                "error": "runtime_kind must be 'llm' or 'external_mcp'",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if runtime_kind == "llm" and not llm_service:
             flowfile.set_content(json.dumps({
                 "error": "llm_service is required when adding an agent to a conversation",
             }).encode())
@@ -148,7 +155,10 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
              model=body.get("model", ""),
              tools=body.get("tools", []),
              max_depth=int(body.get("max_depth", 1000) or 1000),
-             skills=body.get("skills", []))
+             skills=body.get("skills", []),
+             flash_delegate_llm_service=body.get(
+                 "flash_delegate_llm_service", "").strip(),
+             runtime_kind=runtime_kind)
         active = store.get_extra(conv_id, "active_resources") or {}
         if not active.get("agent"):
             active["agent"] = instance_name
@@ -197,10 +207,6 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or name"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        if not cfg.get("llm_service"):
-            flowfile.set_content(json.dumps({"error": "llm_service is required"}).encode())
-            flowfile.set_attribute("http.response.status", "400")
-            return [flowfile]
         from core.conv_agent_config import (
             get_all_agent_configs, set_agent_config,
         )
@@ -209,10 +215,27 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not in conversation"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
+        runtime_kind = str(
+            cfg.get("runtime_kind")
+            or configs[aname].get("runtime_kind")
+            or "llm")
+        if runtime_kind not in {"llm", "external_mcp"}:
+            flowfile.set_content(json.dumps({
+                "error": "runtime_kind must be 'llm' or 'external_mcp'",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        effective_llm = cfg.get(
+            "llm_service", configs[aname].get("llm_service", ""))
+        if runtime_kind == "llm" and not effective_llm:
+            flowfile.set_content(json.dumps({"error": "llm_service is required"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         # Merge — only update known runtime fields. Skills live on the agent
         # definition (`assigned_skills`), not in conv_agent_config.
         _allowed = {"llm_service", "model", "tools", "max_depth", "params",
-                    "realtime_voice_service"}
+                    "realtime_voice_service", "flash_delegate_llm_service",
+                    "runtime_kind"}
         merged = dict(configs[aname])
         for k, v in cfg.items():
             if k in _allowed:

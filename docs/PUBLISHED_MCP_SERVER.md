@@ -3,8 +3,8 @@
 PawFlow can publish one existing conversation and one attached agent as an
 authenticated inbound MCP server. This is separate from the MCP Repository:
 repository entries are outbound servers consumed by PawFlow, while a published
-conversation exposes PawFlow tools to Claude Code, Codex, Gemini CLI/Agy, and
-other MCP clients.
+conversation exposes PawFlow tools to Claude Code, Codex, Gemini CLI/Agy,
+OpenCode, JCode, Pi, Hermes, and other MCP clients.
 
 ## Publish a conversation
 
@@ -64,12 +64,35 @@ vision service. The call fails explicitly if the published agent has no usable
 vision service. PawFlow persists the ordinary text and compact image metadata
 in the conversation transcript, never inline image base64 payloads.
 
+## Conversation transport tools
+
+Published servers expose four direct conversation tools in addition to
+`get_tool_schema` and `use_tool`:
+
+| Tool | Contract |
+|---|---|
+| `get_initial_context` | Returns the full agent-visible bootstrap document and its current `seq` cursor. |
+| `get_context_updates` | Accepts `after_seq` and returns only later agent-visible messages plus the new cursor. |
+| `send_user_message` | Canonically persists a local client prompt with a required `message_id`. |
+| `send_agent_message` | Canonically persists the external agent's response with a required `message_id`. |
+
+Both write tools are durably idempotent: the duplicate check and append occur
+under the conversation lock. A retry with the same `message_id` reports the
+existing write and does not publish a second webchat event.
+
+The release launcher wires these tools to client lifecycle hooks. Each client
+keeps a locked local `seq` cursor. Server-injected prompts carry a short-lived
+`message_id`/SHA-256 marker written before terminal submission, so the prompt
+hook injects other context updates while excluding and not repersisting the
+prompt already stored by webchat ingress.
+
 ## Local stdio bridge
 
 For client workstations, download `pawflow-mcp-client-VERSION.zip` or
 `pawflow-mcp-client-VERSION.tar.gz` from the release. Its guided Windows,
-Linux, and macOS installer configures Claude Code, Codex, and Agy, stores both
-keys in one private local profile, and writes secret-free user MCP entries.
+Linux, and macOS installer configures Claude Code, Codex, Agy, OpenCode, JCode,
+Pi, and Hermes, stores both keys in one private local profile, and writes
+secret-free session entries and plugins.
 See [PawFlow MCP Client Installer](MCP_CLIENT_INSTALLER.md).
 
 Developers with a full PawFlow checkout can also use the `pawflow-mcp`
@@ -88,8 +111,10 @@ Common environment variables:
 | `PAWFLOW_MCP_CLIENT_NAME` | No | Human-readable CLI name |
 | `PAWFLOW_RELAY_INSECURE=1` | Development only | Disable TLS verification |
 
-Optional bridge flags are `--relay-dir`, `--client-name`, `--readonly`, and
-`--allow-exec`.
+Optional bridge flags are `--relay-dir`, `--client-name`, `--readonly`,
+`--allow-exec`, and `--allow-service-tunnels`. The last flag enables the
+existing explicitly-approved FRP service-tunnel capability on the automatic
+MCP relay.
 
 ### Manual Claude Code, Gemini CLI, and Agy configuration
 
@@ -150,6 +175,22 @@ its logical CLI lease and heartbeat, so another CLI cannot start against the
 same publication. `pawflow_relay_reconnect` reuses that lease. Closing the
 bridge releases it.
 
+The same lease owns an optional private terminal registration: session ID,
+terminal kind, target, injection secret, and marker path. Public status returns
+only readiness, session ID, and kind; it never exposes the target, secret, or
+local marker path. POSIX launchers register a `tmux` pane, while Windows
+launchers register an authenticated loopback console injector. Disconnect,
+lease release, expiry, publication reconfiguration, and client replacement all
+clear terminal routing.
+
+Webchat routing reuses the already-connected automatic relay and sends the
+internal `mcp_terminal_inject` action only after the canonical user row has been
+authorized, hooked, and persisted. This internal action is independent of the
+relay's generic shell-execution permission: it can address only the terminal
+target registered by the authenticated active client lease. If a published
+external agent has no reachable terminal, PawFlow returns HTTP 503 instead of
+starting an internal LLM for that agent.
+
 A published server permits one active CLI instance. Starting another instance
 while the first lease is fresh returns HTTP 409; use another published
 conversation for another concurrent client. The bridge heartbeats every 30
@@ -171,13 +212,38 @@ or deleting the publication does the same.
 
 ## Protocol surface
 
-The Streamable HTTP endpoint currently advertises two MCP tools:
+The Streamable HTTP endpoint advertises six MCP tools:
 
 - `get_tool_schema`: list PawFlow tools/families, return one full schema, or
   compare an availability-filtered routing family;
 - `use_tool`: execute a named PawFlow tool with `arguments_json`.
+- `get_initial_context` and `get_context_updates`: bootstrap and cursor-based
+  agent-visible synchronization;
+- `send_user_message` and `send_agent_message`: idempotent conversation writes.
 
 The wrapper keeps the MCP tool list small while exposing the exact set available
 to the bound conversation and agent. MCP sessions expire after eight hours of
 inactivity. Server-initiated SSE is not currently supported; asynchronous and
 background results are completed through their original `tools/call` response.
+
+## Delegate and A2A turns into an external MCP agent
+
+An agent configured with `runtime_kind: "external_mcp"` can be the target of a
+webchat turn, a same-conversation `delegate`, a cross-conversation delegate, or
+an inbound A2A request. PawFlow persists the canonical request first and injects
+it into the registered terminal with that request's `msg_id`. The client hook
+retains the marker and supplies it as `reply_to_message_id` when it calls
+`send_agent_message` with the final response.
+
+That correlation completes the original PawFlow runtime turn. A2A tasks receive
+their terminal `done` event, ordinary delegates deliver the private result back
+to their caller, and delegates started by a published MCP `tools/call` complete
+that still-open call instead of waking the capability-profile agent. Response
+`message_id` values remain the idempotency boundary, so a retried write does not
+append or broadcast a second assistant message.
+
+Inbound A2A publication of an `external_mcp` agent requires
+`context_policy: "shared"`. An isolated A2A context has a different internal
+conversation ID and therefore cannot safely reuse the terminal and context feed
+bound to the published conversation; PawFlow rejects that configuration at
+submission rather than routing it to the wrong context.

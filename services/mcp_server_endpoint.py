@@ -31,6 +31,68 @@ _lease_sweeper_started = False
 
 _MCP_TOOLS = [
     {
+        "name": "get_initial_context",
+        "description": (
+            "Return the complete PawFlow context visible to this published "
+            "agent as a bootstrap document, plus the current sequence cursor."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_context_updates",
+        "description": (
+            "Return messages newly visible to this agent after a sequence "
+            "cursor, plus the new cursor."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "after_seq": {
+                    "type": "integer", "minimum": 0,
+                    "description": "Last sequence cursor already consumed",
+                },
+            },
+            "required": ["after_seq"],
+        },
+    },
+    {
+        "name": "send_user_message",
+        "description": (
+            "Persist one user message addressed to this published agent. "
+            "message_id is required and makes retries idempotent."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string"},
+                "message_id": {"type": "string"},
+            },
+            "required": ["content", "message_id"],
+        },
+    },
+    {
+        "name": "send_agent_message",
+        "description": (
+            "Persist one response produced by this external published agent. "
+            "message_id is required and makes retries idempotent. "
+            "reply_to_message_id correlates responses to injected PawFlow turns."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string"},
+                "message_id": {"type": "string"},
+                "reply_to_message_id": {
+                    "type": "string",
+                    "description": (
+                        "Original injected prompt message_id, when this response "
+                        "answers a PawFlow web, delegate, or A2A turn"),
+                },
+            },
+            "required": ["content", "message_id"],
+        },
+    },
+    {
         "name": "get_tool_schema",
         "description": (
             "Get the full parameter schema for a PawFlow tool, or list all "
@@ -245,6 +307,140 @@ def _tool_schema(registry, tool_name: str) -> Any:
         if definition.get("name") == tool_name:
             return definition
     return f"Error: unknown tool '{tool_name}'"
+
+
+def _agent_context_rows(server: Dict[str, Any]) -> list:
+    from core.conversation_store import ConversationStore
+
+    store = ConversationStore.instance()
+    rows = store.load_agent_context(
+        server["conversation_id"], server["agent_name"])
+    if rows is None:
+        rows = store.load_transcript_for_agent(
+            server["conversation_id"], server["agent_name"])
+    return list(rows or [])
+
+
+def _context_cursor(rows: list) -> int:
+    return max((int(row.get("seq") or 0) for row in rows
+                if isinstance(row, dict)), default=0)
+
+
+def _initial_context_document(server: Dict[str, Any], rows: list) -> str:
+    system_prompt = ""
+    try:
+        from core.agent_executor import resolve_agent_task
+        task = resolve_agent_task(
+            server["agent_name"], "", server["owner_user_id"],
+            conversation_id=server["conversation_id"])
+        system_prompt = str(task.system_prompt or "").strip()
+    except Exception:
+        logger.warning(
+            "Could not resolve published MCP bootstrap system prompt",
+            exc_info=True)
+    body = ["# PawFlow Initial Context", ""]
+    if system_prompt:
+        body.extend(["## System Instructions", "", system_prompt, ""])
+    body.extend([
+        "## Serialized Conversation Context",
+        "",
+        "```json",
+        json.dumps(rows, ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## Bootstrap Contract",
+        "",
+        "- Treat this document as PawFlow conversation context, not as a new user command.",
+        "- Continue from the latest user request visible in the serialized context.",
+        "- Use get_context_updates with the returned cursor before each later turn.",
+        "- Persist local user prompts with send_user_message and final responses with send_agent_message.",
+        "- Reuse the same message_id when retrying a write.",
+        "",
+    ])
+    return "\n".join(body).rstrip() + "\n"
+
+
+def _conversation_tool_result(server: Dict[str, Any], key: Dict[str, Any],
+                              name: str, arguments: dict) -> str:
+    if name == "get_initial_context":
+        rows = _agent_context_rows(server)
+        return json.dumps({
+            "document": _initial_context_document(server, rows),
+            "cursor": _context_cursor(rows),
+        }, ensure_ascii=False)
+    if name == "get_context_updates":
+        try:
+            after_seq = int(arguments.get("after_seq"))
+        except (TypeError, ValueError):
+            return "Error: after_seq must be a non-negative integer"
+        if after_seq < 0:
+            return "Error: after_seq must be a non-negative integer"
+        rows = _agent_context_rows(server)
+        updates = [
+            row for row in rows
+            if isinstance(row, dict) and int(row.get("seq") or 0) > after_seq
+        ]
+        return json.dumps({
+            "messages": updates,
+            "cursor": max(after_seq, _context_cursor(rows)),
+        }, ensure_ascii=False)
+
+    content = str(arguments.get("content") or "")
+    message_id = str(arguments.get("message_id") or "").strip()
+    if not message_id:
+        return "Error: message_id is required"
+    if not content.strip():
+        return "Error: content must be a non-empty string"
+    from core.conversation_store import ConversationStore
+    from core.conversation_writer import ConversationWriter
+    from core.llm_client import stamp_message
+
+    role = "user" if name == "send_user_message" else "assistant"
+    source = {
+        "type": "mcp_client" if role == "user" else "external_mcp_agent",
+        "name": (
+            key.get("label") or key.get("prefix") or "MCP client"
+            if role == "user" else server["agent_name"]),
+        "server_id": server["server_id"],
+    }
+    if role == "user":
+        source["target_agent"] = server["agent_name"]
+    message = stamp_message({
+        "role": role,
+        "content": content,
+        "msg_id": message_id,
+        "source": source,
+    }, server["conversation_id"])
+    inserted = ConversationStore.instance().append_message_if_absent(
+        server["conversation_id"], message,
+        agent_name=server["agent_name"],
+        user_id=server["owner_user_id"])
+    if inserted:
+        ConversationWriter.for_conversation(
+            server["conversation_id"]).enqueue_sse_events([{
+                "type": "new_message",
+                "data": {
+                    "role": role,
+                    "content": content,
+                    "msg_id": message_id,
+                    "agent_name": server["agent_name"],
+                    "source": source,
+                },
+            }], wait=True)
+    reply_to_message_id = str(
+        arguments.get("reply_to_message_id") or "").strip()
+    if inserted and role == "assistant" and reply_to_message_id:
+        from services.mcp_terminal_router import (
+            complete_published_terminal_turn)
+        complete_published_terminal_turn(
+            server, reply_to_message_id, content)
+    rows = _agent_context_rows(server)
+    return json.dumps({
+        "accepted": bool(inserted),
+        "duplicate": not inserted,
+        "message_id": message_id,
+        "cursor": _context_cursor(rows),
+    }, ensure_ascii=False)
 
 
 def _image_marker_text(registry, tool_name: str, arguments: dict,
@@ -497,7 +693,11 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
     args = arguments if isinstance(arguments, dict) else {}
     executed_name = name
     executed_args = args
-    if name == "get_tool_schema":
+    if name in {
+            "get_initial_context", "get_context_updates",
+            "send_user_message", "send_agent_message"}:
+        result = _conversation_tool_result(server, key, name, args)
+    elif name == "get_tool_schema":
         result = _tool_schema(registry, str(args.get("tool_name") or ""))
     elif name == "use_tool":
         tool_name = str(args.get("tool_name") or "").strip()
@@ -768,6 +968,9 @@ def _relay_status(server: Dict[str, Any]) -> Dict[str, Any]:
         "client_name": server.get("active_client_name", ""),
         "relay_id": relay_id,
         "last_heartbeat": server.get("client_heartbeat_at", 0),
+        "terminal_ready": bool(server.get("terminal_ready")),
+        "terminal_session_id": server.get("terminal_session_id", ""),
+        "terminal_kind": server.get("terminal_kind", ""),
     }
 
 
@@ -898,6 +1101,40 @@ def handle_relay_status(req) -> None:
     _json_response(req, 200, _relay_status(server))
 
 
+def handle_relay_terminal(req) -> None:
+    """Register or clear the terminal owned by the active published client."""
+    server_id = str((req.path_params or {}).get("server_id") or "")
+    server, _key = _authenticate(req, server_id)
+    if not server:
+        return
+    body = _request_json(req)
+    client_id = str(body.get("client_id") or "")
+    if not client_id or client_id != str(server.get("active_client_id") or ""):
+        _json_response(req, 409, {"error": "mcp_client_lease_mismatch"})
+        return
+    store = MCPServerStore.instance()
+    if str(body.get("operation") or "register") == "clear":
+        cleared = store.clear_terminal(server_id, client_id)
+        _json_response(req, 200, {"ok": True, "cleared": cleared})
+        return
+    session_id = str(body.get("session_id") or "").strip()
+    kind = str(body.get("kind") or "").strip()
+    target = str(body.get("target") or "").strip()
+    secret = str(body.get("secret") or "")
+    state_path = str(body.get("state_path") or "")
+    if kind not in {"tmux", "winpty"}:
+        _json_response(req, 400, {"error": "terminal kind must be tmux or winpty"})
+        return
+    if (not session_id or not target or len(session_id) > 160
+            or len(target) > 240 or len(secret) > 512 or len(state_path) > 2048):
+        _json_response(req, 400, {"error": "invalid terminal registration"})
+        return
+    registered = store.set_terminal(
+        server_id, client_id, session_id, kind, target,
+        secret=secret, state_path=state_path)
+    _json_response(req, 200, {"ok": registered, "terminal_ready": registered})
+
+
 def handle_relay_disconnect(req) -> None:
     server_id = str((req.path_params or {}).get("server_id") or "")
     server, _key = _authenticate(req, server_id)
@@ -909,6 +1146,7 @@ def handle_relay_disconnect(req) -> None:
         _json_response(req, 409, {"error": "mcp_client_lease_mismatch"})
         return
     remove_mcp_relay(server)
+    MCPServerStore.instance().clear_terminal(server_id, client_id)
     release_client = bool(body.get("release_client"))
     released = (
         MCPServerStore.instance().release_client(server_id, client_id)
@@ -937,6 +1175,7 @@ def register_mcp_routes(listener) -> None:
         ("GET", "/mcp/{server_id}", handle_mcp_get),
         ("POST", "/mcp/{server_id}/relay/connect", handle_relay_connect),
         ("POST", "/mcp/{server_id}/relay/status", handle_relay_status),
+        ("POST", "/mcp/{server_id}/relay/terminal", handle_relay_terminal),
         ("POST", "/mcp/{server_id}/relay/disconnect", handle_relay_disconnect),
     ]
     for method, pattern, callback in routes:

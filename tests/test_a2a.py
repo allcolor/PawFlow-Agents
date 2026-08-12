@@ -298,6 +298,21 @@ def test_delegate_resolves_named_local_target(monkeypatch):
     assert '"target": "legal"' in result
 
 
+def test_external_mcp_a2a_rejects_isolated_context(monkeypatch):
+    from core import a2a_runtime
+
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda *_args: {"runtime_kind": "external_mcp"})
+    with pytest.raises(ValueError, match="require shared context"):
+        a2a_runtime.send_message({
+            "enabled": True,
+            "conversation_id": "conv-1",
+            "agent_name": "External",
+            "context_policy": "isolated",
+        }, {"key_id": "key-1"}, {})
+
+
 def test_a2a_ui_is_loaded_and_translated():
     root = Path(__file__).parents[1]
     serve = (root / "tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")

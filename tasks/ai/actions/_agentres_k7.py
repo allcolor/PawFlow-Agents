@@ -92,12 +92,24 @@ def _handle_agentres_k7(self, action, body, store, user_id, flowfile):
             return _reply(flowfile, {
                 "error": "agent_name must identify an agent attached to this conversation",
             }, 400)
+        context_policy = str(body.get("context_policy") or "isolated")
         try:
+            from core.conv_agent_config import get_agent_config
+            runtime_kind = str(
+                (get_agent_config(conversation_id, canonical) or {}).get(
+                    "runtime_kind") or "llm")
+            if runtime_kind == "external_mcp" and context_policy != "shared":
+                return _reply(flowfile, {
+                    "error": (
+                        "external_mcp agents require A2A context_policy='shared' "
+                        "because their published terminal is bound to the parent "
+                        "conversation"),
+                }, 400)
             publication = a2a_store.configure_publication(
                 owner, conversation_id, canonical,
                 label=str(body.get("label") or canonical).strip(),
                 description=str(body.get("description") or "").strip(),
-                context_policy=str(body.get("context_policy") or "isolated"),
+                context_policy=context_policy,
                 enabled=bool(body.get("enabled", True)),
             )
             from services.a2a_server_endpoint import ensure_a2a_routes

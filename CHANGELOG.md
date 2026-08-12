@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.174] — 2026-08-12
+
+### Added
+
+- Added explicit `external_mcp` conversation agents whose runtime is an
+  authenticated published MCP client rather than a PawFlow-managed LLM.
+- Added idempotent initial-context, incremental-context, user-message, and
+  agent-message tools for published MCP clients, plus persistent terminal
+  registration and remote prompt injection on POSIX and Windows.
+- Added isolated launch profiles and lifecycle integrations for OpenCode,
+  JCode, Pi, and Hermes alongside Claude Code, Codex, and Agy/Gemini; Pi can
+  register the published PawFlow tools dynamically.
+- Added an optional per-agent LLM-service override for `flash_delegate`, so an
+  external MCP agent can still launch temporary LLM work.
+
+### Changed
+
+- Routed webchat, same-conversation delegate, cross-conversation delegate, and
+  shared-context A2A turns into an active external MCP terminal and correlated
+  its final response with the original PawFlow runtime turn.
+- Returned delegate and background results to the published MCP tool caller
+  that started them instead of waking the configured capability-profile agent.
+
+### Security
+
+- Bound private terminal routing to the authenticated active-client lease,
+  kept terminal targets and injection secrets out of public status, rejected
+  unavailable terminals without an internal-LLM fallback, and rejected
+  isolated-context A2A publication for external MCP agents.
+
 ## [1.0.0-beta.173] — 2026-08-12
 
 ### Added

@@ -145,6 +145,61 @@ class TestFlashDelegate:
         assert "SKILL" in task.system_prompt
         assert "agentA::flash::critic" in result
 
+    def test_flash_delegate_uses_configured_llm_service_override(self):
+        h = _make_flash_handler()
+        with patch("core.conv_agent_config.get_agent_config", return_value={
+            "flash_delegate_llm_service": "svc_flash",
+        }), patch("core.agent_executor.get_live_delegate", return_value=None), \
+             patch("core.agent_executor.SubAgentExecutor") as mock_exec:
+            mock_exec.return_value.spawn.return_value = [
+                AgentResult(task_id="flash1",
+                            agent_name="agentA::flash::critic")
+            ]
+            h.execute({"tasks": [{
+                "id": "flash1",
+                "name": "critic",
+                "prompt": "You critique plans.",
+                "message": "Review this",
+            }]})
+
+        task = mock_exec.return_value.spawn.call_args.args[0][0]
+        assert task.llm_service == "svc_flash"
+        assert task.source_llm_service == "svc_flash"
+        assert task.source_agent == "agentA"
+
+    def test_external_mcp_flash_delegate_uses_published_agent_override(self):
+        from core import external_call_router
+
+        external_call_router.reset_for_tests()
+        external_call_router.register_call(
+            "pmcp_flash", "conv1", "published_mcp:pmcp_flash",
+            "MCP Agent", "non_llm_mcp_service")
+        h = _make_flash_handler()
+        h.set_agent_name("MCP Agent")
+        with external_call_router.call_scope("pmcp_flash"), \
+             patch("core.conv_agent_config.get_agent_config", return_value={
+                 "flash_delegate_llm_service": "svc_flash",
+             }) as get_config, \
+             patch("core.agent_executor.get_live_delegate", return_value=None), \
+             patch("core.agent_executor.SubAgentExecutor") as mock_exec:
+            mock_exec.return_value.spawn.return_value = [
+                AgentResult(
+                    task_id="flash1",
+                    agent_name="published_mcp_pmcp_flash::flash::critic")
+            ]
+            h.execute({"tasks": [{
+                "id": "flash1",
+                "name": "critic",
+                "prompt": "You critique plans.",
+                "message": "Review this",
+            }]})
+
+        get_config.assert_called_once_with("conv1", "MCP Agent")
+        task = mock_exec.return_value.spawn.call_args.args[0][0]
+        assert task.llm_service == "svc_flash"
+        assert task.source_llm_service == "svc_flash"
+        assert task.source_agent == "published_mcp:pmcp_flash"
+
     def test_flash_delegate_followup_injects_into_live_flash_agent(self):
         h = _make_flash_handler()
         live_client = MagicMock()

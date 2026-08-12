@@ -83,6 +83,9 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
             return _reply(flowfile, {
                 "error": "agent_name must identify an agent attached to this conversation"
             }, 400)
+        from core.conv_agent_config import set_agent_config
+        set_agent_config(
+            conversation_id, canonical, {"runtime_kind": "external_mcp"})
         if server and (not enabled or server["agent_name"].lower() != canonical.lower()):
             from services.mcp_server_endpoint import remove_mcp_relay
             remove_mcp_relay(server)

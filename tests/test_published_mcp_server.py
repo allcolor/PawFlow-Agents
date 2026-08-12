@@ -204,6 +204,85 @@ def test_mcp_missing_session_is_400_and_batch_returns_only_request_results(monke
     assert payload[1]["result"]["tools"] == endpoint._MCP_TOOLS
 
 
+def test_published_mcp_conversation_context_and_idempotent_messages(monkeypatch):
+    server = {
+        "server_id": "srv-1",
+        "owner_user_id": "alice",
+        "conversation_id": "conv-1",
+        "agent_name": "agent-a",
+    }
+    key = {"key_id": "key-1", "label": "Codex"}
+
+    class Store:
+        def __init__(self):
+            self.rows = [
+                {"role": "user", "content": "first", "msg_id": "m1", "seq": 3},
+                {"role": "assistant", "content": "second", "msg_id": "m2", "seq": 7},
+            ]
+
+        def load_agent_context(self, _cid, _agent):
+            return list(self.rows)
+
+        def load_transcript_for_agent(self, _cid, _agent):
+            raise AssertionError("agent context should be preferred")
+
+        def append_message_if_absent(self, _cid, message, **_kwargs):
+            if any(row["msg_id"] == message["msg_id"] for row in self.rows):
+                return False
+            stored = dict(message)
+            stored["seq"] = max(row["seq"] for row in self.rows) + 1
+            self.rows.append(stored)
+            return True
+
+    class Writer:
+        def __init__(self):
+            self.events = []
+
+        def enqueue_sse_events(self, events, wait=False):
+            assert wait is True
+            self.events.extend(events)
+
+    store = Store()
+    writer = Writer()
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance", lambda: store)
+    monkeypatch.setattr(
+        "core.conversation_writer.ConversationWriter.for_conversation",
+        lambda _cid: writer)
+
+    class Task:
+        system_prompt = "Published agent system prompt"
+
+    monkeypatch.setattr(
+        "core.agent_executor.resolve_agent_task",
+        lambda *_args, **_kwargs: Task())
+
+    initial = json.loads(endpoint._conversation_tool_result(
+        server, key, "get_initial_context", {}))
+    assert initial["cursor"] == 7
+    assert "# PawFlow Initial Context" in initial["document"]
+    assert "Published agent system prompt" in initial["document"]
+    assert '"content": "second"' in initial["document"]
+
+    updates = json.loads(endpoint._conversation_tool_result(
+        server, key, "get_context_updates", {"after_seq": 3}))
+    assert updates["cursor"] == 7
+    assert [row["msg_id"] for row in updates["messages"]] == ["m2"]
+
+    first = json.loads(endpoint._conversation_tool_result(
+        server, key, "send_agent_message", {
+            "content": "external response", "message_id": "external-1",
+        }))
+    retry = json.loads(endpoint._conversation_tool_result(
+        server, key, "send_agent_message", {
+            "content": "external response", "message_id": "external-1",
+        }))
+    assert first["accepted"] is True and first["duplicate"] is False
+    assert retry["accepted"] is False and retry["duplicate"] is True
+    assert len(writer.events) == 1
+    assert writer.events[0]["data"]["msg_id"] == "external-1"
+
+
 def test_use_tool_runs_through_canonical_owner_agent_runtime(monkeypatch):
     calls = {}
 
@@ -680,8 +759,13 @@ def test_relay_disconnect_keeps_cli_lease_until_bridge_closes(monkeypatch):
     }
     releases = []
     removed = []
+    cleared = []
 
     class Store:
+        def clear_terminal(self, server_id, client_id):
+            cleared.append((server_id, client_id))
+            return True
+
         def release_client(self, server_id, client_id):
             releases.append((server_id, client_id))
             return True
@@ -703,6 +787,7 @@ def test_relay_disconnect_keeps_cli_lease_until_bridge_closes(monkeypatch):
     assert status == 200
     assert payload["client_active"] is False
     assert releases == [("srv_test", "cli-1")]
+    assert cleared == [("srv_test", "cli-1"), ("srv_test", "cli-1")]
     assert removed == [server, server]
 
 

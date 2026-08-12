@@ -159,6 +159,21 @@ def _h_list_terminals(ctx, msg, on_output=None):
     return {"ok": True, "data": {"sessions": ctx.term_mgr.list()}}
 
 
+def _h_mcp_terminal_inject(ctx, msg, on_output=None):
+    try:
+        from pawflow_relay.mcp_terminal_inject import inject
+        return {"ok": True, "data": inject(
+            str(msg.get("terminal_kind") or ""),
+            str(msg.get("terminal_target") or ""),
+            str(msg.get("terminal_secret") or ""),
+            str(msg.get("terminal_state_path") or ""),
+            str(msg.get("message_id") or ""),
+            str(msg.get("content") or ""),
+        )}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def _h_http_proxy(ctx, msg, on_output=None):
     if not ctx.allow_exec:
         return _EXEC_DENIED
@@ -267,6 +282,7 @@ _DISPATCH = {
     "write_terminal": _h_write_terminal,
     "resize_terminal": _h_resize_terminal,
     "list_terminals": _h_list_terminals,
+    "mcp_terminal_inject": _h_mcp_terminal_inject,
     "http_proxy": _h_http_proxy,
     "start_code_server": _h_start_code_server,
     "cs_ws_open": _h_cs_ws_open,

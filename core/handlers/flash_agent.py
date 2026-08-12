@@ -29,8 +29,9 @@ class FlashAgentHandler(SpawnAgentsHandler):
             "verify documentation, compare approaches, or gather evidence. "
             "Do NOT use it for tightly coupled edits where one agent must "
             "preserve a single invariant across files. Each flash agent starts "
-            "with an empty context, uses the calling agent's current "
-            "llm_service, runs asynchronously, and disappears when its "
+            "with an empty context, uses the calling agent's configured flash "
+            "delegate LLM service (or its current llm_service when unset), "
+            "runs asynchronously, and disappears when its "
             "delegated task completes. Include every fact, file path, "
             "constraint, and expected output format it needs in its prompt "
             "and message. Read and integrate returned results; do not ignore "
@@ -90,6 +91,28 @@ class FlashAgentHandler(SpawnAgentsHandler):
             name = "flash"
         return f"{parent or 'agent'}::flash::{name}"
 
+    def _resolve_flash_llm_service(self, parent_conv_id: str,
+                                   src_agent: str, src_svc: str) -> str:
+        """Resolve the optional per-agent service override for flash work.
+
+        Published MCP calls use an external source id for attribution. Their
+        configuration still belongs to the conversation agent wired into this
+        handler, so consult that agent while preserving the external identity
+        on the spawned task.
+        """
+        config_agent = src_agent
+        if src_agent.startswith("published_mcp"):
+            config_agent = self._agent_name or src_agent
+        try:
+            from core.conv_agent_config import get_agent_config
+            config = get_agent_config(parent_conv_id, config_agent)
+        except Exception:
+            logger.debug(
+                "[flash-delegate] could not load config for %s/%s",
+                parent_conv_id[:8], config_agent, exc_info=True)
+            return src_svc
+        return str(config.get("flash_delegate_llm_service") or src_svc).strip()
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         if not self._client_resolver:
             return "Error: Agent executor not configured (missing client_resolver)."
@@ -117,6 +140,8 @@ class FlashAgentHandler(SpawnAgentsHandler):
                           if "::task::" in raw_conv_id else "")
 
         src_agent, src_svc = self._resolve_source_context()
+        flash_svc = self._resolve_flash_llm_service(
+            parent_conv_id, src_agent, src_svc)
         delegate_tc_id = getattr(self._local, 'delegate_tc_id', '') or ''
         if not src_agent:
             return (
@@ -124,11 +149,12 @@ class FlashAgentHandler(SpawnAgentsHandler):
                 " agent: no thread-local source context and no agent"
                 " instance name is configured for this conversation."
             )
-        if not src_svc:
+        if not flash_svc:
             return (
                 "Error: flash_delegate could not resolve an llm_service for"
-                f" source agent '{src_agent}'. Set the agent's llm_service in"
-                " the conversation agent config (conv_agents)."
+                f" source agent '{src_agent}'. Set the agent's llm_service or"
+                " flash_delegate_llm_service in the conversation agent config"
+                " (conv_agents)."
             )
 
         from core.agent_executor import get_live_delegate, queue_live_delegate_message
@@ -194,10 +220,10 @@ class FlashAgentHandler(SpawnAgentsHandler):
                 max_iterations=50,
                 max_depth=1000,
                 timeout=180,
-                llm_service=src_svc,
+                llm_service=flash_svc,
                 user_id=user_id,
                 source_agent=src_agent,
-                source_llm_service=src_svc,
+                source_llm_service=flash_svc,
                 context_mode="isolated",
                 parent_conversation_id=parent_conv_id,
                 delegate_tc_id=delegate_tc_id,

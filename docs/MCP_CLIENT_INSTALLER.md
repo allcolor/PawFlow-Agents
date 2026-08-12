@@ -2,8 +2,9 @@
 
 The PawFlow MCP client package connects one local client instance to one
 published PawFlow conversation and agent through a local stdio bridge. It
-provides isolated launchers for Claude Code, Codex, and Agy/Gemini, plus
-configuration fragments for any MCP-compatible stdio client. The bridge also
+provides isolated launchers for Claude Code, Codex, Agy/Gemini, OpenCode,
+JCode, Pi, and Hermes, plus configuration fragments for any MCP-compatible
+stdio client. The bridge also
 registers the selected project directory as that conversation's CLI relay
 without changing the conversation's default relay.
 
@@ -13,8 +14,8 @@ without changing the conversation's default relay.
 - A published conversation URL ending in `/mcp/srv_...`.
 - A PawFlow MCP API key created for that publication.
 - The Private Gateway key when the PawFlow deployment uses the gateway.
-- Claude Code, Codex, Agy/Gemini, or another MCP-compatible client already
-  installed on the client workstation.
+- At least one supported harness already installed on the client workstation:
+  Claude Code, Codex, Agy/Gemini, OpenCode, JCode, Pi, or Hermes.
 
 A publication accepts one active client instance. Create another published
 conversation when two client instances must run at the same time.
@@ -70,13 +71,21 @@ The wizard asks for:
 3. The publication API key. Input is hidden.
 4. The optional Private Gateway key. Input is hidden.
 5. The local project directory shared through the relay.
-6. The clients to configure: `cc`, `codex`, `agy`, or a comma-separated subset.
+6. The clients to configure: `cc`, `codex`, `agy`, `opencode`, `jcode`,
+   `pi`, `hermes`, or a comma-separated subset.
 7. Whether the relay is read-only.
 8. Whether shell execution is allowed.
+9. Whether explicitly approved FRP service tunnels are allowed.
 
 The default relay is read/write with shell execution disabled. File edits are
 therefore available, while commands remain denied until the operator explicitly
 enables them.
+
+FRP service tunnels are opt-in. When enabled, the installer downloads the
+platform-specific official `frpc` binary, verifies its pinned SHA-256 checksum,
+and stores it inside the private MCP runtime. The automatic MCP relay then
+advertises the existing `allow_service_tunnels` capability. Local services
+still require explicit approval in the relay service catalogue.
 
 The installer prints one launch command for every selected client. Always start
 that instance with the printed command. Starting the client normally does not
@@ -108,23 +117,55 @@ Each server name creates one isolated session directory:
 | `agy-home/` | Isolated Agy/Gemini home and MCP configuration. |
 | `mcp.json` | Generic `{"mcpServers": {...}}` configuration. |
 | `entry.json` | One generic stdio server entry for clients with their own envelope format. |
+| `claude.settings.json` | Session-only Claude lifecycle hooks. |
+| `codex-home/hooks.json` | Session-only Codex lifecycle hooks and approval state. |
+| `opencode-home/` | Isolated OpenCode config and conversation plugin. |
+| `jcode-home/` | Isolated JCode MCP config, lifecycle hooks, and sessions. |
+| `pi-home/extensions/pawflow.js` | Pi extension providing PawFlow tools and conversation synchronization. |
+| `hermes-home/` | Isolated Hermes MCP config and PawFlow plugin. |
+| `hook-state-CLIENT.json` | Locked per-client conversation cursor. |
+| `injected-prompts.jsonl` | Short-lived IDs and hashes used to suppress webchat prompt mirroring. |
 
-The installer never reads or writes the user's global Claude Code, Codex, Agy,
-or Gemini configuration. Re-running the same server name replaces only that
-PawFlow session bundle. Use a different name for a different published
-conversation or agent.
+The installer never reads or writes the user's global configuration for any
+supported harness. Re-running the same server name replaces only that PawFlow
+session bundle. Use a different name for a different published conversation or
+agent.
 
 ## Launch one isolated instance
 
 The generated launcher enforces one session bundle per local process:
 
 - **Claude Code:** launches `claude --mcp-config SESSION/claude.mcp.json
-  --strict-mcp-config`, so global MCP servers are excluded from that instance.
+  --strict-mcp-config --settings SESSION/claude.settings.json`, so global MCP
+  servers and hooks are excluded from that instance.
 - **Codex:** launches with `-C PROJECT` and a per-invocation `-c
   mcp_servers=...` override containing only the selected PawFlow publication.
+  `CODEX_HOME` points to `SESSION/codex-home`, so generated hooks cannot affect
+  another Codex instance. Complete login and approve the hooks with `/hooks`
+  once inside this isolated home when requested.
 - **Agy/Gemini:** launches with `HOME` and `USERPROFILE` set to
   `SESSION/agy-home`, isolating both its MCP settings and client state. Complete
   the client login once inside that isolated home when required.
+- **OpenCode:** launches the project with `OPENCODE_CONFIG` and
+  `OPENCODE_CONFIG_DIR` pointing to `SESSION/opencode-home`. Its native local
+  MCP entry provides the PawFlow tools; the generated plugin synchronizes
+  prompts, context deltas, and final assistant messages.
+- **JCode:** launches with `JCODE_HOME=SESSION/jcode-home`. JCode loads its
+  native stdio MCP entry from that home. Observer hooks mirror local prompts and
+  final assistant messages from the isolated JCode session file. Its isolated
+  `prompt-overlay.md` directs the model to fetch bootstrap and incremental
+  context through the native PawFlow conversation tools. JCode observer hooks
+  cannot modify an in-flight model request, so this model-directed tool call is
+  the closest native equivalent to the mutable pre-model hooks of other clients.
+- **Pi:** launches with `PI_CODING_AGENT_DIR=SESSION/pi-home` and the generated
+  extension explicitly loaded. Because Pi intentionally has no built-in MCP
+  client, the extension discovers the published PawFlow tools and registers
+  equivalent native Pi tools. It also injects bootstrap/delta context and mirrors
+  prompts and final assistant messages.
+- **Hermes:** launches with `HERMES_HOME=SESSION/hermes-home`. Its native MCP
+  configuration exposes the PawFlow tools; its generated plugin injects
+  bootstrap/delta context at `pre_llm_call` and persists the completed turn at
+  `post_llm_call`.
 
 Arguments after the launch command are forwarded to the underlying client. For
 example, append `-- --model sonnet` to the generated Claude Code command.
@@ -135,6 +176,50 @@ expects only one server object rather than an `mcpServers` map, use
 `SESSION/entry.json`. Do not merge that file into a shared global profile:
 one running local instance must load exactly one session configuration, and that
 session maps to exactly one PawFlow conversation and agent.
+
+### Persistent terminal and webchat routing
+
+The generated launch command owns the terminal rather than starting a throwaway
+client process:
+
+- Linux and macOS create or reattach a deterministic `tmux` session. `tmux` is
+  required and the client keeps running after the operator detaches.
+- Windows keeps the client in the inherited host console and starts an
+  authenticated loopback listener. PawFlow injects Unicode console input through
+  that listener; its random secret stays in the child environment and is never
+  returned by relay status APIs.
+
+After the MCP stdio bridge connects its existing automatic relay, it registers
+the terminal under the same client lease. A text prompt sent from webchat is
+authorized, processed by `pre_user_message`, and persisted before it is injected
+into the TUI. Immediately before `Enter`, the transport writes the prompt's
+`message_id` and SHA-256 marker. The prompt hook consumes that marker and does
+not call `send_user_message` a second time.
+
+An `external_mcp` agent never falls back to a PawFlow LLM. If its publication is
+active but its terminal cannot be reached, webchat submission returns
+`external_mcp_terminal_unavailable` with HTTP 503; the canonical user message
+remains persisted for recovery.
+
+### Conversation lifecycle hooks
+
+The session-scoped hook program uses the four published conversation tools:
+
+1. The first native pre-turn lifecycle event calls `get_initial_context` and
+   injects its document as hidden context where the harness supports mutable
+   pre-model hooks.
+2. Before later turns, the hook calls `get_context_updates(after_seq)` under a
+   local file lock. The cursor advances only after a successful response.
+3. A prompt typed directly in the terminal is persisted with
+   `send_user_message`. A server-injected webchat prompt is recognized by its
+   marker and skipped.
+4. The native completed-turn event persists the final assistant response. Agy
+   and JCode read their isolated transcript/session because their hook payloads
+   do not always contain the full response text.
+
+Hook writes derive stable `message_id` values from client session/turn identity
+and content. Server-side idempotence makes retries safe. Hook failures are
+fail-open for the local TUI and never print profile contents or keys.
 
 ## Non-interactive installation
 
@@ -149,12 +234,14 @@ export PAWFLOW_GATEWAY_KEY='gateway key'
   --name pawflow \
   --url https://pawflow.example/mcp/srv_example \
   --relay-dir /path/to/project \
-  --clients cc,codex,agy
+  --clients cc,codex,agy,opencode,jcode,pi,hermes
 ```
 
 Omit `PAWFLOW_GATEWAY_KEY` when the deployment has no Private Gateway. Add
 `--readonly` or `--allow-exec` when required. `--install-dir`, `--home`,
-and `--python` support managed or test installations.
+and `--python` support managed or test installations. Add
+`--allow-service-tunnels` to enable the verified FRP integration for the
+automatic MCP relay.
 
 ## Verify the connection
 
@@ -193,6 +280,13 @@ Close every active instance first so the publication lease can be released.
 - Agy/Gemini asks for authentication: complete login inside the isolated
   session launched by PawFlow; credentials from the normal global home are
   intentionally not reused.
+- Codex reports untrusted hooks: run `/hooks` in the isolated PawFlow Codex
+  instance and approve the three generated lifecycle hooks.
+- POSIX launcher reports that `tmux` is missing: install `tmux`, then rerun the
+  same session-bound launch command.
+- Webchat returns `external_mcp_terminal_unavailable`: reattach or restart the
+  generated client command and confirm `pawflow_relay_status` reports both the
+  relay and terminal as ready.
 - A generic client also loads another PawFlow publication: use a dedicated
   profile or per-invocation config rather than merging `mcp.json` globally.
 

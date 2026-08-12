@@ -732,6 +732,8 @@
   "liveSpeechChooseService": "Elegir servicio de voz",
   "llmServiceRequired": "Servicio LLM *",
   "llmServiceRequiredMessage": "Se requiere el servicio LLM.",
+  "flashDelegateLlmService": "Servicio LLM para Flash Delegate",
+  "flashDelegateLlmInherit": "Usar el servicio LLM del agente",
   "loadError": "Error al cargar la conversación",
   "loading": "Cargando...",
   "loadingCredentials": "Cargando credenciales...",

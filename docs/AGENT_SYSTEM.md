@@ -97,6 +97,31 @@ Expression
 language references like `${llm_default_service}` are resolved at runtime from
 the expression cascade: flow -> conversation -> user -> global.
 
+Conversation agent instances may also set
+`flash_delegate_llm_service`. When present, `flash_delegate` uses that
+LLM-capable service instead of the instance's `llm_service`; when it is empty,
+the existing inheritance behavior is preserved. This is required for published
+MCP agents whose own runtime service is a non-LLM MCP transport. The external
+MCP source identity is retained for routing and attribution.
+
+A conversation agent published as an inbound MCP client has
+`runtime_kind: "external_mcp"`. PawFlow does not start its own LLM loop for
+that agent. Webchat turns are accepted only while its remotely controllable MCP
+terminal is active; the external client persists prompts and responses through
+the conversation transport tools. Webchat persists the canonical prompt before
+terminal injection, and a local message-id/hash marker prevents the client hook
+from mirroring that same prompt. An unavailable registered client produces HTTP
+503 rather than silently selecting an internal LLM service.
+
+The same terminal route handles same-conversation delegates,
+cross-conversation delegates, and inbound A2A turns. The injected request
+`msg_id` is returned by the external client as `reply_to_message_id`; PawFlow
+uses it to publish the matching runtime `done` event and to return a private
+delegate result to either the calling agent or the originating published MCP
+tool call. External MCP agents may be published through A2A only with shared
+context. Isolated A2A publication is rejected because its internal conversation
+cannot share the terminal-bound context stream safely.
+
 ---
 
 ## 3. Agent Loop

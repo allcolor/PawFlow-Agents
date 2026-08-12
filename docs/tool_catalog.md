@@ -220,17 +220,23 @@ capture file, so a `FAILED` on line 400 is found under any `line_limit`.
 | `show_file` | Open a file in the user's chat viewer. |
 
 `web_search` accepts `query` (or `q`), `max_results` (or `maxResults`), and
-`provider` / `search_provider` as a single provider or a comma-separated chain.
-Supported no-key providers are `google`, `bing`, and `duckduckgo`; the default
-chain is `google,bing`. The same default can be set with the PawFlow variable
+`provider` / `search_provider` as a single no-key provider or a comma-separated
+chain. `service` selects a `webSearchConnection`, `search_cli_providers`
+optionally restricts its paid providers, and `mode` selects the search-cli mode.
+When a scoped `webSearchConnection` exists, the tool first uses the bundled
+`search-cli` binary in the PawFlow server image with that service's encrypted
+provider keys. The binary and keys are never sent to a relay. It otherwise
+uses the built-in no-key providers `bing`, `duckduckgo`, and `google`; the
+default chain is `bing,duckduckgo,google`. The same default can be set with the PawFlow variable
 `web_search_providers` (conversation → user → global, with OS env fallback only
-after PawFlow variables). Google and Bing use static HTML when available and
-browser stealth fallbacks when needed; the browser fallback uses
+after PawFlow variables). The no-key providers run concurrently under one global
+deadline. Bing tries RSS first and Google uses static HTML. Slow browser
+fallback is disabled unless `browser_fallback=true`; when enabled it uses
 `PAWFLOW_CHROMIUM_EXECUTABLE` when set, then common system Chromium binaries.
-Bing falls back to RSS only after browser search fails. When a relay is
-connected, `web_search` runs inside that relay so browser/search dependencies
-match the user's execution environment; if no relay is available it runs on the
-PawFlow server host. Both
+Search credentials, cache, and logs are isolated per invocation; search-cli
+logging and its local cache are disabled. When a relay is connected, only the
+no-key fallback may run there so its network surface matches the user's
+environment; without a relay the fallback runs on the PawFlow server. Both
 runtimes must have the declared scraping dependencies and managed browser binary
 installed. Results are interleaved across contributing providers, duplicate URLs
 merge provider labels, and ranking is generic: query-term relevance plus text

@@ -13,6 +13,7 @@ The chat service installer receives service type metadata grouped by category an
 | `llmCredentialOAuthProvider` | Encrypted OAuth credential pool for CLI-backed LLM providers. Canonical pool identifiers remain `claude-code`, `codex-app-server`, and `gemini`; the recommended `claude-code-interactive`, `codex-interactive`, and `antigravity-interactive` agent providers reuse those pools respectively. The pool names are not legacy configuration guidance. |
 | `realtimeVoiceConnection` | Speech-to-speech voice sessions with an agent (webchat voice mode, Telegram voice notes). Two engines: `legacy` (default — built-in bridge; protocols `openai_realtime` for OpenAI/Azure/compatibles and `gemini_live`; credentials from a referenced `llmConnection`) and `livekit` (media via a LiveKit server + sidecar worker; providers `openai`, `gemini`, `azure_openai`, `xai`, `aws_nova`, `local_pipeline`; supports `video_input` and `modalities: audio,text,video`). With `livekit_url` left empty the stack is MANAGED: PawFlow provisions `pawflow-livekit` + `pawflow-livekit-worker` containers itself via the Docker socket (generated credentials, browser signal proxied same-origin on `/livekit`); set `livekit_url`/`livekit_api_key`/`livekit_api_secret` only for an external LiveKit server. Legacy configs map onto the LiveKit engine deterministically (`protocol`→`provider`, `vad`→`turn_detection`). Session API: `POST /api/realtime/livekit/start` / `stop`; the sidecar attaches on `/ws/realtime-worker/{session_id}` with a PawFlow-signed scoped token. See [Media Tools — Realtime Voice Conversation](media_tools.md#realtime-voice-conversation) and `docs/REALTIME_MULTIMODAL_LIVEKIT_PLAN.md`. |
 | `httpClientService` | Reusable HTTP client. |
+| `webSearchConnection` | Configures encrypted API keys and provider selection for the bundled paperfoot/search-cli backend. Without a usable configured provider, `web_search` uses PawFlow's concurrent no-key Bing RSS, DuckDuckGo, and static Google fallback. |
 | `httpListener` | Shared listener for inbound HTTP/webhook/SSE/VNC routes. |
 | `httpAuthValidator` | Bearer/basic/custom auth validator. |
 | `authGateway` | Login/session gateway with OAuth and built-in auth. |
@@ -43,6 +44,113 @@ Use `failure_policy=best_effort` to continue when one advisor fails, or
 
 For setup, operating behavior, cost accounting, and troubleshooting, see the
 [Multi-LLM Aggregator guide](llm_aggregator.md).
+
+### Web Search Connection
+
+`webSearchConnection` enables the `web_search` tool to use the `search-cli`
+binary bundled in the PawFlow **server image**. The binary is not installed in
+the relay image and API keys are never sent to a relay. PawFlow resolves service
+definitions by scope (conversation, then user, then global), decrypts the
+selected service configuration on the server, and injects only that service's
+keys into one isolated `search-cli` process.
+
+#### Configure the service
+
+1. Open the webchat `Services` panel and add a service.
+2. Select `Web Search Connection` (`webSearchConnection`) in the Network
+   category.
+3. Give it a stable id, for example `web-search`, and choose its scope. Use a
+   conversation scope for one conversation, user scope for all of one user's
+   conversations, or global scope for an administrator-managed shared service.
+4. Add at least one provider key from the table below.
+5. Optionally set `providers` to a comma-separated allowlist such as
+   `brave,serper,exa`. Leaving it empty enables every provider for which the
+   service contains a key.
+6. Keep `default_mode=general` for ordinary web searches, set `timeout` to the
+   per-provider deadline in seconds, and keep `fallback_to_free=true` unless an
+   API failure must be returned without using the no-key backend.
+
+All `*_api_key` fields are sensitive service parameters: the UI renders them
+as password inputs and PawFlow encrypts them at rest. Do not put provider keys
+in global environment variables or in `search-cli` configuration files. The
+service removes inherited provider-key variables before each invocation,
+disables local search logs, and uses temporary XDG config/cache/data directories
+that are deleted after the call.
+
+#### Obtain provider API keys
+
+Create keys in the provider's official account or API console. Only configure
+providers that you intend to bill; `search-cli` calls enabled providers in
+parallel for modes that support them.
+
+| PawFlow field | Obtain the key | Main uses in `search-cli` |
+|---|---|---|
+| `parallel_api_key` | Create a Parallel account and follow the official [Search API quickstart](https://docs.parallel.ai/search/search-quickstart). | `general`, `news`, `deep` |
+| `brave_api_key` | Subscribe to the Search API and create a key in the [Brave Search API dashboard](https://api-dashboard.search.brave.com/). | Independent web/news index, `general`, `news`, `deep` |
+| `serper_api_key` | Sign in at [Serper](https://serper.dev/) and copy the API key shown in the dashboard. | Google web/news results, Scholar, patents, images, places |
+| `exa_api_key` | Create a key in the [Exa API dashboard](https://dashboard.exa.ai/api-keys). | Semantic search, papers, people, similar pages |
+| `jina_api_key` | Create a token in the [Jina API dashboard](https://jina.ai/api-dashboard/). | General search and URL-to-markdown extraction |
+| `linkup_api_key` | Create a free Linkup account from the [Linkup API documentation](https://docs.linkup.so/) and copy the key issued in its dashboard. | Accuracy-focused `general`, `news`, `deep` searches |
+| `firecrawl_api_key` | Create a key in the [Firecrawl API Keys page](https://www.firecrawl.dev/app/api-keys). | Search and JavaScript-rendered extraction |
+| `tavily_api_key` | Create and manage keys in the [Tavily API platform](https://app.tavily.com/home). | General, news, academic and deep research |
+| `serpapi_api_key` | Create an account and copy the key from [SerpApi's API key page](https://serpapi.com/manage-api-key). | Scholar and multi-engine specialist results |
+| `perplexity_api_key` | Add API credits and create a key in the [Perplexity API console](https://console.perplexity.ai/); see its [key management guide](https://docs.perplexity.ai/docs/admin/api-key-management). | Web-grounded answers with citations |
+| `browserless_api_key` | Create an account and manage the token in the Browserless dashboard; see [API Token Management](https://docs.browserless.io/overview/api-keys). | Cloud-browser fallback for difficult extraction pages |
+| `xai_api_key` | Create an account, add credits, and generate a key in the [xAI Console](https://console.x.ai/); see the [xAI quickstart](https://docs.x.ai/developers/quickstart). | Real-time X/Twitter search in `social` and `deep` modes |
+
+Provider signup terms, free credits, quotas, and prices can change. Check the
+linked provider console before enabling a key. A single provider key is enough;
+multiple keys improve coverage and let `search-cli` rank-fuse results.
+
+#### Modes and tool usage
+
+The service defaults to `general`. Other query modes include `news`,
+`academic`, `scholar`, `deep`, `people`, `social`, `patents`, `images`, and
+`places`. The `similar`, `extract`, and `scrape` modes expect a URL rather than a
+text query. A mode only calls configured providers that support that mode.
+
+Normally the agent calls `web_search` with only a query:
+
+```json
+{"query": "PawFlow release notes", "max_results": 8}
+```
+
+Use a named service or restrict its paid providers when needed:
+
+```json
+{
+  "query": "recent agent orchestration research",
+  "service": "web-search",
+  "mode": "academic",
+  "search_cli_providers": "exa,tavily",
+  "max_results": 10
+}
+```
+
+`search_cli_providers` applies only to the server-side service and must name
+providers whose keys exist in that service. The separate `provider` parameter
+selects the built-in no-key fallback (`bing`, `duckduckgo`, or `google`).
+
+#### Free mode and fallback
+
+`search-cli` 0.9.0 has no keyless general-search provider. Its keyless
+`stealth` capability extracts a known URL and is not a search engine; moreover,
+the PawFlow Linux build intentionally disables that unsupported feature.
+PawFlow therefore retains its own no-key backend:
+
+- Bing RSS, DuckDuckGo HTML, and static Google are launched concurrently;
+- one global deadline bounds the fallback (8 seconds by default);
+- Chromium is disabled on the normal path and only runs when
+  `browser_fallback=true` is explicitly requested;
+- when a connected relay is available, only this no-key fallback may execute
+  there. The bundled `search-cli` binary and provider keys stay on the PawFlow
+  server.
+
+With `fallback_to_free=true`, PawFlow uses this backend when no provider key is
+configured, the server binary is unavailable, the selected paid providers fail,
+or `search-cli` returns no usable result. The result includes a fallback note so
+an API outage is not silent. Set `fallback_to_free=false` to make a
+`search-cli` failure explicit instead.
 
 `authGateway` supports standard OAuth providers through `/auth/callback` and
 Telegram through the Telegram Login Widget. Telegram requires a BotFather bot

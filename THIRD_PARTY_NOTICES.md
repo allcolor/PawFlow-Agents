@@ -38,6 +38,13 @@ The project source code is licensed separately under the repository license. Thi
 
 - `tasks/io/chat_ui/vendor/livekit-client.umd.min.js` — [livekit-client](https://github.com/livekit/client-sdk-js) 2.20.1, Apache-2.0. Served to browsers at `/api/realtime/livekit/sdk.js` for realtime LiveKit sessions. Update by downloading the pinned UMD build from npm/jsdelivr and recording the new version here.
 
+## Bundled Command-Line Tools
+
+- `search` — [paperfoot/search-cli](https://github.com/paperfoot/search-cli)
+  0.9.0, MIT. The PawFlow server image builds the Linux binary from pinned
+  commit `3ebd955e51035c53c7f8bf3c5b62be652ff441ff` with Cargo's locked
+  dependency graph and without the unsupported Linux stealth feature.
+
 ## Release Checklist
 
 Before making a Docker release public:

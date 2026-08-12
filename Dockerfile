@@ -1,6 +1,18 @@
+FROM rust:1.89-bookworm AS search-cli-builder
+
+ARG SEARCH_CLI_COMMIT=3ebd955e51035c53c7f8bf3c5b62be652ff441ff
+RUN git clone https://github.com/paperfoot/search-cli.git /src/search-cli \
+    && cd /src/search-cli \
+    && git checkout --detach "$SEARCH_CLI_COMMIT" \
+    && test "$(git rev-parse HEAD)" = "$SEARCH_CLI_COMMIT" \
+    && cargo build --release --locked --no-default-features
+
 FROM python:3.12-slim
 
 WORKDIR /app
+
+COPY --from=search-cli-builder /src/search-cli/target/release/search /usr/local/bin/search
+COPY --from=search-cli-builder /src/search-cli/LICENSE /usr/share/licenses/search-cli/LICENSE
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 

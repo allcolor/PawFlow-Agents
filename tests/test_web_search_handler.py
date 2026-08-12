@@ -1,9 +1,12 @@
 import inspect
+import threading
+import time
+from types import SimpleNamespace
 
 from core.handlers.web_fetch import ExecuteScriptHandler, WebSearchHandler
 
 
-def test_web_search_defaults_to_google_then_bing_aggregation(monkeypatch):
+def test_web_search_defaults_to_concurrent_free_provider_aggregation(monkeypatch):
     handler = WebSearchHandler()
     calls = []
 
@@ -28,11 +31,12 @@ def test_web_search_defaults_to_google_then_bing_aggregation(monkeypatch):
 
     out = handler.execute({"query": "AWS brand color", "max_results": 5})
 
-    assert calls == [
-        ("google", "AWS brand color", 5),
+    assert set(calls) == {
         ("bing", "AWS brand color", 5),
-    ]
-    assert "providers: google,bing" in out
+        ("duckduckgo", "AWS brand color", 5),
+        ("google", "AWS brand color", 5),
+    }
+    assert "providers: bing,duckduckgo,google" in out
     assert "AWS Color Guide" in out
     assert "AWS Brand Color" in out
 
@@ -97,8 +101,9 @@ def test_web_search_delegates_to_relay_when_available(monkeypatch):
             assert command.startswith("python3 .pawflow_web_search_")
             assert env is None or isinstance(env, dict)
             script = next(iter(files.values()))
-            assert '"provider": "google,bing"' in script
+            assert '"provider": "bing,duckduckgo,google"' in script
             assert '"_pawflow_web_search_local": true' in script
+            assert '"timeout": 8' in script
             return {
                 "stdout": "Search results from relay\n",
                 "stderr": "",
@@ -204,7 +209,141 @@ def test_web_search_deduplicates_results(monkeypatch):
     out = handler.execute({"query": "test", "provider": "google,bing"})
 
     assert out.count("https://www.example.com/page/?utm_source=x") == 1
-    assert "[google,bing]" in out
+    assert "[google,bing]" in out or "[bing,google]" in out
+
+
+def test_web_search_uses_server_search_cli_before_relay(monkeypatch):
+    handler = WebSearchHandler()
+
+    class SearchService:
+        available = True
+        fallback_to_free = True
+
+        def search(self, query, **kwargs):
+            assert query == "fast search"
+            assert kwargs["providers"] == "brave"
+            return {
+                "results": [{
+                    "title": "Server result",
+                    "url": "https://example.com/server",
+                    "snippet": "Executed by the PawFlow server image.",
+                    "source": "brave",
+                }],
+                "metadata": {"elapsed_ms": 42},
+            }
+
+    monkeypatch.setattr(
+        handler, "_resolve_search_service", lambda _arguments: (SearchService(), ""))
+    handler.set_fs_resolver(
+        lambda _service_id: (_ for _ in ()).throw(
+            AssertionError("search-cli must not be routed through the relay")))
+
+    out = handler.execute({
+        "query": "fast search",
+        "search_cli_providers": "brave",
+    })
+
+    assert "Server result" in out
+    assert "search-cli, 42 ms" in out
+
+
+def test_web_search_preserves_paid_backend_failure_note_after_relay_fallback(
+    monkeypatch,
+):
+    handler = WebSearchHandler()
+
+    class BrokenSearchService:
+        available = True
+        fallback_to_free = True
+
+        def search(self, *_args, **_kwargs):
+            raise RuntimeError("provider timeout")
+
+    monkeypatch.setattr(
+        handler,
+        "_resolve_search_service",
+        lambda _arguments: (BrokenSearchService(), ""),
+    )
+    monkeypatch.setattr(
+        handler,
+        "_execute_via_relay",
+        lambda *_args: "Search results from relay",
+    )
+
+    out = handler.execute({"query": "fallback test"})
+
+    assert out.startswith("Search results from relay")
+    assert "search-cli unavailable (provider timeout)" in out
+    assert "used PawFlow's no-key fallback" in out
+
+
+def test_web_search_auto_selects_most_specific_service_scope(monkeypatch):
+    from core.service_registry import ServiceRegistry
+
+    handler = WebSearchHandler()
+    handler.set_user_id("alice")
+    handler.set_conversation_id("conv-1")
+    definitions = [
+        SimpleNamespace(
+            service_id="aaa-global", scope="global", scope_id="global"),
+        SimpleNamespace(
+            service_id="bbb-user", scope="user", scope_id="alice"),
+        SimpleNamespace(
+            service_id="zzz-conv", scope="conv", scope_id="conv-1"),
+    ]
+    selected = object()
+
+    class Registry:
+        def resolve_by_type(self, service_type, **kwargs):
+            assert service_type == "webSearchConnection"
+            assert kwargs == {"user_id": "alice", "conv_id": "conv-1"}
+            return definitions
+
+        def get_live_instance(self, scope, scope_id, service_id):
+            assert (scope, scope_id, service_id) == (
+                "conv", "conv-1", "zzz-conv")
+            return selected
+
+    monkeypatch.setattr(
+        ServiceRegistry, "get_instance", classmethod(lambda cls: Registry()))
+
+    service, error = handler._resolve_search_service({})
+
+    assert service is selected
+    assert error == ""
+
+
+def test_web_search_free_backend_returns_at_global_deadline(monkeypatch):
+    handler = WebSearchHandler()
+    release = threading.Event()
+
+    def slow_search(_provider, _query, _max_results):
+        release.wait(0.5)
+        return []
+
+    monkeypatch.setattr(handler, "_search_provider", slow_search)
+    started = time.monotonic()
+    attempts, results = handler._search_free_concurrently(
+        ["bing", "duckduckgo", "google"], "test", 5, 0.03)
+    elapsed = time.monotonic() - started
+    release.set()
+
+    assert elapsed < 0.2
+    assert results == []
+    assert all("deadline exceeded" in attempt for attempt in attempts)
+
+
+def test_web_search_renders_search_cli_answers_without_url_results():
+    handler = WebSearchHandler()
+
+    out = handler._render_cli_response("question", {
+        "results": [],
+        "answers": [{"provider": "perplexity_sonar", "text": "Grounded answer."}],
+        "metadata": {"elapsed_ms": 12},
+    })
+
+    assert "Answer [perplexity_sonar]" in out
+    assert "Grounded answer." in out
 
 
 def test_web_search_orders_text_before_image_and_video():

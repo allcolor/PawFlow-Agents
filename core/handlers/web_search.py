@@ -11,18 +11,21 @@ import re
 import shutil
 from typing import Any, Dict, List, Optional
 
+from core.handlers._web_search_backend import WebSearchBackendMixin
 from core.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
 
 
-class WebSearchHandler(ToolHandler):
+class WebSearchHandler(WebSearchBackendMixin, ToolHandler):
     """Search the web using a configurable provider chain."""
 
     def __init__(self):
         self._user_id = ""
         self._conversation_id = ""
         self._fs_resolver = None
+        self._network_timeout = 6
+        self._allow_browser_fallback = False
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id or ""
@@ -44,8 +47,8 @@ class WebSearchHandler(ToolHandler):
             "Search the web using configurable providers and return titles, URLs, and snippets.\n\n"
             "Use this when you need to find current information, look up documentation, "
             "verify facts, or research topics that are beyond your training data. "
-            "No API key required. By default PawFlow queries Google and Bing, "
-            "then aggregates and deduplicates results. "
+            "Uses a configured webSearchConnection/search-cli service when available, "
+            "then falls back to the no-key PawFlow search engine. "
             "Override with provider/search_provider or the PawFlow variable "
             "web_search_providers.\n\n"
             "Key parameters:\n"
@@ -84,12 +87,36 @@ class WebSearchHandler(ToolHandler):
                     "description": (
                         "Search provider or comma-separated provider chain. "
                         "Supported: auto, google, bing, duckduckgo. "
-                        "Default: PawFlow variable web_search_providers or google,bing."
+                        "Default: PawFlow variable web_search_providers or "
+                        "bing,duckduckgo,google."
                     ),
                 },
                 "search_provider": {
                     "type": "string",
                     "description": "Alias for provider.",
+                },
+                "search_cli_providers": {
+                    "type": "string",
+                    "description": (
+                        "Optional comma-separated search-cli providers configured "
+                        "on the selected server-side webSearchConnection."
+                    ),
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Optional webSearchConnection service id.",
+                },
+                "mode": {
+                    "type": "string",
+                    "description": "search-cli mode such as general, news, academic, or deep.",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Global no-key fallback deadline in seconds (default 8).",
+                },
+                "browser_fallback": {
+                    "type": "boolean",
+                    "description": "Allow slow Chromium search fallback (default false).",
                 },
             },
             "required": [],
@@ -104,6 +131,39 @@ class WebSearchHandler(ToolHandler):
         if not query:
             return "Error: no query provided"
 
+        self._network_timeout = max(
+            1, min(15, int(arguments.get("timeout", 8))))
+        self._allow_browser_fallback = str(
+            arguments.get("browser_fallback", False)).lower() in {
+                "1", "true", "yes", "on"}
+
+        service = None
+        service_error = ""
+        if not arguments.get("_pawflow_web_search_local"):
+            service, service_error = self._resolve_search_service(arguments)
+        if service is not None:
+            try:
+                if service.available:
+                    payload = service.search(
+                        query,
+                        count=max_results,
+                        mode=str(arguments.get("mode") or ""),
+                        providers=arguments.get("search_cli_providers"),
+                        freshness=str(arguments.get("freshness") or ""),
+                        include_domains=arguments.get("include_domains"),
+                        exclude_domains=arguments.get("exclude_domains"),
+                    )
+                    rendered = self._render_cli_response(query, payload)
+                    if rendered:
+                        return rendered
+                    service_error = "search-cli returned no results"
+                else:
+                    service_error = service.unavailable_reason
+            except Exception as exc:
+                service_error = str(exc)
+                if not getattr(service, "fallback_to_free", True):
+                    return f"Error: search-cli backend failed: {service_error}"
+
         providers = self._provider_chain(arguments)
         if not providers:
             return "Error: unsupported search provider"
@@ -111,31 +171,28 @@ class WebSearchHandler(ToolHandler):
         if not arguments.get("_pawflow_web_search_local"):
             relay_result = self._execute_via_relay(arguments, providers, max_results)
             if relay_result is not None:
+                if service_error:
+                    relay_result += (
+                        f"\n\nNote: search-cli unavailable ({service_error}); "
+                        "used PawFlow's no-key fallback."
+                    )
                 return relay_result
 
-        attempts = []
-        collected = []
-        for provider in providers:
-            try:
-                results = self._search_provider(provider, query, max_results)
-            except Exception as e:
-                attempts.append(f"{provider}: {e}")
-                continue
-            if results:
-                for result in results:
-                    result.setdefault("provider", provider)
-                collected.extend(results)
-                attempts.append(f"{provider}: {len(results)} result(s)")
-                continue
-            attempts.append(f"{provider}: no parseable results")
+        attempts, collected = self._search_free_concurrently(
+            providers, query, max_results, self._network_timeout)
 
         results = self._dedupe_results(collected, max_results, query=query)
         if results:
             rendered = [self._format_result(r) for r in results]
             provider_list = ",".join(providers)
+            fallback_note = (
+                f"\n\nNote: search-cli unavailable ({service_error}); "
+                "used PawFlow's no-key fallback."
+                if service_error else "")
             return (
                 f"Search results for '{query}' (providers: {provider_list}):\n\n"
                 + "\n\n".join(rendered)
+                + fallback_note
             )
 
         detail = "; ".join(attempts)
@@ -157,6 +214,8 @@ class WebSearchHandler(ToolHandler):
             "query": arguments.get("query") or arguments.get("q") or "",
             "max_results": max_results,
             "provider": ",".join(providers),
+            "timeout": self._network_timeout,
+            "browser_fallback": self._allow_browser_fallback,
             "_pawflow_web_search_local": True,
         }
         code = "\n".join([
@@ -232,11 +291,11 @@ class WebSearchHandler(ToolHandler):
             arguments.get("provider")
             or arguments.get("search_provider")
             or self._configured_provider_chain()
-            or "google,bing"
+            or "bing,duckduckgo,google"
         )
         raw = str(raw).strip().lower()
         if raw in ("", "auto", "default"):
-            raw = "google,bing"
+            raw = "bing,duckduckgo,google"
         parts = [p.strip().replace("-", "_") for p in re.split(r"[,\s]+", raw) if p.strip()]
         aliases = {"ddg": "duckduckgo", "duck_duck_go": "duckduckgo"}
         valid = {"google", "bing", "duckduckgo"}
@@ -427,7 +486,8 @@ class WebSearchHandler(ToolHandler):
             headers["Cookie"] = "CONSENT=YES+; SOCS=CAESHAgBEhIaAB"
 
         ctx = ssl.create_default_context()
-        conn = http.client.HTTPSConnection(host, timeout=15, context=ctx)
+        conn = http.client.HTTPSConnection(
+            host, timeout=self._network_timeout, context=ctx)
         try:
             conn.request("GET", path, headers=headers)
             resp = conn.getresponse()
@@ -620,7 +680,9 @@ class WebSearchHandler(ToolHandler):
                 break
         if results:
             return results
-        return self._search_google_stealth(query, max_results)
+        if self._allow_browser_fallback:
+            return self._search_google_stealth(query, max_results)
+        return []
 
     def _search_google_stealth(self, query: str, max_results: int) -> List[Dict[str, str]]:
         """Use Patchright/Playwright for Google when static HTML is a JS shell."""
@@ -647,6 +709,17 @@ class WebSearchHandler(ToolHandler):
         from urllib.parse import quote_plus, urlencode
 
         try:
+            path = "/search?" + urlencode({"q": query, "format": "rss"})
+            body = self._fetch_https(
+                "www.bing.com", path, "application/rss+xml,text/xml,*/*")
+            results = self._parse_bing_rss(body, max_results)
+            if results:
+                return results
+        except Exception as e:
+            logger.debug("bing RSS search failed: %s", e)
+        if not self._allow_browser_fallback:
+            return []
+        try:
             variants = [
                 ("https://www.bing.com/search?q=" + quote_plus(query), "fr-BE", "Europe/Brussels"),
                 ("https://www.bing.com/search?q=" + quote_plus(query), "en-US", "America/New_York"),
@@ -659,9 +732,7 @@ class WebSearchHandler(ToolHandler):
         except Exception as e:
             logger.debug("bing browser search failed: %s", e)
 
-        path = "/search?" + urlencode({"q": query, "format": "rss"})
-        body = self._fetch_https("www.bing.com", path, "application/rss+xml,text/xml,*/*")
-        return self._parse_bing_rss(body, max_results)
+        return []
 
     def _parse_bing_rss(self, body: str, max_results: int) -> List[Dict[str, str]]:
         import defusedxml.ElementTree as ET

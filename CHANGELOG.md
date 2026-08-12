@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.175] — 2026-08-12
+
+### Added
+
+- Bundled the pinned search-cli 0.9.0 binary in the PawFlow server image and
+  added owner-scoped `webSearchConnection` services with UI-configurable
+  provider selection, search mode, timeout, fallback behavior, and encrypted
+  API keys for all 12 supported providers.
+- Documented the complete UI setup flow and the official account portals used
+  to obtain each supported provider API key.
+
+### Changed
+
+- Routed `web_search` through the best matching scoped search-cli service
+  before PawFlow's no-key backend, with explicit provider and mode selection,
+  bounded concurrent fallback requests, and visible fallback diagnostics.
+- Kept search-cli in the server image only; relay images remain unchanged.
+
+### Security
+
+- Isolated search-cli configuration and cache directories per call, removed
+  inherited provider credentials, injected only scope-resolved service keys,
+  disabled search-cli logging and cache persistence, and redacted configured
+  secrets from command failures.
+
 ## [1.0.0-beta.174] — 2026-08-12
 
 ### Added

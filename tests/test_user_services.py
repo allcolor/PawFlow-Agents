@@ -933,6 +933,37 @@ class TestAgentServiceActions:
         assert by_type["relay"]["category"] == "network"
         assert by_type["relay"]["name"] == "Relay"
 
+    def test_web_search_connection_is_discoverable_with_ui_schema(self):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        ff = self._make_flowfile({"action": "list_service_types"})
+        result = _handle_service_flow(
+            None, "list_service_types", json.loads(ff.get_content()),
+            None, "testuser", ff)
+        by_type = {
+            item["type"]: item
+            for item in json.loads(result[0].get_content())["service_types"]
+        }
+
+        assert by_type["webSearchConnection"]["category"] == "network"
+        assert by_type["webSearchConnection"]["name"] == "Web Search Connection"
+
+        ff = self._make_flowfile({
+            "action": "get_service_schema",
+            "service_type": "webSearchConnection",
+        })
+        result = _handle_service_flow(
+            None, "get_service_schema", json.loads(ff.get_content()),
+            None, "testuser", ff)
+        parameters = json.loads(result[0].get_content())["parameters"]
+
+        assert parameters["providers"]["type"] == "string"
+        assert parameters["default_mode"]["type"] == "select"
+        assert parameters["timeout"]["type"] == "integer"
+        assert parameters["fallback_to_free"]["type"] == "boolean"
+        assert parameters["brave_api_key"]["type"] == "password"
+        assert parameters["brave_api_key"]["sensitive"] is True
+
     def test_service_install_relay_without_token_spawns_managed_server_relay(self, monkeypatch):
         from tasks.ai.actions.service_flow import _handle_service_flow
 

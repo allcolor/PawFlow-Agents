@@ -237,7 +237,7 @@ Example: `allowed_paths=src,docs` + `denied_paths=src/secret` → can read `src/
 
 ### Advanced
 - `search(path, pattern, recursive)` — Find files by glob pattern. Patterns support `**` and shell-style brace alternatives such as `{core,services}/**/*.py`.
-- `grep(path, regex, recursive)` — Search file contents by regex. A space-separated `path` containing multiple existing roots scans each root.
+- `grep(path, regex, recursive)` — Search file contents by regex. A space-separated `path` containing multiple existing roots scans each root. Docker relay images include `rg` and use bounded `ripgrep --json` output. Host-local, legacy, or custom relays fall back to the built-in Python scanner when `rg` is unavailable; unsupported expressions and ordered multi-root scans also use the fallback. Both paths return the same structured matches and context.
 - `find_replace(path, pattern, replacement, multiline=false)` — Regex replace in a file; set `multiline=true` so `^` and `$` match line boundaries.
 
 ### Git (relay + server backends only)

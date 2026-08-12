@@ -86,7 +86,7 @@ Editing preference: use `apply_patch` for patch-shaped changes and `batch_edit` 
 | `exists` | Check existence. |
 | `list_dir` | List directory contents. |
 | `glob` | Find files by glob. |
-| `grep` | Search file contents. |
+| `grep` | Search file contents. Relay-backed searches use bounded `ripgrep --json` output when the binary is available and transparently fall back to the Python scanner when it is not or cannot parse the requested regex. |
 | `search` | Combined glob + regex + ranked snippets for fewer discovery calls. |
 | `copy` | Copy files between filesystem services/FileStore. |
 | `notebook_edit` | Edit a Jupyter notebook cell. |
@@ -156,6 +156,10 @@ the selected relay target has the `rtk` binary, PawFlow uses RTK for compatible
 relay-backed calls: `bash` and `run_tests` run `rtk rewrite <command>` before
 execution, while `read` uses `rtk read`. `grep` and `glob` stay native because
 RTK output does not preserve PawFlow's grep/glob response semantics reliably.
+The native relay `grep` path independently uses `ripgrep --json` when
+available, while preserving PawFlow's structured paths, line numbers, context,
+exclusions, and global result limit. It falls back to the Python scanner if
+`rg` is missing or rejects the expression.
 If the variable is not truthy, RTK is missing, or RTK cannot handle a request,
 PawFlow falls back to the native tool behavior unchanged. A generated multi-line
 script opts out entirely (`_skip_rtk`): the rewrite keeps only the last line of

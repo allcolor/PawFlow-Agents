@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.179] — 2026-08-12
+
+### Changed
+
+- Accelerated relay-backed `grep` and `search` calls with bounded
+  `ripgrep --json` streaming while preserving the existing structured response,
+  exclusions, context, global limit, and Python fallback. Made `ripgrep` part of
+  the required relay image base so minimal generated Docker relays receive the
+  same fast path as the official full image.
+
 ## [1.0.0-beta.178] — 2026-08-12
 
 ### Fixed

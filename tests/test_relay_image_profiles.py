@@ -32,6 +32,7 @@ def test_relay_catalog_has_required_base_runtime():
     assert base["required"] is True
     assert "python3" in base["apt"]
     assert "python3-dev" in base["apt"]
+    assert "ripgrep" in base["apt"]
     assert "vim-tiny" in base["apt"]
     assert "nano" in base["apt"]
     assert "procps" in base["apt"]
@@ -43,6 +44,7 @@ def test_relay_catalog_has_required_base_runtime():
     assert "pkg-config" in base["apt"]
     assert "pyfuse3" in base["pip"]
     assert "trio" in base["pip"]
+    assert "ripgrep" not in catalog["features"]["dev.shell-tools"]["apt"]
     post_install = "\n".join(base["post_install"])
     assert "/workspace" in post_install
     assert "/cc_sessions" in post_install
@@ -128,6 +130,7 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert "python3 /opt/pawflow/pawflow_relay_launcher.py" not in dockerfile
     assert dockerfile.index("pkg-config") < dockerfile.index("pip3 install")
     assert dockerfile.index("libfuse3-dev") < dockerfile.index("pip3 install")
+    assert "ripgrep" in dockerfile
     assert "https://deb.nodesource.com/setup_22.x" in dockerfile
     assert dockerfile.index("https://deb.nodesource.com/setup_22.x") < dockerfile.index("nodejs")
     assert "gimp gimp-plugin-registry" in dockerfile

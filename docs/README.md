@@ -67,6 +67,7 @@
 | [Roadmap Gaps](ROADMAP_GAPS.md) | Release-readiness gaps and planned improvements |
 | [Eval Harness Plan](EVAL_HARNESS_PLAN.md) | Scored agent evaluation: case format, scorers, suites, scorecard, phasing |
 | [Model Harness Profiles Plan](MODEL_HARNESS_PROFILES_PLAN.md) | Per-model prompt/tool/limit tuning behind one resolution point |
+| [FFF Search Integration Plan](FFF_SEARCH_INTEGRATION_PLAN.md) | Optional relay-side indexed search, packaging choices, lifecycle boundaries, rollout phases, and acceptance gates |
 | [Maestro PFP Integration Plan](MAESTRO_PFP_INTEGRATION_PLAN.md) | Deferred standalone connector architecture, license gates, security boundary, and phased delivery |
 | [Threat Models Plan](THREAT_MODELS_PLAN.md) | Per-surface attacker models with mandatory residual risk |
 | [Code Signing Plan](CODE_SIGNING_PLAN.md) | Signing Windows/macOS/Linux artifacts: certificates, registrations, costs, rollout phases |

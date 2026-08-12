@@ -1,7 +1,11 @@
+import json
+
 from core.handlers.grep_handler import GrepHandler
 from core.handlers.glob_handler import GlobHandler
 from core.handlers.search import SearchHandler
 from tools.fs_actions import action_grep, action_search
+
+import _fs_grep as grep_impl
 
 
 def test_grep_handler_accepts_glob_in_path(tmp_path):
@@ -131,6 +135,125 @@ def test_relay_action_grep_honors_limit_and_streams_context(tmp_path):
     assert results[0]["after"] == [{"line_number": 3, "line": "after one"}]
     assert results[1]["before"] == [{"line_number": 4, "line": "before two"}]
     assert results[1]["after"] == [{"line_number": 6, "line": "after two"}]
+
+
+def test_relay_action_grep_uses_bounded_ripgrep_json(monkeypatch, tmp_path):
+    target = tmp_path / "sample.py"
+    target.write_text("before\nNeedle hit\nafter\n", encoding="utf-8")
+    captured = {}
+
+    class FakeProcess:
+        def __init__(self, args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            self.returncode = None
+            self.stdout = iter([
+                json.dumps({
+                    "type": "match",
+                    "data": {
+                        "path": {"text": str(target)},
+                        "lines": {"text": "Needle hit\n"},
+                        "line_number": 2,
+                    },
+                }) + "\n",
+            ])
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            captured["terminated"] = True
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            if self.returncode is None:
+                self.returncode = 0
+            return self.returncode
+
+    monkeypatch.setattr(grep_impl.shutil, "which", lambda name: "/usr/bin/rg")
+    monkeypatch.setattr(grep_impl.subprocess, "Popen", FakeProcess)
+
+    results = action_grep(str(tmp_path), str(tmp_path), {
+        "regex": "needle",
+        "include": "*.py",
+        "context": 1,
+        "limit": 1,
+    })
+
+    assert results == [{
+        "path": "sample.py",
+        "line_number": 2,
+        "line": "Needle hit",
+        "before": [{"line_number": 1, "line": "before"}],
+        "after": [{"line_number": 3, "line": "after"}],
+    }]
+    assert captured["args"][0] == "/usr/bin/rg"
+    assert "--json" in captured["args"]
+    assert "--hidden" in captured["args"]
+    assert "--no-ignore" in captured["args"]
+    assert "**/*.py" in captured["args"]
+    assert captured["kwargs"]["stderr"] is grep_impl.subprocess.DEVNULL
+    assert captured["terminated"] is True
+
+
+def test_relay_action_grep_falls_back_when_ripgrep_is_unavailable(
+        monkeypatch, tmp_path):
+    target = tmp_path / "sample.txt"
+    target.write_text("Needle fallback\n", encoding="utf-8")
+    monkeypatch.setattr(grep_impl.shutil, "which", lambda name: None)
+
+    results = action_grep(str(tmp_path), str(tmp_path), {
+        "regex": "needle",
+        "limit": 10,
+    })
+
+    assert results == [{
+        "path": "sample.txt",
+        "line_number": 1,
+        "line": "Needle fallback",
+    }]
+
+
+def test_relay_action_grep_falls_back_when_ripgrep_rejects_regex(
+        monkeypatch, tmp_path):
+    target = tmp_path / "sample.txt"
+    target.write_text("needle fallback\n", encoding="utf-8")
+
+    class RejectedProcess:
+        stdout = iter(())
+        returncode = 2
+
+        def __init__(self, args, **kwargs):
+            pass
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            raise AssertionError("completed rejected process must not terminate")
+
+        def kill(self):
+            raise AssertionError("completed rejected process must not be killed")
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    monkeypatch.setattr(grep_impl.shutil, "which", lambda name: "/usr/bin/rg")
+    monkeypatch.setattr(grep_impl.subprocess, "Popen", RejectedProcess)
+
+    results = action_grep(str(tmp_path), str(tmp_path), {
+        "regex": "needle(?= fallback)",
+        "limit": 10,
+    })
+
+    assert results == [{
+        "path": "sample.txt",
+        "line_number": 1,
+        "line": "needle fallback",
+    }]
 
 
 def test_search_handler_uses_relay_context_without_reading_full_files():

@@ -27,7 +27,7 @@ not a development language preset; it is the minimum runtime PawFlow needs:
 - `pyfuse3` and `trio`
 - `rclone` for conversation-linked remote filesystem mounts under `/remote`
 - `/workspace`, `/cc_sessions`, `/filestore`, and `/opt/pawflow` mountpoints
-- basic network/TLS and shell tools
+- basic network/TLS and shell tools, including `ripgrep` for relay-backed search
 - Docker runtime requirements: `SYS_ADMIN`, `/dev/fuse`, and
   `apparmor:unconfined`
 
@@ -37,8 +37,8 @@ relay image also embeds `tini`, so launchers set `TINI_SUBREAPER=1`: its nested
 PID 1. The variable is harmless for generated images that rely only on Docker's
 init process.
 
-The base must stay small, but it cannot drop Python or FUSE without breaking
-relay functionality.
+The base must stay small, but it cannot drop Python, FUSE, or `ripgrep` without
+breaking relay functionality or its search performance contract.
 
 ## Optional Features
 

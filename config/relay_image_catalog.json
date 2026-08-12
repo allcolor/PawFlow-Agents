@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "relay_image_version": "2026.07.16",
+  "relay_image_version": "2026.08.12",
   "required_features": ["relay.base"],
   "server_profile": "server-full",
   "server_minimal_profile": "server-minimal",
@@ -13,7 +13,7 @@
       "description": "Minimum runtime needed by a PawFlow Docker relay: Python launcher, FUSE server mounts, FileStore mount, and core shell tools.",
       "apt": [
         "sudo", "python3", "python3-pip", "python3-venv", "python3-dev", "ca-certificates",
-        "git", "curl", "wget", "gnupg2", "software-properties-common", "jq", "sqlite3", "openssh-client", "unzip", "zip",
+        "git", "curl", "wget", "gnupg2", "software-properties-common", "jq", "sqlite3", "openssh-client", "unzip", "zip", "ripgrep",
         "vim-tiny", "nano", "procps", "psmisc", "lsof", "iproute2", "iputils-ping", "dnsutils", "netcat-openbsd",
         "file", "less", "fuse3", "libfuse3-dev", "cryfs", "build-essential", "pkg-config", "chrony"
       ],
@@ -46,7 +46,7 @@
       "label": "Advanced shell tools",
       "category": "developer_tools",
       "description": "Search, diagnostics, terminal and archive helpers.",
-      "apt": ["ripgrep", "fd-find", "bat", "tree", "htop", "strace", "ltrace", "tmux", "ncdu"],
+      "apt": ["fd-find", "bat", "tree", "htop", "strace", "ltrace", "tmux", "ncdu"],
       "estimated_size_mb": 95
     },
     "lang.python-dev": {

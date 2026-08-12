@@ -1,5 +1,8 @@
 """Grep + glob filesystem actions, split from fs_actions.py."""
+import json
 import re
+import shutil
+import subprocess  # nosec B404
 from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List
@@ -116,6 +119,161 @@ def _split_glob_parts(value: str) -> list[str]:
     return parts
 
 
+def _grep_rg_display_path(raw_path: str, root_dir: str, paths: list[Path],
+                          multiple_roots: bool) -> tuple[str, Path]:
+    """Map an rg result back to the relay's existing display-path contract."""
+    matched = Path(raw_path)
+    if not matched.is_absolute():
+        matched = Path(root_dir) / matched
+    matched = matched.resolve()
+
+    for candidate in paths:
+        resolved = candidate.resolve()
+        if candidate.is_file():
+            if matched == resolved:
+                display = str(candidate).replace("\\", "/") if multiple_roots else candidate.name
+                return display, matched
+            continue
+        try:
+            rel = str(matched.relative_to(resolved)).replace("\\", "/")
+        except ValueError:
+            continue
+        root_label = str(candidate).replace("\\", "/")
+        display = f"{root_label}/{rel}" if multiple_roots else rel
+        return display, matched
+
+    return raw_path.replace("\\", "/"), matched
+
+
+def _grep_attach_context(results: list[dict], context_before: int,
+                         context_after: int) -> None:
+    """Attach bounded context to rg matches using the legacy response shape."""
+    if not context_before and not context_after:
+        for row in results:
+            row.pop("_absolute_path", None)
+        return
+
+    cache: dict[str, list[str]] = {}
+    for row in results:
+        raw_path = row.pop("_absolute_path", "")
+        lines = cache.get(raw_path)
+        if lines is None:
+            try:
+                lines = Path(raw_path).read_text(
+                    encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                lines = []
+            cache[raw_path] = lines
+
+        line_number = int(row["line_number"])
+        if context_before:
+            start = max(1, line_number - context_before)
+            row["before"] = [
+                {"line_number": number, "line": lines[number - 1][:500]}
+                for number in range(start, line_number)
+                if number <= len(lines)
+            ]
+        if context_after:
+            end = min(len(lines), line_number + context_after)
+            row["after"] = [
+                {"line_number": number, "line": lines[number - 1][:500]}
+                for number in range(line_number + 1, end + 1)
+            ]
+
+
+def _grep_with_ripgrep(root_dir: str, paths: list[Path], regex: str,
+                        glob_patterns: list[str], recursive: bool, limit: int,
+                        context_before: int,
+                        context_after: int) -> list[dict] | None:
+    """Use bounded rg JSON output, or return None for Python fallback."""
+    if limit <= 0:
+        return []
+    # ripgrep may interleave multiple roots; the legacy contract preserves the
+    # caller's root order, so keep that uncommon shape on the Python fallback.
+    if len(paths) != 1:
+        return None
+    binary = shutil.which("rg")
+    if not binary:
+        return None
+
+    args = [
+        binary, "--json", "--ignore-case", "--hidden", "--no-ignore",
+        "--color=never", "--no-messages",
+    ]
+    if not recursive:
+        args.extend(["--max-depth", "1"])
+    for pattern in glob_patterns:
+        args.extend(["--glob", pattern])
+    for name in sorted(_GREP_SKIP_DIRS):
+        args.extend(["--glob", f"!**/{name}/**"])
+    for suffix in sorted(_GREP_SKIP_EXT):
+        args.extend(["--glob", f"!**/*{suffix}"])
+    args.extend(["--", regex])
+    args.extend(str(path) for path in paths)
+
+    try:
+        proc = subprocess.Popen(  # nosec B603
+            args,
+            cwd=root_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError:
+        return None
+
+    results: list[dict] = []
+    reached_limit = False
+    parse_failed = False
+    multiple_roots = len(paths) > 1
+    try:
+        if proc.stdout is None:
+            parse_failed = True
+        else:
+            for raw_line in proc.stdout:
+                try:
+                    event = json.loads(raw_line)
+                except (TypeError, json.JSONDecodeError):
+                    parse_failed = True
+                    break
+                if event.get("type") != "match":
+                    continue
+                data = event.get("data") or {}
+                raw_path = (data.get("path") or {}).get("text")
+                line = (data.get("lines") or {}).get("text")
+                line_number = data.get("line_number")
+                if not isinstance(raw_path, str) or not isinstance(line, str):
+                    continue
+                if not isinstance(line_number, int):
+                    continue
+                display, absolute = _grep_rg_display_path(
+                    raw_path, root_dir, paths, multiple_roots)
+                results.append({
+                    "path": display,
+                    "line_number": line_number,
+                    "line": line.rstrip("\r\n")[:500],
+                    "_absolute_path": str(absolute),
+                })
+                if len(results) >= limit:
+                    reached_limit = True
+                    break
+    finally:
+        if (reached_limit or parse_failed) and proc.poll() is None:
+            proc.terminate()
+        try:
+            returncode = proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            returncode = proc.wait()
+
+    if parse_failed or (not reached_limit and returncode not in (0, 1)):
+        return None
+    _grep_attach_context(results, context_before, context_after)
+    return results
+
+
 def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     regex = req.get("regex", "")
     recursive = req.get("recursive", True)
@@ -138,6 +296,12 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         _w.simplefilter("ignore", FutureWarning)
         compiled = re.compile(regex, re.IGNORECASE)
     paths = _grep_candidate_paths(path)
+    rg_results = _grep_with_ripgrep(
+        root_dir, paths, regex, glob_patterns, recursive, limit,
+        context_before, context_after)
+    if rg_results is not None:
+        return rg_results
+
     multiple_roots = len(paths) > 1
     results = []
 

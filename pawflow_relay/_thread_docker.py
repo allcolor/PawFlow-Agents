@@ -3,6 +3,7 @@
 import logging
 
 import os
+import secrets
 import threading
 import time
 
@@ -24,6 +25,7 @@ class _RelayDockerMixin:
         """Run the relay inside a Docker container with auto-restart."""
         # Start host helper (TCP server for host-level commands)
         host_helper_port = find_free_port()
+        self._host_helper_token = secrets.token_urlsafe(32)
         self._host_helper_thread = threading.Thread(
             target=self._run_host_helper, args=(host_helper_port,),
             daemon=True, name="pawflow-host-helper")
@@ -205,6 +207,8 @@ class _RelayDockerMixin:
                 _relay_permission_args.append("--allow-exec")
             if self.allow_remote_desktop:
                 _relay_permission_args += ["--allow-automation", "--allow-local-screen"]
+            if self.allow_service_tunnels:
+                _relay_permission_args.append("--allow-service-tunnels")
 
             docker_run_cmd = docker_cmd() + [
                 "run", "--rm",
@@ -241,6 +245,7 @@ class _RelayDockerMixin:
                 "-e", "GIT_CONFIG_KEY_3=core.untrackedCache",
                 "-e", "GIT_CONFIG_VALUE_3=false",
                 "-e", f"PAWFLOW_HOST_HELPER={get_host_ip()}:{host_helper_port}",
+                "-e", f"PAWFLOW_HOST_HELPER_TOKEN={self._host_helper_token}",
                 "-e", f"PAWFLOW_SESSION_TOKEN={self.session_token}",
                 *_desktop_publish_args,
                 "-e", f"PAWFLOW_HOST_WORKDIR={self.directory.replace(chr(92), '/')}",

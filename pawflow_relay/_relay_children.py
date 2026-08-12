@@ -34,6 +34,7 @@ class ChildRelayConfig:
     allow_automation: bool
     allow_local_screen: bool
     allow_local: bool
+    allow_service_tunnels: bool = False
 
 
 @dataclass
@@ -111,7 +112,8 @@ class ChildRelayManager:
                         readonly=cfg.readonly, allow_exec=cfg.allow_exec,
                         allow_automation=cfg.allow_automation,
                         allow_local_screen=cfg.allow_local_screen,
-                        allow_local=cfg.allow_local)
+                        allow_local=cfg.allow_local,
+                        allow_service_tunnels=cfg.allow_service_tunnels)
         except Exception as _ce:
             sys.stderr.write(f"[FSRelay] Child {sr_id} died: {_ce}\n")
         finally:

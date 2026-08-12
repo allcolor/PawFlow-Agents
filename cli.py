@@ -306,6 +306,14 @@ def cmd_start(args):
     from core.executor_registry import ExecutorRegistry
     er = ExecutorRegistry.get_instance()
     er.restore_from_disk()
+
+    # FRPS calls this private route before accepting service-tunnel clients and
+    # STCP proxies. The registration is disabled when no signing key is set.
+    from services.service_tunnel_endpoint import ensure_service_tunnel_route
+    if ensure_service_tunnel_route():
+        from core.service_tunnel_lifecycle import start as start_tunnel_lifecycle
+        start_tunnel_lifecycle()
+
     n = er.count()
     logger.info(f"PawFlow server ready — {n} flow(s) restored")
     _log_startup_urls(logger, args.host, int(args.port), is_install_complete())

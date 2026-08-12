@@ -319,6 +319,14 @@ class _RelayConnMixin:
                 on_relay_connected(service, relay_id)
             except Exception:
                 logger.debug('relay key connect hook failed', exc_info=True)
+            try:
+                from core.service_tunnel_lifecycle import (
+                    on_relay_connected as reconcile_service_tunnels,
+                )
+                reconcile_service_tunnels(relay_id)
+            except Exception:
+                logger.debug(
+                    'service tunnel connect hook failed', exc_info=True)
             await self._relay_main_loop(
                 reader, writer, service, send_lock, relay_tasks, conn_state)
             if conn_state.get('close_info'):

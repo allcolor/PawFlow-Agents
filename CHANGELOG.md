@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.173] — 2026-08-12
+
+### Added
+
+- Added owner-scoped Service Tunnels that connect an approved TCP service on
+  one PawFlow relay to a loopback listener on another relay through FRP STCP.
+- Added webchat controls, agent actions, relay permissions, service catalogues,
+  FRPS Compose deployment, and an operator guide for creating and managing
+  tunnels.
+- Bundled the pinned FRP 0.70.1 client with managed relay images, Relay Desktop,
+  and standalone Relay CLI installers, with SHA-256 verification during builds.
+
+### Security
+
+- Added short-lived HMAC grants enforced by FRPS login and proxy-registration
+  hooks, exact approved-target validation, owner isolation, and loopback-only
+  access listeners.
+- Added automatic grant refresh every 45 minutes and relay-reconnect
+  reconciliation while keeping failed or explicitly stopped tunnels fail-closed.
+
 ## [1.0.0-beta.172] — 2026-08-11
 
 ### Added

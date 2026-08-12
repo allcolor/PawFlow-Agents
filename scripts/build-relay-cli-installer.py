@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import platform
 import re
@@ -11,6 +12,8 @@ import shutil
 import subprocess  # nosec B404
 import sys
 import tarfile
+import tempfile
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -19,6 +22,27 @@ ROOT = Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "pawflow-relay-desktop" / "scripts" / "relay-bin-entry.py"
 DIST_ROOT = ROOT / "dist" / "relay-cli-installers"
 BUILD_ROOT = ROOT / "build" / "relay-cli-pyinstaller"
+FRP_VERSION = "0.70.1"
+FRP_ASSETS = {
+    ("windows", "amd64"): (
+        "windows_amd64", "zip",
+        "531f3cd3cc41c0b4f077b54fe6b7dd83c0ff727e7f0bf412a4c78fa279165de5"),
+    ("windows", "arm64"): (
+        "windows_arm64", "zip",
+        "74d3acaf0f03ee190dd0462f9b49861dca50b0559c5488af4b36572fc951fcca"),
+    ("linux", "amd64"): (
+        "linux_amd64", "tar.gz",
+        "333da23d1b9009d7c01638e9ba38cf4600f7d37d393f854e96ee1396adefa9a6"),
+    ("linux", "arm64"): (
+        "linux_arm64", "tar.gz",
+        "3990f396a9a490ee7f0e5f355287750ed41520064ed999eab443b5e9a78d773d"),
+    ("darwin", "amd64"): (
+        "darwin_amd64", "tar.gz",
+        "cbf69cf26e5553e914e97d37f5d4367fa30f5f531d073a889465af4719281e25"),
+    ("darwin", "arm64"): (
+        "darwin_arm64", "tar.gz",
+        "cfa733b5a261c1647edee3c1fc4133d2542989b28f5602e81d47fc821d25c55f"),
+}
 
 RUNTIME_TOOL_HIDDEN_IMPORTS = [
     "concurrent.futures",
@@ -77,6 +101,55 @@ def platform_tag() -> str:
 
 def executable_name() -> str:
     return "pawflow-relay.exe" if platform.system().lower() == "windows" else "pawflow-relay"
+
+
+def _frp_asset() -> tuple[str, str, str]:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    machine = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
+    try:
+        return FRP_ASSETS[(system, machine)]
+    except KeyError as exc:
+        raise RuntimeError(
+            f"FRP {FRP_VERSION} is not packaged for {system}-{machine}") from exc
+
+
+def download_frpc(bin_dir: Path) -> Path:
+    """Download and verify the official FRP client for the build host."""
+    platform_name, extension, expected_sha256 = _frp_asset()
+    archive_name = f"frp_{FRP_VERSION}_{platform_name}.{extension}"
+    url = (
+        f"https://github.com/fatedier/frp/releases/download/"
+        f"v{FRP_VERSION}/{archive_name}")
+    with tempfile.TemporaryDirectory(prefix="pawflow-frpc-") as temp:
+        root = Path(temp)
+        archive_path = root / archive_name
+        request = urllib.request.Request(url, headers={"User-Agent": "PawFlow-builder"})
+        with urllib.request.urlopen(request, timeout=120) as response:  # nosec B310
+            payload = response.read()
+        actual_sha256 = hashlib.sha256(payload).hexdigest()
+        if actual_sha256 != expected_sha256:
+            raise RuntimeError(
+                f"FRP checksum mismatch for {archive_name}: "
+                f"expected {expected_sha256}, got {actual_sha256}")
+        archive_path.write_bytes(payload)
+        extract_root = root / "extract"
+        extract_root.mkdir()
+        if extension == "zip":
+            with zipfile.ZipFile(archive_path) as archive:
+                archive.extractall(extract_root)
+        else:
+            with tarfile.open(archive_path, "r:gz") as archive:
+                archive.extractall(extract_root, filter="data")
+        source_name = "frpc.exe" if platform.system().lower() == "windows" else "frpc"
+        matches = list(extract_root.rglob(source_name))
+        if len(matches) != 1:
+            raise RuntimeError(f"{source_name} was not found in {archive_name}")
+        destination = bin_dir / source_name
+        shutil.copy2(matches[0], destination)
+        if platform.system().lower() != "windows":
+            destination.chmod(0o755)
+        return destination
 
 
 def ensure_pyinstaller(python: str) -> None:
@@ -143,7 +216,9 @@ set -eu
 target="${PREFIX}/bin"
 mkdir -p "$target"
 cp "$(dirname "$0")/bin/pawflow-relay" "$target/pawflow-relay"
+cp "$(dirname "$0")/bin/frpc" "$target/frpc"
 chmod 755 "$target/pawflow-relay"
+chmod 755 "$target/frpc"
 echo "Installed pawflow-relay to $target/pawflow-relay"
 """,
         encoding="utf-8",
@@ -154,6 +229,7 @@ echo "Installed pawflow-relay to $target/pawflow-relay"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\PawFlow Relay CLI"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item -Force -Path (Join-Path $PSScriptRoot "bin\pawflow-relay.exe") -Destination (Join-Path $InstallDir "pawflow-relay.exe")
+Copy-Item -Force -Path (Join-Path $PSScriptRoot "bin\frpc.exe") -Destination (Join-Path $InstallDir "frpc.exe")
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not ($UserPath -split ';' | Where-Object { $_ -eq $InstallDir })) {
     [Environment]::SetEnvironmentVariable("Path", (($UserPath, $InstallDir) -ne '' -join ';'), "User")
@@ -211,6 +287,7 @@ def main() -> None:
     elif not binary.exists():
         raise SystemExit(f"Missing existing relay CLI binary: {binary}")
 
+    download_frpc(binary.parent)
     artifacts = package(binary, version)
     print("PawFlow relay CLI artifacts:")
     for artifact in artifacts:

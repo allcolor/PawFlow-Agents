@@ -249,6 +249,8 @@ def list_available_relays(user_id: str = "", conv_id: str = "") -> List[Dict[str
                 "host_root": _ri.get("host_root", ""),
                 "allow_local": bool(_ri.get('allow_local', False)),
                 "allow_local_screen": bool(_ri.get('allow_local_screen', False)),
+                "allow_service_tunnels": bool(
+                    _ri.get('allow_service_tunnels', False)),
                 "server_local_exec": bool(
                     (sdef.config or {}).get("server_local_exec")),
                 "server_managed": bool(

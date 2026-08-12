@@ -13,7 +13,8 @@ def test_relay_desktop_package_exposes_electron_app():
     package = json.loads((DESKTOP / "package.json").read_text(encoding="utf-8"))
     assert package["main"] == "src/main.js"
     assert package["scripts"]["start"] == "electron ."
-    assert package["scripts"]["prepare-runtime"] == "node scripts/prepare-runtime.js"
+    assert package["scripts"]["prepare-runtime"] == (
+        "node scripts/prepare-runtime.js && node scripts/download-frpc.js")
     assert package["scripts"]["build-relay-bin"] == "node scripts/build-relay-bin.js"
     assert package["scripts"]["package:portable"] == "node scripts/package-portable.js"
     assert package["homepage"] == "https://github.com/allcolor/PawFlow-Agents"

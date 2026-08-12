@@ -11,14 +11,14 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "prepare-runtime": "node scripts/prepare-runtime.js",
+    "prepare-runtime": "node scripts/prepare-runtime.js && node scripts/download-frpc.js",
     "build-relay-bin": "node scripts/build-relay-bin.js",
     "package:portable": "node scripts/package-portable.js",
     "dist": "npm run prepare-runtime && npm run build-relay-bin && electron-builder",
     "dist:win": "npm run prepare-runtime && npm run build-relay-bin && electron-builder --win",
     "dist:linux": "npm run prepare-runtime && npm run build-relay-bin && electron-builder --linux",
     "dist:mac": "npm run prepare-runtime && npm run build-relay-bin && electron-builder --mac",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check scripts/prepare-runtime.js && node --check scripts/build-relay-bin.js && node --check scripts/package-portable.js"
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check scripts/prepare-runtime.js && node --check scripts/download-frpc.js && node --check scripts/build-relay-bin.js && node --check scripts/package-portable.js"
   },
   "build": {
     "appId": "org.allcolor.pawflow.relay-desktop",

@@ -134,6 +134,8 @@ def worker_main():
                         help="Allow local screen access (disabled by default)")
     parser.add_argument("--allow-local", action="store_true",
                         help="Allow local exec — commands run on the host, not in Docker")
+    parser.add_argument("--allow-service-tunnels", action="store_true",
+                        help="Allow explicitly approved TCP service tunnels")
     parser.add_argument("--login-url", default="http://localhost:9090",
                         help="PawFlow chat UI URL for OAuth login")
     parser.add_argument("--host", default="localhost",
@@ -219,6 +221,7 @@ def worker_main():
         f"  Automation:{'enabled' if args.allow_automation else 'disabled'}\n"
         f"  Local scr: {'enabled' if args.allow_local_screen else 'disabled'}\n"
         f"  Local exec:{'enabled' if args.allow_local else 'disabled'}\n"
+        f"  Tunnels:   {'enabled' if args.allow_service_tunnels else 'disabled'}\n"
         f"  Token:     {masked}\n"
         f"  Auto-reg:  {'no (manual)' if args.server else 'yes'}\n"
         f"  Gateway:   {'cookie provided' if args.gateway_cookie else ('key provided' if args.gateway_key else 'none')}\n\n"
@@ -319,6 +322,8 @@ def worker_main():
             cmd.append("--allow-exec")
         if args.allow_automation:
             cmd.append("--allow-automation")
+        if args.allow_service_tunnels:
+            cmd.append("--allow-service-tunnels")
         if args.readonly:
             cmd.append("--readonly")
 
@@ -356,6 +361,7 @@ def worker_main():
                         allow_automation=args.allow_automation,
                         allow_local_screen=args.allow_local_screen,
                         allow_local=args.allow_local,
+                        allow_service_tunnels=args.allow_service_tunnels,
                         gateway_cookie=gateway_cookie,
                         gateway_key=args.gateway_key,
                         session_token=session_token,

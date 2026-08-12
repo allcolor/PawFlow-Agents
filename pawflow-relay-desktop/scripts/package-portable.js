@@ -21,6 +21,11 @@ const prep = spawnSync(process.execPath, [path.join(__dirname, 'prepare-runtime.
   stdio: 'inherit',
 });
 if (prep.status !== 0) process.exit(prep.status || 1);
+const frpc = spawnSync(process.execPath, [path.join(__dirname, 'download-frpc.js')], {
+  cwd: desktopRoot,
+  stdio: 'inherit',
+});
+if (frpc.status !== 0) process.exit(frpc.status || 1);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });

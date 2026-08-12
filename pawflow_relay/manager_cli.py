@@ -114,6 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_add.add_argument("--no-remote-desktop", action="store_true",
                                help="Disable Docker desktop/VNC/audio support")
     workspace_add.add_argument("--allow-local", action="store_true")
+    workspace_add.add_argument("--allow-service-tunnels", action="store_true",
+                               help="Allow approved TCP service tunnels")
     workspace_delete = workspace_sub.add_parser("delete", help="Delete a workspace share")
     workspace_delete.add_argument("name")
     workspace_sub.add_parser("list", help="List configured workspace shares")
@@ -224,6 +226,7 @@ def main(argv=None) -> int:
                     allow_local=args.allow_local,
                     allow_exec=not args.no_exec,
                     allow_remote_desktop=not args.no_remote_desktop,
+                    allow_service_tunnels=args.allow_service_tunnels,
                 ))
                 return 0
             if args.workspace_command == "delete":

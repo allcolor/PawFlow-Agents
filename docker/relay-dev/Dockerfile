@@ -50,6 +50,24 @@ RUN curl -fsSL "https://downloads.rclone.org/rclone-${DOWNLOAD_RCLONE_VERSION}-l
     && rclone version \
     && rm -rf /tmp/rclone.zip /tmp/rclone-dist
 
+# Service Tunnels use the pinned FRP client. Verify the official release digest
+# before installing so a compromised or partial download never enters the image.
+ARG FRP_VERSION=0.70.1
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) frp_arch="amd64"; frp_sha256="333da23d1b9009d7c01638e9ba38cf4600f7d37d393f854e96ee1396adefa9a6" ;; \
+      arm64) frp_arch="arm64"; frp_sha256="3990f396a9a490ee7f0e5f355287750ed41520064ed999eab443b5e9a78d773d" ;; \
+      *) echo "unsupported FRP architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    archive="frp_${FRP_VERSION}_linux_${frp_arch}.tar.gz"; \
+    curl -fsSL "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${archive}" -o "/tmp/${archive}"; \
+    echo "${frp_sha256}  /tmp/${archive}" | sha256sum -c -; \
+    tar -xzf "/tmp/${archive}" -C /tmp; \
+    install -m 0755 "/tmp/frp_${FRP_VERSION}_linux_${frp_arch}/frpc" /usr/local/bin/frpc; \
+    frpc --version; \
+    rm -rf "/tmp/${archive}" "/tmp/frp_${FRP_VERSION}_linux_${frp_arch}"
+
 # ── Python ──────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv python3-dev \

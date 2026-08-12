@@ -3,6 +3,7 @@
 import logging
 
 import json
+import hmac
 import os
 import shutil
 import socket
@@ -76,7 +77,24 @@ class _RelayHostHelperMixin:
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
 
-        if action in ("claude_auth_login", "codex_auth_login", "gemini_auth_login"):
+        if action.startswith("service_tunnel_"):
+            expected = str(getattr(self, "_host_helper_token", "") or "")
+            supplied = str(req.pop("_host_helper_token", "") or "")
+            if not expected or not hmac.compare_digest(expected, supplied):
+                resp = json.dumps({
+                    "type": "error", "error": "Invalid host helper capability",
+                }) + "\n"
+                conn.sendall(resp.encode("utf-8"))
+                return
+            from pawflow_relay.service_tunnels import handle_action
+            try:
+                result = handle_action(action, req)
+                resp = json.dumps({"type": "result", "data": result}) + "\n"
+            except Exception as exc:
+                resp = json.dumps({"type": "error", "error": str(exc)}) + "\n"
+            conn.sendall(resp.encode("utf-8"))
+
+        elif action in ("claude_auth_login", "codex_auth_login", "gemini_auth_login"):
             from pawflow_relay.auth import (
                 claude_auth_login as _claude_auth_login,
                 codex_auth_login as _codex_auth_login,

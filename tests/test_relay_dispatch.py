@@ -32,6 +32,7 @@ def _ctx(**over):
         allow_local=True,
         allow_local_screen=True,
         allow_automation=True,
+        allow_service_tunnels=False,
     )
     base.update(over)
     return d.DispatchCtx(**base)
@@ -151,3 +152,19 @@ def test_start_local_desktop_forwards_when_host_helper(monkeypatch):
         {"action": "start_local_desktop"})
     assert res == {"ok": True, "data": {"fwd": True}}
     assert seen["action"] == "start_local_desktop"
+
+
+def test_service_tunnel_actions_require_dedicated_permission(monkeypatch):
+    res = d.execute_command(
+        _ctx(allow_service_tunnels=False),
+        {"action": "service_tunnel_status", "tunnel_id": "t1", "role": "access"})
+    assert res == {"ok": False, "error": "Service tunnels are disabled on this relay"}
+
+    monkeypatch.setattr(
+        d._service_tunnels, "handle_action",
+        lambda action, message: {"running": True, "action": action})
+    allowed = d.execute_command(
+        _ctx(allow_service_tunnels=True),
+        {"action": "service_tunnel_status", "tunnel_id": "t1", "role": "access"})
+    assert allowed["ok"] is True
+    assert allowed["data"]["running"] is True

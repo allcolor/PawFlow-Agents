@@ -1,0 +1,30 @@
+# PawFlow Service Tunnels FRP server.
+# Values are rendered from the container environment by FRP before parsing.
+bindAddr = "0.0.0.0"
+bindPort = {{ .Envs.PAWFLOW_FRPS_PORT }}
+quicBindPort = {{ .Envs.PAWFLOW_FRPS_PORT }}
+
+transport.tls.force = true
+transport.maxPoolCount = 5
+
+auth.method = "token"
+auth.token = "{{ .Envs.PAWFLOW_FRPS_TOKEN }}"
+
+detailedErrorsToClient = false
+maxPortsPerClient = 1
+
+log.to = "console"
+log.level = "info"
+log.disablePrintColor = true
+
+[[httpPlugins]]
+name = "pawflow-service-tunnel-login"
+addr = "{{ .Envs.PAWFLOW_FRP_PLUGIN_ADDR }}"
+path = "/internal/service-tunnels/frp"
+ops = ["Login"]
+
+[[httpPlugins]]
+name = "pawflow-service-tunnel-proxy"
+addr = "{{ .Envs.PAWFLOW_FRP_PLUGIN_ADDR }}"
+path = "/internal/service-tunnels/frp"
+ops = ["NewProxy"]

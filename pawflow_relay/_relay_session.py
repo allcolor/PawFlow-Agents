@@ -37,7 +37,8 @@ def _is_containerized():
 
 
 def build_connection_params(url, root_dir, readonly, allow_exec,
-                            allow_automation, allow_local_screen, allow_local):
+                            allow_automation, allow_local_screen, allow_local,
+                            allow_service_tunnels=False):
     """Parse the WS URL and build the relay registration ``info`` payload.
 
     Pure given the environment: URL scheme/host/port/path, available shells,
@@ -79,6 +80,7 @@ def build_connection_params(url, root_dir, readonly, allow_exec,
         "allow_automation": allow_automation,
         "allow_local_screen": allow_local_screen,
         "allow_local": allow_local,
+        "allow_service_tunnels": bool(allow_service_tunnels),
     }
     return ConnectionParams(host=host, port=port, path=path,
                             use_ssl=use_ssl, info=info)

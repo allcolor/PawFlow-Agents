@@ -26,6 +26,7 @@ REPO_TYPES = frozenset({
     "agents", "skills", "tasks", "flows",
     "mcps", "services", "tools", "prompts", "agent_hooks", "theme",
     "private_gateway_skin", "service_templates", "voice_clones",
+    "service_tunnels",
 })
 
 

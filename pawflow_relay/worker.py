@@ -117,7 +117,7 @@ def _is_allowed_tmp_path(path: str) -> bool:
 def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,  # nosec B107
                 allow_automation=False, allow_local_screen=False, allow_local=False,
                 gateway_cookie="", gateway_key="", session_token="", server_mount="",
-                filestore_mount="", skills_mount=""):
+                filestore_mount="", skills_mount="", allow_service_tunnels=False):
     """Connect to the PawFlow server via WebSocket and process filesystem commands.
 
     server_mount: if set, mount a FUSE proxy at this local path that
@@ -138,7 +138,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     """
     _cp = _build_connection_params(
         url, root_dir, readonly, allow_exec, allow_automation,
-        allow_local_screen, allow_local)
+        allow_local_screen, allow_local, allow_service_tunnels)
     host, port, path = _cp.host, _cp.port, _cp.path
     use_ssl = _cp.use_ssl
     info = _cp.info
@@ -281,7 +281,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _child_cfg = ChildRelayConfig(
                 url=url, token=token, secret=secret, readonly=readonly,
                 allow_exec=allow_exec, allow_automation=allow_automation,
-                allow_local_screen=allow_local_screen, allow_local=allow_local)
+                allow_local_screen=allow_local_screen, allow_local=allow_local,
+                allow_service_tunnels=allow_service_tunnels)
 
             def _term_send(_frame):
                 # PTY reader threads stream output here; take the shared
@@ -301,7 +302,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 resolve=_resolve, forward_to_host_helper=_forward_to_host_helper,
                 root_dir=root_dir, readonly=readonly, allow_exec=allow_exec,
                 allow_local=allow_local, allow_local_screen=allow_local_screen,
-                allow_automation=allow_automation)
+                allow_automation=allow_automation,
+                allow_service_tunnels=allow_service_tunnels)
             _disconnect_reason = "unknown"
 
             # ── Per-WS-connection FUSE clients ──────────────────────────

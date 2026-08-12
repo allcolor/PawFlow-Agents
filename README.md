@@ -53,6 +53,7 @@ Use it when a hosted coding assistant is too boxed-in, a workflow tool is too ri
 PawFlow gives agents a real operating surface without handing your workspace to a vendor-controlled agent cloud.
 
 - **Relay-backed tools**: read, edit, grep, run commands, browse, control desktops, generate media, and inspect projects through explicit relay routes.
+- **Service Tunnels**: reach a relay-approved TCP service from another relay through a loopback-only listener, with owner-scoped records, short-lived signed grants, and FRPS Login/NewProxy authorization.
 - **Purpose-built context**: conversations, memory, knowledge graphs, agent
   diaries, relay-scoped project graphs and wikis, durable todo state, expiring
   scratchpads, files, and buckets each keep their own scope and lifetime across

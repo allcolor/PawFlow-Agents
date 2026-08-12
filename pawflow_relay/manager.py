@@ -216,6 +216,7 @@ class WorkspaceShare:
     allow_exec: bool = True
     allow_remote_desktop: bool = True
     allow_local: bool = False
+    allow_service_tunnels: bool = False
     relay_id: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -309,7 +310,8 @@ def get_workspace(name: str) -> Dict[str, Any]:
 def add_workspace(name: str, server: str, path: str, mode: str = "rw",
                   docker_image: str = "", allow_local: bool = False,
                   allow_exec: bool = True,
-                  allow_remote_desktop: bool = True) -> Dict[str, Any]:
+                  allow_remote_desktop: bool = True,
+                  allow_service_tunnels: bool = False) -> Dict[str, Any]:
     if not name:
         raise ValueError("Workspace name is required")
     get_server(server)
@@ -332,6 +334,7 @@ def add_workspace(name: str, server: str, path: str, mode: str = "rw",
             allow_remote_desktop if allow_remote_desktop is not None
             else previous.get("allow_remote_desktop", True)),
         allow_local=bool(allow_local),
+        allow_service_tunnels=bool(allow_service_tunnels),
         relay_id=relay_id,
         created_at=previous.get("created_at", now),
         updated_at=now,
@@ -410,6 +413,7 @@ def start_workspace(name: str):
         allow_exec=bool(share.get("allow_exec", True)),
         allow_remote_desktop=bool(share.get("allow_remote_desktop", True)),
         allow_local=bool(share.get("allow_local", False)),
+        allow_service_tunnels=bool(share.get("allow_service_tunnels", False)),
         read_only=(share.get("mode") == "ro"),
     )
     with _workspace_runtime_lock(name, relay.relay_id):

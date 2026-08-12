@@ -36,6 +36,7 @@ class RelayThread(_RelayDockerMixin, _RelayHostHelperMixin):
                  allow_exec: bool = True,
                  allow_remote_desktop: bool = True,
                  allow_local: bool = False,
+                 allow_service_tunnels: bool = False,
                  on_token_refresh=None,
                  log_file: str = "",
                  relay_id: str = "",
@@ -53,6 +54,7 @@ class RelayThread(_RelayDockerMixin, _RelayHostHelperMixin):
         self.allow_exec = allow_exec
         self.allow_remote_desktop = allow_remote_desktop
         self.allow_local = allow_local
+        self.allow_service_tunnels = allow_service_tunnels
         self.read_only = read_only
         self.relay_id = relay_id or generate_relay_id(username, self.directory)
         self.port = 0

@@ -50,6 +50,7 @@
 | [Deployment](deployment.md) | Local, Docker, sidecar, and production deployment |
 | [Docker](docker.md) | Containerization, relay Docker mode, desktop audio notes |
 | [Relay Client](relay_client.md) | Standalone client relay CLI/Desktop contract |
+| [Service Tunnels](service_tunnels.md) | Relay-approved loopback TCP tunnels, FRP deployment, security, and troubleshooting |
 | [Relay Image Profiles](relay_images.md) | Server full relay image and configurable client relay image profiles |
 | [Security Model](security_model.md) | Trust boundaries, relay risk, desktop/VNC, provider egress, production checklist |
 | [Observability](OBSERVABILITY.md) | Session correlation in logs (always on) and optional OpenTelemetry tracing |

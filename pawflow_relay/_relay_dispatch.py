@@ -53,6 +53,7 @@ from pawflow_relay._relay_actions import (
     script_hash as _act_script_hash,
     update_scripts as _act_update_scripts,
 )
+from pawflow_relay import service_tunnels as _service_tunnels
 
 # Actions refused in readonly mode (mirrors the relay HTTP write set).
 _WRITE_ACTIONS = frozenset({
@@ -83,6 +84,7 @@ class DispatchCtx:
     allow_local: bool
     allow_local_screen: bool
     allow_automation: bool
+    allow_service_tunnels: bool = False
 
 
 def _forward(ctx, msg):
@@ -249,6 +251,16 @@ def _h_update_scripts(ctx, msg, on_output=None):
     return _act_update_scripts(msg)
 
 
+def _h_service_tunnel(ctx, msg, on_output=None):
+    if not ctx.allow_service_tunnels:
+        return {"ok": False, "error": "Service tunnels are disabled on this relay"}
+    try:
+        return {"ok": True, "data": _service_tunnels.handle_action(
+            str(msg.get("action") or ""), msg)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 _DISPATCH = {
     "open_terminal": _h_open_terminal,
     "close_terminal": _h_close_terminal,
@@ -272,6 +284,12 @@ _DISPATCH = {
     "desktop_audio_close": _h_audio_stream_close,
     "script_hash": _h_script_hash,
     "update_scripts": _h_update_scripts,
+    "service_tunnel_catalog": _h_service_tunnel,
+    "service_tunnel_catalog_save": _h_service_tunnel,
+    "service_tunnel_catalog_delete": _h_service_tunnel,
+    "service_tunnel_apply": _h_service_tunnel,
+    "service_tunnel_stop": _h_service_tunnel,
+    "service_tunnel_status": _h_service_tunnel,
 }
 
 
@@ -324,6 +342,14 @@ def execute_command(ctx, msg, on_output=None):
         _key_ops = None
     if _key_ops is not None and _key_ops.is_key_action(action):
         return _key_ops.handle(action, msg)
+
+    if action.startswith("service_tunnel_") and not ctx.allow_service_tunnels:
+        return {"ok": False, "error": "Service tunnels are disabled on this relay"}
+
+    if action.startswith("service_tunnel_") and msg.get("local", False):
+        if not os.environ.get("PAWFLOW_HOST_HELPER", ""):
+            return {"ok": False, "error": "Host service tunnels require Relay Desktop host forwarding"}
+        return _forward(ctx, msg)
 
     if msg.get("local", False):
         if not ctx.allow_local:

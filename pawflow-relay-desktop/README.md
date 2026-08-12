@@ -56,7 +56,9 @@ shim required by the Docker relay. For a copyable dev bundle, run:
 npm run package:portable
 ```
 
-This writes `dist/pawflow-relay-desktop/`. Copy that directory to a Windows-local
+This writes `dist/pawflow-relay-desktop/`. The preparation step also downloads
+the platform FRP client used by Service Tunnels and verifies its official
+SHA-256 digest before placing it in `runtime/bin/`. Copy that directory to a Windows-local
 path, then run:
 
 ```powershell
@@ -70,6 +72,7 @@ runtime/tools/
 runtime/pawflow_relay/
 runtime/pawflow_cli/
 runtime/docker/pawflow_sdk/pawflow.py
+runtime/bin/frpc[.exe]
 ```
 
 The app calls the Python module from `runtime/` first, then falls back to the

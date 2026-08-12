@@ -402,6 +402,9 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
     _sock_owned_by_bg = [False]
     try:
         _fwd_msg = {k: v for k, v in msg.items() if k not in ("type", "request_id")}
+        _host_token = os.environ.get("PAWFLOW_HOST_HELPER_TOKEN", "")
+        if _host_token:
+            _fwd_msg["_host_helper_token"] = _host_token
         req = json.dumps(_fwd_msg) + "\n"
         sock.sendall(req.encode("utf-8"))
 

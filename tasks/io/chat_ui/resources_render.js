@@ -327,6 +327,17 @@ async function _renderResourcesData(data) {
       liveHtml += _sectionFooter();
     }
 
+    liveHtml += _sectionHeader(t('serviceTunnels'), '_service_tunnels', {
+      createOnclick: 'showServiceTunnelsDialog()',
+      createTitle: t('serviceTunnelsManage'),
+      refreshOnclick: 'event.stopPropagation();showServiceTunnelsDialog()',
+      refreshTitle: t('serviceTunnelRefresh'),
+    });
+    liveHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);cursor:pointer;"'
+      + ' onclick="showServiceTunnelsDialog()">'
+      + escapeHtml(t('serviceTunnelsDescription')) + '</div>';
+    liveHtml += _sectionFooter();
+
     // Filesystem bindings: rclone is mounted inside linked relays; native API
     // filesystems are made available directly to tools.
     {

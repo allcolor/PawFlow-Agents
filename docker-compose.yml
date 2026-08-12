@@ -13,6 +13,12 @@ services:
       # Enables the realtime worker bootstrap endpoint when set (must match
       # the livekit-worker service value).
       - PAWFLOW_REALTIME_WORKER_SECRET=${PAWFLOW_REALTIME_WORKER_SECRET:-}
+      # Optional Service Tunnels control plane. The signing key also enables
+      # the private FRPS authorization endpoint on the main listener.
+      - PAWFLOW_FRPS_SERVER=${PAWFLOW_FRPS_SERVER:-}
+      - PAWFLOW_FRPS_PORT=${PAWFLOW_FRPS_PORT:-7000}
+      - PAWFLOW_FRPS_TOKEN=${PAWFLOW_FRPS_TOKEN:-}
+      - PAWFLOW_SERVICE_TUNNEL_SIGNING_KEY=${PAWFLOW_SERVICE_TUNNEL_SIGNING_KEY:-}
     volumes:
       - ./flows:/app/flows
       - ./config:/app/config
@@ -47,6 +53,27 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Optional FRP rendezvous for user-scoped, relay-approved Service Tunnels.
+  # It exposes only FRP transport ports; its dashboard remains disabled.
+  frps:
+    image: fatedier/frps:v0.70.1
+    command: ["-c", "/etc/frp/frps.toml"]
+    environment:
+      - PAWFLOW_FRPS_PORT=${PAWFLOW_FRPS_PORT:-7000}
+      - PAWFLOW_FRPS_TOKEN=${PAWFLOW_FRPS_TOKEN:-}
+      - PAWFLOW_FRP_PLUGIN_ADDR=pawflow:${PAWFLOW_PORT}
+    ports:
+      - "${PAWFLOW_FRPS_PORT:-7000}:${PAWFLOW_FRPS_PORT:-7000}/tcp"
+      - "${PAWFLOW_FRPS_PORT:-7000}:${PAWFLOW_FRPS_PORT:-7000}/udp"
+    volumes:
+      - ./docker/frps.toml:/etc/frp/frps.toml:ro
+    depends_on:
+      pawflow:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - service-tunnels
 
   # Optional: relay container for sandboxed tool execution
   relay:

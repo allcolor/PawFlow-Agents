@@ -62,6 +62,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - **Encryption at rest (opt-in)**: per-conversation passphrase encryption of message content, thinking, and tool I/O (and conv-scoped relay workspaces via CryFS); keys live in RAM only, so a stopped server leaves only ciphertext on disk. Off by default and transparent to conversations that don't use it.
 - **Multi-provider agents**: mix Codex interactive, Claude Code interactive, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation. The old Codex app-server and Claude Code `-p` agent transports remain available only for legacy configurations.
 - **Native CLI engines, not API reimplementations**: subscription providers run the real interactive Codex, Claude Code, Antigravity, and Gemini CLI engines per conversation — native harness and reasoning preserved — with native Codex plugins (`codex_plugins`) and Claude Code plugin marketplaces (`claude_plugins`/`claude_marketplaces`) declarable per LLM service.
+- **External agent interoperability**: publish a conversation as an authenticated MCP or A2A endpoint, call remote A2A agents, or attach Claude Code, Codex, Agy/Gemini, OpenCode, JCode, Pi, or Hermes as a first-class external MCP agent.
 - **Delegated vision**: pair a strong text-only reasoning model with a separate vision-enabled LLM so uploads, screenshots, and desktop views become detailed descriptions with UI coordinates before the reasoning turn. Images sent to a text-only model are never silently dropped: any model — including free-tier ones — gets vision, and clicks stay accurate because coordinates come from the vision model, verified locally by the pre-click screen guard.
 - **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, API clients, or channel integrations.
 - **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
@@ -71,6 +72,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 
 - Agentic coding sessions against a linked workspace, with persistent context and auditable tool output.
 - Multi-agent operations where planners, coders, reviewers, researchers, and verifiers work in the same conversation.
+- MCP and A2A gateways that expose an existing PawFlow conversation to external clients or connect remote agents to the same durable runtime.
 - Browser and desktop automation for workflows that do not have clean APIs.
 - Vision-guided desktop agents built from a text-only reasoning model and an independently selected vision model.
 - Realtime voice conversations with your agents — speech-to-speech sessions (OpenAI Realtime or Gemini Live) with live captions, barge-in, tool use, and Telegram voice-note replies, persisted as normal conversation history.
@@ -367,6 +369,11 @@ keeping API and gateway keys in one
 private local profile. See the [MCP client installation guide](docs/MCP_CLIENT_INSTALLER.md)
 and [Published Conversation MCP Servers](docs/PUBLISHED_MCP_SERVER.md).
 
+An authenticated MCP client can also become a first-class `external_mcp`
+conversation agent. Its terminal receives user, delegate, and shared-context A2A
+turns while PawFlow keeps the conversation, permissions, relay tools, and result
+routing durable.
+
 ### Agent-to-Agent (A2A)
 
 Publish one or more conversation agents as authenticated A2A 1.0 HTTP+JSON
@@ -519,9 +526,11 @@ Key upcoming areas:
 - New media service providers
 - Git worktree isolation for parallel agents
 - Mobile client (PWA)
-- MCP elicitation and PawFlow as an MCP server
+- MCP elicitation
+- x402 payment policies for published endpoints and outbound calls
 - Filesystem hooks
-- Full cost tracking dashboard
+- Full AWS-native remote execution mode
+- First-class Discord, Slack, and WhatsApp conversation clients
 
 ## Contributing
 

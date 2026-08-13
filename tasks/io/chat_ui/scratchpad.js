@@ -1,5 +1,5 @@
 // Searchable TTL-bound scratchpad UI for the selected conversation agent.
-let _spState = { notes: [], current: null, query: '' };
+let _spState = { notes: [], current: null, query: '', agent: '' };
 let _spSearchTimer = null;
 
 function closeScratchpadOverlay() {
@@ -12,8 +12,8 @@ function cmdShowScratchpad() {
 }
 
 function showScratchpadOverlay() {
-  if (!conversationId || !selectedAgent) {
-    addMsg('error', t('noAgentSelectedSelectFirst'));
+  if (!conversationId) {
+    addMsg('error', t('noConv'));
     return;
   }
   closeScratchpadOverlay();
@@ -22,7 +22,10 @@ function showScratchpadOverlay() {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;z-index:9999';
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:16px;width:min(980px,94vw);height:min(700px,86vh);display:flex;flex-direction:column">'
     + '<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">Scratchpad: ' + escapeHtml(selectedAgent) + '</h3>'
+    + '<h3 id="spTitle" style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('scratchpad')) + '</h3>'
+    + '<label style="color:#888;font-size:11px">' + escapeHtml(t('agent'))
+    + ' <select id="spAgent" onchange="spAgentChanged()" style="background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:6px;padding:3px 7px"><option>'
+    + escapeHtml(t('loadingAgents')) + '</option></select></label>'
     + '<button type="button" onclick="closeScratchpadOverlay();showProjectGraphOverlay()" class="btn">Graph</button>'
     + '<button type="button" onclick="closeScratchpadOverlay();showProjectWikiOverlay()" class="btn">Wiki</button>'
     + '<button type="button" onclick="spEditNote()" class="btn">New note</button>'
@@ -38,8 +41,38 @@ function showScratchpadOverlay() {
     + '<div style="color:#777;text-align:center;padding:30px">Select a note or create one.</div>'
     + '</main></div></div>';
   document.body.appendChild(overlay);
-  _spState = { notes: [], current: null, query: '' };
-  spLoadNotes('');
+  _spState = { notes: [], current: null, query: '', agent: '' };
+  _cognitiveLoadResources(function(data) {
+    const agents = _cognitiveAgentNames(data);
+    const select = document.getElementById('spAgent');
+    if (!agents.length) {
+      select.innerHTML = '<option value="">' + escapeHtml(t('noAgents')) + '</option>';
+      _spError(t('noAgents'));
+      return;
+    }
+    _spState.agent = agents.indexOf(selectedAgent) >= 0 ? selectedAgent : agents[0];
+    select.innerHTML = agents.map(function(agent) {
+      return '<option value="' + escapeHtml(agent) + '"' + (agent === _spState.agent ? ' selected' : '')
+        + '>' + escapeHtml(agent) + '</option>';
+    }).join('');
+    _spUpdateTitle();
+    spLoadNotes('');
+  }, _spError);
+}
+
+function _spUpdateTitle() {
+  const title = document.getElementById('spTitle');
+  if (title) title.textContent = t('scratchpad') + ': ' + (_spState.agent || '?');
+}
+
+function spAgentChanged() {
+  _spState.agent = document.getElementById('spAgent').value;
+  _spState.current = null;
+  _spUpdateTitle();
+  const content = document.getElementById('spContent');
+  if (content) content.innerHTML = '<div style="color:#777;text-align:center;padding:30px">'
+    + escapeHtml(t('loadingAgentData')) + '</div>';
+  spLoadNotes(_spState.query);
 }
 
 function _spDate(seconds) {
@@ -65,7 +98,7 @@ function spScheduleSearch(value) {
 function spLoadNotes(query) {
   const list = document.getElementById('spNotes');
   if (list) list.innerHTML = '<div style="color:#777;padding:10px">Loading...</div>';
-  action$('scratchpad_list', { query: query || '', limit: 100 }).subscribe({
+  action$('scratchpad_list', { agent_name: _spState.agent, query: query || '', limit: 100 }).subscribe({
     next: function(data) {
       if (!data || data.error) { _spError((data && data.error) || 'Cannot load scratchpad'); return; }
       _spState.notes = Array.isArray(data.notes) ? data.notes : [];
@@ -105,7 +138,7 @@ function spOpenNote(noteId) {
     spRenderNote(cached);
     return;
   }
-  action$('scratchpad_get', { note_id: noteId }).subscribe({
+  action$('scratchpad_get', { agent_name: _spState.agent, note_id: noteId }).subscribe({
     next: function(data) {
       if (!data || data.error) { _spError((data && data.error) || 'Cannot load note'); return; }
       _spState.current = data;
@@ -159,6 +192,7 @@ function spEditNote() {
 function spSaveNote(event) {
   event.preventDefault();
   const payload = {
+    agent_name: _spState.agent,
     note_id: document.getElementById('spNoteId').value,
     topic: document.getElementById('spTopic').value.trim(),
     content: document.getElementById('spBody').value,
@@ -178,7 +212,7 @@ function spSaveNote(event) {
 
 function spDeleteNote() {
   if (!_spState.current || !confirm('Delete scratchpad note "' + _spState.current.topic + '"?')) return;
-  action$('scratchpad_delete', { note_id: _spState.current.id }).subscribe({
+  action$('scratchpad_delete', { agent_name: _spState.agent, note_id: _spState.current.id }).subscribe({
     next: function(data) {
       if (!data || data.error) { _spError((data && data.error) || 'Cannot delete note'); return; }
       _spState.current = null;
@@ -191,8 +225,8 @@ function spDeleteNote() {
 }
 
 function spClear() {
-  if (!confirm('Delete every active scratchpad note for ' + selectedAgent + '?')) return;
-  action$('scratchpad_clear', {}).subscribe({
+  if (!confirm('Delete every active scratchpad note for ' + _spState.agent + '?')) return;
+  action$('scratchpad_clear', { agent_name: _spState.agent }).subscribe({
     next: function(data) {
       if (!data || data.error) { _spError((data && data.error) || 'Cannot clear scratchpad'); return; }
       _spState.current = null;

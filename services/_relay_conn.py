@@ -203,7 +203,12 @@ class _RelayConnMixin:
                 conn for conn in self._relay_pool
                 if not getattr(conn.get("writer"), "_closed", False)
             ]
-            return len(self._relay_pool) > 0
+            connected = len(self._relay_pool) > 0
+            if connected:
+                self._relay_available.set()
+            else:
+                self._relay_available.clear()
+            return connected
 
     def disconnect(self):
         if self._connection and getattr(self, '_route_path', ''):
@@ -687,6 +692,7 @@ class _RelayConnMixin:
                                       "loop": loop, "send_lock": send_lock,
                                       "tasks": relay_tasks})
             count = len(self._relay_pool)
+            self._relay_available.set()
         # Registration is the definitive recovery signal. Clear any grace
         # started by transport retries before they can replace this connection.
         self._managed_disconnected_at = 0.0
@@ -764,6 +770,8 @@ class _RelayConnMixin:
                 removed = list(self._relay_pool)
                 self._relay_pool.clear()
             alive = len(self._relay_pool)
+            if alive == 0:
+                self._relay_available.clear()
         removed_readers = {conn.get("reader") for conn in removed}
         for conn in removed:
             for task in list(conn.get("tasks") or ()):

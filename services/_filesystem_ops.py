@@ -10,7 +10,6 @@ import base64
 import json
 import logging
 import threading
-import time
 import uuid
 from typing import Any, Dict, List
 
@@ -103,7 +102,8 @@ class _RelayFsOpsMixin:
                 if attempt >= attempts - 1:
                     break
                 logger.warning(
-                    "Relay request %s on %s lost connection; retrying in %.0fs "
+                    "Relay request %s on %s lost connection; waiting up to %.0fs "
+                    "for reconnection "
                     "(attempt %d/%d): %s",
                     action, self._service_id, _RELAY_RETRY_DELAY_SECONDS,
                     attempt + 2, attempts, exc)
@@ -114,7 +114,7 @@ class _RelayFsOpsMixin:
                 # No-op unless this service owns a container and that container
                 # is really gone.
                 self.ensure_managed_relay_alive()
-                time.sleep(_RELAY_RETRY_DELAY_SECONDS)
+                self._relay_available.wait(_RELAY_RETRY_DELAY_SECONDS)
         if last_exc is not None:
             raise Exception(
                 f"{_RELAY_RETRY_EXHAUSTED_MARKER} for {action}: {last_exc}")
@@ -129,6 +129,9 @@ class _RelayFsOpsMixin:
         with self._relay_pool_lock:
             pool = self._relay_pool[:]
         if not pool:
+            if self.config.get("server_managed"):
+                raise Exception(
+                    f"Managed relay '{self._service_id}' is reconnecting.")
             raise Exception(
                 f"Relay not connected to '{self._service_id}'. "
                 f"Start: python tools/pawflow_relay.py "

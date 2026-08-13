@@ -127,6 +127,30 @@ def test_hot_metadata_write_is_best_effort():
 
 def test_cli_session_cleanup_does_not_block_startup_ready_path():
     assert "def _cleanup_cli_sessions_async" in _CONTINUOUS_EXECUTOR
+    assert "def _start_cli_session_cleanup_once" in _CONTINUOUS_EXECUTOR
+    assert "_cli_session_cleanup_lock" in _CONTINUOUS_EXECUTOR
     assert "name=\"cli-session-cleanup\"" in _CONTINUOUS_EXECUTOR
     assert "daemon=True" in _CONTINUOUS_EXECUTOR
     assert "executor CLI session cleanup async" in _CONTINUOUS_EXECUTOR
+
+
+def test_cli_session_cleanup_starts_only_once_per_process(monkeypatch):
+    import engine.continuous_executor as module
+
+    started = []
+
+    class _Thread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def start(self):
+            started.append(self.kwargs)
+
+    monkeypatch.setattr(module, "_cli_session_cleanup_started", False)
+    monkeypatch.setattr(module.threading, "Thread", _Thread)
+
+    assert module._start_cli_session_cleanup_once() is True
+    assert module._start_cli_session_cleanup_once() is False
+    assert len(started) == 1
+    assert started[0]["name"] == "cli-session-cleanup"
+    assert started[0]["daemon"] is True

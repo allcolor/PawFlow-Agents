@@ -467,63 +467,79 @@ class LLMAntigravityInteractiveMixin(ClaudeCodeSessionMixin):
         # clones a client that may carry the marker.
         _ephemeral = bool(call_ephemeral_stream if call_ephemeral_stream is not None
                           else getattr(self, "_ephemeral_stream", False))
+        pool_conversation_id = conversation_id
+        if _ephemeral:
+            pool_conversation_id = (
+                f"{conversation_id}__ephemeral_{uuid.uuid4().hex}")
         state = pool.ensure_started(
-            self, model or "", user_id, conversation_id, agent_name,
+            self, model or "", user_id, pool_conversation_id, agent_name,
             before_launch=None if _ephemeral else (
                 lambda: self._cli_require_cold_context(
                     "antigravity-interactive")))
-        pool.touch(state)
-        # Case 2, told by the pool -- see the CCI provider for the reasoning.
-        if not _ephemeral and getattr(state, "initial_context_loaded", False):
-            self._cli_require_delta_context("antigravity-interactive")
-        self._agi_active_user_id = user_id
-        self._agi_active_conversation_id = conversation_id
-        self._agi_active_agent_name = agent_name
-        self._agi_active_service_id = getattr(state, "service_id", "") or getattr(self, "_agent_service", "") or ""
-        prompt = self._agi_prompt(
-            messages, tools, state.workdir, state.container_workdir,
-            user_id, conversation_id,
-            initial_context=not state.initial_context_loaded,
-            agent_name=agent_name)
-        offset = self._agi_log_offset(state.log_path)
-        logger.info(
-            "[antigravity-interactive] prompt submit conv=%s agent=%s service=%s initial=%s prompt_bytes=%d log_offset=%d log=%s",
-            conversation_id[:8], agent_name, self._agi_active_service_id,
-            not state.initial_context_loaded, len(prompt.encode("utf-8")),
-            offset, state.log_path)
-        pool.suspend_manual_ingest(state)
         try:
-            if not pool.send_text(state, prompt):
-                detail = getattr(state, "last_error", "") or "unknown tmux error"
-                raise LLMClientError(
-                    "Failed to paste prompt into Antigravity interactive tmux session: "
-                    f"{detail}")
-            state.initial_context_loaded = True
-            coord = _AntigravityTurnCoordinator(
-                state.log_path, offset=offset, callback=callback,
-                thinking_callback=thinking_callback, block_callback=block_callback,
-                turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
-                usage_callback=self._agi_usage_observer(
-                    conversation_id, agent_name),
-                emitted_tool_use_ids=state.emitted_tool_use_ids,
-                emitted_tool_result_ids=state.emitted_tool_result_ids,
-                interrupted_callback=lambda: pool.is_interrupted_prompt(state))
-            response = coord.run(getattr(self, "_abort", None))
-            # The observer normalizes Gemini's promptTokenCount to
-            # input_tokens: that is the window's real occupancy, and the only
-            # number PawFlow can trust here -- the session holds Antigravity's
-            # own prompt and history on top of what PawFlow can enumerate.
-            self.record_observed_wire_usage(
-                getattr(coord, "usage", None), conversation_id, agent_name)
+            pool.touch(state)
+            if (not _ephemeral
+                    and getattr(state, "initial_context_loaded", False)):
+                self._cli_require_delta_context("antigravity-interactive")
+            self._agi_active_user_id = user_id
+            self._agi_active_conversation_id = conversation_id
+            self._agi_active_agent_name = agent_name
+            self._agi_active_service_id = (
+                getattr(state, "service_id", "")
+                or getattr(self, "_agent_service", "") or "")
+            prompt = self._agi_prompt(
+                messages, tools, state.workdir, state.container_workdir,
+                user_id, conversation_id,
+                initial_context=not state.initial_context_loaded,
+                agent_name=agent_name)
+            offset = self._agi_log_offset(state.log_path)
+            logger.info(
+                "[antigravity-interactive] prompt submit conv=%s agent=%s "
+                "service=%s initial=%s prompt_bytes=%d log_offset=%d log=%s",
+                conversation_id[:8], agent_name,
+                self._agi_active_service_id,
+                not state.initial_context_loaded,
+                len(prompt.encode("utf-8")), offset, state.log_path)
+            pool.suspend_manual_ingest(state)
+            try:
+                if not pool.send_text(state, prompt):
+                    detail = (
+                        getattr(state, "last_error", "")
+                        or "unknown tmux error")
+                    raise LLMClientError(
+                        "Failed to paste prompt into Antigravity interactive "
+                        f"tmux session: {detail}")
+                state.initial_context_loaded = True
+                coord = _AntigravityTurnCoordinator(
+                    state.log_path, offset=offset, callback=callback,
+                    thinking_callback=thinking_callback,
+                    block_callback=block_callback,
+                    turn_callback=turn_callback,
+                    touch_callback=lambda: pool.touch(state),
+                    usage_callback=self._agi_usage_observer(
+                        conversation_id, agent_name),
+                    emitted_tool_use_ids=state.emitted_tool_use_ids,
+                    emitted_tool_result_ids=state.emitted_tool_result_ids,
+                    interrupted_callback=(
+                        lambda: pool.is_interrupted_prompt(state)))
+                response = coord.run(getattr(self, "_abort", None))
+                self.record_observed_wire_usage(
+                    getattr(coord, "usage", None),
+                    conversation_id, agent_name)
+            finally:
+                pool.mark_submit_complete(state)
+                pool.resume_manual_ingest(state)
+            response.model = model or self.default_model
+            logger.info(
+                "[antigravity-interactive] response complete conv=%s "
+                "agent=%s text=%d thinking=%d tokens_in=%d tokens_out=%d",
+                conversation_id[:8], agent_name,
+                len(response.content or ""), len(response.thinking or ""),
+                response.tokens_in, response.tokens_out)
+            return response
         finally:
-            pool.mark_submit_complete(state)
-            pool.resume_manual_ingest(state)
-        response.model = model or self.default_model
-        logger.info(
-            "[antigravity-interactive] response complete conv=%s agent=%s text=%d thinking=%d tokens_in=%d tokens_out=%d",
-            conversation_id[:8], agent_name, len(response.content or ""),
-            len(response.thinking or ""), response.tokens_in, response.tokens_out)
-        return response
+            if _ephemeral:
+                pool.destroy_ephemeral(state)
 
     def _agi_prompt(self, messages, tools, workdir: str, container_workdir: str,
                     user_id: str, conversation_id: str,

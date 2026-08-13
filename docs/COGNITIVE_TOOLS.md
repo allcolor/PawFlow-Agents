@@ -92,7 +92,7 @@ Memories are extracted automatically in two situations:
 
 1. **Periodic auto-save** -- Every ~15 user messages, the system extracts key facts from recent conversation text using the `summarizer_service` LLM. The counter is tracked per-agent via conversation extras (`_auto_save_count:{agent}`).
 
-2. **Post-compaction extraction** -- When a conversation is compacted, the bucket or rollup summary is fed to `auto_extract_memories()`. This path is intentionally conservative: it stores at most two durable memories per extraction, rejects ephemeral/current-task state, and asks the LLM for `importance`, `durability`, `scope`, and `ttl_days` metadata. Extracted memories are tagged `["auto-extracted", "compaction"]`.
+2. **Post-compaction extraction** -- When a conversation is compacted, the bucket or rollup summary is fed to `auto_extract_memories()`. The operation resolves the effective `summarizer_service` itself and fails closed when that service or its configured LLM is unavailable; callers cannot inject the active agent client. This path is intentionally conservative: it stores at most two durable memories per extraction, rejects ephemeral/current-task state, and asks the LLM for `importance`, `durability`, `scope`, and `ttl_days` metadata. Extracted memories are tagged `["auto-extracted", "compaction"]`.
 
 Compaction auto-extract does not write global permanent memories by default. Only durable high/critical user preferences or advice may become global. Project/debug facts are stored in conversation scope with a TTL unless explicitly classified as durable. Existing stale auto-extracted entries can be marked ended with `scripts/memory_gc.py`; ended memories remain in the raw JSON audit trail but are ignored by normal recall and the memory panel.
 
@@ -314,6 +314,11 @@ The project wiki is a persistent set of generated Markdown pages for one
 SHA-256 source metadata, generated pages, an index, an append-only activity log,
 and exact source provenance for every factual page.
 
+Automatic wiki maintenance resolves the conversation's effective
+`summarizer_service` for every job, then uses only the LLM service configured by
+that summarizer. It never reuses the active agent's LLM client and does not fall
+back to another LLM when the summarizer binding is unavailable.
+
 Context preparation and successful relay mutations schedule the same coalesced
 background worker as the Project Graph. The worker scans source hashes, selects
 one bounded batch of changed high-signal files, and makes one ephemeral LLM call.
@@ -349,18 +354,22 @@ against live source files.
 
 ### 5.1 Webchat Panels and Scratchpad
 
-The webchat **Agent tools** menu exposes three connected project panels. The same
-panels can be opened with `/graph`, `/wiki`, and `/scratchpad`.
+The webchat **Agent tools** menu exposes the cognitive panels. Project Graph,
+Project Wiki, and Scratchpad can also be opened with `/graph`, `/wiki`, and
+`/scratchpad`; Diary and Memory are available from the same menu and their slash
+commands.
 
 | Panel | Available actions |
 |---|---|
-| **Project Graph** | Build or refresh the derived AST index, view its report, search nodes and edges, and inspect a node's source location and neighbors. The graph is read-only because source code is its source of truth. |
-| **Project Wiki** | List and search pages, render Markdown, create or edit a page, delete a page, refresh source metadata, and run lint checks. |
-| **Scratchpad** | List and search working notes, create or edit a note with tags and a required TTL, delete one note, or clear the selected conversation agent's notes. |
+| **Project Graph** | Select an explicitly linked relay, automatically load its existing report, build or refresh the derived AST index, search nodes and edges, and inspect a node's source location and neighbors. Stored reports remain readable while that relay is disconnected. The graph is read-only because source code is its source of truth. |
+| **Project Wiki** | Select an explicitly linked relay, list and search pages, render Markdown, create or edit a page, delete a page, refresh source metadata, and run lint checks. |
+| **Scratchpad** | Select a conversation agent, list and search working notes, create or edit a note with tags and a required TTL, delete one note, or clear that agent's notes. |
+| **Diary** | Select a conversation agent, read structured diary entries, filter them by type, and add an entry. |
+| **Memory** | Select all agents, global memory, or a specific conversation agent for filtering and explicit add/edit targeting. |
 
-Project Graph and Project Wiki follow the active relay project. Scratchpad notes
-are isolated by user, conversation, and selected agent, and expired notes are
-removed from normal reads automatically.
+Project Graph and Project Wiki always send the relay selected in the panel.
+Scratchpad notes are isolated by user, conversation, and the agent selected in
+the panel, and expired notes are removed from normal reads automatically.
 
 ---
 

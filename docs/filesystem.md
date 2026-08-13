@@ -86,9 +86,11 @@ python tools/pawflow_relay.py --port 9877 --dir /home/user/project --secret myse
 /service install wsFilesystem myfiles host=localhost,port=9877,secret=mysecret,mode=readwrite
 ```
 
-Relay reconnect handling is connection-scoped. When a relay WebSocket dies, PawFlow cancels only the pending requests sent through that socket; requests already sent through a newer reconnect stay alive. If the pool drops to zero, all pending relay requests are failed immediately so UI calls, context sync, and tool requests cannot accumulate blocked threads during network flaps.
+Relay reconnect handling is connection-scoped. When a relay WebSocket dies, PawFlow cancels only the pending requests sent through that socket; requests already sent through a newer reconnect stay alive. If the pool drops to zero, all pending relay requests are failed immediately so UI calls, context sync, and tool requests cannot accumulate blocked threads during network flaps. Retriable requests wait on one shared pool-availability event for at most five seconds; a new relay registration wakes every waiter immediately, while the last disconnect clears the signal. Managed relays report that they are reconnecting instead of displaying standalone relay CLI instructions.
 
 On Windows/WSL2 network changes, a relay socket may surface the network failure through the reader before the next payload frame arrives. The relay receiver treats a stored reader exception as a disconnect, not as an idle keepalive timeout; this prevents ping/retry hot loops and releases the relay session cleanly.
+
+For TLS relay connections, PawFlow serializes reads and writes on the accepted `SSLSocket`. The server bridge uses a short bounded receive poll so server-initiated commands are not starved while preventing concurrent TLS operations from corrupting or closing the connection during cold-start synchronization and chunked filesystem traffic.
 
 When a Docker relay is started with `--allow-local`, `local=true` operations are forwarded to the host helper. For Windows hosts whose project root is a UNC path such as `\\wsl$\...`, cmd-based execution uses `pushd`/`popd` instead of setting the process current directory to the UNC path, because `cmd.exe` cannot run with a UNC cwd.
 

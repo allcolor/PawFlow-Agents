@@ -503,7 +503,7 @@ class _PACPhase3Mixin:
             st._project_relay_id, st._pg, st._project_wiki = (
                 prepare_active_project_context(
                 st.user_id, st.conversation_id or "",
-                st._active_agent_name, llm_client=st.client))
+                st._active_agent_name))
         except Exception:
             logging.getLogger(__name__).debug(
                 "Failed to prepare active project context", exc_info=True)

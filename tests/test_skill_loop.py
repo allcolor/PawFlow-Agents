@@ -32,6 +32,12 @@ class _FakeClient:
         return MagicMock(content=json.dumps(self.payload))
 
 
+def _use_summarizer(monkeypatch, client):
+    monkeypatch.setattr(
+        "core.summarizer_bindings.resolve_llm_client",
+        lambda user_id, conversation_id: (client, 64000, "summarizer-llm"))
+
+
 @pytest.fixture()
 def mem_store():
     tmpdir = tempfile.mkdtemp()
@@ -53,15 +59,16 @@ def stats_file(tmp_path, monkeypatch):
 
 
 class TestSkillDraftProposal:
-    def test_stores_draft_memory(self, mem_store):
+    def test_stores_draft_memory(self, mem_store, monkeypatch):
         client = _FakeClient({"skill": {
             "name": "Restart Foo Daemon!",
             "description": "Restart the foo daemon after config edits",
             "steps": ["edit config", "run foo --reload", "check status"],
             "trigger": "foo config changed",
         }})
+        _use_summarizer(monkeypatch, client)
         outcome = propose_skill_draft_from_summary(
-            "u1", "long summary", llm_client=client, conversation_id="c1")
+            "u1", "long summary", conversation_id="c1")
         assert outcome == "created"
         entries = mem_store.list_all("u1")
         assert len(entries) == 1
@@ -72,25 +79,25 @@ class TestSkillDraftProposal:
         assert e.conversation_id == "c1"
         assert e.expires_at > time.time()
 
-    def test_null_skill_stores_nothing(self, mem_store):
+    def test_null_skill_stores_nothing(self, mem_store, monkeypatch):
         client = _FakeClient({"skill": None})
+        _use_summarizer(monkeypatch, client)
         outcome = propose_skill_draft_from_summary(
-            "u1", "summary", llm_client=client, conversation_id="c1")
+            "u1", "summary", conversation_id="c1")
         assert outcome == "rejected"
         assert mem_store.list_all("u1") == []
 
-    def test_duplicate_draft_not_stored_twice(self, mem_store):
+    def test_duplicate_draft_not_stored_twice(self, mem_store, monkeypatch):
         payload = {"skill": {
             "name": "one-trick",
             "description": "desc",
             "steps": ["a"],
         }}
+        _use_summarizer(monkeypatch, _FakeClient(payload))
         assert propose_skill_draft_from_summary(
-            "u1", "s", llm_client=_FakeClient(payload),
-            conversation_id="c1") == "created"
+            "u1", "s", conversation_id="c1") == "created"
         assert propose_skill_draft_from_summary(
-            "u1", "s2", llm_client=_FakeClient(payload),
-            conversation_id="c1") == "duplicate"
+            "u1", "s2", conversation_id="c1") == "duplicate"
         assert len(mem_store.list_all("u1")) == 1
 
     def test_cross_conversation_recurrence_auto_promotes(
@@ -108,12 +115,11 @@ class TestSkillDraftProposal:
             "steps": ["validate config", "restart service", "check health"],
             "trigger": "service configuration changed",
         }}
+        _use_summarizer(monkeypatch, _FakeClient(payload))
         assert propose_skill_draft_from_summary(
-            "u1", "first", llm_client=_FakeClient(payload),
-            conversation_id="c1") == "created"
+            "u1", "first", conversation_id="c1") == "created"
         assert propose_skill_draft_from_summary(
-            "u1", "second", llm_client=_FakeClient(payload),
-            conversation_id="c2") == "promoted"
+            "u1", "second", conversation_id="c2") == "promoted"
 
         learned = ResourceStore.instance().get(
             "skill", "restart-service", "u1")
@@ -146,64 +152,76 @@ class TestSkillDraftProposal:
             "steps": ["restore database", "start service", "verify records"],
             "trigger": "database recovery completed",
         }}
+        clients = iter((_FakeClient(first), _FakeClient(collision)))
+        monkeypatch.setattr(
+            "core.summarizer_bindings.resolve_llm_client",
+            lambda user_id, conversation_id: (
+                next(clients), 64000, "summarizer-llm"))
         assert propose_skill_draft_from_summary(
-            "u1", "first", llm_client=_FakeClient(first),
-            conversation_id="c1") == "created"
+            "u1", "first", conversation_id="c1") == "created"
 
         assert propose_skill_draft_from_summary(
-            "u1", "second", llm_client=_FakeClient(collision),
-            conversation_id="c2") == "duplicate"
+            "u1", "second", conversation_id="c2") == "duplicate"
         assert ResourceStore.instance().get(
             "skill", "restart-service", "u1") is None
         assert len(mem_store.list_all("u1")) == 1
         ResourceStore.reset()
         ScopedRepository.reset()
 
-    def test_no_client_is_noop(self, mem_store):
+    def test_no_client_is_noop(self, mem_store, monkeypatch):
+        monkeypatch.setattr(
+            "core.summarizer_bindings.resolve_llm_client",
+            lambda user_id, conversation_id: (None, 0, ""))
         assert propose_skill_draft_from_summary("u1", "s") == "skipped"
 
-    def test_invalid_payload_is_noop(self, mem_store):
+    def test_invalid_payload_is_noop(self, mem_store, monkeypatch):
         client = _FakeClient({"skill": {"name": "x"}})  # missing fields
+        _use_summarizer(monkeypatch, client)
         assert propose_skill_draft_from_summary(
-            "u1", "s", llm_client=client) == "invalid"
+            "u1", "s") == "invalid"
         assert mem_store.list_all("u1") == []
 
-    def test_steps_must_be_a_json_array(self, mem_store):
+    def test_steps_must_be_a_json_array(self, mem_store, monkeypatch):
         client = _FakeClient({"skill": {
             "name": "bad-steps", "description": "bad",
             "steps": "run tests",
         }})
+        _use_summarizer(monkeypatch, client)
         assert propose_skill_draft_from_summary(
-            "u1", "s", llm_client=client) == "invalid"
+            "u1", "s") == "invalid"
         assert mem_store.list_all("u1") == []
 
-    def test_failure_is_an_observable_error(self, mem_store, caplog):
+    def test_failure_is_an_observable_error(self, mem_store, caplog, monkeypatch):
         client = _FakeClient({"skill": None})
         client.complete = MagicMock(side_effect=RuntimeError("provider down"))
+        _use_summarizer(monkeypatch, client)
 
         assert propose_skill_draft_from_summary(
-            "u1", "summary", llm_client=client) == "error"
+            "u1", "summary") == "error"
         assert "proposal failed" in caplog.text
 
-    def test_prompt_does_not_treat_domain_overlap_as_coverage(self, mem_store):
+    def test_prompt_does_not_treat_domain_overlap_as_coverage(
+            self, mem_store, monkeypatch):
         client = _FakeClient({"skill": None})
+        _use_summarizer(monkeypatch, client)
         propose_skill_draft_from_summary(
-            "u1", "Repeatable PawFlow release procedure", llm_client=client)
+            "u1", "Repeatable PawFlow release procedure")
 
         prompt = client.calls[0]["messages"][0].content
         assert "same product or domain does not count as coverage" in prompt
         assert "release" in prompt
 
-    def test_draft_memory_has_round_trippable_structured_fields(self, mem_store):
+    def test_draft_memory_has_round_trippable_structured_fields(
+            self, mem_store, monkeypatch):
         client = _FakeClient({"skill": {
             "name": "release-pawflow",
             "description": "Release PawFlow safely",
             "steps": ["run all tests", "build twice", "push tag"],
             "trigger": "a PawFlow release is requested",
         }})
+        _use_summarizer(monkeypatch, client)
         assert propose_skill_draft_from_summary(
-            "u1", "summary", llm_client=client,
-            conversation_id="c1") == "created"
+            "u1", "summary", conversation_id="c1") == "created"
 
         draft = parse_skill_draft_memory(mem_store.list_all("u1")[0].text)
         assert draft == {
@@ -213,7 +231,8 @@ class TestSkillDraftProposal:
             "trigger": "a PawFlow release is requested",
         }
 
-    def test_list_memories_exposes_structured_skill_draft(self, mem_store):
+    def test_list_memories_exposes_structured_skill_draft(
+            self, mem_store, monkeypatch):
         from core import FlowFile
         from tasks.ai.actions.memory_prompts import _handle_memory_prompts
 
@@ -223,9 +242,9 @@ class TestSkillDraftProposal:
             "steps": ["run tests", "push tag"],
             "trigger": "release requested",
         }})
+        _use_summarizer(monkeypatch, client)
         propose_skill_draft_from_summary(
-            "u1", "summary", llm_client=client,
-            conversation_id="c1")
+            "u1", "summary", conversation_id="c1")
 
         result = _handle_memory_prompts(
             None, "list_memories", {}, None, "u1", FlowFile())
@@ -328,7 +347,8 @@ class TestLoadSkillFooter:
 
 
 class TestSkillCuratorTask:
-    def _run(self, monkeypatch, stats, skills, config=None):
+    def _run(self, monkeypatch, stats, skills, config=None,
+             summarizer_client=None):
         from core import FlowFile
         from tasks.system.skill_curator import SkillCuratorTask
         fake_rs = MagicMock()
@@ -338,6 +358,11 @@ class TestSkillCuratorTask:
             staticmethod(lambda: fake_rs))
         monkeypatch.setattr(
             "core.skill_stats.stats_for_user", lambda uid: stats)
+        monkeypatch.setattr(
+            "core.summarizer_bindings.resolve_llm_client",
+            lambda user_id, conversation_id: (
+                summarizer_client, 64000,
+                "summarizer-llm" if summarizer_client else ""))
         task = SkillCuratorTask(dict({"user_id": "u1"}, **(config or {})))
         ff = FlowFile()
         results = task.execute(ff)
@@ -365,6 +390,33 @@ class TestSkillCuratorTask:
         # Report-only contract: no LLM configured, actions default to review
         assert all(p["action"] == "review"
                    for p in report["proposed_actions"])
+
+    def test_review_uses_ephemeral_summarizer_call(self, monkeypatch):
+        client = _FakeClient([{
+            "name": "never", "action": "archive", "reason": "obsolete",
+        }])
+        report = self._run(
+            monkeypatch, {}, [{
+                "name": "never", "_scope": "user", "description": "d",
+            }], config={"conversation_id": "conv1"},
+            summarizer_client=client)
+
+        assert report["llm_reviewed"] is True
+        assert report["proposed_actions"][0]["action"] == "archive"
+        call = client.calls[0]
+        assert call["call_user_id"] == "u1"
+        assert call["call_conversation_id"].startswith(
+            "_skill_curator_conv1_")
+        assert call["call_ephemeral_stream"] is True
+
+    def test_schema_has_no_direct_provider_credentials(self):
+        from tasks.system.skill_curator import SkillCuratorTask
+        schema = SkillCuratorTask({"user_id": "u1"}).get_parameter_schema()
+        assert "conversation_id" in schema
+        assert "provider" not in schema
+        assert "api_key" not in schema
+        assert "base_url" not in schema
+        assert "model" not in schema
 
     def test_global_scope_excluded_by_default(self, monkeypatch):
         skills = [{"name": "g", "_scope": "global", "description": ""}]

@@ -2,6 +2,8 @@ import json
 from queue import Empty, Queue
 from types import SimpleNamespace
 
+import pytest
+
 from core._cci_pool_spawn import InteractiveContainer
 from core.codex_interactive_pool import (
     CodexInteractivePool, _CodexInteractiveSpawnMixin)
@@ -99,6 +101,90 @@ def test_pool_restarts_when_container_lives_but_tmux_was_killed(monkeypatch):
     assert killed == [stale.name]
     assert launched == [True]
     assert pool._sessions[key] is replacement
+
+
+def test_destroy_ephemeral_kills_and_removes_runtime(tmp_path, monkeypatch):
+    import core.codex_interactive_pool as pool_mod
+
+    root = tmp_path / "codex"
+    workdir = root / "user" / "_project_wiki_job" / "project-wiki"
+    workdir.mkdir(parents=True)
+    (workdir / "state.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(pool_mod._paths, "CODEX_SESSIONS_DIR", root)
+    pool = CodexInteractivePool()
+    key = ("user", "_project_wiki_job", "project-wiki", "service")
+    state = _state(key)
+    state.workdir = str(workdir)
+    state.internal_token = "internal-token"
+    pool._sessions[key] = state
+    killed = []
+    recovered = []
+    unregistered = []
+    revoked = []
+    monkeypatch.setattr(
+        pool, "_kill_container", lambda name: killed.append(name))
+    monkeypatch.setattr(
+        pool, "_recover_container_tokens", lambda item: recovered.append(item))
+    events = SimpleNamespace(
+        unregister_session=lambda token: unregistered.append(token))
+    monkeypatch.setattr(
+        "services.cc_interactive_event_service."
+        "get_or_create_cc_interactive_event_service",
+        lambda: ("", "", events))
+    monkeypatch.setattr(
+        "core.internal_auth.revoke_token", lambda token: revoked.append(token))
+
+    pool.destroy_ephemeral(state)
+
+    assert key not in pool._sessions
+    assert killed == [state.name]
+    assert recovered == [state]
+    assert unregistered == [state.session_token]
+    assert revoked == ["internal-token"]
+    assert not workdir.exists()
+    assert not (root / "user" / "_project_wiki_job").exists()
+
+
+def test_ephemeral_stream_is_destroyed_when_prompt_send_fails(monkeypatch):
+    client = LLMClient("codex-interactive")
+    key = ("user", "_project_wiki_job", "project-wiki", "")
+    state = _state(key)
+    destroyed = []
+    acquired_conversations = []
+    def ensure_started(_client, _model, _user, conversation, _agent,
+                       **_kwargs):
+        acquired_conversations.append(conversation)
+        return state
+    pool = SimpleNamespace(
+        ensure_started=ensure_started,
+        touch=lambda _state: None,
+        send_text=lambda _state, _prompt: False,
+        destroy_ephemeral=lambda item: destroyed.append(item),
+    )
+    monkeypatch.setattr(
+        CodexInteractivePool, "instance", classmethod(lambda cls: pool))
+    monkeypatch.setattr(client, "_cci_prompt", lambda *_args, **_kwargs: "prompt")
+    events = SimpleNamespace(
+        claim_consumer=lambda _token: 1,
+        drain_session=lambda _token: None,
+        release_consumer=lambda _token, _epoch: None,
+    )
+    monkeypatch.setattr(
+        "services.cc_interactive_event_service."
+        "get_or_create_cc_interactive_event_service",
+        lambda: ("", "", events))
+
+    with pytest.raises(Exception, match="Failed to paste prompt"):
+        client._stream_codex_interactive(
+            [], "", call_user_id="user",
+            call_conversation_id="_project_wiki_job",
+            call_agent_name="project-wiki",
+            call_ephemeral_stream=True)
+
+    assert destroyed == [state]
+    assert acquired_conversations[0].startswith(
+        "_project_wiki_job__ephemeral_")
+    assert acquired_conversations[0] != "_project_wiki_job"
 
 
 def test_endpoint_uses_custom_base_url_or_official_auth_endpoint():

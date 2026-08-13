@@ -7,6 +7,33 @@ import threading
 from pathlib import Path
 
 
+def test_destroy_ephemeral_removes_exact_session_and_runtime(
+        monkeypatch, tmp_path):
+    from core._antigravity_base import AntigravityObserverSession
+    from core.antigravity_observer_pool import AntigravityObserverPool
+
+    workdir = tmp_path / "user" / "conv__ephemeral_one" / "assistant"
+    workdir.mkdir(parents=True)
+    (workdir / "state.json").write_text("{}", encoding="utf-8")
+    key = ("user", "conv__ephemeral_one", "assistant", "service")
+    state = AntigravityObserverSession(
+        key=key, name="ephemeral-container", workdir=str(workdir),
+        container_workdir="/cc_sessions/conv__ephemeral_one/assistant",
+        log_path=str(workdir / "events.jsonl"))
+    pool = AntigravityObserverPool()
+    pool._sessions[key] = state
+    killed = []
+    monkeypatch.setattr(
+        AntigravityObserverPool, "_base_dir", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(pool, "kill", lambda item: killed.append(item))
+
+    pool.destroy_ephemeral(state)
+
+    assert killed == [state]
+    assert key not in pool._sessions
+    assert not workdir.exists()
+
+
 def test_observer_container_routes_antigravity_backend_to_local_proxy(monkeypatch):
     from core.antigravity_observer_pool import AntigravityObserverPool
 

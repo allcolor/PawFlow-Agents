@@ -138,6 +138,19 @@ def resolve_service(user_id: str = "", conversation_id: str = "") -> Tuple[Any, 
     return svc, sdef, explicit
 
 
+def resolve_llm_client(user_id: str = "", conversation_id: str = ""):
+    """Resolve only the LLM configured by the effective summarizer service.
+
+    Maintenance callers use this boundary instead of accepting an arbitrary
+    active-agent client.  A missing/broken summarizer binding fails closed.
+    """
+    summarizer, _sdef, _explicit = resolve_service(user_id, conversation_id)
+    if summarizer is None or not hasattr(summarizer, "resolve_llm_service"):
+        return None, 0, ""
+    return summarizer.resolve_llm_service(
+        user_id=user_id, conversation_id=conversation_id)
+
+
 def summary(user_id: str = "", conversation_id: str = "") -> Dict[str, Any]:
     """Return UI-friendly current/effective summarizer state."""
     binding = get_binding(conversation_id)

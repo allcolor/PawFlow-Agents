@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.180] — 2026-08-13
+
+### Added
+
+- Added explicit conversation-agent selectors to Diary, Scratchpad, and Memory,
+  and explicit linked-relay selectors to the Project Graph and Project Wiki panels.
+
+### Fixed
+
+- Loaded existing Project Graph reports automatically, kept stored relay data
+  readable while disconnected, exposed Diary in the action menu, and routed all
+  cognitive panel actions to their visibly selected agent or relay.
+- Routed Wiki maintenance, compaction memory extraction, skill proposals, resume
+  summaries, and Skill Curator reviews exclusively through `summarizer_service`;
+  CLI-backed maintenance calls now use isolated ephemeral sessions that are
+  destroyed immediately on success, failure, or cancellation.
+- Anchored managed-relay server-local relative paths in the configured workspace,
+  synchronized transport retries on relay registration instead of fixed sleeps,
+  and made boot orphan-session reclamation process-wide and one-shot.
+- Made cold CLI bootstrap resume unfinished durable todos as active work instead
+  of only listing them as context.
+
 ## [1.0.0-beta.179] — 2026-08-12
 
 ### Changed

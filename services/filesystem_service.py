@@ -92,6 +92,10 @@ class RelayService(_RelayConnMixin, _RelayFsOpsMixin, BaseService):
         # dying and live WS unpredictably.
         self._relay_pool: List[Dict] = []  # [{"reader", "writer", "loop"}]
         self._relay_pool_lock = threading.Lock()
+        # Shared recovery signal for requests blocked by a relay outage.
+        # Registration wakes all waiters immediately; the last disconnect
+        # clears it, avoiding one fixed sleep per concurrent request.
+        self._relay_available = threading.Event()
         self._managed_container_started = False
         # Guards ensure_managed_relay_alive(): missing containers respawn at
         # once; running containers get a reconnect grace before replacement.

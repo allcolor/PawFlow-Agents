@@ -60,6 +60,56 @@ def test_project_graph_build_uses_active_relay_surface(monkeypatch):
     graph.build_from_relay.assert_called_once_with(service, "src", local=True)
 
 
+def test_explicit_linked_relay_selects_non_default_stored_graph(monkeypatch):
+    graph = MagicMock()
+    graph.has_graph.return_value = True
+    graph.get_report.return_value = "relay-b report"
+    graph.nodes = []
+    graph.edges = []
+    monkeypatch.setattr("core.relay_bindings.get_linked_all", lambda _cid: ["relay-a", "relay-b"])
+    monkeypatch.setattr("core.relay_bindings.get_default_local", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        lambda: MagicMock(resolve=MagicMock(return_value=None)))
+    for_relay = MagicMock(return_value=graph)
+    monkeypatch.setattr("core.project_graph.ProjectGraph.for_relay", for_relay)
+    flowfile = _FlowFile()
+
+    _handle_cognitive_ui(None, "project_graph_report", {
+        "conversation_id": "conv-a", "relay_id": "relay-b",
+    }, None, "alice", flowfile)
+
+    assert flowfile.payload()["report"] == "relay-b report"
+    for_relay.assert_called_once_with("alice", "relay-b")
+
+
+def test_explicit_unlinked_relay_is_rejected(monkeypatch):
+    monkeypatch.setattr("core.relay_bindings.get_linked_all", lambda _cid: ["relay-a"])
+    flowfile = _FlowFile()
+
+    _handle_cognitive_ui(None, "project_graph_report", {
+        "conversation_id": "conv-a", "relay_id": "relay-b",
+    }, None, "alice", flowfile)
+
+    assert "not linked" in flowfile.payload()["error"]
+
+
+def test_explicit_disconnected_relay_still_rejects_build(monkeypatch):
+    monkeypatch.setattr("core.relay_bindings.get_linked_all", lambda _cid: ["relay-b"])
+    monkeypatch.setattr("core.relay_bindings.get_default_local", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        lambda: MagicMock(resolve=MagicMock(return_value=None)))
+    monkeypatch.setattr("core.project_graph.ProjectGraph.for_relay", MagicMock())
+    flowfile = _FlowFile()
+
+    _handle_cognitive_ui(None, "project_graph_build", {
+        "conversation_id": "conv-a", "relay_id": "relay-b",
+    }, None, "alice", flowfile)
+
+    assert flowfile.payload() == {"error": "Relay 'relay-b' is not connected."}
+
+
 def test_project_wiki_ui_lists_and_saves_on_active_relay(monkeypatch):
     service = MagicMock()
     wiki = MagicMock()

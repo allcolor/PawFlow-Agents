@@ -1225,17 +1225,21 @@ if (typeof hljs !== 'undefined') {
           <span class="ami-icon">&#x1F9E0;</span>
           <div><div class="ami-label" data-i18n="memories">Memories</div><div class="ami-desc" data-i18n="memoriesDesc">View agent memories</div></div>
         </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdShowDiary()">
+          <span class="ami-icon">D</span>
+          <div><div class="ami-label" data-i18n="diary">Diary</div><div class="ami-desc" data-i18n="diaryDesc">View and add agent diary entries</div></div>
+        </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdShowProjectGraph()">
           <span class="ami-icon">&#x1F578;</span>
           <div><div class="ami-label" data-i18n="projectGraph">Project Graph</div><div class="ami-desc" data-i18n="projectGraphDesc">Build / browse the codebase graph</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdShowProjectWiki()">
           <span class="ami-icon">W</span>
-          <div><div class="ami-label">Project Wiki</div><div class="ami-desc">Search and edit relay project knowledge</div></div>
+          <div><div class="ami-label" data-i18n="projectWiki">Project Wiki</div><div class="ami-desc" data-i18n="projectWikiDesc">Search and edit relay project knowledge</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdShowScratchpad()">
           <span class="ami-icon">S</span>
-          <div><div class="ami-label">Scratchpad</div><div class="ami-desc">Temporary notes for the selected agent</div></div>
+          <div><div class="ami-label" data-i18n="scratchpad">Scratchpad</div><div class="ami-desc" data-i18n="scratchpadDesc">Temporary notes for a conversation agent</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();_showToolMcpFilterDialog('', 'conversation')">
           <span class="ami-icon">&#x1F6E0;</span>

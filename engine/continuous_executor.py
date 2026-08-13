@@ -33,6 +33,39 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["TaskStats", "ExecutionResult", "ContinuousFlowExecutor"]
 
+_cli_session_cleanup_lock = threading.Lock()
+_cli_session_cleanup_started = False
+
+
+def _start_cli_session_cleanup_once() -> bool:
+    """Launch the process-wide orphan-session safety net at most once."""
+    global _cli_session_cleanup_started
+    with _cli_session_cleanup_lock:
+        if _cli_session_cleanup_started:
+            return False
+        _cli_session_cleanup_started = True
+
+    def _cleanup_cli_sessions_async():
+        try:
+            started_at = time.monotonic()
+            from core.conversation_store import ConversationStore
+            removed = ConversationStore.instance().cleanup_orphan_cli_sessions()
+            if removed:
+                logger.info(
+                    "Reclaimed %d orphan CLI session dir(s) on boot", removed)
+            logger.debug(
+                "[startup-timing] executor CLI session cleanup async: %.1fms",
+                (time.monotonic() - started_at) * 1000)
+        except Exception as exc:
+            logger.debug("CLI session cleanup on boot failed: %s", exc)
+
+    threading.Thread(
+        target=_cleanup_cli_sessions_async,
+        name="cli-session-cleanup",
+        daemon=True,
+    ).start()
+    return True
+
 
 class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixin):
     """NiFi-style continuous executor.
@@ -313,27 +346,9 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
         logger.debug("[startup-timing] executor scheduler/start phase: %.1fms",
                     (time.monotonic() - _t0) * 1000)
 
-        # Safety net: reclaim orphan CLI session dirs accumulated across
-        # previous runs. This only checks sessions/<provider>/<user>/<conv>
-        # links against conversation dirs; it does not walk live session trees.
-        def _cleanup_cli_sessions_async():
-            try:
-                _t0 = time.monotonic()
-                from core.conversation_store import ConversationStore as _CS
-                _removed = _CS.instance().cleanup_orphan_cli_sessions()
-                if _removed:
-                    logger.info("Reclaimed %d orphan CLI session dir(s) on boot",
-                                _removed)
-                logger.debug("[startup-timing] executor CLI session cleanup async: %.1fms",
-                            (time.monotonic() - _t0) * 1000)
-            except Exception as _e:
-                logger.debug("CLI session cleanup on boot failed: %s", _e)
-
-        threading.Thread(
-            target=_cleanup_cli_sessions_async,
-            name="cli-session-cleanup",
-            daemon=True,
-        ).start()
+        # Process-wide safety net for orphans from previous runs. Normal
+        # ephemeral calls remove their own runtime in provider finally blocks.
+        _start_cli_session_cleanup_once()
         logger.debug("[startup-timing] executor start total: %.1fms",
                     (time.monotonic() - _start_t0) * 1000)
 

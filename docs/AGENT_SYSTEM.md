@@ -265,6 +265,11 @@ same block in `initial_context.md` before the Bootstrap Contract. A warm CLI
 session is not reprompted solely because todo state changed; the agent can query
 the authoritative store through the tool.
 
+The cold-start Bootstrap Contract makes unfinished work actionable: unless the
+latest user request supersedes, redirects, or cancels it, the agent resumes and
+executes every pending or in-progress todo. Listing unfinished items without
+working on them does not satisfy the contract.
+
 ### Scratchpad
 
 `scratchpad` is temporary working state, not a second memory or todo system.
@@ -474,7 +479,12 @@ claude-code (`-p`) used to have a *third* path, and it was the last provider tha
 
 The pools take a `before_launch` callback rather than asking themselves: they manage containers, not context policy, and they call it only when they are really going to launch — never on the reuse path, because a reused session's delta is correct and restarting that turn would be gratuitous.
 
-An ephemeral call (compact, memory extraction) is exempt everywhere: it builds its own full text, but it clones a client that may carry the marker.
+An ephemeral call (compact, memory extraction, skill proposal, Wiki update, or
+Skill Curator review) is exempt everywhere: it builds its own full text, but it
+clones the LLM resolved by `summarizer_service`. Maintenance boundaries do not
+accept the active agent client as an override. Interactive-provider calls use an
+invocation-unique pool identity and destroy their exact container/session runtime
+in `finally`; the boot orphan scan is a process-wide, one-shot safety net only.
 
 `force_cold` is a third *caller*, not a third state: the turn already knows it is going to launch, so probing again could only answer "warm" and strip the context that launch needs.
 

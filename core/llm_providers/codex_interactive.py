@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+import uuid
 
 from core.codex_interactive_pool import CodexInteractivePool
 from core.llm_providers._codex_interactive_turn import (
@@ -213,60 +214,66 @@ class LLMCodexInteractiveMixin:
         ephemeral = bool(
             call_ephemeral_stream if call_ephemeral_stream is not None
             else getattr(self, "_ephemeral_stream", False))
+        pool_conversation_id = conversation_id
+        if ephemeral:
+            pool_conversation_id = (
+                f"{conversation_id}__ephemeral_{uuid.uuid4().hex}")
         state = pool.ensure_started(
-            self, model or "", user_id, conversation_id, agent_name,
+            self, model or "", user_id, pool_conversation_id, agent_name,
             before_launch=None if ephemeral else (
                 lambda: self._cli_require_cold_context("codex-interactive")))
-        pool.touch(state)
-        # Case 2, told by the pool -- see the CCI provider for the reasoning.
-        if not ephemeral and getattr(state, "initial_context_loaded", False):
-            self._cli_require_delta_context("codex-interactive")
-        self._codex_interactive_active_user_id = user_id
-        self._codex_interactive_active_conversation_id = conversation_id
-        self._codex_interactive_active_agent_name = agent_name
-        self._codex_interactive_active_service_id = (
-            getattr(self, "_agent_service", "") or "")
-        self._had_preempts_this_turn = False
+        try:
+            pool.touch(state)
+            # Case 2, told by the pool -- see the CCI provider for the reasoning.
+            if not ephemeral and getattr(state, "initial_context_loaded", False):
+                self._cli_require_delta_context("codex-interactive")
+            self._codex_interactive_active_user_id = user_id
+            self._codex_interactive_active_conversation_id = conversation_id
+            self._codex_interactive_active_agent_name = agent_name
+            self._codex_interactive_active_service_id = (
+                getattr(self, "_agent_service", "") or "")
+            self._had_preempts_this_turn = False
 
-        prompt = self._cci_prompt(
-            messages, tools, state.workdir, state.container_workdir,
-            user_id, conversation_id,
-            initial_context=not state.initial_context_loaded,
-            agent_name=agent_name)
-        _, _, event_service = get_or_create_cc_interactive_event_service()
-        consumer_epoch = event_service.claim_consumer(state.session_token)
-        event_service.drain_session(state.session_token)
-        if not pool.send_text(state, prompt):
-            # No coordinator will ever poll this claim. Hand the stream back
-            # so the orphan-turn net can adopt the turn the user is about to
-            # start by pressing Enter in the tmux themselves -- the prompt is
-            # usually sitting in the composer, and its answer has to reach the
-            # webchat rather than run into a stream nobody owns.
-            event_service.release_consumer(state.session_token, consumer_epoch)
-            detail = getattr(state, "last_error", "") or "unknown tmux error"
-            raise LLMClientError(
-                "Failed to paste prompt into Codex interactive tmux session: "
-                f"{detail}")
-        state.initial_context_loaded = True
+            prompt = self._cci_prompt(
+                messages, tools, state.workdir, state.container_workdir,
+                user_id, conversation_id,
+                initial_context=not state.initial_context_loaded,
+                agent_name=agent_name)
+            _, _, event_service = get_or_create_cc_interactive_event_service()
+            consumer_epoch = event_service.claim_consumer(state.session_token)
+            event_service.drain_session(state.session_token)
+            if not pool.send_text(state, prompt):
+                event_service.release_consumer(
+                    state.session_token, consumer_epoch)
+                detail = (
+                    getattr(state, "last_error", "") or "unknown tmux error")
+                raise LLMClientError(
+                    "Failed to paste prompt into Codex interactive tmux session: "
+                    f"{detail}")
+            state.initial_context_loaded = True
 
-        coord = _CodexInteractiveTurnCoordinator(
-            event_service, state.session_token, callback=callback,
-            thinking_callback=thinking_callback,
-            block_callback=block_callback, turn_callback=turn_callback,
-            touch_callback=lambda: pool.touch(state),
-            emitted_tool_use_ids=state.emitted_tool_use_ids,
-            emitted_tool_result_ids=state.emitted_tool_result_ids,
-            consumer_epoch=consumer_epoch,
-            context_tokens_callback=lambda tokens: (
-                self.record_codex_live_context(
-                    state, conversation_id, agent_name, tokens,
-                    user_id=user_id, event_cid=call_event_cid or conversation_id)))
-        response = coord.run(getattr(self, "_abort", None))
-        self.record_codex_context_window(
-            pool, state, conversation_id, agent_name,
-            coord.observed_context_tokens)
-        response.model = response.model or model or self.default_model
-        return response
+            coord = _CodexInteractiveTurnCoordinator(
+                event_service, state.session_token, callback=callback,
+                thinking_callback=thinking_callback,
+                block_callback=block_callback, turn_callback=turn_callback,
+                touch_callback=lambda: pool.touch(state),
+                emitted_tool_use_ids=state.emitted_tool_use_ids,
+                emitted_tool_result_ids=state.emitted_tool_result_ids,
+                consumer_epoch=consumer_epoch,
+                context_tokens_callback=lambda tokens: (
+                    self.record_codex_live_context(
+                        state, conversation_id, agent_name, tokens,
+                        user_id=user_id,
+                        event_cid=call_event_cid or conversation_id)))
+            response = coord.run(getattr(self, "_abort", None))
+            self.record_codex_context_window(
+                pool, state, conversation_id, agent_name,
+                coord.observed_context_tokens)
+            response.model = response.model or model or self.default_model
+            return response
+        finally:
+            if ephemeral:
+                pool.destroy_ephemeral(state)
 
     def interrupt_codex_interactive(
         self, text: str, *, callback=None, thinking_callback=None,

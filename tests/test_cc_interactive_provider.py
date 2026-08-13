@@ -4,6 +4,7 @@ import json
 import threading
 import time
 from queue import Queue
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,6 +45,51 @@ def test_claude_code_interactive_provider_registered_and_dispatched():
     assert '"claude-code-interactive"' in stream_src
     assert "_stream_claude_code_interactive" in stream_src
     assert "_cci_send_user_message" in send_src
+
+
+def test_ephemeral_interactive_stream_is_isolated_and_destroyed_on_send_error(
+        monkeypatch):
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    client = LLMClient("claude-code-interactive")
+    state = SimpleNamespace(
+        session_token="ephemeral-token", initial_context_loaded=False,
+        workdir="/tmp/ephemeral", container_workdir="/cc_sessions/ephemeral",
+        emitted_tool_use_ids=set(), emitted_tool_result_ids=set(),
+        last_error="send failed")
+    acquired_conversations = []
+    destroyed = []
+
+    def ensure_started(_client, _model, _user, conversation, _agent,
+                       **_kwargs):
+        acquired_conversations.append(conversation)
+        return state
+
+    pool = SimpleNamespace(
+        ensure_started=ensure_started, touch=lambda _state: None,
+        send_text=lambda _state, _prompt: False,
+        destroy_ephemeral=lambda item: destroyed.append(item))
+    monkeypatch.setattr(
+        InteractiveClaudeCodePool, "instance",
+        classmethod(lambda cls: pool))
+    monkeypatch.setattr(client, "_cci_prompt", lambda *_args, **_kwargs: "prompt")
+    events = SimpleNamespace(
+        claim_consumer=lambda _token: 1,
+        drain_session=lambda _token: None,
+        release_consumer=lambda _token, _epoch: None)
+    monkeypatch.setattr(
+        "services.cc_interactive_event_service."
+        "get_or_create_cc_interactive_event_service",
+        lambda: ("", "", events))
+
+    with pytest.raises(Exception, match="Failed to paste prompt"):
+        client._stream_claude_code_interactive(
+            [], "", call_user_id="user", call_conversation_id="conv",
+            call_agent_name="assistant", call_ephemeral_stream=True)
+
+    assert destroyed == [state]
+    assert acquired_conversations[0].startswith("conv__ephemeral_")
+    assert acquired_conversations[0] != "conv"
 
 
 def test_turn_coordinator_assembles_text_thinking_and_native_tool_use():

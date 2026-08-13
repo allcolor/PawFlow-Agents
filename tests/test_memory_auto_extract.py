@@ -24,6 +24,12 @@ class _FakeClient:
         return MagicMock(content=json.dumps(self.facts))
 
 
+def _use_summarizer(monkeypatch, client):
+    monkeypatch.setattr(
+        "core.summarizer_bindings.resolve_llm_client",
+        lambda user_id, conversation_id: (client, 64000, "summarizer-llm"))
+
+
 class TestMemoryAutoExtract:
     def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -49,13 +55,12 @@ class TestMemoryAutoExtract:
             "scope": "global",
         }])
         count = auto_extract_memories(
-            "u1", "summary", llm_client=client,
-            conversation_id="temp1")
+            "u1", "summary", conversation_id="temp1")
         assert count == 0
         assert client.calls == []  # LLM never invoked for temporary convs
         assert self.store.list_all("u1") == []
 
-    def test_skips_ephemeral_and_stores_conversation_ttl(self):
+    def test_skips_ephemeral_and_stores_conversation_ttl(self, monkeypatch):
         facts = [
             {
                 "text": "Latest validation passed with 3471 tests after compact.",
@@ -75,9 +80,9 @@ class TestMemoryAutoExtract:
         ]
 
         client = _FakeClient(facts)
+        _use_summarizer(monkeypatch, client)
         count = auto_extract_memories(
-            "u1", "summary", llm_client=client,
-            conversation_id="conv1")
+            "u1", "summary", conversation_id="conv1")
 
         assert count == 1
         entries = self.store.list_all("u1")
@@ -92,7 +97,7 @@ class TestMemoryAutoExtract:
         assert client.calls[0]["call_ephemeral_stream"] is True
         assert client.calls[0]["messages"][0].conversation_id == scope
 
-    def test_durable_preference_can_be_global_without_ttl(self):
+    def test_durable_preference_can_be_global_without_ttl(self, monkeypatch):
         facts = [{
             "text": "User expects agents to answer in French when reporting PawFlow bugs.",
             "category": "preferences",
@@ -103,9 +108,9 @@ class TestMemoryAutoExtract:
             "tags": ["communication"],
         }]
 
+        _use_summarizer(monkeypatch, _FakeClient(facts))
         count = auto_extract_memories(
-            "u1", "summary", llm_client=_FakeClient(facts),
-            conversation_id="conv1")
+            "u1", "summary", conversation_id="conv1")
 
         assert count == 1
         entry = self.store.list_all("u1")[0]
@@ -113,7 +118,7 @@ class TestMemoryAutoExtract:
         assert entry.conversation_id == ""
         assert entry.expires_at == 0
 
-    def test_limits_each_extract_to_two_memories(self):
+    def test_limits_each_extract_to_two_memories(self, monkeypatch):
         facts = [{
             "text": f"Durable user preference number {i} should be retained for future PawFlow conversations.",
             "category": "preferences",
@@ -122,10 +127,20 @@ class TestMemoryAutoExtract:
             "scope": "global",
         } for i in range(4)]
 
-        count = auto_extract_memories("u1", "summary", llm_client=_FakeClient(facts))
+        _use_summarizer(monkeypatch, _FakeClient(facts))
+        count = auto_extract_memories("u1", "summary")
 
         assert count == 2
         assert self.store.count("u1") == 2
+
+    def test_missing_summarizer_fails_closed(self, monkeypatch):
+        monkeypatch.setattr(
+            "core.summarizer_bindings.resolve_llm_client",
+            lambda user_id, conversation_id: (None, 0, ""))
+
+        assert auto_extract_memories(
+            "u1", "summary", conversation_id="conv1") == 0
+        assert self.store.list_all("u1") == []
 
 
 class TestMemoryGc:

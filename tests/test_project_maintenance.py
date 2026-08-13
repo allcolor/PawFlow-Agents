@@ -22,9 +22,14 @@ def test_worker_refreshes_graph_and_wiki_for_same_relay(monkeypatch):
     monkeypatch.setattr("core.project_wiki.ProjectWiki.for_relay", wiki_for_relay)
     service = MagicMock()
     client = MagicMock()
+    summarizer = MagicMock()
+    summarizer.resolve_llm_service.return_value = (client, 100_000, "wiki-llm")
+    resolve_service = MagicMock(return_value=(summarizer, MagicMock(), True))
+    monkeypatch.setattr(
+        "core.summarizer_bindings.resolve_service", resolve_service)
     job = _MaintenanceJob(
         user_id="alice", relay_id="relay-a", service=service,
-        conversation_id="conv-a", agent_name="assistant", llm_client=client,
+        conversation_id="conv-a", agent_name="assistant",
         root="src", local=True)
 
     ProjectMaintenanceScheduler()._run(job)
@@ -36,6 +41,31 @@ def test_worker_refreshes_graph_and_wiki_for_same_relay(monkeypatch):
         service, "src", local=True,
         initial_paths=["core/main.py", "core/leaf.py"])
     wiki.auto_update.assert_called_once_with(service, client, local=True)
+    resolve_service.assert_called_once_with("alice", "conv-a")
+    summarizer.resolve_llm_service.assert_called_once_with("alice", "conv-a")
+
+
+def test_worker_never_falls_back_when_summarizer_is_unavailable(monkeypatch):
+    graph = MagicMock(nodes=[])
+    graph.build_from_relay.return_value = {"status": "built"}
+    wiki = MagicMock()
+    wiki.scan_from_relay.return_value = {"status": "refreshed"}
+    wiki.auto_update.return_value = {"status": "pending"}
+    monkeypatch.setattr(
+        "core.project_graph.ProjectGraph.for_relay", lambda *_args: graph)
+    monkeypatch.setattr(
+        "core.project_wiki.ProjectWiki.for_relay", lambda *_args: wiki)
+    resolve_service = MagicMock(return_value=(None, None, True))
+    monkeypatch.setattr(
+        "core.summarizer_bindings.resolve_service", resolve_service)
+    service = MagicMock()
+
+    ProjectMaintenanceScheduler()._run(_MaintenanceJob(
+        user_id="alice", relay_id="relay-a", service=service,
+        conversation_id="conv-a"))
+
+    wiki.auto_update.assert_called_once_with(service, None, local=False)
+    resolve_service.assert_called_once_with("alice", "conv-a")
 
 
 def test_schedule_marks_running_job_for_one_rerun():

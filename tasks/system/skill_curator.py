@@ -14,6 +14,7 @@ stays review-first.
 import json
 import logging
 import re
+import uuid
 import time
 from typing import Any, Dict, List
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 _REVIEW_PROMPT = """You are curating an agent-skill library. For each flagged skill below, decide: "keep" (still useful), "archive" (obsolete or superseded), or "merge" (overlaps another listed skill — name it in reason).
 
-Return a JSON array: [{"name": "...", "action": "keep|archive|merge", "reason": "one line"}]
+Return a JSON array: [{{"name": "...", "action": "keep|archive|merge", "reason": "one line"}}]
 
 Flagged skills:
 {flagged}
@@ -57,21 +58,9 @@ class SkillCuratorTask(BaseTask):
                 "type": "boolean", "required": False, "default": False,
                 "description": "Also flag global-scope skills (report only)",
             },
-            "provider": {
+            "conversation_id": {
                 "type": "string", "required": False, "default": "",
-                "description": "Optional LLM provider for the review pass (openai, anthropic); empty = heuristic report only",
-            },
-            "api_key": {
-                "type": "string", "required": False, "sensitive": True,
-                "description": "API key for the review LLM",
-            },
-            "base_url": {
-                "type": "string", "required": False, "default": "",
-                "description": "API base URL (for self-hosted or compatible APIs)",
-            },
-            "model": {
-                "type": "string", "required": False, "default": "",
-                "description": "Model name (empty = provider default)",
+                "description": "Conversation scope used to resolve summarizer_service",
             },
         }
 
@@ -113,7 +102,10 @@ class SkillCuratorTask(BaseTask):
             if status != "active":
                 flagged.append(entry)
 
-        reviews = self._llm_review(flagged, entries) if flagged else []
+        reviews = self._llm_review(
+            flagged, entries, user_id,
+            str(self.config.get("conversation_id", "") or ""),
+        ) if flagged else []
         review_by_name = {r["name"]: r for r in reviews}
 
         proposed = []
@@ -178,54 +170,52 @@ class SkillCuratorTask(BaseTask):
             return {}
 
     def _llm_review(self, flagged: List[Dict[str, Any]],
-                    all_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        provider = str(self.config.get("provider", "")).strip()
-        api_key = str(self.config.get("api_key", "") or "")
-        if not provider:
-            return []
+                    all_entries: List[Dict[str, Any]], user_id: str,
+                    conversation_id: str) -> List[Dict[str, Any]]:
         try:
-            from services.llm_connection import LLMConnectionService, LLMMessage
-            svc_config: Dict[str, Any] = {
-                "provider": provider, "api_key": api_key, "timeout": 60,
-            }
-            if self.config.get("base_url"):
-                svc_config["base_url"] = self.config["base_url"]
-            model = str(self.config.get("model", "") or "")
-            if model:
-                svc_config["default_model"] = model
-            svc = LLMConnectionService(svc_config)
-            svc.connect()
-            try:
-                def _lines(items):
-                    return "\n".join(
-                        f"- {e['name']} [{e['status']}, {e['loads']} loads]: "
-                        f"{e['description']}" for e in items) or "(none)"
-                prompt = _REVIEW_PROMPT.format(
-                    flagged=_lines(flagged), all_skills=_lines(all_entries))
-                _cid = f"_skill_curator:{self.config.get('_service_id', 'curator')}"
-                resp = svc.complete(
-                    messages=[LLMMessage(role="user", content=prompt,
-                                         conversation_id=_cid)],
-                    model=model or None,
-                    temperature=0.2,
-                    max_tokens=2000,
-                    response_format="json",
-                )
-                match = re.search(r"\[.*\]", resp.content or "", re.DOTALL)
-                if not match:
-                    return []
-                data = json.loads(match.group())
-                valid = {"keep", "archive", "merge"}
-                return [
-                    {"name": str(r.get("name", "")).strip(),
-                     "action": str(r.get("action", "")).strip().lower(),
-                     "reason": str(r.get("reason", "")).strip()[:200]}
-                    for r in data
-                    if isinstance(r, dict)
-                    and str(r.get("action", "")).strip().lower() in valid
-                ]
-            finally:
-                svc.disconnect()
+            from core.llm_client import LLMMessage
+            from core.summarizer_bindings import resolve_llm_client
+            client, _context_size, _service_id = resolve_llm_client(
+                user_id, conversation_id)
+            if client is None:
+                return []
+            call_client = getattr(client, "_client", client).clone_for_call()
+
+            def _lines(items):
+                return "\n".join(
+                    f"- {e['name']} [{e['status']}, {e['loads']} loads]: "
+                    f"{e['description']}" for e in items) or "(none)"
+            prompt = _REVIEW_PROMPT.format(
+                flagged=_lines(flagged), all_skills=_lines(all_entries))
+            safe_cid = "".join(
+                c if c.isalnum() or c in "-_" else "_"
+                for c in (conversation_id or "curator"))[:48]
+            call_cid = f"_skill_curator_{safe_cid}_{uuid.uuid4().hex[:8]}"
+            resp = call_client.complete(
+                messages=[LLMMessage(role="user", content=prompt,
+                                     conversation_id=call_cid)],
+                temperature=0.2,
+                max_tokens=2000,
+                response_format="json",
+                call_user_id=user_id,
+                call_conversation_id=call_cid,
+                call_agent_name="skill-curator",
+                call_event_cid="",
+                call_ephemeral_stream=True,
+            )
+            match = re.search(r"\[.*\]", resp.content or "", re.DOTALL)
+            if not match:
+                return []
+            data = json.loads(match.group())
+            valid = {"keep", "archive", "merge"}
+            return [
+                {"name": str(r.get("name", "")).strip(),
+                 "action": str(r.get("action", "")).strip().lower(),
+                 "reason": str(r.get("reason", "")).strip()[:200]}
+                for r in data
+                if isinstance(r, dict)
+                and str(r.get("action", "")).strip().lower() in valid
+            ]
         except Exception:
             logger.debug("[skill-curator] LLM review failed", exc_info=True)
             return []

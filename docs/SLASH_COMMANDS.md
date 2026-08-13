@@ -537,6 +537,10 @@ Shortcut for `/skill add`.
 | `del` | `/memory del <id>` | Delete a memory by ID |
 | `search` | `/memory search <query>` | Search memories by text or tags |
 
+The Memory panel populates agent choices from the conversation, including agents
+that do not yet own a memory. **All** and **Global** remain available for filtering,
+and add/edit operations use an explicit agent selector rather than free text.
+
 ```
 /memory list
 /memory list @grok
@@ -545,6 +549,17 @@ Shortcut for `/skill add`.
 /memory del abc123
 /memory search "API key"
 ```
+
+### /diary
+
+```
+/diary [type]
+```
+
+Without a type, `/diary` opens the Diary panel. The panel selects one of the
+conversation's agents explicitly, lists that agent's structured entries, filters
+by `observation`, `decision`, `learning`, or `reflection`, and can add an entry.
+Passing a type lists matching entries for the currently selected agent in chat.
 
 ---
 

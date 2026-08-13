@@ -55,7 +55,8 @@ _JS_MODULES = [
     # exists before any command handler that reads it (define-before-use).
     "commands_help.js",
     "cmd_agent.js", "cmd_context.js", "cmd_resources.js", "cmd_conversation.js", "cmd_misc.js",
-    "commands.js", "file_mention.js", "context_editor.js", "memories.js", "diary.js", "todos.js", "knowledge_graph.js", "project_graph.js", "project_wiki.js", "scratchpad.js",
+    "commands.js", "file_mention.js", "context_editor.js", "cognitive_panel_helpers.js",
+    "memories.js", "diary.js", "todos.js", "knowledge_graph.js", "project_graph.js", "project_wiki.js", "scratchpad.js",
     "secrets.js", "files_panel.js", "plans_panel.js", "attachments.js",
     # resources.js was split into smaller modules (<=800 lines each); load
     # order is significant — resources.js (core: shared helpers + collapsed

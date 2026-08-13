@@ -1,5 +1,8 @@
 import inspect
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from core.llm_client import LLMClient
 from core.llm_providers.antigravity_interactive import _AntigravityTurnCoordinator
@@ -19,6 +22,48 @@ def test_antigravity_interactive_provider_registered_and_dispatched():
     assert "_stream_antigravity_interactive" in stream_src
     assert "_agi_send_user_message" in send_src
     assert "cancel_antigravity_interactive" in abort_src
+
+
+def test_ephemeral_antigravity_stream_is_isolated_and_destroyed_on_send_error(
+        monkeypatch):
+    from core.antigravity_observer_pool import AntigravityObserverPool
+
+    client = LLMClient("antigravity-interactive")
+    state = SimpleNamespace(
+        initial_context_loaded=False, workdir="/tmp/ephemeral",
+        container_workdir="/cc_sessions/ephemeral",
+        log_path="/tmp/ephemeral/events.jsonl", service_id="",
+        emitted_tool_use_ids=set(), emitted_tool_result_ids=set(),
+        last_error="send failed")
+    acquired_conversations = []
+    destroyed = []
+
+    def ensure_started(_client, _model, _user, conversation, _agent,
+                       **_kwargs):
+        acquired_conversations.append(conversation)
+        return state
+
+    pool = SimpleNamespace(
+        ensure_started=ensure_started, touch=lambda _state: None,
+        suspend_manual_ingest=lambda _state: None,
+        mark_submit_complete=lambda _state: None,
+        resume_manual_ingest=lambda _state: None,
+        send_text=lambda _state, _prompt: False,
+        destroy_ephemeral=lambda item: destroyed.append(item))
+    monkeypatch.setattr(
+        AntigravityObserverPool, "instance",
+        classmethod(lambda cls: pool))
+    monkeypatch.setattr(client, "_agi_prompt", lambda *_args, **_kwargs: "prompt")
+    monkeypatch.setattr(client, "_agi_log_offset", lambda _path: 0)
+
+    with pytest.raises(Exception, match="Failed to paste prompt"):
+        client._stream_antigravity_interactive(
+            [], "", call_user_id="user", call_conversation_id="conv",
+            call_agent_name="assistant", call_ephemeral_stream=True)
+
+    assert destroyed == [state]
+    assert acquired_conversations[0].startswith("conv__ephemeral_")
+    assert acquired_conversations[0] != "conv"
 
 
 def test_antigravity_turn_coordinator_reads_jsonl_text_thinking_and_tools(monkeypatch, tmp_path):

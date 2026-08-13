@@ -82,7 +82,6 @@ Summary:
 def propose_skill_draft_from_summary(
     user_id: str,
     summary: str,
-    llm_client=None,
     conversation_id: str = "",
     agent_name: str = "",
 ) -> str:
@@ -91,9 +90,14 @@ def propose_skill_draft_from_summary(
     Return one of ``created``, ``promoted``, ``rejected``, ``invalid``,
     ``duplicate``, ``skipped``, or ``error``. Never raises.
     """
-    if not user_id or not summary or llm_client is None:
+    if not user_id or not summary:
         return "skipped"
     try:
+        from core.summarizer_bindings import resolve_llm_client
+        llm_client, _context_size, _service_id = resolve_llm_client(
+            user_id, conversation_id)
+        if llm_client is None:
+            return "skipped"
         outcome, draft = _propose_with_llm(
             llm_client, summary, user_id, conversation_id)
         if not draft:

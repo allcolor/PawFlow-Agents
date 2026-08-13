@@ -53,60 +53,67 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
         # clones a client that may carry the marker.
         _ephemeral = bool(call_ephemeral_stream if call_ephemeral_stream is not None
                           else getattr(self, "_ephemeral_stream", False))
+        pool_conversation_id = conversation_id
+        if _ephemeral:
+            pool_conversation_id = (
+                f"{conversation_id}__ephemeral_{uuid.uuid4().hex}")
         state = pool.ensure_started(
-            self, model or "", user_id, conversation_id, agent_name,
+            self, model or "", user_id, pool_conversation_id, agent_name,
             before_launch=None if _ephemeral else (
                 lambda: self._cli_require_cold_context(
                     "claude-code-interactive")))
-        pool.touch(state)
-        # Case 2, told by the pool: the live process already holds the PawFlow
-        # initial context, so this turn is a delta. A turn built as a cold
-        # start is rebuilt as the delta it is -- before_launch above covers
-        # the opposite direction, and only one of the two can fire.
-        if not _ephemeral and getattr(state, "initial_context_loaded", False):
-            self._cli_require_delta_context("claude-code-interactive")
-        self._cci_active_user_id = user_id
-        self._cci_active_conversation_id = conversation_id
-        self._cci_active_agent_name = agent_name
-        self._cci_active_service_id = getattr(self, "_agent_service", "") or ""
-        self._had_preempts_this_turn = False
-        prompt = self._cci_prompt(
-            messages, tools, state.workdir, state.container_workdir,
-            user_id, conversation_id,
-            initial_context=not state.initial_context_loaded,
-            agent_name=agent_name)
-        from services.cc_interactive_event_service import get_or_create_cc_interactive_event_service
-        _, _, event_service = get_or_create_cc_interactive_event_service()
-        # Claim BEFORE draining: any stale coordinator still polling this
-        # session is evicted first, so whatever it grabs afterwards belongs
-        # to the discarded pre-drain backlog and never to our turn.
-        consumer_epoch = event_service.claim_consumer(state.session_token)
-        event_service.drain_session(state.session_token)
-        if not pool.send_text(state, prompt):
-            # No coordinator will ever poll this claim -- release it, or the
-            # orphan-turn net stays muted for the whole grace window and the
-            # turn a human starts with their own Enter runs invisibly.
-            event_service.release_consumer(state.session_token, consumer_epoch)
-            detail = getattr(state, "last_error", "") or "unknown tmux error"
-            raise LLMClientError(
-                "Failed to paste prompt into Claude Code interactive tmux session: "
-                f"{detail}")
-        state.initial_context_loaded = True
+        try:
+            pool.touch(state)
+            # Case 2, told by the pool: the live process already holds the
+            # PawFlow initial context, so this turn is a delta.
+            if (not _ephemeral
+                    and getattr(state, "initial_context_loaded", False)):
+                self._cli_require_delta_context("claude-code-interactive")
+            self._cci_active_user_id = user_id
+            self._cci_active_conversation_id = conversation_id
+            self._cci_active_agent_name = agent_name
+            self._cci_active_service_id = (
+                getattr(self, "_agent_service", "") or "")
+            self._had_preempts_this_turn = False
+            prompt = self._cci_prompt(
+                messages, tools, state.workdir, state.container_workdir,
+                user_id, conversation_id,
+                initial_context=not state.initial_context_loaded,
+                agent_name=agent_name)
+            from services.cc_interactive_event_service import (
+                get_or_create_cc_interactive_event_service)
+            _, _, event_service = get_or_create_cc_interactive_event_service()
+            consumer_epoch = event_service.claim_consumer(state.session_token)
+            event_service.drain_session(state.session_token)
+            if not pool.send_text(state, prompt):
+                event_service.release_consumer(
+                    state.session_token, consumer_epoch)
+                detail = (
+                    getattr(state, "last_error", "") or "unknown tmux error")
+                raise LLMClientError(
+                    "Failed to paste prompt into Claude Code interactive "
+                    f"tmux session: {detail}")
+            state.initial_context_loaded = True
 
-        coord = _CCITurnCoordinator(
-            event_service, state.session_token, callback=callback,
-            thinking_callback=thinking_callback, block_callback=block_callback,
-            turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
-            usage_callback=self._cci_usage_observer(conversation_id, agent_name),
-            emitted_tool_use_ids=state.emitted_tool_use_ids,
-            emitted_tool_result_ids=state.emitted_tool_result_ids,
-            consumer_epoch=consumer_epoch)
-        response = coord.run(getattr(self, "_abort", None))
-        self._cci_record_observed_context(coord, conversation_id, agent_name)
-        # Prefer the model resolved on the wire (message_start); fall back to
-        # the configured alias (e.g. "best") then the provider default.
-        response.model = response.model or model or self.default_model
-        return response
+            coord = _CCITurnCoordinator(
+                event_service, state.session_token, callback=callback,
+                thinking_callback=thinking_callback,
+                block_callback=block_callback,
+                turn_callback=turn_callback,
+                touch_callback=lambda: pool.touch(state),
+                usage_callback=self._cci_usage_observer(
+                    conversation_id, agent_name),
+                emitted_tool_use_ids=state.emitted_tool_use_ids,
+                emitted_tool_result_ids=state.emitted_tool_result_ids,
+                consumer_epoch=consumer_epoch)
+            response = coord.run(getattr(self, "_abort", None))
+            self._cci_record_observed_context(
+                coord, conversation_id, agent_name)
+            response.model = response.model or model or self.default_model
+            return response
+        finally:
+            if _ephemeral:
+                pool.destroy_ephemeral(state)
 
     def interrupt_claude_code_interactive(
         self, text: str, *, callback=None, thinking_callback=None,

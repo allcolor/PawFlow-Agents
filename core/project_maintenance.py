@@ -29,7 +29,6 @@ class _MaintenanceJob:
     service: Any
     conversation_id: str = ""
     agent_name: str = ""
-    llm_client: Any = None
     root: str = "."
     local: bool = False
     timer: Optional[threading.Timer] = None
@@ -63,7 +62,7 @@ class ProjectMaintenanceScheduler:
 
     def schedule(self, *, user_id: str, relay_id: str, service,
                  conversation_id: str = "", agent_name: str = "",
-                 llm_client=None, root: str = ".", local: bool = False,
+                 root: str = ".", local: bool = False,
                  changed_path: str = "", force: bool = False) -> bool:
         if not user_id or not relay_id or service is None:
             return False
@@ -78,7 +77,6 @@ class ProjectMaintenanceScheduler:
             job.service = service
             job.conversation_id = conversation_id or job.conversation_id
             job.agent_name = agent_name or job.agent_name
-            job.llm_client = llm_client or job.llm_client
             job.root = str(root or ".")
             job.local = bool(local)
             if changed_path:
@@ -87,13 +85,12 @@ class ProjectMaintenanceScheduler:
                 job.rerun = job.rerun or force or bool(changed_path)
                 return False
             pending_wiki = False
-            if job.llm_client is not None:
-                try:
-                    from core.project_wiki import ProjectWiki
-                    pending_wiki = bool(ProjectWiki.for_relay(
-                        user_id, relay_id).status()["dirty_sources"])
-                except Exception:
-                    logger.debug("Failed to inspect pending project wiki", exc_info=True)
+            try:
+                from core.project_wiki import ProjectWiki
+                pending_wiki = bool(ProjectWiki.for_relay(
+                    user_id, relay_id).status()["dirty_sources"])
+            except Exception:
+                logger.debug("Failed to inspect pending project wiki", exc_info=True)
             if (not force and not changed_path and not pending_wiki
                     and now - job.last_run_at < _LAZY_REFRESH_SECONDS):
                 return False
@@ -130,7 +127,7 @@ class ProjectMaintenanceScheduler:
                 self.schedule(
                     user_id=job.user_id, relay_id=job.relay_id,
                     service=job.service, conversation_id=job.conversation_id,
-                    agent_name=job.agent_name, llm_client=job.llm_client,
+                    agent_name=job.agent_name,
                     root=job.root, local=job.local, force=True)
 
     @staticmethod
@@ -139,6 +136,18 @@ class ProjectMaintenanceScheduler:
             str(node.get("source_file") or "")
             for node in graph.nodes if node.get("source_file"))
         return [path for path, _count in counts.most_common(40)]
+
+    @staticmethod
+    def _resolve_wiki_client(user_id: str, conversation_id: str):
+        """Resolve only the LLM configured by the effective summarizer service."""
+        from core.summarizer_bindings import resolve_service
+        summarizer, _definition, _explicit = resolve_service(
+            user_id, conversation_id)
+        if summarizer is None or not hasattr(summarizer, "resolve_llm_service"):
+            return None
+        client, _context_size, _service_id = summarizer.resolve_llm_service(
+            user_id, conversation_id)
+        return client
 
     def _run(self, job: _MaintenanceJob) -> None:
         from core.project_graph import ProjectGraph
@@ -154,8 +163,10 @@ class ProjectMaintenanceScheduler:
         wiki_result = wiki.scan_from_relay(
             job.service, job.root, local=job.local,
             initial_paths=self._graph_seed_paths(graph))
+        llm_client = self._resolve_wiki_client(
+            job.user_id, job.conversation_id)
         update_result = wiki.auto_update(
-            job.service, job.llm_client, local=job.local)
+            job.service, llm_client, local=job.local)
         logger.info(
             "Project maintenance relay=%s graph=%s wiki=%s update=%s",
             job.relay_id, graph_result.get("status"),

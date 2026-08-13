@@ -13,9 +13,23 @@ logger = logging.getLogger(__name__)
 def _resolve_project_graph(user_id, body):
     """Return the active relay-scoped graph and its live execution surface."""
     conv_id = body.get("conversation_id", "")
-    from core.project_context import resolve_active_project
-    relay_id, service, local = resolve_active_project(
-        user_id, conv_id, body.get("agent_name", ""))
+    agent_name = body.get("agent_name", "")
+    relay_param = str(body.get("relay_id") or body.get("source") or "")
+    if relay_param:
+        from core.relay_bindings import get_default_local, get_linked_all
+        if relay_param not in get_linked_all(conv_id):
+            raise ValueError(
+                f"Relay '{relay_param}' is not linked to this conversation")
+        relay_id = relay_param
+        from core.service_registry import ServiceRegistry
+        service = ServiceRegistry.get_instance().resolve(
+            relay_id, user_id=user_id, conv_id=conv_id)
+        local = bool(get_default_local(
+            conv_id, relay_id=relay_id, agent=agent_name))
+    else:
+        from core.project_context import resolve_active_project
+        relay_id, service, local = resolve_active_project(
+            user_id, conv_id, agent_name)
     if not relay_id:
         raise ValueError("No active relay project for this conversation")
     from core.project_graph import ProjectGraph

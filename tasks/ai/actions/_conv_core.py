@@ -476,11 +476,9 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
         _summ_client, _, _ = self._get_summarizer_client(user_id, conversation_id=conv_id)
         _rs_client = _summ_client
         if not _rs_client:
-            _rs_svc = self._resolve_service_param(
-                "llm_service", user_id, conv_id) or "default"
-            _rs_client, _ = self._resolve_client(_rs_svc, user_id)
-        if not _rs_client:
-            flowfile.set_content(json.dumps({"error": "No LLM service for summarization"}).encode())
+            flowfile.set_content(json.dumps({
+                "error": "No summarizer_service LLM configured",
+            }).encode())
             return [flowfile]
 
         def _do_resume():

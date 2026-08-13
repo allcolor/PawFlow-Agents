@@ -5,6 +5,7 @@ import threading
 import pytest
 
 from services.filesystem_service import RelayService
+from services._relay_ws import _attach_sync_sock_to_loop
 
 
 class _Reader:
@@ -17,6 +18,50 @@ def _pending(reader=None):
     if reader is not None:
         holder["_relay_reader"] = reader
     return evt, holder
+
+
+def test_sync_socket_bridge_serializes_recv_and_send():
+    class _ConcurrentSensitiveSocket:
+        def __init__(self):
+            self.recv_entered = threading.Event()
+            self.release_recv = threading.Event()
+            self.sent = threading.Event()
+            self.in_recv = False
+            self.concurrent_access = False
+            self.closed = False
+
+        def settimeout(self, value):
+            assert value == 0.1
+
+        def recv(self, _size):
+            self.in_recv = True
+            self.recv_entered.set()
+            self.release_recv.wait(timeout=2)
+            self.in_recv = False
+            return b""
+
+        def sendall(self, _data):
+            self.concurrent_access = self.in_recv
+            self.sent.set()
+
+        def close(self):
+            self.closed = True
+
+    loop = asyncio.new_event_loop()
+    sock = _ConcurrentSensitiveSocket()
+    _reader, writer = _attach_sync_sock_to_loop(sock, loop)
+    assert sock.recv_entered.wait(timeout=2)
+
+    send_thread = threading.Thread(target=writer.write, args=(b"frame",))
+    send_thread.start()
+    assert not sock.sent.wait(timeout=0.05)
+    sock.release_recv.set()
+    send_thread.join(timeout=2)
+
+    assert sock.sent.is_set()
+    assert sock.concurrent_access is False
+    writer.close()
+    loop.close()
 
 
 def test_clear_relay_unblocks_pending_for_closed_connection_only():
@@ -68,11 +113,9 @@ def test_clear_last_relay_unblocks_all_pending_even_without_reader_tag():
 
 
 def test_request_retries_transient_relay_disconnect(monkeypatch):
-    import services._filesystem_ops as fs_mod  # _request/time.sleep live here post-split
-
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     calls = {"count": 0}
-    sleeps = []
+    waits = []
     request_ids = []
 
     def _request_once(action, path=".", **kwargs):
@@ -85,23 +128,17 @@ def test_request_retries_transient_relay_disconnect(monkeypatch):
         return "ok"
 
     monkeypatch.setattr(svc, "_request_once", _request_once)
-    # fs_mod.time is the shared global time module, so the patch is process-wide;
-    # only record sleeps from this test's thread to avoid capturing stray
-    # background-thread sleeps (e.g. bg bucket builder) that flake the assert.
-    _tid = threading.get_ident()
     monkeypatch.setattr(
-        fs_mod.time, "sleep",
-        lambda delay: sleeps.append(delay) if threading.get_ident() == _tid else None)
+        svc._relay_available, "wait",
+        lambda timeout: waits.append(timeout) or True)
 
     assert svc._request("read_file", "README.md") == "ok"
     assert calls["count"] == 2
-    assert sleeps == [5.0]
+    assert waits == [5.0]
     assert request_ids[0] == request_ids[1]
 
 
 def test_request_does_not_retry_functional_relay_error(monkeypatch):
-    import services._filesystem_ops as fs_mod  # _request/time.sleep live here post-split
-
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     calls = {"count": 0}
 
@@ -110,7 +147,6 @@ def test_request_does_not_retry_functional_relay_error(monkeypatch):
         raise Exception("file not found")
 
     monkeypatch.setattr(svc, "_request_once", _request_once)
-    monkeypatch.setattr(fs_mod.time, "sleep", lambda _delay: None)
 
     with pytest.raises(Exception, match="file not found"):
         svc._request("read_file", "missing.txt")
@@ -118,11 +154,9 @@ def test_request_does_not_retry_functional_relay_error(monkeypatch):
 
 
 def test_request_marks_relay_disconnect_after_retry_exhaustion(monkeypatch):
-    import services._filesystem_ops as fs_mod  # _request/time.sleep live here post-split
-
     svc = RelayService({"_service_id": "fs1", "token": "tok"})
     calls = {"count": 0}
-    sleeps = []
+    waits = []
     request_ids = []
 
     def _request_once(_action, _path=".", **kwargs):
@@ -131,19 +165,70 @@ def test_request_marks_relay_disconnect_after_retry_exhaustion(monkeypatch):
         raise Exception("Relay disconnected")
 
     monkeypatch.setattr(svc, "_request_once", _request_once)
-    # Process-wide patch (shared time module): record only this thread's sleeps
-    # so a concurrent background-thread time.sleep can't pollute the assert.
-    _tid = threading.get_ident()
     monkeypatch.setattr(
-        fs_mod.time, "sleep",
-        lambda delay: sleeps.append(delay) if threading.get_ident() == _tid else None)
+        svc._relay_available, "wait",
+        lambda timeout: waits.append(timeout) or False)
 
     with pytest.raises(Exception, match="Relay transport retry attempts exhausted"):
         svc._request("read_file", "README.md")
 
     assert calls["count"] == 5
-    assert sleeps == [5.0, 5.0, 5.0, 5.0]
+    assert waits == [5.0, 5.0, 5.0, 5.0]
     assert len(set(request_ids)) == 1
+
+
+def test_relay_availability_tracks_pool_lifecycle(monkeypatch):
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    reader = _Reader()
+    monkeypatch.setattr(svc, "push_remote_fs_manifest", lambda: None)
+
+    assert not svc._relay_available.is_set()
+    svc._set_relay(reader, object(), object(), object(), set())
+    assert svc._relay_available.is_set()
+
+    svc._clear_relay(reader=reader)
+    assert not svc._relay_available.is_set()
+
+
+def test_reconnect_signal_wakes_request_without_fixed_delay(monkeypatch):
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    first_failed = threading.Event()
+    calls = {"count": 0}
+
+    def _request_once(*_args, **_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            first_failed.set()
+            raise Exception("Relay disconnected")
+        return "ok"
+
+    monkeypatch.setattr(svc, "_request_once", _request_once)
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.setdefault(
+            "value", svc._request("read_file", "README.md")))
+    worker.start()
+    assert first_failed.wait(timeout=1)
+    assert worker.is_alive()
+    svc._relay_available.set()
+    worker.join(timeout=1)
+
+    assert result == {"value": "ok"}
+    assert not worker.is_alive()
+
+
+def test_managed_relay_disconnect_has_no_manual_cli_instruction():
+    svc = RelayService({
+        "_service_id": "MyWorkspace", "token": "tok",
+        "server_managed": True,
+    })
+
+    with pytest.raises(
+            Exception,
+            match="Managed relay 'MyWorkspace' is reconnecting") as exc:
+        svc._request_once("stat", ".")
+
+    assert "python tools/pawflow_relay.py" not in str(exc.value)
 
 
 class _BrokenReader:

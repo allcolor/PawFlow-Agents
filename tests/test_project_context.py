@@ -16,16 +16,14 @@ def test_prepare_active_project_context_schedules_relay_and_returns_digests(monk
                         lambda user_id, relay_id: f"graph:{user_id}:{relay_id}")
     monkeypatch.setattr("core.project_wiki_digest.build_project_wiki_digest",
                         lambda user_id, relay_id: f"wiki:{user_id}:{relay_id}")
-    client = MagicMock()
-
     result = project_context.prepare_active_project_context(
-        "alice", "conversation-a", "assistant", llm_client=client)
+        "alice", "conversation-a", "assistant")
 
     assert result == ("relay-a", "graph:alice:relay-a", "wiki:alice:relay-a")
     scheduled.assert_called_once_with(
         user_id="alice", relay_id="relay-a", service=service,
         conversation_id="conversation-a", agent_name="assistant",
-        llm_client=client, local=True)
+        local=True)
 
 
 def test_resolve_active_project_uses_single_link_when_no_default(monkeypatch):

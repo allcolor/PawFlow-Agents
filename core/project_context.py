@@ -50,7 +50,7 @@ def resolve_active_project(user_id: str, conversation_id: str,
 
 
 def schedule_active_project(user_id: str, conversation_id: str,
-                            agent_name: str = "", llm_client=None) -> str:
+                            agent_name: str = "") -> str:
     """Schedule automatic maintenance and return the active relay ID."""
     relay_id, service, local = resolve_active_project(
         user_id, conversation_id, agent_name)
@@ -59,16 +59,15 @@ def schedule_active_project(user_id: str, conversation_id: str,
         schedule_project_maintenance(
             user_id=user_id, relay_id=relay_id, service=service,
             conversation_id=conversation_id, agent_name=agent_name,
-            llm_client=llm_client, local=local)
+            local=local)
     return relay_id
 
 
 def prepare_active_project_context(user_id: str, conversation_id: str,
-                                   agent_name: str = "", llm_client=None
+                                   agent_name: str = ""
                                    ) -> Tuple[str, str, str]:
     """Schedule maintenance and return relay, graph and wiki prompt digests."""
-    relay_id = schedule_active_project(
-        user_id, conversation_id, agent_name, llm_client=llm_client)
+    relay_id = schedule_active_project(user_id, conversation_id, agent_name)
     graph_digest = ""
     wiki_digest = ""
     if relay_id:

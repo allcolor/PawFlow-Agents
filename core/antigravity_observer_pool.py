@@ -13,6 +13,7 @@ from typing import Optional, TYPE_CHECKING
 import json
 import logging
 import os
+import shutil
 import shlex
 import socket
 import subprocess  # nosec B404 - Docker/tmux process control is this module's job.
@@ -711,3 +712,37 @@ class AntigravityObserverPool(_AntigravityManualIngestMixin, _AntigravityInputMi
             # very orphan this cleanup exists to prevent.
             if self._sessions.get(state.key) is state:
                 self._sessions.pop(state.key, None)
+
+    def destroy_ephemeral(self, state: AntigravityObserverSession) -> None:
+        """Destroy exactly one ephemeral session and its runtime directory."""
+        if state is None:
+            return
+        with self._lock:
+            if self._sessions.get(state.key) is state:
+                self._sessions.pop(state.key, None)
+        self.kill(state)
+        try:
+            root = self._base_dir().resolve()
+            workdir = Path(state.workdir).resolve()
+            if workdir == root or root not in workdir.parents:
+                raise ValueError(
+                    f"ephemeral workdir escapes session root: {workdir}")
+            stale = workdir.with_name(
+                f".stale-ephemeral-{workdir.name}-{uuid.uuid4().hex[:8]}")
+            if workdir.exists():
+                workdir.replace(stale)
+                shutil.rmtree(stale, ignore_errors=True)
+            parent = workdir.parent
+            while parent != root and root in parent.parents:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+            logger.info(
+                "[antigravity-ephemeral] destroyed session runtime: %s",
+                workdir)
+        except Exception:
+            logger.debug(
+                "[antigravity-ephemeral] runtime cleanup failed: %s",
+                state.workdir, exc_info=True)

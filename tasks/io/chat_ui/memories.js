@@ -3,8 +3,19 @@ let _memoryCache = [];
 let _memoryAgentFilter = null;  // null = all
 let _memoryDraftFilter = false;
 let _memoryVisibleCache = [];
+let _memoryAgents = [];
 
 function cmdShowMemories() {
+  _cognitiveLoadResources(function(resources) {
+    _memoryAgents = _cognitiveAgentNames(resources);
+    if (_memoryAgentFilter && _memoryAgents.indexOf(_memoryAgentFilter) < 0) {
+      _memoryAgentFilter = null;
+    }
+    _loadMemoriesForPanel();
+  }, function(error) { addMsg('error', t('failedLoadMemories', { error: error.message })); });
+}
+
+function _loadMemoriesForPanel() {
   const body = {};
   if (_memoryAgentFilter !== null) body.agent_name = _memoryAgentFilter;
   action$('list_memories', body).subscribe({
@@ -28,14 +39,11 @@ function showMemoryOverlay(memories) {
     ? memories.filter(m => !!m.skill_draft) : memories;
   _memoryVisibleCache = visibleMemories;
 
-  // Collect unique agent names for filter
-  const agents = [...new Set(memories.map(m => m.agent || ''))].sort();
-
   // Filter dropdown
   let filterHtml = '<select id="memAgentFilter" onchange="memFilterChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
   filterHtml += '<option value="__all__"' + (_memoryAgentFilter === null ? ' selected' : '') + '>' + t('all') + '</option>';
   filterHtml += '<option value=""' + (_memoryAgentFilter === '' ? ' selected' : '') + '>' + t('globalOnly') + '</option>';
-  for (const a of agents) {
+  for (const a of _memoryAgents) {
     if (a) filterHtml += '<option value="' + a + '"' + (_memoryAgentFilter === a ? ' selected' : '') + '>' + a + '</option>';
   }
   filterHtml += '</select>';
@@ -91,6 +99,14 @@ function showMemoryOverlay(memories) {
     + '</div>';
   document.body.appendChild(overlay);
 
+}
+
+function _memoryAgentOptions(selected) {
+  return '<option value=""' + (!selected ? ' selected' : '') + '>' + escapeHtml(t('globalOnly')) + '</option>'
+    + _memoryAgents.map(function(agent) {
+      return '<option value="' + escapeHtml(agent) + '"' + (agent === selected ? ' selected' : '')
+        + '>' + escapeHtml(agent) + '</option>';
+    }).join('');
 }
 
 function _formatAge(ts) {
@@ -189,7 +205,8 @@ function memEdit(idx) {
     + '<label style="color:#6c6c8a;font-size:11px">' + escapeHtml(t('tags')) + ':</label>'
     + '<input id="mem-edit-tags" value="' + (m.tags || []).join(', ') + '" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
     + '<label style="color:#6c6c8a;font-size:11px">' + escapeHtml(t('agent')) + ':</label>'
-    + '<input id="mem-edit-agent" value="' + (m.agent || '') + '" placeholder="' + t('globalLower') + '" style="width:80px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<select id="mem-edit-agent" style="background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + _memoryAgentOptions(m.agent || '') + '</select>'
     + '<button onclick="memSaveEdit(\'' + m.id + '\')" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + escapeHtml(t('contextSave')) + '</button>'
     + '<button onclick="cmdShowMemories()" style="background:#333;color:#aaa;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + escapeHtml(t('contextCancel')) + '</button>'
     + '</div></div>';
@@ -216,7 +233,9 @@ function memAddNew() {
     + '<label style="color:#6c6c8a;font-size:11px">' + t('tags') + ':</label>'
     + '<input id="mem-new-tags" placeholder="tag1, tag2" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
     + '<label style="color:#6c6c8a;font-size:11px">' + t('agent') + ':</label>'
-    + '<input id="mem-new-agent" placeholder="' + t('globalLower') + '" style="width:80px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<select id="mem-new-agent" style="background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + _memoryAgentOptions(_memoryAgentFilter !== null ? _memoryAgentFilter
+      : (_memoryAgents.indexOf(selectedAgent) >= 0 ? selectedAgent : '')) + '</select>'
     + '<button onclick="memSaveNew()" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + t('add') + '</button>'
     + '</div>';
   list.insertBefore(form, list.firstChild);

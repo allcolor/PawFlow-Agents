@@ -601,6 +601,7 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
             "- Read the entire file at least once: the earlier sections contain mandatory system/project instructions, skills, tool-use hints, prior decisions, and safety constraints.",
             "- For filesystem, shell, search, edit, patch, browser, web, image, or desktop work, use PawFlow MCP tools first. Prefer get_tool_schema/use_tool and do not switch to native provider tools unless the explicit user request is only about the provider runtime itself.",
             "- Continue from the latest user request.",
+            "- If the latest user request does not supersede, redirect, or cancel unfinished work, resume and execute every pending or in-progress item in the Durable Todo List. Do not merely report that those items remain to be done.",
             "- Do not ask what to do unless both the file and the latest request are ambiguous.",
             "",
         ])

@@ -1,41 +1,31 @@
 // ── Agent Diary ─────────────────────────────────────────────────
 let _diaryCache = [];
 let _diaryTypeFilter = null;  // null = all
+let _diaryAgent = '';
 
 function cmdShowDiary() {
-  const agent = selectedAgent || '';
-  if (!agent) { addMsg('error', t('noAgentSelectedSelectFirst')); return; }
-  const args = { limit: 50 };
-  if (_diaryTypeFilter) args.type = _diaryTypeFilter;
-  action$('call_tool', { tool_name: 'diary_read', arguments: args }).subscribe({
-    next: (data) => {
-      _diaryCache = _parseDiaryResult(data);
-      showDiaryOverlay(_diaryCache, agent);
-    },
-    error: (e) => addMsg('error', t('failedLoadDiary', { error: e.message })),
+  _cognitiveLoadResources(function(data) {
+    const agents = _cognitiveAgentNames(data);
+    if (!agents.length) { addMsg('error', t('noAgents')); return; }
+    if (agents.indexOf(_diaryAgent) < 0) {
+      _diaryAgent = agents.indexOf(selectedAgent) >= 0 ? selectedAgent : agents[0];
+    }
+    const args = { agent_name: _diaryAgent, limit: 50 };
+    if (_diaryTypeFilter) args.type = _diaryTypeFilter;
+    action$('diary_list', args).subscribe({
+      next: function(result) {
+        if (result.error) { addMsg('error', result.error); return; }
+        _diaryCache = result.entries || [];
+        showDiaryOverlay(_diaryCache, _diaryAgent, agents);
+      },
+      error: function(error) { addMsg('error', t('failedLoadDiary', { error: error.message })); },
+    });
+  }, function(error) {
+    addMsg('error', t('failedLoadDiary', { error: error.message }));
   });
 }
 
-function _parseDiaryResult(data) {
-  // diary_read returns a text blob; parse lines into structured entries
-  // Format: "  [type] YYYY-MM-DD HH:MM: text..."
-  const raw = (data.result || data.text || '').toString();
-  const entries = [];
-  const lines = raw.split('\n');
-  for (const line of lines) {
-    const m = line.match(/^\s*\[(\w+)\]\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}):\s*(.*)$/);
-    if (m) {
-      entries.push({
-        type: m[1],
-        timestamp: m[2],
-        text: m[3],
-      });
-    }
-  }
-  return entries;
-}
-
-function showDiaryOverlay(entries, agentName) {
+function showDiaryOverlay(entries, agentName, agents) {
   let overlay = document.getElementById('diaryOverlay');
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
@@ -72,7 +62,7 @@ function showDiaryOverlay(entries, agentName) {
       const text = escapeHtml(e.text || '');
       rowsHtml += '<div id="diary-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="this.querySelector(\'.diary-full\')&&(this.querySelector(\'.diary-full\').style.display=this.querySelector(\'.diary-full\').style.display===\'block\'?\'none\':\'block\')">'
         + '<div style="display:flex;align-items:center;gap:4px">' + typeBadge(e.type)
-        + '<span style="color:#6c6c8a;font-size:10px;margin-left:auto">' + escapeHtml(e.timestamp || '') + '</span>'
+        + '<span style="color:#6c6c8a;font-size:10px;margin-left:auto">' + escapeHtml(e.ts ? new Date(e.ts * 1000).toLocaleString() : '') + '</span>'
         + '</div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + text.slice(0, 200) + '</div>'
         + '<div class="diary-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">' + text + '</div>'
@@ -83,6 +73,9 @@ function showDiaryOverlay(entries, agentName) {
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
     + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('diaryTitle', { agent: agentName || '?' })) + '</h3>'
+    + '<select id="diaryAgent" onchange="diaryAgentChanged()" style="background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:6px;padding:3px 7px">'
+    + agents.map(function(agent) { return '<option value="' + escapeHtml(agent) + '"'
+      + (agent === agentName ? ' selected' : '') + '>' + escapeHtml(agent) + '</option>'; }).join('') + '</select>'
     + '<span style="color:#6c6c8a;font-size:12px">' + entries.length + ' entries</span>'
     + filterHtml
     + '<button onclick="diaryAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ ' + escapeHtml(t('add')) + '</button>'
@@ -92,6 +85,11 @@ function showDiaryOverlay(entries, agentName) {
     + '</div>';
   document.body.appendChild(overlay);
 
+}
+
+function diaryAgentChanged() {
+  _diaryAgent = document.getElementById('diaryAgent').value;
+  cmdShowDiary();
 }
 
 function diaryFilterChanged() {
@@ -128,9 +126,9 @@ function diarySaveNew() {
   const entryType = document.getElementById('diary-new-type').value;
   const tagsRaw = document.getElementById('diary-new-tags').value;
   const tags = tagsRaw.split(',').map(t => t.trim()).filter(t => t);
-  const args = { entry: text, type: entryType };
+  const args = { agent_name: _diaryAgent, text: text, type: entryType };
   if (tags.length) args.tags = tags;
-  action$('call_tool', { tool_name: 'diary_write', arguments: args }).subscribe({
+  action$('diary_add', args).subscribe({
     next: () => cmdShowDiary(),
     error: (e) => addMsg('error', e.message),
   });
@@ -139,16 +137,16 @@ function diarySaveNew() {
 function cmdDiaryList(typeFilter) {
   const agent = selectedAgent || '';
   if (!agent) { addMsg('system', t('noAgentSelected')); return; }
-  const args = { limit: 20 };
+  const args = { agent_name: agent, limit: 20 };
   if (typeFilter) args.type = typeFilter;
-  action$('call_tool', { tool_name: 'diary_read', arguments: args }).subscribe({
+  action$('diary_list', args).subscribe({
     next: (data) => {
-      const entries = _parseDiaryResult(data);
+      const entries = data.entries || [];
       if (entries.length === 0) {
         addMsg('system', t('noDiaryEntriesFor', { agent: agent }));
       } else {
         const lines = entries.map(e => {
-          return '\u2022 [' + e.type + '] ' + e.timestamp + ' \u2014 ' + e.text;
+          return '\u2022 [' + e.type + '] ' + (e.ts ? new Date(e.ts * 1000).toLocaleString() : '') + ' \u2014 ' + e.text;
         });
         addMsg('system', t('diaryFor', { agent: agent, n: entries.length, lines: lines.join('\n') }));
       }

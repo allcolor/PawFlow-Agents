@@ -1,5 +1,5 @@
 // Project Wiki browser/editor for the active relay project.
-let _pwState = { pages: [], current: null, query: '', status: null };
+let _pwState = { pages: [], current: null, query: '', status: null, relay: '' };
 let _pwSearchTimer = null;
 
 function _pwButton(label, onclick, primary) {
@@ -27,6 +27,9 @@ function showProjectWikiOverlay() {
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:16px;width:min(1050px,94vw);height:min(760px,88vh);display:flex;flex-direction:column">'
     + '<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px">'
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">Project Wiki</h3>'
+    + '<label style="color:#888;font-size:11px">' + escapeHtml(t('relays'))
+    + ' <select id="pwRelay" onchange="pwRelayChanged()" style="background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:6px;padding:3px 7px"><option>'
+    + escapeHtml(t('loadingRelays')) + '</option></select></label>'
     + '<span id="pwStatus" style="color:#777;font-size:11px"></span>'
     + _pwButton('Graph', "closeProjectWikiOverlay();showProjectGraphOverlay()", false)
     + _pwButton('Scratchpad', "closeProjectWikiOverlay();showScratchpadOverlay()", false)
@@ -44,7 +47,36 @@ function showProjectWikiOverlay() {
     + '<div style="color:#777;text-align:center;padding:30px">Select a page or create one.</div>'
     + '</main></div></div>';
   document.body.appendChild(overlay);
-  _pwState = { pages: [], current: null, query: '', status: null };
+  const previousRelay = _pwState.relay;
+  _pwState = { pages: [], current: null, query: '', status: null, relay: previousRelay };
+  _cognitiveLoadResources(function(data) {
+    const available = _cognitiveRelays(data, selectedAgent);
+    const ids = available.relays.map(function(relay) { return relay.id; });
+    if (ids.indexOf(_pwState.relay) < 0) {
+      _pwState.relay = ids.indexOf(available.preferred) >= 0 ? available.preferred : (ids[0] || '');
+    }
+    const select = document.getElementById('pwRelay');
+    if (!available.relays.length) {
+      select.innerHTML = '<option value="">' + escapeHtml(t('noRelaysLinked')) + '</option>';
+      _pwError(t('noRelaysLinked'));
+      return;
+    }
+    select.innerHTML = _cognitiveRelayOptions(available.relays, _pwState.relay);
+    pwLoadStatus();
+    pwLoadPages('');
+  }, _pwError);
+}
+
+function _pwArgs(extra) {
+  return Object.assign({ relay_id: _pwState.relay }, extra || {});
+}
+
+function pwRelayChanged() {
+  _pwState = { pages: [], current: null, query: '', status: null,
+    relay: document.getElementById('pwRelay').value };
+  const content = document.getElementById('pwContent');
+  if (content) content.innerHTML = '<div style="color:#777;text-align:center;padding:30px">'
+    + escapeHtml(t('loadingRelayData')) + '</div>';
   pwLoadStatus();
   pwLoadPages('');
 }
@@ -56,7 +88,7 @@ function _pwError(error) {
 }
 
 function pwLoadStatus() {
-  action$('project_wiki_status', {}).subscribe({
+  action$('project_wiki_status', _pwArgs()).subscribe({
     next: function(data) {
       if (!data || data.error) return;
       _pwState.status = data;
@@ -80,7 +112,7 @@ function pwLoadPages(query) {
   const list = document.getElementById('pwPages');
   if (list) list.innerHTML = '<div style="color:#777;padding:10px">Loading...</div>';
   const action = query ? 'project_wiki_query' : 'project_wiki_pages';
-  action$(action, { query: query || '', limit: 25 }).subscribe({
+  action$(action, _pwArgs({ query: query || '', limit: 25 })).subscribe({
     next: function(data) {
       if (!data || data.error) { _pwError((data && data.error) || 'Cannot load wiki'); return; }
       _pwState.pages = Array.isArray(data.pages) ? data.pages : [];
@@ -114,7 +146,7 @@ function pwRenderPages() {
 function pwOpenPage(slug) {
   const content = document.getElementById('pwContent');
   if (content) content.innerHTML = '<div style="color:#777">Loading page...</div>';
-  action$('project_wiki_page', { slug: slug }).subscribe({
+  action$('project_wiki_page', _pwArgs({ slug: slug })).subscribe({
     next: function(data) {
       if (!data || data.error) { _pwError((data && data.error) || 'Cannot load page'); return; }
       _pwState.current = data;
@@ -169,6 +201,7 @@ function pwEditPage() {
 function pwSavePage(event) {
   event.preventDefault();
   const payload = {
+    relay_id: _pwState.relay,
     slug: document.getElementById('pwSlug').value.trim(),
     title: document.getElementById('pwTitle').value.trim(),
     summary: document.getElementById('pwSummary').value.trim(),
@@ -189,7 +222,7 @@ function pwSavePage(event) {
 function pwDeletePage() {
   if (!_pwState.current || !confirm('Delete wiki page "' + _pwState.current.title + '"?')) return;
   const slug = _pwState.current.slug;
-  action$('project_wiki_delete', { slug: slug }).subscribe({
+  action$('project_wiki_delete', _pwArgs({ slug: slug })).subscribe({
     next: function(data) {
       if (!data || data.error) { _pwError((data && data.error) || 'Cannot delete page'); return; }
       _pwState.current = null;
@@ -205,7 +238,7 @@ function pwDeletePage() {
 function pwRefresh() {
   const content = document.getElementById('pwContent');
   if (content) content.innerHTML = '<div style="color:#4fc3f7">Refreshing source hashes...</div>';
-  action$('project_wiki_refresh', { path: '.' }).subscribe({
+  action$('project_wiki_refresh', _pwArgs({ path: '.' })).subscribe({
     next: function(data) {
       if (!data || data.error) { _pwError((data && data.error) || 'Refresh failed'); return; }
       if (content) content.innerHTML = '<pre style="white-space:pre-wrap;color:#bbb">'
@@ -218,7 +251,7 @@ function pwRefresh() {
 }
 
 function pwLint() {
-  action$('project_wiki_lint', {}).subscribe({
+  action$('project_wiki_lint', _pwArgs()).subscribe({
     next: function(data) {
       if (!data || data.error) { _pwError((data && data.error) || 'Lint failed'); return; }
       const content = document.getElementById('pwContent');

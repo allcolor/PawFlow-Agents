@@ -2,6 +2,7 @@
 let _pgReportCache = null;
 let _pgQueryCache = [];
 let _pgNodeCache = null;
+let _pgRelay = '';
 
 function cmdShowProjectGraph() {
   showProjectGraphOverlay();
@@ -17,6 +18,9 @@ function showProjectGraphOverlay() {
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:750px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
     + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">Project Graph</h3>'
+    + '<label style="color:#888;font-size:11px">' + escapeHtml(t('relays'))
+    + ' <select id="pgRelaySelect" onchange="pgRelayChanged()" style="background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:6px;padding:3px 7px"><option>'
+    + escapeHtml(t('loadingRelays')) + '</option></select></label>'
     + '<button onclick="pgBuild()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Build</button>'
     + '<button onclick="pgReport()" style="background:#1b4332;color:#52b788;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Report</button>'
     + '<button onclick="document.getElementById(\'pgOverlay\').remove();showProjectWikiOverlay()" style="background:#2a2a4a;color:#a0a0c0;border:1px solid #444;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Wiki</button>'
@@ -32,7 +36,34 @@ function showProjectGraphOverlay() {
     + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
+  _cognitiveLoadResources(function(data) {
+    const available = _cognitiveRelays(data, selectedAgent);
+    const ids = available.relays.map(function(relay) { return relay.id; });
+    if (ids.indexOf(_pgRelay) < 0) {
+      _pgRelay = ids.indexOf(available.preferred) >= 0 ? available.preferred : (ids[0] || '');
+    }
+    const select = document.getElementById('pgRelaySelect');
+    if (!available.relays.length) {
+      select.innerHTML = '<option value="">' + escapeHtml(t('noRelaysLinked')) + '</option>';
+      _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">'
+        + escapeHtml(t('noRelaysLinked')) + '</div>');
+      return;
+    }
+    select.innerHTML = _cognitiveRelayOptions(available.relays, _pgRelay);
+    pgReport();
+  }, function(error) {
+    _pgSetContent('<div style="color:#e74c3c">' + escapeHtml(error.message) + '</div>');
+  });
+}
 
+function pgRelayChanged() {
+  _pgRelay = document.getElementById('pgRelaySelect').value;
+  _pgReportCache = null;
+  _pgQueryCache = [];
+  _pgNodeCache = null;
+  _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">'
+    + escapeHtml(t('loadingRelayData')) + '</div>');
+  pgReport();
 }
 
 function pgBuild() {
@@ -48,7 +79,7 @@ function pgBuild() {
   // The previous 'call_tool' path dispatched via the agent loop and
   // returned {status:'accepted'} immediately — the panel was stuck on
   // that ack forever.
-  action$('project_graph_build', {}).subscribe({
+  action$('project_graph_build', { relay_id: _pgRelay }).subscribe({
     next: function(data) {
       if (data.error) {
         _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(data.error) + '</div>');
@@ -91,7 +122,7 @@ function pgReport() {
   if (content) {
     content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('loadingReport')) + '</div>';
   }
-  action$('project_graph_report', {}).subscribe({
+  action$('project_graph_report', { relay_id: _pgRelay }).subscribe({
     next: function(data) {
       if (data.error) {
         _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(data.error) + '</div>');
@@ -195,7 +226,7 @@ function pgSearch() {
   if (content) {
     content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('searching')) + '</div>';
   }
-  action$('project_graph_query', { question: query }).subscribe({
+  action$('project_graph_query', { relay_id: _pgRelay, question: query }).subscribe({
     next: function(data) {
       if (data.error) {
         _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(data.error) + '</div>');
@@ -245,7 +276,7 @@ function pgNodeDetail(label) {
   if (content) {
     content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('loadingNode')) + '</div>';
   }
-  action$('project_graph_node', { label: label }).subscribe({
+  action$('project_graph_node', { relay_id: _pgRelay, label: label }).subscribe({
     next: function(data) {
       if (data.error) {
         _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(data.error) + '</div>');

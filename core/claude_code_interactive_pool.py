@@ -17,10 +17,12 @@ except ImportError:  # Windows: server still boots, the marker file is written w
 import hashlib
 import json
 import os
+import shutil
 import subprocess  # nosec B404
 import threading
 import time
 import logging
+import uuid
 
 from core.docker_utils import docker_cmd
 from core._cci_pool_spawn import InteractiveContainer, _InteractiveContainerSpawnMixin
@@ -1057,6 +1059,54 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         self._recover_container_tokens(state)
         self._kill_container(state.name)
         return True
+
+    def destroy_ephemeral(self, state: InteractiveContainer) -> None:
+        """Destroy one ephemeral interactive session and its runtime directory."""
+        if state is None:
+            return
+        with self._lock:
+            if self._sessions.get(state.key) is state:
+                self._sessions.pop(state.key, None)
+        self._recover_container_tokens(state)
+        self._kill_container(state.name)
+        try:
+            from services.cc_interactive_event_service import (
+                get_or_create_cc_interactive_event_service)
+            get_or_create_cc_interactive_event_service()[2].unregister_session(
+                state.session_token)
+        except Exception:
+            logger.debug("[cci-ephemeral] event session cleanup failed",
+                         exc_info=True)
+        if state.internal_token:
+            try:
+                from core.internal_auth import revoke_token
+                revoke_token(state.internal_token)
+            except Exception:
+                logger.debug("[cci-ephemeral] internal token revoke failed",
+                             exc_info=True)
+        try:
+            root = Path(self._session_root()).resolve()
+            workdir = Path(state.workdir).resolve()
+            if workdir == root or root not in workdir.parents:
+                raise ValueError(
+                    f"ephemeral workdir escapes session root: {workdir}")
+            stale = workdir.with_name(
+                f".stale-ephemeral-{workdir.name}-{uuid.uuid4().hex[:8]}")
+            if workdir.exists():
+                workdir.replace(stale)
+                shutil.rmtree(stale, ignore_errors=True)
+            parent = workdir.parent
+            while parent != root and root in parent.parents:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+            logger.info("[cci-ephemeral] destroyed session runtime: %s",
+                        workdir)
+        except Exception:
+            logger.debug("[cci-ephemeral] runtime cleanup failed: %s",
+                         state.workdir, exc_info=True)
 
     def kill_and_evict_by_conv(self, conv_id: str, reason: str) -> int:
         """Kill live containers for every interactive session in a conversation."""

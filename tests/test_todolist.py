@@ -179,6 +179,14 @@ def test_cli_cold_context_injects_todos_before_bootstrap_contract(store, tmp_pat
     assert "## Durable Todo List" in body
     assert task["id"] in body
     assert body.index("## Durable Todo List") < body.index("## Bootstrap Contract")
+    assert (
+        "resume and execute every pending or in-progress item"
+        in body
+    )
+    assert (
+        "Do not merely report that those items remain to be done."
+        in body
+    )
 
 
 @pytest.mark.parametrize("scope", [

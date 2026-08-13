@@ -25,6 +25,42 @@ class _CCStreamMixin:
     def _stream_claude_code(
         self, messages, model, temperature, max_tokens, tools, callback=None,
         thinking_callback=None, turn_callback=None, block_callback=None,
+        _is_auth_retry=False, *, call_user_id=None,
+        call_conversation_id=None, call_agent_name=None,
+        call_event_cid=None, call_ephemeral_stream=None,
+    ):
+        lifecycle = {}
+        try:
+            return self._stream_claude_code_inner(
+                messages, model, temperature, max_tokens, tools, callback,
+                thinking_callback=thinking_callback,
+                turn_callback=turn_callback, block_callback=block_callback,
+                _is_auth_retry=_is_auth_retry,
+                call_user_id=call_user_id,
+                call_conversation_id=call_conversation_id,
+                call_agent_name=call_agent_name,
+                call_event_cid=call_event_cid,
+                call_ephemeral_stream=call_ephemeral_stream,
+                _lifecycle_guard=lifecycle)
+        finally:
+            if lifecycle.get("armed"):
+                st = lifecycle["state"]
+                try:
+                    self._cleanup_proc(st.proc)
+                    self._recover_tokens(
+                        st.workdir, user_id=st.user_id,
+                        conversation_id=st.conv_id)
+                    if st._mcp_internal_token:
+                        from core.internal_auth import revoke_token
+                        revoke_token(st._mcp_internal_token)
+                except Exception:
+                    logger.warning(
+                        "[claude-code] pre-dispatch cleanup failed",
+                        exc_info=True)
+
+    def _stream_claude_code_inner(
+        self, messages, model, temperature, max_tokens, tools, callback=None,
+        thinking_callback=None, turn_callback=None, block_callback=None,
         _is_auth_retry=False,
         *,
         call_user_id: Optional[str] = None,
@@ -32,6 +68,7 @@ class _CCStreamMixin:
         call_agent_name: Optional[str] = None,
         call_event_cid: Optional[str] = None,
         call_ephemeral_stream: Optional[bool] = None,
+        _lifecycle_guard=None,
     ):
         """Stream from claude CLI using bidirectional stream-json.
 
@@ -308,6 +345,9 @@ class _CCStreamMixin:
                 self._spawn_cc_stream(st.workdir, st.user_id, st.conv_id, st.agent_name,
                                       st.model,
                                       ephemeral_stream=st._is_ephemeral))
+            if _lifecycle_guard is not None:
+                _lifecycle_guard.update(
+                    armed=True, state=st)
 
         # Session-aware serialization -- decided HERE, after the live lookup,
         # and on `st._is_reuse` alone. The persisted `claude_session:*` id is
@@ -637,7 +677,12 @@ class _CCStreamMixin:
                 messages, st.model, temperature, max_tokens, tools, st.callback,
                 thinking_callback=st.thinking_callback,
                 turn_callback=st.turn_callback, block_callback=st.block_callback,
-                _is_auth_retry=True)
+                _is_auth_retry=True,
+                call_user_id=st.user_id,
+                call_conversation_id=st.conv_id,
+                call_agent_name=st.agent_name,
+                call_event_cid=st._raw_event_cid,
+                call_ephemeral_stream=st._is_ephemeral)
         except BaseException as _dispatch_exc:
             # ANY other exception in the dispatch loop (CCCompactDetected,
             # KeyboardInterrupt, AgentCancelled, programming bugs, etc.):
@@ -817,4 +862,6 @@ class _CCStreamMixin:
                         "via the early-error path at line 1129)",
                         exc_info=True)
                 st._owns_turn_lock = False
+            if _lifecycle_guard is not None:
+                _lifecycle_guard["armed"] = False
         return self._ccs_finalize(st)

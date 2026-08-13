@@ -482,7 +482,7 @@ class _BgBucketBuildMixin:
             from core.memory_auto_extract import auto_extract_memories
             auto_extract_memories(
                 user_id=user_id, summary=summary,
-                agent_name="", llm_client=client,
+                agent_name="",
                 embed_fn=_build_embed_fn(user_id=user_id, conversation_id=cid),
                 conversation_id=cid)
         except Exception:
@@ -496,7 +496,7 @@ class _BgBucketBuildMixin:
             from core.skill_loop import propose_skill_draft_from_summary
             propose_skill_draft_from_summary(
                 user_id=user_id, summary=summary,
-                llm_client=client, conversation_id=cid)
+                conversation_id=cid)
         except Exception:
             logger.debug(
                 "[bg-bucket] skill draft proposal failed for cid=%s",
@@ -636,7 +636,7 @@ class _BgBucketBuildMixin:
                 from core.memory_auto_extract import auto_extract_memories
                 auto_extract_memories(
                     user_id=user_id, summary=result,
-                    agent_name="", llm_client=client,
+                    agent_name="",
                     embed_fn=_build_embed_fn(user_id=user_id, conversation_id=cid),
                     conversation_id=cid)
             except Exception:
@@ -646,7 +646,7 @@ class _BgBucketBuildMixin:
                 from core.skill_loop import propose_skill_draft_from_summary
                 propose_skill_draft_from_summary(
                     user_id=user_id, summary=result,
-                    llm_client=client, conversation_id=cid)
+                    conversation_id=cid)
             except Exception:
                 logger.debug("[bg-bucket] consolidate skill draft failed",
                               exc_info=True)

@@ -65,7 +65,6 @@ def auto_extract_memories(
     user_id: str,
     summary: str,
     agent_name: str = "",
-    llm_client=None,
     embed_fn=None,
     conversation_id: str = "",
 ) -> int:
@@ -78,9 +77,6 @@ def auto_extract_memories(
     if not user_id or not summary:
         return 0
 
-    if not llm_client:
-        return 0
-
     # Temporary (TTL-bearing) conversations never feed long-term memory.
     if conversation_id:
         try:
@@ -91,6 +87,18 @@ def auto_extract_memories(
             logger.debug(
                 "[auto-extract] is_temporary check failed for %s: %s",
                 conversation_id, exc)
+
+    try:
+        from core.summarizer_bindings import resolve_llm_client
+        llm_client, _context_size, _service_id = resolve_llm_client(
+            user_id, conversation_id)
+    except Exception as exc:
+        logger.debug(
+            "[auto-extract] summarizer resolution failed for %s: %s",
+            conversation_id, exc)
+        return 0
+    if not llm_client:
+        return 0
 
     facts = _extract_with_llm(
         llm_client, summary, user_id=user_id,

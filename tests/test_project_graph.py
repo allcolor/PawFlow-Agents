@@ -1,8 +1,10 @@
 """Tests for core.project_graph.ProjectGraph."""
 
+import base64
 import json
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from core.project_graph import ProjectGraph
 
@@ -56,9 +58,29 @@ def test_build_from_relay(tmp_path):
     assert result["nodes"] == 3
     assert result["edges"] == 2
     assert pg.has_graph()
-    svc.write_file.assert_called_once()
     svc.exec.assert_called_once()
-    svc.delete_file.assert_called_once()
+    svc.write_file.assert_not_called()
+    svc.delete_file.assert_not_called()
+    command = svc.exec.call_args.args[1]
+    prefix = "python3 -c \"import base64;exec(base64.b64decode('"
+    suffix = "'))\""
+    assert command.startswith(prefix)
+    assert command.endswith(suffix)
+    encoded_script = command[len(prefix):-len(suffix)]
+    assert b"PAWFLOW_GRAPH_ROOT" in base64.b64decode(encoded_script)
+
+
+def test_build_from_relay_creates_no_helper_file_on_failure(tmp_path):
+    """An execution failure cannot leave a helper file in the source tree."""
+    svc = _make_relay_mock({})
+    svc.exec.side_effect = RuntimeError("relay failed")
+
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    result = pg.build_from_relay(svc, ".")
+
+    assert result == {"status": "error", "reason": "relay failed"}
+    svc.write_file.assert_not_called()
+    svc.delete_file.assert_not_called()
 
 
 def test_build_from_relay_empty(tmp_path):

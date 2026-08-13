@@ -7,8 +7,9 @@ relay — the extraction script runs where the code is, results are sent back.
 Storage: data/graphs/{user}/{relay_id}/graph.json
 """
 
-import json
+import base64
 import hashlib
+import json
 import logging
 import re
 import threading
@@ -246,21 +247,16 @@ class ProjectGraph:
                 old_meta.get("root") and old_meta.get("root") != root_path)
             known_files: Dict[str, int] = (
                 {} if root_changed else old_meta.get("files", {}) or {})
-            script_name = ".pawflow_graph_extract.py"
-            fs_service.write_file(script_name, _RELAY_EXTRACT_SCRIPT.encode("utf-8"),
-                                  local=local)
-            try:
-                env = {
-                    "PAWFLOW_GRAPH_ROOT": root_path,
-                    "PAWFLOW_GRAPH_KNOWN": json.dumps(known_files),
-                }
-                result = fs_service.exec(".", f"python3 {script_name}", env=env,
-                                         local=local)
-            finally:
-                try:
-                    fs_service.delete_file(script_name, local=local)
-                except Exception:
-                    logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            encoded_script = base64.b64encode(
+                _RELAY_EXTRACT_SCRIPT.encode("utf-8")).decode("ascii")
+            command = (
+                "python3 -c \"import base64;"
+                f"exec(base64.b64decode('{encoded_script}'))\"")
+            env = {
+                "PAWFLOW_GRAPH_ROOT": root_path,
+                "PAWFLOW_GRAPH_KNOWN": json.dumps(known_files),
+            }
+            result = fs_service.exec(".", command, env=env, local=local)
 
             stdout = result.get("stdout", "") if isinstance(result, dict) else str(result)
             stderr = result.get("stderr", "") if isinstance(result, dict) else ""

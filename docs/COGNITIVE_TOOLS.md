@@ -258,8 +258,12 @@ The project graph builds a structural code graph from a codebase using tree-sitt
 
 ### 4.1 Build via Relay
 
-Initial context preparation schedules a background build automatically. Successful relay writes and shell commands schedule a debounced incremental refresh. The manual `build` action remains available for recovery or an explicit root change. Each build runs as a single relay exec; the extraction script
-walks the workspace, AST-parses changed files via tree-sitter, and
+Initial context preparation schedules a background build automatically. Successful
+relay writes and shell commands schedule a debounced incremental refresh. The
+manual `build` action remains available for recovery or an explicit root change.
+Each build runs as a single relay exec; the extraction script is passed directly
+to Python and executed in memory, without writing a helper file into the source
+tree. It walks the workspace, AST-parses changed files via tree-sitter, and
 returns a JSON delta the server merges into the cached graph.
 
 1. **Server sends** the cached `{rel_path: mtime}` map to the relay

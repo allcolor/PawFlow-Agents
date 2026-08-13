@@ -92,7 +92,7 @@ def test_agent_builders_inject_common_prompt_and_cli_mcp_separately():
     assert "_provider_system_prompt" in agent_core_src
     assert 'ctx.get("_is_cli_provider") and ctx.get("_cli_has_session")' in agent_core_src
     assert "append_cli_mcp_system_prompt" in inspect.getsource(
-        LLMClaudeCodeMixin._stream_claude_code)
+        LLMClaudeCodeMixin._stream_claude_code_inner)
     assert "_codex_app_resume_text" in inspect.getsource(
         LLMCodexAppServerMixin._stream_codex_app_server)
     assert "_gemini_acp_resume_text" in inspect.getsource(

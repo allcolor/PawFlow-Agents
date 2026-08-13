@@ -8,6 +8,11 @@ PawFlow provides a unified filesystem abstraction that allows flows and agents t
 
 ## Architecture
 
+Relay WebSockets are full duplex: the idle receive pump and server-initiated
+writes never share a lock. Per-connection writers are serialized separately,
+so a blocked `recv()` cannot delay filesystem tools, tool-relay traffic, or
+Claude Code Interactive lifecycle events.
+
 ```
 ┌──────────────────────────────────────────────┐
 │              FilesystemBackend (ABC)          │

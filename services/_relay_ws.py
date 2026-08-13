@@ -10,7 +10,6 @@ import base64
 import hashlib
 import logging
 import os
-import socket
 import struct
 import threading
 
@@ -18,8 +17,6 @@ import threading
 # relay is user-run and holds a token; a huge declared frame must not be
 # read into unbounded memory.
 _WS_MAX_FRAME_BYTES = 64 * 1024 * 1024
-_SOCKET_IO_POLL_SECONDS = 0.1
-
 logger = logging.getLogger(__name__)
 
 
@@ -151,14 +148,14 @@ def _attach_sync_sock_to_loop(sock, loop):
     Returns ``(reader, writer_shim)`` usable with ``_ws_recv_frame`` /
     ``_ws_send_frame`` as if they came from ``connect_accepted_socket``.
     """
-    # SSLSocket does not support concurrent recv/send calls safely.  The read
-    # pump and the asyncio writer run on different threads, so serialize their
-    # access to the accepted socket.  A short recv timeout releases the lock
-    # while the connection is idle, allowing server-initiated commands through.
-    sock.settimeout(_SOCKET_IO_POLL_SECONDS)
+    # Reads and writes must remain independent. The reader normally blocks for
+    # the lifetime of an idle WebSocket; holding a shared I/O lock around that
+    # recv would starve server-initiated tool commands and CCI hook replies.
+    # Services with concurrent writers serialize them separately with an
+    # asyncio.Lock; single-writer services need no cross-direction lock.
+    sock.setblocking(True)
     reader = asyncio.StreamReader(loop=loop)
     stop_event = threading.Event()
-    io_lock = threading.Lock()
 
     def _call_reader(method, *args):
         if stop_event.is_set() or loop.is_closed():
@@ -172,10 +169,7 @@ def _attach_sync_sock_to_loop(sock, loop):
         try:
             while not stop_event.is_set():
                 try:
-                    with io_lock:
-                        data = sock.recv(65536)
-                except socket.timeout:
-                    continue
+                    data = sock.recv(65536)
                 except OSError as e:
                     _call_reader(reader.set_exception, e)
                     return
@@ -202,8 +196,7 @@ def _attach_sync_sock_to_loop(sock, loop):
             if self._closed:
                 return
             try:
-                with io_lock:
-                    self._sock.sendall(data)
+                self._sock.sendall(data)
             except OSError:
                 self._closed = True
 

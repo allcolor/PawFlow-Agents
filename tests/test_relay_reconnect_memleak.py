@@ -4,8 +4,8 @@ import threading
 
 import pytest
 
-from services.filesystem_service import RelayService
 from services._relay_ws import _attach_sync_sock_to_loop
+from services.filesystem_service import RelayService
 
 
 class _Reader:
@@ -20,18 +20,17 @@ def _pending(reader=None):
     return evt, holder
 
 
-def test_sync_socket_bridge_serializes_recv_and_send():
-    class _ConcurrentSensitiveSocket:
+def test_sync_socket_bridge_send_is_never_blocked_by_idle_recv():
+    class _FullDuplexSocket:
         def __init__(self):
             self.recv_entered = threading.Event()
             self.release_recv = threading.Event()
             self.sent = threading.Event()
             self.in_recv = False
-            self.concurrent_access = False
             self.closed = False
 
-        def settimeout(self, value):
-            assert value == 0.1
+        def setblocking(self, value):
+            assert value is True
 
         def recv(self, _size):
             self.in_recv = True
@@ -41,25 +40,25 @@ def test_sync_socket_bridge_serializes_recv_and_send():
             return b""
 
         def sendall(self, _data):
-            self.concurrent_access = self.in_recv
             self.sent.set()
 
         def close(self):
             self.closed = True
 
     loop = asyncio.new_event_loop()
-    sock = _ConcurrentSensitiveSocket()
+    sock = _FullDuplexSocket()
     _reader, writer = _attach_sync_sock_to_loop(sock, loop)
     assert sock.recv_entered.wait(timeout=2)
 
     send_thread = threading.Thread(target=writer.write, args=(b"frame",))
     send_thread.start()
-    assert not sock.sent.wait(timeout=0.05)
+    assert sock.sent.wait(timeout=0.25)
+    assert sock.in_recv is True
     sock.release_recv.set()
     send_thread.join(timeout=2)
 
     assert sock.sent.is_set()
-    assert sock.concurrent_access is False
+    assert not send_thread.is_alive()
     writer.close()
     loop.close()
 

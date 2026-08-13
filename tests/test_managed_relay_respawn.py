@@ -231,8 +231,6 @@ def test_the_retry_loop_respawns_before_it_gives_up(manager, monkeypatch):
     Without the respawn the five retries all hit a container that is gone and
     the relay stays down until the server restarts.
     """
-    import services._filesystem_ops as fs_mod
-
     mgr = manager(running=False)
     svc = _managed_service()
     attempts = {"count": 0}
@@ -245,7 +243,7 @@ def test_the_retry_loop_respawns_before_it_gives_up(manager, monkeypatch):
         raise Exception("Relay not connected to 'MyWorkspace'.")
 
     monkeypatch.setattr(svc, "_request_once", _request_once)
-    monkeypatch.setattr(fs_mod.time, "sleep", lambda _d: None)
+    monkeypatch.setattr(svc._relay_available, "wait", lambda _d: None)
 
     assert svc._request("read_file", "README.md") == "ok"
     assert attempts["count"] == 2
@@ -254,8 +252,6 @@ def test_the_retry_loop_respawns_before_it_gives_up(manager, monkeypatch):
 
 def test_an_operator_relay_still_exhausts_its_retries(manager, monkeypatch):
     """Nothing about the respawn hook changes the unmanaged path."""
-    import services._filesystem_ops as fs_mod
-
     mgr = manager(running=False)
     svc = RelayService({"_service_id": "laptop", "token": "tok"})
 
@@ -263,7 +259,7 @@ def test_an_operator_relay_still_exhausts_its_retries(manager, monkeypatch):
         raise Exception("Relay not connected to 'laptop'.")
 
     monkeypatch.setattr(svc, "_request_once", _request_once)
-    monkeypatch.setattr(fs_mod.time, "sleep", lambda _d: None)
+    monkeypatch.setattr(svc._relay_available, "wait", lambda _d: None)
 
     with pytest.raises(Exception, match="Relay transport retry attempts exhausted"):
         svc._request("read_file", "README.md")

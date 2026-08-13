@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.181] — 2026-08-13
+
+### Fixed
+
+- Aligned the full release validation suite with the refactored Claude Code
+  stream wrapper, summarizer-only skill proposals, reconnect-event relay retries,
+  and the single-source package version before creating a verified release tag.
+
 ## [1.0.0-beta.180] — 2026-08-13
 
 ### Added

@@ -135,8 +135,8 @@ blocked when ownership changes is woken before it can take the replacement's
 first event; if an evicted reader ever holds an event, it is pushed back ahead of
 the queue so order is preserved. A `request` claim always wins because it serves
 the turn the user is waiting on. A `capture` claim (the orphan-turn safety net)
-refuses while a request coordinator is polling, and when evicted mid-turn it
-discards only its partial local text, never a queue event.
+refuses while a request coordinator holds its explicit lease, and when evicted
+mid-turn it discards only its partial local text, never a queue event.
 
 A claim owns the stream from the moment it is granted, not from the first poll.
 The provider claims before it sends anything, and the send blocks on TUI
@@ -144,9 +144,9 @@ readiness, paste, submit and verification — up to a minute on a cold TUI —
 before `run()` starts polling. Judging liveness on the last `wait_event()` alone
 made that whole window look unowned: a `request_start` arriving inside it was
 adopted as an orphan turn, and the capture's claim evicted the coordinator that
-was about to read the stream. The claim timestamp closes the window, bounded by
-a ceiling so a coordinator that claimed and died cannot disable the net for
-good.
+was about to read the stream. The provider holds an explicit request lease from
+the pre-send claim through the complete coordinator run and releases it in a
+`finally`, including on errors, aborts, and cancellation.
 
 ### What crosses the wire is shown in the webchat
 
@@ -172,13 +172,14 @@ coordinator inside its send has claimed and not polled, so 25 seconds of queued
 events is what it looks like *by design*, and the net evicted it — the real
 turn then died on its first read with `CCIConsumerEvicted` while the capture
 kept writing its rows, so the webchat showed the whole turn with active-agents
-and the context gauge dead for it. A capture claim is therefore refused on
-either fact: a request consumer polling within `_LISTENER_FRESH_SECONDS`, or a
-request claim still outstanding and unpolled within
-`_REQUEST_CLAIM_GRACE_SECONDS`. Past the grace the claim is granted as before,
-so a coordinator that claimed and died cannot mute the net for good.
+and the context gauge dead for it. A capture claim is therefore refused while
+`active_request_consumer_epoch` identifies a live provider turn. There is no
+polling timeout: the observed failure paused a legitimate coordinator for 26
+seconds inside context accounting, which is indistinguishable from death by
+timestamps alone. The matching provider `finally` clears the lease as soon as
+the turn actually exits, so genuine orphan turns remain adoptable.
 
-Adoption *also* respects that second fact, rather than firing on the queue and
+Adoption *also* respects that lease, rather than firing on the queue and
 letting the claim refuse it downstream. Leaving the two out of step produced a
 loop: the rule adopted, `claim_consumer` refused, the refused capture consumed
 nothing, so the queue stayed stale and the next sweep repeated it — one capture
@@ -187,11 +188,10 @@ the active-agent marker, for the entire time a slow TUI took to accept its
 prompt. A stream a coordinator provably owns is not a stream nobody is reading,
 and there is nothing there to adopt.
 
-Two more facts the rule needs. `wait_event()` stamps the freshness clock only
-for the consumer that still owns the stream: stamping before the epoch check let
-an already-evicted coordinator refresh it on its way to its own exception, and
-that stamp reads as "has polled since claiming" — retiring the claim grace and
-handing the net a live turn three seconds later. And a session is marked
+Two more facts the rule needs. `wait_event()` stamps the diagnostic freshness
+clock only for the consumer that still owns the stream: stamping before the
+epoch check let an already-evicted coordinator impersonate current activity.
+And a session is marked
 *between turns* by its `Stop` hook, because nothing drains the queue when a turn
 ends: `drain_session()` runs when the *next* turn claims, so every finished turn
 left its post-Stop tail waiting and was re-adopted 25 seconds later by a capture

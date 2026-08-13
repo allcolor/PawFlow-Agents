@@ -114,19 +114,16 @@ class CCInteractiveSessionEvents:
     injected_prompt_texts: list = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     last_event_at: float = 0.0
-    # Listener liveness: when a PawFlow-injected prompt is submitted while
-    # no request coordinator is polling wait_event anymore (it timed out or
-    # died), the turn would run invisibly — these timestamps let the service
-    # detect that and capture the orphan turn like a manual tmux one.
+    # Last successful poll, retained for diagnostics and short handover hints.
+    # It is not ownership: a live coordinator can spend arbitrarily long in a
+    # callback between two polls.
     last_wait_at: float = 0.0
     injected_intent_at: float = 0.0
-    # A request coordinator claims the stream BEFORE it sends anything: the
-    # send blocks on TUI readiness, paste, submit and verification, and only
-    # then does run() start polling. Until that first poll neither timestamp
-    # above exists, so the orphan-turn net saw an unowned stream and evicted
-    # the coordinator that was about to read it. The claim is the ownership
-    # fact; these two are its consequences.
-    last_request_claim_at: float = 0.0
+    # Explicit request lease. It is set by claim_consumer(request) and cleared
+    # only by the matching provider finally block. Poll timing cannot represent
+    # ownership: callbacks such as context accounting may legitimately pause a
+    # live coordinator for tens of seconds.
+    active_request_consumer_epoch: int = 0
     # Tool-id dedup fallback, used only when the pool no longer knows the
     # container behind this session (see _capture_dedup_sets). Lives here so
     # two chained captures of the same session still dedup against each other.
@@ -471,43 +468,19 @@ class CCInteractiveEventService(BaseService):
         A ``request`` claim always wins: it is the authoritative reader for
         the turn the user is waiting on, and any stale coordinator still
         polling is evicted. A ``capture`` claim (the orphan-turn safety net)
-        refuses when a request coordinator is actively polling — the net
-        must never take the stream away from the real turn. Returns the
-        granted epoch, or 0 when the claim is refused.
-
-        "Actively polling" is two facts, not one. A coordinator that polled
-        recently is obviously alive; so is one that has claimed and not polled
-        YET, because it is still inside its send -- the send blocks on TUI
-        readiness, paste, settle, double Enter and submit verification before
-        run() reads anything, and `_REQUEST_CLAIM_GRACE_SECONDS` is the
-        ceiling that window was measured against. Only the first fact was
-        checked, so the net could take the stream from a turn that had not
-        started reading. Bumping the epoch is not a passive act: the
-        coordinator then dies with CCIConsumerEvicted on its very first read.
-        Observed on codex-interactive when a slow TUI ("prompt not detected
-        ready") pushed the first poll past 50s -- the tmux kept working and
-        the capture kept the rows flowing, so the webchat showed the whole
-        turn while active-agents and the context gauge stayed dead for it.
+        refuses while the explicit request lease is held. Poll recency is not
+        ownership: a live coordinator may be inside a slow callback and not
+        call ``wait_event`` for an arbitrary interval. Returns the granted
+        epoch, or 0 when the claim is refused.
         """
         state = self.register_session(session_token)
         with self._sessions_lock:
-            if kind != "request":
-                now = time.time()
-                if now - state.last_wait_at < self._LISTENER_FRESH_SECONDS:
-                    return 0
-                # Claimed more recently than it last polled = has not read
-                # since claiming = still sending. Once it polls, last_wait_at
-                # overtakes the claim and the check above governs again; if it
-                # never polls at all, the grace expires and the net gets the
-                # stream, so no turn is left invisible for longer than that.
-                if (state.last_request_claim_at > state.last_wait_at
-                        and now - state.last_request_claim_at
-                        < self._REQUEST_CLAIM_GRACE_SECONDS):
-                    return 0
+            if kind != "request" and state.active_request_consumer_epoch:
+                return 0
             with state.stream_condition:
                 state.consumer_epoch += 1
                 if kind == "request":
-                    state.last_request_claim_at = time.time()
+                    state.active_request_consumer_epoch = state.consumer_epoch
                     # Code mode is a property of the turn, not of the session:
                     # the next turn may call its tools directly, and a stale
                     # flag would have the relay add a row beside the provider's.
@@ -516,35 +489,21 @@ class CCInteractiveEventService(BaseService):
                 return state.consumer_epoch
 
     def release_consumer(self, session_token: str, epoch: int = 0) -> None:
-        """Give up a claim whose coordinator never started reading.
+        """Release the matching request lease.
 
-        A request claim suppresses the orphan-turn net for two minutes, on the
-        reasoning that the coordinator is busy inside its send (TUI readiness,
-        paste, settle, double Enter, verification) and will start polling any
-        moment. When the send FAILS the coordinator is never built, and
-        nothing withdrew the claim: the net stayed muted for the rest of the
-        grace window.
-
-        That window is exactly when the turn happens. The user watches the
-        send fail, presses Enter in the tmux themselves, and the TUI runs the
-        prompt it was holding all along -- a real turn, streamed through the
-        proxy, addressed to nobody. The net exists to adopt precisely that
-        turn, and it declined because a claim from a dead coordinator was
-        still on the books. Releasing hands the stream back so the next
-        request_start is adopted and the answer reaches the webchat.
-
-        Scoped by epoch: a claim taken since then belongs to a live turn and
-        must not be cleared by the loser's cleanup. Passing 0 releases
-        unconditionally.
+        Providers call this both when sending fails and from the coordinator
+        ``finally`` path. Epoch scoping prevents an older turn's cleanup from
+        releasing a newer request lease. Passing 0 releases unconditionally.
         """
         state = self.session_state(session_token)
         if state is None:
             return
         with self._sessions_lock:
             with state.stream_condition:
-                if epoch and epoch != state.consumer_epoch:
+                if (epoch and epoch
+                        != state.active_request_consumer_epoch):
                     return
-                state.last_request_claim_at = 0.0
+                state.active_request_consumer_epoch = 0
                 # The paste intent is the other half of the same suppression:
                 # remember_injected_prompt sets it so the net keeps quiet
                 # while the send runs. The send is over.
@@ -560,13 +519,12 @@ class CCInteractiveEventService(BaseService):
         with state.stream_condition:
             # Stamp the freshness clock only for the consumer that still owns
             # the stream. Stamping first let an EVICTED coordinator refresh it
-            # on the way to its own exception: `last_wait_at` then sat newer
-            # than the incoming claim, which is exactly the shape
-            # `claim_consumer` reads as "has polled since claiming". Three
-            # seconds later the freshness check expired too, and the
-            # orphan-turn net was granted a capture against a live turn whose
-            # 120s claim grace should have refused it -- evicting the real
-            # coordinator on its first read. The capture kept the rows
+            # on the way to its own exception. That made diagnostics claim a
+            # newer owner had already polled and, under the former timestamp
+            # ownership heuristic, let the orphan net evict a live coordinator.
+            # Explicit request leases no longer depend on this clock, but the
+            # stamp must still describe only the current owner. The capture
+            # kept the rows
             # flowing, so the webchat filled in while active-agents and the
             # block went dead: the turn read "Completed" while the tmux worked.
             if epoch and epoch != state.consumer_epoch:
@@ -833,28 +791,18 @@ class CCInteractiveEventService(BaseService):
             return
         self._start_manual_capture(state)
 
-    # A live request coordinator polls wait_event at least every 0.25s;
-    # a last_wait_at older than this means nobody is streaming the turn.
+    # Short handover hint used only after no explicit request lease exists.
     _LISTENER_FRESH_SECONDS = 3.0
     # Worst-case gap between the prompt injection (tmux paste) and the
     # coordinator's first wait_event poll — the send blocks through paste,
     # settle, double-Enter and submit verification before run() starts.
     _INJECT_INTENT_GRACE_SECONDS = 60.0
-    # Ceiling on claim -> first wait_event. The send it covers is bounded by
-    # the TUI readiness wait (PAWFLOW_CCI_PROMPT_READY_TIMEOUT_SECONDS, 45s)
-    # plus paste, settle, double Enter and submit verification. A coordinator
-    # that claims and then dies inside that window has already failed its
-    # turn with an error, so there is no invisible response left to capture --
-    # suppressing the net here costs nothing and stops it killing a live turn.
-    _REQUEST_CLAIM_GRACE_SECONDS = 120.0
-
     def _request_listener_recent(self, state: CCInteractiveSessionEvents) -> bool:
         now = time.time()
         return (state.manual_capture_active
+                or bool(state.active_request_consumer_epoch)
                 or now - state.last_wait_at < self._LISTENER_FRESH_SECONDS
-                or now - state.injected_intent_at < self._INJECT_INTENT_GRACE_SECONDS
-                or now - state.last_request_claim_at
-                < self._REQUEST_CLAIM_GRACE_SECONDS)
+                or now - state.injected_intent_at < self._INJECT_INTENT_GRACE_SECONDS)
 
     def _capture_orphan_injected_turn(self, state: CCInteractiveSessionEvents) -> None:
         """Safety net for injected prompts submitted with no listener.
@@ -1015,19 +963,17 @@ class CCInteractiveEventService(BaseService):
             return
         if time.time() - pending_since < self._UNDELIVERED_ADOPT_SECONDS:
             return
-        # One guess this rule may NOT force past: a coordinator that has claimed
-        # and not polled is inside its send, and `claim_consumer` will refuse
-        # the capture on exactly that ground. Forcing anyway produced a
+        # One fact this rule may NOT force past: an explicit request lease.
+        # The coordinator may be sending or running a slow callback. Forcing
+        # adoption anyway produced a
         # capture per sweep tick -- claimed, refused, streaming 0 chars, each
         # one raising and dropping the active-agent marker, and none of them
         # consuming an event, so the queue stayed stale and the next tick did
         # it again. Observed every 5s for the whole 45s a slow codex TUI took
         # to accept its prompt. The stream is owned; there is nothing to adopt.
         with state.stream_condition:
-            claimed_at = state.last_request_claim_at
-            polled_at = state.last_wait_at
-        if (claimed_at > polled_at
-                and time.time() - claimed_at < self._REQUEST_CLAIM_GRACE_SECONDS):
+            request_lease = state.active_request_consumer_epoch
+        if request_lease:
             return
         self._adopt_orphan_turn(state, "events undelivered", force=True)
 

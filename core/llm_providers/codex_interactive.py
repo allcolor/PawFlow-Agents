@@ -252,20 +252,24 @@ class LLMCodexInteractiveMixin:
                     f"{detail}")
             state.initial_context_loaded = True
 
-            coord = _CodexInteractiveTurnCoordinator(
-                event_service, state.session_token, callback=callback,
-                thinking_callback=thinking_callback,
-                block_callback=block_callback, turn_callback=turn_callback,
-                touch_callback=lambda: pool.touch(state),
-                emitted_tool_use_ids=state.emitted_tool_use_ids,
-                emitted_tool_result_ids=state.emitted_tool_result_ids,
-                consumer_epoch=consumer_epoch,
-                context_tokens_callback=lambda tokens: (
-                    self.record_codex_live_context(
-                        state, conversation_id, agent_name, tokens,
-                        user_id=user_id,
-                        event_cid=call_event_cid or conversation_id)))
-            response = coord.run(getattr(self, "_abort", None))
+            try:
+                coord = _CodexInteractiveTurnCoordinator(
+                    event_service, state.session_token, callback=callback,
+                    thinking_callback=thinking_callback,
+                    block_callback=block_callback, turn_callback=turn_callback,
+                    touch_callback=lambda: pool.touch(state),
+                    emitted_tool_use_ids=state.emitted_tool_use_ids,
+                    emitted_tool_result_ids=state.emitted_tool_result_ids,
+                    consumer_epoch=consumer_epoch,
+                    context_tokens_callback=lambda tokens: (
+                        self.record_codex_live_context(
+                            state, conversation_id, agent_name, tokens,
+                            user_id=user_id,
+                            event_cid=call_event_cid or conversation_id)))
+                response = coord.run(getattr(self, "_abort", None))
+            finally:
+                event_service.release_consumer(
+                    state.session_token, consumer_epoch)
             self.record_codex_context_window(
                 pool, state, conversation_id, agent_name,
                 coord.observed_context_tokens)
@@ -301,19 +305,22 @@ class LLMCodexInteractiveMixin:
             raise LLMClientError(
                 "Failed to interrupt Codex interactive tmux session: "
                 f"{detail}")
-        coord = _CodexInteractiveTurnCoordinator(
-            event_service, state.session_token, callback=callback,
-            thinking_callback=thinking_callback,
-            block_callback=block_callback, turn_callback=turn_callback,
-            touch_callback=lambda: pool.touch(state),
-            emitted_tool_use_ids=state.emitted_tool_use_ids,
-            emitted_tool_result_ids=state.emitted_tool_result_ids,
-            consumer_epoch=consumer_epoch,
-            context_tokens_callback=lambda tokens: (
-                self.record_codex_live_context(
-                    state, conversation_id, agent_name, tokens,
-                    user_id=user_id, event_cid=conversation_id)))
-        response = coord.run(getattr(self, "_abort", None))
+        try:
+            coord = _CodexInteractiveTurnCoordinator(
+                event_service, state.session_token, callback=callback,
+                thinking_callback=thinking_callback,
+                block_callback=block_callback, turn_callback=turn_callback,
+                touch_callback=lambda: pool.touch(state),
+                emitted_tool_use_ids=state.emitted_tool_use_ids,
+                emitted_tool_result_ids=state.emitted_tool_result_ids,
+                consumer_epoch=consumer_epoch,
+                context_tokens_callback=lambda tokens: (
+                    self.record_codex_live_context(
+                        state, conversation_id, agent_name, tokens,
+                        user_id=user_id, event_cid=conversation_id)))
+            response = coord.run(getattr(self, "_abort", None))
+        finally:
+            event_service.release_consumer(state.session_token, consumer_epoch)
         self.record_codex_context_window(
             pool, state, conversation_id, agent_name,
             coord.observed_context_tokens)

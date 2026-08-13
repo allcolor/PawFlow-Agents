@@ -187,6 +187,54 @@ def test_ephemeral_stream_is_destroyed_when_prompt_send_fails(monkeypatch):
     assert acquired_conversations[0] != "_project_wiki_job"
 
 
+def test_codex_provider_releases_request_lease_when_coordinator_raises(
+        monkeypatch):
+    client = LLMClient("codex-interactive")
+    state = _state(("user", "conv", "assistant", ""))
+    pool = SimpleNamespace(
+        ensure_started=lambda *_args, **_kwargs: state,
+        touch=lambda _state: None,
+        send_text=lambda _state, _prompt: True,
+        send_interrupt=lambda _state, _text: True,
+        destroy_ephemeral=lambda _state: None)
+    released = []
+    events = SimpleNamespace(
+        claim_consumer=lambda _token: 11,
+        drain_session=lambda _token: None,
+        release_consumer=lambda token, epoch: released.append((token, epoch)))
+
+    class _FailingCoordinator:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, _abort=None):
+            raise RuntimeError("callback failed")
+
+    monkeypatch.setattr(
+        CodexInteractivePool, "instance", classmethod(lambda cls: pool))
+    monkeypatch.setattr(client, "_cci_prompt", lambda *_args, **_kwargs: "prompt")
+    monkeypatch.setattr(
+        client, "_codex_interactive_session_state", lambda **_kwargs: state)
+    monkeypatch.setattr(
+        "core.llm_providers.codex_interactive."
+        "_CodexInteractiveTurnCoordinator", _FailingCoordinator)
+    monkeypatch.setattr(
+        "services.cc_interactive_event_service."
+        "get_or_create_cc_interactive_event_service",
+        lambda: ("", "", events))
+
+    with pytest.raises(RuntimeError, match="callback failed"):
+        client._stream_codex_interactive(
+            [], "", call_user_id="user", call_conversation_id="conv",
+            call_agent_name="assistant")
+    with pytest.raises(RuntimeError, match="callback failed"):
+        client.interrupt_codex_interactive(
+            "stop", user_id="user", conversation_id="conv",
+            agent_name="assistant")
+
+    assert released == [(state.session_token, 11), (state.session_token, 11)]
+
+
 def test_endpoint_uses_custom_base_url_or_official_auth_endpoint():
     oauth = SimpleNamespace(api_key="", base_url="")
     api_key = SimpleNamespace(api_key="sk-test", base_url="")

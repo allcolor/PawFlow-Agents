@@ -91,9 +91,7 @@ def test_orphan_capture_refused_while_a_claim_has_not_polled_yet(monkeypatch):
     assert svc.wait_event("sess", timeout=0, epoch=epoch)["request_id"] == "r1"
 
 
-def test_orphan_capture_granted_once_the_claim_grace_expired(monkeypatch):
-    # The grace is a ceiling, not an amnesty: a coordinator that claimed and
-    # never came back must not disable the safety net for good.
+def test_orphan_capture_granted_once_the_request_lease_is_released(monkeypatch):
     svc = _service()
     state = _codex_session(svc)
     captured = []
@@ -101,9 +99,8 @@ def test_orphan_capture_granted_once_the_claim_grace_expired(monkeypatch):
         CCInteractiveEventService, "_start_manual_capture",
         lambda self, st: captured.append(st.session_token))
 
-    svc.claim_consumer("sess")
-    state.last_request_claim_at = (
-        time.time() - CCInteractiveEventService._REQUEST_CLAIM_GRACE_SECONDS - 1)
+    epoch = svc.claim_consumer("sess")
+    svc.release_consumer("sess", epoch)
     svc.publish_event("sess", dict(_CODEX_REQUEST_START))
 
     assert captured == ["sess"]
@@ -151,7 +148,7 @@ def test_release_leaves_a_newer_claim_alone(monkeypatch):
     svc.publish_event("sess", dict(_CODEX_REQUEST_START))
 
     assert captured == []
-    assert state.last_request_claim_at > 0.0
+    assert state.active_request_consumer_epoch > 0
 
 
 # ── the rule: what crosses the wire reaches the webchat ────────────────────
@@ -188,6 +185,8 @@ def test_events_nobody_takes_out_of_the_queue_are_adopted(monkeypatch):
     svc.publish_event("sess", dict(_CODEX_REQUEST_START, request_id="r2"))
     svc.wait_event("sess", timeout=0, epoch=epoch)
     assert captured == []
+    # The provider's coordinator exits and its finally releases ownership.
+    svc.release_consumer("sess", epoch)
 
     _age_pending(svc, state,
                  CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
@@ -227,6 +226,7 @@ def test_taking_one_event_does_not_clear_the_rest(monkeypatch):
     svc.publish_event("sess", {"type": "sse", "payload": {"type": "x"}})
     svc.wait_event("sess", timeout=0, epoch=epoch)
     assert state.oldest_pending_at > 0.0
+    svc.release_consumer("sess", epoch)
 
     _age_pending(svc, state,
                  CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
@@ -249,8 +249,10 @@ def test_the_sweeper_notices_a_burst_that_went_quiet(monkeypatch):
     svc.publish_event("sess", dict(_CODEX_REQUEST_START))
     svc.publish_event("sess", dict(_CODEX_REQUEST_START, request_id="r2"))
     # It read the burst's first event and went quiet, so the claim is no
-    # longer newer than the last poll: nobody is coming back for the rest.
+    # longer active once the provider's finally runs: nobody is coming back
+    # for the rest.
     svc.wait_event("sess", timeout=0, epoch=epoch)
+    svc.release_consumer("sess", epoch)
     _age_pending(svc, state,
                  CCInteractiveEventService._UNDELIVERED_ADOPT_SECONDS + 1)
     # One sweep pass, run directly rather than waiting on its thread.
@@ -277,7 +279,7 @@ def test_capture_claim_does_not_stamp_the_request_claim_clock():
     state = svc.register_session("sess")
     state.last_wait_at = time.time() - 3600
     assert svc.claim_consumer("sess", kind="capture") > 0
-    assert state.last_request_claim_at == 0.0
+    assert state.active_request_consumer_epoch == 0
 
 
 def test_the_net_may_not_evict_a_coordinator_still_inside_its_send():
@@ -349,9 +351,8 @@ def test_the_undelivered_rule_does_not_storm_a_coordinator_still_sending(
         svc._adopt_if_undelivered(state)
     assert captured == [], "the stream is owned; there is nothing to adopt"
 
-    # The grace is still a ceiling, not an amnesty.
-    state.last_request_claim_at = (
-        time.time() - CCInteractiveEventService._REQUEST_CLAIM_GRACE_SECONDS - 1)
+    # Once the owning provider exits its finally block, adoption is allowed.
+    svc.release_consumer("sess")
     svc._adopt_if_undelivered(state)
     assert captured == ["sess"]
 
@@ -551,11 +552,9 @@ def test_an_evicted_coordinator_does_not_refresh_the_freshness_clock():
 
     ``wait_event`` stamped ``last_wait_at`` before checking the epoch, so a
     coordinator that had ALREADY been evicted refreshed the clock on its way
-    to its own exception. That stamp sits newer than the incoming claim, which
-    is precisely the shape ``claim_consumer`` reads as "has polled since
-    claiming" -- so the claim grace stopped applying, and once the freshness
-    window expired the net was granted a capture against a live turn. The new
-    owner then died on its first read, and the capture kept the rows flowing
+    to its own exception. The former timestamp ownership heuristic could then
+    treat the live replacement as absent and grant a capture against it. The
+    new owner died on its first read, and the capture kept the rows flowing
     without the active-agent and gauge that belong to a coordinator.
     """
     svc = _service()
@@ -575,51 +574,39 @@ def test_an_evicted_coordinator_does_not_refresh_the_freshness_clock():
     assert state.last_wait_at == stamped, (
         "an evicted consumer must not refresh the freshness clock")
 
-    # Age both clocks past the freshness window, their order intact: the new
-    # owner has claimed, has not polled, and is well inside its claim grace.
-    shift = CCInteractiveEventService._LISTENER_FRESH_SECONDS + 1
-    state.last_wait_at -= shift
-    state.last_request_claim_at -= shift
-    assert state.last_request_claim_at > state.last_wait_at
-
     assert svc.claim_consumer("sess", kind="capture") == 0
+    assert state.active_request_consumer_epoch == second
     assert state.consumer_epoch == second
     assert svc.wait_event("sess", timeout=0, epoch=second) == {}
 
 
-def test_a_send_that_never_polls_still_loses_the_stream_eventually():
-    """The grace defers the net, it does not disable it: a coordinator that
-    dies inside its send without releasing must not mute the net forever, or
-    the turn it was holding stays invisible."""
+def test_a_request_lease_never_expires_from_elapsed_time():
+    """Elapsed time cannot prove a coordinator dead; its finally releases."""
     svc = _service()
     state = _codex_session(svc)
 
-    svc.claim_consumer("sess")
+    epoch = svc.claim_consumer("sess")
     svc.publish_event("sess", dict(_CODEX_REQUEST_START))
     state.last_wait_at = 0.0
-    state.last_request_claim_at = (
-        time.time() - CCInteractiveEventService._REQUEST_CLAIM_GRACE_SECONDS - 1)
 
+    assert svc.claim_consumer("sess", kind="capture") == 0
+    svc.release_consumer("sess", epoch)
     assert svc.claim_consumer("sess", kind="capture") > 0
 
 
-def test_a_coordinator_that_has_polled_is_governed_by_freshness_alone():
-    """Once it reads, the claim stops shielding it: a reader that then goes
-    quiet past _LISTENER_FRESH_SECONDS is the case the net was built for."""
+def test_a_coordinator_that_has_polled_keeps_its_lease_until_release():
+    """A slow callback after a poll must not let orphan capture evict it."""
     svc = _service()
     state = _codex_session(svc)
 
     epoch = svc.claim_consumer("sess")
     svc.publish_event("sess", dict(_CODEX_REQUEST_START))
     svc.wait_event("sess", timeout=0, epoch=epoch)
-    # It polled after claiming -- the ordering that says the send is over --
-    # and has since gone quiet past the freshness window.
-    now = time.time()
-    state.last_request_claim_at = now - 10
-    state.last_wait_at = (
-        now - CCInteractiveEventService._LISTENER_FRESH_SECONDS - 1)
-    assert state.last_wait_at > state.last_request_claim_at
+    state.last_wait_at = time.time() - 3600
 
+    assert svc.claim_consumer("sess", kind="capture") == 0
+    assert state.consumer_epoch == epoch
+    svc.release_consumer("sess", epoch)
     assert svc.claim_consumer("sess", kind="capture") > 0
 
 

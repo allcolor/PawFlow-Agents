@@ -95,18 +95,22 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     f"tmux session: {detail}")
             state.initial_context_loaded = True
 
-            coord = _CCITurnCoordinator(
-                event_service, state.session_token, callback=callback,
-                thinking_callback=thinking_callback,
-                block_callback=block_callback,
-                turn_callback=turn_callback,
-                touch_callback=lambda: pool.touch(state),
-                usage_callback=self._cci_usage_observer(
-                    conversation_id, agent_name),
-                emitted_tool_use_ids=state.emitted_tool_use_ids,
-                emitted_tool_result_ids=state.emitted_tool_result_ids,
-                consumer_epoch=consumer_epoch)
-            response = coord.run(getattr(self, "_abort", None))
+            try:
+                coord = _CCITurnCoordinator(
+                    event_service, state.session_token, callback=callback,
+                    thinking_callback=thinking_callback,
+                    block_callback=block_callback,
+                    turn_callback=turn_callback,
+                    touch_callback=lambda: pool.touch(state),
+                    usage_callback=self._cci_usage_observer(
+                        conversation_id, agent_name),
+                    emitted_tool_use_ids=state.emitted_tool_use_ids,
+                    emitted_tool_result_ids=state.emitted_tool_result_ids,
+                    consumer_epoch=consumer_epoch)
+                response = coord.run(getattr(self, "_abort", None))
+            finally:
+                event_service.release_consumer(
+                    state.session_token, consumer_epoch)
             self._cci_record_observed_context(
                 coord, conversation_id, agent_name)
             response.model = response.model or model or self.default_model
@@ -152,15 +156,21 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 "Failed to send interrupt to Claude Code interactive tmux session: "
                 f"{detail}")
 
-        coord = _CCITurnCoordinator(
-            event_service, state.session_token, callback=callback,
-            thinking_callback=thinking_callback, block_callback=block_callback,
-            turn_callback=turn_callback, touch_callback=lambda: pool.touch(state),
-            usage_callback=self._cci_usage_observer(conversation_id, agent_name),
-            emitted_tool_use_ids=state.emitted_tool_use_ids,
-            emitted_tool_result_ids=state.emitted_tool_result_ids,
-            consumer_epoch=consumer_epoch)
-        response = coord.run(getattr(self, "_abort", None))
+        try:
+            coord = _CCITurnCoordinator(
+                event_service, state.session_token, callback=callback,
+                thinking_callback=thinking_callback,
+                block_callback=block_callback,
+                turn_callback=turn_callback,
+                touch_callback=lambda: pool.touch(state),
+                usage_callback=self._cci_usage_observer(
+                    conversation_id, agent_name),
+                emitted_tool_use_ids=state.emitted_tool_use_ids,
+                emitted_tool_result_ids=state.emitted_tool_result_ids,
+                consumer_epoch=consumer_epoch)
+            response = coord.run(getattr(self, "_abort", None))
+        finally:
+            event_service.release_consumer(state.session_token, consumer_epoch)
         self._cci_record_observed_context(coord, conversation_id, agent_name)
         # Prefer the model resolved on the wire (message_start); fall back to
         # the configured alias (e.g. "best") then the provider default.

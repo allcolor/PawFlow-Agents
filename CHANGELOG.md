@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.182] — 2026-08-13
+
+### Fixed
+
+- Restored full-duplex relay WebSockets so an idle receive cannot starve
+  filesystem tool commands, tool-relay responses, or Claude Code Interactive
+  lifecycle events. This removes the 40–50 second tool-call delays and hook
+  timeouts introduced in beta.180 and still present in beta.181.
+- Prevented orphan-turn capture from evicting a live Claude Code or Codex
+  Interactive coordinator during a slow callback. Request ownership is now an
+  explicit epoch lease held through the full turn and released in every provider
+  exit path instead of being inferred from recent event polling.
+
 ## [1.0.0-beta.181] — 2026-08-13
 
 ### Fixed

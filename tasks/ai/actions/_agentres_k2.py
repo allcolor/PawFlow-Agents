@@ -15,137 +15,33 @@ def _handle_agentres_k2(self, action, body, store, user_id, flowfile):
     if action == "assign_skill":
         agent_name = body.get("agent_name", "").strip()
         skill_name = body.get("skill_name", "").strip()
-        if not agent_name or not skill_name:
-            flowfile.set_content(json.dumps({"error": "Missing agent_name or skill_name"}).encode())
-            return [flowfile]
-        from core.resource_store import ResourceStore
-        rs = ResourceStore.instance()
-        uid = user_id
         conv_id = body.get("conversation_id", "")
-        _def_name = agent_name
-        if conv_id:
-            try:
-                from core.conv_agent_config import get_agent_config
-                _def_name = get_agent_config(conv_id, agent_name).get("definition") or agent_name
-            except Exception:
-                _def_name = agent_name
-        agent_def = rs.get_any("agent", _def_name, uid,
-                               conversation_id=conv_id)
-        if not agent_def:
-            flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
-            return [flowfile]
-        skill_def = rs.get_any("skill", skill_name, uid,
-                               conversation_id=conv_id)
-        if not skill_def:
-            flowfile.set_content(json.dumps({"error": f"Skill '{skill_name}' not found"}).encode())
-            return [flowfile]
-        if skill_def.get("_invalid"):
-            flowfile.set_content(json.dumps({
-                "error": f"Skill '{skill_name}' is invalid: {skill_def.get('_invalid')}",
-            }).encode())
-            return [flowfile]
-        # Re-read under the lock so a concurrent assign/unassign can't drop an entry.
-        from core.skill_lifecycle import ASSIGNED_SKILLS_LOCK
-        with ASSIGNED_SKILLS_LOCK:
-            fresh = rs.get_any("agent", _def_name, uid,
-                               conversation_id=conv_id) or agent_def
-            assigned = list(fresh.get("assigned_skills", []) or [])
-            from core.skill_resolver import normalize_skill_entry
-            newly_assigned = not any(
-                normalize_skill_entry(entry)[0] == skill_name
-                for entry in assigned)
-            if newly_assigned:
-                assigned.append(skill_name)
-            _scope = fresh.get("_scope", "user")
-            _uid = uid if _scope in ("conversation", "user") else "__global__"
-            _scope_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
-            rs.update("agent", _def_name, _uid, {"assigned_skills": assigned}, **_scope_kwargs)
-        if conv_id and newly_assigned:
-            try:
-                from core.llm_client import stamp_message
-                from core.pending_queue import PendingQueue
-                from core.skill_resolver import available_skill_context_message
-                content = available_skill_context_message(skill_name, skill_def)
-                msg = stamp_message({
-                    "role": "system",
-                    "content": content,
-                    "source": {"type": "context", "name": "pawflow"},
-                }, conv_id)
-                store.append_message(conv_id, msg, agent_name=agent_name,
-                                     user_id=uid)
-                PendingQueue.for_agent(conv_id, agent_name).enqueue(
-                    dict(msg), source="skill_assign")
-            except Exception:
-                logger.debug("skill availability context injection failed",
-                             exc_info=True)
-        flowfile.set_content(json.dumps({
-            "assigned": True, "agent": agent_name, "skill": skill_name,
-            "message": f"Skill '{skill_name}' assigned to agent '{agent_name}'",
-        }).encode())
+        from core.resource_store import ResourceStore
+        from core.skill_lifecycle import assign_skill_to_agent
+        result = assign_skill_to_agent(
+            agent_name, skill_name, user_id, conv_id,
+            resource_store=ResourceStore.instance(),
+            conversation_store=store,
+            source="skill_assign")
+        if not result.get("ok"):
+            flowfile.set_attribute("http.response.status", "400")
+        flowfile.set_content(json.dumps(result).encode())
         return [flowfile]
 
     if action == "unassign_skill":
         agent_name = body.get("agent_name", "").strip()
         skill_name = body.get("skill_name", "").strip()
-        if not agent_name or not skill_name:
-            flowfile.set_content(json.dumps({"error": "Missing agent_name or skill_name"}).encode())
-            return [flowfile]
-        from core.resource_store import ResourceStore
-        rs = ResourceStore.instance()
-        uid = user_id
         conv_id = body.get("conversation_id", "")
-        _def_name = agent_name
-        if conv_id:
-            try:
-                from core.conv_agent_config import get_agent_config
-                _def_name = get_agent_config(conv_id, agent_name).get("definition") or agent_name
-            except Exception:
-                _def_name = agent_name
-        agent_def = rs.get_any("agent", _def_name, uid,
-                               conversation_id=conv_id)
-        if not agent_def:
-            flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
-            return [flowfile]
-        # Re-read under the lock so a concurrent assign/unassign can't drop an entry.
-        from core.skill_lifecycle import ASSIGNED_SKILLS_LOCK
-        with ASSIGNED_SKILLS_LOCK:
-            fresh = rs.get_any("agent", _def_name, uid,
-                               conversation_id=conv_id) or agent_def
-            assigned = list(fresh.get("assigned_skills", []) or [])
-            from core.skill_resolver import normalize_skill_entry
-            kept = []
-            was_assigned = False
-            for entry in assigned:
-                if normalize_skill_entry(entry)[0] == skill_name:
-                    was_assigned = True
-                    continue
-                kept.append(entry)
-            assigned = kept
-            _scope = fresh.get("_scope", "user")
-            _uid = uid if _scope in ("conversation", "user") else "__global__"
-            _scope_kwargs = {"conversation_id": conv_id} if _scope == "conversation" and conv_id else {}
-            rs.update("agent", _def_name, _uid, {"assigned_skills": assigned}, **_scope_kwargs)
-        if conv_id and was_assigned:
-            try:
-                from core.llm_client import stamp_message
-                from core.pending_queue import PendingQueue
-                from core.skill_resolver import removed_skill_context_message
-                msg = stamp_message({
-                    "role": "system",
-                    "content": removed_skill_context_message(skill_name),
-                    "source": {"type": "context", "name": "pawflow"},
-                }, conv_id)
-                store.append_message(conv_id, msg, agent_name=agent_name,
-                                     user_id=uid)
-                PendingQueue.for_agent(conv_id, agent_name).enqueue(
-                    dict(msg), source="skill_unassign")
-            except Exception:
-                logger.debug("skill removal context injection failed",
-                             exc_info=True)
-        flowfile.set_content(json.dumps({
-            "unassigned": True, "agent": agent_name, "skill": skill_name,
-            "message": f"Skill '{skill_name}' removed from agent '{agent_name}'",
-        }).encode())
+        from core.resource_store import ResourceStore
+        from core.skill_lifecycle import unassign_skill_from_agent
+        result = unassign_skill_from_agent(
+            agent_name, skill_name, user_id, conv_id,
+            resource_store=ResourceStore.instance(),
+            conversation_store=store,
+            source="skill_unassign")
+        if not result.get("ok"):
+            flowfile.set_attribute("http.response.status", "400")
+        flowfile.set_content(json.dumps(result).encode())
         return [flowfile]
 
     if action in ("agent_msg", "resume_agent"):
@@ -323,19 +219,16 @@ def _handle_agentres_k2(self, action, body, store, user_id, flowfile):
         rs = ResourceStore.instance()
         uid = user_id
         conv_id = body.get("conversation_id", "")
-        _def_name = agent_name
-        if conv_id:
-            try:
-                from core.conv_agent_config import get_agent_config
-                _def_name = get_agent_config(conv_id, agent_name).get("definition") or agent_name
-            except Exception:
-                _def_name = agent_name
+        from core.conv_agent_config import resolve_agent_config_entry
+        _config_conv_id, resolved_name, agent_config = (
+            resolve_agent_config_entry(conv_id, agent_name))
+        _def_name = agent_config.get("definition") or ""
         agent_def = rs.get_any("agent", _def_name, uid,
                                conversation_id=conv_id)
-        if not agent_def:
+        if not resolved_name or not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
-        assigned = agent_def.get("assigned_skills", [])
+        assigned = agent_config.get("assigned_skills", [])
         skills_detail = []
         for sn in assigned:
             name, _params, _condition = normalize_skill_entry(sn)
@@ -366,12 +259,8 @@ def _handle_agentres_k2(self, action, body, store, user_id, flowfile):
                 conv_agent_cfgs = get_all_agent_configs(conv_id)
             except Exception:
                 conv_agent_cfgs = {}
-            all_agent_defs = rs.list_all("agent", uid, conversation_id=conv_id)
-            agent_defs_by_name = {a.get("name"): a for a in all_agent_defs}
             for agent_name, acfg in conv_agent_cfgs.items():
-                def_name = (acfg or {}).get("definition") or agent_name
-                agent_def = agent_defs_by_name.get(def_name) or agent_defs_by_name.get(agent_name) or {}
-                for raw_skill in agent_def.get("assigned_skills") or []:
+                for raw_skill in (acfg or {}).get("assigned_skills") or []:
                     skill_name, _params, _condition = normalize_skill_entry(raw_skill)
                     if skill_name:
                         assigned_by_skill.setdefault(skill_name, []).append(agent_name)

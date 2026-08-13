@@ -256,7 +256,7 @@ class SpawnAgentsHandler(_SpawnDeliveryMixin, ToolHandler):
                             "skills": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Skill names to inject into the delegate agent's prompt (replaces the agent's own assigned_skills)",
+                                "description": "Additional skill names to advertise for this delegated task only",
                             },
                             "persist": {
                                 "type": "boolean",

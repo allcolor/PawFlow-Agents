@@ -850,6 +850,21 @@ class TestAgentLoopTask(unittest.TestCase):
         # transcript for the user, same guarantee as sub_agent_trace/nudges.
         assert history[-1]["display_only"] is True
 
+    def test_stale_worker_cannot_remove_successor_active_context(self):
+        task = AgentLoopTask({"api_key": "test-key"})
+        old_ctx = {"conversation_id": "conv", "active_agent_name": "assistant"}
+        new_ctx = {"conversation_id": "conv", "active_agent_name": "assistant"}
+        key = "conv:assistant"
+
+        def _replace(_ctx, _emitter):
+            with task._active_contexts_lock:
+                task._active_contexts[key] = new_ctx
+            return object()
+
+        task._run_agent_loop_inner = _replace
+        task._run_agent_loop(old_ctx, object())
+        assert task._active_contexts[key] is new_ctx
+
     @patch.object(LLMClient, 'complete')
     def test_multiple_tool_calls_in_one_response(self, mock_complete):
         """LLM requests multiple tool calls in a single response."""

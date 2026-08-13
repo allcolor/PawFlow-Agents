@@ -14,6 +14,7 @@ from typing import List, Optional
 
 from core.token_counter import count_messages_tokens
 from core._llm_types import (
+    AgentSuperseded,
     CCCompactDetected,
     ColdStartRequired,
     DeltaContextRequired,
@@ -542,7 +543,7 @@ class _LLMClientDriverMixin:
                 # cold start the caller must rebuild the context for: this
                 # loop would re-send the same delta to the same launch.
                 from tasks.ai.agent_exceptions import AgentCancelled as _AC
-                if isinstance(e, (_AC, CCCompactDetected, ColdStartRequired,
+                if isinstance(e, (_AC, AgentSuperseded, CCCompactDetected, ColdStartRequired,
                                   DeltaContextRequired)):
                     raise
                 last_error = e

@@ -6,11 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.183] — 2026-08-13
+
 ### Fixed
 
 - Prevented Project Graph builds from leaving `.pawflow_graph_extract.py` in the
   source tree by executing the relay extraction script in memory instead of
   creating a helper file.
+- Kept large Project Graph builds below relay output and memory limits with a
+  versioned gzip/base64 transport, bounded sequential extraction, and anonymous
+  edge spooling, while preserving grouped cross-file resolution for small deltas.
+- Kept Project Wiki source batches pending when the summarizer raises or returns
+  empty, malformed, or structurally invalid JSON, so failed generation cannot
+  acknowledge sources or abort the graph/source maintenance pass.
+- Separated Auto Wiki's final JSON response budget from the LLM provider's
+  generation ceiling, so internal reasoning can no longer consume the entire
+  document budget before any wiki content is emitted.
+- Scoped agent skill assignments by user, conversation, and agent instance, so
+  assigning a skill in one conversation cannot silently enable it for an agent
+  with the same name in another conversation.
+- Treated interactive-session consumer replacement as silent supersession rather
+  than an LLM failure, and correlated backend cleanup and browser terminal events
+  with their owning turn so a compact restart cannot flash a false error or make
+  its successor disappear from Active Agents during a long tool call.
 
 ## [1.0.0-beta.182] — 2026-08-13
 

@@ -380,7 +380,8 @@ class _ALCClosures2Mixin:
         _ctx_key_done = st.ctx.get("_active_context_key")
         if _ctx_key_done:
             with self._active_contexts_lock:
-                self._active_contexts.pop(_ctx_key_done, None)
+                if self._active_contexts.get(_ctx_key_done) is st.ctx:
+                    self._active_contexts.pop(_ctx_key_done, None)
         self._decrement_active(st.conversation_id, st.ctx)
         st.client._codex_app_turn_completed_for_callback = False
         try:
@@ -392,6 +393,8 @@ class _ALCClosures2Mixin:
                     "data": {
                         "conversation_id": st.conversation_id,
                         "agent_name": st.ctx.get("active_agent_name", ""),
+                        "turn_id": st.ctx.get("request_msg_id", ""),
+                        "request_msg_id": st.ctx.get("request_msg_id", ""),
                     },
                 }])
         except Exception:

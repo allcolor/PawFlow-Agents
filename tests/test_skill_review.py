@@ -225,6 +225,21 @@ def test_manage_resource_assign_skill_notifies_agent(monkeypatch):
             updated.append((args, kwargs))
 
     class ConvStore:
+        configs = {
+            "assistant": {
+                "definition": "assistant",
+                "llm_service": "llm",
+                "assigned_skills": [],
+            },
+        }
+
+        def get_extra(self, conv_id, key):
+            return self.configs if key == "conv_agents" else None
+
+        def set_extra(self, conv_id, key, value):
+            assert key == "conv_agents"
+            self.configs = value
+
         def append_message(self, conv_id, msg, agent_name="", user_id=""):
             appended.append((conv_id, msg, agent_name, user_id))
 
@@ -233,7 +248,8 @@ def test_manage_resource_assign_skill_notifies_agent(monkeypatch):
             enqueued.append((msg, source))
 
     monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
-    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: ConvStore()))
+    conv_store = ConvStore()
+    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: conv_store))
     monkeypatch.setattr(PendingQueue, "for_agent", staticmethod(lambda cid, agent: Queue()))
 
     handler = ManageResourceHandler()
@@ -249,7 +265,8 @@ def test_manage_resource_assign_skill_notifies_agent(monkeypatch):
 
     assert result["ok"] is True
     assert result["changed"] is True
-    assert updated[0][0][3] == {"assigned_skills": ["review-pr"]}
+    assert updated == []
+    assert conv_store.configs["assistant"]["assigned_skills"] == ["review-pr"]
     assert appended[0][2] == "assistant"
     assert "Skill available: review-pr" in appended[0][1]["content"]
     assert enqueued[0][1] == "skill_assign"
@@ -278,6 +295,24 @@ def test_manage_resource_unassign_skill_notifies_agent(monkeypatch):
             updated.append((args, kwargs))
 
     class ConvStore:
+        configs = {
+            "assistant": {
+                "definition": "assistant",
+                "llm_service": "llm",
+                "assigned_skills": [
+                    {"name": "review-pr", "params": {"mode": "fast"}},
+                    "other",
+                ],
+            },
+        }
+
+        def get_extra(self, conv_id, key):
+            return self.configs if key == "conv_agents" else None
+
+        def set_extra(self, conv_id, key, value):
+            assert key == "conv_agents"
+            self.configs = value
+
         def append_message(self, conv_id, msg, agent_name="", user_id=""):
             appended.append((conv_id, msg, agent_name, user_id))
 
@@ -286,7 +321,8 @@ def test_manage_resource_unassign_skill_notifies_agent(monkeypatch):
             enqueued.append((msg, source))
 
     monkeypatch.setattr(ResourceStore, "instance", staticmethod(lambda: Store()))
-    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: ConvStore()))
+    conv_store = ConvStore()
+    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: conv_store))
     monkeypatch.setattr(PendingQueue, "for_agent", staticmethod(lambda cid, agent: Queue()))
 
     handler = ManageResourceHandler()
@@ -302,7 +338,8 @@ def test_manage_resource_unassign_skill_notifies_agent(monkeypatch):
 
     assert result["ok"] is True
     assert result["changed"] is True
-    assert updated[0][0][3] == {"assigned_skills": ["other"]}
+    assert updated == []
+    assert conv_store.configs["assistant"]["assigned_skills"] == ["other"]
     assert appended[0][2] == "assistant"
     assert "Skill removed: review-pr" in appended[0][1]["content"]
     assert enqueued[0][1] == "skill_unassign"

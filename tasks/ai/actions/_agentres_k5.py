@@ -155,7 +155,8 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
              model=body.get("model", ""),
              tools=body.get("tools", []),
              max_depth=int(body.get("max_depth", 1000) or 1000),
-             skills=body.get("skills", []),
+             skills=(body["skills"] if "skills" in body
+                     else agent.get("assigned_skills", [])),
              flash_delegate_llm_service=body.get(
                  "flash_delegate_llm_service", "").strip(),
              runtime_kind=runtime_kind)
@@ -231,8 +232,8 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "llm_service is required"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Merge — only update known runtime fields. Skills live on the agent
-        # definition (`assigned_skills`), not in conv_agent_config.
+        # Merge only runtime fields. Skill assignment changes use the dedicated
+        # assign/unassign actions so notifications and locking stay consistent.
         _allowed = {"llm_service", "model", "tools", "max_depth", "params",
                     "realtime_voice_service", "flash_delegate_llm_service",
                     "runtime_kind"}
@@ -241,54 +242,6 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             if k in _allowed:
                 merged[k] = v
         set_agent_config(conv_id, aname, merged)
-        if "skills" in cfg:
-            from core.resource_store import ResourceStore
-            from core.skill_resolver import normalize_skill_entry
-            _def_name = merged.get("definition", aname)
-            _skills = cfg.get("skills") or []
-            _agent_def = ResourceStore.instance().get_any(
-                "agent", _def_name, user_id, conversation_id=conv_id)
-            _old_skills = [normalize_skill_entry(s)[0]
-                           for s in ((_agent_def or {}).get("assigned_skills") or [])]
-            _new_skills = [normalize_skill_entry(s)[0] for s in _skills]
-            if _agent_def is not None:
-                _scope = _agent_def.get("_scope", "user")
-                _uid = user_id if _scope == "user" else "__global__"
-                ResourceStore.instance().update(
-                    "agent", _def_name, _uid, {"assigned_skills": list(_skills)})
-            try:
-                from core.llm_client import stamp_message
-                from core.pending_queue import PendingQueue
-                from core.skill_resolver import (
-                    available_skill_context_message,
-                    removed_skill_context_message,
-                )
-                for _skill in [s for s in _new_skills if s and s not in _old_skills]:
-                    _skill_def = ResourceStore.instance().get_any(
-                        "skill", _skill, user_id,
-                        conversation_id=conv_id) or {}
-                    _msg = stamp_message({
-                        "role": "system",
-                        "content": available_skill_context_message(_skill, _skill_def),
-                        "source": {"type": "context", "name": "pawflow"},
-                    }, conv_id)
-                    store.append_message(conv_id, _msg, agent_name=aname,
-                                         user_id=user_id)
-                    PendingQueue.for_agent(conv_id, aname).enqueue(
-                        dict(_msg), source="skill_config")
-                for _skill in [s for s in _old_skills if s and s not in _new_skills]:
-                    _msg = stamp_message({
-                        "role": "system",
-                        "content": removed_skill_context_message(_skill),
-                        "source": {"type": "context", "name": "pawflow"},
-                    }, conv_id)
-                    store.append_message(conv_id, _msg, agent_name=aname,
-                                         user_id=user_id)
-                    PendingQueue.for_agent(conv_id, aname).enqueue(
-                        dict(_msg), source="skill_config")
-            except Exception:
-                logger.debug("skill config context injection failed",
-                             exc_info=True)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
 

@@ -58,14 +58,10 @@ def create_conversation(user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
     store.set_extra(conversation_id, "permission_mode", "auto")
 
     for entry in valid_entries:
-        if entry.get("skills") is not None:
-            agent_def = rs.get_any("agent", entry["definition"], user_id)
-            if agent_def is not None:
-                scope = agent_def.get("_scope", "user")
-                update_uid = user_id if scope == "user" else "__global__"
-                rs.update("agent", entry["definition"], update_uid, {
-                    "assigned_skills": list(entry.get("skills") or []),
-                })
+        agent_def = rs.get_any("agent", entry["definition"], user_id) or {}
+        assigned_skills = (
+            entry["skills"] if entry.get("skills") is not None
+            else agent_def.get("assigned_skills", []))
         add_agent_to_conv(
             conversation_id,
             entry["instance_name"],
@@ -75,7 +71,7 @@ def create_conversation(user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
             model=entry["model"],
             tools=entry["tools"],
             max_depth=entry["max_depth"],
-            skills=entry["skills"],
+            skills=assigned_skills,
         )
 
     title = payload.get("title", "")

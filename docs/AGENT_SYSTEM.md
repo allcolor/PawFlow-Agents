@@ -62,7 +62,7 @@ Agents are stored as resources in the `ResourceStore`. Global agents are defined
 | `timeout` | Request timeout in seconds for LLM calls. |
 | `description` | Human-readable description. |
 | `_scope` | `"global"` (available to all users) or `"user"` (private to one user). |
-| `assigned_skills` | Optional list of skill definitions assigned to this agent. |
+| `assigned_skills` | Optional package defaults copied into each new conversation instance. Runtime assignment does not modify the reusable definition. |
 
 **Scoping:** Agent keys in `agents.json` use the format `__global__:name` for global agents or `userid:name` for user-scoped agents. The system resolves agents by checking user-scoped first, then global.
 
@@ -345,7 +345,7 @@ If a file named `{agent_name}.md` exists in the relay filesystem root, its conte
 
 ### Programmable Skills
 
-Skills are effective only when they are assigned to an agent definition through `assigned_skills`. PawFlow does not inject a separate conversation-level `active_resources.skills` list; legacy activation paths must be treated as inactive UI/API compatibility only. Assign or remove skills with `/skill assign @agent @skill` and `/skill unassign @agent @skill`.
+Skills are effective only when they are listed in `assigned_skills` on the target entry in the conversation's `conv_agents` roster. The identity is `(conversation_id, instance_name)`: assigning a skill to `assistant` in one conversation never changes another `assistant` instance or the reusable agent definition. An agent definition or package may declare default `assigned_skills`; PawFlow copies those defaults when it creates a conversation instance. PawFlow does not inject a separate conversation-level `active_resources.skills` list. Assign or remove skills with `/skill assign @agent @skill` and `/skill unassign @agent @skill`.
 
 Assigned skills are lazy-loaded. Assigning a skill writes a lightweight context message to the target agent and rebuilt system prompts include only an availability manifest with the skill name and description. The full skill prompt is returned only when the agent calls `load_skill(name="skill-name")`, and `load_skill` refuses skills that are not assigned to the current agent. Updating a skill writes a lightweight context message to assigned conversation agents telling them to reload the skill if needed; deleting or uninstalling a skill removes it from visible agents' `assigned_skills` and writes the normal removal context message. Users can also invoke a visible skill immediately with `/skill run [@agent] <skill> [args...]` or the shortcut `//<skill> [@agent] [args...]`; this does not persist assignment, and queues the rendered skill prompt as a user message for the selected or explicit target agent.
 
@@ -817,6 +817,14 @@ Pawflow replacement for the Claude Code built-in `Monitor`. Runs a relay bash co
 ## 10. Streaming
 
 PawFlow uses Server-Sent Events (SSE) for real-time communication between the agent and the client.
+
+Interactive-session ownership changes are internal control flow. When a newer
+consumer supersedes an older one, the obsolete worker exits through
+`AgentSuperseded` without publishing `error_event`, `cancelled`, or `done`.
+Active-turn cleanup is owner-conditional, and browser terminal handlers compare
+`turn_id` with the currently displayed interaction before changing streams,
+status, or the Active Agents panel. A late terminal from an older generation can
+therefore never erase or repaint its successor.
 
 ### Execution Flow
 

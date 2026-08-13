@@ -411,19 +411,14 @@ def _agent_assigned_skill_entry(skill_name: str, user_id: str,
                                 agent_name: str):
     if not skill_name or not agent_name:
         return None
-    from core.resource_store import ResourceStore
-    rs = ResourceStore.instance()
-    def_name = agent_name
-    if conversation_id:
-        try:
-            from core.conv_agent_config import get_agent_config
-            def_name = get_agent_config(conversation_id, agent_name).get("definition") or agent_name
-        except Exception:
-            def_name = agent_name
-    agent_def = rs.get_any("agent", def_name, user_id,
-                           conversation_id=conversation_id) or rs.get_any(
-                               "agent", def_name, user_id) or {}
-    for entry in agent_def.get("assigned_skills") or []:
+    if not conversation_id:
+        return None
+    from core.conv_agent_config import resolve_agent_config_entry
+    _config_conv_id, resolved_name, agent_config = resolve_agent_config_entry(
+        conversation_id, agent_name)
+    if not resolved_name:
+        return None
+    for entry in agent_config.get("assigned_skills") or []:
         name, _params, condition = normalize_skill_entry(entry)
         if name != skill_name:
             continue

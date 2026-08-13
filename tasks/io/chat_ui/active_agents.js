@@ -130,13 +130,14 @@ function _refreshGaugeSurfaces(key) {
 // several seconds preparing context before the next poll. SSE hints keep the
 // Active Agents panel visible immediately; syncActiveFromServer removes rows
 // that the server no longer reports.
-function trackAgentStart(agentName, msgPreview, taskId) {
+function trackAgentStart(agentName, msgPreview, taskId, turnId) {
   const key = activeAgentKey(agentName, taskId || '');
   if (!key) return;
   const existing = activeInteractions[key] || {};
   activeInteractions[key] = {
     name: agentName,
     taskId: taskId || existing.taskId || '',
+    turnId: turnId || existing.turnId || '',
     startedAt: existing.startedAt || Date.now(),
     iteration: existing.iteration || 0,
     round: existing.round || 0,
@@ -214,9 +215,17 @@ function trackAgentToolDone(agentName, toolName, taskId) {
   updateActivePanel();
 }
 
-function trackAgentDone(agentName, taskId) {
+function isAgentTerminalCurrent(agentName, taskId, turnId) {
+  const key = activeAgentKey(agentName, taskId || '');
+  if (!key) return true;
+  const current = activeInteractions[key];
+  return !(turnId && current && current.turnId && current.turnId !== turnId);
+}
+
+function trackAgentDone(agentName, taskId, turnId) {
   const key = activeAgentKey(agentName, taskId || '');
   if (!key) return;
+  if (!isAgentTerminalCurrent(agentName, taskId, turnId)) return false;
   const now = Date.now();
   _activeDoneAt[key] = now;
   delete activeInteractions[key];
@@ -225,6 +234,7 @@ function trackAgentDone(agentName, taskId) {
       && typeof setConversationWorking === 'function') {
     setConversationWorking(conversationId, false);
   }
+  return true;
 }
 
 function updateActivePanel() {
@@ -429,6 +439,7 @@ function syncActiveFromServer(force) {
       activeInteractions[key] = {
         name: a.agent_name,
         taskId: a.task_id || '',
+        turnId: a.turn_id || (existing ? existing.turnId : ''),
         startedAt: existing ? existing.startedAt : now - ((a.duration_s || 0) * 1000),
         iteration: a.iteration || (existing ? existing.iteration : 0),
         round: a.round || 0,

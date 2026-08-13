@@ -14,12 +14,29 @@ import time
 import pytest
 
 from core.llm_providers.claude_code_interactive import _CCITurnCoordinator
+from core.llm_client import AgentSuperseded, LLMClient, LLMMessage
 from services.cc_interactive_event_service import (
     CCIConsumerEvicted, CCInteractiveEventService)
 
 
 def _service() -> CCInteractiveEventService:
     return CCInteractiveEventService({"token": "tok", "_service_id": "events"})
+
+
+def test_consumer_eviction_is_generic_silent_supersession():
+    assert issubclass(CCIConsumerEvicted, AgentSuperseded)
+
+
+def test_llm_driver_preserves_consumer_eviction_control_flow(monkeypatch):
+    client = LLMClient("codex-interactive")
+
+    def _evicted(*_args, **_kwargs):
+        raise CCIConsumerEvicted("new owner")
+
+    monkeypatch.setattr(client, "_stream_codex_interactive", _evicted)
+    with pytest.raises(AgentSuperseded, match="new owner"):
+        client.complete_stream([
+            LLMMessage(role="user", content="hello", conversation_id="conv")])
 
 
 def test_request_claim_evicts_previous_consumer():

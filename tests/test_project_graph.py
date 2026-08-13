@@ -1,12 +1,13 @@
 """Tests for core.project_graph.ProjectGraph."""
 
 import base64
+import gzip
 import json
 from unittest.mock import MagicMock
 
 import pytest
 
-from core.project_graph import ProjectGraph
+from core.project_graph import ProjectGraph, _RELAY_PAYLOAD_PREFIX
 
 
 @pytest.fixture(autouse=True)
@@ -67,7 +68,53 @@ def test_build_from_relay(tmp_path):
     assert command.startswith(prefix)
     assert command.endswith(suffix)
     encoded_script = command[len(prefix):-len(suffix)]
-    assert b"PAWFLOW_GRAPH_ROOT" in base64.b64decode(encoded_script)
+    script = base64.b64decode(encoded_script)
+    assert b"PAWFLOW_GRAPH_ROOT" in script
+    assert b"parallel=False" in script
+    assert b"max_workers=1" in script
+    assert b"FULL_BATCH_MAX_FILES = 32" in script
+    assert b"FULL_BATCH_MAX_BYTES = 8 * 1024 * 1024" in script
+    assert b"gzip.open" in script
+    assert b"from graphify.build import build" not in script
+
+
+def test_build_from_relay_decodes_compressed_graph_payload(tmp_path):
+    graph_data = {
+        "status": "built",
+        "nodes": [{"id": "a", "label": "A", "source_file": "a.py"}],
+        "edges": [],
+        "parsed_files": ["a.py"],
+        "removed": [],
+        "mtimes": {"a.py": 1},
+        "total_files": 1,
+    }
+    compressed = gzip.compress(
+        json.dumps(graph_data, separators=(",", ":")).encode())
+    stdout = _RELAY_PAYLOAD_PREFIX + base64.b64encode(compressed).decode()
+    svc = _make_relay_mock(
+        {"stdout": stdout, "stderr": "", "returncode": 0})
+
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    result = pg.build_from_relay(svc, ".")
+
+    assert result == {
+        "status": "built", "nodes": 1, "edges": 0, "files": 1,
+        "reparsed": 1, "removed": 0,
+    }
+    assert pg.nodes[0]["id"] == "a"
+
+
+def test_build_from_relay_rejects_truncated_compressed_payload(tmp_path):
+    svc = _make_relay_mock({
+        "stdout": _RELAY_PAYLOAD_PREFIX + "not-base64... (truncated)",
+        "stderr": "", "returncode": 0,
+    })
+
+    result = ProjectGraph(str(tmp_path / "graph.json")).build_from_relay(
+        svc, ".")
+
+    assert result["status"] == "error"
+    assert "compressed project graph payload" in result["reason"]
 
 
 def test_build_from_relay_creates_no_helper_file_on_failure(tmp_path):

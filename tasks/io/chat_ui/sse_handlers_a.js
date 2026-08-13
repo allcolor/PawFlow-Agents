@@ -167,7 +167,7 @@ function _sseWireA() {
       return;
     }
     // New turn starting — clear cancel suppression so tool events show again
-    trackAgentStart(agentName);
+    trackAgentStart(agentName, '', '', data.turn_id || data.request_msg_id || '');
   });
 
   eventSource.addEventListener('thinking_delta', (e) => {

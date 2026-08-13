@@ -14,6 +14,7 @@ from tasks.ai.agent_poller import AgentPollerMixin, _poll_generation_key
 class _PollLoopHarness(_AgentStreamingLoopMixin, _AgentMediaMixin):
     def __init__(self, conversation_id):
         self._active_contexts_lock = threading.Lock()
+        self._active_contexts = {}
         self._active_turns = {}
         self._active_claude_client = {}
         self._active_lock = threading.Lock()

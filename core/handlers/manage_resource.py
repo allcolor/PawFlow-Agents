@@ -442,7 +442,7 @@ class ManageResourceHandler(ToolHandler):
                 if not name:
                     return "Error: 'name' is required for activate"
                 if rtype == "skill":
-                    return "Error: skills are injected only through agent.assigned_skills. Use /skill assign @agent @skill."
+                    return "Error: skills are injected only through a conversation agent's assigned_skills. Use /skill assign @agent @skill."
                 if store.get_any(rtype, name, user_id,
                                  conversation_id=self._conversation_id) is None:
                     return f"{rtype} '{name}' not found."
@@ -453,7 +453,7 @@ class ManageResourceHandler(ToolHandler):
                 if not name:
                     return "Error: 'name' is required for deactivate"
                 if rtype == "skill":
-                    return "Error: skills are injected only through agent.assigned_skills. Use /skill unassign @agent @skill."
+                    return "Error: skills are injected only through a conversation agent's assigned_skills. Use /skill unassign @agent @skill."
                 self._deactivate_resource(rtype, name)
                 return f"Deactivated {rtype} '{name}' from this conversation."
 

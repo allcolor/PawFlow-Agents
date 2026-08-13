@@ -29,6 +29,7 @@ _MAX_SOURCE_CHARS = 16_000
 _MAX_BATCH_CHARS = 80_000
 _MAX_EXISTING_PAGE_CHARS = 20_000
 _DEFAULT_BATCH_FILES = 8
+_AUTO_UPDATE_RESPONSE_TOKENS = 6_000
 
 _SCAN_SCRIPT = r'''
 import hashlib
@@ -145,6 +146,10 @@ Return one JSON object only:
   "processed_sources": ["every changed source you fully considered"]
 }}
 
+The final JSON response, excluding any internal reasoning, must fit within
+{response_token_budget} tokens. Keep page bodies concise enough to respect that
+response budget.
+
 Update an existing page by returning the same slug. Remove obsolete claims from
 the returned replacement body. Cross-link related pages with
 `[[page-slug|Label]]`. A removed file can appear in `processed_sources` but must
@@ -196,6 +201,27 @@ def _atomic_json(path: Path, value: Dict[str, Any]) -> None:
         path,
         json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     )
+
+
+def _decode_llm_json_object(raw: str) -> Optional[Dict[str, Any]]:
+    """Return the first complete JSON object without greedy brace matching."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    decoder = json.JSONDecoder()
+    try:
+        value = decoder.decode(text)
+        return value if isinstance(value, dict) else None
+    except json.JSONDecodeError:
+        pass
+    for match in re.finditer(r"\{", text):
+        try:
+            value, _end = decoder.raw_decode(text, match.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
 
 
 class ProjectWiki:
@@ -722,38 +748,57 @@ class ProjectWiki:
             paths = {path for path, _ in entries}
             source_text = self._source_batch_text(service, entries, local)
             existing_pages = self._affected_pages_text(paths)
+            pending_count = len(dirty)
             try:
                 index = (self.path / "index.md").read_text(encoding="utf-8")[:12_000]
             except OSError:
                 index = "(empty)"
 
         prompt = _AUTO_UPDATE_PROMPT.format(
-            index=index, pages=existing_pages, sources=source_text)
+            index=index, pages=existing_pages, sources=source_text,
+            response_token_budget=_AUTO_UPDATE_RESPONSE_TOKENS)
         from core.llm_client import LLMMessage
-        inner = getattr(llm_client, "_client", llm_client)
-        client = inner.clone_for_call()
-        scope_id = f"_project_wiki_{_safe_component(self.relay_id)}_{uuid.uuid4().hex[:8]}"
-        response = client.complete(
-            messages=[LLMMessage(role="user", content=prompt,
-                                 conversation_id=scope_id)],
-            temperature=0.2,
-            max_tokens=6000,
-            response_format="json",
-            call_user_id=self.user_id,
-            call_conversation_id=scope_id,
-            call_agent_name="project-wiki",
-            call_event_cid="",
-            call_ephemeral_stream=True,
-        )
+        try:
+            inner = getattr(llm_client, "_client", llm_client)
+            client = inner.clone_for_call()
+            scope_id = f"_project_wiki_{_safe_component(self.relay_id)}_{uuid.uuid4().hex[:8]}"
+            response = client.complete(
+                messages=[LLMMessage(role="user", content=prompt,
+                                     conversation_id=scope_id)],
+                temperature=0.2,
+                # This provider-facing ceiling may include internal reasoning on
+                # some APIs.  Zero delegates that transport limit to the service;
+                # the prompt above budgets only the final JSON response.
+                max_tokens=0,
+                response_format="json",
+                call_user_id=self.user_id,
+                call_conversation_id=scope_id,
+                call_agent_name="project-wiki",
+                call_event_cid="",
+                call_ephemeral_stream=True,
+            )
+        except Exception as exc:
+            logger.warning("Project wiki LLM call failed relay=%s: %s",
+                           self.relay_id, exc)
+            return {"status": "pending", "reason": "LLM call failed",
+                    "remaining": pending_count}
         raw = str(getattr(response, "content", "") or "").strip()
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not match:
-            raise ValueError("project wiki LLM returned no JSON object")
-        payload = json.loads(match.group())
+        payload = _decode_llm_json_object(raw)
+        if payload is None:
+            logger.warning(
+                "Project wiki LLM returned no valid JSON object relay=%s "
+                "content_chars=%d finish_reason=%s",
+                self.relay_id, len(raw),
+                str(getattr(response, "finish_reason", "") or ""))
+            return {"status": "pending", "reason": "invalid LLM response",
+                    "remaining": pending_count}
         pages = payload.get("pages") if isinstance(payload, dict) else None
         processed = payload.get("processed_sources") if isinstance(payload, dict) else None
         if not isinstance(pages, list) or not isinstance(processed, list):
-            raise ValueError("project wiki LLM returned an invalid payload")
+            logger.warning("Project wiki LLM returned invalid fields relay=%s",
+                           self.relay_id)
+            return {"status": "pending", "reason": "invalid LLM payload",
+                    "remaining": pending_count}
         allowed = paths
         with self._lock:
             current_dirty = self._manifest.get("dirty_sources", {}) or {}

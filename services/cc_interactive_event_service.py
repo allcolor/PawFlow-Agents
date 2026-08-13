@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 
 from core import ServiceFactory
 from core.base_service import BaseService
+from core._llm_types import AgentSuperseded
 from core.llm_providers.cli_shared import is_anthropic_messages_endpoint
 from core.native_todo_adapter import native_task_id as _native_task_id
 
@@ -41,7 +42,7 @@ def _redact_wire_bytes(data: bytes) -> bytes:
         lambda match: match.group(1) + b": <redacted>", data)
 
 
-class CCIConsumerEvicted(RuntimeError):
+class CCIConsumerEvicted(AgentSuperseded):
     """Raised when a newer consumer took over a session's event stream."""
 
 

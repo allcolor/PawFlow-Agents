@@ -332,6 +332,16 @@ class LLMClientError(Exception):
     pass
 
 
+class AgentSuperseded(Exception):
+    """Internal control flow: a newer worker owns this agent turn now.
+
+    Unlike user cancellation or provider failure, supersession is silent.  The
+    obsolete worker must stop without publishing a terminal event that could
+    overwrite the newer worker's live state.
+    """
+    pass
+
+
 class CCCompactDetected(Exception):
     """Raised when Claude Code starts auto-compaction.
 

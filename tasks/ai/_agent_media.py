@@ -512,7 +512,9 @@ class _AgentMediaMixin:
                     _newer_turn = _turn_gen != _ctx_gen
             if not _foreign_owner and not _newer_turn:
                 self._active_turns.pop(_turn_key, None)
-                self._active_claude_client.pop(_cc_key, None)
+                _active_ctx = getattr(self, "_active_contexts", {}).get(_cc_key)
+                if _active_ctx is None or _active_ctx is ctx:
+                    self._active_claude_client.pop(_cc_key, None)
         if ctx:
             # This worker's cleanup is complete even when a different owner has
             # already installed its marker. Coupling this flag to deletion made

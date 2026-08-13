@@ -54,6 +54,19 @@ updateActivePanel = () => {};
 _sseWireA();
 _sseWireB();
 
+// A terminal event from the consumer replaced during compact belongs to its
+// old turn. It must neither show an error nor remove the successor's activity.
+let staleErrorsShown = 0;
+global.addMsg = role => { if (role === 'error') staleErrorsShown += 1; return {}; };
+trackAgentStart('assistant', '', '', 'turn-new');
+eventSource.emit('error_event', {
+  conversation_id: 'conv', agent_name: 'assistant', turn_id: 'turn-old',
+  message: 'CCIConsumerEvicted: newer consumer owns the session',
+});
+assert.strictEqual(staleErrorsShown, 0, 'stale supersession error must stay hidden');
+assert.strictEqual(activeInteractions.assistant.turnId, 'turn-new',
+  'stale terminal must not remove the successor active turn');
+
 function seedWarmGauge(updatedAt) {
   setContextUsage('assistant', {
     conversation_id: 'conv', used: 600, max: 1000, updated_at: updatedAt,

@@ -294,7 +294,7 @@ used for an official release identity.
 - `.pfp` install requires a valid Ed25519 signature.
 - Every archive path is normalized and rejected if it is absolute, escapes the package, or contains unsafe characters.
 - Registry refs and direct URLs show package size before download and require explicit confirmation before fetching. Local inspect shows package size, uncompressed content size, and file count before install; there is no arbitrary PFP size cap. Users decide whether a package is acceptable before installing it.
-- Installation writes only selected objects from the install plan. Agents with `assigned_skills` can be installed only when every referenced skill is either already visible in the target scope or selected in the same install operation.
+- Installation writes only selected objects from the install plan. Agent definitions with default `assigned_skills` can be installed only when every referenced skill is either already visible in the target scope or selected in the same install operation. Those defaults are copied into each new conversation instance rather than remaining a mutable cross-conversation assignment.
 - When at least one object is installed, the verified package payload is copied into a scoped local content store under the package repository. Runtime proxies reference that stable `content_dir` plus their signed entrypoint path; they never depend on the original `.pfp` file remaining on disk.
 - Installed resources receive `installed_from` provenance with package id, version, object id, file hash, package hash, and developer public key.
 - PFP runtime proxies validate their installed entrypoint before invocation: the file must still live under the scoped package content directory and its SHA-256 must match the signed install provenance. Dev-loaded `.pfpdir` packages still enforce path containment, but skip hash mismatch failures so source edits take effect immediately.
@@ -304,7 +304,7 @@ used for an official release identity.
 - Required PFP secrets must be declared and explicitly bound during install. Runtime envelopes carry binding names only; secret values are resolved at invocation time and injected into the runner environment.
 - `PackageCapabilityBroker` centralizes runtime authorization for future package execution. It authorizes builtin grants such as `{"name": "read"}` and package-qualified grants such as `{"package": "community.media-core", "object": "tool:normalize_image"}`, then verifies the referenced package and object are installed before allowing the call.
 - Registry downloads verify the package SHA-256 when the registry provides one.
-- Uninstall uses the local install registry and does not remove secrets. When uninstall removes a skill, PawFlow also removes that skill from visible agents' `assigned_skills` lists and queues the normal skill-removal context message for conversation agents.
+- Uninstall uses the local install registry and does not remove secrets. When uninstall removes a skill from a conversation scope, PawFlow also removes that skill from that conversation's agent instances and queues the normal skill-removal context message.
 
 ## Developer Checklist
 

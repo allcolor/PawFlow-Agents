@@ -15,6 +15,7 @@ import uuid
 from typing import Dict
 
 from core.llm_client import LLMMessage
+from core.llm_client import AgentSuperseded
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,10 @@ class _AgentStreamingLoopMixin:
                 self._active_turns.setdefault(turn_key, marker)
         try:
             self._streaming_agent_loop_inner(ctx, conversation_id, bus)
+        except AgentSuperseded:
+            logger.info(
+                "[agent:%s] obsolete worker superseded; stopping silently",
+                conversation_id[:8])
         except Exception as e:
             logger.error(f"[agent:{conversation_id[:8]}] streaming loop crashed: {e}", exc_info=True)
             try:
@@ -184,6 +189,8 @@ class _AgentStreamingLoopMixin:
             # MemoryStore entries (different paraphrases of the
             # same fact) that escape remember()'s exact-text dedup.
 
+        except AgentSuperseded:
+            raise
         except Exception:
             _had_error = True
         finally:

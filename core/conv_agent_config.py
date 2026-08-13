@@ -5,6 +5,7 @@ An agent *instance* lives in a conversation. It has:
     - definition: the name of the .md template in the repository
     - params: dict of values resolved into the definition prompt via ${agent.key}
     - llm_service, model, tools, max_depth, timeout: runtime config
+    - assigned_skills: skills available only to this conversation instance
 
 The same definition can be instantiated multiple times with different
 names and params (e.g. two "researcher" agents: Alice and Bob).
@@ -39,6 +40,7 @@ AGENT_CONFIG_DEFAULTS = {
     "flash_delegate_llm_service": "",
     "model": "",
     "tools": [],
+    "assigned_skills": [],
     "max_depth": 1000,
     # Optional realtimeVoiceConnection service id. When set the agent is
     # "voice-native": the webchat auto-selects it for voice mode and
@@ -47,17 +49,45 @@ AGENT_CONFIG_DEFAULTS = {
 }
 
 
-def get_all_agent_configs(conv_id: str) -> Dict[str, Dict[str, Any]]:
-    """Get all agent configs for a conversation."""
+def _agent_config_source(
+        conv_id: str) -> tuple[str, Dict[str, Dict[str, Any]]]:
+    """Return the conversation that owns the effective agent roster."""
     from core.conversation_store import ConversationStore
     store = ConversationStore.instance()
     configs = store.get_extra(conv_id, CONV_AGENTS_KEY) or {}
+    source_id = conv_id
     if not configs:
         from core.service_registry import _parent_conversation_id
         parent_id = _parent_conversation_id(conv_id)
         if parent_id:
             configs = store.get_extra(parent_id, CONV_AGENTS_KEY) or {}
-    return configs
+            if configs:
+                source_id = parent_id
+    return source_id, configs
+
+
+def get_all_agent_configs(conv_id: str) -> Dict[str, Dict[str, Any]]:
+    """Get all agent configs for a conversation."""
+    return _agent_config_source(conv_id)[1]
+
+
+def resolve_agent_config_entry(
+        conv_id: str,
+        agent_name: str) -> tuple[str, str, Dict[str, Any]]:
+    """Resolve an instance to its roster owner, canonical name, and config."""
+    source_id, configs = _agent_config_source(conv_id)
+    resolved_name = agent_name if agent_name in configs else ""
+    if not resolved_name and agent_name:
+        needle = agent_name.lower()
+        resolved_name = next((
+            key for key in configs
+            if isinstance(key, str) and key.lower() == needle
+        ), "")
+    if not resolved_name:
+        return source_id, "", {}
+    result = dict(AGENT_CONFIG_DEFAULTS)
+    result.update(configs[resolved_name] or {})
+    return source_id, resolved_name, result
 
 
 def get_agent_config(conv_id: str, agent_name: str) -> Dict[str, Any]:
@@ -68,16 +98,16 @@ def get_agent_config(conv_id: str, agent_name: str) -> Dict[str, Any]:
     Agent-name lookup is case-insensitive.
     """
     configs = get_all_agent_configs(conv_id)
-    raw = configs.get(agent_name)
-    if raw is None and agent_name:
-        _needle = agent_name.lower()
-        for _k, _v in configs.items():
-            if isinstance(_k, str) and _k.lower() == _needle:
-                raw = _v
-                break
-    raw = raw or {}
+    resolved_name = agent_name if agent_name in configs else ""
+    if not resolved_name and agent_name:
+        needle = agent_name.lower()
+        resolved_name = next((
+            key for key in configs
+            if isinstance(key, str) and key.lower() == needle
+        ), "")
     result = dict(AGENT_CONFIG_DEFAULTS)
-    result.update(raw)
+    if resolved_name:
+        result.update(configs[resolved_name] or {})
     return result
 
 
@@ -87,9 +117,16 @@ def set_agent_config(conv_id: str, agent_name: str,
     from core.conversation_store import ConversationStore
     store = ConversationStore.instance()
     configs = store.get_extra(conv_id, CONV_AGENTS_KEY) or {}
-    existing = configs.get(agent_name, {})
+    resolved_name = agent_name
+    if agent_name not in configs and agent_name:
+        needle = agent_name.lower()
+        resolved_name = next((
+            key for key in configs
+            if isinstance(key, str) and key.lower() == needle
+        ), agent_name)
+    existing = configs.get(resolved_name, {})
     existing.update(config)
-    configs[agent_name] = existing
+    configs[resolved_name] = existing
     store.set_extra(conv_id, CONV_AGENTS_KEY, configs)
 
 
@@ -139,6 +176,7 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
         "flash_delegate_llm_service": flash_delegate_llm_service,
         "model": model,
         "tools": tools or [],
+        "assigned_skills": list(skills or []),
         "max_depth": max_depth,
     }
     set_agent_config(conv_id, instance_name, config)
@@ -270,7 +308,8 @@ def require_agent_member(conv_id: str, agent_name: str,
                 if _svc:
                     add_agent_to_conv(conv_id, agent_name,
                                       llm_service=_svc,
-                                      definition=agent_name)
+                                      definition=agent_name,
+                                      skills=_adef.get("assigned_skills") or [])
                     logger.info(
                         "[agent-member] auto-registered agent '%s' "
                         "into conv %s with llm_service='%s' (from "

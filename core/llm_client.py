@@ -28,6 +28,7 @@ from core.llm_providers import (
     LLMGeminiMixin,
 )
 from core._llm_types import (  # noqa: F401 -- re-exported for back-compat (invariant 1)
+    AgentSuperseded,
     CCCompactDetected,
     ColdStartRequired,
     DeltaContextRequired,

@@ -3,6 +3,7 @@ import logging
 import time
 
 from core.llm_client import (
+    AgentSuperseded,
     CCCompactDetected,
     ColdStartRequired,
     DeltaContextRequired,
@@ -122,6 +123,8 @@ class _ALCLlmTurnMixin:
                     st.conversation_id[:8])
                 st._run_interrupt_turn()
         except AgentCancelled:
+            raise
+        except AgentSuperseded:
             raise
         except CCCompactDetected:
             # A stateful CLI provider started auto-compacting → kill it,

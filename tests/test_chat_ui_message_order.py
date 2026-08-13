@@ -765,6 +765,8 @@ def test_active_released_sse_hint_clears_panel_before_done():
     active_released = SSE_JS[
         SSE_JS.index("eventSource.addEventListener('active_released'"):
         SSE_JS.index("eventSource.addEventListener('done'", SSE_JS.index("eventSource.addEventListener('active_released'"))]
-    assert "trackAgentDone(agentName)" in active_released
+    assert "terminalTurnId = data.turn_id || data.request_msg_id || ''" in active_released
+    assert "isAgentTerminalCurrent(agentName, '', terminalTurnId)" in active_released
+    assert "trackAgentDone(agentName, '', terminalTurnId)" in active_released
     assert "document.getElementById('status').textContent = t('ready')" in active_released
     assert "syncActiveFromServer(true)" in active_released

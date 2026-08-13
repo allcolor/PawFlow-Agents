@@ -263,8 +263,12 @@ relay writes and shell commands schedule a debounced incremental refresh. The
 manual `build` action remains available for recovery or an explicit root change.
 Each build runs as a single relay exec; the extraction script is passed directly
 to Python and executed in memory, without writing a helper file into the source
-tree. It walks the workspace, AST-parses changed files via tree-sitter, and
-returns a JSON delta the server merges into the cached graph.
+tree. Small deltas retain Graphify's normal grouped cross-file resolution. Large
+deltas are AST-parsed one file at a time in a memory-bounded sequential pass.
+Nodes are compressed as they are produced and edges use an anonymous disk spool,
+so the relay never retains a large corpus in RAM. The gzip/base64 delta stays
+below the relay's bounded text-output transport; the server validates and decodes
+that versioned payload before merging it.
 
 1. **Server sends** the cached `{rel_path: mtime}` map to the relay
    via `PAWFLOW_GRAPH_KNOWN`.
@@ -277,10 +281,9 @@ returns a JSON delta the server merges into the cached graph.
    re-parsed slice).
 5. **Server merges**: drops nodes/edges sourced from re-parsed or
    removed files, appends the new ones.
-6. **No file count cap**. Memory cost grows roughly linearly with
-   codebase size; tree-sitter
-   itself handles real-world repos in the tens-of-thousands range
-   without issue.
+6. **No file count cap**. Memory cost grows roughly linearly with codebase size.
+   PawFlow consumes Graphify's extracted lists directly instead of materializing
+   a duplicate NetworkX graph on the memory-bounded relay.
 7. **Cache hit**: if nothing changed and nothing was removed, the
    relay returns `status='unchanged'` and no parsing happens server-
    or relay-side.
@@ -339,6 +342,13 @@ validated JSON, and may update up to twelve pages. A page is written with the
 current SHA-256 digest of every cited source. If any batched source changes while
 the LLM call is running, the response is marked `superseded`, no page is written,
 and the newer source remains pending for the next worker run.
+An empty, malformed, or structurally invalid LLM response is also fail-closed:
+no page or source marker changes, the batch remains pending, and the graph/source
+scan portion of project maintenance still completes.
+The Auto Wiki prompt separately budgets the final JSON document. It does not use
+that response budget as the provider generation ceiling, because some providers
+include internal reasoning in their output-token limit. The provider transport
+limit therefore remains controlled by the selected LLM service configuration.
 
 The `project_wiki` tool provides manual inspection and recovery:
 

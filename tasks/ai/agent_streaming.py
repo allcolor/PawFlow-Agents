@@ -683,6 +683,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         if _target:
             bus.publish_event(conversation_id, "thinking", {
                 "conversation_id": conversation_id, "agent_name": _target,
+                "turn_id": flowfile.get_attribute("agent.request_msg_id") or "",
             })
 
         # Clone flowfile for background thread (main thread overwrites with ack)
@@ -744,20 +745,35 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 self._decrement_active(conversation_id, ctx)
                 return
 
+            _preparing_superseded = False
             with self._active_contexts_lock:
-                _turn = self._active_turns.pop(_active_turn_key, None) or {}
-                _turn.update({
-                    "conversation_id": conversation_id,
-                    "agent_name": _resolved_agent,
-                    "started_at": _turn.get("started_at", _active_turn_started),
-                    "status": "thinking",
-                    "message_preview": _turn.get("message_preview", _user_text[:160]),
-                    "max_rounds": ctx.get("max_rounds", 0),
-                    "active_llm_provider": ctx.get(
-                        "active_llm_provider", ""),
-                    "generation": _starting_generation,
-                })
-                self._active_turns[_resolved_turn_key] = _turn
+                _current_turn = self._active_turns.get(_active_turn_key)
+                _current_owner = (
+                    _current_turn.get("owner_id")
+                    if isinstance(_current_turn, dict) else None)
+                if (_current_owner and
+                        _current_owner != _active_turn_owner_id):
+                    _preparing_superseded = True
+                else:
+                    _turn = self._active_turns.pop(_active_turn_key, None) or {}
+                    _turn.update({
+                        "conversation_id": conversation_id,
+                        "agent_name": _resolved_agent,
+                        "started_at": _turn.get("started_at", _active_turn_started),
+                        "status": "thinking",
+                        "message_preview": _turn.get("message_preview", _user_text[:160]),
+                        "max_rounds": ctx.get("max_rounds", 0),
+                        "active_llm_provider": ctx.get(
+                            "active_llm_provider", ""),
+                        "generation": _starting_generation,
+                    })
+                    self._active_turns[_resolved_turn_key] = _turn
+            if _preparing_superseded:
+                logger.info(
+                    "[agent:%s] preparing worker superseded before context install",
+                    conversation_id[:8])
+                self._decrement_active(conversation_id, ctx)
+                return
             _active_turn_key = _resolved_turn_key
             ctx["_active_turn_key"] = _active_turn_key
 

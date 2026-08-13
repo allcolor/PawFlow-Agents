@@ -47,3 +47,27 @@ def test_an_existing_conversation_keeps_its_own_permission_mode():
 
     create_conversation("alice@test.com", _payload())
     assert store.get_extra("legacy", "permission_mode") is None
+
+
+def test_agent_definition_skills_are_copied_to_new_conversation_instance():
+    name = "skill-default-agent"
+    ResourceStore.instance().create("agent", name, "alice@test.com", {
+        "name": name,
+        "prompt": "You are helpful.",
+        "llm_service": "default",
+        "assigned_skills": ["operate-comfyui"],
+    })
+    payload = {"agents": [{
+        "instance_name": name,
+        "definition": name,
+        "llm_service": "default",
+    }]}
+
+    result = create_conversation("alice@test.com", payload)
+    conv_id = result["conversation_id"]
+    configs = ConversationStore.instance().get_extra(conv_id, "conv_agents")
+
+    assert configs[name]["assigned_skills"] == ["operate-comfyui"]
+    assert ResourceStore.instance().get_any(
+        "agent", name, "alice@test.com")["assigned_skills"] == [
+            "operate-comfyui"]

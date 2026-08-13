@@ -264,7 +264,8 @@ def test_active_agent_tool_hints_use_task_scoped_keys():
         _SSE_JS.index("// Single update path", _SSE_JS.index("eventSource.addEventListener('done'"))]
     assert "trackAgentTool(tcAgent, data.tool, data.task_id || '')" in tool_call
     assert "trackAgentToolDone(data.agent_name, data.tool, data.task_id || '')" in tool_result
-    assert "trackAgentDone(doneAgent, data.task_id)" in task_done
+    assert "isAgentTerminalCurrent(doneAgent, data.task_id || '', terminalTurnId)" in task_done
+    assert "trackAgentDone(doneAgent, data.task_id, terminalTurnId)" in task_done
 
 
 def test_active_sync_is_conversation_bound_and_rejects_stale_responses():
@@ -2098,6 +2099,7 @@ def test_visible_answer_releases_active_before_slow_done_bookkeeping():
         src.index("def _claude_code_turn_callback", src.index("def _release_active_after_terminal_visible_answer"))]
     assert "_codex_app_turn_completed_for_callback" in callback_block
     assert "force: bool = False" in callback_block
+    assert "self._active_contexts.get(_ctx_key_done) is ctx" in callback_block
     assert "self._active_contexts.pop(_ctx_key_done, None)" in callback_block
     assert "self._decrement_active(conversation_id, ctx)" in callback_block
     assert '"type": "active_released"' in callback_block
@@ -2114,7 +2116,9 @@ def test_visible_answer_releases_active_before_slow_done_bookkeeping():
         src.index('result = _make_result()'):
         src.index('return result', src.index('logger.info("[agent:%s] enqueueing done'))]
     assert "active released before done enqueue" in done_block
-    assert "self._active_contexts.pop(_ctx_key_done, None)" in done_block
+    assert "self._active_contexts.get(" in done_block
+    assert "_ctx_key_done) is ctx" in done_block
+    assert "self._active_contexts.pop(" in done_block
     assert "flush(timeout=30.0)" not in done_block
     assert "ConversationWriter.for_conversation" not in done_block
     assert "enqueue_done_after_writes" in done_block

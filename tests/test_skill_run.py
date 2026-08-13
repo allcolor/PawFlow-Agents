@@ -217,6 +217,7 @@ def test_run_skill_action_queues_rendered_prompt_for_selected_agent(monkeypatch)
             captured["queued"].append((msg, source))
 
     from core.resource_store import ResourceStore as RealResourceStore
+    from core.conversation_store import ConversationStore
     from core.conversation_writer import ConversationWriter
     from core.pending_queue import PendingQueue
     from tasks.ai.agent_loop import AgentLoopTask
@@ -343,6 +344,16 @@ def test_skill_update_notifies_assigned_agents(monkeypatch):
         def resolve_owner(self, cid):
             return "alice"
 
+        def get_extra(self, conv_id, key):
+            if key == "conv_agents":
+                return {
+                    "assistant": {
+                        "definition": "assistant",
+                        "assigned_skills": ["review-pr"],
+                    },
+                }
+            return None
+
         def append_message(self, conv_id, msg, agent_name="", user_id=""):
             appended.append((conv_id, msg, agent_name, user_id))
 
@@ -371,17 +382,20 @@ def test_skill_update_notifies_assigned_agents(monkeypatch):
 
     import core.review_bindings as review_bindings
     from core.resource_store import ResourceStore as RealResourceStore
+    from core.conversation_store import ConversationStore
     from core.pending_queue import PendingQueue
 
     monkeypatch.setattr(review_bindings, "review_for_write", lambda *a, **k: {})
+    conv_store = Store()
     monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore()))
+    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: conv_store))
     monkeypatch.setattr(PendingQueue, "for_agent", staticmethod(lambda cid, agent: Queue()))
 
     ff = FlowFile(content=b"")
     result = _handle_agent_resource(Task(), "update_skill", {
         "conversation_id": "conv1", "name": "review-pr",
         "instructions": "new",
-    }, Store(), "alice", ff)
+    }, conv_store, "alice", ff)
 
     assert result == [ff]
     assert updated
@@ -430,6 +444,18 @@ def test_delete_skill_removes_agent_assignments(monkeypatch):
         def resolve_owner(self, cid):
             return "alice"
 
+        configs = {
+            "assistant": {"assigned_skills": ["review-pr", "other"]},
+            "reviewer": {"assigned_skills": [{"name": "review-pr"}]},
+        }
+
+        def get_extra(self, conv_id, key):
+            return self.configs if key == "conv_agents" else None
+
+        def set_extra(self, conv_id, key, value):
+            assert key == "conv_agents"
+            self.configs = value
+
         def append_message(self, conv_id, msg, agent_name="", user_id=""):
             appended.append((conv_id, msg, agent_name, user_id))
 
@@ -458,21 +484,25 @@ def test_delete_skill_removes_agent_assignments(monkeypatch):
             enqueued.append((msg, source))
 
     from core.resource_store import ResourceStore as RealResourceStore
+    from core.conversation_store import ConversationStore
     from core.pending_queue import PendingQueue
+    conv_store = Store()
     monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore()))
+    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: conv_store))
     monkeypatch.setattr(PendingQueue, "for_agent", staticmethod(lambda cid, agent: Queue()))
 
     ff = FlowFile(content=b"")
     result = _handle_agent_resource(Task(), "delete_skill", {
         "conversation_id": "conv1", "name": "review-pr",
-    }, Store(), "alice", ff)
+    }, conv_store, "alice", ff)
 
     assert result == [ff]
     body = json.loads(ff.get_content().decode("utf-8"))
     assert body["deleted"] is True
     assert body["cleaned_agents"] == ["assistant", "reviewer"]
-    assert updated[0][3] == {"assigned_skills": ["other"]}
-    assert updated[1][3] == {"assigned_skills": []}
+    assert updated == []
+    assert conv_store.configs["assistant"]["assigned_skills"] == ["other"]
+    assert conv_store.configs["reviewer"]["assigned_skills"] == []
     assert [row[1] for row in enqueued] == ["skill_delete", "skill_delete"]
     assert len(appended) == 2
 
@@ -490,7 +520,22 @@ def test_unassign_skill_matches_object_entries(monkeypatch):
         def resolve_owner(self, cid):
             return "alice"
 
-        pass
+        configs = {
+            "assistant": {
+                "definition": "assistant",
+                "assigned_skills": [
+                    {"name": "review-pr", "params": {"mode": "fast"}},
+                    "other",
+                ],
+            },
+        }
+
+        def get_extra(self, conv_id, key):
+            return self.configs if key == "conv_agents" else None
+
+        def set_extra(self, conv_id, key, value):
+            assert key == "conv_agents"
+            self.configs = value
 
     class ResourceStore:
         def get_any(self, rtype, name, user_id, conversation_id=""):
@@ -509,21 +554,27 @@ def test_unassign_skill_matches_object_entries(monkeypatch):
             updated.append((rtype, name, user_id, data, kwargs))
 
     from core.resource_store import ResourceStore as RealResourceStore
+    from core.conversation_store import ConversationStore
+    conv_store = Store()
     monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore()))
+    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: conv_store))
 
     ff = FlowFile(content=b"")
     result = _handle_agent_resource(Task(), "unassign_skill", {
+        "conversation_id": "conv1",
         "agent_name": "assistant", "skill_name": "review-pr",
-    }, Store(), "alice", ff)
+    }, conv_store, "alice", ff)
 
     assert result == [ff]
     body = json.loads(ff.get_content().decode("utf-8"))
     assert body["unassigned"] is True
-    assert updated == [("agent", "assistant", "alice", {"assigned_skills": ["other"]}, {})]
+    assert updated == []
+    assert conv_store.configs["assistant"]["assigned_skills"] == ["other"]
 
 
 def test_assign_skill_does_not_duplicate_object_entries(monkeypatch):
     updated = []
+    existing_assignment = {"name": "review-pr", "params": {"mode": "fast"}}
 
     class Task:
         pass
@@ -535,9 +586,19 @@ def test_assign_skill_does_not_duplicate_object_entries(monkeypatch):
         def resolve_owner(self, cid):
             return "alice"
 
-        pass
+        configs = {
+            "assistant": {
+                "definition": "assistant",
+                "assigned_skills": [existing_assignment],
+            },
+        }
 
-    existing_assignment = {"name": "review-pr", "params": {"mode": "fast"}}
+        def get_extra(self, conv_id, key):
+            return self.configs if key == "conv_agents" else None
+
+        def set_extra(self, conv_id, key, value):
+            assert key == "conv_agents"
+            self.configs = value
 
     class ResourceStore:
         def get_any(self, rtype, name, user_id, conversation_id=""):
@@ -555,15 +616,21 @@ def test_assign_skill_does_not_duplicate_object_entries(monkeypatch):
             updated.append((rtype, name, user_id, data, kwargs))
 
     from core.resource_store import ResourceStore as RealResourceStore
+    from core.conversation_store import ConversationStore
+    conv_store = Store()
     monkeypatch.setattr(RealResourceStore, "instance", staticmethod(lambda: ResourceStore()))
+    monkeypatch.setattr(ConversationStore, "instance", staticmethod(lambda: conv_store))
 
     ff = FlowFile(content=b"")
     result = _handle_agent_resource(Task(), "assign_skill", {
+        "conversation_id": "conv1",
         "agent_name": "assistant", "skill_name": "review-pr",
-    }, Store(), "alice", ff)
+    }, conv_store, "alice", ff)
 
     assert result == [ff]
-    assert updated == [("agent", "assistant", "alice", {"assigned_skills": [existing_assignment]}, {})]
+    assert updated == []
+    assert conv_store.configs["assistant"]["assigned_skills"] == [
+        existing_assignment]
 
 
 def test_list_resources_normalizes_object_assigned_skills(monkeypatch):
@@ -605,7 +672,16 @@ def test_list_resources_normalizes_object_assigned_skills(monkeypatch):
     monkeypatch.setattr(
         conv_agent_config,
         "get_all_agent_configs",
-        lambda conv_id: {"assistant": {"definition": "assistant", "llm_service": "llm"}},
+        lambda conv_id: {
+            "assistant": {
+                "definition": "assistant",
+                "llm_service": "llm",
+                "assigned_skills": [
+                    {"name": "review-pr", "params": {"mode": "fast"}},
+                    "other",
+                ],
+            },
+        },
     )
 
     ff = FlowFile(content=b"")
@@ -657,7 +733,14 @@ def test_list_skills_marks_current_agent_assignments(monkeypatch):
     monkeypatch.setattr(
         conv_agent_config,
         "get_all_agent_configs",
-        lambda conv_id: {"assistant": {"definition": "assistant"}},
+        lambda conv_id: {
+            "assistant": {
+                "definition": "assistant",
+                "assigned_skills": [
+                    {"name": "review-pr", "params": {"mode": "fast"}},
+                ],
+            },
+        },
     )
 
     ff = FlowFile(content=b"")

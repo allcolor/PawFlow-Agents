@@ -209,6 +209,65 @@ def test_auto_update_writes_pages_and_acknowledges_sources(wiki):
     prompt = client.calls[0]["messages"][0].content
     assert "SOURCE README.md" in prompt
     assert "Return one JSON object only" in prompt
+    assert "excluding any internal reasoning" in prompt
+    assert "6000 tokens" in prompt
+    assert client.calls[0]["max_tokens"] == 0
+
+
+def test_auto_update_keeps_sources_pending_on_empty_llm_response(wiki):
+    relay = _Relay(
+        [{"README.md": _source("overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    client = _Client({})
+    client.complete = MagicMock(return_value=MagicMock(
+        content="", finish_reason="stop"))
+
+    result = wiki.auto_update(relay, client)
+
+    assert result == {
+        "status": "pending", "reason": "invalid LLM response",
+        "remaining": 1,
+    }
+    assert wiki.status()["dirty_sources"] == 1
+
+
+def test_auto_update_accepts_json_object_inside_markdown(wiki):
+    relay = _Relay(
+        [{"README.md": _source("overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    payload = {
+        "pages": [{
+            "slug": "overview", "title": "Overview", "summary": "Summary",
+            "content": "Current facts.", "sources": ["README.md"],
+        }],
+        "processed_sources": ["README.md"],
+    }
+    client = _Client({})
+    client.complete = MagicMock(return_value=MagicMock(
+        content="Result:\n```json\n" + json.dumps(payload) + "\n```"))
+
+    result = wiki.auto_update(relay, client)
+
+    assert result["status"] == "updated"
+    assert result["remaining"] == 0
+
+
+def test_auto_update_keeps_sources_pending_when_llm_call_fails(wiki):
+    relay = _Relay(
+        [{"README.md": _source("overview")}],
+        files={"README.md": "Project overview"})
+    wiki.scan_from_relay(relay)
+    client = _Client({})
+    client.complete = MagicMock(side_effect=RuntimeError("provider unavailable"))
+
+    result = wiki.auto_update(relay, client)
+
+    assert result == {
+        "status": "pending", "reason": "LLM call failed", "remaining": 1,
+    }
+    assert wiki.status()["dirty_sources"] == 1
 
 
 def test_auto_update_refuses_response_when_source_changed_during_llm_call(wiki):

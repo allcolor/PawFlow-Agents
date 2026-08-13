@@ -224,7 +224,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
             return self._run_agent_loop_inner(ctx, emitter)
         finally:
             with self._active_contexts_lock:
-                self._active_contexts.pop(_ctx_key, None)
+                if self._active_contexts.get(_ctx_key) is ctx:
+                    self._active_contexts.pop(_ctx_key, None)
 
     def _run_agent_loop_inner(self, ctx, emitter):
         st = _ALCState()
@@ -496,7 +497,10 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                         st._ctx_key_done = st.ctx.get("_active_context_key")
                         if st._ctx_key_done:
                             with self._active_contexts_lock:
-                                self._active_contexts.pop(st._ctx_key_done, None)
+                                if self._active_contexts.get(
+                                        st._ctx_key_done) is st.ctx:
+                                    self._active_contexts.pop(
+                                        st._ctx_key_done, None)
                         self._decrement_active(st.conversation_id, st.ctx)
                         logger.info(
                             "[agent:%s] active released before done enqueue agent=%s",

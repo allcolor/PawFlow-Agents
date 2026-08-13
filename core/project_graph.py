@@ -8,6 +8,7 @@ Storage: data/graphs/{user}/{relay_id}/graph.json
 """
 
 import base64
+import gzip
 import hashlib
 import json
 import logging
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+_RELAY_PAYLOAD_PREFIX = "pawflow-project-graph-v1:gzip-base64:"
 
 import core.paths as _paths
 
@@ -30,7 +33,7 @@ _CODE_EXTENSIONS = (
 
 # Python script that runs ON THE RELAY to extract AST and return JSON
 _RELAY_EXTRACT_SCRIPT = '''
-import json, sys, os
+import base64, gc, gzip, json, os, sys, tempfile
 from pathlib import Path
 
 # Discover code files
@@ -105,41 +108,47 @@ import contextlib
 # if the import fails the relay setup is broken and the agent should
 # see the real error instead of a degraded import-only graph.
 from graphify.extract import extract
-from graphify.build import build
 
-with contextlib.redirect_stdout(sys.stderr):
-    extraction = extract(files) if files else []
-    G = build([extraction]) if extraction else None
+FULL_BATCH_MAX_FILES = 32
+FULL_BATCH_MAX_BYTES = 8 * 1024 * 1024
+full_batch_bytes = 0
+for path in files:
+    try:
+        full_batch_bytes += path.stat().st_size
+    except OSError:
+        full_batch_bytes = FULL_BATCH_MAX_BYTES + 1
+        break
+if len(files) <= FULL_BATCH_MAX_FILES and full_batch_bytes <= FULL_BATCH_MAX_BYTES:
+    extraction_batches = [files]
+else:
+    extraction_batches = [[path] for path in files]
 
-nodes = []
-edges = []
-if G is not None:
-    for n, data in G.nodes(data=True):
-        sf = data.get("source_file", "")
-        if sf:
-            try:
-                sf = str(Path(sf).relative_to(root))
-            except ValueError:
-                pass
-        nodes.append({
-            "id": n, "label": data.get("label", n),
-            "file_type": data.get("file_type", "code"),
-            "source_file": sf.replace(os.sep, "/"),
-            "source_location": data.get("source_location", ""),
-        })
-    for u, v, data in G.edges(data=True):
-        sf = data.get("source_file", "")
-        if sf:
-            try:
-                sf = str(Path(sf).relative_to(root))
-            except ValueError:
-                pass
-        edges.append({
-            "source": u, "target": v,
-            "relation": data.get("relation", "related"),
-            "confidence": data.get("confidence", "EXTRACTED"),
-            "source_file": sf.replace(os.sep, "/"),
-        })
+def relative_source(value):
+    sf = str(value or "")
+    if sf:
+        try:
+            sf = str(Path(sf).relative_to(root))
+        except ValueError:
+            pass
+    return sf.replace(os.sep, "/")
+
+def node_payload(item):
+    node_id, data = item
+    return {
+        "id": node_id, "label": data.get("label", node_id),
+        "file_type": data.get("file_type", "code"),
+        "source_file": relative_source(data.get("source_file", "")),
+        "source_location": data.get("source_location", ""),
+    }
+
+def edge_payload(edge):
+    return {
+        "source": str(edge.get("source", "")),
+        "target": str(edge.get("target", "")),
+        "relation": edge.get("relation", "related"),
+        "confidence": edge.get("confidence", "EXTRACTED"),
+        "source_file": relative_source(edge.get("source_file", "")),
+    }
 
 # parsed_files = rel-paths the server should drop+replace.
 # all_files = rel-paths the server should keep tracking.
@@ -149,15 +158,87 @@ parsed_files = sorted({
     for rel, _ in mtimes.items()
     if known.get(rel) != mtimes[rel]
 })
-print(json.dumps({
-    "status": "built", "nodes": nodes, "edges": edges,
-    "total_files": len(all_files),
-    "all_files": all_files,
-    "parsed_files": parsed_files,
-    "removed": removed,
-    "mtimes": mtimes,
-}))
+
+# stdout is capped at 10 MiB by the relay. Extract one file at a time so
+# Graphify never retains the whole corpus plus its resolution indexes in RAM.
+# Nodes stream into the compressed payload immediately; edges use an anonymous
+# spool because the JSON object writes its node array first. Neither temporary
+# file has a project-tree path and both are unlinked automatically.
+with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as edge_spool, \
+        tempfile.TemporaryFile() as payload:
+    with gzip.open(payload, "wt", encoding="utf-8", compresslevel=6) as out:
+        out.write('{"status":"built","nodes":[')
+        first_node = True
+        with contextlib.redirect_stdout(sys.stderr):
+            for batch in extraction_batches:
+                extraction = extract(
+                    batch, root=root, parallel=False, max_workers=1)
+                node_by_id = {
+                    str(node["id"]): node
+                    for node in extraction.get("nodes", [])
+                    if isinstance(node, dict) and node.get("id")
+                }
+                for item in node_by_id.items():
+                    if not first_node:
+                        out.write(",")
+                    json.dump(node_payload(item), out, separators=(",", ":"))
+                    first_node = False
+                edge_by_pair = {}
+                for edge in extraction.get("edges", []):
+                    if not isinstance(edge, dict):
+                        continue
+                    source = str(edge.get("source", ""))
+                    target = str(edge.get("target", ""))
+                    if not source or not target:
+                        continue
+                    edge_by_pair[tuple(sorted((source, target)))] = edge
+                for edge in edge_by_pair.values():
+                    json.dump(edge_payload(edge), edge_spool,
+                              separators=(",", ":"))
+                    edge_spool.write("\\n")
+                del extraction, node_by_id, edge_by_pair
+                gc.collect()
+        out.write('],"edges":[')
+        edge_spool.seek(0)
+        first_edge = True
+        for line in edge_spool:
+            if not first_edge:
+                out.write(",")
+            out.write(line.rstrip("\\n"))
+            first_edge = False
+        out.write('],"total_files":')
+        json.dump(len(all_files), out)
+        out.write(',"all_files":')
+        json.dump(all_files, out, separators=(",", ":"))
+        out.write(',"parsed_files":')
+        json.dump(parsed_files, out, separators=(",", ":"))
+        out.write(',"removed":')
+        json.dump(removed, out, separators=(",", ":"))
+        out.write(',"mtimes":')
+        json.dump(mtimes, out, separators=(",", ":"))
+        out.write("}")
+    payload.seek(0)
+    sys.stdout.write("pawflow-project-graph-v1:gzip-base64:")
+    while True:
+        chunk = payload.read(57 * 1024)
+        if not chunk:
+            break
+        sys.stdout.write(base64.b64encode(chunk).decode("ascii"))
+    sys.stdout.write("\\n")
 '''
+
+
+def _decode_relay_payload(stdout: str) -> Dict[str, Any]:
+    """Decode either the compact graph transport or a small legacy JSON reply."""
+    if not stdout.startswith(_RELAY_PAYLOAD_PREFIX):
+        return json.loads(stdout)
+    encoded = stdout[len(_RELAY_PAYLOAD_PREFIX):].strip()
+    try:
+        compressed = base64.b64decode(encoded, validate=True)
+        raw = gzip.decompress(compressed).decode("utf-8")
+        return json.loads(raw)
+    except (ValueError, OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid compressed project graph payload: {exc}") from exc
 
 
 class ProjectGraph:
@@ -267,8 +348,8 @@ class ProjectGraph:
                 return {"status": "error", "reason": f"Script failed (exit {returncode}): {stderr[:200]}"}
 
             try:
-                data = json.loads(stdout)
-            except json.JSONDecodeError as e:
+                data = _decode_relay_payload(stdout)
+            except (json.JSONDecodeError, ValueError) as e:
                 logger.error(
                     "[project_graph] Invalid JSON from relay: %s\n"
                     "  stdout[:500]=%r\n  stderr[:500]=%r",
@@ -298,8 +379,16 @@ class ProjectGraph:
                         "nodes": len(self.nodes), "edges": len(self.edges),
                         "files": len(new_mtimes)}
 
-            new_nodes = data.get("nodes", [])
-            new_edges = data.get("edges", [])
+            # The relay streams each file independently to keep its peak memory
+            # bounded. Recreate the old exact-id / undirected-endpoint collapse
+            # here, after the complete delta has reached the server.
+            node_by_id = {
+                str(node.get("id")): node
+                for node in (data.get("nodes", []) or [])
+                if isinstance(node, dict) and node.get("id")
+            }
+            new_nodes = list(node_by_id.values())
+            raw_new_edges = data.get("edges", []) or []
             parsed_files = set(data.get("parsed_files", []) or [])
             removed = set(data.get("removed", []) or [])
             # `gone` = files whose nodes/edges must be dropped from the
@@ -312,6 +401,20 @@ class ProjectGraph:
                 n for n in self.nodes if n.get("source_file", "") not in gone]
             kept_edges = [] if root_changed else [
                 e for e in self.edges if e.get("source_file", "") not in gone]
+            available_node_ids = {
+                str(node.get("id")) for node in kept_nodes + new_nodes
+                if isinstance(node, dict) and node.get("id")
+            }
+            edge_by_pair = {}
+            for edge in raw_new_edges:
+                if not isinstance(edge, dict):
+                    continue
+                source = str(edge.get("source", ""))
+                target = str(edge.get("target", ""))
+                if source not in available_node_ids or target not in available_node_ids:
+                    continue
+                edge_by_pair[tuple(sorted((source, target)))] = edge
+            new_edges = list(edge_by_pair.values())
             merged_nodes = kept_nodes + new_nodes
             merged_edges = kept_edges + new_edges
 

@@ -91,7 +91,7 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                 a = {"name": aname, "description": "", "_scope": ""}
             from core.skill_resolver import normalize_skill_entry
             assigned_names = []
-            for raw_skill in a.get("assigned_skills") or []:
+            for raw_skill in acfg.get("assigned_skills") or []:
                 skill_name, _params, _condition = normalize_skill_entry(raw_skill)
                 if skill_name:
                     assigned_names.append(skill_name)
@@ -121,8 +121,8 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
             "in_conversation": a["name"] in set(conv_agent_names),
         } for a in all_repo_agents]
 
-        # Skills: show all from repo, mark assigned_to from the precomputed
-        # agent definitions map. No per-skill repository reads in UI refresh.
+        # Skills: show all from repo, mark assigned_to from conversation agent
+        # instances. No per-skill repository reads in UI refresh.
         all_skills = rs.list_all("skill", uid, conversation_id=conv_id)
         skills_out = []
         for s in all_skills:

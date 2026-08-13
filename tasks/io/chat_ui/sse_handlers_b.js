@@ -150,9 +150,11 @@ function _sseWireB() {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || '';
+    const terminalTurnId = data.turn_id || data.request_msg_id || '';
+    if (!isAgentTerminalCurrent(agentName, '', terminalTurnId)) return;
     if (typeof turnViewFail === 'function') turnViewFail(data.turn_id || data.request_msg_id, 'stopped');
     if (agentName) _finalizeLiveToolCalls(agentName, '[Stopped]');
-    if (agentName) trackAgentDone(agentName);
+    if (agentName) trackAgentDone(agentName, '', terminalTurnId);
     if (Object.keys(activeInteractions).length === 0) {
       sending = false;
       document.getElementById('sendBtn').disabled = false;
@@ -172,6 +174,8 @@ function _sseWireB() {
       turnViewFail(data.turn_id || data.request_msg_id, 'cancelled');
     }
     const doneAgent = data.agent_name || data.source?.name || '';
+    const terminalTurnId = data.turn_id || data.request_msg_id || '';
+    if (!isAgentTerminalCurrent(doneAgent, data.task_id || '', terminalTurnId)) return;
     // Task done: finalize task block
     if (data.task_id) {
       finalizeThinking(doneAgent, 'done');
@@ -185,7 +189,7 @@ function _sseWireB() {
         if (msgEl && block) block.content.appendChild(msgEl);
       }
       _finalizeTaskBlock(data.task_id, data.task_iteration, '\u2713 done', '#4ecdc4');
-      trackAgentDone(doneAgent, data.task_id);
+      trackAgentDone(doneAgent, data.task_id, terminalTurnId);
       clearStream(doneAgent);
       return;
     }
@@ -229,7 +233,7 @@ function _sseWireB() {
         try { _attachToolResult(tcEl, '[result not delivered]', {placeholder: true}); } catch (e) {}
       }
     });
-    trackAgentDone(doneAgent);
+    trackAgentDone(doneAgent, '', terminalTurnId);
     pawflowDebugLog('[SSE done]', doneAgent, data.response ? data.response.substring(0, 100) : '(empty)');
     // Sync message count/offset to prevent load-more overlap.
     if (typeof _noteLiveHistoryAppend === 'function') {
@@ -414,6 +418,9 @@ function _sseWireB() {
     lastSSEActivity = Date.now();
     const cancelData = e.data ? JSON.parse(e.data) : {};
     const cancelAgent = cancelData.agent_name || 'all';
+    const terminalTurnId = cancelData.turn_id || cancelData.request_msg_id || '';
+    if (cancelAgent !== 'all'
+        && !isAgentTerminalCurrent(cancelAgent, '', terminalTurnId)) return;
     if (typeof turnViewFail === 'function') turnViewFail(cancelData.turn_id || cancelData.request_msg_id, 'cancelled');
     _finalizeLiveToolCalls(cancelAgent === 'all' ? '' : cancelAgent, '[Cancelled]');
     if (cancelAgent === 'all') {
@@ -421,7 +428,7 @@ function _sseWireB() {
       syncActiveFromServer();
       document.querySelectorAll('#messages .thinking-block').forEach(el => el.remove());
     } else {
-      trackAgentDone(cancelAgent);
+      trackAgentDone(cancelAgent, '', terminalTurnId);
     }
     // Finalize streaming chunks instead of removing them (preserve visible text)
     if (cancelAgent === 'all') {
@@ -562,6 +569,9 @@ function _sseWireB() {
   eventSource.addEventListener('error_event', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    const errAgent = data.agent_name || '';
+    const terminalTurnId = data.turn_id || data.request_msg_id || '';
+    if (errAgent && !isAgentTerminalCurrent(errAgent, '', terminalTurnId)) return;
     if (typeof turnViewFail === 'function') turnViewFail(data.turn_id || data.request_msg_id, 'error', data.message || '');
     // data.ts is the server's real publish_event() timestamp -- stamped at
     // the moment the error actually happened, BEFORE any event-bus buffering
@@ -572,11 +582,10 @@ function _sseWireB() {
     // if it just happened right now, with no relation to current activity.
     addMsg('error', data.message || t('unknownError'), { ts: data.ts, transcript: true });
     // Error could be from any agent — clear the agent's stream + active interaction
-    const errAgent = data.agent_name || '';
     _finalizeLiveToolCalls(errAgent, '[Error]');
     clearStream(errAgent);
     if (errAgent) {
-      trackAgentDone(errAgent);
+      trackAgentDone(errAgent, '', terminalTurnId);
     } else {
       activeInteractions = {};
       updateActivePanel();

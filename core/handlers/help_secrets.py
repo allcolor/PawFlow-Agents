@@ -571,7 +571,7 @@ Sub-agents with their own system prompts and tool access.
 - Fields: prompt (required), model, tools (list), max_depth, timeout, description
 
 ### Skills
-Agent Skills (directory + SKILL.md) injected into agents through agent.assigned_skills.
+Agent Skills (directory + SKILL.md) assigned to one agent instance in the current conversation.
 - Create: `manage_resource(action="create", resource_type="skill", name="summarizer", data={"description": "Summarize text concisely", "instructions": "Summarize concisely"})`
 - Review untrusted content first: `manage_resource(action="review", resource_type="skill", data={"description": "...", "instructions": "..."})`
 - Fields: description (required), instructions (required), allowed-tools (list), license, metadata

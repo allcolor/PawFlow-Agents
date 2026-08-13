@@ -9,27 +9,14 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Serializes read-modify-write of agent.assigned_skills across concurrent
+# Serializes read-modify-write of instance assigned_skills across concurrent
 # assign/unassign/delete/update paths so a concurrent update cannot drop an entry.
 ASSIGNED_SKILLS_LOCK = threading.Lock()
 
 
-def _agent_definition_name(agent_name: str, conversation_id: str) -> str:
-    if not conversation_id:
-        return agent_name
-    try:
-        from core.conv_agent_config import get_agent_config
-        return get_agent_config(conversation_id, agent_name).get("definition") or agent_name
-    except Exception:
-        return agent_name
-
-
-def _agent_update_target(agent_def: Dict[str, Any], user_id: str,
-                         conversation_id: str) -> tuple[str, Dict[str, str]]:
-    scope = agent_def.get("_scope", "user")
-    update_uid = user_id if scope in ("conversation", "user") else "__global__"
-    update_kwargs = {"conversation_id": conversation_id} if scope == "conversation" and conversation_id else {}
-    return update_uid, update_kwargs
+def _agent_instance(agent_name: str, conversation_id: str):
+    from core.conv_agent_config import resolve_agent_config_entry
+    return resolve_agent_config_entry(conversation_id, agent_name)
 
 
 def _append_agent_context(conversation_store, conversation_id: str, user_id: str,
@@ -63,6 +50,8 @@ def assign_skill_to_agent(agent_name: str, skill_name: str, user_id: str,
     skill_name = str(skill_name or "").strip()
     if not agent_name or not skill_name:
         return {"ok": False, "error": "Missing agent_name or skill_name"}
+    if not conversation_id:
+        return {"ok": False, "error": "Missing conversation_id"}
     if resource_store is None:
         from core.resource_store import ResourceStore
         resource_store = ResourceStore.instance()
@@ -71,7 +60,11 @@ def assign_skill_to_agent(agent_name: str, skill_name: str, user_id: str,
         conversation_store = ConversationStore.instance()
     from core.skill_resolver import available_skill_context_message, normalize_skill_entry
 
-    def_name = _agent_definition_name(agent_name, conversation_id)
+    config_conv_id, resolved_name, agent_config = _agent_instance(
+        agent_name, conversation_id)
+    if not resolved_name:
+        return {"ok": False, "error": f"Agent '{agent_name}' not found in conversation"}
+    def_name = agent_config.get("definition") or ""
     agent_def = resource_store.get_any(
         "agent", def_name, user_id, conversation_id=conversation_id)
     if not agent_def:
@@ -84,18 +77,15 @@ def assign_skill_to_agent(agent_name: str, skill_name: str, user_id: str,
         return {"ok": False, "error": f"Skill '{skill_name}' is invalid: {skill_def.get('_invalid')}"}
 
     with ASSIGNED_SKILLS_LOCK:
-        fresh = resource_store.get_any(
-            "agent", def_name, user_id, conversation_id=conversation_id) or agent_def
+        from core.conv_agent_config import get_agent_config, set_agent_config
+        fresh = get_agent_config(config_conv_id, resolved_name)
         assigned = list(fresh.get("assigned_skills", []) or [])
         changed = not any(
             normalize_skill_entry(entry)[0] == skill_name for entry in assigned)
         if changed:
             assigned.append(skill_name)
-        update_uid, update_kwargs = _agent_update_target(
-            fresh, user_id, conversation_id)
-        resource_store.update(
-            "agent", def_name, update_uid,
-            {"assigned_skills": assigned}, **update_kwargs)
+        set_agent_config(
+            config_conv_id, resolved_name, {"assigned_skills": assigned})
     if changed and notify and conversation_id and conversation_store is not None:
         _append_agent_context(
             conversation_store, conversation_id, user_id, agent_name,
@@ -104,7 +94,7 @@ def assign_skill_to_agent(agent_name: str, skill_name: str, user_id: str,
         "ok": True,
         "assigned": True,
         "changed": changed,
-        "agent": agent_name,
+        "agent": resolved_name,
         "skill": skill_name,
     }
 
@@ -120,6 +110,8 @@ def unassign_skill_from_agent(agent_name: str, skill_name: str, user_id: str,
     skill_name = str(skill_name or "").strip()
     if not agent_name or not skill_name:
         return {"ok": False, "error": "Missing agent_name or skill_name"}
+    if not conversation_id:
+        return {"ok": False, "error": "Missing conversation_id"}
     if resource_store is None:
         from core.resource_store import ResourceStore
         resource_store = ResourceStore.instance()
@@ -128,14 +120,18 @@ def unassign_skill_from_agent(agent_name: str, skill_name: str, user_id: str,
         conversation_store = ConversationStore.instance()
     from core.skill_resolver import normalize_skill_entry, removed_skill_context_message
 
-    def_name = _agent_definition_name(agent_name, conversation_id)
+    config_conv_id, resolved_name, agent_config = _agent_instance(
+        agent_name, conversation_id)
+    if not resolved_name:
+        return {"ok": False, "error": f"Agent '{agent_name}' not found in conversation"}
+    def_name = agent_config.get("definition") or ""
     agent_def = resource_store.get_any(
         "agent", def_name, user_id, conversation_id=conversation_id)
     if not agent_def:
         return {"ok": False, "error": f"Agent '{agent_name}' not found"}
     with ASSIGNED_SKILLS_LOCK:
-        fresh = resource_store.get_any(
-            "agent", def_name, user_id, conversation_id=conversation_id) or agent_def
+        from core.conv_agent_config import get_agent_config, set_agent_config
+        fresh = get_agent_config(config_conv_id, resolved_name)
         assigned = list(fresh.get("assigned_skills", []) or [])
         kept = []
         changed = False
@@ -144,11 +140,8 @@ def unassign_skill_from_agent(agent_name: str, skill_name: str, user_id: str,
                 changed = True
                 continue
             kept.append(entry)
-        update_uid, update_kwargs = _agent_update_target(
-            fresh, user_id, conversation_id)
-        resource_store.update(
-            "agent", def_name, update_uid,
-            {"assigned_skills": kept}, **update_kwargs)
+        set_agent_config(
+            config_conv_id, resolved_name, {"assigned_skills": kept})
     if changed and notify and conversation_id and conversation_store is not None:
         _append_agent_context(
             conversation_store, conversation_id, user_id, agent_name,
@@ -157,7 +150,7 @@ def unassign_skill_from_agent(agent_name: str, skill_name: str, user_id: str,
         "ok": True,
         "unassigned": True,
         "changed": changed,
-        "agent": agent_name,
+        "agent": resolved_name,
         "skill": skill_name,
     }
 
@@ -179,17 +172,44 @@ def remove_skill_assignments(skill_name: str, user_id: str,
         conversation_store = ConversationStore.instance()
     from core.skill_resolver import normalize_skill_entry, removed_skill_context_message
 
+    if not conversation_id:
+        cleaned_agents: List[str] = []
+        for agent_def in resource_store.list_all("agent", user_id):
+            agent_name = agent_def.get("name", "")
+            if not agent_name:
+                continue
+            with ASSIGNED_SKILLS_LOCK:
+                fresh = resource_store.get_any(
+                    "agent", agent_name, user_id) or agent_def
+                kept = []
+                changed = False
+                for entry in list(fresh.get("assigned_skills", []) or []):
+                    name, _params, _condition = normalize_skill_entry(entry)
+                    if name == skill_name:
+                        changed = True
+                        continue
+                    kept.append(entry)
+                if not changed:
+                    continue
+                scope = fresh.get("_scope", "user")
+                update_uid = (
+                    user_id if scope == "user" else "__global__")
+                resource_store.update(
+                    "agent", agent_name, update_uid,
+                    {"assigned_skills": kept})
+            cleaned_agents.append(agent_name)
+        return cleaned_agents
+    from core.conv_agent_config import (
+        get_all_agent_configs, resolve_agent_config_entry, set_agent_config,
+    )
     cleaned_agents: List[str] = []
-    for agent_def in resource_store.list_all(
-            "agent", user_id, conversation_id=conversation_id):
-        agent_name = agent_def.get("name", "")
+    for agent_name in get_all_agent_configs(conversation_id):
         if not agent_name:
             continue
         changed = False
         with ASSIGNED_SKILLS_LOCK:
-            fresh = resource_store.get_any(
-                "agent", agent_name, user_id,
-                conversation_id=conversation_id) or agent_def
+            config_conv_id, resolved_name, fresh = resolve_agent_config_entry(
+                conversation_id, agent_name)
             kept = []
             for entry in list(fresh.get("assigned_skills", []) or []):
                 name, _params, _condition = normalize_skill_entry(entry)
@@ -198,11 +218,9 @@ def remove_skill_assignments(skill_name: str, user_id: str,
                     continue
                 kept.append(entry)
             if changed:
-                update_uid, update_kwargs = _agent_update_target(
-                    fresh, user_id, conversation_id)
-                resource_store.update(
-                    "agent", agent_name, update_uid,
-                    {"assigned_skills": kept}, **update_kwargs)
+                set_agent_config(
+                    config_conv_id, resolved_name,
+                    {"assigned_skills": kept})
         if not changed:
             continue
         cleaned_agents.append(agent_name)
@@ -229,14 +247,12 @@ def notify_skill_updated(skill_name: str, skill_def: Optional[Dict[str, Any]],
         conversation_store = ConversationStore.instance()
     from core.skill_resolver import normalize_skill_entry, updated_skill_context_message
 
+    from core.conv_agent_config import get_all_agent_configs
     notified: List[str] = []
-    for agent_def in resource_store.list_all(
-            "agent", user_id, conversation_id=conversation_id):
-        agent_name = agent_def.get("name", "")
-        if not agent_name:
-            continue
+    for agent_name, agent_config in get_all_agent_configs(
+            conversation_id).items():
         assigned = False
-        for entry in list(agent_def.get("assigned_skills", []) or []):
+        for entry in list(agent_config.get("assigned_skills", []) or []):
             name, _params, _condition = normalize_skill_entry(entry)
             if name == skill_name:
                 assigned = True

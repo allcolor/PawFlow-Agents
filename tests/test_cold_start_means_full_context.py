@@ -114,7 +114,7 @@ def test_the_stream_driver_does_not_retry_a_context_transition():
     from pathlib import Path
 
     src = Path("core/_llm_client_driver.py").read_text(encoding="utf-8")
-    assert "isinstance(e, (_AC, CCCompactDetected, ColdStartRequired," in src
+    assert "isinstance(e, (_AC, AgentSuperseded, CCCompactDetected, ColdStartRequired," in src
     assert "DeltaContextRequired))" in src
 
 

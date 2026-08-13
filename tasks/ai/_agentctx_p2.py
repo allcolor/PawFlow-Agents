@@ -324,7 +324,8 @@ class _PACPhase2Mixin:
                 # Advertise assigned skills without loading their full prompts.
                 # Active CLI sessions receive assignment deltas via context;
                 # cold/rebuilt contexts get this lightweight manifest.
-                st._agent_skills = (st.agent_def or {}).get("assigned_skills") or []
+                st._agent_skills = (getattr(st, "_inst_cfg", {}) or {}).get(
+                    "assigned_skills") or []
                 if st._agent_skills:
                     from core.skill_resolver import inject_available_skills_into_prompt
                     st.system_prompt = inject_available_skills_into_prompt(

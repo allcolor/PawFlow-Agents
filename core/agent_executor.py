@@ -513,8 +513,8 @@ def resolve_agent_task(
         _sys_prompt = _raw_prompt
 
     # 4) Advertise skills. Full skill prompts are loaded lazily through
-    # load_skill; assigned_skills remains the persistent source of truth.
-    _assigned_skills = agent_def.get("assigned_skills") or []
+    # load_skill; the conversation instance is the persistent source of truth.
+    _assigned_skills = acfg.get("assigned_skills") or []
     _all_skills = list(_assigned_skills) + list(extra_skills or [])
     if _all_skills:
         from core.skill_resolver import inject_available_skills_into_prompt

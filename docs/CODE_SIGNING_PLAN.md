@@ -9,6 +9,7 @@ sign every distributable artifact so end users get fewer scary warnings, and so
 malicious builds of our software are easier to detect. It covers:
 
 - Windows executables and installers (`setup.exe`, `pawcode.exe`)
+- Relay Desktop executables, helpers, and bundled native tools such as `frpc.exe`
 - macOS applications and disk images (`.app`, `.dmg`, `.pkg`) — **not built yet**
 - Linux packages (`.deb`, `.rpm`) and archives (`.tar.gz`, `.zip`)
 - Checksums and detached signatures for every artifact
@@ -27,6 +28,7 @@ Artifacts produced by `.github/workflows/release-assets.yml` and
 | `pawcode-<ver>-<os>.zip/.tar.gz` | PyInstaller + zipfile | all | No |
 | `pawflow-relay-cli-<ver>-*.zip/.tar.gz` | PyInstaller + zipfile | all | No |
 | Relay Desktop (Electron) | `dist:win` / `dist:linux` | Win/Linux | No |
+| Bundled FRP client (`frpc.exe`) | verified FRP 0.70.1 upstream archive | Windows | No |
 | `pawflow-installers/*` | `build-pawflow-install-zip.sh` | Linux | No |
 
 No `.rpm` and no macOS artifacts are produced today. No signing infrastructure
@@ -52,10 +54,16 @@ binaries would widen the blast radius of a single leak.
 
 ### What is needed
 
-An **Authenticode** signature on the `pawcode.exe` binary and the NSIS
-`setup.exe`, applied with `signtool` (Windows SDK) or `osslsigncode` (cross,
-on Linux CI), plus an **RFC 3161 timestamp** so the signature stays valid after
-the certificate expires.
+An **Authenticode** signature on every shipped Windows PE executable, including
+`pawcode.exe`, Relay Desktop, its native helpers, and the bundled `frpc.exe`,
+followed by a signature on the final NSIS/Electron installer. Apply signatures
+with `signtool` (Windows SDK) or `osslsigncode` (cross, on Linux CI), and add an
+**RFC 3161 timestamp** so each signature stays valid after the certificate
+expires.
+
+Signing only the outer installer is insufficient. Windows Defender extracts and
+scans bundled executables independently, so an unsigned `frpc.exe` can still be
+reported as `Win32/Frproxy` even when the installer itself is trusted.
 
 ### Registration / where to get the certificate
 
@@ -80,15 +88,47 @@ valid Authenticode cert, a brand-new publisher gets "More info → Run anyway"
 until downloads and prevalence build reputation. Azure Trusted Signing is the
 fastest path today because the key is pre-vetted by Microsoft.
 
+### Defender and dual-use tunnel binaries
+
+Authenticode and SmartScreen reputation do not disable antivirus signatures.
+FRP is a legitimate reverse-proxy client, but its tunnelling capability is also
+useful to attackers, so Defender can classify an authentic build as
+`Win32/Frproxy`. A valid signature improves publisher attribution and allows
+certificate-based enterprise policy, but it does not by itself guarantee that
+Defender will accept the file.
+
+For every Relay Desktop release:
+
+1. Pin the FRP version and upstream source/archive digest.
+2. Prefer a reproducible build from the pinned FRP source. Until that is in
+   place, retain the existing verified upstream archive and record its digest in
+   release provenance.
+3. Sign and timestamp `frpc.exe` before it is embedded in Relay Desktop.
+4. Submit the signed `frpc.exe` and the signed installer to Microsoft Security
+   Intelligence as suspected false positives before public release.
+5. Block publication until signature verification passes and any unexpected
+   Defender verdict has been reviewed. Do not add broad Defender exclusions or
+   ask users to exclude the Relay Desktop installation directory.
+
 ### Steps (CI, GitHub Actions)
 
 1. Store certificate/key in `AZURE_*` secrets (Trusted Signing) or import the
    PFX (OV/EV) into a protected secret; keep the EV token in a hardware module
    accessed by the runner (e.g. via a signing service), never in the repo.
-2. Sign `pawcode.exe` before NSIS packaging, then sign `setup.exe` after.
-3. Add `/tr http://timestamp.digicert.com /td SHA256` (or the CA's RFC 3161 URL).
-4. Verify with `signtool verify /pa /v` in CI.
-5. Add a workflow that checks signatures on release artifacts.
+2. Inventory every Windows PE file in the release payload and fail if an
+   executable is not covered by the signing manifest.
+3. Sign inner payloads first: `frpc.exe`, Relay Desktop helpers, Relay Desktop,
+   and `pawcode.exe`.
+4. Build the NSIS/Electron installer from those signed payloads, then sign the
+   final installer last.
+5. Add `/tr http://timestamp.digicert.com /td SHA256` (or the CA's RFC 3161 URL).
+6. Verify every signed PE file with `signtool verify /pa /v` in CI, including a
+   post-packaging extraction check so packaging cannot replace a signed payload.
+7. Generate release provenance containing the upstream FRP version and digest,
+   the shipped `frpc.exe` digest, and the signer identity.
+8. Submit release candidates to Microsoft Security Intelligence and record the
+   submission/result in the release checklist.
+9. Add a workflow that checks signatures and provenance on release artifacts.
 
 ## 5. macOS (.app / .dmg / .pkg)
 
@@ -197,7 +237,12 @@ appropriate. Add timestamping everywhere so old signatures survive expiry.
 
 ### Phase 2 — Windows (paid)
 - Decide Azure Trusted Signing (~US$10/month) vs OV/EV cert (~US$100–600/yr).
-- Sign `pawcode.exe` + `setup.exe` with timestamping; verify in CI.
+- Define a complete PE signing manifest for PawCode, Relay Desktop, native
+  helpers, and `frpc.exe`.
+- Sign and timestamp inner payloads before packaging, then sign the final
+  installer; verify both layers in CI.
+- Add FRP release provenance and Microsoft false-positive submission to the
+  mandatory release checklist.
 
 ### Phase 3 — macOS (paid)
 - Apple Developer Program (US$99/yr), macOS CI runner.
@@ -226,3 +271,5 @@ appropriate. Add timestamping everywhere so old signatures survive expiry.
 2. macOS: is a native macOS build in scope for 1.0?
 3. Linux: direct GPG distribution vs PPA/COPR hosting.
 4. Whether to add `.rpm` to the release matrix.
+5. FRP provenance: reproducible source build in PawFlow CI vs verified upstream
+   binary followed by PawFlow Authenticode signing.

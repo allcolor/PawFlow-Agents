@@ -11,9 +11,16 @@ import pytest
 def _reset_observed_emission_dedup():
     # The proxy dedups observed tool blocks at the source for the lifetime of
     # its process; tests reuse call ids across cases, so each starts clean.
-    from tools import cc_interactive_observers as observers
-    observers._OBSERVED_EMITTED_USES.clear()
-    observers._OBSERVED_EMITTED_RESULTS.clear()
+    # The proxy imports the observers module as top-level cc_interactive_observers
+    # when tools/ is on sys.path (standalone layout), so the suite can hold TWO
+    # module instances with independent dedup sets — clear every loaded one.
+    import sys
+    from tools import cc_interactive_observers  # noqa: F401 — ensure loaded
+    for name in ("tools.cc_interactive_observers", "cc_interactive_observers"):
+        module = sys.modules.get(name)
+        if module is not None:
+            module._OBSERVED_EMITTED_USES.clear()
+            module._OBSERVED_EMITTED_RESULTS.clear()
     yield
 
 

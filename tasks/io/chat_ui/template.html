@@ -524,6 +524,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                 position: static; z-index: 50; max-width: 350px; max-height: 80px;
                 overflow-y: auto; backdrop-filter: blur(4px); }
 .active-panel.visible { display: block; }
+/* Composer drawer: everything above the prompt (conversation controls +
+   action dock) folds behind a slim centered handle. CLOSED by default;
+   the choice persists across reloads (localStorage). The active-agents
+   mount stays visible in both states. */
+.composer-drawer-handle { display: block; margin: 0 auto; width: 46px; height: 13px;
+  line-height: 9px; padding: 0; background: rgba(15,22,41,0.9); border: 1px solid #0f3460;
+  border-bottom: none; border-radius: 8px 8px 0 0; color: #8a8fa3; font-size: 9px; cursor: pointer; }
+.composer-drawer-handle:hover { color: #e0e0e0; background: #0f3460; }
+.input-area.composer-drawer-collapsed .composer-context-row > .prompt-controls-panel,
+.input-area.composer-drawer-collapsed .composer-context-row > .composer-action-mount { display: none; }
 .composer-context-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
                         align-items: end; gap: 10px; min-width: 0; }
 .prompt-controls-panel { justify-self: start; }
@@ -608,8 +618,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                     background: #0f3460; color: #e0e0e0; border: 1px solid #e94560; border-radius: 6px;
                     cursor: pointer; font-size: 16px; line-height: 1; }
 .speak-toggle-btn:hover, .speak-toggle-btn.active { background: #e94560; color: white; }
-#stopBtn { background: #cc3333; padding: 10px 14px; font-size: 16px; min-width: 44px; }
-#stopBtn:hover { background: #aa2222; }
 .btn-attach { background: #0f3460 !important; padding: 10px 12px !important; font-size: 18px !important; }
 .btn-attach:hover { background: #1a4a8a !important; }
 /* Grab mode: the composer is wired to a terminal, and that has to be
@@ -1323,6 +1331,10 @@ if (typeof hljs !== 'undefined') {
   <div class="task-tab-panel-body" id="taskTabPanelBody"></div>
 </div>
 <div class="input-area">
+  <button class="composer-drawer-handle" id="composerDrawerHandle" type="button"
+          aria-expanded="false" aria-controls="promptControlsPanel"
+          onclick="toggleComposerDrawer()"
+          title="Show/hide conversation controls" data-i18n-title="composerDrawerTitle">&#x25B4;</button>
   <div class="composer-context-row">
     <div class="prompt-controls-panel" id="promptControlsPanel">
       <div class="active-panel-title" data-i18n="conversationControls">Conversation controls</div>
@@ -1389,7 +1401,6 @@ if (typeof hljs !== 'undefined') {
               rows="1" onkeydown="handleKey(event)"></textarea>
     <div class="attachments-preview" id="attachPreview" aria-live="polite"></div>
     <button id="sendBtn" onclick="send()" data-i18n="send">Send</button>
-    <button id="stopBtn" onclick="interruptCurrent()" style="display:none" title="Interrupt (force answer)" data-i18n-title="stopTitle">&#9632;</button>
   </div>
 </div>
 </div><!-- /tab-content chat -->

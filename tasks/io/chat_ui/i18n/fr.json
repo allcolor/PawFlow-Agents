@@ -53,6 +53,7 @@
   "activeAgentTitle": "Actif : {agent} — cliquer pour revenir",
   "activeAgents": "Agents actifs",
   "conversationControls": "Commandes conversation",
+  "composerDrawerTitle": "Afficher/masquer les commandes de conversation",
   "activeForwards": "Forwards actifs :\n{lines}",
   "activeLoopsHeader": "Boucles actives :",
   "add": "Ajouter",

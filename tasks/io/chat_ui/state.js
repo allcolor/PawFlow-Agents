@@ -310,6 +310,34 @@ function toggleSidebar() {
   _syncToggleBtn();
 }
 
+// Composer drawer: the zone above the prompt (conversation controls +
+// action dock) folds behind a slim handle. CLOSED by default; the reader's
+// choice persists across reloads. The active-agents mount is not part of
+// the drawer and stays visible in both states.
+const _COMPOSER_DRAWER_KEY = 'pawflow.composerDrawerOpen';
+function _composerDrawerOpen() {
+  try { return localStorage.getItem(_COMPOSER_DRAWER_KEY) === '1'; }
+  catch (_) { return false; }
+}
+function _applyComposerDrawer() {
+  const area = document.querySelector('.input-area');
+  if (!area) return;
+  const open = _composerDrawerOpen();
+  area.classList.toggle('composer-drawer-collapsed', !open);
+  const handle = document.getElementById('composerDrawerHandle');
+  if (handle) {
+    handle.innerHTML = open ? '&#x25BE;' : '&#x25B4;';
+    handle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+}
+function toggleComposerDrawer() {
+  try {
+    localStorage.setItem(_COMPOSER_DRAWER_KEY, _composerDrawerOpen() ? '0' : '1');
+  } catch (_) {}
+  _applyComposerDrawer();
+}
+document.addEventListener('DOMContentLoaded', _applyComposerDrawer);
+
 
 
 function _setInputEnabled(enabled) {

@@ -651,8 +651,9 @@ def test_primary_chat_controls_are_i18n_bound():
     assert 'data-i18n-placeholder="placeholder"' in TEMPLATE_HTML
     assert 'id="sendBtn"' in TEMPLATE_HTML
     assert 'data-i18n="send"' in TEMPLATE_HTML
-    assert 'id="stopBtn"' in TEMPLATE_HTML
-    assert 'data-i18n-title="stopTitle"' in TEMPLATE_HTML
+    # The composer stop button was removed on purpose: the per-agent stop
+    # controls in the Active Agents panel are the only stop surface.
+    assert 'id="stopBtn"' not in TEMPLATE_HTML
     assert "title=\"Reply\"" not in MESSAGES_JS
     assert "title=\"Copy\"" not in MESSAGES_JS
     assert "title=\"Delete\"" not in MESSAGES_JS

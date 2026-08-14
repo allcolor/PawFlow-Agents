@@ -188,7 +188,6 @@ function applyI18n(root) {
   _setText('#sendBtn', t('send'));
   _setTitle('.btn-attach', t('promptLibraryTitle'));
   _setTitle('#fileAttachBtn', t('attachTitle'));
-  _setTitle('#stopBtn', t('stopTitle'));
   _setTitle('#permissionMode', t('permissionModeTitle'));
   _setText('.sidebar-header h2', t('conversations'));
   _setText('.btn-new', t('newChat'));

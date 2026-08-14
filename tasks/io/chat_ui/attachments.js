@@ -369,7 +369,6 @@ function deleteSelectedMessages() {
 
 function cancelAgent(target) {
   if (!conversationId) return;
-  document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('status').textContent = t('cancelling');
   const params = { force: true };
   if (target && target !== 'ALL') params.agent_name = target;
@@ -530,7 +529,6 @@ async function send() {
         _noteLiveHistoryAppend(data.message_count, 1);
       } else if (data.message_count) serverMsgCount = data.message_count;
       document.getElementById('status').textContent = t('thinking');
-      document.getElementById('stopBtn').style.display = '';
       // SSE will handle the rest
       return;
     }

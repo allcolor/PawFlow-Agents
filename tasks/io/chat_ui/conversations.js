@@ -174,8 +174,6 @@ function _clearConvState() {
   sending = false;
   var _sendBtn = document.getElementById('sendBtn');
   if (_sendBtn) _sendBtn.disabled = false;
-  var _stopBtn = document.getElementById('stopBtn');
-  if (_stopBtn) _stopBtn.style.display = 'none';
   if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
   if (typeof window._taskTabsReset === 'function') window._taskTabsReset();
   if (typeof activeInteractions !== 'undefined') {

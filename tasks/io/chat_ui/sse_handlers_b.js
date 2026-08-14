@@ -158,7 +158,6 @@ function _sseWireB() {
     if (Object.keys(activeInteractions).length === 0) {
       sending = false;
       document.getElementById('sendBtn').disabled = false;
-      document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('status').textContent = t('ready');
       hideTyping();
     }
@@ -374,7 +373,6 @@ function _sseWireB() {
       // Final response — ensure active panel is cleaned up
       sending = false;
       document.getElementById('sendBtn').disabled = false;
-      document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('status').textContent = t('ready');
       // Force-clean all active interactions for this agent
       if (doneAgent) {
@@ -448,7 +446,6 @@ function _sseWireB() {
     scrollBottom();
     sending = false;
     document.getElementById('sendBtn').disabled = false;
-    document.getElementById('stopBtn').style.display = 'none';
     document.getElementById('status').textContent = t('ready');
   });
 
@@ -592,7 +589,6 @@ function _sseWireB() {
     }
     sending = false;
     document.getElementById('sendBtn').disabled = false;
-    document.getElementById('stopBtn').style.display = 'none';
     document.getElementById('status').textContent = t('error');
   });
 
@@ -620,7 +616,6 @@ function _sseWireB() {
     }
     sending = false;
     document.getElementById('sendBtn').disabled = false;
-    document.getElementById('stopBtn').style.display = 'none';
     document.getElementById('status').textContent = t('ready');
     addMsg('system', `Broadcast complete — ${data.agent_count} agent(s) responded.`);
     scrollBottom();

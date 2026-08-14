@@ -178,7 +178,7 @@ def test_turn_controller_keeps_positional_boundaries_and_rehydrates_live(tmp_pat
 
 CONVERSATION_BODY = """
 <div id="messages"></div><div id="status"></div><div id="sidebar"></div>
-<button id="sendBtn"></button><button id="stopBtn"></button><input id="input">
+<button id="sendBtn"></button><input id="input">
 <div id="viewMenuWrap"></div><div id="viewItemClassic"></div>
 <div id="viewItemSimplified"></div><div id="viewClassicOptions"></div>
 """

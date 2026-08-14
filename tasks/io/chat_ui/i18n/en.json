@@ -53,6 +53,7 @@
   "activeAgentTitle": "Active: {agent} — click to switch back",
   "activeAgents": "Active agents",
   "conversationControls": "Conversation controls",
+  "composerDrawerTitle": "Show/hide conversation controls",
   "activeForwards": "Active forwards:\n{lines}",
   "activeLoopsHeader": "Active loops:",
   "add": "Add",

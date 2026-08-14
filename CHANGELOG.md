@@ -6,6 +6,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.187] — 2026-08-14
+
+### Added
+
+- `delegate_status` / `delegate_result` tools (generalized from the
+  flash-only `flash_status`): caller-facing observability for ALL
+  delegates — flash agents and named sub-agents. Finished results are
+  retained in a bounded ring (full text up to 200k chars, last 100
+  results), recorded BEFORE push delivery, so a caller can always PULL a
+  finished delegate's output by task_id even when the push path failed.
+
+### Fixed
+
+- Claude Code / Codex interactive multi-message drain: a retrigger turn
+  carrying N drained user messages (e.g. delegate results preempted while
+  the previous turn was ending) only pasted the newest one into the live
+  CLI session — the other N−1 were persisted and visible in the webchat
+  but never answered. The live delta now renders every not-yet-submitted
+  trailing user message in one paste, and each session deduplicates by
+  `msg_id`, which also ends double-delivered delegate results (the same
+  persisted message re-pasted by a later prompt build).
+
+### Performance
+
+- Hot-path debug logging no longer costs anything when disabled: the
+  engine commit path logs `ff.size()` instead of re-reading spilled
+  FlowFiles from disk, and CC/CCI event dumps (json.dumps per event,
+  wire-frame base64 decode) are gated behind `isEnabledFor(DEBUG)`.
+- Pool locks no longer serialize I/O: CCI `ensure_started` probes
+  docker/tmux liveness and reads+decrypts the credentials file OUTSIDE
+  the global pool lock (beta-186 regression); batch pool reapers
+  (claude/codex/gemini) run `docker inspect` outside the lock.
+- Dead/evicted CCI containers unregister their event-service session
+  (slow memory leak + O(all-sessions) scans in `publish_agent_event`).
+- `ConfigStore.load_params`/`load_secrets` cached by file mtime — every
+  expression resolution used to re-read and re-decrypt params/secrets
+  from disk, per chain.
+- `KnowledgeGraph.for_user` instance cache with mtime revalidation —
+  prompt builds stop re-parsing the whole JSON file every turn.
+- `AgentDiary.read` reads the file tail instead of scanning the whole
+  JSONL on every prompt build.
+- `ConversationStore.load_agent_context` adds a stat-signature cache for
+  contexts too large for the bounded cache — the CLI context gauge stops
+  reloading the full context from disk on every LLM call and heartbeat.
+- Sub-agent (delegate) transcript persist is now incremental and runs on
+  a coalescing worker thread instead of re-serializing and rewriting the
+  whole conversation synchronously every iteration.
+- CCI stream accumulators (text/thinking/tool-json) switched from
+  quadratic string concatenation to append+join; the CC stream
+  reader→dispatch queue is bounded (blocking backpressure).
+
 ## [1.0.0-beta.186] — 2026-08-14
 
 ### Fixed

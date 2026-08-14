@@ -68,7 +68,7 @@ def list_live_delegates(parent_conv: str, caller: str = "") -> List[dict]:
     """Sanitized snapshot of live delegate entries for a parent conversation.
 
     Returns serializable dicts (no client/task objects), optionally filtered
-    by the calling agent. Used by the flash_status tool.
+    by the calling agent. Used by the delegate_status tool.
     """
     out: List[dict] = []
     with _live_delegates_lock:
@@ -85,15 +85,19 @@ def list_live_delegates(parent_conv: str, caller: str = "") -> List[dict]:
     return out
 
 
-# Finished delegate results (newest last), bounded so flash_status can report
+# Finished delegate results (newest last), bounded so delegate_status can report
 # recent completions/failures without keeping AgentResult objects forever.
 _FINISHED_DELEGATES_MAX = 100
+# Per-entry cap on the retained response text so the ring buffer stays
+# memory-bounded even with large delegate outputs.
+_FINISHED_RESPONSE_MAX_CHARS = 200_000
 _finished_delegates: List[dict] = []
 
 
 def record_finished_delegate(parent_conv: str, caller: str, target: str,
                              task_id: str, status: str, error: str = "",
-                             duration_ms: float = 0.0) -> None:
+                             duration_ms: float = 0.0,
+                             response: str = "") -> None:
     import time
     with _live_delegates_lock:
         _finished_delegates.append({
@@ -105,19 +109,38 @@ def record_finished_delegate(parent_conv: str, caller: str, target: str,
             "error": (error or "")[:500],
             "duration_ms": duration_ms,
             "finished_at": time.time(),
+            "response": (response or "")[:_FINISHED_RESPONSE_MAX_CHARS],
         })
         del _finished_delegates[:-_FINISHED_DELEGATES_MAX]
 
 
 def list_finished_delegates(parent_conv: str, caller: str = "") -> List[dict]:
-    """Recent finished delegate results for a parent conversation."""
+    """Recent finished delegate results for a parent conversation.
+
+    Summary view: the retained response text is replaced by its size
+    (``response_chars``) — fetch the full text per task_id with
+    :func:`get_finished_delegate`.
+    """
     with _live_delegates_lock:
         return [
-            {k: v for k, v in e.items() if k != "parent_conv"}
+            {**{k: v for k, v in e.items()
+                if k not in ("parent_conv", "response")},
+             "response_chars": len(e.get("response") or "")}
             for e in _finished_delegates
             if e["parent_conv"] == parent_conv
             and (not caller or e["caller"] == caller)
         ]
+
+
+def get_finished_delegate(parent_conv: str, caller: str,
+                          task_id: str) -> Optional[dict]:
+    """Full finished-delegate entry (including retained response text)."""
+    with _live_delegates_lock:
+        for e in reversed(_finished_delegates):
+            if (e["parent_conv"] == parent_conv and e["caller"] == caller
+                    and e["task_id"] == task_id):
+                return {k: v for k, v in e.items() if k != "parent_conv"}
+    return None
 
 
 def queue_live_delegate_message(parent_conv: str, caller: str, target: str,

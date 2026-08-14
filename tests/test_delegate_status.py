@@ -1,13 +1,16 @@
-"""Tests for the flash_status tool and its registry state.
+"""Tests for delegate_status / delegate_result and their registry state.
 
 Verifies that:
 1. register_live_delegate stamps started_at and list_live_delegates returns a
    sanitized, caller-filtered snapshot (no client/task objects)
-2. record_finished_delegate keeps a bounded, caller-filtered ring buffer
-3. FlashStatusHandler.execute reports live + finished flash agents for the
-   calling agent only, excluding non-flash delegates
-4. flash_status is registered in the default tool registry and
-   FlashAgentHandler records finished results for it
+2. record_finished_delegate keeps a bounded, caller-filtered ring buffer with
+   capped retained response text
+3. DelegateStatusHandler reports live + finished delegates (flash and plain)
+   for the calling agent only
+4. DelegateResultHandler returns the retained output by task_id, reports
+   still-running delegates, and hides other callers' results
+5. Wiring: handlers registered in the default registry, results recorded in
+   _inject_bg_result, relay source-context injection covers both tools
 """
 import json
 
@@ -15,21 +18,24 @@ from unittest.mock import MagicMock
 
 from core.agent_executor import (
     AgentTask,
+    get_finished_delegate,
     list_finished_delegates,
     list_live_delegates,
     record_finished_delegate,
     register_live_delegate,
     unregister_live_delegate,
 )
-from core.handlers.resource_agent import FlashStatusHandler
+from core.handlers.resource_agent import (
+    DelegateResultHandler,
+    DelegateStatusHandler,
+)
 
 
-def _make_status_handler(conversation_id="conv_fs", user_id="user1",
-                         source_agent="agentA", llm_service="svc_a"):
-    h = FlashStatusHandler()
+def _make_handler(cls, conversation_id, source_agent="agentA"):
+    h = cls()
     h.set_conversation_id(conversation_id)
-    h.set_user_id(user_id)
-    h.set_source_agent(source_agent, llm_service)
+    h.set_user_id("user1")
+    h.set_source_agent(source_agent, "svc_a")
     return h
 
 
@@ -37,9 +43,9 @@ class TestLiveDelegateSnapshot:
     def test_register_stamps_started_at_and_list_sanitizes(self):
         task = AgentTask(id="tid1", agent_name="agentA::flash::critic",
                          message="m")
-        client = MagicMock()
         register_live_delegate("conv_live1", "agentA",
-                               "agentA::flash::critic", "tid1", client, task)
+                               "agentA::flash::critic", "tid1",
+                               MagicMock(), task)
         try:
             entries = list_live_delegates("conv_live1", "agentA")
             assert len(entries) == 1
@@ -48,7 +54,6 @@ class TestLiveDelegateSnapshot:
             assert e["task_id"] == "tid1"
             assert e["started_at"] > 0
             assert e["pending_messages"] == 0
-            # No live objects leak into the snapshot
             assert "client" not in e and "task" not in e
         finally:
             unregister_live_delegate("conv_live1", "agentA",
@@ -95,53 +100,64 @@ class TestFinishedDelegateRing:
             record_finished_delegate("conv_fin2", "agentA", "t", f"tid{i}",
                                      "error", "x" * 2000)
         entries = list_finished_delegates("conv_fin2", "agentA")
-        # Oldest entries were evicted; the newest survive
         assert len(entries) <= _FINISHED_DELEGATES_MAX
         assert entries[-1]["task_id"] == f"tid{_FINISHED_DELEGATES_MAX + 4}"
         assert len(entries[-1]["error"]) == 500
 
+    def test_response_retained_capped_and_summarized(self):
+        from core._agent_executor_base import _FINISHED_RESPONSE_MAX_CHARS
+        record_finished_delegate("conv_fin3", "agentA", "agentA::flash::big",
+                                 "tidR", "completed",
+                                 response="y" * (_FINISHED_RESPONSE_MAX_CHARS + 10))
+        summary = list_finished_delegates("conv_fin3", "agentA")[-1]
+        assert "response" not in summary
+        assert summary["response_chars"] == _FINISHED_RESPONSE_MAX_CHARS
+        full = get_finished_delegate("conv_fin3", "agentA", "tidR")
+        assert len(full["response"]) == _FINISHED_RESPONSE_MAX_CHARS
+        assert get_finished_delegate("conv_fin3", "agentA", "nope") is None
 
-class TestFlashStatusHandler:
-    def test_reports_live_and_finished_flash_agents_only(self):
-        conv = "conv_fsh1"
+
+class TestDelegateStatusHandler:
+    def test_reports_flash_and_plain_delegates(self):
+        conv = "conv_dsh1"
         task = AgentTask(id="tid1", agent_name="agentA::flash::critic",
                          message="m")
         register_live_delegate(conv, "agentA", "agentA::flash::critic",
                                "tid1", MagicMock(), task)
-        # Plain (non-flash) delegate must not appear
         register_live_delegate(conv, "agentA", "reviewer", "tid2",
                                MagicMock(), task)
         record_finished_delegate(conv, "agentA", "agentA::flash::done1",
-                                 "tid3", "completed", "", 42.0)
+                                 "tid3", "completed", "", 42.0,
+                                 response="r1")
         record_finished_delegate(conv, "agentA", "reviewer", "tid4",
                                  "completed")
         try:
-            h = _make_status_handler(conversation_id=conv)
+            h = _make_handler(DelegateStatusHandler, conv)
             out = json.loads(h.execute({}))
-            assert out["counts"] == {"live": 1, "finished": 1}
-            live = out["live"][0]
-            assert live["name"] == "critic"
-            assert live["agent"] == "agentA::flash::critic"
-            assert live["task_id"] == "tid1"
-            assert live["age_seconds"] >= 0
-            fin = out["finished"][0]
-            assert fin["name"] == "done1"
-            assert fin["status"] == "completed"
-            assert fin["duration_ms"] == 42.0
+            assert out["counts"] == {"live": 2, "finished": 2}
+            by_tid = {e["task_id"]: e for e in out["live"]}
+            assert by_tid["tid1"]["name"] == "critic"
+            assert by_tid["tid1"]["kind"] == "flash"
+            assert by_tid["tid1"]["age_seconds"] >= 0
+            assert by_tid["tid2"]["name"] == "reviewer"
+            assert by_tid["tid2"]["kind"] == "agent"
+            fin = {e["task_id"]: e for e in out["finished"]}
+            assert fin["tid3"]["kind"] == "flash"
+            assert fin["tid3"]["response_chars"] == 2
+            assert fin["tid4"]["kind"] == "agent"
         finally:
             unregister_live_delegate(conv, "agentA",
                                      "agentA::flash::critic", "tid1")
             unregister_live_delegate(conv, "agentA", "reviewer", "tid2")
 
-    def test_other_callers_flash_agents_are_hidden(self):
-        conv = "conv_fsh2"
+    def test_other_callers_delegates_are_hidden(self):
+        conv = "conv_dsh2"
         task = AgentTask(id="tid1", agent_name="agentB::flash::spy",
                          message="m")
         register_live_delegate(conv, "agentB", "agentB::flash::spy",
                                "tid1", MagicMock(), task)
         try:
-            h = _make_status_handler(conversation_id=conv,
-                                     source_agent="agentA")
+            h = _make_handler(DelegateStatusHandler, conv)
             out = json.loads(h.execute({}))
             assert out["counts"] == {"live": 0, "finished": 0}
         finally:
@@ -149,27 +165,67 @@ class TestFlashStatusHandler:
                                      "agentB::flash::spy", "tid1")
 
     def test_error_without_source_agent(self):
-        h = FlashStatusHandler()
-        h.set_conversation_id("conv_fsh3")
+        h = DelegateStatusHandler()
+        h.set_conversation_id("conv_dsh3")
         out = h.execute({})
-        assert out.startswith("Error: flash_status")
+        assert out.startswith("Error: delegate_status")
+
+
+class TestDelegateResultHandler:
+    def test_returns_full_response_of_finished_delegate(self):
+        conv = "conv_dr1"
+        record_finished_delegate(conv, "agentA", "agentA::flash::auditor",
+                                 "tidF", "completed", "", 99.0,
+                                 response="the full report text")
+        h = _make_handler(DelegateResultHandler, conv)
+        out = json.loads(h.execute({"task_id": "tidF"}))
+        assert out["response"] == "the full report text"
+        assert out["status"] == "completed"
+        assert out["name"] == "auditor"
+        assert out["kind"] == "flash"
+
+    def test_running_delegate_reports_running(self):
+        conv = "conv_dr2"
+        task = AgentTask(id="tidL", agent_name="slowagent", message="m")
+        register_live_delegate(conv, "agentA", "slowagent", "tidL",
+                               MagicMock(), task)
+        try:
+            h = _make_handler(DelegateResultHandler, conv)
+            out = json.loads(h.execute({"task_id": "tidL"}))
+            assert out["status"] == "running"
+        finally:
+            unregister_live_delegate(conv, "agentA", "slowagent", "tidL")
+
+    def test_unknown_task_id_and_missing_param(self):
+        h = _make_handler(DelegateResultHandler, "conv_dr3")
+        assert h.execute({"task_id": "ghost"}).startswith("Error: no finished")
+        assert h.execute({}).startswith("Error: delegate_result requires")
+
+    def test_other_callers_results_are_hidden(self):
+        conv = "conv_dr4"
+        record_finished_delegate(conv, "agentB", "agentB::flash::sec",
+                                 "tidS", "completed", response="private")
+        h = _make_handler(DelegateResultHandler, conv)
+        assert h.execute({"task_id": "tidS"}).startswith("Error: no finished")
 
 
 class TestWiringInvariants:
-    def test_flash_status_registered_in_default_registry(self):
+    def test_handlers_registered_in_default_registry(self):
         import inspect
         import core.tool_registry as tr
         src = inspect.getsource(tr)
-        assert "registry.register(FlashStatusHandler())" in src
+        assert "registry.register(DelegateStatusHandler())" in src
+        assert "registry.register(DelegateResultHandler())" in src
 
-    def test_flash_delegate_records_finished_results(self):
+    def test_inject_bg_result_records_finished_delegates(self):
         import inspect
-        from core.handlers.flash_agent import FlashAgentHandler
-        src = inspect.getsource(FlashAgentHandler.execute)
+        from core.handlers._spawn_delivery import _SpawnDeliveryMixin
+        src = inspect.getsource(_SpawnDeliveryMixin._inject_bg_result)
         assert "record_finished_delegate(" in src
 
-    def test_relay_sets_source_context_for_flash_status(self):
+    def test_relay_sets_source_context_for_status_tools(self):
         import inspect
         import services._tool_relay_execute as tre
         src = inspect.getsource(tre)
-        assert '"flash_status"' in src
+        assert '"delegate_status"' in src
+        assert '"delegate_result"' in src

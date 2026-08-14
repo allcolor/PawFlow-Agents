@@ -352,7 +352,8 @@ someone else.
 |---|---|
 | `delegate` | Spawn/delegate work to another agent. |
 | `flash_delegate` | Create temporary task-specific agents for independent parallel work; they use the caller's LLM service and disappear after completion. Background results are delivered to the caller (preempt/wake) — and when the caller is on a live realtime voice session, the result is ALSO injected into the session and spoken (out-of-band `context` message). |
-| `flash_status` | Report the caller's flash agents: live ones (name, task_id, age, queued follow-ups) from the live-delegate registry, and recently finished ones (status, error, duration) from a bounded ring buffer. Lets the calling agent verify delegated work is actually running instead of inferring liveness from silence; results are still delivered asynchronously. |
+| `delegate_status` | Report the caller's delegates (flash agents and background sub-agents): live ones (name, kind, task_id, age, queued follow-ups) from the live-delegate registry, and recently finished ones (status, error, duration, response size) from a bounded ring buffer. Lets the calling agent verify delegated work is actually running instead of inferring liveness from silence. |
+| `delegate_result` | Fetch the retained output of a finished delegate by task_id (full response text, capped at 200k chars, last 100 completions). The pull counterpart to the asynchronous push delivery — use it when a result's delivery was missed. Reports `running` for a still-live delegate. |
 | `consult_agent` | One-shot delegation to the conversation agent's own model: resolves the agent's system prompt and `llm_service`, sends the task with bounded conversation context, returns the answer as the tool result. Approval-exempt (the delegate gets no tools). Built for realtime voice sessions (`tool_profile=consult_agent`) where the realtime model is only the spoken interface and routes substantial work to the agent's brain; works from text sessions too. |
 | `manage_resource` | Create/update/delete/list agents, skills, tools, services, resources; review/import marketplace skills; assign/unassign skills to agents with live context notifications. Creates resources in conversation scope when called from an active conversation. |
 | `manage_package` | Build, inspect, install, export, list, and uninstall signed PawFlow Package (`.pfp`) artifacts with selectable objects and provenance. |
@@ -460,7 +461,7 @@ Skipped by default:
 
 ```text
 get_tool_schema, use_tool, ScheduleWakeup, PushNotification,
-complete_task, verify_task, flash_delegate, flash_status, manage_resource, manage_package, create_tool,
+complete_task, verify_task, flash_delegate, delegate_status, delegate_result, manage_resource, manage_package, create_tool,
 pawflow_help, update_plan, create_plan, link_identity,
 browser_action
 ```

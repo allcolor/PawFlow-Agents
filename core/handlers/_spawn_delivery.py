@@ -232,6 +232,20 @@ class _SpawnDeliveryMixin:
         """
         import uuid as _uuid
         try:
+            # Record in the bounded finished-delegates ring FIRST so
+            # delegate_status/delegate_result can always report this
+            # completion, even when the push delivery below fails.
+            try:
+                from core.agent_executor import record_finished_delegate
+                from core.service_registry import _parent_conversation_id
+                _ring_conv = _parent_conversation_id(conv_id) or conv_id
+                record_finished_delegate(
+                    _ring_conv, source_agent, result.agent_name,
+                    result.task_id, result.status, result.error or "",
+                    result.duration_ms, response=result.response or "")
+            except Exception:
+                logger.debug("[bg-delegate] finished-ring record failed",
+                             exc_info=True)
             from core.external_call_router import complete_task
             if complete_task(result.task_id, {
                     "task_id": result.task_id,

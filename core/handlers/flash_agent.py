@@ -258,13 +258,6 @@ class FlashAgentHandler(SpawnAgentsHandler):
         )
         result_conv_id = raw_conv_id
         def _bg_callback(result, task):
-            from core.agent_executor import record_finished_delegate
-            record_finished_delegate(
-                parent_conv_id, src_agent, task.agent_name,
-                getattr(result, "task_id", task.id),
-                getattr(result, "status", ""),
-                getattr(result, "error", ""),
-                getattr(result, "duration_ms", 0.0))
             self._inject_bg_result(result, task, result_conv_id, user_id, src_agent)
 
         results = executor.spawn(agent_tasks, wait=False,
@@ -287,74 +280,3 @@ class FlashAgentHandler(SpawnAgentsHandler):
             reply["injected"] = injected_results
         return json.dumps(reply, ensure_ascii=False)
 
-
-class FlashStatusHandler(FlashAgentHandler):
-    """Report the caller's flash agents: live ones and recent finished ones."""
-
-    _FLASH_MARKER = "::flash::"
-
-    @property
-    def name(self) -> str:
-        return "flash_status"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Check the status of your flash agents. Returns the live flash "
-            "agents you spawned with flash_delegate (name, task_id, age, "
-            "queued follow-ups) and the recently finished ones (status, "
-            "error, duration). Use it to verify delegated work is actually "
-            "running instead of inferring liveness from silence. It reports "
-            "status only — results are still delivered asynchronously."
-        )
-
-    @property
-    def parameters_schema(self) -> Dict[str, Any]:
-        return {"type": "object", "properties": {}, "required": []}
-
-    def execute(self, arguments: Dict[str, Any]) -> str:
-        import time
-
-        from core.agent_executor import (
-            list_finished_delegates, list_live_delegates,
-        )
-        from core.service_registry import _parent_conversation_id
-
-        raw_conv_id = self._conversation_id
-        parent_conv_id = _parent_conversation_id(raw_conv_id) or raw_conv_id
-        src_agent, _src_svc = self._resolve_source_context()
-        if not src_agent:
-            return (
-                "Error: flash_status could not determine the calling agent:"
-                " no thread-local source context and no agent instance name"
-                " is configured for this conversation."
-            )
-
-        now = time.time()
-        live = []
-        for entry in list_live_delegates(parent_conv_id, src_agent):
-            target = entry.pop("target")
-            if self._FLASH_MARKER not in target:
-                continue
-            started = entry.pop("started_at", 0.0)
-            entry.pop("caller", None)
-            entry["name"] = target.split(self._FLASH_MARKER, 1)[-1]
-            entry["agent"] = target
-            entry["age_seconds"] = round(now - started, 1) if started else None
-            live.append(entry)
-
-        finished = []
-        for entry in list_finished_delegates(parent_conv_id, src_agent):
-            target = entry.pop("target")
-            if self._FLASH_MARKER not in target:
-                continue
-            entry.pop("caller", None)
-            entry["name"] = target.split(self._FLASH_MARKER, 1)[-1]
-            entry["agent"] = target
-            finished.append(entry)
-
-        return json.dumps({
-            "live": live,
-            "finished": finished,
-            "counts": {"live": len(live), "finished": len(finished)},
-        }, ensure_ascii=False, indent=2)

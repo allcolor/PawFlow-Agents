@@ -622,7 +622,8 @@ class _ToolRelayExecuteMixin:
         # (otherwise the events fall back to a generic task-block).
         # flash_delegate uses the same caller context by design: flash agents
         # inherit the calling agent identity and llm_service.
-        if tool_name in {"delegate", "flash_delegate", "flash_status"}:
+        if tool_name in {"delegate", "flash_delegate", "delegate_status",
+                         "delegate_result"}:
             try:
                 from core.handlers.resource_agent import SpawnAgentsHandler
                 _src_svc = ""

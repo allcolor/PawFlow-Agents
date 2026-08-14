@@ -64,7 +64,8 @@ the model provider container.
 |---|---|---|
 | Ask an existing agent in the same conversation | `delegate` | Asynchronous; the named agent keeps its own conversation context and tools |
 | Run independent, temporary work in parallel | `flash_delegate` | Fresh temporary agents; provide a self-contained prompt and narrow tools |
-| Check whether your flash agents are still running | `flash_status` | Live + recently finished flash agents; status only, results arrive asynchronously |
+| Check whether your delegates are still running | `delegate_status` | Live + recently finished delegates (flash and sub-agents); status only |
+| Retrieve a finished delegate's output you never received | `delegate_result` | Pull by task_id; full retained response text |
 | Obtain one tool-free second opinion from the current configured agent brain | `consult_agent` | Synchronous one-shot completion; mainly for thin interfaces such as voice helpers, not recursive self-delegation from a full agent turn |
 | Call a configured agent outside this conversation/runtime | `a2a` | Remote asynchronous task with explicit task/context IDs for `get` or `cancel` |
 

@@ -719,6 +719,8 @@ class CCInteractiveEventService(BaseService):
                 event.get("content_type", ""), event.get("content_encoding", ""),
                 event.get("reason", ""))
         elif etype == "wire":
+            if not logger.isEnabledFor(logging.DEBUG):
+                return
             safe_b64, safe_text = _safe_wire_field(
                 str(event.get("data_b64", "")), str(event.get("text_repr", "")))
             logger.debug(

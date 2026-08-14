@@ -370,7 +370,7 @@ class _ContinuousExecRunMixin:
                         "_commit: %s → %s [%d/%d], fragment.id=%s, %d bytes",
                         task_id, out_conn.target_id, i + 1, len(matching),
                         ff_to_send.get_attribute("fragment.identifier"),
-                        len(ff_to_send.get_content()),
+                        ff_to_send.size(),
                     )
                     if not out_conn.enqueue(ff_to_send):
                         logger.warning(

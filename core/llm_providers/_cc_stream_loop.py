@@ -56,7 +56,8 @@ class _CCStreamLoopMixin:
             # Raw event dump at DEBUG. Confirmed CC 1.0+ sends
             # complete `assistant` events (no content_block_delta)
             # with thinking blocks redacted (thinking="" + signature).
-            logger.debug("[cc-raw] %s %.500s", etype, json.dumps(event))
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("[cc-raw] %s %.500s", etype, json.dumps(event))
 
             if etype == "stream_event":
                 payload = event.get("event") or {}
@@ -284,7 +285,8 @@ class _CCStreamLoopMixin:
                             else:
                                 st._turn_text_parts.append(text)
                     elif btype == "tool_use":
-                        logger.debug("[CC-RAW-TOOL] block=%s", json.dumps(block, default=str, ensure_ascii=False))
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug("[CC-RAW-TOOL] block=%s", json.dumps(block, default=str, ensure_ascii=False))
                         _block_id = block.get("id", "")
                         st._native_todo_adapter.observe({
                             "type": "tool_use",
@@ -464,7 +466,8 @@ class _CCStreamLoopMixin:
                 msg = event.get("message", {})
                 for block in msg.get("content", []):
                     if block.get("type") == "tool_result":
-                        logger.debug("[CC-RAW-RESULT] block=%s", json.dumps(block, default=str, ensure_ascii=False)[:2000])
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug("[CC-RAW-RESULT] block=%s", json.dumps(block, default=str, ensure_ascii=False)[:2000])
                         tc_id = block.get("tool_use_id", "")
                         result_text = block.get("content", "")
                         if isinstance(result_text, list):

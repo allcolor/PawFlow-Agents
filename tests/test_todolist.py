@@ -1,3 +1,4 @@
+import itertools
 import json
 from pathlib import Path
 
@@ -138,7 +139,11 @@ def test_source_call_replay_upserts_and_external_id_resolves(store):
 
 
 def test_context_has_all_active_and_only_five_recent_completed(store, monkeypatch):
-    now = iter(range(1, 30))
+    # core.todo_store.time is the global `time` module, so this patch is
+    # process-wide: any daemon thread (pool sweepers, conversation writers)
+    # calling time.time() consumes values too. A bounded iterator therefore
+    # raised StopIteration under load — use an unbounded monotonic counter.
+    now = itertools.count(1)
     monkeypatch.setattr("core.todo_store.time.time", lambda: float(next(now)))
     pending = store.create("u", "c", "a", subject="pending")
     active = store.create("u", "c", "a", subject="active")

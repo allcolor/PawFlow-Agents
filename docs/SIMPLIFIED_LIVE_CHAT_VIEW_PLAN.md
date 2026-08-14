@@ -387,7 +387,11 @@ Two more invariants govern the reconciliation pass (`turnViewReconcile`):
   block seeded from the row's own identity (`_turnRowSeedData`), and is
   filed inside it. A page bringing back the older half of a turn whose
   block is already on screen gets a derived fragment identity instead of
-  clobbering the existing state.
+  clobbering the existing state — and the fragment keeps OWNING rows
+  stamped with the turn's real id (`state.fragOf`): they file into the
+  fragment block instead of reading as identity changes, which had left
+  narration texts stray at top level, filed tool rows into the live block
+  far below, and stacked an empty "0s Completed" fragment block.
 - **Only the last block may be active.** After reconciliation, every block
   except the newest that still claims `working` is closed (as a reopenable
   guess). This is what prevents a load-more during a live turn from showing

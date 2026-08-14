@@ -814,6 +814,80 @@ test('a load-more page of stamped wakeup turns builds one titled block per turn'
   eq(blocks[1].querySelector('.simple-turn-title').textContent, 'claude');
 });
 
+// A page bringing back the OLDER HALF of a turn whose block is already on
+// screen opens a fragment block with a derived '-frag' identity. The fragment
+// must keep OWNING rows stamped with the turn's real id: forgetting the
+// original id made every later row of the same turn read as an identity
+// change — narration texts were reclassified as wakeup boundaries and left
+// at top level (three consecutive top-level agent messages), tool rows were
+// filed into the LIVE block far below, and the fragment block sat empty
+// ('0s Completed' with nothing under it). Observed on load-more in a CCI
+// conversation whose last turn is a long wakeup turn.
+test('the older half of an on-screen turn regroups into its fragment block', () => {
+  const e = env('simplified');
+  // The live tail of turn T is on screen, already grouped.
+  const c9 = e.row('c9');
+  c9.dataset.messageRole = 'tool_call';
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c9', turn_id: 'T' }, c9);
+  const a9 = e.row('a9');
+  a9.dataset.messageRole = 'assistant';
+  a9.dataset.rawText = 'live tail';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a9', turn_id: 'T', content: 'live tail' }, a9);
+  e.ctx.turnViewReconcile();
+  eq(topLevelIds(e).join(','), 'BLOCK,a9', 'the live tail starts well formed');
+
+  // Load more brings the older half of the SAME turn: narration texts
+  // interleaved with tool rows, every row stamped with the real turn id.
+  prependDeferredRows(e, [
+    { type: 'tool_call', msg_id: 'c0', turn_id: 'T', agent_name: 'claude' },
+    { type: 'tool_result', msg_id: 'r0', turn_id: 'T', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'm1', content: 'narration 1', turn_id: 'T', agent_name: 'claude' },
+    { type: 'tool_call', msg_id: 'c1', turn_id: 'T', agent_name: 'claude' },
+    { type: 'tool_result', msg_id: 'r1', turn_id: 'T', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'm2', content: 'narration 2', turn_id: 'T', agent_name: 'claude' },
+    { type: 'tool_call', msg_id: 'c2', turn_id: 'T', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'm3', content: 'narration 3', turn_id: 'T', agent_name: 'claude' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'BLOCK,m3,BLOCK,a9',
+     'the fragment is ONE block promoting its own last text');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(blocks.length, 2, 'fragment block + live block, nothing else');
+  const frag = blocks[0]; const liveBlock = blocks[1];
+  for (const id of ['c0', 'r0', 'm1', 'c1', 'r1', 'm2', 'c2']) {
+    assert(frag.querySelector('[data-msgid="' + id + '"]'),
+           id + ' belongs to the fragment block');
+    assert(!liveBlock.querySelector('[data-msgid="' + id + '"]'),
+           id + ' must never land in the live block');
+  }
+  assert(!frag.classList.contains('turn-working'), 'the fragment is closed');
+});
+
+// Same page shape, but the window starts on a narration text instead of a
+// tool row — the first row itself opens the fragment.
+test('a fragment page starting on a text keeps its texts grouped', () => {
+  const e = env('simplified');
+  const a9 = e.row('a9');
+  a9.dataset.messageRole = 'assistant';
+  a9.dataset.rawText = 'live tail';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a9', turn_id: 'T', content: 'live tail' }, a9);
+  e.ctx.turnViewReconcile();
+
+  prependDeferredRows(e, [
+    { type: 'assistant', msg_id: 'm1', content: 'narration 1', turn_id: 'T', agent_name: 'claude' },
+    { type: 'tool_call', msg_id: 'c1', turn_id: 'T', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'm2', content: 'narration 2', turn_id: 'T', agent_name: 'claude' },
+    { type: 'tool_call', msg_id: 'c2', turn_id: 'T', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'm3', content: 'narration 3', turn_id: 'T', agent_name: 'claude' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'BLOCK,m3,BLOCK,a9',
+     'no narration text is left stray at top level');
+  eq(e.messages.querySelectorAll('.simple-turn-block').length, 2);
+});
+
 // Two detail blocks may never sit next to each other. A turn that produced
 // no visible answer (tool rows only) has no last message to separate its
 // block from the next one, so the next turn's activity files into the SAME

@@ -236,11 +236,18 @@ function _turnOpenOrphanTurn(element, data) {
   // the fragment. The fragment is its own block with a derived identity; the
   // only-last-block-active pass then keeps it closed.
   const existing = simplifiedTurns.get(id);
+  let fragOf = '';
   if (existing && existing.blockEl && existing.blockEl.isConnected) {
+    fragOf = id;
     id = id + '-frag' + (++_turnSeq);
   }
   const state = _turnCreateState(id, null, data || {}, element);
   if (!state) return null;
+  // The fragment still OWNS rows stamped with the turn's real id: without
+  // this, every later row of the same turn read as an identity change --
+  // narration texts became wakeup boundaries left at top level, tool rows
+  // were filed into the live block far below, and the fragment sat empty.
+  if (fragOf) state.fragOf = fragOf;
   _turnOpen = { turnId: id, userEl: null, data: data || {}, state };
   return state;
 }
@@ -1316,7 +1323,8 @@ function _turnIsWakeupBoundary(el, state) {
   if (_turnRowRole(el) !== 'assistant') return false;
   if (!String((el.dataset && el.dataset.rawText) || '').trim()) return false;
   const rowTurn = (el.dataset && el.dataset.turnId) || '';
-  return !!(rowTurn && state && state.turnId && rowTurn !== state.turnId);
+  return !!(rowTurn && state && state.turnId && rowTurn !== state.turnId
+            && rowTurn !== state.fragOf);
 }
 
 // ── The display rule, enforced on the DOM ──────────────────────────────────
@@ -1432,6 +1440,7 @@ function turnViewReconcile() {
     // block > asst). Close the previous turn and open this one's own block.
     const rowTurnId = (el.dataset && el.dataset.turnId) || '';
     if (state && rowTurnId && state.turnId && rowTurnId !== state.turnId
+        && rowTurnId !== state.fragOf
         && _turnRowRole(el) !== 'system'
         && _turnHasPromotableAnswer(state)) {
       if (state.status === 'working' && !_turnRuntime.has(state.turnId)) {

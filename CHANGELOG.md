@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Simplified chat view: a load-more page bringing back the older half of a
+  turn whose block is already on screen now regroups into its fragment
+  block. The fragment keeps owning rows stamped with the turn's real id
+  (`state.fragOf`); previously every later row of the same turn read as an
+  identity change — narration texts were reclassified as wakeup boundaries
+  and left at top level (consecutive top-level agent messages), tool rows
+  were filed into the live block far below, and the fragment sat as an
+  empty "0s Completed" block.
+
 ## [1.0.0-beta.187] — 2026-08-14
 
 ### Added

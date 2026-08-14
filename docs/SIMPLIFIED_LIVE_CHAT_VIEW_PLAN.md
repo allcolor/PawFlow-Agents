@@ -369,7 +369,15 @@ Two more invariants govern the reconciliation pass (`turnViewReconcile`):
   - Two detail blocks may NEVER sit adjacent. A turn-identity change opens a
     new block only when the current block has a last message to promote
     between them (`_turnHasPromotableAnswer`); an answerless (tool-only)
-    turn's activity files into the same block as what follows.
+    turn's activity files into the same block as what follows. The same rule
+    holds for blocks that were BUILT before they became adjacent: when the
+    walk reaches a block element while an answerless block is being filed
+    with nothing visible between them (a load-more page boundary splitting a
+    turn right after its first tool call), `_turnMergeAnswerlessInto` folds
+    the answerless block into the one that follows — its rows move to the
+    head of the same tabs (DOM order is reading order) and the empty shell
+    is removed. A non-filable top-level row (approval, error) between the
+    two separates them and suppresses the merge.
   - The only legal pair of consecutive top-level agent messages is a block's
     last message followed by a wakeup boundary message.
   - A system-injected user-ROLE row — a delegate/flash result nudge

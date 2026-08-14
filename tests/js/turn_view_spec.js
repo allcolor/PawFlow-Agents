@@ -864,6 +864,64 @@ test('the older half of an on-screen turn regroups into its fragment block', () 
   assert(!frag.classList.contains('turn-working'), 'the fragment is closed');
 });
 
+// Observed on a real transcript (2026-08-14): a page boundary split a turn
+// right after its FIRST tool call. The newer page had already built the
+// turn's block; the next load-more brought back the turn's own user row plus
+// that first tool call. The tool call opened an answerless fragment block,
+// and the walk then adopted the built block sitting right under it — two
+// adjacent blocks (an untitled "Agent activity" shell over the real one).
+// The answerless block must fold into the block that follows.
+test('an answerless fragment above the turn\'s own block merges into it', () => {
+  const e = env('simplified');
+  // Newer page first: the turn's later rows build its block, no user row.
+  prependDeferredRows(e, [
+    { type: 'tool_result', msg_id: 'r5', turn_id: 'T', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'a5', content: 'fin', turn_id: 'T', agent_name: 'claude' },
+  ]);
+  e.ctx.turnViewReconcile();
+  eq(topLevelIds(e).join(','), 'BLOCK,a5', 'the newer page built the block');
+
+  // Older page: the turn's user row and its first tool call come back.
+  prependDeferredRows(e, [
+    { type: 'user', msg_id: 'u0', turn_id: 'T' },
+    { type: 'tool_call', msg_id: 'c0', turn_id: 'T', agent_name: 'claude' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'u0,BLOCK,a5',
+     'one single block: never two blocks adjacent');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(blocks.length, 1, 'the answerless shell disappeared');
+  assert(blocks[0].querySelector('[data-msgid="c0"]'),
+         'the merged block holds the older tool call');
+  assert(blocks[0].querySelector('[data-msgid="r5"]'),
+         'and still holds its own rows');
+  eq(blocks[0].querySelector('.simple-turn-title').textContent, 'claude',
+     'the merged block keeps the agent identity');
+});
+
+// The merge is about ADJACENT blocks only: a non-filable row left at top
+// level (an approval, an error the reader must act on) separates the two,
+// and an answerless block behind it must stay where it is.
+test('a top-level row between two blocks blocks the adjacent merge', () => {
+  const e = env('simplified');
+  prependDeferredRows(e, [
+    { type: 'assistant', msg_id: 'a5', content: 'fin', turn_id: 'T', agent_name: 'claude' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  prependDeferredRows(e, [
+    { type: 'user', msg_id: 'u0', turn_id: 'T' },
+    { type: 'tool_call', msg_id: 'c0', turn_id: 'T', agent_name: 'claude' },
+    { type: 'error', msg_id: 'x0', turn_id: 'T' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'u0,BLOCK,x0,BLOCK,a5',
+     'the visible error row keeps the blocks apart');
+  eq(e.messages.querySelectorAll('.simple-turn-block').length, 2);
+});
+
 // Same page shape, but the window starts on a narration text instead of a
 // tool row — the first row itself opens the fragment.
 test('a fragment page starting on a text keeps its texts grouped', () => {

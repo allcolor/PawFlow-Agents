@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Simplified chat view: two detail blocks can no longer sit adjacent on
+  screen. A load-more page boundary that split a turn right after its
+  first tool call left an untitled, answerless "Agent activity" shell
+  directly above the turn's real block (observed on a real transcript:
+  `user > "Agent activity" block > "claude" block`). `turnViewReconcile`
+  now folds an answerless block into the block that follows when nothing
+  visible separates them — its rows move to the head of the same tabs
+  (DOM order is reading order) and the empty shell disappears. A
+  non-filable top-level row (approval, error) between the two still keeps
+  the blocks apart.
+
 ## [1.0.0-beta.189] — 2026-08-14
 
 ### Fixed

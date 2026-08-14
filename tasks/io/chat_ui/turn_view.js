@@ -1380,12 +1380,62 @@ function _turnHasPromotableAnswer(state) {
   return false;
 }
 
+// Two detail blocks must never sit adjacent on screen. The row path enforces
+// this by filing the next turn's rows into the answerless block, but a block
+// that was BUILT before it became adjacent slips past it: a load-more page
+// brings back the older half of a turn (user row + first tool rows) right
+// above the block a newer page already built, the older rows open their own
+// answerless fragment block, and the walk then adopts the built block without
+// looking back. This folds the answerless block into the block that follows:
+// its rows move to the head of the same tabs -- DOM order is reading order,
+// so position wins over timestamps -- and the empty shell disappears.
+function _turnMergeAnswerlessInto(prev, next) {
+  for (const key of Object.keys(prev.tabs || {})) {
+    const src = prev.tabs[key] && prev.tabs[key].bodyEl;
+    const dst = next.tabs[key] && next.tabs[key].bodyEl;
+    if (!src || !dst) continue;
+    const anchor = dst.firstChild;
+    for (const row of Array.from(src.children)) dst.insertBefore(row, anchor);
+  }
+  for (const [id, el] of prev.elementsByMsgId) {
+    if (!next.elementsByMsgId.has(id)) next.elementsByMsgId.set(id, el);
+  }
+  for (const [id, el] of prev.toolElementsByCallId) {
+    if (!next.toolElementsByCallId.has(id)) next.toolElementsByCallId.set(id, el);
+  }
+  for (const [id, el] of prev.artifactElementsByFileId) {
+    if (!next.artifactElementsByFileId.has(id)) next.artifactElementsByFileId.set(id, el);
+  }
+  for (const [id, fid] of prev.artifactFileIdByCallId) {
+    if (!next.artifactFileIdByCallId.has(id)) next.artifactFileIdByCallId.set(id, fid);
+  }
+  // The merged block keeps whichever identity exists: an orphan opened from
+  // an id-less tool row is untitled, and the block it folds into may carry
+  // the turn's real agent -- or the other way around.
+  if (!next.agentName && prev.agentName) {
+    next.identityRendered = false;
+    _turnUpdateIdentity(next, { agent_name: prev.agentName, llm_service: prev.llmService });
+  }
+  if (prev.startedAt && prev.startedAt < next.startedAt) {
+    next.startedAt = prev.startedAt;
+    _turnRenderElapsed(next);
+  }
+  _turnStopTransient(prev); _turnStopElapsed(prev);
+  prev.blockEl.remove();
+  simplifiedTurns.delete(prev.turnId);
+  if (_turnOpen && _turnOpen.state === prev) _turnOpen = null;
+}
+
 function turnViewReconcile() {
   if (!turnViewIsSimplified()) return;
   const container = document.getElementById('messages');
   if (!container) return;
   const touched = new Set();
   let state = null;
+  // Whether a non-filable top-level row (an approval, an error) was left on
+  // screen since `state` was set: it visually separates `state`'s block from
+  // the next one, so the adjacent-block merge must not fire across it.
+  let stateSeparated = false;
   // What the live path must carry on into once the pass is over: the last turn
   // on screen. Leaving it on whatever the previous render left behind is how a
   // reload ends up filing new rows into a turn that scrolled away -- or into
@@ -1408,7 +1458,16 @@ function turnViewReconcile() {
     if (el.classList.contains('simple-turn-block')) {
       const owner = simplifiedTurns.get(el.dataset.turnId || '');
       if (owner) {
+        // The block being filed above this one produced no visible answer
+        // and nothing else separates them: fold it into this one instead of
+        // letting two blocks sit adjacent.
+        if (state && state !== owner && !stateSeparated
+            && !_turnHasPromotableAnswer(state)) {
+          _turnMergeAnswerlessInto(state, owner);
+          touched.delete(state);
+        }
         state = owner; touched.add(owner);
+        stateSeparated = false;
         open = { turnId: owner.turnId, userEl: owner.userEl, data: {}, state: owner };
       }
       continue;
@@ -1444,10 +1503,16 @@ function turnViewReconcile() {
         open = { turnId: id, userEl: el, data: {}, state: null };
       }
       _turnOpen = open;
+      stateSeparated = false;
       continue;
     }
     if (!TURN_FILABLE_ROLES.has(_turnRowRole(el))
-        && !(el.dataset && el.dataset.systemInjected)) continue;
+        && !(el.dataset && el.dataset.systemInjected)) {
+      // This row stays at top level, between state's block and whatever
+      // comes next: the two are no longer adjacent.
+      if (state) stateSeparated = true;
+      continue;
+    }
     if (state && el === state.finalEl) continue;
     // A row that names a DIFFERENT turn than the one being filed is a
     // boundary: the transcript stamps every row with its turn identity, and
@@ -1468,6 +1533,7 @@ function turnViewReconcile() {
       state = _turnOpenOrphanTurn(el, _turnRowSeedData(el, rowTurnId));
       if (!state) continue;
       touched.add(state);
+      stateSeparated = false;
       open = _turnOpen;
       if (el.parentNode !== container) continue;  // the block took its place
     }
@@ -1481,6 +1547,7 @@ function turnViewReconcile() {
         : _turnOpenOrphanTurn(el, _turnRowSeedData(el));
       if (!state) continue;
       touched.add(state);
+      stateSeparated = false;
       open = _turnOpen;
       if (el.parentNode !== container) continue;  // the block took its place
     }

@@ -9,6 +9,7 @@ Sidecar naming: {json_stem}__{sanitized_key}.dat (params) or .dat.enc (secrets).
 import json
 import logging
 import re
+import threading
 from pathlib import Path
 from typing import Dict, Set
 
@@ -40,11 +41,52 @@ def _sidecar_path(json_path: Path, key: str, encrypted: bool = False) -> Path:
 class ConfigStore:
     """Unified persistence for params/secrets with spill-to-disk."""
 
+    # (path, kind) -> (mtime_ns, values). Every ${...} resolution loads the
+    # params/secrets stores; without this each expression in a chain re-read
+    # AND re-decrypted the files from disk. A stat per load revalidates; a
+    # save invalidates explicitly. Bounded: config files are few (global +
+    # per-user + per-conv), but clear defensively past 256 entries.
+    _cache: Dict[tuple, tuple] = {}
+    _cache_lock = threading.Lock()
+
+    @staticmethod
+    def _cache_get(path: Path, kind: str):
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return None, None
+        key = (str(path), kind)
+        with ConfigStore._cache_lock:
+            entry = ConfigStore._cache.get(key)
+            if entry is not None and entry[0] == mtime_ns:
+                # Shallow copy: callers mutate the mapping (e.g.
+                # atomic_increment_param) before saving it back.
+                return dict(entry[1]), mtime_ns
+        return None, mtime_ns
+
+    @staticmethod
+    def _cache_put(path: Path, kind: str, mtime_ns, values) -> None:
+        if mtime_ns is None:
+            return
+        with ConfigStore._cache_lock:
+            if len(ConfigStore._cache) > 256:
+                ConfigStore._cache.clear()
+            ConfigStore._cache[(str(path), kind)] = (mtime_ns, dict(values))
+
+    @staticmethod
+    def _cache_invalidate(path: Path) -> None:
+        with ConfigStore._cache_lock:
+            ConfigStore._cache.pop((str(path), "params"), None)
+            ConfigStore._cache.pop((str(path), "secrets"), None)
+
     @staticmethod
     def load_params(path: Path) -> Dict[str, ConfigValue]:
         """Load JSON, resolve $ref sidecars into ConfigValue objects."""
         if not path.exists():
             return {}
+        cached, mtime_ns = ConfigStore._cache_get(path, "params")
+        if cached is not None:
+            return cached
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
@@ -63,6 +105,7 @@ class ConfigStore:
                     result[key] = ConfigValue(value="")
             else:
                 result[key] = ConfigValue(value=str(value))
+        ConfigStore._cache_put(path, "params", mtime_ns, result)
         return result
 
     @staticmethod
@@ -88,6 +131,7 @@ class ConfigStore:
         path.write_text(
             json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        ConfigStore._cache_invalidate(path)
         ConfigStore._cleanup_sidecars(path, valid_sidecars)
 
     @staticmethod
@@ -125,6 +169,9 @@ class ConfigStore:
         """Load JSON, decrypt, resolve $ref sidecars."""
         if not path.exists():
             return {}
+        cached, mtime_ns = ConfigStore._cache_get(path, "secrets")
+        if cached is not None:
+            return cached
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
@@ -172,6 +219,7 @@ class ConfigStore:
                         key, e)
                     decrypted = ""
                 result[key] = ConfigValue(value=decrypted)
+        ConfigStore._cache_put(path, "secrets", mtime_ns, result)
         return result
 
     @staticmethod
@@ -201,6 +249,7 @@ class ConfigStore:
         path.write_text(
             json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        ConfigStore._cache_invalidate(path)
         ConfigStore._cleanup_sidecars(path, valid_sidecars, encrypted=True)
 
     @staticmethod
@@ -225,6 +274,7 @@ class ConfigStore:
         path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        ConfigStore._cache_invalidate(path)
 
     @staticmethod
     def _cleanup_sidecars(path: Path, valid_names: Set[str],

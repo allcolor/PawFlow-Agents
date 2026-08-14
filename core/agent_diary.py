@@ -57,28 +57,63 @@ class AgentDiary:
 
     def read(self, user_id: str, agent_name: str,
              limit: int = 20, entry_type: str = "") -> List[Dict]:
-        """Read recent diary entries (newest first)."""
+        """Read recent diary entries (newest first).
+
+        Reads the file TAIL, not the whole file — the diary is consulted on
+        every prompt build, and appends are chronological, so the last N
+        lines are the newest entries. Falls back to a full scan only when
+        a type filter needs more history than the tail held.
+        """
         if not user_id or not agent_name:
             return []
         path = self._diary_path(user_id, agent_name)
         if not path.exists():
             return []
-        entries = []
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                    if entry_type and record.get("type") != entry_type:
-                        continue
-                    entries.append(record)
-                except json.JSONDecodeError:
-                    continue
+        want = limit if not entry_type else max(limit * 10, 200)
+        lines, consumed_all = self._tail_lines(path, want)
+        entries = self._parse_lines(lines, entry_type)
+        if len(entries) < limit and not consumed_all:
+            with open(path, encoding="utf-8") as f:
+                entries = self._parse_lines(f, entry_type)
         # Newest first
         entries.sort(key=lambda e: e.get("ts", 0), reverse=True)
         return entries[:limit]
+
+    @staticmethod
+    def _parse_lines(lines, entry_type: str) -> List[Dict]:
+        entries = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry_type and record.get("type") != entry_type:
+                continue
+            entries.append(record)
+        return entries
+
+    @staticmethod
+    def _tail_lines(path: Path, max_lines: int):
+        """Return (last max_lines text lines, whole_file_consumed)."""
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            data = b""
+            pos = size
+            while pos > 0 and data.count(b"\n") <= max_lines:
+                step = min(65536, pos)
+                pos -= step
+                f.seek(pos)
+                data = f.read(step) + data
+        lines = data.split(b"\n")
+        if pos > 0:
+            lines = lines[1:]  # first line may be a partial record
+        decoded = [ln.decode("utf-8", "replace") for ln in lines if ln.strip()]
+        consumed_all = pos == 0 and len(decoded) <= max_lines
+        return decoded[-max_lines:], consumed_all
 
     def list_agents(self, user_id: str) -> List[str]:
         """Return every agent name that has a diary file for this user.

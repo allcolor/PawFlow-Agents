@@ -62,6 +62,18 @@ class _CsAgentCtxMixin:
             path = self._agent_ctx_path(cid, agent_name)
         else:
             path = self._shared_ctx_path(cid)
+        # Contexts too large for the bounded cache above used to be re-read
+        # and re-parsed from disk on EVERY call — and the context gauge asks
+        # for them on every LLM call and heartbeat of long CLI sessions.
+        # Cache them behind a stat signature: a handful of stats per call
+        # instead of a full parse, invalidated by any segment change.
+        stat_key = (cid, agent_name)
+        sig = self._ctx_stat_signature(path, cid)
+        if sig is not None:
+            with self._ctx_cache_lock:
+                entry = self._ctx_stat_cache.get(stat_key)
+                if entry is not None and entry[0] == sig:
+                    return list(entry[1])
         # This read is on the agent hot path before every provider send.
         # Do not take the conversation write lock: context files are append-only
         # during normal turns, and full rewrites are rare/manual. A concurrent
@@ -72,13 +84,50 @@ class _CsAgentCtxMixin:
             if self._should_cache_context(result):
                 self._ctx_cache.setdefault(cid, {})[agent_name] = result
                 self._trim_ctx_cache_locked()
+                self._ctx_stat_cache.pop(stat_key, None)
             else:
                 self._ctx_cache.get(cid, {}).pop(agent_name, None)
+                if result is not None and sig is not None:
+                    self._ctx_stat_cache[stat_key] = (sig, result)
+                    while len(self._ctx_stat_cache) > 8:
+                        oldest = next(iter(self._ctx_stat_cache), None)
+                        if oldest is None:
+                            break
+                        self._ctx_stat_cache.pop(oldest, None)
                 logger.debug("ConversationStore: skipped ctx cache for %s/%s (%s messages, %s chars)",
                              cid[:8], agent_name or "shared", len(result or []),
                              self._context_cache_chars(result))
         return result
 
+    @property
+    def _ctx_stat_cache(self) -> Dict:
+        cache = getattr(self, "_ctx_stat_cache_store", None)
+        if cache is None:
+            cache = {}
+            self._ctx_stat_cache_store = cache
+        return cache
+
+    def _ctx_stat_signature(self, path, cid: str):
+        """Cheap change signature for a (possibly segmented) context file."""
+        try:
+            log = self._content_seg(cid, path) if cid else SegmentedJsonl(path)
+            parts = []
+            for p in log.iter_paths():
+                try:
+                    st = p.stat()
+                    parts.append((str(p), st.st_size, st.st_mtime_ns))
+                except OSError:
+                    continue
+            idx = getattr(log, "index_path", None)
+            if idx is not None:
+                try:
+                    st = idx.stat()
+                    parts.append((str(idx), st.st_size, st.st_mtime_ns))
+                except OSError:
+                    pass
+            return tuple(parts)
+        except Exception:
+            return None
     def load_agent_context_page(self, cid: str, agent_name: str,
                                 limit: int = 50, offset: int = 0) -> Optional[Dict]:
         """Load a newest-first page from an agent/shared context file.

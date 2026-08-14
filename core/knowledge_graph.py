@@ -30,16 +30,25 @@ def _safe_filename(user_id: str) -> str:
 class KnowledgeGraph:
     """Per-user temporal entity-relationship graph backed by JSON."""
 
+    # Instance cache (same pattern as ProjectWiki._instances). Every prompt
+    # build asks for the user's KG; without this the whole JSON file was
+    # re-parsed on every turn. Staleness is checked by mtime — a stat per
+    # call instead of a full parse.
+    _instances: Dict[str, "KnowledgeGraph"] = {}
+    _instances_lock = threading.Lock()
+
     def __init__(self, json_path: str):
         self._path = Path(json_path)
         self._lock = threading.Lock()
         self._triples: List[Dict[str, Any]] = []
         self._entities: Dict[str, Dict[str, Any]] = {}  # name -> {type, properties, created_at}
+        self._loaded_mtime: float = -1.0
         self._load()
 
     def _load(self):
         if self._path.exists():
             try:
+                self._loaded_mtime = self._path.stat().st_mtime
                 data = json.loads(self._path.read_text())
                 self._triples = data.get("triples", [])
                 self._entities = data.get("entities", {})
@@ -54,6 +63,20 @@ class KnowledgeGraph:
             separators=(',', ':'),
         ))
         tmp.replace(self._path)
+        try:
+            self._loaded_mtime = self._path.stat().st_mtime
+        except OSError:
+            self._loaded_mtime = -1.0
+
+    def _reload_if_stale(self):
+        """Re-parse the file only when it changed on disk since our load."""
+        try:
+            mtime = self._path.stat().st_mtime
+        except OSError:
+            return
+        if mtime != self._loaded_mtime:
+            with self._lock:
+                self._load()
 
     def _ensure_entity(self, name: str):
         if name not in self._entities:
@@ -323,4 +346,12 @@ class KnowledgeGraph:
         """Get or create a KnowledgeGraph for a user."""
         d = Path(store_dir or str(_paths.KNOWLEDGE_GRAPHS_DIR))
         d.mkdir(parents=True, exist_ok=True)
-        return cls(str(d / f"{_safe_filename(user_id)}.json"))
+        path = str(d / f"{_safe_filename(user_id)}.json")
+        with cls._instances_lock:
+            inst = cls._instances.get(path)
+            if inst is None:
+                inst = cls(path)
+                cls._instances[path] = inst
+                return inst
+        inst._reload_if_stale()
+        return inst

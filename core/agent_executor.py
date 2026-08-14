@@ -35,7 +35,10 @@ from core._agent_executor_base import (  # noqa: F401 -- re-exported (invariant 
     cancel_sub_agent_task,
     drain_live_delegate_messages,
     get_live_delegate,
+    list_finished_delegates,
+    list_live_delegates,
     queue_live_delegate_message,
+    record_finished_delegate,
     register_live_delegate,
     unregister_live_delegate,
 )

@@ -23,6 +23,7 @@ SKIP_TOOLS = {
     "PushNotification",  # agent-loop internal (conv bell)
     "complete_task", "verify_task",  # task lifecycle (agent-only)
     "flash_delegate",  # agent-internal temporary sub-agents
+    "flash_status",  # agent-internal flash-agent status
     "manage_resource",  # resource CRUD
     "create_tool",  # dynamic tool creation
     "pawflow_help",  # help text

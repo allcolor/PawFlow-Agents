@@ -55,11 +55,69 @@ def get_live_delegate(parent_conv: str, caller: str, target: str) -> Optional[di
 
 def register_live_delegate(parent_conv: str, caller: str, target: str,
                            task_id: str, client, task) -> None:
+    import time
     with _live_delegates_lock:
         _live_delegates[(parent_conv, caller, target)] = {
             "task_id": task_id, "client": client, "task": task,
             "pending": [],
+            "started_at": time.time(),
         }
+
+
+def list_live_delegates(parent_conv: str, caller: str = "") -> List[dict]:
+    """Sanitized snapshot of live delegate entries for a parent conversation.
+
+    Returns serializable dicts (no client/task objects), optionally filtered
+    by the calling agent. Used by the flash_status tool.
+    """
+    out: List[dict] = []
+    with _live_delegates_lock:
+        for (conv, c, target), entry in _live_delegates.items():
+            if conv != parent_conv or (caller and c != caller):
+                continue
+            out.append({
+                "caller": c,
+                "target": target,
+                "task_id": entry.get("task_id", ""),
+                "started_at": entry.get("started_at", 0.0),
+                "pending_messages": len(entry.get("pending") or []),
+            })
+    return out
+
+
+# Finished delegate results (newest last), bounded so flash_status can report
+# recent completions/failures without keeping AgentResult objects forever.
+_FINISHED_DELEGATES_MAX = 100
+_finished_delegates: List[dict] = []
+
+
+def record_finished_delegate(parent_conv: str, caller: str, target: str,
+                             task_id: str, status: str, error: str = "",
+                             duration_ms: float = 0.0) -> None:
+    import time
+    with _live_delegates_lock:
+        _finished_delegates.append({
+            "parent_conv": parent_conv,
+            "caller": caller,
+            "target": target,
+            "task_id": task_id,
+            "status": status,
+            "error": (error or "")[:500],
+            "duration_ms": duration_ms,
+            "finished_at": time.time(),
+        })
+        del _finished_delegates[:-_FINISHED_DELEGATES_MAX]
+
+
+def list_finished_delegates(parent_conv: str, caller: str = "") -> List[dict]:
+    """Recent finished delegate results for a parent conversation."""
+    with _live_delegates_lock:
+        return [
+            {k: v for k, v in e.items() if k != "parent_conv"}
+            for e in _finished_delegates
+            if e["parent_conv"] == parent_conv
+            and (not caller or e["caller"] == caller)
+        ]
 
 
 def queue_live_delegate_message(parent_conv: str, caller: str, target: str,

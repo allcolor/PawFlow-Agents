@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pawflow_navy">#061D3A</color>
+    <color name="pawflow_teal">#32C4A8</color>
+    <color name="pawflow_surface">#F6F8FB</color>
+    <color name="pawflow_text">#102A43</color>
+    <color name="white">#FFFFFF</color>
+</resources>
+

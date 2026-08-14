@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.PawFlow" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/pawflow_teal</item>
+        <item name="android:navigationBarColor">@color/pawflow_navy</item>
+        <item name="android:statusBarColor">@color/pawflow_navy</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="Theme.PawFlow.Splash" parent="Theme.PawFlow">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+    </style>
+</resources>
+

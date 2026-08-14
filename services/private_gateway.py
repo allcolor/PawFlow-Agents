@@ -472,6 +472,22 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
             "gateway public+private_only exempt check failed",
             exc_info=True)
 
+    # A native OAuth flow opens the provider in a browser that does not share
+    # the Android WebView cookie jar. Let only callbacks carrying a currently
+    # active, server-minted mobile state reach the normal OAuth handler. The
+    # state disappears as soon as the handoff is completed, so callback
+    # replays fall back to the gateway challenge.
+    if path == "/auth/callback":
+        try:
+            from urllib.parse import parse_qs, urlparse
+
+            from core.mobile_auth import mobile_auth_store
+            state = parse_qs(urlparse(handler.path).query).get("state", [""])[0]
+            if state and mobile_auth_store.is_mobile_state(state):
+                return False
+        except Exception:
+            logger.debug("mobile OAuth callback gateway check failed", exc_info=True)
+
     # /files/{file_id} — check if public or gateway_key access
     if path.startswith("/files/"):
         file_id = path.split("/")[2] if len(path.split("/")) >= 3 else ""

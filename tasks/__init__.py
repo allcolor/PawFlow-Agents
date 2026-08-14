@@ -241,6 +241,7 @@ def register_all_tasks():
     from tasks.io.oauth_callback import OAuthCallbackTask
     from tasks.io.oauth_logout import OAuthLogoutTask
     from tasks.io.validate_session_auth import ValidateSessionAuthTask
+    from tasks.io.mobile_auth import MobileAuthTask
 
     # Telegram
     from tasks.io.telegram_receiver import TelegramReceiverTask

@@ -300,6 +300,29 @@ class OAuthCallbackTask(BaseTask):
 
         if not code and self._looks_like_telegram_callback(params):
             return self._handle_telegram_callback(flowfile, auth_svc, params)
+        if not code and params.get("error"):
+            state_data = oauth_service.validate_state(state)
+            if state_data is False or state_data is None:
+                state_data = auth_svc.validate_state(state)
+            mobile_flow_id = (
+                str(state_data.get("mobile_flow_id") or "")
+                if isinstance(state_data, dict) else ""
+            )
+            if mobile_flow_id:
+                from core.mobile_auth import mobile_auth_store
+                from tasks.io.mobile_auth import MOBILE_CALLBACK_URI
+                mobile_auth_store.cancel(mobile_flow_id)
+                error = params.get("error_description") or params["error"]
+                location = MOBILE_CALLBACK_URI + "?" + urllib.parse.urlencode({
+                    "flow_id": mobile_flow_id,
+                    "error": error,
+                })
+                flowfile.set_content(b"")
+                flowfile.set_attribute("http.response.status", "302")
+                flowfile.set_attribute("http.response.header.Location", location)
+                flowfile.set_attribute(
+                    "http.response.header.Cache-Control", "no-store")
+                return [flowfile]
         if not code:
             return [self._error_response(flowfile, 400, "Missing authorization code")]
 
@@ -423,6 +446,22 @@ class OAuthCallbackTask(BaseTask):
 
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")
+        mobile_flow_id = ""
+        if isinstance(state_data, dict):
+            mobile_flow_id = str(state_data.get("mobile_flow_id") or "")
+        if mobile_flow_id:
+            from core.mobile_auth import mobile_auth_store
+            from tasks.io.mobile_auth import MOBILE_CALLBACK_URI
+            handoff_code = mobile_auth_store.complete(
+                mobile_flow_id, token, result.username,
+                user.role.value if hasattr(user, "role") else "user")
+            location = MOBILE_CALLBACK_URI + "?" + urllib.parse.urlencode({
+                "flow_id": mobile_flow_id,
+                "code": handoff_code,
+            })
+            flowfile.set_attribute("http.response.header.Location", location)
+            flowfile.set_attribute("http.response.header.Cache-Control", "no-store")
+            return [flowfile]
         if relay_callback:
             # Redirect to relay callback (CLI/plugin) with token
             cb_url = relay_callback + ("&" if "?" in relay_callback else "?")

@@ -145,6 +145,31 @@
             "public": true
           },
           {
+            "method": "GET",
+            "pattern": "/auth/mobile/providers",
+            "relationship": "GET:/auth/mobile/providers",
+            "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/auth/mobile/start",
+            "relationship": "POST:/auth/mobile/start",
+            "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/auth/mobile/builtin",
+            "relationship": "POST:/auth/mobile/builtin",
+            "public": true
+          },
+          {
+            "method": "POST",
+            "pattern": "/auth/mobile/consume",
+            "relationship": "POST:/auth/mobile/consume",
+            "public": true,
+            "gateway_exempt": true
+          },
+          {
             "method": "POST",
             "pattern": "/auth/logout",
             "relationship": "POST:/auth/logout",
@@ -186,6 +211,14 @@
       "parameters": {
         "cookie_name": "pawflow_token",
         "redirect_to": "/chat"
+      }
+    },
+    "mobile_auth": {
+      "type": "mobileAuth",
+      "parameters": {
+        "auth_service_id": "auth",
+        "oauth_service_id": "oauth",
+        "cookie_name": "pawflow_token"
       }
     },
     "agent": {
@@ -425,6 +458,31 @@
       "from": "http_in",
       "to": "oauth_callback",
       "type": "GET:/auth/callback"
+    },
+    {
+      "from": "http_in",
+      "to": "mobile_auth",
+      "type": "GET:/auth/mobile/providers"
+    },
+    {
+      "from": "http_in",
+      "to": "mobile_auth",
+      "type": "POST:/auth/mobile/start"
+    },
+    {
+      "from": "http_in",
+      "to": "mobile_auth",
+      "type": "POST:/auth/mobile/builtin"
+    },
+    {
+      "from": "http_in",
+      "to": "mobile_auth",
+      "type": "POST:/auth/mobile/consume"
+    },
+    {
+      "from": "mobile_auth",
+      "to": "send_response",
+      "type": "success"
     },
     {
       "from": "http_in",

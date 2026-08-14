@@ -110,21 +110,26 @@ class HTTPReceiverTask(BaseTask):
             relationship = route_def.get("relationship", f"{method}:{pattern}")
             _public = bool(route_def.get("public", False))
             _private_only = bool(route_def.get("private_only", False))
+            _gateway_exempt = bool(route_def.get("gateway_exempt", False))
 
             def make_callback(rel):
                 def callback(pending_req):
                     self._on_request(pending_req, rel)
                 return callback
 
+            route_kwargs = {"public": _public, "private_only": _private_only}
+            if _gateway_exempt:
+                route_kwargs["gateway_exempt"] = True
             svc.register_route(
                 method, pattern, self._owner_id, make_callback(relationship),
-                public=_public, private_only=_private_only,
+                **route_kwargs,
             )
             logger.debug(
-                "httpReceiver registered %s %s -> %s%s%s",
+                "httpReceiver registered %s %s -> %s%s%s%s",
                 method, pattern, relationship,
                 " [public]" if _public else "",
                 " [private_only]" if _private_only else "",
+                " [gateway_exempt]" if _gateway_exempt else "",
             )
 
         # One summary line at INFO instead of N per-route lines.

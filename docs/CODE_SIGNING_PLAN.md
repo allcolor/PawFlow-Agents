@@ -1,6 +1,7 @@
-# Code Signing Plan — PawFlow / PawCode / Relay artifacts
+# Code Signing Plan — PawFlow / PawCode / Android / Relay artifacts
 
-Status: **draft** — decision plan, nothing implemented yet
+Status: **draft** — Android debug publication exists; stable production signing
+is planned but not implemented
 
 ## 1. Purpose
 
@@ -9,12 +10,13 @@ sign every distributable artifact so end users get fewer scary warnings, and so
 malicious builds of our software are easier to detect. It covers:
 
 - Windows executables and installers (`setup.exe`, `pawcode.exe`)
+- Android APKs and future Android App Bundles (`.apk`, `.aab`)
 - Relay Desktop executables, helpers, and bundled native tools such as `frpc.exe`
 - macOS applications and disk images (`.app`, `.dmg`, `.pkg`) — **not built yet**
 - Linux packages (`.deb`, `.rpm`) and archives (`.tar.gz`, `.zip`)
 - Checksums and detached signatures for every artifact
 
-It deliberately does **not** reuse the PFP Ed25519 signing key (see §8).
+It deliberately does **not** reuse the PFP Ed25519 signing key (see §9).
 
 ## 2. Current state (2026-08)
 
@@ -30,9 +32,12 @@ Artifacts produced by `.github/workflows/release-assets.yml` and
 | Relay Desktop (Electron) | `dist:win` / `dist:linux` | Win/Linux | No |
 | Bundled FRP client (`frpc.exe`) | verified FRP 0.70.1 upstream archive | Windows | No |
 | `pawflow-installers/*` | `build-pawflow-install-zip.sh` | Linux | No |
+| `pawflow-android-<ver>-debug.apk` | Gradle / Android release-assets job | Android | Debug key only |
 
-No `.rpm` and no macOS artifacts are produced today. No signing infrastructure
-exists anywhere (no Authenticode, no GPG, no notarization).
+No `.rpm` and no macOS artifacts are produced today. The Android release job
+builds and verifies an explicitly named debug APK, but no stable Android release
+keystore exists yet. No Authenticode, GPG, or Apple notarization infrastructure
+exists.
 
 ## 3. Why one key cannot sign everything
 
@@ -41,6 +46,7 @@ Each OS trusts signatures through a different mechanism:
 | Platform | Trust anchor | Verifier |
 |---|---|---|
 | Windows | CA root store (Authenticode) or Microsoft (Azure Trusted Signing) | SmartScreen, kernel, `signtool verify` |
+| Android | App signing certificate pinned to the package identity | Package Manager, `apksigner verify`, Google Play |
 | macOS | Apple Developer Program (Developer ID + notarization) | Gatekeeper |
 | Linux | Local GPG keyring imported by the admin | `apt`/`dpkg`, `dnf`/`rpm` |
 | PawFlow .pfp | Ed25519 public key embedded in manifest (TOFU) | PawFlow itself |
@@ -130,7 +136,126 @@ For every Relay Desktop release:
    submission/result in the release checklist.
 9. Add a workflow that checks signatures and provenance on release artifacts.
 
-## 5. macOS (.app / .dmg / .pkg)
+## 5. Android (.apk / .aab)
+
+### Trust model and artifact types
+
+Android requires every installable APK to be signed. The signing certificate is
+the durable identity of `org.allcolor.pawflow`: Android accepts an update only
+when its signer matches the installed application or belongs to a valid signing
+lineage. A debug certificate is suitable only for development. GitHub-hosted
+runners generate unrelated debug keys, so successive debug releases are not a
+stable update channel.
+
+The direct GitHub release channel should publish a signed universal APK. A
+future Play Store channel should publish an Android App Bundle and enable
+**Play App Signing**: Google protects the app-signing key while CI uses a
+separate, replaceable upload key. Direct APK users still require a PawFlow-held
+stable signing key.
+
+Use APK Signature Scheme v2 and v3. Keep v1 disabled unless support below
+Android 7 is introduced; the current minimum is Android 8 (API 26).
+
+### One-time key ceremony
+
+1. Assign two people as key custodians and record the package name, alias,
+   creation date, certificate SHA-256 fingerprint, and recovery locations.
+2. Generate a dedicated Android release key offline, never from a CI runner:
+
+   ```bash
+   keytool -genkeypair -v \
+     -keystore pawflow-android-release.jks \
+     -alias pawflow-android \
+     -keyalg RSA -keysize 4096 -validity 10000
+   keytool -list -v -keystore pawflow-android-release.jks \
+     -alias pawflow-android
+   ```
+
+3. Keep two encrypted offline backups in separate custody locations. Test
+   restoration before the first signed release. Losing the direct-distribution
+   key prevents normal updates for existing sideloaded installations.
+4. Store the expected public certificate SHA-256 fingerprint as a reviewed
+   repository variable. It is not secret and must be compared on every build.
+5. If Google Play distribution is enabled, enroll the app-signing key in Play
+   App Signing and create a distinct upload key. Never use the PFP, GPG,
+   Authenticode, or Apple key for Android.
+
+### GitHub Actions secrets
+
+Create a protected `android-release` GitHub Environment with required
+reviewers and these Actions secrets:
+
+| Secret | Content |
+|---|---|
+| `ANDROID_SIGNING_KEYSTORE_B64` | Base64 of the encrypted JKS/PKCS12 file |
+| `ANDROID_SIGNING_KEY_ALIAS` | Release-key alias |
+| `ANDROID_SIGNING_STORE_PASSWORD` | Keystore password |
+| `ANDROID_SIGNING_KEY_PASSWORD` | Private-key password |
+
+Set `ANDROID_SIGNING_CERT_SHA256` as an environment variable containing the
+expected public fingerprint. GitHub Actions must mask passwords, never print
+Gradle properties, never upload the decoded keystore, and delete it from
+`RUNNER_TEMP` in an `if: always()` cleanup step.
+
+### Gradle integration
+
+1. Add a `release` signing configuration that reads the keystore path, alias,
+   and passwords from environment variables. Do not put credentials in
+   `gradle.properties`, source files, workflow arguments, or build logs.
+2. Make `assembleRelease` and `bundleRelease` fail with a clear error when
+   any signing input is absent. **Never fall back to the debug signing config.**
+3. Keep local and pull-request validation on `lintDebug`,
+   `testDebugUnitTest`, and `assembleDebug`; forked PRs must never receive
+   signing secrets.
+4. Inject `versionName` and monotonic `versionCode` from the release tag,
+   as the current debug release job already does.
+
+### Tag CI and publication
+
+The protected tag job should perform this order:
+
+1. Check out the exact annotated tag and verify it points to a green `main`
+   SHA.
+2. Decode the keystore into `RUNNER_TEMP`, set mode `0600`, and expose only
+   its path and passwords to the Gradle process environment.
+3. Run `./gradlew clean lintRelease testReleaseUnitTest assembleRelease
+   bundleRelease`.
+4. Verify the APK before upload:
+
+   ```bash
+   zipalign -c -v 4 app-release.apk
+   apksigner verify --verbose --print-certs app-release.apk
+   aapt dump badging app-release.apk
+   ```
+
+5. Fail unless the package is `org.allcolor.pawflow`, the artifact is not
+   debuggable, versionName/versionCode match the tag, v2/v3 verification
+   succeeds, and the signer certificate matches
+   `ANDROID_SIGNING_CERT_SHA256`.
+6. Generate SHA-256 checksums, an SBOM/provenance statement, and upload only
+   the verified signed APK/AAB. The release publish job must depend on this
+   verification job and use `if-no-files-found: error`.
+7. Delete the decoded keystore and unset signing variables with
+   `if: always()`. Retain verification logs and provenance, never the key.
+
+Until this gate is implemented and the stable key ceremony is complete, release
+artifacts must retain the explicit `-debug.apk` suffix.
+
+### Rotation and incident response
+
+- Test backup restoration annually and before changing custodians.
+- For Google Play, use Play's upload-key reset process if only the upload key is
+  lost. Follow Play's supported app-signing-key upgrade process when rotating
+  the protected signing key.
+- For direct APK distribution, preserve signing lineage where supported and
+  test upgrades from the last public APK on API 26 and the latest Android
+  before release.
+- On suspected compromise, stop Android publication, remove GitHub secrets,
+  revoke environment access, rotate the upload key, document affected
+  fingerprints, and publish recovery instructions. Do not silently sign a new
+  package with an unrelated key.
+
+## 6. macOS (.app / .dmg / .pkg)
 
 ### What is needed
 
@@ -162,7 +287,7 @@ and notarization for unsigned-download apps to open without a warning.
 4. Store the Apple API key (`AuthKey_*.p8`) in GitHub secrets; keep the
    certificate in the CI keychain via a base64 secret + `security import`.
 
-## 6. Linux (.deb / .rpm / .tar.gz)
+## 7. Linux (.deb / .rpm / .tar.gz)
 
 ### What is needed
 
@@ -202,7 +327,7 @@ There is no central registry: trust is decided machine-by-machine.
 5. Publish the public key at a stable URL and embed the fingerprint in docs
    and in `install-pawflow.sh`.
 
-## 7. Auxiliary hardening
+## 8. Auxiliary hardening
 
 - **Checksums**: `SHA256SUMS` + signed detached file for every release.
 - **Reproducible builds**: extend the existing byte-for-byte reproducibility
@@ -212,19 +337,20 @@ There is no central registry: trust is decided machine-by-machine.
   key management, but different trust model (keyless, Fulcio) — not a
   replacement for Authenticode/Developer ID/notarization.
 
-## 8. Key separation (security)
+## 9. Key separation (security)
 
 | Key | Purpose | Store |
 |---|---|---|
 | PFP Ed25519 key (`PAWFLOW_PFP_SIGNING_KEY`) | .pfp packages, TOFU | CI secret |
 | Windows Authenticode / Azure Trusted Signing | .exe / NSIS / MSI | Azure HSM or cert token |
+| Android release / upload key | .apk / .aab | Offline backups + protected GitHub Environment / Play HSM |
 | Apple Developer ID + notary API key | .app / .dmg / .pkg | CI keychain + GitHub secret |
 | GPG `pawflow-releases` | .deb / .rpm / archives / checksums | Offline master + CI signing subkey |
 
 Keep each key separate. Rotate on leak; revoke via CA/Apple/GPG revocation as
 appropriate. Add timestamping everywhere so old signatures survive expiry.
 
-## 9. Rollout phases
+## 10. Rollout phases
 
 ### Phase 0 — Foundations (no cost)
 - Add GPG signing of `.tar.gz`/`.zip` + signed `SHA256SUMS`.
@@ -235,7 +361,14 @@ appropriate. Add timestamping everywhere so old signatures survive expiry.
 - Sign `.deb` with `dpkg-sig`; add `.rpm` build + `rpmsign`.
 - Optional: Launchpad PPA / COPR for pre-trusted sources.
 
-### Phase 2 — Windows (paid)
+### Phase 2 — Android (no recurring signing cost)
+- Perform the two-custodian key ceremony and verify offline backups.
+- Add fail-closed Gradle release signing and a protected GitHub Environment.
+- Verify package metadata, non-debuggable status, schemes, and certificate
+  fingerprint before the release job can upload the APK.
+- Optionally register Google Play Console and enable Play App Signing.
+
+### Phase 3 — Windows (paid)
 - Decide Azure Trusted Signing (~US$10/month) vs OV/EV cert (~US$100–600/yr).
 - Define a complete PE signing manifest for PawCode, Relay Desktop, native
   helpers, and `frpc.exe`.
@@ -244,32 +377,38 @@ appropriate. Add timestamping everywhere so old signatures survive expiry.
 - Add FRP release provenance and Microsoft false-positive submission to the
   mandatory release checklist.
 
-### Phase 3 — macOS (paid)
+### Phase 4 — macOS (paid)
 - Apple Developer Program (US$99/yr), macOS CI runner.
 - Developer ID + notarization + stapling for the Electron desktop app.
 
 ### Go/no-go
 - Phase 0–1: go (free, low risk).
-- Phase 2: go when we accept the recurring cost and pick a provider.
-- Phase 3: go when macOS artifacts become a supported deliverable.
+- Phase 2: go after assigning key custodians and testing recovery.
+- Phase 3: go when we accept the recurring cost and pick a provider.
+- Phase 4: go when macOS artifacts become a supported deliverable.
 
-## 10. Cost summary
+## 11. Cost summary
 
 | Item | One-time | Recurring |
 |---|---|---|
 | GPG signing | — | Free |
 | Launchpad PPA / COPR / OBS | — | Free |
+| Android direct APK signing | key ceremony and secure backups | Free |
+| Google Play Console (optional) | US$25 registration | — |
 | Azure Trusted Signing | identity validation | ~US$10/month |
 | OV code-signing cert | — | ~US$100–300/yr |
 | EV code-signing cert | token | ~US$300–600/yr |
 | Apple Developer Program | — | US$99/yr |
 | macOS CI runner | — | ~10× Linux runner cost |
 
-## 11. Open decisions
+## 12. Open decisions
 
-1. Windows: Azure Trusted Signing vs OV/EV certificate.
-2. macOS: is a native macOS build in scope for 1.0?
-3. Linux: direct GPG distribution vs PPA/COPR hosting.
-4. Whether to add `.rpm` to the release matrix.
-5. FRP provenance: reproducible source build in PawFlow CI vs verified upstream
+1. Android: direct APK only or Google Play distribution as well.
+2. Android: name the two release-key custodians and protected-environment
+   reviewers.
+3. Windows: Azure Trusted Signing vs OV/EV certificate.
+4. macOS: is a native macOS build in scope for 1.0?
+5. Linux: direct GPG distribution vs PPA/COPR hosting.
+6. Whether to add `.rpm` to the release matrix.
+7. FRP provenance: reproducible source build in PawFlow CI vs verified upstream
    binary followed by PawFlow Authenticode signing.

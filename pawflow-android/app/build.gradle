@@ -1,0 +1,40 @@
+plugins {
+    id "com.android.application"
+}
+
+def pawflowVersionName = providers.gradleProperty("pawflowVersion")
+        .getOrElse("1.0.0-dev")
+def pawflowVersionCode = providers.gradleProperty("pawflowVersionCode")
+        .getOrElse("1").toInteger()
+
+android {
+    namespace "org.allcolor.pawflow"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "org.allcolor.pawflow"
+        minSdk 26
+        targetSdk 35
+        versionCode pawflowVersionCode
+        versionName pawflowVersionName
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    //noinspection GradleDependency -- 1.8.0 remains compatible with compileSdk 35.
+    implementation "androidx.browser:browser:1.8.0"
+    testImplementation "junit:junit:4.13.2"
+}
+

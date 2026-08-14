@@ -498,6 +498,7 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 | [LLM Providers](docs/llm_providers.md) | OpenAI, Anthropic, recommended Claude Code/Codex interactive providers, legacy transports, Antigravity/Agy, Gemini CLI, compatible APIs |
 | [PawCode CLI](docs/pawcode.md) | Terminal client and stream-JSON mode |
 | [VS Code Extension](docs/vscode.md) | Editor client and resource panel |
+| [Android App](docs/ANDROID_APP.md) | Native server profiles, OAuth2 login, parallel webchat tabs, and APK build |
 | [Multi-Client Conversations](docs/multi_client_conversations.md) | Shared runtime across web, CLI, VS Code, API, channels |
 | [Desktop/VNC](docs/desktop_vnc.md) | noVNC desktop, screen tool, audio notes |
 | [Media Tools](docs/media_tools.md) | Image/video/audio/3D/voice tools, realtime voice conversation |

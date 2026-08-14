@@ -238,7 +238,7 @@ class LLMCodexInteractiveMixin:
                 messages, tools, state.workdir, state.container_workdir,
                 user_id, conversation_id,
                 initial_context=not state.initial_context_loaded,
-                agent_name=agent_name)
+                agent_name=agent_name, state=state)
             _, _, event_service = get_or_create_cc_interactive_event_service()
             consumer_epoch = event_service.claim_consumer(state.session_token)
             event_service.drain_session(state.session_token)
@@ -251,6 +251,18 @@ class LLMCodexInteractiveMixin:
                     "Failed to paste prompt into Codex interactive tmux session: "
                     f"{detail}")
             state.initial_context_loaded = True
+            # Same dedup contract as the CCI provider: everything in
+            # `messages` has been conveyed, never re-paste it.
+            _submitted = getattr(state, "submitted_msg_ids", None)
+            if _submitted is None:
+                _submitted = set()
+                state.submitted_msg_ids = _submitted
+            _submitted.update(
+                mid for mid in (
+                    getattr(m, "msg_id", "")
+                    for m in (messages or [])
+                    if getattr(m, "role", "") == "user")
+                if mid)
 
             try:
                 coord = _CodexInteractiveTurnCoordinator(

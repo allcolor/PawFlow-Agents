@@ -434,6 +434,20 @@ not receive the full context or tool instructions again; PawFlow sends only the
 latest turn delta, any current attachment references, and a narrow catch-up block
 containing new messages from other participants since the agent's last response.
 
+### Multi-message drain and msg_id dedup
+
+The live-session delta is NOT just the newest user message. A retrigger turn
+can carry several drained user messages (e.g. N delegate results preempted
+while the previous turn was ending); `_cci_live_text` renders the whole tail
+of consecutive user messages after the last assistant reply, in order, in one
+paste. Each session tracks the `msg_id`s it has already conveyed
+(`InteractiveContainer.submitted_msg_ids`, updated after every successful
+paste — cold context, catch-up, and live tail all count): a message is never
+pasted twice, and when a spurious retrigger finds the whole tail already
+submitted the prompt build sends nothing instead of re-pasting the latest user
+text (which used to produce double-delivered delegate results). The Codex
+interactive provider shares this contract.
+
 The bootstrap paste is one short physical line and never quotes the current turn
 inline. The turn is already in the file under `## Latest User Request`; copying
 it into a terminal composer created a second transport and let multiline paste

@@ -72,6 +72,10 @@ class InteractiveContainer:
     # re-emitted and re-appended to the PawFlow context.
     emitted_tool_use_ids: set = field(default_factory=set)
     emitted_tool_result_ids: set = field(default_factory=set)
+    # msg_ids of user messages already pasted into this session (cold
+    # context, catchup, or live tail). A prompt build never re-pastes one
+    # of these — dedup for the multi-message drain / retrigger path.
+    submitted_msg_ids: set = field(default_factory=set)
     # Credential-pool coordinates captured at spawn so teardown can release the
     # exclusive slot (1 login = 1 live container) and recover any CLI-rotated
     # OAuth refresh_token back to the right pool slot. Defaults keep back-compat

@@ -79,7 +79,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                 messages, tools, state.workdir, state.container_workdir,
                 user_id, conversation_id,
                 initial_context=not state.initial_context_loaded,
-                agent_name=agent_name)
+                agent_name=agent_name, state=state)
             from services.cc_interactive_event_service import (
                 get_or_create_cc_interactive_event_service)
             _, _, event_service = get_or_create_cc_interactive_event_service()
@@ -94,6 +94,20 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     "Failed to paste prompt into Claude Code interactive "
                     f"tmux session: {detail}")
             state.initial_context_loaded = True
+            # Everything in `messages` has now been conveyed to the CLI
+            # (cold paste, catchup context, or the live tail). Record the
+            # user msg_ids on the session so no later prompt build ever
+            # re-pastes one of them (double-delivery bug).
+            _submitted = getattr(state, "submitted_msg_ids", None)
+            if _submitted is None:
+                _submitted = set()
+                state.submitted_msg_ids = _submitted
+            _submitted.update(
+                mid for mid in (
+                    getattr(m, "msg_id", "")
+                    for m in (messages or [])
+                    if getattr(m, "role", "") == "user")
+                if mid)
 
             try:
                 coord = _CCITurnCoordinator(
@@ -208,7 +222,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
 
     def _cci_prompt(self, messages, tools, workdir: str, container_workdir: str,
                     user_id: str, conversation_id: str,
-                    initial_context: bool = False, agent_name: str = "") -> str:
+                    initial_context: bool = False, agent_name: str = "",
+                    state=None) -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         if tools:
             system_prompt = append_cli_mcp_system_prompt(system_prompt)
@@ -240,7 +255,9 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             catchup = self._cci_catchup_context(conversation_id, agent_name)
             if catchup:
                 parts.append(catchup)
-            current = self._cci_live_text(messages) or user_text
+            current = self._cci_live_text(messages, state=state)
+            if not current and not getattr(self, "_cci_live_all_submitted", False):
+                current = user_text
             if current:
                 parts.append(current)
         rendered = "\n\n".join(parts).strip()
@@ -260,16 +277,53 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             return ""
         return builder(conversation_id, agent) or ""
 
-    def _cci_live_text(self, messages) -> str:
-        """Return only the latest user text for an already-live tmux session."""
+    def _cci_live_text(self, messages, state=None) -> str:
+        """Return every not-yet-submitted trailing user text for a live session.
+
+        A retrigger turn can carry SEVERAL drained user messages (e.g. N
+        delegate results preempted during the previous turn). The old code
+        pasted only the newest one — the other N-1 were persisted in the
+        PawFlow context and visible in the webchat but never reached the
+        CLI, so they were silently never answered. Render the whole tail of
+        consecutive user messages after the last assistant reply, and skip
+        any msg_id the session has already pasted (dedup — the same drained
+        message must never be submitted twice).
+
+        Side effects: stashes the rendered msg_ids on
+        ``self._cci_pending_live_msg_ids`` (recorded on the session by the
+        caller AFTER the paste succeeds) and sets
+        ``self._cci_live_all_submitted`` when the tail existed but every
+        message in it was already submitted.
+        """
         from core.llm_providers.cli_shared import textualize_message
 
+        submitted = getattr(state, "submitted_msg_ids", None) or set()
+        tail = []
         for msg in reversed(messages or []):
-            if getattr(msg, "role", "") != "user":
+            role = getattr(msg, "role", "")
+            if role == "assistant":
+                break
+            if role != "user" or getattr(msg, "display_only", False):
+                continue
+            tail.append(msg)
+        tail.reverse()
+        self._cci_live_all_submitted = bool(tail) and all(
+            getattr(m, "msg_id", "") in submitted for m in tail)
+        rendered_ids = []
+        parts = []
+        for msg in tail:
+            mid = getattr(msg, "msg_id", "")
+            if mid and mid in submitted:
                 continue
             rendered = textualize_message(msg)
-            return rendered.strip() if isinstance(rendered, str) else ""
-        return ""
+            text = rendered.strip() if isinstance(rendered, str) else ""
+            if not text:
+                continue
+            parts.append(text)
+            if mid:
+                rendered_ids.append(mid)
+        self._cci_pending_live_msg_ids = rendered_ids
+        return "\n\n".join(parts)
 
     def _cci_materialize_images(self, messages, workdir: str, container_workdir: str,
                                 user_id: str, conversation_id: str) -> list[str]:

@@ -167,6 +167,24 @@ function addMsg(role, text, extra) {
   const _rowTurnId = extra ? String(extra.turn_id || extra.request_msg_id
     || (extra.source && extra.source.turn_id) || '').trim() : '';
   if (_rowTurnId) el.dataset.turnId = _rowTurnId;
+  // Agent identity rides on the row too: the reconciliation pass opens
+  // blocks for history pages with no user row, and without this it could
+  // only title them "Agent activity".
+  const _rowAgentName = (extra && extra.source && extra.source.name) || '';
+  if (_rowAgentName) el.dataset.agentName = _rowAgentName;
+  const _rowLlmService = (extra && (extra.llm_service
+    || (extra.source && extra.source.llm_service))) || '';
+  if (_rowLlmService) el.dataset.llmService = _rowLlmService;
+  // A user-ROLE row the SYSTEM injected — a delegate/flash result nudge
+  // (source.delegate / source.name 'system'), a background tool result
+  // (source {type:'system', name:'background'}) — is agent activity, not
+  // the user speaking. The simplified turn view files it into the block's
+  // tool rows instead of treating it as a user boundary.
+  const _rowSrc = (extra && extra.source) || {};
+  if (role === 'user' && (_rowSrc.delegate || _rowSrc.name === 'system'
+      || _rowSrc.name === 'background' || _rowSrc.type === 'system')) {
+    el.dataset.systemInjected = '1';
+  }
   const _msgTaskId = (extra && (extra.task_id || (extra.source && extra.source.task_id))) || '';
   if (_msgTaskId) el.dataset.taskId = _msgTaskId;
   if (role === 'assistant' || role === 'user') el.dataset.technicalBoundary = '1';

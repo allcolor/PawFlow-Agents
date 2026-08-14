@@ -361,20 +361,33 @@ Tests: `tests/test_turn_view_active_truth.py`.
 
 Two more invariants govern the reconciliation pass (`turnViewReconcile`):
 
-- **Boundaries.** Everything between two boundaries belongs inside the detail
-  block, and at most two top-level messages sit between two blocks: the
-  previous turn's last message and the next turn's boundary. A boundary is
-  (1) a message the user sent, or (2) the first assistant message of a
-  scheduled wakeup — nothing else. A background-tool result is NOT a
-  boundary: it is filed inside its turn's block like a tool call. The
-  detector is turn identity: every rendered row carries `data-turn-id`
-  (stamped in `messages_render.js` from `turn_id`/`request_msg_id`). An
-  assistant row WITH text naming an unseen turn is a wakeup boundary and
-  stays top level (`_turnIsWakeupBoundary`); any other row naming an unseen
-  turn closes the previous block, opens the new turn's block, and is filed
-  inside it. A page bringing back the older half of a turn whose block is
-  already on screen gets a derived fragment identity instead of clobbering
-  the existing state.
+- **Boundaries.** The boundary BEFORE a detail block is either a message the
+  user sent or a scheduled wakeup's first assistant message — nothing else.
+  The boundary AFTER a detail block is the turn's last agent message, or a
+  user message when the user preempted before the answer — that is all.
+  Consequences enforced by the pass:
+  - Two detail blocks may NEVER sit adjacent. A turn-identity change opens a
+    new block only when the current block has a last message to promote
+    between them (`_turnHasPromotableAnswer`); an answerless (tool-only)
+    turn's activity files into the same block as what follows.
+  - The only legal pair of consecutive top-level agent messages is a block's
+    last message followed by a wakeup boundary message.
+  - A system-injected user-ROLE row — a delegate/flash result nudge
+    (`source.delegate` / `source.name == 'system'`) or a background-tool
+    result (`source {type:'system', name:'background'}`) — is agent
+    activity, NOT a boundary: `messages_render.js` stamps it
+    `data-system-injected` and the view files it with the tool rows.
+  The detector is turn identity: every rendered row carries `data-turn-id`
+  (stamped in `messages_render.js` from `turn_id`/`request_msg_id`), plus
+  `data-agent-name`/`data-llm-service` so a block opened from bare rows is
+  titled with the agent identity. An assistant row WITH text naming an
+  unseen turn is a wakeup boundary and stays top level
+  (`_turnIsWakeupBoundary`); any other row naming an unseen turn closes the
+  previous block (if it has an answer to promote), opens the new turn's
+  block seeded from the row's own identity (`_turnRowSeedData`), and is
+  filed inside it. A page bringing back the older half of a turn whose
+  block is already on screen gets a derived fragment identity instead of
+  clobbering the existing state.
 - **Only the last block may be active.** After reconciliation, every block
   except the newest that still claims `working` is closed (as a reopenable
   guess). This is what prevents a load-more during a live turn from showing

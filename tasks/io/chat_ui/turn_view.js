@@ -114,6 +114,12 @@ function _turnRetireRuntime(state) {
 // page) is not given an empty one.
 function turnViewRegisterUser(extra, element) {
   if (!turnViewIsSimplified() || !element) return;
+  // System-injected user-role rows are activity: file them with the tool
+  // rows of the open turn instead of closing it and opening a new one.
+  if (element.dataset && element.dataset.systemInjected) {
+    turnViewIngest('sub_agent_trace', extra, element);
+    return;
+  }
   // A new user message ends the previous turn, whatever the server did or did
   // not send: leaving the old block on "working" with a ticking clock, above a
   // message the reader has already moved past, states something false. A turn
@@ -1293,7 +1299,10 @@ function _turnRowRole(el) {
 }
 
 function _turnIsUserRow(el) {
-  return _turnRowRole(el) === 'user';
+  // A system-injected user-role row (delegate result nudge, background
+  // tool result) is activity, never a boundary.
+  return _turnRowRole(el) === 'user'
+    && !(el.dataset && el.dataset.systemInjected);
 }
 
 // A scheduled wakeup has no user row: its first assistant message IS the
@@ -1322,6 +1331,38 @@ function _turnIsWakeupBoundary(el, state) {
 // about what is actually on screen: every stray row is filed into the block of
 // the turn it falls in, and a stretch of activity with no user row above it
 // gets a block of its own.
+// Seed data for a block the reconciliation pass opens from a bare row: the
+// row's own turn identity and agent identity. Opening the orphan with NO
+// data gave it a synthetic turn id, so the very next row of the same turn
+// read as an identity change and opened ANOTHER block — a loaded history
+// page grew a stack of empty "Agent activity" blocks (one per page top and
+// per turn) instead of one titled block per turn.
+function _turnRowSeedData(el, turnId) {
+  const ds = (el && el.dataset) || {};
+  return {
+    turn_id: turnId || ds.turnId || '',
+    agent_name: ds.agentName || '',
+    llm_service: ds.llmService || '',
+  };
+}
+
+// Whether this block will have a visible last message promoted under it.
+// Two detail blocks may NEVER sit next to each other on screen: a block is
+// separated from the next one by a user row or by its own last message. A
+// turn that produced no visible answer has neither, so the next turn's
+// activity must file into the SAME block instead of opening an adjacent one.
+function _turnHasPromotableAnswer(state) {
+  if (state.finalEl && state.finalEl.isConnected) return true;
+  const tab = state.tabs && state.tabs.messages;
+  if (!tab) return false;
+  for (const el of Array.from(tab.bodyEl.children)) {
+    if (el.dataset && el.dataset.turnDetailMirror === '1') continue;
+    if (_turnRowRole(el) === 'system') continue;
+    if (String((el.dataset && el.dataset.rawText) || '').trim()) return true;
+  }
+  return false;
+}
+
 function turnViewReconcile() {
   if (!turnViewIsSimplified()) return;
   const container = document.getElementById('messages');
@@ -1379,7 +1420,8 @@ function turnViewReconcile() {
       _turnOpen = open;
       continue;
     }
-    if (!TURN_FILABLE_ROLES.has(_turnRowRole(el))) continue;
+    if (!TURN_FILABLE_ROLES.has(_turnRowRole(el))
+        && !(el.dataset && el.dataset.systemInjected)) continue;
     if (state && el === state.finalEl) continue;
     // A row that names a DIFFERENT turn than the one being filed is a
     // boundary: the transcript stamps every row with its turn identity, and
@@ -1390,12 +1432,13 @@ function turnViewReconcile() {
     // block > asst). Close the previous turn and open this one's own block.
     const rowTurnId = (el.dataset && el.dataset.turnId) || '';
     if (state && rowTurnId && state.turnId && rowTurnId !== state.turnId
-        && _turnRowRole(el) !== 'system') {
+        && _turnRowRole(el) !== 'system'
+        && _turnHasPromotableAnswer(state)) {
       if (state.status === 'working' && !_turnRuntime.has(state.turnId)) {
         _turnStopTransient(state);
         _turnUpdateStatus(state, 'completed');
       }
-      state = _turnOpenOrphanTurn(el, { turn_id: rowTurnId });
+      state = _turnOpenOrphanTurn(el, _turnRowSeedData(el, rowTurnId));
       if (!state) continue;
       touched.add(state);
       open = _turnOpen;
@@ -1407,7 +1450,8 @@ function turnViewReconcile() {
       if (_turnRowRole(el) === 'system') continue;
       state = (_passedOpenUser && _turnOpen && _turnOpen.userEl
                && _turnOpen.userEl.isConnected)
-        ? _turnCurrentState(true) : _turnOpenOrphanTurn(el);
+        ? _turnCurrentState(true)
+        : _turnOpenOrphanTurn(el, _turnRowSeedData(el));
       if (!state) continue;
       touched.add(state);
       open = _turnOpen;
@@ -1501,7 +1545,10 @@ function _turnPromoteRecordedLast(state) {
 // message of the turn is hoisted back out immediately after: the block's own
 // answer is the one thing that sits below it.
 function _turnFileRow(state, el) {
-  const role = _turnRowRole(el);
+  let role = _turnRowRole(el);
+  // System-injected user-role rows (delegate/bg-tool result nudges) live
+  // with the tool rows.
+  if (role === 'user' && el.dataset && el.dataset.systemInjected) role = 'tool_result';
   // A delegate box is a tool call by another name -- it is what the `delegate`
   // and `flash_delegate` calls draw -- so it lives with the tool calls.
   const tabKey = _turnTabForKind(role === 'sub_agent_trace' ? 'tool_call' : role);

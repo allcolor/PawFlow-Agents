@@ -642,6 +642,9 @@ function prependDeferredRows(e, rows) {
     el.dataset.msgid = m.msg_id;
     el.dataset.messageRole = m.type || m.role;
     if (m.content) el.dataset.rawText = m.content;
+    if (m.turn_id) el.dataset.turnId = m.turn_id;
+    if (m.agent_name) el.dataset.agentName = m.agent_name;
+    if (m.system_injected) el.dataset.systemInjected = '1';
     e.messages.insertBefore(el, anchor);
   }
 }
@@ -778,6 +781,125 @@ test('an orphan live turn does not leave older orphan blocks working', () => {
 // The browser-level copy of this lives in
 // tests/test_webchat_durable_state_behavior.py, which skips wherever headless
 // Chromium cannot render. This is the copy that always runs.
+
+// Real transcripts stamp every row with its turn identity, and wakeup turns
+// have NO user row at all. Opening the page-top orphan without the row's own
+// turn id gave it a synthetic one, so the next row of the SAME turn read as
+// an identity change and opened another block: a page of wakeup turns grew a
+// stack of empty untitled "Agent activity" blocks (observed after load-more).
+test('a load-more page of stamped wakeup turns builds one titled block per turn', () => {
+  const e = env('simplified');
+  startTurn(e, 'u9');
+  const live = e.row('a9');
+  live.dataset.messageRole = 'assistant';
+  live.dataset.rawText = 'live';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a9', turn_id: 'u9' }, live);
+  e.ctx.turnViewReconcile();
+
+  prependDeferredRows(e, [
+    { type: 'tool_call', msg_id: 'c0', turn_id: 'T1', agent_name: 'claude' },
+    { type: 'tool_result', msg_id: 'r0', turn_id: 'T1', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'a0', content: 'fin T1', turn_id: 'T1', agent_name: 'claude' },
+    { type: 'tool_call', msg_id: 'c1', turn_id: 'T2', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'a1', content: 'fin T2', turn_id: 'T2', agent_name: 'claude' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'BLOCK,a0,BLOCK,a1,u9,BLOCK,a9',
+     'one block per stamped turn, each followed by its answer');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(blocks.length, 3, 'no synthetic extra block per page top or per turn');
+  eq(blocks[0].querySelector('.simple-turn-title').textContent, 'claude',
+     'the block carries the agent identity from the rows');
+  eq(blocks[1].querySelector('.simple-turn-title').textContent, 'claude');
+});
+
+// Two detail blocks may never sit next to each other. A turn that produced
+// no visible answer (tool rows only) has no last message to separate its
+// block from the next one, so the next turn's activity files into the SAME
+// block. The only legal consecutive agent messages are a block's last
+// message followed by a wakeup boundary message.
+test('a tool-only turn merges into one block instead of stacking two', () => {
+  const e = env('simplified');
+  startTurn(e, 'u9');
+  const live = e.row('a9');
+  live.dataset.messageRole = 'assistant';
+  live.dataset.rawText = 'live';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a9', turn_id: 'u9' }, live);
+  e.ctx.turnViewReconcile();
+
+  prependDeferredRows(e, [
+    // T1 never answered: tool rows only.
+    { type: 'tool_call', msg_id: 'c0', turn_id: 'T1', agent_name: 'claude' },
+    { type: 'tool_result', msg_id: 'r0', turn_id: 'T1', agent_name: 'claude' },
+    // T2 starts on a tool row and ends with an answer.
+    { type: 'tool_call', msg_id: 'c1', turn_id: 'T2', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'a1', content: 'fin T2', turn_id: 'T2', agent_name: 'claude' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'BLOCK,a1,u9,BLOCK,a9',
+     'the answerless turn shares the block of the turn that follows');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(blocks.length, 2, 'no adjacent blocks on screen');
+  assert(blocks[0].querySelector('[data-msgid="c0"]'), 'T1 activity is inside the merged block');
+  assert(blocks[0].querySelector('[data-msgid="c1"]'), 'T2 activity is inside the merged block');
+});
+
+// A delegate/flash result or background-tool result is delivered as a
+// user-ROLE message (an imperative nudge), but it is agent activity: it
+// must file into the block's tool rows, never act as a user boundary.
+test('a system-injected user row files into the block instead of bounding', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  const c0 = e.row('c0');
+  c0.dataset.messageRole = 'tool_call';
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c0', turn_id: 'u1' }, c0);
+
+  // The delegate result nudge arrives mid-turn through the user path.
+  const nudge = e.row('n1');
+  nudge.dataset.messageRole = 'user';
+  nudge.dataset.systemInjected = '1';
+  nudge.dataset.rawText = '[Delegate result for task_id=x] finished';
+  e.ctx.turnViewRegisterUser(
+    { msg_id: 'n1', source: { name: 'system', delegate: { task_id: 'x' } } },
+    nudge);
+
+  const answer = e.row('a1');
+  answer.dataset.messageRole = 'assistant';
+  answer.dataset.rawText = 'done';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a1', turn_id: 'u1' }, answer);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a1',
+     'the nudge is not a boundary and does not sit at top level');
+  const block = e.block();
+  assert(block.querySelector('[data-msgid="n1"]'), 'the nudge is inside the block');
+});
+
+test('a load-more page with an injected result row keeps one block per turn', () => {
+  const e = env('simplified');
+  startTurn(e, 'u9');
+  const live = e.row('a9');
+  live.dataset.messageRole = 'assistant';
+  live.dataset.rawText = 'live';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a9', turn_id: 'u9' }, live);
+  e.ctx.turnViewReconcile();
+
+  prependDeferredRows(e, [
+    { type: 'tool_call', msg_id: 'c0', turn_id: 'T1', agent_name: 'claude' },
+    { type: 'user', msg_id: 'n0', turn_id: 'T1', system_injected: true,
+      content: '[Delegate result for task_id=x] finished' },
+    { type: 'assistant', msg_id: 'a0', content: 'fin T1', turn_id: 'T1', agent_name: 'claude' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'BLOCK,a0,u9,BLOCK,a9',
+     'the injected row neither bounds nor stays top level');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(blocks.length, 2);
+  assert(blocks[0].querySelector('[data-msgid="n0"]'), 'the injected row is filed inside the block');
+});
 test('the runtime snapshot rehydrates a live turn, and a done still closes the open one', () => {
   const e = env('simplified');
   const now = e.ctx.Date.now();

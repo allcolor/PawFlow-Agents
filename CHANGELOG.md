@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.186] — 2026-08-14
+
+### Fixed
+
+- Shared Claude Code interactive credential slots: one login can back any
+  number of concurrent containers (parent agents, flash delegates, task
+  sub-agents). `_claim_pool_slot_locked` now balances launches onto the
+  least-loaded slot instead of enforcing 1 login = 1 live container — the
+  hard cap that killed five of six flash agents instantly on a
+  single-credential pool with "All Claude Code credentials are in use".
+  The only credential error left is an empty pool (no `/cls` login).
+- Re-checked `_retrigger_after_done` after every post-turn retrigger
+  (bounded at 5 per idle transition). A delegate result landing during a
+  retrigger turn was drained by that turn's final drain — PendingQueue
+  emptied, so the post-idle wake saw nothing — and set the flag again,
+  which the one-shot check never re-read: the message was persisted into
+  context but no turn ever answered it (how the flash-agent failure
+  notices and the surviving auditor's report were silently dropped).
+
 ## [1.0.0-beta.185] — 2026-08-14
 
 ### Fixed

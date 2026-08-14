@@ -888,6 +888,52 @@ test('a fragment page starting on a text keeps its texts grouped', () => {
   eq(e.messages.querySelectorAll('.simple-turn-block').length, 2);
 });
 
+// A later page can bring back the turn's own USER row along with its older
+// rows, while the block a newer page built sits far below. Adopting that far
+// block filed the tool rows downward and stranded every narration text at
+// top level (_turnPromoteLast refuses a text sitting above the block) --
+// the user saw 'user > m1 > m2 > m3 > empty block' after load-more, still
+// broken in beta.188. The user row must leave the turn unopened so the rows
+// after it open their own fragment right there.
+test("a page bringing back the turn's own user row keeps narrations grouped", () => {
+  const e = env('simplified');
+  // Newer half of turn T already on screen, grouped by an earlier page.
+  const c9 = e.row('c9');
+  c9.dataset.messageRole = 'tool_call';
+  e.ctx.turnViewIngest('tool_call', { msg_id: 'c9', turn_id: 'T' }, c9);
+  const a9 = e.row('a9');
+  a9.dataset.messageRole = 'assistant';
+  a9.dataset.rawText = 'final answer';
+  e.ctx.turnViewIngest('assistant', { msg_id: 'a9', turn_id: 'T', content: 'final answer' }, a9);
+  e.ctx.turnViewReconcile();
+  eq(topLevelIds(e).join(','), 'BLOCK,a9', 'the newer half starts well formed');
+
+  // Load more: the turn's user row + narrations interleaved with tool rows.
+  prependDeferredRows(e, [
+    { type: 'user', msg_id: 'T', turn_id: 'T' },
+    { type: 'assistant', msg_id: 'm1', content: 'narration 1', turn_id: 'T', agent_name: 'claude' },
+    { type: 'tool_call', msg_id: 'c1', turn_id: 'T', agent_name: 'claude' },
+    { type: 'tool_result', msg_id: 'r1', turn_id: 'T', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'm2', content: 'narration 2', turn_id: 'T', agent_name: 'claude' },
+    { type: 'tool_call', msg_id: 'c2', turn_id: 'T', agent_name: 'claude' },
+    { type: 'assistant', msg_id: 'm3', content: 'narration 3', turn_id: 'T', agent_name: 'claude' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'T,BLOCK,m3,BLOCK,a9',
+     'user row, ONE fragment block promoting its last text, then the live half');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  eq(blocks.length, 2, 'fragment block + existing block, nothing else');
+  const frag = blocks[0];
+  for (const id of ['m1', 'c1', 'r1', 'm2', 'c2']) {
+    assert(frag.querySelector('[data-msgid="' + id + '"]'),
+           id + ' belongs to the fragment block');
+  }
+  // Reconciling again must not move anything: the layout is settled.
+  e.ctx.turnViewReconcile();
+  eq(topLevelIds(e).join(','), 'T,BLOCK,m3,BLOCK,a9', 'a second pass is a no-op');
+});
+
 // Two detail blocks may never sit next to each other. A turn that produced
 // no visible answer (tool rows only) has no last message to separate its
 // block from the next one, so the next turn's activity files into the SAME

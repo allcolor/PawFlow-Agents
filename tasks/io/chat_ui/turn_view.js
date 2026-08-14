@@ -410,7 +410,16 @@ function _turnCurrentState(create) {
   const anchor = (_turnOpen.state && _turnOpen.state.blockEl) || _turnOpen.userEl;
   if (!anchor || !anchor.isConnected) return null;
   if (!_turnOpen.state && create) {
-    _turnOpen.state = _turnCreateState(_turnOpen.turnId, _turnOpen.userEl, _turnOpen.data);
+    // Never clobber a turn whose block is already on screen (a newer page
+    // built it): the late-created state is a fragment of it, same as
+    // _turnOpenOrphanTurn, and keeps owning rows stamped with the real id.
+    let tid = _turnOpen.turnId;
+    const existing = simplifiedTurns.get(tid);
+    const fragOf = (existing && existing.blockEl && existing.blockEl.isConnected)
+      ? tid : '';
+    if (fragOf) tid = tid + '-frag' + (++_turnSeq);
+    _turnOpen.state = _turnCreateState(tid, _turnOpen.userEl, _turnOpen.data);
+    if (_turnOpen.state && fragOf) _turnOpen.state.fragOf = fragOf;
   }
   return _turnOpen.state;
 }
@@ -1418,10 +1427,19 @@ function turnViewReconcile() {
       const id = el.dataset.turnId || el.dataset.msgid || ('turn-' + (++_turnSeq));
       el.dataset.turnId = id;
       const existing = simplifiedTurns.get(id);
-      if (existing && existing.blockEl.isConnected) {
+      if (existing && existing.blockEl.isConnected
+          && el.nextSibling === existing.blockEl) {
+        // The turn's block already sits right under this boundary: adopt it.
         state = existing; touched.add(existing);
         open = { turnId: id, userEl: el, data: {}, state: existing };
       } else {
+        // No block yet -- or the block sits FAR BELOW because a newer page
+        // built it and this page brought back the turn's own user row and
+        // older rows. Adopting the far block files the rows that follow
+        // downward, and _turnPromoteLast refuses a text sitting above the
+        // block, so every narration was stranded at top level. Leave the
+        // turn unopened: the first row that follows opens its own fragment
+        // block right here, exactly like a page starting mid-turn.
         state = null;
         open = { turnId: id, userEl: el, data: {}, state: null };
       }
@@ -1566,10 +1584,14 @@ function _turnFileRow(state, el) {
   const msgId = (el.dataset && el.dataset.msgid) || '';
   const messageRow = tabKey === 'messages' ? _turnMessageRow(el) : null;
   if (msgId && messageRow) state.elementsByMsgId.set(msgId, messageRow);
-  if (tabKey === 'messages' && role !== 'system' && String(el.dataset.rawText || '').trim()) {
+  if (tabKey === 'messages' && role !== 'system' && String(el.dataset.rawText || '').trim()
+      && _turnRowBelongsHere(state, el)) {
     _turnPromoteLast(state, el);
     return;
   }
+  // A text that cannot sit under the block (it is ABOVE it -- an older row
+  // of a turn whose block a newer page built) still belongs to the turn:
+  // file it with the rest instead of leaving it stranded at top level.
   if (el.parentNode !== tab.bodyEl) tab.bodyEl.appendChild(el);
 }
 

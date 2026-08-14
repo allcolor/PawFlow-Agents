@@ -391,7 +391,17 @@ Two more invariants govern the reconciliation pass (`turnViewReconcile`):
   stamped with the turn's real id (`state.fragOf`): they file into the
   fragment block instead of reading as identity changes, which had left
   narration texts stray at top level, filed tool rows into the live block
-  far below, and stacked an empty "0s Completed" fragment block.
+  far below, and stacked an empty "0s Completed" fragment block. The same
+  protection applies when the page brings back the turn's own USER row: the
+  boundary adopts the existing state only if that block sits directly under
+  it — a far-below block (built by a newer page) is left alone and the rows
+  after the user row open their own fragment right there. Adopting the far
+  block filed tool rows downward and stranded every narration text at top
+  level, because `_turnPromoteLast` refuses a text sitting above the block
+  (`_turnRowBelongsHere`); `_turnFileRow` now also files such a text into
+  the messages tab instead of leaving it stranded, and a state created late
+  by `_turnCurrentState` derives a fragment identity rather than clobbering
+  an on-screen turn.
 - **Only the last block may be active.** After reconciliation, every block
   except the newest that still claims `working` is closed (as a reopenable
   guess). This is what prevents a load-more during a live turn from showing

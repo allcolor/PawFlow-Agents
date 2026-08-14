@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Simplified chat view: a load-more page bringing back a turn's own USER
+  row (with the turn's block already on screen, built by a newer page) no
+  longer strands the turn's narration texts at top level. The user
+  boundary adopts the existing state only when its block sits directly
+  under it; otherwise the rows after the user row open their own fragment
+  block right there. `_turnFileRow` files a text that cannot sit under the
+  block into the messages tab instead of leaving it stranded, and
+  `_turnCurrentState` derives a fragment identity instead of clobbering an
+  on-screen turn. This was the remaining cause of the "consecutive
+  top-level agent messages + empty '0s Completed' block" report, still
+  reproducible in beta.188 with the conversation's real transcript.
+
 ## [1.0.0-beta.188] — 2026-08-14
 
 ### Fixed

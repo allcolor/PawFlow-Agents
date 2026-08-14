@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+import threading
 
 from core.llm_client import LLMMessage
 
@@ -362,6 +363,74 @@ class _SubAgentExecutorLoopMixin:
         except Exception:
             _active_inst = None
 
+        # Coalescing background persister for the sub-conversation. The old
+        # code re-serialized and rewrote the ENTIRE transcript synchronously
+        # on every iteration (O(iterations × messages)) between the tool
+        # round and the next LLM call. Serialization is now incremental
+        # (messages only grow; a compaction that swaps the list triggers a
+        # rebuild) and the rewrite runs on a worker thread that coalesces
+        # bursts. The finally block flushes the final state synchronously.
+        _sub_cache = {"rows": [], "src": None}
+        _sub_persist = {"dirty": False, "running": False, "rows": []}
+        _sub_persist_lock = threading.Lock()
+
+        def _serialize_sub_msg(m):
+            d = {"role": m.role, "content": m.content}
+            if hasattr(m, 'tool_calls') and m.tool_calls:
+                d["tool_calls"] = [
+                    {"id": tc.id, "name": tc.name,
+                     "arguments": tc.arguments}
+                    for tc in m.tool_calls
+                ]
+            if getattr(m, 'thinking', ''):
+                d["thinking"] = m.thinking
+            if getattr(m, 'thinking_signature', ''):
+                d["thinking_signature"] = m.thinking_signature
+            if hasattr(m, 'tool_call_id') and m.tool_call_id:
+                d["tool_call_id"] = m.tool_call_id
+            return d
+
+        def _sub_rows_snapshot():
+            if (_sub_cache["src"] is not messages
+                    or len(messages) < len(_sub_cache["rows"])):
+                _sub_cache["rows"] = [_serialize_sub_msg(m) for m in messages]
+                _sub_cache["src"] = messages
+            else:
+                _sub_cache["rows"].extend(
+                    _serialize_sub_msg(m)
+                    for m in messages[len(_sub_cache["rows"]):])
+            return list(_sub_cache["rows"])
+
+        def _sub_persist_save(rows):
+            try:
+                from core.conversation_store import ConversationStore
+                ConversationStore.instance().save(
+                    sub_conv_id, rows, user_id=task.user_id)
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
+
+        def _sub_persist_worker():
+            while True:
+                with _sub_persist_lock:
+                    if not _sub_persist["dirty"]:
+                        _sub_persist["running"] = False
+                        return
+                    _sub_persist["dirty"] = False
+                    rows = _sub_persist["rows"]
+                _sub_persist_save(rows)
+
+        def _schedule_sub_persist():
+            if not sub_conv_id or task.ephemeral:
+                return
+            rows = _sub_rows_snapshot()
+            with _sub_persist_lock:
+                _sub_persist["rows"] = rows
+                _sub_persist["dirty"] = True
+                if not _sub_persist["running"]:
+                    _sub_persist["running"] = True
+                    threading.Thread(
+                        target=_sub_persist_worker, daemon=True).start()
+
         try:
             for iteration in range(1, max_iter + 1):
                 if _active_inst and _active_ctx_key:
@@ -635,31 +704,9 @@ class _SubAgentExecutorLoopMixin:
                         conversation_id=sub_conv_id or task.parent_conversation_id,
                     ))
 
-                # Persist sub-conversation after each iteration
-                if sub_conv_id and not task.ephemeral:
-                    try:
-                        from core.conversation_store import ConversationStore
-                        _store = ConversationStore.instance()
-                        def _serialize_msg(m):
-                            d = {"role": m.role, "content": m.content}
-                            if hasattr(m, 'tool_calls') and m.tool_calls:
-                                d["tool_calls"] = [
-                                    {"id": tc.id, "name": tc.name,
-                                     "arguments": tc.arguments}
-                                    for tc in m.tool_calls
-                                ]
-                            if getattr(m, 'thinking', ''):
-                                d["thinking"] = m.thinking
-                            if getattr(m, 'thinking_signature', ''):
-                                d["thinking_signature"] = m.thinking_signature
-                            if hasattr(m, 'tool_call_id') and m.tool_call_id:
-                                d["tool_call_id"] = m.tool_call_id
-                            return d
-                        _store.save(sub_conv_id,
-                                    [_serialize_msg(m) for m in messages],
-                                    user_id=task.user_id)
-                    except Exception:
-                        logger.debug("exception suppressed", exc_info=True)
+                # Persist sub-conversation after each iteration (coalesced,
+                # off the critical path — see _schedule_sub_persist above).
+                _schedule_sub_persist()
 
                 if _append_live_delegate_pending():
                     continue
@@ -681,6 +728,10 @@ class _SubAgentExecutorLoopMixin:
             result.error = _err
             result.status = "error"
         finally:
+            # Final synchronous flush — the background persister may not
+            # have written the last iteration's state yet.
+            if sub_conv_id and not task.ephemeral:
+                _sub_persist_save(_sub_rows_snapshot())
             # Release capacity slot
             if resolved_svc and hasattr(resolved_svc, 'release'):
                 resolved_svc.release()

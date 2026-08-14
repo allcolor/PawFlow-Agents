@@ -177,8 +177,10 @@ class _CCITurnCoordinator:
         self.lifecycle_events: list[dict] = []
         self.current_block_type = None
         self._block_types: dict[int, str] = {}
-        self._text_block_bufs: dict[int, str] = {}
-        self._thinking_block_bufs: dict[int, str] = {}
+        # Per-block accumulators are append+join (quadratic string += on
+        # str-keyed dicts was the old cost on long streamed blocks).
+        self._text_block_bufs: dict[int, list] = {}
+        self._thinking_block_bufs: dict[int, list] = {}
         self._thinking_redacted: dict[int, bool] = {}
         self._thinking_start: dict[int, float] = {}
         self._thinking_end: dict[int, float] = {}
@@ -451,7 +453,8 @@ class _CCITurnCoordinator:
                         self._mark_redacted_thinking(idx)
                     continue
                 if dtype == "input_json_delta" and idx in self.tool_blocks:
-                    self.tool_blocks[idx]["json"] += delta.get("partial_json", "")
+                    self.tool_blocks[idx].setdefault("json_parts", []).append(
+                        delta.get("partial_json", ""))
                     continue
                 thinking_text = (
                     delta.get("thinking", "")
@@ -562,7 +565,7 @@ class _CCITurnCoordinator:
 
     def _append_text(self, text: str, idx: int = 0) -> None:
         if text:
-            self._text_block_bufs[idx] = self._text_block_bufs.get(idx, "") + text
+            self._text_block_bufs.setdefault(idx, []).append(text)
             self.text_parts.append(text)
             self._message_text_parts.append(text)
             if self.callback:
@@ -575,7 +578,7 @@ class _CCITurnCoordinator:
 
     def _append_thinking(self, text: str, idx: int = 0) -> None:
         if text:
-            self._thinking_block_bufs[idx] = self._thinking_block_bufs.get(idx, "") + text
+            self._thinking_block_bufs.setdefault(idx, []).append(text)
             if self.thinking_callback:
                 self.thinking_callback(text)
 
@@ -588,7 +591,7 @@ class _CCITurnCoordinator:
     def _flush_text_block(self, idx: int) -> None:
         if idx not in self._text_block_bufs:
             return
-        text = self._text_block_bufs.pop(idx, "")
+        text = "".join(self._text_block_bufs.pop(idx, []))
         if self.block_callback:
             self.block_callback("text", {"text": text})
 
@@ -600,7 +603,7 @@ class _CCITurnCoordinator:
         redacted = self._thinking_redacted.get(idx, False)
         if idx not in self._thinking_block_bufs and not redacted:
             return
-        thinking = self._thinking_block_bufs.pop(idx, "")
+        thinking = "".join(self._thinking_block_bufs.pop(idx, []))
         synthesized = False
         if not thinking and redacted:
             duration = max(0.0, self._thinking_end.get(idx, 0.0) - self._thinking_start.get(idx, 0.0))
@@ -666,11 +669,20 @@ class _CCITurnCoordinator:
         """
         return result
 
+    @staticmethod
+    def _fold_tool_json(block: dict) -> None:
+        """Fold accumulated input_json_delta parts into block['json']."""
+        parts = block.get("json_parts")
+        if parts:
+            block["json"] = (block.get("json", "") or "") + "".join(parts)
+            parts.clear()
+
     def _emit_tool_use(self, idx: int) -> None:
         block = self.tool_blocks.get(idx) or {}
         if not block or block.get("emitted"):
             return
         tool_id = block.get("id") or f"cci_{uuid.uuid4().hex[:12]}"
+        self._fold_tool_json(block)
         raw = block.get("json", "") or "{}"
         args = _loads_tolerant(raw)
         display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
@@ -758,6 +770,7 @@ class _CCITurnCoordinator:
         block["emitted"] = True
         self.emitted_tool_use_ids.add(tc_id)
         self.emitted_tool_use_ids.update(alias_ids)
+        self._fold_tool_json(block)
         args = _loads_tolerant(block.get("json", "") or "{}")
         display_name, display_args = normalize_observed_tool(block.get("name", ""), args)
         display_args = self._displayable_args(display_name, display_args)

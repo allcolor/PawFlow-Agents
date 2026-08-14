@@ -621,7 +621,9 @@ class _CCStreamMixin:
             st._reader_thread = st._live_session.reader_thread
             st._reader_stop = st._live_session.stop_event
         else:
-            st._event_q = queue.Queue()
+            # Bounded: a stalled dispatch loop must backpressure the reader
+            # (blocking put) instead of growing the queue without limit.
+            st._event_q = queue.Queue(maxsize=10000)
             st._reader_stop = threading.Event()
 
 

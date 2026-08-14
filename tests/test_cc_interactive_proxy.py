@@ -4,6 +4,61 @@ import json
 import threading
 import time
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _reset_observed_emission_dedup():
+    # The proxy dedups observed tool blocks at the source for the lifetime of
+    # its process; tests reuse call ids across cases, so each starts clean.
+    from tools import cc_interactive_observers as observers
+    observers._OBSERVED_EMITTED_USES.clear()
+    observers._OBSERVED_EMITTED_RESULTS.clear()
+    yield
+
+
+def test_observed_blocks_are_emitted_once_across_requests(monkeypatch):
+    """Every request re-sends the whole history; only NEW blocks may emit.
+
+    Without source dedup the proxy re-emitted every historical tool block on
+    every /v1/messages request — event volume grew with the square of the
+    turn count and delivery lagged the coordinator by more than a minute on
+    a large-context session (the lost-final-answer incident).
+    """
+    monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")
+    proxy = importlib.import_module("tools.cc_interactive_proxy")
+    events = []
+    monkeypatch.setattr(proxy.EVENTS, "emit", events.append)
+    body = json.dumps({"messages": [
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu-dedup-1", "name": "bash",
+             "input": {"command": "true"}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu-dedup-1",
+             "content": "ok"}]},
+    ]}).encode()
+    proxy._emit_observed_tool_blocks("req-1", "/v1/messages?beta=true", body)
+    assert [e["type"] for e in events] == ["tool_use", "tool_result"]
+    # The next request replays the same history plus one new pair.
+    body2 = json.dumps({"messages": [
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu-dedup-1", "name": "bash",
+             "input": {"command": "true"}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu-dedup-1",
+             "content": "ok"}]},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu-dedup-2", "name": "read",
+             "input": {"path": "/x"}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu-dedup-2",
+             "content": "data"}]},
+    ]}).encode()
+    events.clear()
+    proxy._emit_observed_tool_blocks("req-2", "/v1/messages?beta=true", body2)
+    assert [(e["type"], e["tool_use_id"]) for e in events] == [
+        ("tool_use", "toolu-dedup-2"), ("tool_result", "toolu-dedup-2")]
+
 
 def test_proxy_observes_responses_function_calls_and_outputs(monkeypatch):
     monkeypatch.setenv("PAWFLOW_CCI_SESSION_TOKEN", "sess")

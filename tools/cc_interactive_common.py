@@ -28,7 +28,10 @@ EVENT_URL = os.environ.get("PAWFLOW_CCI_EVENT_URL", "")
 EVENT_TOKEN = os.environ.get("PAWFLOW_CCI_EVENT_TOKEN", "")
 
 def _log(msg: str) -> None:
-    sys.stderr.write(f"[cc-interactive-proxy] {msg}\n")
+    # UTC wall-clock prefix: diagnosing event-delivery lag between the proxy
+    # and the server needs to compare both logs on the same clock.
+    stamp = time.strftime("%H:%M:%S", time.gmtime())
+    sys.stderr.write(f"[cc-interactive-proxy] {stamp} {msg}\n")
     sys.stderr.flush()
 
 # The shell that starts this proxy appends its stderr to a capture file on the

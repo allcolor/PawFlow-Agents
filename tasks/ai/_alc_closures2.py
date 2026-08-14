@@ -485,6 +485,11 @@ class _ALCClosures2Mixin:
             st._append(msg)  # persists immediately + publishes new_message (+ thinking_content)
             turn_msgs.append(msg)
             st.client._last_turn_msg_id = getattr(msg, "msg_id", "")
+            # Only a message with visible content may be named the turn's
+            # final answer: a later thinking-only flush overwrites
+            # _last_turn_msg_id, and naming that row final made the
+            # turn_final patch miss and the UI hoist an empty answer.
+            st.client._last_turn_visible_msg_id = getattr(msg, "msg_id", "")
             if not tool_calls:
                 st._release_active_after_terminal_visible_answer()
         elif _text_thinking:
@@ -691,6 +696,9 @@ class _ALCClosures2Mixin:
                 conversation_id=st.conversation_id)
             st._append(msg)
             st.client._last_turn_msg_id = getattr(msg, "msg_id", "")
+            # See the turn-flush twin above: only visible content may be
+            # named the turn's final answer.
+            st.client._last_turn_visible_msg_id = getattr(msg, "msg_id", "")
             return
 
         if event_type in ("thinking", "thinking_content"):

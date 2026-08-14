@@ -91,6 +91,27 @@ class SSEObserver:
                 f"event={event_name} payload_type={type(payload).__name__}")
         EVENTS.emit(ev)
 
+# Every /v1/messages request re-sends the whole conversation history, so
+# without source-side dedup the proxy re-emits every historical tool block on
+# every request — event volume (and delivery lag) grows with the square of
+# the turn count, and a 2 MB-context session lagged the event channel by more
+# than a minute. The server keeps its own per-session dedup; these sets only
+# stop the redundant wire traffic. Cleared wholesale at the cap: the server
+# dedup makes a one-off re-emission burst harmless.
+_OBSERVED_EMITTED_USES: set = set()
+_OBSERVED_EMITTED_RESULTS: set = set()
+_OBSERVED_EMITTED_CAP = 100_000
+
+
+def _observed_first_emission(seen: set, tool_use_id: str) -> bool:
+    if tool_use_id in seen:
+        return False
+    if len(seen) >= _OBSERVED_EMITTED_CAP:
+        seen.clear()
+    seen.add(tool_use_id)
+    return True
+
+
 def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
     try:
         payload = json.loads(body.decode("utf-8"))
@@ -106,6 +127,8 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
             output = observed_call_output(item)
             if output:
                 call_id, result = output
+                if not _observed_first_emission(_OBSERVED_EMITTED_RESULTS, call_id):
+                    continue
                 EVENTS.emit({
                     "type": "tool_result",
                     "request_id": request_id,
@@ -118,6 +141,8 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
             call = observed_call_item(item)
             if call:
                 call_id, tool_name, args = call
+                if not _observed_first_emission(_OBSERVED_EMITTED_USES, call_id):
+                    continue
                 display_name, display_args = normalize_observed_tool(
                     tool_name, args if isinstance(args, dict) else {})
                 EVENTS.emit({
@@ -151,6 +176,8 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
                 tool_use_id = block.get("id") or ""
                 if not tool_use_id:
                     continue
+                if not _observed_first_emission(_OBSERVED_EMITTED_USES, tool_use_id):
+                    continue
                 args = block.get("input") or {}
                 tool_name = block.get("name", "")
                 display_name, display_args = normalize_observed_tool(tool_name, args)
@@ -169,6 +196,8 @@ def _emit_observed_tool_blocks(request_id: str, path: str, body: bytes) -> None:
             elif role == "user" and btype == "tool_result":
                 tool_use_id = block.get("tool_use_id") or block.get("id") or ""
                 if not tool_use_id:
+                    continue
+                if not _observed_first_emission(_OBSERVED_EMITTED_RESULTS, tool_use_id):
                     continue
                 result = _content_text(block.get("content"))
                 _log(

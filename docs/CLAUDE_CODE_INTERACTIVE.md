@@ -325,6 +325,18 @@ Timing controls are read once when the provider modules are imported:
   Default: `2.5` seconds.
 - `PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_MS` is the millisecond alias for the same
   value. The seconds variable wins if both are set.
+- `PAWFLOW_CCI_POST_STOP_PENDING_RESPONSE_CAP_SECONDS` bounds how long the
+  post-Stop drain is HELD OPEN while a response is still owed: a
+  `/v1/messages` request whose start was observed but whose end was not, or
+  a follow-up after a response ended on `stop_reason=tool_use`. The `Stop`
+  hook travels on its own connection and can outrun lagging SSE delivery;
+  finalizing on idle then returned the turn without its final text and left
+  the straggler events to be drained by the NEXT turn under the wrong turn
+  id. Default `90` seconds for an open request; a merely owed follow-up
+  (whose request may never come — the reader pressed `Esc` in the tmux)
+  waits at most `20` seconds. When a delayed response completes with
+  nothing further owed, the coordinator re-arms the stop latch itself,
+  since no second `Stop` hook ever comes for a delayed replay.
 - `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS` sets how long a submitted tmux
   prompt may produce no observed proxy event before PawFlow treats the turn as
   failed. Default: `300` seconds.
@@ -371,6 +383,13 @@ The provider assembles responses from those events:
 - `tool_use` blocks and `input_json_delta` are emitted as live observed tool
   events for display/persistence only. PawFlow never re-executes them; Claude
   Code already ran those tools inside its own session.
+- The proxy deduplicates observed tool blocks at the source: every
+  `/v1/messages` request re-sends the whole conversation history, and
+  re-emitting each historical block on each request made event volume — and
+  delivery lag — grow with the square of the turn count. Each `tool_use_id`'s
+  use and result are emitted once per proxy process; the server keeps its own
+  per-session dedup, so a proxy restart's one-off re-emission burst is
+  harmless.
 - **No tool call is filtered.** Every observed call is emitted and persisted,
   native ones included — `GetSchema`, `ToolSearch`, and Claude Code's `Read` of
   `.pawflow_cci/initial_context.md` among them. These were once suppressed as

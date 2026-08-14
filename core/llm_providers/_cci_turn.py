@@ -47,6 +47,15 @@ _POST_STOP_IDLE_DRAIN_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_POST_STOP_IDLE_DRAIN_MS", "PAWFLOW_CCI_DRAIN_MS"),
     default=2.5,
 )
+# How long a Stop may wait for a response the wire still owes (an open
+# /v1/messages request, or a follow-up after stop_reason=tool_use) before
+# finalizing anyway. Generous: with source-side dedup the event channel lags
+# by milliseconds; this only matters when delivery is genuinely degraded.
+_POST_STOP_PENDING_RESPONSE_CAP_SECONDS = _env_seconds(
+    ("PAWFLOW_CCI_POST_STOP_PENDING_RESPONSE_CAP_SECONDS",),
+    ("PAWFLOW_CCI_POST_STOP_PENDING_RESPONSE_CAP_MS",),
+    default=90.0,
+)
 _NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_SECONDS"),
     ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_MS"),
@@ -179,6 +188,17 @@ class _CCITurnCoordinator:
         self._saw_model_content = False
         self._stop_seen = False
         self._post_stop_last_event_at = 0.0
+        # Stop must not finalize a turn whose answer is still on the wire.
+        # `_open_messages_requests` holds /v1/messages requests whose start
+        # was observed but whose end was not; `_awaiting_followup` is set when
+        # a response ended on stop_reason=tool_use, because the CLI then owes
+        # another request whose start may not have been delivered yet (event
+        # delivery can lag the hook channel). Either one holds the post-Stop
+        # drain open, bounded by _POST_STOP_PENDING_RESPONSE_CAP_SECONDS.
+        self._open_messages_requests: set = set()
+        self._awaiting_followup = False
+        self._stop_seen_at = 0.0
+        self._pending_response_hold_logged = False
         self._turn_callback_sent = False
         self._saw_proxy_event = False
         self._first_event_at = 0.0
@@ -201,6 +221,44 @@ class _CCITurnCoordinator:
             self.usage_callback(dict(self.usage))
         except Exception:
             logger.debug("cci usage observation callback failed", exc_info=True)
+
+    def _response_still_owed(self) -> bool:
+        """True while a Stop must keep draining instead of finalizing.
+
+        A /v1/messages request whose start was observed but whose end was not
+        is still streaming its answer; a response that ended on
+        stop_reason=tool_use owes a follow-up request that may not have been
+        delivered yet. Finalizing then returns a turn missing its final text
+        (it only ever reached tmux) and leaves the stragglers to be drained
+        by the NEXT turn under the wrong turn id. Bounded: past the cap the
+        wire is considered dead and the turn finishes with what it has.
+        """
+        if not (self._open_messages_requests or self._awaiting_followup):
+            return False
+        waited = time.time() - (self._stop_seen_at or time.time())
+        # An OPEN request is proof the answer is streaming: wait the full cap.
+        # A mere owed follow-up may never come (the reader pressed Esc in the
+        # tmux and the CLI stopped after its tools): only wait long enough for
+        # its request_start to be delivered.
+        cap = (_POST_STOP_PENDING_RESPONSE_CAP_SECONDS
+               if self._open_messages_requests
+               else min(_POST_STOP_PENDING_RESPONSE_CAP_SECONDS, 20.0))
+        if waited >= cap:
+            logger.warning(
+                "[cci-provider] session=%s pending response never arrived "
+                "within %.0fs of Stop (open=%d awaiting_followup=%s) — "
+                "finalizing with partial turn",
+                self.session_token[:8], waited,
+                len(self._open_messages_requests), self._awaiting_followup)
+            return False
+        if not self._pending_response_hold_logged:
+            self._pending_response_hold_logged = True
+            logger.info(
+                "[cci-provider] session=%s Stop seen but a response is still "
+                "owed (open=%d awaiting_followup=%s) — holding the drain",
+                self.session_token[:8],
+                len(self._open_messages_requests), self._awaiting_followup)
+        return True
 
     def _wait_event(self, timeout: float) -> dict:
         """Poll the session queue, asserting we still own the stream.
@@ -242,6 +300,8 @@ class _CCITurnCoordinator:
                         continue
                     idle_for = time.time() - self._post_stop_last_event_at
                     if idle_for >= _POST_STOP_IDLE_DRAIN_SECONDS:
+                        if self._response_still_owed():
+                            continue
                         done = self._finish_turn_if_ready()
                 continue
             if self.touch_callback:
@@ -266,6 +326,7 @@ class _CCITurnCoordinator:
                         and not event.get("ignore_reason")):
                     self._request_saw_model_content.setdefault(request_id, False)
                     self._request_saw_tool_use.setdefault(request_id, False)
+                    self._open_messages_requests.add(request_id)
                     # A fresh /v1/messages request after a Stop means the turn
                     # is still going — typically a PawFlow preempt injected a
                     # new prompt into the live session, extending the turn past
@@ -284,6 +345,8 @@ class _CCITurnCoordinator:
                 continue
             if etype == "request_stop":
                 self._saw_proxy_event = True
+                self._open_messages_requests.discard(
+                    event.get("request_id", "") or "")
                 continue
             if etype == "response_ignored":
                 self._saw_proxy_event = True
@@ -305,6 +368,8 @@ class _CCITurnCoordinator:
                 if hook_name == "Stop":
                     self._stop_seen = True
                     self._post_stop_last_event_at = time.time()
+                    if not self._stop_seen_at:
+                        self._stop_seen_at = time.time()
                 elif hook_name == "StopFailure":
                     info = event.get("input") or {}
                     detail = info.get("error") or "Claude Code interactive turn failed"
@@ -322,6 +387,7 @@ class _CCITurnCoordinator:
                 # _last_message_text always holds the latest completed
                 # message that produced text.
                 self._finalize_message_text()
+                self._awaiting_followup = False
                 msg = payload.get("message") or {}
                 model = msg.get("model")
                 if model:
@@ -416,10 +482,35 @@ class _CCITurnCoordinator:
                 stop_reason = delta.get("stop_reason") or payload.get("stop_reason") or ""
                 if request_id and stop_reason:
                     self._request_stop_reasons[request_id] = str(stop_reason)
+                if stop_reason:
+                    # tool_use means the CLI owes another /v1/messages call
+                    # for the model's continuation; any other stop reason
+                    # settles the debt.
+                    self._awaiting_followup = (str(stop_reason) == "tool_use")
                 usage = payload.get("usage") or {}
                 if usage:
                     self.usage.update(usage)
             elif ptype == "message_stop":
+                self._open_messages_requests.discard(
+                    event.get("request_id", "") or "")
+                # A post-Stop request_start clears the stop latch expecting a
+                # NEW Stop hook — but when that request was only the delayed
+                # delivery of a response the Stop already covered, no second
+                # Stop ever comes and the coordinator would wait forever.
+                # The response is now complete and nothing further is owed:
+                # re-arm the latch so the normal idle drain can finish. A
+                # genuine preempt-extended turn ends on stop_reason=tool_use
+                # or keeps a request open, so it is not re-armed here; and if
+                # its real Stop still fires, a second latch set is harmless.
+                if (not self._stop_seen and self._stop_seen_at
+                        and not self._open_messages_requests
+                        and not self._awaiting_followup):
+                    logger.info(
+                        "[cci-provider] session=%s delayed response completed "
+                        "after Stop — re-arming stop latch",
+                        self.session_token[:8])
+                    self._stop_seen = True
+                    self._post_stop_last_event_at = time.time()
                 continue
 
         self._finalize_message_text()

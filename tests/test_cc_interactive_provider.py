@@ -3729,3 +3729,104 @@ def test_observed_wire_prompt_size_feeds_the_context_gauge():
     client._cci_record_observed_context(_Coord(), "conv-1", "claude")
     assert client._cli_observed_context_tokens_by_stream[
         ("conv-1", "claude")] == 228_422
+
+
+class _ScriptedEvents:
+    """wait_event returns each scripted item in order; {} entries model an
+    empty-queue poll (delivery lag). Exhaustion fails the test loudly."""
+
+    def __init__(self, script):
+        self.script = list(script)
+
+    def wait_event(self, session_token, timeout=None, epoch=None):
+        if not self.script:
+            raise AssertionError(
+                "scripted event queue exhausted before the turn completed")
+        return self.script.pop(0)
+
+
+def test_stop_holds_for_the_delayed_final_response(monkeypatch):
+    """The lost-final-answer incident: the Stop hook (own channel) outruns
+    the SSE events of the final response (delivery lag). The coordinator must
+    hold the drain while a follow-up is owed, absorb the delayed response,
+    and finish with the real final text — instead of finalizing on 2.5s of
+    idle and leaving the answer for the NEXT turn to salvage under the wrong
+    turn id."""
+    import core.llm_providers._cci_turn as cci_turn
+    monkeypatch.setattr(cci_turn, "_POST_STOP_IDLE_DRAIN_SECONDS", 0.0)
+
+    script = [
+        # First response ends on tool_use: a follow-up request is owed.
+        _sse("message_start", {"type": "message_start",
+                               "message": {"usage": {"input_tokens": 5}}}),
+        _sse("content_block_start", {"type": "content_block_start", "index": 0,
+                                     "content_block": {"type": "text"}}),
+        _sse("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                     "delta": {"type": "text_delta",
+                                               "text": "running tools"}}),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        _sse("message_delta", {"type": "message_delta",
+                               "delta": {"stop_reason": "tool_use"}}),
+        _sse("message_stop", {"type": "message_stop"}),
+        # The Stop hook arrives on its own channel, ahead of the lagging SSE.
+        {"type": "hook", "hook_event_name": "Stop",
+         "input": {"hook_event_name": "Stop"}},
+        {},  # empty poll: idle drain expires but a follow-up is owed -> hold
+        # The delayed final request now arrives (clears the stop latch).
+        {"type": "request_start", "request_id": "req-final",
+         "path": "/v1/messages?beta=true"},
+        _sse("message_start", {"type": "message_start",
+                               "message": {"usage": {"input_tokens": 9}}}),
+        _sse("content_block_start", {"type": "content_block_start", "index": 0,
+                                     "content_block": {"type": "text"}}),
+        _sse("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                     "delta": {"type": "text_delta",
+                                               "text": "the real final answer"}}),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        _sse("message_delta", {"type": "message_delta",
+                               "delta": {"stop_reason": "end_turn"}}),
+        # message_stop completes the delayed response with nothing further
+        # owed: the coordinator re-arms the stop latch itself (no second
+        # Stop hook ever comes for a delayed replay).
+        _sse("message_stop", {"type": "message_stop"}),
+        {},  # empty poll: nothing owed anymore -> finish
+    ]
+    for entry in script:
+        if entry.get("type") == "sse":
+            entry["request_id"] = entry.get("request_id", "req-final")
+
+    blocks = []
+    resp = _CCITurnCoordinator(
+        _ScriptedEvents(script), "sess",
+        block_callback=lambda kind, payload: blocks.append((kind, payload)),
+    ).run()
+
+    assert resp.content == "the real final answer"
+    assert ("text", {"text": "the real final answer"}) in blocks
+
+
+def test_stop_pending_response_hold_is_bounded(monkeypatch):
+    """A follow-up owed forever (reader pressed Esc in the tmux) must not
+    hold the turn open past the cap."""
+    import core.llm_providers._cci_turn as cci_turn
+    monkeypatch.setattr(cci_turn, "_POST_STOP_IDLE_DRAIN_SECONDS", 0.0)
+    monkeypatch.setattr(
+        cci_turn, "_POST_STOP_PENDING_RESPONSE_CAP_SECONDS", 0.0)
+
+    script = [
+        _sse("message_start", {"type": "message_start", "message": {}}),
+        _sse("content_block_start", {"type": "content_block_start", "index": 0,
+                                     "content_block": {"type": "text"}}),
+        _sse("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                     "delta": {"type": "text_delta",
+                                               "text": "partial"}}),
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        _sse("message_delta", {"type": "message_delta",
+                               "delta": {"stop_reason": "tool_use"}}),
+        _sse("message_stop", {"type": "message_stop"}),
+        {"type": "hook", "hook_event_name": "Stop",
+         "input": {"hook_event_name": "Stop"}},
+        {},  # owed follow-up, but the cap already expired -> finish anyway
+    ]
+    resp = _CCITurnCoordinator(_ScriptedEvents(script), "sess").run()
+    assert resp.content == "partial"

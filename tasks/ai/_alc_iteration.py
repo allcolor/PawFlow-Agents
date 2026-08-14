@@ -423,11 +423,18 @@ class _ALCIterationMixin:
                 # Patch the persisted turn message with token +
                 # context-gauge data (turn_callback persisted it
                 # without tokens).
+                # Both the gauge patch and the final marker must target a row
+                # with visible content: a thinking-only flush also updates
+                # _last_turn_msg_id, and naming that row made the turn_final
+                # patch match no transcript row and the UI hoist an empty
+                # answer while the real one sat unmarked.
+                _visible_mid = (
+                    getattr(st.client, '_last_turn_visible_msg_id', '')
+                    or getattr(st.client, '_last_turn_msg_id', ''))
                 st._schedule_cc_turn_gauge_patch(
-                    st.response, getattr(st.client, '_last_turn_msg_id', ''),
-                    "final")
+                    st.response, _visible_mid, "final")
                 st.final_msg_id = (
-                    getattr(st.client, '_last_turn_msg_id', '')
+                    _visible_mid
                     or (st.all_assistant_msg_ids[-1]
                         if st.all_assistant_msg_ids else "")
                 )

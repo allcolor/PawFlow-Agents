@@ -916,7 +916,7 @@ security.set_oauth_config("google", {
 
 ### 15.3. Listener Auth
 
-The listener authenticates users through PawFlow session cookies/API keys and applies route-level capability tokens for browser-accessible runtime resources such as VNC, terminal, code-server, and port-forward routes.
+The listener authenticates users through PawFlow session cookies/API keys and applies route-level capability tokens for browser-accessible runtime resources such as VNC, terminal, code-server, and port-forward routes. Browser sessions use a sliding expiry: every authenticated cookie request refreshes the browser cookie and the in-memory session, while the renewed server-side expiry is persisted at most once every five minutes so active logins survive a server restart without writing the session file on every request. Explicit logout still revokes the session and its bound capability tokens immediately.
 
 ---
 

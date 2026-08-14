@@ -10,7 +10,7 @@ Key functions:
   collect_files(target) — list all code files in a directory
 """
 
-from core.graphify.detect import detect, classify_file  # noqa: F401
-from core.graphify.extract import extract, collect_files  # noqa: F401
-from core.graphify.build import build, build_from_json  # noqa: F401
-from core.graphify.validate import validate_extraction  # noqa: F401
+from .detect import detect, classify_file  # noqa: F401
+from .extract import extract, collect_files  # noqa: F401
+from .build import build, build_from_json  # noqa: F401
+from .validate import validate_extraction  # noqa: F401

@@ -172,6 +172,7 @@ class SecurityManager:
     def __init__(self):
         self._users: Dict[str, User] = {}
         self._sessions: Dict[str, Session] = {}
+        self._session_persisted_at: Dict[str, float] = {}
         self._session_ttl = 3600 * 8  # 8 hours
         self._oauth_config: Dict[str, Any] = {}
         self._api_keys: Dict[str, str] = {}
@@ -305,18 +306,21 @@ class SecurityManager:
         # will attempt silent refresh using session.oauth_provider before giving up.
         if session.is_expired:
             return session  # return as-is, caller checks is_expired
-        # Sliding window: extend session on each access
-        new_expiry = time.time() + self._session_ttl
-        # Persist if extended by more than 5 minutes
-        if new_expiry - session.expires_at > 300:
-            session.expires_at = new_expiry
+        # Sliding window: extend on every access, but persist at most once every
+        # five minutes. Comparing against the previous in-memory expiry would
+        # never save an actively used session because each frequent request
+        # moves that value forward again before the threshold is reached.
+        now = time.time()
+        session.expires_at = now + self._session_ttl
+        last_persisted = self._session_persisted_at.get(
+            session.session_id, now)
+        if now - last_persisted >= 300:
             self._save_sessions()
-        else:
-            session.expires_at = new_expiry
         return session
 
     def logout(self, session_id: str):
         self._sessions.pop(session_id, None)
+        self._session_persisted_at.pop(session_id, None)
         self._save_sessions()
         # Drop every capability token (VNC, terminal, code-server, etc.)
         # bound to this login session so a leaked URL stops working the
@@ -470,6 +474,9 @@ class SecurityManager:
                     groups=list(s.get("groups") or []),
                 )
                 self._sessions[session.session_id] = session
+                self._session_persisted_at[session.session_id] = (
+                    float(expires_at) - self._session_ttl
+                    if expires_at else now)
             if self._sessions or skipped:
                 logger.info(f"Restored {len(self._sessions)} session(s) from disk"
                             + (f" ({skipped} stale removed)" if skipped else ""))
@@ -502,6 +509,8 @@ class SecurityManager:
         ]
         with open(path, 'w') as f:
             json.dump({"sessions": sessions}, f, indent=2)
+        for session in sessions:
+            self._session_persisted_at[session["session_id"]] = now
 
     # -- Cleanup --
 
@@ -513,6 +522,7 @@ class SecurityManager:
                  if s.expires_at > 0 and now - s.expires_at > self._SESSION_HARD_EXPIRY]
         for sid in stale:
             del self._sessions[sid]
+            self._session_persisted_at.pop(sid, None)
         if stale:
             self._save_sessions()
         return len(stale)
@@ -521,4 +531,5 @@ class SecurityManager:
         """Hard-delete a session (after failed silent refresh)."""
         if session_id in self._sessions:
             del self._sessions[session_id]
+            self._session_persisted_at.pop(session_id, None)
             self._save_sessions()

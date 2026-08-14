@@ -208,6 +208,7 @@ class TodoStore:
 
     def create(self, user_id: str, conversation_id: str, agent_name: str,
                *, subject: str, description: str = "", active_form: str = "",
+               status: str = "pending",
                owner: str = "", blocks: Optional[List[str]] = None,
                blocked_by: Optional[List[str]] = None,
                metadata: Optional[Dict[str, Any]] = None,
@@ -216,6 +217,10 @@ class TodoStore:
         subject = str(subject or "").strip()
         if not subject:
             raise ValueError("subject is required")
+        status = str(status or "").strip()
+        if status not in TODO_STATUSES:
+            raise ValueError(
+                "status must be pending, in_progress, or completed")
         if metadata is not None and not isinstance(metadata, dict):
             raise ValueError("metadata must be an object")
         self._validate_dependencies(blocks, blocked_by)
@@ -273,10 +278,10 @@ class TodoStore:
                         subject, description, active_form, owner, blocks,
                         blocked_by, metadata, external_id, source_call_id,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        user_id, conversation_id, agent_name, task_id,
+                        user_id, conversation_id, agent_name, task_id, status,
                         values["subject"], values["description"],
                         values["active_form"], values["owner"],
                         values["blocks"], values["blocked_by"],

@@ -189,9 +189,18 @@ def _relay_runtime_host_dir(runtime_dir: Path) -> str:
     return to_host_path(str(runtime_abs))
 
 
-def _relay_runtime_source_hash(tools_dir: Path, relay_pkg: Path, sdk_file: Path) -> str:
+def _relay_runtime_source_hash(
+    tools_dir: Path,
+    relay_pkg: Path,
+    graphify_pkg: Path,
+    sdk_file: Path,
+) -> str:
     digest = hashlib.sha256()
-    sources = (("tools", tools_dir), ("pawflow_relay", relay_pkg))
+    sources = (
+        ("tools", tools_dir),
+        ("pawflow_relay", relay_pkg),
+        ("graphify", graphify_pkg),
+    )
     for label, directory in sources:
         files = (
             path for path in directory.rglob("*")
@@ -214,12 +223,14 @@ def _prepare_relay_code_dir(runtime_dir: Path) -> Path:
     root = Path(__file__).resolve().parents[1]
     tools_dir = root / "tools"
     relay_pkg = root / "pawflow_relay"
+    graphify_pkg = root / "core" / "graphify"
     sdk_file = root / "docker" / "pawflow_sdk" / "pawflow.py"
-    for required in (tools_dir, relay_pkg, sdk_file):
+    for required in (tools_dir, relay_pkg, graphify_pkg, sdk_file):
         if not required.exists():
             raise RuntimeError(f"Missing relay runtime source: {required}")
 
-    source_hash = _relay_runtime_source_hash(tools_dir, relay_pkg, sdk_file)
+    source_hash = _relay_runtime_source_hash(
+        tools_dir, relay_pkg, graphify_pkg, sdk_file)
     code_dir = runtime_dir / ".pawflow-runtime"
     marker_file = code_dir / ".pawflow-runtime-source.json"
     if code_dir.exists():
@@ -230,6 +241,7 @@ def _prepare_relay_code_dir(runtime_dir: Path) -> Path:
         if (
             marker.get("source_hash") == source_hash
             and (code_dir / "pawflow_relay").exists()
+            and (code_dir / "graphify").exists()
             and (code_dir / "pawflow.py").exists()
             and (code_dir / "pawflow_relay_launcher.py").exists()
         ):
@@ -238,6 +250,7 @@ def _prepare_relay_code_dir(runtime_dir: Path) -> Path:
     ignore_bytecode = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
     shutil.copytree(tools_dir, code_dir, ignore=ignore_bytecode)
     shutil.copytree(relay_pkg, code_dir / "pawflow_relay", ignore=ignore_bytecode)
+    shutil.copytree(graphify_pkg, code_dir / "graphify", ignore=ignore_bytecode)
     shutil.copy2(sdk_file, code_dir / "pawflow.py")
     marker_file.write_text(
         json.dumps({"source": str(root), "source_hash": source_hash}, sort_keys=True) + "\n",

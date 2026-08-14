@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.184] — 2026-08-14
+
+### Fixed
+
+- Staged and source-hashed the integrated Graphify package in managed relay
+  runtimes, with vendorable relative imports, so automatic Project Graph refresh
+  cannot fail with `ModuleNotFoundError` after a server upgrade.
+- Executed Project Wiki source scanners in memory instead of writing a temporary
+  helper file, including on the server-local surface where relative paths resolve
+  from `/` and the service user cannot write root-level files.
+- Honored and validated the initial `status` supplied to `todolist` `create`, so
+  agents can create active work directly without a second update call.
+- Persisted sliding authenticated-session expiry on a five-minute throttle based
+  on the last disk write rather than the previous in-memory request, so active
+  browser logins survive server restarts while explicit logout remains immediate.
+
 ## [1.0.0-beta.183] — 2026-08-13
 
 ### Fixed

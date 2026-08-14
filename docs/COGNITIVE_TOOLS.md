@@ -263,7 +263,10 @@ relay writes and shell commands schedule a debounced incremental refresh. The
 manual `build` action remains available for recovery or an explicit root change.
 Each build runs as a single relay exec; the extraction script is passed directly
 to Python and executed in memory, without writing a helper file into the source
-tree. Small deltas retain Graphify's normal grouped cross-file resolution. Large
+tree. Managed relay runtimes stage the integrated `graphify` package alongside
+the relay handlers and include it in the runtime source hash, so server upgrades
+cannot reuse a stale runtime that lacks the extractor. Small deltas retain
+Graphify's normal grouped cross-file resolution. Large
 deltas are AST-parsed one file at a time in a memory-bounded sequential pass.
 Nodes are compressed as they are produced and edges use an anonymous disk spool,
 so the relay never retains a large corpus in RAM. The gzip/base64 delta stays
@@ -329,6 +332,8 @@ back to another LLM when the summarizer binding is unavailable.
 Context preparation and successful relay mutations schedule the same coalesced
 background worker as the Project Graph. The worker scans source hashes, selects
 one bounded batch of changed high-signal files, and makes one ephemeral LLM call.
+The source scanner is encoded into the relay command and executed in memory; it
+does not create a helper file in the project or on the server-local root.
 The first scan seeds root configuration, architecture documentation, and central
 graph files instead of enqueueing an entire large repository. Later additions,
 changes, and removals become pending automatically.

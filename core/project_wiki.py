@@ -7,6 +7,7 @@ is shared by every conversation and agent that uses the same relay.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -391,20 +392,17 @@ class ProjectWiki:
         if not service:
             raise ValueError("relay service is required")
         root = str(root or ".")
-        script_name = f".pawflow_wiki_scan_{uuid.uuid4().hex}.py"
-        service.write_file(script_name, _SCAN_SCRIPT.encode("utf-8"), local=local)
-        try:
-            result = service.exec(
-                ".", f"python3 {script_name}",
-                env={"PAWFLOW_WIKI_ROOT": root,
-                     "PAWFLOW_WIKI_MAX_FILES": str(max_files)},
-                local=local,
-            )
-        finally:
-            try:
-                service.delete_file(script_name, local=local)
-            except Exception:
-                logger.debug("Failed to delete wiki scanner", exc_info=True)
+        encoded_script = base64.b64encode(
+            _SCAN_SCRIPT.encode("utf-8")).decode("ascii")
+        command = (
+            "python3 -c \"import base64;"
+            f"exec(base64.b64decode('{encoded_script}'))\"")
+        result = service.exec(
+            ".", command,
+            env={"PAWFLOW_WIKI_ROOT": root,
+                 "PAWFLOW_WIKI_MAX_FILES": str(max_files)},
+            local=local,
+        )
         if not isinstance(result, dict) or int(result.get("returncode", 0) or 0) != 0:
             detail = str((result or {}).get("stderr", ""))[:300]
             raise RuntimeError(f"project wiki scan failed: {detail or 'relay error'}")

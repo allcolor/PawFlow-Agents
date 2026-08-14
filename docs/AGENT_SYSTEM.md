@@ -251,7 +251,8 @@ and those runtimes manage their own caching.
 
 `todolist` is the universal lightweight work-state tool. It supports
 `create`, `update`, `list`, and `get`, with `pending`, `in_progress`,
-and `completed` statuses. Each list is scoped by the required
+and `completed` statuses. `create` accepts an initial `status` and defaults to
+`pending` only when it is omitted. Each list is scoped by the required
 `(user_id, conversation_id, agent_name)` tuple and stored in the indexed SQLite
 database `data/runtime/todolists/todos.sqlite3`. On first open, legacy per-agent
 JSON documents are imported in one transaction and removed only after the

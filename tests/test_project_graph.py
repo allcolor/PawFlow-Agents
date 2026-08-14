@@ -3,11 +3,15 @@
 import base64
 import gzip
 import json
+import os
+import subprocess
+import sys
 from unittest.mock import MagicMock
 
 import pytest
 
 from core.project_graph import ProjectGraph, _RELAY_PAYLOAD_PREFIX
+from core._relay_naming import _prepare_relay_code_dir
 
 
 @pytest.fixture(autouse=True)
@@ -153,6 +157,18 @@ def test_build_from_relay_script_error(tmp_path):
 
     assert result["status"] == "error"
     assert "exit 1" in result["reason"]
+
+
+def test_managed_relay_runtime_stages_importable_graphify(tmp_path):
+    code_dir = _prepare_relay_code_dir(tmp_path / "relay")
+
+    assert (code_dir / "graphify" / "extract.py").is_file()
+    env = dict(os.environ, PYTHONPATH=str(code_dir))
+    result = subprocess.run(
+        [sys.executable, "-c", "from graphify.extract import extract"],
+        capture_output=True, text=True, env=env, check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_build_from_relay_invalid_json(tmp_path):

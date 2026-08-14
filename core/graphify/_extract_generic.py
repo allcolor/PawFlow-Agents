@@ -6,7 +6,7 @@ core.graphify._extract_base only.
 from __future__ import annotations
 import importlib
 from pathlib import Path
-from core.graphify._extract_base import (
+from ._extract_base import (
     LanguageConfig,
     _CPP_CONFIG,
     _CSHARP_CONFIG,

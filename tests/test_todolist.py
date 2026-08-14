@@ -36,6 +36,18 @@ def test_create_update_list_get_and_atomic_document(store):
     assert list(paths.TODOLISTS_DIR.rglob("*.tmp")) == []
 
 
+def test_create_accepts_initial_status_and_rejects_invalid_status(store):
+    task = store.create(
+        "user", "conv", "agent", subject="Start now",
+        status="in_progress")
+
+    assert task["status"] == "in_progress"
+    with pytest.raises(ValueError, match="status must be"):
+        store.create(
+            "user", "conv", "agent", subject="Broken",
+            status="running")
+
+
 def test_list_page_is_filtered_ordered_and_bounded(store, monkeypatch):
     now = iter(range(1, 100))
     monkeypatch.setattr("core.todo_store.time.time", lambda: float(next(now)))
@@ -151,11 +163,13 @@ def test_handler_is_universal_and_uses_runtime_scope(store):
     handler.set_conversation_id("c")
     handler.set_agent_name("a")
     created = json.loads(handler.execute({
-        "action": "create", "subject": "Ship it"}))
+        "action": "create", "subject": "Ship it",
+        "status": "in_progress"}))
     updated = json.loads(handler.execute({
         "action": "update", "task_id": created["id"],
         "status": "completed"}))
     listed = json.loads(handler.execute({"action": "list"}))
+    assert created["status"] == "in_progress"
     assert updated["status"] == "completed"
     assert listed["tasks"][0]["id"] == created["id"]
 

@@ -41,7 +41,7 @@ class TodoListHandler(ToolHandler):
                     "type": "string",
                     "enum": ["create", "update", "list", "get"],
                     "description": (
-                        "create: new pending item; update: mutate an item by task_id; "
+                        "create: new item; update: mutate an item by task_id; "
                         "get: fetch one item by task_id; list: paginated search/filter"),
                 },
                 "task_id": {"type": "string",
@@ -53,7 +53,9 @@ class TodoListHandler(ToolHandler):
                 "active_form": {"type": "string",
                                 "description": "Present-tense activity shown while active"},
                 "status": {"type": "string", "enum": list(TODO_STATUSES),
-                           "description": "Filter for list or new status for update"},
+                           "description": (
+                               "Initial status for create, status filter for list, "
+                               "or new status for update")},
                 "query": {"type": "string",
                           "description": "Text filter for list"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100,
@@ -93,6 +95,7 @@ class TodoListHandler(ToolHandler):
                     subject=arguments.get("subject", ""),
                     description=arguments.get("description", ""),
                     active_form=arguments.get("active_form", ""),
+                    status=arguments.get("status", "pending"),
                     owner=arguments.get("owner", ""),
                     blocks=arguments.get("blocks"),
                     blocked_by=arguments.get("blocked_by"),

@@ -6,7 +6,7 @@ core.graphify._extract_base only.
 from __future__ import annotations
 from pathlib import Path
 from typing import Any
-from core.graphify._extract_base import _make_id, _read_text
+from ._extract_base import _make_id, _read_text
 
 
 def extract_go(path: Path) -> dict:

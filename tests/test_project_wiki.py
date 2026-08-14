@@ -26,14 +26,18 @@ class _Relay:
         self.scans = list(scans)
         self.files = files or {}
         self.writes = []
+        self.deletes = []
+        self.exec_calls = []
 
     def write_file(self, path, content, local=False):
         self.writes.append((path, content, local))
 
     def delete_file(self, path, local=False):
+        self.deletes.append((path, local))
         return None
 
     def exec(self, path, command, env=None, local=False):
+        self.exec_calls.append((path, command, env, local))
         payload = self.scans.pop(0)
         return {"stdout": json.dumps({"status": "scanned", "files": payload}),
                 "stderr": "", "returncode": 0}
@@ -79,6 +83,21 @@ def test_first_scan_only_queues_high_signal_sources(wiki):
     assert wiki.status()["dirty_sources"] == 2
     assert (wiki.path / "schema.md").exists()
     assert (wiki.path / "index.md").exists()
+
+
+def test_scan_executes_in_memory_without_relay_helper_file(wiki):
+    relay = _Relay([{"README.md": _source("overview")}])
+
+    wiki.scan_from_relay(relay, local=True)
+
+    assert relay.writes == []
+    assert relay.deletes == []
+    path, command, env, local = relay.exec_calls[0]
+    assert path == "."
+    assert command.startswith("python3 -c ")
+    assert ".pawflow_wiki_scan_" not in command
+    assert env["PAWFLOW_WIKI_ROOT"] == "."
+    assert local is True
 
 
 def test_changed_source_makes_page_stale_until_replaced(wiki):

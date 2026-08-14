@@ -177,10 +177,11 @@ def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tm
     relay_pkg = root / "pawflow_relay"
     sdk = root / "docker" / "pawflow_sdk"
     core = root / "core"
+    graphify_pkg = core / "graphify"
     tools.mkdir(parents=True)
     relay_pkg.mkdir()
     sdk.mkdir(parents=True)
-    core.mkdir()
+    graphify_pkg.mkdir(parents=True)
     (tools / "pawflow_relay_launcher.py").write_text("launcher", encoding="utf-8")
     (tools / "__pycache__").mkdir()
     (tools / "__pycache__" / "stale.pyc").write_bytes(b"stale tools bytecode")
@@ -188,6 +189,7 @@ def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tm
     (relay_pkg / "__init__.py").write_text("pkg", encoding="utf-8")
     (relay_pkg / "__pycache__").mkdir()
     (relay_pkg / "__pycache__" / "stale.pyo").write_bytes(b"stale package bytecode")
+    (graphify_pkg / "__init__.py").write_text("graphify", encoding="utf-8")
     (sdk / "pawflow.py").write_text("sdk", encoding="utf-8")
     monkeypatch.setattr(_rn, "__file__", str(core / "server_relay_manager.py"))
 
@@ -195,6 +197,7 @@ def test_prepare_relay_code_dir_stages_runtime_from_server_image(monkeypatch, tm
 
     assert (code_dir / "pawflow_relay_launcher.py").read_text(encoding="utf-8") == "launcher"
     assert (code_dir / "pawflow_relay" / "__init__.py").read_text(encoding="utf-8") == "pkg"
+    assert (code_dir / "graphify" / "__init__.py").read_text(encoding="utf-8") == "graphify"
     assert (code_dir / "pawflow.py").read_text(encoding="utf-8") == "sdk"
     assert not (code_dir / "__pycache__").exists()
     assert not (code_dir / "orphan.pyc").exists()
@@ -208,11 +211,13 @@ def test_prepare_relay_code_dir_ignores_persistent_synced_runtime(monkeypatch, t
     root = tmp_path / "app"
     (root / "tools").mkdir(parents=True)
     (root / "pawflow_relay").mkdir()
+    (root / "core" / "graphify").mkdir(parents=True)
     (root / "docker" / "pawflow_sdk").mkdir(parents=True)
     (root / "tools" / "pawflow_relay_launcher.py").write_text("image-launcher", encoding="utf-8")
     (root / "pawflow_relay" / "__init__.py").write_text("image-pkg", encoding="utf-8")
+    (root / "core" / "graphify" / "__init__.py").write_text(
+        "image-graphify", encoding="utf-8")
     (root / "docker" / "pawflow_sdk" / "pawflow.py").write_text("image-sdk", encoding="utf-8")
-    (root / "core").mkdir()
     monkeypatch.setattr(_rn, "__file__", str(root / "core" / "server_relay_manager.py"))
 
     data_dir = tmp_path / "data"
@@ -234,11 +239,13 @@ def test_prepare_relay_code_dir_replaces_stale_staging(monkeypatch, tmp_path):
     root = tmp_path / "app"
     (root / "tools").mkdir(parents=True)
     (root / "pawflow_relay").mkdir()
+    (root / "core" / "graphify").mkdir(parents=True)
     (root / "docker" / "pawflow_sdk").mkdir(parents=True)
     (root / "tools" / "pawflow_relay_launcher.py").write_text("image-launcher", encoding="utf-8")
     (root / "pawflow_relay" / "__init__.py").write_text("image-pkg", encoding="utf-8")
+    (root / "core" / "graphify" / "__init__.py").write_text(
+        "image-graphify", encoding="utf-8")
     (root / "docker" / "pawflow_sdk" / "pawflow.py").write_text("image-sdk", encoding="utf-8")
-    (root / "core").mkdir()
     monkeypatch.setattr(_rn, "__file__", str(root / "core" / "server_relay_manager.py"))
 
     stale = tmp_path / "runtime" / ".pawflow-runtime"

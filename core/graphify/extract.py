@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any
 from .cache import load_cached, save_cached
-from core.graphify._extract_base import _make_id
-from core.graphify._extract_generic import (
+from ._extract_base import _make_id
+from ._extract_generic import (
     extract_c,
     extract_cpp,
     extract_csharp,
@@ -27,7 +27,7 @@ from core.graphify._extract_generic import (
     extract_scala,
     extract_swift,
 )
-from core.graphify._extract_lang import (
+from ._extract_lang import (
     extract_go,
     extract_powershell,
     extract_rust,

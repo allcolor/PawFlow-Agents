@@ -24,13 +24,16 @@ class TestSecurity:
         import core.paths as _paths
         self._orig_config = _paths.SECURITY_FILE
         self._orig_users = _paths.USERS_FILE
+        self._orig_sessions = _paths.SESSIONS_FILE
         _paths.SECURITY_FILE = tmp_path / "security.json"
         _paths.USERS_FILE = tmp_path / "users.json"
+        _paths.SESSIONS_FILE = tmp_path / "sessions.json"
         # Reset singleton
         SecurityManager._instance = None
         yield
         _paths.SECURITY_FILE = self._orig_config
         _paths.USERS_FILE = self._orig_users
+        _paths.SESSIONS_FILE = self._orig_sessions
         SecurityManager._instance = None
 
     def test_no_default_admin_created(self):
@@ -96,6 +99,25 @@ class TestSecurity:
 
         sm.logout(session.session_id)
         assert sm.get_session(session.session_id) is None
+
+    def test_active_session_sliding_expiry_survives_restart(self, monkeypatch):
+        now = [1_000.0]
+        monkeypatch.setattr("core.security.time.time", lambda: now[0])
+        sm = SecurityManager()
+        sm._session_ttl = 600
+        sm.create_user("active", "pass", Role.USER)
+        session = sm.authenticate("active", "pass")
+
+        for timestamp in range(1_100, 1_701, 100):
+            now[0] = float(timestamp)
+            assert sm.get_session(session.session_id) is session
+
+        now[0] = 1_750.0
+        restarted = SecurityManager()
+        restored = restarted.get_session(session.session_id)
+
+        assert restored is not None
+        assert restored.is_expired is False
 
     def test_api_key_lifecycle(self):
         sm = SecurityManager()

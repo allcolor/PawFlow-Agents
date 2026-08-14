@@ -63,7 +63,7 @@ def action_project_context(root_dir: str, path: str, req: Dict[str, Any]) -> Any
 
     # Read key config/context files
     _KEY_FILES = [
-        ".pawflow.md", "CLAUDE.md", "README.md", "readme.md",
+        ".pawflow.md", "CLAUDE.md", "AGENTS.md", "README.md", "readme.md",
         "package.json", "pyproject.toml", "Cargo.toml", "go.mod",
         "Makefile", "Dockerfile", "docker-compose.yml",
         ".gitignore", "requirements.txt", "setup.py", "setup.cfg",

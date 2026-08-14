@@ -158,8 +158,8 @@ class RelayService(_RelayConnMixin, _RelayFsOpsMixin, BaseService):
             lines.append(f"Project type: {', '.join(ctx['project_types'])}")
         if ctx.get("git"):
             lines.append(f"Git repo (branch: {ctx.get('git_branch', '?')})")
-        # .pawflow.md or CLAUDE.md — project instructions
-        for key in (".pawflow.md", "CLAUDE.md"):
+        # .pawflow.md, CLAUDE.md or AGENTS.md — project instructions
+        for key in (".pawflow.md", "CLAUDE.md", "AGENTS.md"):
             if key in ctx.get("config_files", {}):
                 lines.append(f"\n### {key}\n{ctx['config_files'][key]}")
         # README summary (first 2000 chars)

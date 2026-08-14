@@ -344,6 +344,8 @@ the usage dashboard (`cache_read / (tokens_in + cache_read)`).
 
 If a file named `{agent_name}.md` exists in the relay filesystem root, its content is injected into the context as project instructions (after the system prompt, or after a conversation summary if one exists). This allows per-project, per-agent customization without modifying the agent definition.
 
+Independently of the per-agent file, the relay project scan (`action_project_context`) reads `.pawflow.md`, `CLAUDE.md`, and `AGENTS.md` from the project root (5 KB cap each), and the filesystem service renders each one as a `### <name>` section of the project prompt supplement, in that order. `AGENTS.md` is the agent-facing counterpart to `CLAUDE.md`: put operational instructions for agents there (e.g. the pointer to the release-procedure wiki page).
+
 ### Programmable Skills
 
 Skills are effective only when they are listed in `assigned_skills` on the target entry in the conversation's `conv_agents` roster. The identity is `(conversation_id, instance_name)`: assigning a skill to `assistant` in one conversation never changes another `assistant` instance or the reusable agent definition. An agent definition or package may declare default `assigned_skills`; PawFlow copies those defaults when it creates a conversation instance. PawFlow does not inject a separate conversation-level `active_resources.skills` list. Assign or remove skills with `/skill assign @agent @skill` and `/skill unassign @agent @skill`.

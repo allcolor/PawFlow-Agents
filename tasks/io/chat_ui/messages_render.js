@@ -161,6 +161,12 @@ function addMsg(role, text, extra) {
   }
   el.className = 'msg ' + cssClass;
   el.dataset.messageRole = role;
+  // Every row carries its turn identity so the reconciliation pass can see
+  // turn boundaries that have no user row -- a background-tool result
+  // starting a new turn, a scheduled wakeup's first assistant message.
+  const _rowTurnId = extra ? String(extra.turn_id || extra.request_msg_id
+    || (extra.source && extra.source.turn_id) || '').trim() : '';
+  if (_rowTurnId) el.dataset.turnId = _rowTurnId;
   const _msgTaskId = (extra && (extra.task_id || (extra.source && extra.source.task_id))) || '';
   if (_msgTaskId) el.dataset.taskId = _msgTaskId;
   if (role === 'assistant' || role === 'user') el.dataset.technicalBoundary = '1';

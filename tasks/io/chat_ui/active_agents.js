@@ -482,6 +482,12 @@ function syncActiveFromServer(force) {
       // hydrateContextUsage() on load/switch, then live message_meta events.
     }
     updateActivePanel();
+    // The poll is the authority on "en cours": an open turn block may not
+    // keep ticking "working" when the server lists no active agent for this
+    // conversation (turn-id drift can make every terminal event miss it).
+    if (typeof turnViewSyncActive === 'function') {
+      turnViewSyncActive(hasActiveForCurrentConv);
+    }
     if (Object.keys(activeInteractions).length > 0) {
       if (!document.getElementById('typing')) showTyping();
     } else {

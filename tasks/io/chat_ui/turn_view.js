@@ -223,7 +223,16 @@ function _turnOpenOrphanTurn(element, data) {
   if (!element || !element.parentNode) return null;
   const container = document.getElementById('messages');
   if (container && element.parentNode !== container) return null;
-  const id = _turnId(data) || ('turn-' + (++_turnSeq));
+  let id = _turnId(data) || ('turn-' + (++_turnSeq));
+  // A page can bring back the OLDER HALF of a turn whose block is already on
+  // screen (load-more cutting the live turn). Reusing its id would clobber
+  // the existing state in simplifiedTurns and hand the runtime protection to
+  // the fragment. The fragment is its own block with a derived identity; the
+  // only-last-block-active pass then keeps it closed.
+  const existing = simplifiedTurns.get(id);
+  if (existing && existing.blockEl && existing.blockEl.isConnected) {
+    id = id + '-frag' + (++_turnSeq);
+  }
   const state = _turnCreateState(id, null, data || {}, element);
   if (!state) return null;
   _turnOpen = { turnId: id, userEl: null, data: data || {}, state };
@@ -1166,9 +1175,16 @@ function turnViewFinalize(data) {
   // The turn the done names is a block this view already closed (a new user
   // message closes it), so there is nothing left to end. Only a done that
   // names this turn (or names nothing) ends this block.
+  //
+  // The guard protects a LIVE successor, and "live" has exactly one truth:
+  // the active-agents set. When no agent is active besides the turn this
+  // done ends, there is no successor to protect -- refusing then left the
+  // block ticking "working" forever whenever the block adopted a turn id
+  // the server never named (interrupted/drained turns do this).
   const incomingTurnId = _turnId(data || {});
   if (state.status === 'working' && incomingTurnId
-      && state.turnId && incomingTurnId !== state.turnId) return false;
+      && state.turnId && incomingTurnId !== state.turnId
+      && _turnLiveSuccessorExists(incomingTurnId)) return false;
   const finalId = String((data && (data.final_msg_id || data.msg_id)) || '');
   // A derived marker is a reconstruction, and a reconstruction may not end a
   // turn that is still running. The page classifier names the last assistant
@@ -1226,10 +1242,40 @@ function turnViewFail(turnId, status, message) {
   // live. Applying it here left the successor stuck "cancelled" -- no
   // animation -- over an agent still working.
   if (state.status === 'working' && turnId
-      && state.turnId && turnId !== state.turnId) return false;
+      && state.turnId && turnId !== state.turnId
+      && _turnLiveSuccessorExists(turnId)) return false;
   _turnRetireRuntime(state);
   _turnStopTransient(state); _turnUpdateStatus(state, ['stopped', 'cancelled', 'error'].includes(status) ? status : 'error');
   if (message) _turnOfferTransient(state, 'messages', message);
+  return true;
+}
+
+// "En cours" has one truth: the active-agents set. A live successor exists
+// only if some active interaction runs a turn OTHER than the one the
+// terminal event ends (the event's own agent may still be listed -- it is
+// removed after the finalize). With no truth available, assume live: the
+// old, conservative behavior.
+function _turnLiveSuccessorExists(excludeTurnId) {
+  if (typeof activeInteractions === 'undefined' || !activeInteractions) return true;
+  return Object.values(activeInteractions).some(
+    info => !excludeTurnId || !info.turnId || info.turnId !== excludeTurnId);
+}
+
+// Reconcile the open block against the authoritative active-agents state
+// (the server's list_active poll). No active agent in the conversation and a
+// block still ticking "working" is a contradiction: the agent finished but
+// the terminal events never matched this block (turn-id drift, lost SSE).
+// Close it as a guess -- closedByGuess -- so a live row arriving right after
+// (a turn the poll raced with) reopens it in turnViewIngest. This covers both
+// directions of the invariant: open-while-finished closes here, and a
+// closed-while-running block is reopened by its own live rows.
+function turnViewSyncActive(hasActive) {
+  if (hasActive || !turnViewIsSimplified()) return false;
+  const state = _turnCurrentState(false);
+  if (!state || state.status !== 'working') return false;
+  state.closedByGuess = true;
+  _turnRetireRuntime(state);
+  _turnStopTransient(state); _turnUpdateStatus(state, 'completed'); _turnPlaceBlock(state);
   return true;
 }
 
@@ -1248,6 +1294,20 @@ function _turnRowRole(el) {
 
 function _turnIsUserRow(el) {
   return _turnRowRole(el) === 'user';
+}
+
+// A scheduled wakeup has no user row: its first assistant message IS the
+// boundary, and like a user row it stays top level with the turn's block
+// building under it. It is recognized by turn identity: an assistant row
+// WITH text that names a turn other than the one currently being filed.
+// Rows without text (technical assistants, tool rows — including a
+// background-tool result relabeled tool_result) are NOT boundaries: they
+// open the new turn's block and are filed inside it.
+function _turnIsWakeupBoundary(el, state) {
+  if (_turnRowRole(el) !== 'assistant') return false;
+  if (!String((el.dataset && el.dataset.rawText) || '').trim()) return false;
+  const rowTurn = (el.dataset && el.dataset.turnId) || '';
+  return !!(rowTurn && state && state.turnId && rowTurn !== state.turnId);
 }
 
 // ── The display rule, enforced on the DOM ──────────────────────────────────
@@ -1295,7 +1355,7 @@ function turnViewReconcile() {
       }
       continue;
     }
-    if (_turnIsUserRow(el)) {
+    if (_turnIsUserRow(el) || _turnIsWakeupBoundary(el, state)) {
       // A user boundary seen in the final chronological DOM closes the turn
       // before it. This also settles a historical page that ended mid-turn,
       // without touching the newest live turn (nothing follows that one).
@@ -1321,6 +1381,26 @@ function turnViewReconcile() {
     }
     if (!TURN_FILABLE_ROLES.has(_turnRowRole(el))) continue;
     if (state && el === state.finalEl) continue;
+    // A row that names a DIFFERENT turn than the one being filed is a
+    // boundary: the transcript stamps every row with its turn identity, and
+    // an identity change is how a turn with no user row above it begins -- a
+    // background-tool result triggering a new turn, a scheduled wakeup's
+    // first assistant message. Filing it into the previous block merged two
+    // turns into one and left the page misgrouped (user > asst > asst >
+    // block > asst). Close the previous turn and open this one's own block.
+    const rowTurnId = (el.dataset && el.dataset.turnId) || '';
+    if (state && rowTurnId && state.turnId && rowTurnId !== state.turnId
+        && _turnRowRole(el) !== 'system') {
+      if (state.status === 'working' && !_turnRuntime.has(state.turnId)) {
+        _turnStopTransient(state);
+        _turnUpdateStatus(state, 'completed');
+      }
+      state = _turnOpenOrphanTurn(el, { turn_id: rowTurnId });
+      if (!state) continue;
+      touched.add(state);
+      open = _turnOpen;
+      if (el.parentNode !== container) continue;  // the block took its place
+    }
     if (!state) {
       // A system notice never opens a block: with no turn open it stays top
       // level (see turnViewIngest -- the /compact notice case).
@@ -1353,6 +1433,18 @@ function turnViewReconcile() {
     // tool snapshot may arrive immediately after the history reconstruction
     // and must be allowed to refute this guess.
     owner.closedByGuess = true;
+    _turnUpdateStatus(owner, 'completed');
+  }
+  // THE INVARIANT: only the LAST block on screen may be active. Whatever
+  // protected an earlier block from the sweep above -- a runtime snapshot
+  // naming the live turn whose older half a page brought back, a liveFed
+  // fragment -- the reader is looking at ONE running turn and it is the
+  // newest. Closed as a guess, so a live row can still refute it.
+  for (let i = 0; i < blocks.length - 1; i++) {
+    const owner = simplifiedTurns.get((blocks[i].dataset && blocks[i].dataset.turnId) || '');
+    if (!owner || owner.status !== 'working') continue;
+    owner.closedByGuess = true;
+    _turnStopTransient(owner);
     _turnUpdateStatus(owner, 'completed');
   }
   for (const s of touched) {

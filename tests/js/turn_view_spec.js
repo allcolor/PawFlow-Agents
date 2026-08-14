@@ -1766,6 +1766,192 @@ test('a detail panel opens at the bottom and follows the stream', () => {
     'a reader who scrolled up keeps their position');
 });
 
+// ── Active agents are the single truth for "working" ───────────────────
+
+test('a mismatched done closes the block when no agent is active', () => {
+  const e = env('simplified');
+  startTurn(e, 'u1');
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u1', msg_id: 'a1', content: 'hi' }, e.row('a1'));
+  // The block adopted turn u1; the server names a different id (drained /
+  // interrupted turn). With no active interaction there is no successor to
+  // protect: the done must close the block instead of leaving it "working".
+  e.ctx.activeInteractions = {};
+  eq(e.ctx.turnViewFinalize({ turn_id: 'server-id', final_msg_id: 'a1' }), true);
+  assert(e.block().className.indexOf('turn-working') < 0, 'block completed');
+});
+
+test('a mismatched done is still refused while a successor is active', () => {
+  const e = env('simplified');
+  startTurn(e, 'u2');
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u2', msg_id: 'b1', content: 'hi' }, e.row('b1'));
+  // A different agent runs another turn: the stale predecessor's done may
+  // not stamp the live block completed.
+  e.ctx.activeInteractions = { other: { name: 'other', turnId: 'u2' } };
+  eq(e.ctx.turnViewFinalize({ turn_id: 'old-turn', final_msg_id: 'b1' }), false);
+  assert(e.block().className.indexOf('turn-working') >= 0, 'block still working');
+});
+
+test('the poll reconciliation closes an orphaned working block, reopenable', () => {
+  const e = env('simplified');
+  startTurn(e, 'u3');
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u3', msg_id: 'c1', content: 'hi' }, e.row('c1'));
+  // Server truth: nothing active. The block may not keep ticking.
+  eq(e.ctx.turnViewSyncActive(false), true);
+  assert(e.block().className.indexOf('turn-working') < 0, 'block completed');
+  // It closed as a guess: a live row proves the turn runs and reopens it.
+  e.ctx.turnViewIngest('assistant', { turn_id: 'u3', msg_id: 'c2', content: 'more', live: true }, e.row('c2'));
+  assert(e.block().className.indexOf('turn-working') >= 0, 'live row reopened the block');
+  // An agent still active never closes anything.
+  eq(e.ctx.turnViewSyncActive(true), false);
+  assert(e.block().className.indexOf('turn-working') >= 0, 'active agent keeps it working');
+});
+
+// ── Load-more during a live turn ────────────────────────────────────────
+
+// Same shape as loadMoreMessages: rows rendered detached, prepended in
+// transcript order above everything on screen, then one reconcile pass.
+function prependPage(e, rows) {
+  const anchor = e.messages.firstChild;
+  for (const m of rows) {
+    const el = e.dom.document.createElement('div');
+    el.className = 'msg';
+    el.dataset.msgid = m.msg_id;
+    el.dataset.messageRole = m.role;
+    if (m.text) el.dataset.rawText = m.text;
+    e.messages.insertBefore(el, anchor);
+  }
+  e.ctx.turnViewReconcile();
+}
+
+test('load more during a live turn keeps exactly one active block, the last', () => {
+  const e = env('simplified');
+  startTurn(e, 'live');
+  e.ctx.turnViewIngest('assistant',
+    { turn_id: 'live', msg_id: 'l1', content: 'working', live: true }, e.row('l1'));
+  e.ctx.turnViewSetRuntimeTurns([{ turn_id: 'live', status: 'running' }]);
+  prependPage(e, [
+    { role: 'assistant', msg_id: 'h1', text: 'old frag a' },
+    { role: 'assistant', msg_id: 'h2', text: 'old frag b' },
+    { role: 'user', msg_id: 'hu' },
+    { role: 'assistant', msg_id: 'h3', text: 'old answer' },
+  ]);
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  const working = blocks.filter(b => b.classList.contains('turn-working'));
+  eq(working.length, 1, 'exactly one active block');
+  assert(working[0] === blocks[blocks.length - 1], 'the active block is the last one');
+});
+
+test('load more groups every row between two boundaries into the block', () => {
+  const e = env('simplified');
+  startTurn(e, 'live');
+  e.ctx.turnViewIngest('assistant',
+    { turn_id: 'live', msg_id: 'l1', content: 'working', live: true }, e.row('l1'));
+  e.ctx.turnViewSetRuntimeTurns([{ turn_id: 'live', status: 'running' }]);
+  prependPage(e, [
+    { role: 'assistant', msg_id: 'h1', text: 'old frag a' },
+    { role: 'assistant', msg_id: 'h2', text: 'old frag b' },
+    { role: 'user', msg_id: 'hu' },
+    { role: 'assistant', msg_id: 'h3', text: 'narration' },
+    { role: 'assistant', msg_id: 'h4', text: 'old answer' },
+  ]);
+  // Invariant: boundary > block > last message, repeated. The mid-turn
+  // fragment has no boundary: block > its last row. Then hu > block > h4.
+  eq(topLevelIds(e).join(','), 'BLOCK,h2,hu,BLOCK,h4,live,BLOCK,l1');
+});
+
+test('load more above a live ORPHAN turn does not feed it the old page', () => {
+  const e = env('simplified');
+  // A live turn with no user row: scheduled wakeup / drained-preempt turn.
+  const l1 = e.row('l1'); l1.dataset.messageRole = 'assistant';
+  e.ctx.turnViewIngest('assistant',
+    { turn_id: 'live', msg_id: 'l1', content: 'working', live: true }, l1);
+  e.ctx.turnViewSetRuntimeTurns([{ turn_id: 'live', status: 'running' }]);
+  prependPage(e, [
+    { role: 'assistant', msg_id: 'h1', text: 'old frag a' },
+    { role: 'assistant', msg_id: 'h2', text: 'old frag b' },
+    { role: 'user', msg_id: 'hu' },
+    { role: 'assistant', msg_id: 'h3', text: 'old answer' },
+  ]);
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  const working = blocks.filter(b => b.classList.contains('turn-working'));
+  eq(working.length, 1, 'exactly one active block');
+  assert(working[0] === blocks[blocks.length - 1], 'the active block is the last one');
+  eq(topLevelIds(e).join(','), 'BLOCK,h2,hu,BLOCK,h3,BLOCK,l1');
+});
+
+test('a page bringing back the live turn\'s older half stays closed', () => {
+  const e = env('simplified');
+  startTurn(e, 'live');
+  e.ctx.turnViewIngest('assistant',
+    { turn_id: 'live', msg_id: 'l1', content: 'working', live: true }, e.row('l1'));
+  e.ctx.turnViewSetRuntimeTurns([{ turn_id: 'live', status: 'running' }]);
+  // The prepended page cut the live turn: its older rows carry the SAME id.
+  const anchor = e.messages.firstChild;
+  for (const m of [{ msg_id: 'o1', text: 'older half a' }, { msg_id: 'o2', text: 'older half b' }]) {
+    const el = e.dom.document.createElement('div');
+    el.className = 'msg'; el.dataset.msgid = m.msg_id;
+    el.dataset.messageRole = 'assistant'; el.dataset.rawText = m.text;
+    el.dataset.turnId = 'live';
+    e.messages.insertBefore(el, anchor);
+  }
+  e.ctx.turnViewReconcile();
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  const working = blocks.filter(b => b.classList.contains('turn-working'));
+  eq(working.length, 1, 'exactly one active block');
+  assert(working[0] === blocks[blocks.length - 1], 'the active block is the last one');
+});
+
+test('a turn-identity change is a boundary even with no user row', () => {
+  const e = env('simplified');
+  // Turn u1 (user-triggered), then turn w1 (bg result / scheduled wakeup:
+  // no user row, the rows just change identity).
+  const rows = [
+    { role: 'user', msg_id: 'u1', turn: 'u1' },
+    { role: 'assistant', msg_id: 'a1', text: 'narration', turn: 'u1' },
+    { role: 'assistant', msg_id: 'a2', text: 'answer one', turn: 'u1' },
+    { role: 'assistant', msg_id: 'w2', text: 'wakeup narration', turn: 'w1' },
+    { role: 'assistant', msg_id: 'w3', text: 'wakeup answer', turn: 'w1' },
+  ];
+  for (const m of rows) {
+    const el = e.row(m.msg_id);
+    el.dataset.messageRole = m.role;
+    if (m.text) el.dataset.rawText = m.text;
+    el.dataset.turnId = m.turn;
+  }
+  e.ctx.turnViewSetRuntimeTurns([]);
+  e.ctx.turnViewReconcile();
+  // Two turns, two blocks. The wakeup's first assistant message is the
+  // boundary and stays top level, like a user row:
+  // u1 > BLOCK > a2, then w2 > BLOCK > w3.
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a2,w2,BLOCK,w3');
+});
+
+test('a background-tool result opens the next block and is filed inside it', () => {
+  const e = env('simplified');
+  // Turn u1, then a turn triggered by a background-tool result: the result
+  // row is NOT a boundary — it belongs inside the block, like a tool call.
+  const rows = [
+    { role: 'user', msg_id: 'u1', turn: 'u1' },
+    { role: 'assistant', msg_id: 'a2', text: 'answer one', turn: 'u1' },
+    { role: 'tool_result', msg_id: 'bg1', turn: 'w1' },
+    { role: 'assistant', msg_id: 'w3', text: 'bg follow-up answer', turn: 'w1' },
+  ];
+  for (const m of rows) {
+    const el = e.row(m.msg_id);
+    el.dataset.messageRole = m.role;
+    if (m.text) el.dataset.rawText = m.text;
+    el.dataset.turnId = m.turn;
+  }
+  e.ctx.turnViewSetRuntimeTurns([]);
+  e.ctx.turnViewReconcile();
+  // At most [last message][boundary] between blocks — here no boundary row:
+  // u1 > BLOCK > a2, then BLOCK (holding bg1) > w3.
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,a2,BLOCK,w3');
+  const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
+  assert(blocks[1].querySelector('[data-msgid="bg1"]'),
+    'the bg result row lives inside the second block');
+});
+
 if (failures.length) {
   console.error('\n' + failures.length + ' failing, ' + passed + ' passing');
   for (const f of failures) console.error('  - ' + f);

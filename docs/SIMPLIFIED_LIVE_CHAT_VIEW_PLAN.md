@@ -345,6 +345,43 @@ keeps its animation, and only its own `done` (or one that names nothing)
 closes it. See `turnViewFinalize`/`turnViewFail` in `tasks/io/chat_ui/turn_view.js`
 and the preempt test in `tests/js/turn_view_spec.js`.
 
+The mismatch guard protects a live successor, and "live" has exactly one
+truth: the active-agents set (`activeInteractions`, fed by the server's
+`list_active` poll). The guard therefore refuses a terminal event only when
+`_turnLiveSuccessorExists()` finds an active interaction running a turn other
+than the one the event ends. Without that condition, a block that adopted a
+turn id the server never named (interrupted/drained turns do this) refused
+every `done` and ticked "working" forever after the answer was delivered.
+As a safety net, `syncActiveFromServer` calls `turnViewSyncActive()` after
+each poll: no active agent in the conversation closes an open `working`
+block within one poll interval (10 s), marked `closedByGuess` so a live row
+from a turn the poll raced with reopens it. Invariant: a block is "working"
+if and only if an agent is in active agents.
+Tests: `tests/test_turn_view_active_truth.py`.
+
+Two more invariants govern the reconciliation pass (`turnViewReconcile`):
+
+- **Boundaries.** Everything between two boundaries belongs inside the detail
+  block, and at most two top-level messages sit between two blocks: the
+  previous turn's last message and the next turn's boundary. A boundary is
+  (1) a message the user sent, or (2) the first assistant message of a
+  scheduled wakeup — nothing else. A background-tool result is NOT a
+  boundary: it is filed inside its turn's block like a tool call. The
+  detector is turn identity: every rendered row carries `data-turn-id`
+  (stamped in `messages_render.js` from `turn_id`/`request_msg_id`). An
+  assistant row WITH text naming an unseen turn is a wakeup boundary and
+  stays top level (`_turnIsWakeupBoundary`); any other row naming an unseen
+  turn closes the previous block, opens the new turn's block, and is filed
+  inside it. A page bringing back the older half of a turn whose block is
+  already on screen gets a derived fragment identity instead of clobbering
+  the existing state.
+- **Only the last block may be active.** After reconciliation, every block
+  except the newest that still claims `working` is closed (as a reopenable
+  guess). This is what prevents a load-more during a live turn from showing
+  two ticking blocks.
+
+Behavioural coverage: the load-more section of `tests/js/turn_view_spec.js`.
+
 A system notice — compact finished, git pruned — is not a turn, and it never
 opens a block. `/compact` while the agent is idle is the standing case: the
 notice arrives with no turn open, and nothing ever closes a block a notice

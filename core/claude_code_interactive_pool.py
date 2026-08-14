@@ -76,12 +76,13 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         self._lock = threading.RLock()
         self._sessions: Dict[tuple[str, str, str, str], InteractiveContainer] = {}
         self._disallowed_builtin_tools = _DISALLOWED_BUILTIN_TOOLS
-        # (service_id, pool_index) slots reserved by an in-flight _start_new —
-        # a slot has been claimed but the container is not yet registered in
-        # _sessions. Lets two concurrent ensure_started calls for different
-        # conversations claim DISTINCT credential slots, so they never share a
-        # single-use OAuth refresh_token (Anthropic rotates it on each refresh).
-        self._reserved_slots: set = set()
+        # (service_id, pool_index) slots reserved by in-flight _start_new
+        # calls — a slot has been claimed but the container is not yet
+        # registered in _sessions. A list (not a set) because slots are
+        # SHARED: several concurrent launches may legitimately claim the
+        # same credential slot, and each reservation must count once toward
+        # that slot's load for least-loaded balancing.
+        self._reserved_slots: list = []
         self._sweeper_started = False
         self._sweeper_stop = threading.Event()
         self._tick_seconds = 60
@@ -197,10 +198,10 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             # refusal costs nothing and releases nothing.
             if before_launch is not None:
                 before_launch()
-            # Claim an exclusive credential slot BEFORE spawning: Anthropic
-            # refresh_tokens are single-use, so two concurrent containers on one
-            # slot race and invalidate the loser. Reserved under the lock so a
-            # concurrent ensure_started for another conversation sees it taken.
+            # Claim a credential slot BEFORE spawning. Slots are shared —
+            # any number of containers may run on one credential — but the
+            # reservation is recorded under the lock so concurrent
+            # ensure_started calls balance across slots (least-loaded).
             api_key = getattr(client, "api_key", "")
             if callable(api_key):
                 api_key = api_key()
@@ -212,15 +213,26 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             state = self._start_new(client, model, user_id, conversation_id,
                                     agent_name, key, pool_index=claimed_idx)
         except Exception:
-            # Spawn failed — release the reservation so the slot is reusable.
+            # Spawn failed — release the reservation so the slot's load drops.
             with self._lock:
-                self._reserved_slots.discard((service_id, claimed_idx))
+                self._release_slot_locked(service_id, claimed_idx)
             raise
         with self._lock:
             self._sessions[key] = state
             # Now tracked via _sessions; drop the in-flight reservation.
-            self._reserved_slots.discard((service_id, claimed_idx))
+            self._release_slot_locked(service_id, claimed_idx)
         return state
+
+    def _release_slot_locked(self, service_id: str, idx: int) -> None:
+        """Drop ONE in-flight reservation for this slot. MUST hold self._lock.
+
+        No-op for API-key mode (idx < 0, never reserved) and when the
+        reservation was already released.
+        """
+        try:
+            self._reserved_slots.remove((service_id, idx))
+        except (ValueError, KeyError):
+            pass
 
     def touch(self, state: InteractiveContainer) -> None:
         with self._lock:
@@ -228,13 +240,13 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
 
     def _claim_pool_slot_locked(self, service_id: str, user_id: str,
                                 conversation_id: str) -> int:
-        """Pick a credential slot not used by any live/reserved container.
+        """Pick the least-loaded credential slot for a new container.
 
-        MUST be called holding self._lock. Returns the slot index. Raises
-        LLMClientError when no credentials are configured, or when every slot is
-        busy — the hard cap that enforces 1 login = 1 concurrent container
-        (Anthropic refresh_tokens are single-use, so sharing a slot across two
-        live containers races and invalidates the loser's session).
+        MUST be called holding self._lock. Returns the slot index. Slots are
+        SHARED — one Claude login can back any number of concurrent
+        containers — so this never refuses a launch because slots are busy;
+        it only spreads containers across the configured logins. Raises
+        LLMClientError only when no credentials are configured at all.
         """
         from core.llm_client import LLMClientError
         from core.llm_providers._cc_credentials import _load_credentials_pool
@@ -244,20 +256,17 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             raise LLMClientError(
                 "Claude Code credentials not configured. "
                 "Use /cls to authenticate with your Claude subscription.")
-        occupied = {
-            s.svc_pool_idx for s in self._sessions.values()
-            if s.service_id == service_id and s.svc_pool_idx >= 0
-        }
-        occupied |= {idx for sid, idx in self._reserved_slots if sid == service_id}
-        free = [i for i in range(len(pool)) if i not in occupied]
-        if not free:
-            raise LLMClientError(
-                "All Claude Code credentials are in use by live sessions. "
-                "Add more logins (/cls) or wait for one to free up.")
-        idx = free[0]
-        self._reserved_slots.add((service_id, idx))
-        logger.info("[cci-live] claimed pool slot %d for %s (remaining free=%d)",
-                    idx, service_id, len(free) - 1)
+        load = [0] * len(pool)
+        for s in self._sessions.values():
+            if s.service_id == service_id and 0 <= s.svc_pool_idx < len(pool):
+                load[s.svc_pool_idx] += 1
+        for sid, r_idx in self._reserved_slots:
+            if sid == service_id and 0 <= r_idx < len(pool):
+                load[r_idx] += 1
+        idx = min(range(len(pool)), key=lambda i: load[i])
+        self._reserved_slots.append((service_id, idx))
+        logger.info("[cci-live] claimed shared pool slot %d for %s "
+                    "(slot load now %d)", idx, service_id, load[idx] + 1)
         return idx
 
     def _recover_container_tokens(self, state: InteractiveContainer) -> None:

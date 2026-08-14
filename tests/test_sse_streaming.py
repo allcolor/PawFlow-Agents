@@ -20,6 +20,7 @@ import time
 import unittest
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from core import FlowFile, TaskFactory
@@ -2177,6 +2178,69 @@ class TestLLMClientCompleteStream(unittest.TestCase):
 
 
 # ── Flow structure (v1.3.0 with SSE) ───────────────────────────────
+
+
+class TestRetriggerLoop(unittest.TestCase):
+    """The post-loop retrigger must be re-checked after EVERY retrigger.
+
+    Regression: a delegate result landing during a retrigger turn is drained
+    by that turn's final drain (leaving the PendingQueue empty, so the
+    post-idle wake never fires) and sets _retrigger_after_done again — the
+    old one-shot check dropped it silently and the caller never answered
+    the message (six flash-agent failure notices were lost this way).
+    """
+
+    def _make_task(self, run_impl):
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask({"api_key": "k", "streaming": True})
+        task._run_agent_loop = run_impl
+        task._maybe_generate_title = lambda *a, **k: None
+        task._maybe_poke_stalled_plan = lambda *a, **k: None
+        task._is_current_generation = lambda *a, **k: True
+        return task
+
+    def test_retrigger_reruns_until_flag_stays_clear(self):
+        calls = []
+
+        def _run(ctx, emitter):
+            calls.append(True)
+            # Main turn and first retrigger both end with fresh drained
+            # messages; the second retrigger ends clean.
+            if len(calls) < 3:
+                ctx["_retrigger_after_done"] = True
+            return SimpleNamespace(finish_reason="")
+
+        task = self._make_task(_run)
+        with patch("tasks.ai.agent_emitter.StreamEmitter",
+                   return_value=MagicMock()), \
+                patch("core.conversation_store.ConversationStore.instance",
+                      return_value=MagicMock(get_extra=lambda *a, **k: {})):
+            ctx = {"active_agent_name": "claude", "user_id": "u",
+                   "_gen_key": "c:claude", "_generation": 0}
+            task._streaming_agent_loop_inner(
+                ctx, "c", ConversationEventBus.instance())
+        assert len(calls) == 3, \
+            f"expected main turn + 2 retriggers, got {len(calls)} run(s)"
+        assert "_retrigger_after_done" not in ctx
+
+    def test_retrigger_budget_is_bounded(self):
+        calls = []
+
+        def _run(ctx, emitter):
+            calls.append(True)
+            ctx["_retrigger_after_done"] = True  # never converges
+            return SimpleNamespace(finish_reason="")
+
+        task = self._make_task(_run)
+        with patch("tasks.ai.agent_emitter.StreamEmitter",
+                   return_value=MagicMock()), \
+                patch("core.conversation_store.ConversationStore.instance",
+                      return_value=MagicMock(get_extra=lambda *a, **k: {})):
+            ctx = {"active_agent_name": "claude", "user_id": "u",
+                   "_gen_key": "c:claude", "_generation": 0}
+            task._streaming_agent_loop_inner(
+                ctx, "c", ConversationEventBus.instance())
+        assert len(calls) == 6  # 1 main + 5 retriggers, then the cap
 
 
 class TestStreamingFlowStructure(unittest.TestCase):

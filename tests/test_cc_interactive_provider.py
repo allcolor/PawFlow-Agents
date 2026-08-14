@@ -2714,11 +2714,12 @@ def test_cci_native_file_tools_allowed_bash_blocked():
         assert "WebFetch" in disallow
 
 
-def test_cci_claim_pool_slot_is_exclusive_and_errors_when_full(monkeypatch):
-    """Bug 2: 1 login = 1 live container. Concurrent claims take distinct pool
-    slots; once the pool is exhausted the next claim raises immediately."""
+def test_cci_claim_pool_slot_is_shared_least_loaded(monkeypatch):
+    """Credential slots are SHARED: a claim never fails because slots are
+    busy — a full pool balances new containers onto the least-loaded slot
+    (one login can back any number of concurrent sessions, e.g. six flash
+    agents on a single /cls credential)."""
     from core.claude_code_interactive_pool import InteractiveClaudeCodePool
-    from core.llm_client import LLMClientError
     pool = InteractiveClaudeCodePool()
     monkeypatch.setattr(
         "core.llm_providers._cc_credentials._load_credentials_pool",
@@ -2727,10 +2728,30 @@ def test_cci_claim_pool_slot_is_exclusive_and_errors_when_full(monkeypatch):
             {"access_token": "at1", "refresh_token": "rt1", "expires_at": 9},
         ])
     with pool._lock:
+        # First two claims spread across the two slots…
         assert pool._claim_pool_slot_locked("svc", "u", "c1") == 0
         assert pool._claim_pool_slot_locked("svc", "u", "c2") == 1
+        # …then the pool wraps around instead of raising.
+        assert pool._claim_pool_slot_locked("svc", "u", "c3") == 0
+        assert pool._claim_pool_slot_locked("svc", "u", "c4") == 1
+        assert pool._claim_pool_slot_locked("svc", "u", "c5") == 0
+        # Releasing one reservation on slot 1 makes it least-loaded again.
+        pool._release_slot_locked("svc", 1)
+        pool._release_slot_locked("svc", 1)
+        assert pool._claim_pool_slot_locked("svc", "u", "c6") == 1
+
+
+def test_cci_claim_pool_slot_still_errors_without_credentials(monkeypatch):
+    """The only refusal left: no credential configured at all."""
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+    from core.llm_client import LLMClientError
+    pool = InteractiveClaudeCodePool()
+    monkeypatch.setattr(
+        "core.llm_providers._cc_credentials._load_credentials_pool",
+        lambda *a, **k: [])
+    with pool._lock:
         with pytest.raises(LLMClientError):
-            pool._claim_pool_slot_locked("svc", "u", "c3")
+            pool._claim_pool_slot_locked("svc", "u", "c1")
 
 
 def test_cci_api_key_mode_does_not_claim_oauth_slot(monkeypatch):

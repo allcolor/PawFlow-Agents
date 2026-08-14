@@ -687,6 +687,14 @@ delegation, shell execution, and records those turns itself. This prevents
 first-run interactive prompts from consuming the pasted PawFlow prompt and keeps
 multi-agent/tool execution inside PawFlow.
 
+Credential slots are shared. One Claude login can back any number of
+concurrent interactive containers (parent agents, flash delegates, task
+sub-agents), so `ensure_started` never refuses a launch because every slot
+already has a live session: `_claim_pool_slot_locked` balances new containers
+onto the least-loaded slot (live containers + in-flight reservations counted
+per service). The only credential error left is the pool being empty —
+no `/cls` login configured at all.
+
 ## Live Debugging
 
 The chat UI action menu exposes `CC Interactive Tmux` for the selected agent. It

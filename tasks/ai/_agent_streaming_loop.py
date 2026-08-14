@@ -150,24 +150,40 @@ class _AgentStreamingLoopMixin:
             result = self._run_agent_loop(ctx, emitter)
             _had_error = getattr(result, "finish_reason", "") == "error"
 
-            # If messages arrived during the last turn, re-trigger a new loop
+            # If messages arrived during the last turn, re-trigger a new loop.
+            # Re-checked AFTER every retrigger too: a retrigger turn's own
+            # final drain can pull fresh messages (e.g. a delegate result
+            # landing mid-retrigger) out of the PendingQueue and set the flag
+            # again. Checking only once dropped those messages silently —
+            # they were already drained (so the post-idle wake saw an empty
+            # queue) but no turn ever answered them. Bounded so a pathological
+            # message storm cannot loop this thread forever.
             _retrig_flag = ctx.get("_retrigger_after_done")
             logger.info(
                 "[agent:%s] post-loop retrigger-check: flag=%s had_error=%s "
                 "finish_reason=%r",
                 conversation_id[:8], bool(_retrig_flag), _had_error,
                 getattr(result, "finish_reason", ""))
-            if _retrig_flag and not _had_error:
-                ctx.pop("_retrigger_after_done", None)
-                logger.info("[agent:%s] re-triggering loop for queued messages",
-                            conversation_id[:8])
+            _retriggers = 0
+            while (ctx.pop("_retrigger_after_done", None) and not _had_error
+                   and _retriggers < 5):
+                _retriggers += 1
+                logger.info(
+                    "[agent:%s] re-triggering loop for queued messages "
+                    "(retrigger %d)", conversation_id[:8], _retriggers)
                 result = self._run_agent_loop(ctx, emitter)
                 _had_error = getattr(result, "finish_reason", "") == "error"
                 logger.info(
                     "[agent:%s] retrigger loop returned: had_error=%s "
-                    "finish_reason=%r",
+                    "finish_reason=%r flag=%s",
                     conversation_id[:8], _had_error,
-                    getattr(result, "finish_reason", ""))
+                    getattr(result, "finish_reason", ""),
+                    bool(ctx.get("_retrigger_after_done")))
+            if ctx.pop("_retrigger_after_done", None):
+                logger.warning(
+                    "[agent:%s] retrigger budget exhausted (%d) with the flag "
+                    "still set — remaining drained messages are in context but "
+                    "unanswered", conversation_id[:8], _retriggers)
 
             # Set idle status
 

@@ -181,34 +181,55 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         key = (user_id, conversation_id, agent_name, service_id)
         with self._lock:
             existing = self._sessions.get(key)
-            container_alive = bool(existing and self._is_alive(existing.name))
-            if (existing and container_alive
-                    and self._tmux_is_alive(existing.name)):
+        # Docker/tmux liveness probes are subprocess round trips — run them
+        # OUTSIDE the pool lock so a slow docker daemon never stalls every
+        # other session's pool access (perf audit F: 2 probes per turn were
+        # executing under the global RLock).
+        container_alive = bool(existing and self._is_alive(existing.name))
+        tmux_alive = bool(existing and container_alive
+                          and self._tmux_is_alive(existing.name))
+        dead_existing = None
+        with self._lock:
+            current = self._sessions.get(key)
+            if current is not None and current is not existing:
+                # Someone else replaced the session while we probed —
+                # theirs is fresher, reuse it.
+                current.last_used = time.time()
+                return current
+            if existing is not None and container_alive and tmux_alive:
                 existing.last_used = time.time()
                 return existing
-            if existing:
+            if existing is not None:
                 self._sessions.pop(key, None)
                 if container_alive:
-                    logger.warning(
-                        "[cci-live] tmux session died inside live container %s; "
-                        "recreating the interactive session", existing.name)
-                    self._recover_container_tokens(existing)
-                    self._kill_container(existing.name)
-            # About to launch. Ask before claiming a credential slot, so a
-            # refusal costs nothing and releases nothing.
-            if before_launch is not None:
-                before_launch()
-            # Claim a credential slot BEFORE spawning. Slots are shared —
-            # any number of containers may run on one credential — but the
-            # reservation is recorded under the lock so concurrent
-            # ensure_started calls balance across slots (least-loaded).
-            api_key = getattr(client, "api_key", "")
-            if callable(api_key):
-                api_key = api_key()
-            elif isinstance(api_key, property):
-                api_key = ""
+                    dead_existing = existing
+        if dead_existing is not None:
+            logger.warning(
+                "[cci-live] tmux session died inside live container %s; "
+                "recreating the interactive session", dead_existing.name)
+            self._recover_container_tokens(dead_existing)
+            self._kill_container(dead_existing.name)
+            self._unregister_event_session(dead_existing)
+        # About to launch. Ask before claiming a credential slot, so a
+        # refusal costs nothing and releases nothing.
+        if before_launch is not None:
+            before_launch()
+        api_key = getattr(client, "api_key", "")
+        if callable(api_key):
+            api_key = api_key()
+        elif isinstance(api_key, property):
+            api_key = ""
+        # Read + decrypt the credentials file OUTSIDE the lock (beta-186
+        # regression: file I/O + crypto were executing under the pool lock).
+        pool_size = 0 if api_key else self._credentials_pool_size(
+            service_id, user_id, conversation_id)
+        # Claim a credential slot BEFORE spawning. Slots are shared —
+        # any number of containers may run on one credential — but the
+        # reservation is recorded under the lock so concurrent
+        # ensure_started calls balance across slots (least-loaded).
+        with self._lock:
             claimed_idx = -1 if api_key else self._claim_pool_slot_locked(
-                service_id, user_id, conversation_id)
+                service_id, user_id, conversation_id, pool_size)
         try:
             state = self._start_new(client, model, user_id, conversation_id,
                                     agent_name, key, pool_index=claimed_idx)
@@ -238,15 +259,13 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         with self._lock:
             state.last_used = time.time()
 
-    def _claim_pool_slot_locked(self, service_id: str, user_id: str,
-                                conversation_id: str) -> int:
-        """Pick the least-loaded credential slot for a new container.
+    def _credentials_pool_size(self, service_id: str, user_id: str,
+                               conversation_id: str) -> int:
+        """Load the credentials pool (file read + decrypt) and return its size.
 
-        MUST be called holding self._lock. Returns the slot index. Slots are
-        SHARED — one Claude login can back any number of concurrent
-        containers — so this never refuses a launch because slots are busy;
-        it only spreads containers across the configured logins. Raises
-        LLMClientError only when no credentials are configured at all.
+        Deliberately called WITHOUT self._lock — the I/O and crypto cost must
+        not serialize the pool. Raises LLMClientError when no credentials are
+        configured at all.
         """
         from core.llm_client import LLMClientError
         from core.llm_providers._cc_credentials import _load_credentials_pool
@@ -256,14 +275,32 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             raise LLMClientError(
                 "Claude Code credentials not configured. "
                 "Use /cls to authenticate with your Claude subscription.")
-        load = [0] * len(pool)
+        return len(pool)
+
+    def _claim_pool_slot_locked(self, service_id: str, user_id: str,
+                                conversation_id: str,
+                                pool_size: int = 0) -> int:
+        """Pick the least-loaded credential slot for a new container.
+
+        MUST be called holding self._lock. Returns the slot index. Slots are
+        SHARED — one Claude login can back any number of concurrent
+        containers — so this never refuses a launch because slots are busy;
+        it only spreads containers across the configured logins. Raises
+        LLMClientError only when no credentials are configured at all.
+        ``pool_size`` should be precomputed outside the lock via
+        ``_credentials_pool_size``; when 0, it is loaded here (test path).
+        """
+        if pool_size <= 0:
+            pool_size = self._credentials_pool_size(
+                service_id, user_id, conversation_id)
+        load = [0] * pool_size
         for s in self._sessions.values():
-            if s.service_id == service_id and 0 <= s.svc_pool_idx < len(pool):
+            if s.service_id == service_id and 0 <= s.svc_pool_idx < pool_size:
                 load[s.svc_pool_idx] += 1
         for sid, r_idx in self._reserved_slots:
-            if sid == service_id and 0 <= r_idx < len(pool):
+            if sid == service_id and 0 <= r_idx < pool_size:
                 load[r_idx] += 1
-        idx = min(range(len(pool)), key=lambda i: load[i])
+        idx = min(range(pool_size), key=lambda i: load[i])
         self._reserved_slots.append((service_id, idx))
         logger.info("[cci-live] claimed shared pool slot %d for %s "
                     "(slot load now %d)", idx, service_id, load[idx] + 1)
@@ -1205,6 +1242,7 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             logger.info("[cci-live] evict %s (%s)", state.name, reason)
             self._recover_container_tokens(state)
             self._kill_container(state.name)
+            self._unregister_event_session(state)
         # The sessions that survive this tick are exactly the ones whose
         # tokens nothing else will rescue: teardown is the only other moment
         # recovery runs, and a server killed hard -- an update whose stop
@@ -1234,6 +1272,29 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
             self._recover_container_tokens(state)
         for state in states:
             self._kill_container(state.name)
+        for state in states:
+            self._unregister_event_session(state)
+
+    @staticmethod
+    def _unregister_event_session(state: InteractiveContainer) -> None:
+        """Drop the dead container's event-service session.
+
+        Sessions were never unregistered outside the ephemeral path, so a
+        long-lived server accumulated one CCInteractiveSessionEvents per
+        container it ever ran — a slow leak plus O(all-sessions) scans in
+        publish_agent_event.
+        """
+        token = getattr(state, "session_token", "")
+        if not token:
+            return
+        try:
+            from services.cc_interactive_event_service import (
+                get_or_create_cc_interactive_event_service)
+            get_or_create_cc_interactive_event_service()[2].unregister_session(
+                token)
+        except Exception:
+            logger.debug("[cci-live] event session cleanup failed",
+                         exc_info=True)
 
     @staticmethod
     def _kill_container(name: str) -> None:

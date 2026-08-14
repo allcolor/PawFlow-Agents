@@ -732,14 +732,22 @@ class ClaudeCodePool:
                 if (now - info.last_used) > self.idle_timeout:
                     del self._ready[name]
                     to_kill.append((name, "ready_idle"))
-            for name, info in list(self._active.items()):
-                if not self._is_container_alive(name):
-                    logger.warning(
-                        "Pool active container %s is dead — "
-                        "dropping from pool (caller should release)",
-                        name)
-                    del self._active[name]
-                    to_forget_active.append(name)
+            active_names = list(self._active.keys())
+        # Probe docker OUTSIDE the lock — one subprocess per active
+        # container; running them serially under the pool lock stalled
+        # every acquire/release for the whole sweep.
+        dead_names = [n for n in active_names
+                      if not self._is_container_alive(n)]
+        if dead_names:
+            with self._lock:
+                for name in dead_names:
+                    if name in self._active:
+                        logger.warning(
+                            "Pool active container %s is dead — "
+                            "dropping from pool (caller should release)",
+                            name)
+                        del self._active[name]
+                        to_forget_active.append(name)
 
         for name, reason in to_kill:
             self._kill_container(name)  # idempotent if already dead

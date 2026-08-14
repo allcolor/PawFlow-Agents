@@ -216,6 +216,7 @@ def test_a_live_container_with_a_dead_tmux_is_recreated_as_a_cold_start():
     asked = []
     pool._recover_container_tokens = lambda state: recovered.append(state)
     pool._kill_container = lambda name: killed.append(name)
+    pool._credentials_pool_size = lambda *_args: 1
     pool._claim_pool_slot_locked = lambda *_args: 0
     pool._start_new = lambda *_args, **_kwargs: replacement
     client = SimpleNamespace(timeout=None, _agent_service="svc", api_key="")

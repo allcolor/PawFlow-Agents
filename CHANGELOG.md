@@ -19,6 +19,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Simplified chat view: the block boundary rule is now enforced on
+  load-more and injected results. A history page no longer grows stacked
+  empty "Agent activity" blocks (orphan blocks are seeded from the row's
+  own turn/agent identity); two detail blocks can never sit adjacent (an
+  answerless tool-only turn merges into the block that follows); and
+  delegate/flash result nudges and background-tool results — user-ROLE
+  rows injected by the system — file into the block's tool rows instead
+  of acting as user boundaries.
 - Claude Code / Codex interactive multi-message drain: a retrigger turn
   carrying N drained user messages (e.g. delegate results preempted while
   the previous turn was ending) only pasted the newest one into the live

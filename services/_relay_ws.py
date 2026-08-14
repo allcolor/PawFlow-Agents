@@ -68,6 +68,12 @@ _RELAY_DISCONNECT_ERRORS = (
     "Relay disconnected",
     "Relay not connected",
     "Failed to send to relay",
+    # Managed relay with an empty pool (_request_once). Without this marker
+    # the transport raised immediately instead of retrying, so the retry
+    # loop's ensure_managed_relay_alive() — the ONLY auto-heal path for a
+    # managed container that died or wedged — was unreachable: the relay
+    # stayed "reconnecting" forever until a manual UI reconnect.
+    "is reconnecting",
 )
 
 

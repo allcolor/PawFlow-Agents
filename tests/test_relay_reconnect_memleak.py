@@ -230,6 +230,27 @@ def test_managed_relay_disconnect_has_no_manual_cli_instruction():
     assert "python tools/pawflow_relay.py" not in str(exc.value)
 
 
+def test_managed_relay_reconnecting_triggers_retry_and_respawn(monkeypatch):
+    # The pool-empty error of a MANAGED relay must be treated as a transport
+    # disconnect: the retry loop is what calls ensure_managed_relay_alive(),
+    # the only automatic respawn path. Raising it straight through left a
+    # dead managed container "reconnecting" forever until a manual reconnect.
+    svc = RelayService({
+        "_service_id": "MyWorkspace", "token": "tok",
+        "server_managed": True,
+    })
+    ensures = {"count": 0}
+    monkeypatch.setattr(
+        svc, "ensure_managed_relay_alive",
+        lambda: ensures.__setitem__("count", ensures["count"] + 1) or False)
+    monkeypatch.setattr(svc._relay_available, "wait", lambda timeout: False)
+
+    with pytest.raises(Exception, match="Relay transport retry attempts exhausted"):
+        svc._request("stat", ".")
+
+    assert ensures["count"] == 4  # once per retry between the 5 attempts
+
+
 class _BrokenReader:
     def exception(self):
         return TimeoutError("network interface changed")

@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Managed relay auto-reconnect: the pool-empty error of a server-managed
+  relay ("Managed relay '<id>' is reconnecting.") is now recognized as a
+  transport disconnect, so the request retry loop runs and calls
+  `ensure_managed_relay_alive()` — the only automatic respawn path for a
+  managed container that died or wedged. Previously the error was raised
+  straight through and the relay stayed "reconnecting" indefinitely
+  (observed ~55 min after a server restart) until a manual UI reconnect.
 - Simplified chat view: a load-more page bringing back the older half of a
   turn whose block is already on screen now regroups into its fragment
   block. The fragment keeps owning rows stamped with the turn's real id

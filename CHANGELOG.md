@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.185] — 2026-08-14
+
+### Fixed
+
+- Made the active-agents set the single truth for a turn block's "working"
+  state in the simplified view: the turn-id mismatch guard now refuses a
+  terminal event only while a live successor actually exists, and the
+  `list_active` poll reconciles any block left ticking "En cours" after the
+  agent finished (reopenable if a racing live row proves the turn is running).
+- Enforced the turn-block invariants on load-more/reload reconciliation:
+  only the last block on screen may be active, and a turn-identity change
+  starts a new block even with no user row. Boundaries are user messages and
+  a scheduled wakeup's first assistant message only; a background-tool
+  result is filed inside its turn's block like a tool call.
+- Timestamped every CCI proxy log line (UTC), so event-delivery lag between
+  the container proxy and the server can be diagnosed on one clock.
+- Deduplicated observed tool blocks at the CCI proxy source: every
+  `/v1/messages` request re-sends the whole conversation history, and
+  re-emitting each historical block made event volume — and delivery lag —
+  grow with the square of the turn count (root cause of the lost-final-answer
+  incident: the event channel lagged the Stop hook by more than a minute).
+- Held the CCI post-Stop drain while a response is still owed (an open
+  `/v1/messages` request, or a follow-up after `stop_reason=tool_use`),
+  bounded by `PAWFLOW_CCI_POST_STOP_PENDING_RESPONSE_CAP_SECONDS` (90s;
+  20s when only a follow-up is owed). Finalizing on 2.5s of idle returned
+  the turn without its final text and left the stragglers to be drained by
+  the NEXT turn under the wrong turn id. The stop latch re-arms itself when
+  a delayed response completes with nothing further owed.
+- Named only a row with visible content as the turn's `final_msg_id` and
+  gauge-patch target on CLI providers: a thinking-only flush could claim the
+  marker, making the `turn_final` patch match no transcript row.
+
+### Added
+
+- Folded the composer zone above the prompt (conversation controls + action
+  dock) behind a slim centered drawer handle. The drawer is closed by
+  default and the choice persists across reloads; the active-agents mount
+  stays visible in both states.
+
+- Injected a root `AGENTS.md` into the project prompt supplement alongside
+  `.pawflow.md` and `CLAUDE.md`, so agent-facing operating instructions (such
+  as the release-procedure wiki pointer) reach every agent bootstrap.
+
+### Removed
+
+- Removed the composer stop button next to Send: the per-agent stop controls
+  in the Active Agents panel are the only stop surface.
+
 ## [1.0.0-beta.184] — 2026-08-14
 
 ### Fixed

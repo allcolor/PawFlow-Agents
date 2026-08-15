@@ -107,6 +107,12 @@ def test_every_native_title_is_adopted_by_the_shared_css_tooltip():
     assert "target.dataset.pfTitle" in tooltips_js
     # The tab bar's home-grown attr(title) tooltip is gone.
     assert ".tab-btn[title]::after" not in TEMPLATE
+    # The portal lives at body level: inside the header it went display:none
+    # with it, killing every tooltip while the header was folded.
+    header = TEMPLATE[TEMPLATE.index('<div class="header" id="headerBar">'):
+                      TEMPLATE.index("<!-- Chat tab content -->")]
+    assert 'id="pfCssTooltip"' not in header
+    assert 'id="pfCssTooltip"' in TEMPLATE
 
 
 def test_header_popover_pattern_toggles_and_closes_the_others():

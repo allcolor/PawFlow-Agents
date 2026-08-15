@@ -176,6 +176,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                           background: currentColor; border-radius: 1px; }
 .ctx-gauge-icon-fill { position: absolute; left: 1px; right: 1px; bottom: 1px; height: 0%;
                        background: var(--pf-accent-2); border-radius: 1px; }
+#ctxGaugeBtn { width: auto; padding: 0 6px; gap: 4px; }
+.ctx-gauge-pct { font-size: 10px; font-variant-numeric: tabular-nums; }
 .header .btn { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
                      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .header .btn:hover { background: #e94560; color: white; }
@@ -1203,6 +1205,7 @@ if (typeof hljs !== 'undefined') {
             aria-controls="ctxGaugePop" onclick="toggleHeaderPop('ctxGaugePop', this)"
             title="Context usage" data-i18n-title="ctxGaugeBtnTitle">
       <span class="ctx-gauge-icon" aria-hidden="true"><span class="ctx-gauge-icon-fill" id="ctxGaugeFill"></span></span>
+      <span class="ctx-gauge-pct" id="ctxGaugePct"></span>
     </button>
     <div class="hdr-pop" id="ctxGaugePop">
       <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>

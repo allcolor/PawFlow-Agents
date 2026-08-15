@@ -101,6 +101,7 @@ def test_action_status_is_an_icon_animated_while_working():
 def test_context_gauge_is_a_battery_icon_with_the_badge_in_its_popover():
     assert 'id="ctxGaugeBtn"' in TEMPLATE
     assert 'id="ctxGaugeFill"' in TEMPLATE
+    assert 'id="ctxGaugePct"' in TEMPLATE  # percentage shown beside the battery
     assert ".ctx-gauge-icon {" in TEMPLATE
     assert ".ctx-gauge-icon-fill {" in TEMPLATE
     # The full agent badge (label + gauge) lives inside the popover.
@@ -108,7 +109,8 @@ def test_context_gauge_is_a_battery_icon_with_the_badge_in_its_popover():
                    TEMPLATE.index('id="usageCostBadge"')]
     assert 'id="activeAgentBadge"' in pop
     # updateActiveAgentBadge mirrors the gauge onto the battery fill.
-    assert "gaugeFill.style.height = Math.round(pct * 100) + '%'" in CMD_AGENT_JS
+    assert "gaugeFill.style.height = pctInt + '%'" in CMD_AGENT_JS
+    assert "gaugePct.textContent = pctInt + '%'" in CMD_AGENT_JS
     assert "gaugeWrap.style.display = ''" in CMD_AGENT_JS
 
 

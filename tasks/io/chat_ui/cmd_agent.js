@@ -236,8 +236,15 @@ function updateActiveAgentBadge() {
     const pct = ctxUsage && ctxUsage.max
       ? Math.max(0, Math.min(1, ctxUsage.pct || (ctxUsage.used / ctxUsage.max)))
       : 0;
-    gaugeFill.style.height = Math.round(pct * 100) + '%';
-    gaugeFill.style.background = pct >= 0.80 ? '#f0ad4e' : '#4ecdc4';
+    const pctInt = Math.round(pct * 100);
+    const gaugeColor = pct >= 0.80 ? '#f0ad4e' : '#4ecdc4';
+    gaugeFill.style.height = pctInt + '%';
+    gaugeFill.style.background = gaugeColor;
+    const gaugePct = document.getElementById('ctxGaugePct');
+    if (gaugePct) {
+      gaugePct.textContent = pctInt + '%';
+      gaugePct.style.color = gaugeColor;
+    }
     gaugeWrap.style.display = '';
   }
 }

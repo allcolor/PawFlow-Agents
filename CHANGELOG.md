@@ -4,6 +4,29 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.194] — 2026-08-15
+
+### Fixed
+
+- Project graph builds on Windows relays: the AST extraction script rode
+  base64-encoded in the exec command line (~10k chars), over the cmd.exe
+  8191-char cap ("The command line is too long"). The script now travels in
+  the `PAWFLOW_GRAPH_SCRIPT` env var behind a tiny fixed command, and the
+  incremental `PAWFLOW_GRAPH_KNOWN` map is gzip+base64 so large projects stay
+  under the 32K per-variable cap.
+- Project graph builds on Docker relays: the exec env carries no
+  `PYTHONPATH`, so the vendored `graphify` staged at `/opt/pawflow` was never
+  importable (`No module named 'graphify'`). The extraction script now
+  bootstraps `sys.path` itself, preferring `PAWFLOW_RELAY_CODE_DIR` over
+  `/opt/pawflow`.
+
+### Security
+
+- Removed the third-party `graphifyy` PyPI package (typosquat-smelling,
+  unrelated to the vendored `core/graphify`) from the relay-dev Dockerfile
+  and the relay image catalogs, and fixed the `detect.py` hint that suggested
+  installing it.
+
 ## [1.0.0-beta.193] — 2026-08-15
 
 ### Fixed

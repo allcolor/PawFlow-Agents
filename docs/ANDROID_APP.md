@@ -26,6 +26,19 @@ without reloading it, and use **×** to close it. Each tab retains its own URL,
 page state, and navigation history while sharing the server login cookie.
 Closing the final tab returns to the server selector.
 
+The native chrome (toolbar + tab strip) folds away to the right like a
+drawer: a small `|||` grip floating in the top-right corner of the web area
+toggles it, giving the webchat the whole screen.
+
+## System bars and keyboard
+
+`targetSdk 35` enforces edge-to-edge on Android 15+: every screen root is set
+through `setScreen`, which absorbs the system bars, display cutout and IME as
+padding (older releases keep the classic decor-fitted layout). Without it the
+composer sat under the navigation bar and the WebView jumped while typing.
+The activity also declares `android:windowSoftInputMode="adjustResize"`, and
+the webchat root paints the inset strips navy to match the app chrome.
+
 ## Mobile authentication protocol
 
 The default PawFlow flow exposes:

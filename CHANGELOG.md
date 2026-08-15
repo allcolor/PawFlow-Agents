@@ -4,6 +4,22 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Android app: the webchat composer no longer sits under the system
+  navigation bar and typing no longer makes the display jump. targetSdk 35
+  enforces edge-to-edge on Android 15+; every screen root now absorbs the
+  system bars, display cutout and IME as padding (`setScreen`), and the
+  activity declares `adjustResize`.
+
+### Added
+
+- Android app: the native chrome (toolbar + tab strip) folds away to the
+  right like a drawer behind a floating `|||` grip in the top-right corner
+  of the web area, giving the webchat the whole screen.
+
 ## [1.0.0-beta.191] — 2026-08-15
 
 ### Added

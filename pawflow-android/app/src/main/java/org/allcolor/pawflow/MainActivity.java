@@ -7,10 +7,12 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.webkit.CookieManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -68,6 +70,25 @@ public final class MainActivity extends Activity {
         }
     }
 
+    // targetSdk 35 enforces edge-to-edge on Android 15+: without insets the
+    // composer sits under the navigation bar and the keyboard resize is never
+    // applied to the layout (the WebView jumps while typing). The screen root
+    // absorbs the system bars, display cutout and IME as padding. Older
+    // Android releases keep the classic decor-fitted behavior and need none.
+    private void setScreen(View root) {
+        if (Build.VERSION.SDK_INT >= 35) {
+            root.setOnApplyWindowInsetsListener((view, insets) -> {
+                android.graphics.Insets bars = insets.getInsets(
+                        WindowInsets.Type.systemBars()
+                                | WindowInsets.Type.displayCutout()
+                                | WindowInsets.Type.ime());
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                return WindowInsets.CONSUMED;
+            });
+        }
+        setContentView(root);
+    }
+
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
@@ -110,7 +131,7 @@ public final class MainActivity extends Activity {
         page.addView(add);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(page);
-        setContentView(scroll);
+        setScreen(scroll);
     }
 
     private void showServerDialog(ServerProfile existing) {
@@ -223,7 +244,7 @@ public final class MainActivity extends Activity {
         }
         ScrollView scroll = new ScrollView(this);
         scroll.addView(page);
-        setContentView(scroll);
+        setScreen(scroll);
     }
 
     private void addBuiltinForm(LinearLayout page, ServerProfile server) {
@@ -319,6 +340,13 @@ public final class MainActivity extends Activity {
         webScreen = true;
         currentServer = server;
         LinearLayout root = column();
+        // The inset padding (status/navigation bars) shows the root's own
+        // background: match the app chrome instead of flashing white strips.
+        root.setBackgroundColor(getColor(R.color.pawflow_navy));
+        // The native chrome (toolbar + tab bar) folds away to the right like
+        // a drawer so the webchat gets the whole screen; a small grip in the
+        // top-right corner of the web area toggles it back.
+        LinearLayout chrome = column();
         LinearLayout toolbar = new LinearLayout(this);
         toolbar.setGravity(Gravity.CENTER_VERTICAL);
         toolbar.setPadding(dp(8), dp(4), dp(8), dp(4));
@@ -332,25 +360,53 @@ public final class MainActivity extends Activity {
         toolbar.addView(name, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         toolbar.addView(reload);
-        root.addView(toolbar);
+        chrome.addView(toolbar);
 
         HorizontalScrollView tabScroller = new HorizontalScrollView(this);
         tabScroller.setHorizontalScrollBarEnabled(false);
         tabBar = new LinearLayout(this);
         tabBar.setOrientation(LinearLayout.HORIZONTAL);
         tabScroller.addView(tabBar);
-        root.addView(tabScroller);
+        chrome.addView(tabScroller);
+        root.addView(chrome);
 
+        // webContainer is cleared on every tab switch, so the grip lives in
+        // an enclosing stack that survives it.
+        FrameLayout webStack = new FrameLayout(this);
         webContainer = new FrameLayout(this);
-        root.addView(webContainer, new LinearLayout.LayoutParams(
+        webStack.addView(webContainer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        Button grip = button("|||");
+        grip.setAlpha(0.75f);
+        FrameLayout.LayoutParams gripParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        gripParams.topMargin = dp(2);
+        gripParams.rightMargin = dp(2);
+        webStack.addView(grip, gripParams);
+        root.addView(webStack, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        grip.setOnClickListener(view -> {
+            if (chrome.getVisibility() == View.VISIBLE) {
+                chrome.animate().translationX(chrome.getWidth()).alpha(0f)
+                        .setDuration(180)
+                        .withEndAction(() -> chrome.setVisibility(View.GONE));
+            } else {
+                chrome.setVisibility(View.VISIBLE);
+                chrome.animate().translationX(0f).alpha(1f).setDuration(180);
+            }
+        });
+        // The grip must float above the WebView added later by switchChatTab.
+        grip.setElevation(dp(4));
         serverButton.setOnClickListener(view -> showServers());
         reload.setOnClickListener(view -> {
             if (webView != null) {
                 webView.reload();
             }
         });
-        setContentView(root);
+        setScreen(root);
         addChatTab(server, handoffCode, verifier);
     }
 
@@ -557,7 +613,7 @@ public final class MainActivity extends Activity {
         ProgressBar progress = new ProgressBar(this);
         page.addView(progress);
         page.addView(text(message));
-        setContentView(page);
+        setScreen(page);
     }
 
     private void showError(String title, Exception error) {

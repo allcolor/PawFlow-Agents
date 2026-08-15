@@ -57,7 +57,6 @@
   "headerGripTitle": "Mostrar/ocultar la cabecera",
   "sidebarGripTitle": "Mostrar/ocultar el menú",
   "actionStatusBtnTitle": "Acciones en curso",
-  "actionStatusIdle": "Ninguna acción en curso",
   "ctxGaugeBtnTitle": "Uso del contexto",
   "activeForwards": "Forwards activos:\n{lines}",
   "activeLoopsHeader": "Bucles activos:",

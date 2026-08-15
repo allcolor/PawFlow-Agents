@@ -198,10 +198,8 @@ function _updateLoadingState() {
   const isWorking = visibleItems.length > 0;
   const statusBtn = document.getElementById('actionStatusBtn');
   const statusIcon = document.getElementById('actionStatusIcon');
-  const statusIdle = document.getElementById('actionStatusIdle');
   if (statusBtn) statusBtn.classList.toggle('working', isWorking);
   if (statusIcon) statusIcon.innerHTML = isWorking ? '\u273B' : '\u2713';
-  if (statusIdle) statusIdle.hidden = isWorking;
   if (!isWorking) {
     el.style.display = 'none';
     el.textContent = '';

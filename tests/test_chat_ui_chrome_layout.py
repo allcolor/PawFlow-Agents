@@ -16,7 +16,7 @@ def _between(start: str, end: str) -> str:
     return TEMPLATE_HTML[start_index:TEMPLATE_HTML.index(end, start_index)]
 
 
-HEADER_OPEN = '<div class="header collapsed" id="headerBar">'
+HEADER_OPEN = '<div class="header" id="headerBar">'
 
 
 def test_theme_and_language_are_compact_controls_in_the_header():
@@ -35,10 +35,9 @@ def test_theme_and_language_are_compact_controls_in_the_header():
     assert '&#x1F3A8;' in header_lead
     assert '&#x1F310;' in header_lead
     assert (
-        header_lead.index('<h1>PawFlow Agent</h1>')
+        header_lead.index('<h1 class="header-logo">')
         < header_lead.index('id="themeSelect"')
         < header_lead.index('id="languageSelect"')
-        < header_lead.index('id="status"')
         < header_lead.index('id="actionLoading"')
         < header_lead.index('id="activeAgentBadge"')
         < header_lead.index('id="usageCostBadge"')

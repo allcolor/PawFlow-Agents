@@ -189,14 +189,22 @@ controls:
 #### Collapsible chrome and header icon widgets
 
 The surrounding chrome maximizes the transcript: the header bar, the left
-sidebar, and the composer drawer (the whole zone above the prompt, controls
-panel and action dock included) each fold completely behind a small grip — a
-square showing 3 vertical lines (`.pf-grip`), centered on the edge it opens
-from (top center for the header, vertical center of the left edge for the
-sidebar, centered above the prompt for the composer). All three are CLOSED by
-default on load and each choice persists in localStorage
-(`pawflow.headerBarOpen`, `pawflow.composerDrawerOpen`; the sidebar keeps its
-collapsed markup default).
+sidebar (together with the vertical tab rail, which folds with it), and the
+composer drawer (the whole zone above the prompt, controls panel and action
+dock included) each fold completely behind a small grip (`.pf-grip`). The
+grip rides the separation line itself — straddling the header's bottom
+border when open (recomputed on toggle and window resize), glued to the
+sidebar/tab-rail boundary at the vertical center of the left edge, and
+absolute on the input area's top border so it adds no height. Bar
+orientation encodes the direction: a vertical menu gets horizontal bars
+(`.pf-grip-bars-h`, sidebar) and a horizontal menu gets vertical bars
+(`.pf-grip-bars`, header and composer). Sidebar and composer start CLOSED;
+the header starts OPEN. Each choice persists in localStorage
+(`pawflow.headerBarOpen`, `pawflow.composerDrawerOpen`; the sidebar keeps
+its collapsed markup default). The header title is the PawFlow logo linking
+to `https://pawflow.allcolor.org/` in a new tab, and the status text
+(`#status`) lives inside the pending-actions popover rather than the header
+lead.
 
 Three header widgets are compact icon buttons whose full content lives in a
 click-toggled popover (`toggleHeaderPop`: click shows, click again hides;

@@ -1,8 +1,10 @@
 """Header chrome: collapsible panels behind grips + icon/popover widgets.
 
-The three chrome zones (header bar, left sidebar, composer drawer) each fold
-completely behind a small grip (a square showing 3 vertical lines) and are
-CLOSED by default so the transcript takes almost the whole screen on load.
+The three chrome zones (header bar, left sidebar + tab rail, composer
+drawer) each fold completely behind a small grip (a square showing 3
+vertical lines) that rides the separation line itself. Sidebar and composer
+start CLOSED so the transcript takes almost the whole screen on load; the
+header starts OPEN and folding it is the reader's persisted choice.
 
 Three header widgets became compact icon buttons whose full content lives in
 a click-toggled popover (click shows, click again hides):
@@ -29,32 +31,60 @@ def test_shared_grip_visual_and_the_three_grips():
     assert ".pf-grip-bars {" in TEMPLATE
     # 3 vertical lines: vertical bars drawn by a horizontal repeating gradient.
     assert "repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 5px)" in TEMPLATE
-    for grip_id in ("headerGrip", "sidebarToggle", "composerDrawerHandle"):
+    # Vertical menu -> horizontal bars; horizontal menu -> vertical bars.
+    assert ".pf-grip-bars-h {" in TEMPLATE
+    for grip_id, bars in (("headerGrip", "pf-grip-bars"),
+                          ("sidebarToggle", "pf-grip-bars-h"),
+                          ("composerDrawerHandle", "pf-grip-bars")):
         start = TEMPLATE.index(f'id="{grip_id}"')
         button = TEMPLATE[TEMPLATE.rindex("<button", 0, start):
                           TEMPLATE.index("</button>", start)]
         assert "pf-grip" in button, grip_id
-        assert 'class="pf-grip-bars"' in button, grip_id
+        assert f'class="{bars}"' in button, grip_id
 
 
-def test_header_bar_folds_behind_a_top_grip_and_defaults_closed():
-    # Markup starts collapsed (no flash before DOMContentLoaded).
-    assert '<div class="header collapsed" id="headerBar">' in TEMPLATE
+def test_header_bar_folds_behind_a_top_grip_and_defaults_open():
+    assert '<div class="header" id="headerBar">' in TEMPLATE
     assert ".header.collapsed { display: none; }" in TEMPLATE
     assert 'onclick="toggleHeaderBar()"' in TEMPLATE
     assert ".pf-grip-top { position: fixed; top: 0; left: 50%;" in TEMPLATE
-    # Open only when the stored flag is explicitly '1': fresh browser = CLOSED.
-    assert "localStorage.getItem(_HEADER_BAR_KEY) === '1'" in STATE_JS
+    # Closed only when the stored flag is explicitly '0': fresh browser = OPEN.
+    assert "localStorage.getItem(_HEADER_BAR_KEY) !== '0'" in STATE_JS
     assert "localStorage.setItem(_HEADER_BAR_KEY" in STATE_JS
     assert "document.addEventListener('DOMContentLoaded', _applyHeaderBar)" in STATE_JS
+    # When open, the grip follows the header's bottom separation line.
+    assert "bar.getBoundingClientRect().bottom - 8" in STATE_JS
+    assert "window.addEventListener('resize', _applyHeaderBar)" in STATE_JS
+
+
+def test_header_shows_the_pawflow_logo_linking_to_the_site():
+    logo = TEMPLATE[TEMPLATE.index('<h1 class="header-logo">'):
+                    TEMPLATE.index('</h1>')]
+    assert 'href="https://pawflow.allcolor.org/"' in logo
+    assert 'target="_blank"' in logo
+    assert 'rel="noopener"' in logo
+    assert "pawflow-logo-32.png" in logo
+    assert "PawFlow Agent</h1>" not in TEMPLATE
 
 
 def test_sidebar_grip_is_an_edge_tab_and_sidebar_defaults_closed():
     assert '<div class="sidebar collapsed" id="sidebar">' in TEMPLATE
     assert ".sidebar-toggle { position: fixed; top: 50%; left: 0;" in TEMPLATE
-    # toggleSidebar keeps the grip glued to the drawer's edge.
-    assert "btn.style.left = collapsed ? '0px' : '260px'" in STATE_JS
+    # The tab rail folds together with the sidebar: collapsed, only the grip
+    # remains visible at the left edge, glued to the boundary line.
+    assert '<div class="tab-bar collapsed" id="tabBar">' in TEMPLATE
+    assert ".tab-bar.collapsed { display: none; }" in TEMPLATE
+    assert "tabBar.classList.toggle('collapsed', collapsed)" in STATE_JS
+    assert "const boundary = collapsed ? 0 : 260 + (tabBar ? tabBar.offsetWidth : 0)" in STATE_JS
+    assert "btn.style.left = Math.max(0, boundary - 8) + 'px'" in STATE_JS
     assert "&#9776;" not in TEMPLATE  # old hamburger glyph is gone
+
+
+def test_composer_grip_rides_the_separation_line():
+    # Absolute on the input area's top border: it adds no height of its own.
+    assert (".composer-drawer-handle { position: absolute; top: -8px; left: 50%;"
+            in TEMPLATE)
+    assert ".input-area { position: relative;" in TEMPLATE
 
 
 def test_header_popover_pattern_toggles_and_closes_the_others():
@@ -86,16 +116,16 @@ def test_active_agents_is_a_header_icon_with_count_and_popover():
 def test_action_status_is_an_icon_animated_while_working():
     assert 'id="actionStatusBtn"' in TEMPLATE
     assert 'id="actionStatusIcon"' in TEMPLATE
-    assert 'id="actionStatusIdle"' in TEMPLATE
-    # The loading label + progress bar moved inside the popover.
+    # The status text and the loading label + progress bar all moved inside
+    # the popover; the header lead shows only the icon.
     pop = TEMPLATE[TEMPLATE.index('id="actionStatusPop"'):
                    TEMPLATE.index('id="ctxGaugeWrap"')]
     assert 'id="actionLoading"' in pop
+    assert 'id="status"' in pop
     assert ".hdr-icon-btn.working .hdr-action-icon { animation: spin" in TEMPLATE
     # rxbus drives icon state + idle text together with the label.
     assert "statusBtn.classList.toggle('working', isWorking)" in RXBUS_JS
     assert "statusIcon.innerHTML = isWorking ? '\\u273B' : '\\u2713'" in RXBUS_JS
-    assert "statusIdle.hidden = isWorking" in RXBUS_JS
 
 
 def test_context_gauge_is_a_battery_icon_with_the_badge_in_its_popover():
@@ -119,5 +149,5 @@ def test_i18n_keys_present_in_all_languages():
         data = json.loads(Path(f"tasks/io/chat_ui/i18n/{lang}.json")
                           .read_text(encoding="utf-8"))
         for key in ("headerGripTitle", "sidebarGripTitle", "actionStatusBtnTitle",
-                    "actionStatusIdle", "ctxGaugeBtnTitle"):
+                    "ctxGaugeBtnTitle"):
             assert data[key], (lang, key)

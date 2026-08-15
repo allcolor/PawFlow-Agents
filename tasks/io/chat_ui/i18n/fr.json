@@ -57,7 +57,6 @@
   "headerGripTitle": "Afficher/masquer l'en-tête",
   "sidebarGripTitle": "Afficher/masquer le menu",
   "actionStatusBtnTitle": "Actions en cours",
-  "actionStatusIdle": "Aucune action en cours",
   "ctxGaugeBtnTitle": "Utilisation du contexte",
   "activeForwards": "Forwards actifs :\n{lines}",
   "activeLoopsHeader": "Boucles actives :",

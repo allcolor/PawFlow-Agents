@@ -113,12 +113,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .pf-grip:hover { color: var(--pf-text, #e0e0e0); background: var(--pf-user, #0f3460); }
 .pf-grip-bars { display: block; width: 12px; height: 11px;
                 background: repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 5px); }
+/* Vertical menu -> horizontal bars; horizontal menu -> vertical bars. */
+.pf-grip-bars-h { display: block; width: 11px; height: 12px;
+                  background: repeating-linear-gradient(180deg, currentColor 0 2px, transparent 2px 5px); }
 .sidebar-toggle { position: fixed; top: 50%; left: 0; transform: translateY(-50%); z-index: 100;
                    width: 15px; height: 36px; border-left: none; border-radius: 0 8px 8px 0;
                    transition: left 0.2s; }
 .pf-grip-top { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 210;
                width: 36px; height: 15px; border-top: none; border-radius: 0 0 8px 8px; }
+/* Open state: JS moves the grip down so it rides the header's bottom line. */
+#headerGrip[aria-expanded="true"] { border: 1px solid var(--pf-border, #0f3460); border-radius: 8px; }
 .header.collapsed { display: none; }
+.header-logo a { display: inline-flex; align-items: center; }
+.header-logo img { display: block; width: 28px; height: 28px; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
            display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
@@ -163,7 +170,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
            padding: 8px 10px; box-shadow: 0 4px 14px rgba(0,0,0,0.4);
            min-width: 230px; max-width: min(480px, 92vw); }
 .hdr-pop.open { display: block; }
-.hdr-pop-idle { font-size: 11px; color: var(--pf-muted); }
 /* Inside its popover the active-agents box is always laid out; the popover
    itself is the only show/hide switch the reader interacts with. */
 .hdr-pop .active-panel { display: block; position: static; max-width: 440px;
@@ -570,8 +576,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 /* Composer drawer: everything above the prompt (conversation controls +
    action dock) folds completely behind a small centered grip. CLOSED by
    default; the choice persists across reloads (localStorage). */
-.composer-drawer-handle { margin: 0 auto; width: 36px; height: 15px;
-  border-bottom: none; border-radius: 8px 8px 0 0; }
+/* The grip straddles the separation line itself (the input area's top
+   border) instead of stacking above the row, so it adds no height. */
+.composer-drawer-handle { position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
+  z-index: 5; width: 36px; height: 15px; border-radius: 8px; }
 .input-area.composer-drawer-collapsed .composer-context-row { display: none; }
 .composer-context-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
                         align-items: end; gap: 10px; min-width: 0; }
@@ -640,8 +648,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                      display: flex; align-items: center; justify-content: center;
                      box-shadow: 0 2px 8px rgba(0,0,0,0.4); transition: background 0.2s, color 0.2s; }
 .scroll-nav button:hover { background: #0f3460; color: #fff; }
-.input-area { background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460; flex-shrink: 0;
-               display: flex; gap: 10px; flex-direction: column; }
+.input-area { position: relative; background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460;
+               flex-shrink: 0; display: flex; gap: 10px; flex-direction: column; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }
 .input-row textarea { flex: 1; min-width: 0; background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460;
                         border-radius: 8px; padding: 10px; font-size: 14px; resize: none;
@@ -907,6 +915,9 @@ pre code.hljs{background:transparent!important;padding:0!important}
                           border: 1px solid #0f3460; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
 .tab-btn:hover[title]::after { opacity: 1; }
 .tab-spacer { flex: 1; }
+/* The tab rail folds together with the sidebar: collapsed, only the grip on
+   the boundary line remains visible at the left edge. */
+.tab-bar.collapsed { display: none; }
 /* Tab content panels */
 .tab-content { display: none; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; }
 .tab-content.active { display: flex; }
@@ -1097,7 +1108,7 @@ if (typeof hljs !== 'undefined') {
 <body>
 <button class="sidebar-toggle pf-grip" id="sidebarToggle" type="button" aria-expanded="false"
         aria-controls="sidebar" onclick="toggleSidebar()"
-        title="Show/hide menu" data-i18n-title="sidebarGripTitle"><span class="pf-grip-bars"></span></button>
+        title="Show/hide menu" data-i18n-title="sidebarGripTitle"><span class="pf-grip-bars-h"></span></button>
 <div class="sidebar collapsed" id="sidebar">
   <div id="conversationsPanel" class="sidebar-section active" data-sidebar-section="conversations">
     <div class="sidebar-header sidebar-section-header" data-sidebar-header="conversations"
@@ -1157,7 +1168,7 @@ if (typeof hljs !== 'undefined') {
   </div>
 </div>
 <!-- Tab bar -->
-<div class="tab-bar" id="tabBar">
+<div class="tab-bar collapsed" id="tabBar">
   <button class="tab-btn active" id="tabChat" data-tab="chat" title="Chat" data-i18n-title="chatTitle" onclick="switchTab('chat')">💬</button>
   <div data-pf-slot="tab_bar_ext"></div>
   <div class="tab-spacer"></div>
@@ -1168,8 +1179,9 @@ if (typeof hljs !== 'undefined') {
 <button class="pf-grip pf-grip-top" id="headerGrip" type="button" aria-expanded="false"
         aria-controls="headerBar" onclick="toggleHeaderBar()"
         title="Show/hide header" data-i18n-title="headerGripTitle"><span class="pf-grip-bars"></span></button>
-<div class="header collapsed" id="headerBar">
-  <h1>PawFlow Agent</h1>
+<div class="header" id="headerBar">
+  <h1 class="header-logo"><a href="https://pawflow.allcolor.org/" target="_blank" rel="noopener"
+      title="PawFlow" aria-label="PawFlow"><img src="/chat/js/assets/pawflow-logo-32.png" alt="PawFlow"></a></h1>
   <label class="header-select-control header-dock-item" id="themeSelectControl"
          aria-label="Global chat theme"
          data-i18n-aria-label="globalThemeTitle" style="display:none">
@@ -1188,7 +1200,6 @@ if (typeof hljs !== 'undefined') {
     <select class="header-icon-select" id="languageSelect" onchange="setLanguage(this.value)"
             aria-label="Language" data-i18n-aria-label="languageTitle"></select>
   </label>
-  <span class="status" id="status" data-i18n="ready">Ready</span>
   <span class="hdr-pop-wrap" id="actionStatusWrap">
     <button class="hdr-icon-btn" id="actionStatusBtn" type="button" aria-expanded="false"
             aria-controls="actionStatusPop" onclick="toggleHeaderPop('actionStatusPop', this)"
@@ -1196,8 +1207,8 @@ if (typeof hljs !== 'undefined') {
       <span class="hdr-action-icon" id="actionStatusIcon">&#x2713;</span>
     </button>
     <div class="hdr-pop" id="actionStatusPop">
+      <div class="status" id="status" data-i18n="ready">Ready</div>
       <span id="actionLoading" class="ui-action-loading" style="display:none"></span>
-      <span class="hdr-pop-idle" id="actionStatusIdle" data-i18n="actionStatusIdle">No actions running</span>
     </div>
   </span>
   <span class="hdr-pop-wrap" id="ctxGaugeWrap" style="display:none">

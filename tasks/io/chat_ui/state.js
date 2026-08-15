@@ -305,7 +305,12 @@ function _syncToggleBtn() {
   const btn = document.getElementById('sidebarToggle');
   if (!sb || !btn) return;
   const collapsed = sb.classList.contains('collapsed');
-  btn.style.left = collapsed ? '0px' : '260px';
+  // The tab rail folds with the sidebar; the grip hugs the boundary line
+  // (straddling it when open, flush with the edge when collapsed).
+  const tabBar = document.getElementById('tabBar');
+  if (tabBar) tabBar.classList.toggle('collapsed', collapsed);
+  const boundary = collapsed ? 0 : 260 + (tabBar ? tabBar.offsetWidth : 0);
+  btn.style.left = Math.max(0, boundary - 8) + 'px';
   btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
 }
 function toggleSidebar() {
@@ -337,12 +342,12 @@ function toggleComposerDrawer() {
 }
 document.addEventListener('DOMContentLoaded', _applyComposerDrawer);
 
-// Header bar: same fold-behind-a-grip pattern. CLOSED by default so the
-// transcript takes almost the whole screen on load.
+// Header bar: same fold-behind-a-grip pattern, but OPEN by default —
+// folding it is the reader's explicit choice and persists.
 const _HEADER_BAR_KEY = 'pawflow.headerBarOpen';
 function _headerBarOpen() {
-  try { return localStorage.getItem(_HEADER_BAR_KEY) === '1'; }
-  catch (_) { return false; }
+  try { return localStorage.getItem(_HEADER_BAR_KEY) !== '0'; }
+  catch (_) { return true; }
 }
 function _applyHeaderBar() {
   const bar = document.getElementById('headerBar');
@@ -350,7 +355,14 @@ function _applyHeaderBar() {
   const open = _headerBarOpen();
   bar.classList.toggle('collapsed', !open);
   const grip = document.getElementById('headerGrip');
-  if (grip) grip.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (grip) {
+    grip.setAttribute('aria-expanded', open ? 'true' : 'false');
+    // The grip follows the separation line: viewport top edge when the
+    // header is folded, straddling the header's bottom border when open.
+    grip.style.top = open
+      ? Math.max(0, bar.getBoundingClientRect().bottom - 8) + 'px'
+      : '0px';
+  }
 }
 function toggleHeaderBar() {
   try {
@@ -359,6 +371,7 @@ function toggleHeaderBar() {
   _applyHeaderBar();
 }
 document.addEventListener('DOMContentLoaded', _applyHeaderBar);
+window.addEventListener('resize', _applyHeaderBar);
 
 // Header popovers: an icon click shows the widget's full content in a
 // tooltip-like popover; a second click hides it. Opening one closes the

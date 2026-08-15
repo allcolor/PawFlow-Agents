@@ -500,6 +500,44 @@ public final class MainActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setSafeBrowsingEnabled(true);
+        // Without a DownloadListener a WebView silently ignores downloads
+        // (files shared by the agent, exports). Hand them to DownloadManager
+        // with the session cookie so authenticated FileStore URLs work; the
+        // file lands in the system Downloads folder with a notification.
+        view.setDownloadListener((url, userAgent, contentDisposition,
+                mimeType, contentLength) -> {
+            if (!url.startsWith("http")) {
+                Toast.makeText(this, "Unsupported download URL",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            try {
+                android.app.DownloadManager.Request request =
+                        new android.app.DownloadManager.Request(Uri.parse(url));
+                String cookies = CookieManager.getInstance().getCookie(url);
+                if (cookies != null) {
+                    request.addRequestHeader("Cookie", cookies);
+                }
+                request.addRequestHeader("User-Agent", userAgent);
+                String name = android.webkit.URLUtil.guessFileName(
+                        url, contentDisposition, mimeType);
+                request.setMimeType(mimeType);
+                request.setNotificationVisibility(
+                        android.app.DownloadManager.Request
+                                .VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                request.setDestinationInExternalPublicDir(
+                        android.os.Environment.DIRECTORY_DOWNLOADS, name);
+                android.app.DownloadManager manager =
+                        (android.app.DownloadManager)
+                                getSystemService(DOWNLOAD_SERVICE);
+                manager.enqueue(request);
+                Toast.makeText(this, "Downloading " + name,
+                        Toast.LENGTH_SHORT).show();
+            } catch (RuntimeException error) {
+                Toast.makeText(this, "Download failed: " + error.getMessage(),
+                        Toast.LENGTH_LONG).show();
+            }
+        });
         view.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView webView,

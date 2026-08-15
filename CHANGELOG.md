@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Android app: downloads from the webchat now work — the WebView hands them
+  to the system DownloadManager with the session cookie, into the Downloads
+  folder with a notification. Previously the WebView ignored them silently.
 - Android app: the webchat composer no longer sits under the system
   navigation bar and typing no longer makes the display jump. targetSdk 35
   enforces edge-to-edge on Android 15+; every screen root now absorbs the

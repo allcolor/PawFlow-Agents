@@ -39,6 +39,13 @@ composer sat under the navigation bar and the WebView jumped while typing.
 The activity also declares `android:windowSoftInputMode="adjustResize"`, and
 the webchat root paints the inset strips navy to match the app chrome.
 
+## Downloads
+
+WebView ignores downloads unless a `DownloadListener` is set. Files the
+webchat offers (agent-shared files, exports) are handed to the system
+`DownloadManager` with the session cookie — so authenticated FileStore URLs
+work — and land in the Downloads folder with a completion notification.
+
 ## Mobile authentication protocol
 
 The default PawFlow flow exposes:

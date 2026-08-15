@@ -42,5 +42,15 @@ def test_webchat_chrome_folds_behind_a_floating_grip():
     assert "webContainer.addView(grip" not in MAIN
 
 
+def test_webview_downloads_go_through_download_manager():
+    # A WebView silently ignores downloads without a DownloadListener.
+    assert "view.setDownloadListener(" in MAIN
+    assert "android.app.DownloadManager.Request" in MAIN
+    # Authenticated FileStore URLs need the session cookie.
+    assert 'request.addRequestHeader("Cookie", cookies);' in MAIN
+    assert "DIRECTORY_DOWNLOADS" in MAIN
+    assert "guessFileName" in MAIN
+
+
 def test_inset_strips_match_the_app_chrome():
     assert "root.setBackgroundColor(getColor(R.color.pawflow_navy));" in MAIN

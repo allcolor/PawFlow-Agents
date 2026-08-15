@@ -46,9 +46,10 @@ def test_mobile_sidebar_toggle_stays_above_the_open_drawer():
     mobile = _mobile_block()
     assert ".sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;" in mobile
     assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile
+    assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 260px;" in mobile
     assert (
         "body:has(.sidebar:not(.collapsed)) .sidebar-toggle"
-        " { left: 260px !important; }" in mobile
+        " { left: 295px !important; }" in mobile
     )
 
 

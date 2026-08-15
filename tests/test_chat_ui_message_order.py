@@ -370,9 +370,11 @@ def test_mobile_breakpoints_scroll_header_and_overlay_sidebar():
     # the drawer's right edge while it is open, or the open drawer covers the
     # only button that closes it and the menu can never be closed again.
     assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile_block
+    # The tab rail overlays beside the fixed drawer; the grip clears both.
+    assert ".tab-bar { position: fixed; top: 0; bottom: 0; left: 260px;" in mobile_block
     assert (
         "body:has(.sidebar:not(.collapsed)) .sidebar-toggle"
-        " { left: 260px !important; }" in mobile_block
+        " { left: 295px !important; }" in mobile_block
     )
 
 

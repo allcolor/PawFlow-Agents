@@ -423,7 +423,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
      is open, sit just outside its right edge -- otherwise the open menu
      covers the only button that closes it and the menu cannot be closed. */
   .sidebar-toggle { left: 0 !important; z-index: 200; }
-  body:has(.sidebar:not(.collapsed)) .sidebar-toggle { left: 260px !important; }
+  /* The tab rail overlays too, glued to the drawer's right edge — in flow it
+     would sit underneath the fixed drawer and simply disappear. The grip
+     moves past both (260px drawer + ~43px rail). */
+  .tab-bar { position: fixed; top: 0; bottom: 0; left: 260px; z-index: 150;
+             box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
+  body:has(.sidebar:not(.collapsed)) .sidebar-toggle { left: 295px !important; }
   /* Desktop sizes assume a ~1400px-wide window read at arm's length; the same
      11-12px on a phone is unreadable. Bump the type scale (roughly +1-2px per
      step) and let bubbles use the full width, since horizontal space -- not

@@ -90,6 +90,11 @@ def test_composer_grip_rides_the_separation_line():
 def test_header_icon_widgets_share_the_dock_hover_zoom():
     assert (".hdr-icon-btn:hover, .header-logo a:hover { transform: scale(1.4);"
             in TEMPLATE)
+    # The grips zoom too, composing with their centering translation.
+    assert ".pf-grip-top:hover { transform: translateX(-50%) scale(1.4); }" in TEMPLATE
+    assert ".sidebar-toggle:hover { transform: translateY(-50%) scale(1.4); }" in TEMPLATE
+    assert (".composer-drawer-handle:hover { transform: translateX(-50%) scale(1.4); }"
+            in TEMPLATE)
 
 
 def test_header_popover_pattern_toggles_and_closes_the_others():

@@ -4,6 +4,20 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Webchat chrome maximizes the transcript: the header bar, the left sidebar
+  and the composer drawer (the whole zone above the prompt) each fold
+  completely behind a small grip (a square showing 3 vertical lines) and are
+  closed by default on load, so the chat takes almost the whole screen. The
+  Active agents box left the composer for a header person-icon with an
+  active-count badge; the pending-actions label and the agent context gauge
+  became header icons too (animated glyph while actions run, battery-style
+  fill mirroring the context percentage). Each icon toggles a popover with
+  the full widget on click.
+
 ## [1.0.0-beta.190] — 2026-08-15
 
 ### Fixed

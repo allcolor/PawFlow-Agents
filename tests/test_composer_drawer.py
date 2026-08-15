@@ -1,8 +1,9 @@
-"""Composer drawer: the zone above the prompt folds behind a slim handle.
+"""Composer drawer: the whole zone above the prompt folds behind a grip.
 
-Closed by default, the reader's choice persists across reloads, and the
-active-agents mount is not part of the drawer. The composer stop button is
-gone: the Active Agents panel is the only stop surface.
+Closed by default and the reader's choice persists across reloads. The
+active-agents box is not in the composer anymore (it lives in the header
+popover — see test_header_chrome.py). The composer stop button is gone:
+the Active Agents panel is the only stop surface.
 """
 
 import json
@@ -16,14 +17,18 @@ def test_handle_markup_and_collapse_rules():
     assert 'id="composerDrawerHandle"' in TEMPLATE
     assert 'onclick="toggleComposerDrawer()"' in TEMPLATE
     assert 'data-i18n-title="composerDrawerTitle"' in TEMPLATE
-    # Collapse hides the controls panel and the action dock…
-    assert (".input-area.composer-drawer-collapsed .composer-context-row > "
-            ".prompt-controls-panel") in TEMPLATE
-    assert (".input-area.composer-drawer-collapsed .composer-context-row > "
-            ".composer-action-mount") in TEMPLATE
-    # …but never the active-agents mount.
-    assert (".input-area.composer-drawer-collapsed .composer-context-row > "
-            ".composer-active-mount") not in TEMPLATE
+    # The handle is a grip (small square, 3 vertical lines), not an arrow.
+    handle_start = TEMPLATE.index('id="composerDrawerHandle"')
+    handle = TEMPLATE[TEMPLATE.rindex("<button", 0, handle_start):
+                      TEMPLATE.index("</button>", handle_start)]
+    assert 'class="composer-drawer-handle pf-grip"' in handle
+    assert 'class="pf-grip-bars"' in handle
+    assert "&#x25B4;" not in handle
+    # Collapse hides the WHOLE context row (controls panel + action dock):
+    # the active-agents box no longer lives above the prompt at all.
+    assert (".input-area.composer-drawer-collapsed "
+            ".composer-context-row { display: none; }") in TEMPLATE
+    assert "composer-active-mount" not in TEMPLATE
 
 
 def test_drawer_defaults_closed_and_persists():

@@ -16,7 +16,7 @@ HELP = (CHAT_UI / "cmd_misc.js").read_text(encoding="utf-8")
 
 def test_notification_button_precedes_linked_accounts_in_header():
     header = TEMPLATE[
-        TEMPLATE.index('<div class="header">'):
+        TEMPLATE.index('<div class="header collapsed" id="headerBar">'):
         TEMPLATE.index('id="actionMenuWrap"')
     ]
     assert header.index('id="notificationCenterBtn"') < header.index(

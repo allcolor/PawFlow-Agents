@@ -193,7 +193,16 @@ function _updateLoadingState() {
   const el = document.getElementById('actionLoading');
   if (!el) return;
   const visibleItems = Array.from(_pendingActionItems.values()).filter(item => item.visible);
-  if (!visibleItems.length) {
+  // Header icon: animated glyph while actions run, idle checkmark otherwise.
+  // The detailed label + progress bar live in the icon's popover.
+  const isWorking = visibleItems.length > 0;
+  const statusBtn = document.getElementById('actionStatusBtn');
+  const statusIcon = document.getElementById('actionStatusIcon');
+  const statusIdle = document.getElementById('actionStatusIdle');
+  if (statusBtn) statusBtn.classList.toggle('working', isWorking);
+  if (statusIcon) statusIcon.innerHTML = isWorking ? '\u273B' : '\u2713';
+  if (statusIdle) statusIdle.hidden = isWorking;
+  if (!isWorking) {
     el.style.display = 'none';
     el.textContent = '';
     return;

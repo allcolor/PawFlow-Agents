@@ -16,8 +16,11 @@ def _between(start: str, end: str) -> str:
     return TEMPLATE_HTML[start_index:TEMPLATE_HTML.index(end, start_index)]
 
 
+HEADER_OPEN = '<div class="header collapsed" id="headerBar">'
+
+
 def test_theme_and_language_are_compact_controls_in_the_header():
-    header = _between('<div class="header">', '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
     header_lead = header[:header.index('id="actionMenuWrap"')]
     dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
 
@@ -44,7 +47,7 @@ def test_theme_and_language_are_compact_controls_in_the_header():
 
 
 def test_theme_and_language_reuse_dock_tooltips_and_hover_zoom():
-    header = _between('<div class="header">', '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
     header_controls = header[:header.index('id="actionMenuWrap"')]
 
     for control_id in ("themeSelectControl", "languageSelectControl"):
@@ -62,7 +65,7 @@ def test_theme_and_language_reuse_dock_tooltips_and_hover_zoom():
 
 
 def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
-    header = _between('<div class="header">', '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
     dock = _between('<div class="action-menu-wrap action-dock"', '<!-- /action dock -->')
     i18n_js = Path("tasks/io/chat_ui/i18n.js").read_text(encoding="utf-8")
     state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
@@ -110,7 +113,7 @@ def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
 
 
 def test_header_account_actions_reuse_dock_tooltip_and_hover_zoom():
-    header = _between('<div class="header">', '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
     header_controls = header[:header.index('id="actionMenuWrap"')]
 
     for element_id in ("linkAccountBtn", "logoutBtn"):
@@ -175,7 +178,7 @@ def test_language_selector_renders_catalog_flags():
 
 
 def test_view_audio_permissions_and_dictation_live_in_left_prompt_panel():
-    header = _between('<div class="header">', '<!-- Chat tab content -->')
+    header = _between(HEADER_OPEN, '<!-- Chat tab content -->')
     controls = _between(
         '<div class="prompt-controls-panel"', '<div class="composer-action-mount"'
     )
@@ -192,7 +195,7 @@ def test_view_audio_permissions_and_dictation_live_in_left_prompt_panel():
     assert "position: fixed; bottom: 70px; left: 20px" not in TEMPLATE_HTML
 
 
-def test_composer_context_row_orders_controls_action_dock_and_active_agents():
+def test_composer_context_row_orders_controls_and_action_dock():
     input_area = _between('<div class="input-area">', '</div><!-- /tab-content chat -->')
     context_row = _between(
         '<div class="composer-context-row">', '<div class="input-row">'
@@ -200,15 +203,16 @@ def test_composer_context_row_orders_controls_action_dock_and_active_agents():
 
     assert 'id="promptControlsPanel"' in context_row
     assert 'id="composerActionMount"' in context_row
-    assert 'id="composerActiveMount"' in context_row
+    # The active-agents box left the composer: it lives in the header
+    # popover now (see test_header_chrome.py).
+    assert 'id="composerActiveMount"' not in TEMPLATE_HTML
     assert 'id="attachPreview"' not in context_row
     assert (
         context_row.index('id="promptControlsPanel"')
         < context_row.index('id="composerActionMount"')
-        < context_row.index('id="composerActiveMount"')
     )
     assert "actionMount.appendChild(actionDock)" in STATE_JS
-    assert "activeMount.appendChild(activePanel)" in STATE_JS
+    assert "activePop.appendChild(activePanel)" in STATE_JS
     assert context_row in input_area
     assert ".composer-context-row { display: grid;" in TEMPLATE_HTML
     assert (
@@ -221,7 +225,7 @@ def test_composer_context_row_orders_controls_action_dock_and_active_agents():
         ".input-area .composer-context-row { grid-template-columns: minmax(0, 1fr); }"
         in TEMPLATE_HTML
     )
-    assert ".composer-context-row > .composer-action-mount," in TEMPLATE_HTML
+    assert ".composer-context-row > .composer-action-mount { justify-self: stretch; }" in TEMPLATE_HTML
 
 
 def test_conversation_actions_are_an_horizontal_composer_dock():

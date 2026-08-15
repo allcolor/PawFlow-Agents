@@ -358,15 +358,15 @@ def test_mobile_breakpoints_wrap_header_and_overlay_sidebar():
     assert ".header .actions { margin-left: auto;" in mobile_block
     assert ".sidebar { position: fixed;" in mobile_block
     # sidebar-toggle's left is set inline by _syncToggleBtn() (state.js) to
-    # '268px' assuming the sidebar pushes .main over -- must be pinned back
+    # '260px' assuming the sidebar pushes .main over -- must be pinned back
     # with !important now that the sidebar overlays instead on mobile. It must
     # also stay above the drawer (z-index 200 > sidebar 150) and move outside
     # the drawer's right edge while it is open, or the open drawer covers the
     # only button that closes it and the menu can never be closed again.
-    assert ".sidebar-toggle { left: 12px !important; z-index: 200; }" in mobile_block
+    assert ".sidebar-toggle { left: 0 !important; z-index: 200; }" in mobile_block
     assert (
         "body:has(.sidebar:not(.collapsed)) .sidebar-toggle"
-        " { left: 268px !important; }" in mobile_block
+        " { left: 260px !important; }" in mobile_block
     )
 
 

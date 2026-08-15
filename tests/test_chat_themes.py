@@ -221,7 +221,7 @@ def test_theme_ui_selector_and_repository_entries_exist():
         for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     themes_js = open("tasks/io/chat_ui/themes.js", encoding="utf-8").read()
 
-    header_start = template.index('<div class="header">')
+    header_start = template.index('<div class="header collapsed" id="headerBar">')
     dock_start = template.index('id="actionMenuWrap"', header_start)
     dock_end = template.index('<!-- /action dock -->', dock_start)
     assert header_start < template.index('id="themeSelect"') < dock_start

@@ -226,6 +226,20 @@ function updateActiveAgentBadge() {
   } catch (e) {}
   badge.innerHTML = escapeHtml(label) + gaugeHtml;
   badge.style.display = '';
+  // Battery-style header icon mirrors the badge's context gauge; the full
+  // badge itself lives in the icon's popover.
+  const gaugeWrap = document.getElementById('ctxGaugeWrap');
+  const gaugeFill = document.getElementById('ctxGaugeFill');
+  if (gaugeWrap && gaugeFill) {
+    let ctxUsage = null;
+    try { ctxUsage = (window._contextUsage || {})[(agent || '').toLowerCase()]; } catch (e) {}
+    const pct = ctxUsage && ctxUsage.max
+      ? Math.max(0, Math.min(1, ctxUsage.pct || (ctxUsage.used / ctxUsage.max)))
+      : 0;
+    gaugeFill.style.height = Math.round(pct * 100) + '%';
+    gaugeFill.style.background = pct >= 0.80 ? '#f0ad4e' : '#4ecdc4';
+    gaugeWrap.style.display = '';
+  }
 }
 
 function cmdAgentSelect(name) {

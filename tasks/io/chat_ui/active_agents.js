@@ -237,6 +237,15 @@ function trackAgentDone(agentName, taskId, turnId) {
   return true;
 }
 
+// Header icon badge: number of active agents, hidden at zero. The icon
+// animates (working state) whenever at least one agent is running.
+function _updateActiveAgentsCount(count) {
+  const badge = document.getElementById('activeAgentsCount');
+  const btn = document.getElementById('activeAgentsBtn');
+  if (badge) { badge.hidden = count === 0; badge.textContent = String(count); }
+  if (btn) btn.classList.toggle('working', count > 0);
+}
+
 function updateActivePanel() {
   // Same poll: whether the selected agent has a tmux to grab.
   if (typeof updateGrabButton === 'function') updateGrabButton();
@@ -245,12 +254,12 @@ function updateActivePanel() {
   const names = Object.keys(activeInteractions);
   const wasVisible = panel.classList.contains('visible');
   const wasAtBottom = isNearBottom();
-  const scrollNav = document.getElementById('scrollNav');
+  _updateActiveAgentsCount(names.length);
   if (names.length === 0) {
+    if (rows) rows.innerHTML = '';
     if (wasVisible) {
       panel.classList.remove('visible');
       hideTyping();
-      if (scrollNav) scrollNav.style.bottom = '75px';
       if (wasAtBottom) scrollBottom(true);
     }
     return;
@@ -373,10 +382,6 @@ function updateActivePanel() {
       + '<button class="btn-stop" title="' + escapeAttr(t('stop')) + '" onclick="stopSingle(' + jsStringArg(apiName) + ',' + jsStringArg(info.taskId || '') + ')">&#x25A0;</button>'
       + '</span></div>';
   }).join('');
-  if (scrollNav) {
-    const panelHeight = panel.offsetHeight || 60;
-    scrollNav.style.bottom = (75 + panelHeight + 8) + 'px';
-  }
   if (!wasVisible && wasAtBottom) scrollBottom(true);
 }
 

@@ -186,6 +186,34 @@ controls:
   Send button. Desktop keeps Enter-to-send, and Grab mirrors either newline
   gesture into the attached terminal without submitting the prompt.
 
+#### Collapsible chrome and header icon widgets
+
+The surrounding chrome maximizes the transcript: the header bar, the left
+sidebar, and the composer drawer (the whole zone above the prompt, controls
+panel and action dock included) each fold completely behind a small grip — a
+square showing 3 vertical lines (`.pf-grip`), centered on the edge it opens
+from (top center for the header, vertical center of the left edge for the
+sidebar, centered above the prompt for the composer). All three are CLOSED by
+default on load and each choice persists in localStorage
+(`pawflow.headerBarOpen`, `pawflow.composerDrawerOpen`; the sidebar keeps its
+collapsed markup default).
+
+Three header widgets are compact icon buttons whose full content lives in a
+click-toggled popover (`toggleHeaderPop`: click shows, click again hides;
+opening one closes the others):
+
+- **Active agents** — person icon with an active-count badge (hidden at zero,
+  `_updateActiveAgentsCount`). The Active Agents box mounts inside the popover
+  (`mountComposerChrome` appends `#activePanel` to `#activeAgentsPop`); it no
+  longer occupies the composer.
+- **Pending actions** — the label formerly between language and the gauge is
+  an icon: animated `✻` while actions run, idle `✓` otherwise
+  (`_updateLoadingState`). The label + progress bar render in the popover.
+- **Context gauge** — the agent badge with its context gauge is a
+  battery-style square icon whose fill height and color mirror the percentage
+  (`updateActiveAgentBadge` drives `#ctxGaugeFill`); the full badge (label +
+  gauge, click to switch back to the assistant) sits in the popover.
+
 These are presentation moves only. Existing element IDs and event handlers remain
 the behavioral contract for authentication, themes, localization, permissions,
 view selection, speech, administration, actions, and UI extensions.

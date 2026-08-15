@@ -6,17 +6,17 @@ const _selectedMsgIds = new Set();  // multiselect for batch delete
 let conversationId = null;
 let sending = false;
 
-// Keep the action and active-agent docks beside the prompt without duplicating
-// their long-lived IDs or handlers. Both nodes are declared in their legacy
-// source positions so extensions can still discover them during HTML assembly,
-// then mounted into the composer's three-column context row once the DOM exists.
+// Keep the action dock beside the prompt and the active-agents box inside its
+// header popover without duplicating their long-lived IDs or handlers. Both
+// nodes are declared in their legacy source positions so extensions can still
+// discover them during HTML assembly, then mounted once the DOM exists.
 function mountComposerChrome() {
   const actionMount = document.getElementById('composerActionMount');
-  const activeMount = document.getElementById('composerActiveMount');
   const actionDock = document.getElementById('actionMenuWrap');
+  const activePop = document.getElementById('activeAgentsPop');
   const activePanel = document.getElementById('activePanel');
   if (actionMount && actionDock) actionMount.appendChild(actionDock);
-  if (activeMount && activePanel) activeMount.appendChild(activePanel);
+  if (activePop && activePanel) activePop.appendChild(activePanel);
 }
 
 mountComposerChrome();
@@ -303,17 +303,19 @@ function doLogout() {
 function _syncToggleBtn() {
   const sb = document.getElementById('sidebar');
   const btn = document.getElementById('sidebarToggle');
-  if (sb && btn) btn.style.left = sb.classList.contains('collapsed') ? '12px' : '268px';
+  if (!sb || !btn) return;
+  const collapsed = sb.classList.contains('collapsed');
+  btn.style.left = collapsed ? '0px' : '260px';
+  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
 }
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('collapsed');
   _syncToggleBtn();
 }
 
-// Composer drawer: the zone above the prompt (conversation controls +
-// action dock) folds behind a slim handle. CLOSED by default; the reader's
-// choice persists across reloads. The active-agents mount is not part of
-// the drawer and stays visible in both states.
+// Composer drawer: the whole zone above the prompt (conversation controls +
+// action dock) folds completely behind a small centered grip. CLOSED by
+// default; the reader's choice persists across reloads.
 const _COMPOSER_DRAWER_KEY = 'pawflow.composerDrawerOpen';
 function _composerDrawerOpen() {
   try { return localStorage.getItem(_COMPOSER_DRAWER_KEY) === '1'; }
@@ -325,10 +327,7 @@ function _applyComposerDrawer() {
   const open = _composerDrawerOpen();
   area.classList.toggle('composer-drawer-collapsed', !open);
   const handle = document.getElementById('composerDrawerHandle');
-  if (handle) {
-    handle.innerHTML = open ? '&#x25BE;' : '&#x25B4;';
-    handle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  }
+  if (handle) handle.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 function toggleComposerDrawer() {
   try {
@@ -337,6 +336,47 @@ function toggleComposerDrawer() {
   _applyComposerDrawer();
 }
 document.addEventListener('DOMContentLoaded', _applyComposerDrawer);
+
+// Header bar: same fold-behind-a-grip pattern. CLOSED by default so the
+// transcript takes almost the whole screen on load.
+const _HEADER_BAR_KEY = 'pawflow.headerBarOpen';
+function _headerBarOpen() {
+  try { return localStorage.getItem(_HEADER_BAR_KEY) === '1'; }
+  catch (_) { return false; }
+}
+function _applyHeaderBar() {
+  const bar = document.getElementById('headerBar');
+  if (!bar) return;
+  const open = _headerBarOpen();
+  bar.classList.toggle('collapsed', !open);
+  const grip = document.getElementById('headerGrip');
+  if (grip) grip.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function toggleHeaderBar() {
+  try {
+    localStorage.setItem(_HEADER_BAR_KEY, _headerBarOpen() ? '0' : '1');
+  } catch (_) {}
+  _applyHeaderBar();
+}
+document.addEventListener('DOMContentLoaded', _applyHeaderBar);
+
+// Header popovers: an icon click shows the widget's full content in a
+// tooltip-like popover; a second click hides it. Opening one closes the
+// others so at most one popover is on screen.
+function toggleHeaderPop(popId, btn) {
+  const pop = document.getElementById(popId);
+  if (!pop) return;
+  const willOpen = !pop.classList.contains('open');
+  document.querySelectorAll('.hdr-pop.open').forEach(p => {
+    p.classList.remove('open');
+    const b = p.parentElement && p.parentElement.querySelector('.hdr-icon-btn');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  });
+  if (willOpen) {
+    pop.classList.add('open');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+  }
+}
 
 
 

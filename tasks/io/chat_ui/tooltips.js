@@ -1,7 +1,8 @@
 // Shared CSS tooltip portal for compact icon controls. The tooltip lives outside
 // scrollable docks so revealing it cannot change their overflow dimensions.
 (function() {
-  const TARGET_SELECTOR = '.action-dock-menu > .action-menu-item, .prompt-controls-row button, .header-dock-item';
+  const TARGET_SELECTOR = '.action-dock-menu > .action-menu-item, .prompt-controls-row button, '
+    + '.header-dock-item, .pf-grip, .hdr-icon-btn, [data-pf-title]';
   let activeTarget = null;
 
   function tooltipElement() {
@@ -12,9 +13,26 @@
     const label = target.querySelector('.ami-label');
     const desc = target.querySelector('.ami-desc');
     return {
-      label: (label ? label.textContent : target.getAttribute('aria-label') || '').trim(),
+      label: (label ? label.textContent
+              : target.dataset.pfTitle || target.getAttribute('aria-label') || '').trim(),
       desc: (desc ? desc.textContent : '').trim(),
     };
+  }
+
+  // ONE tooltip look everywhere: every native `title` in the app is adopted
+  // on first contact. The text moves to data-pf-title so the browser tooltip
+  // never paints and the shared CSS tooltip takes over. Titles re-set later
+  // (i18n language switch, dynamic updates) are re-adopted on the next hover,
+  // which always fires before the browser's own tooltip delay.
+  function adoptNativeTitles(node) {
+    let el = node && node.closest ? node.closest('[title]') : null;
+    while (el) {
+      const text = (el.getAttribute('title') || '').trim();
+      el.removeAttribute('title');
+      if (text) el.dataset.pfTitle = text;
+      el = el.parentElement && el.parentElement.closest
+        ? el.parentElement.closest('[title]') : null;
+    }
   }
 
   function hideTooltip() {
@@ -79,6 +97,7 @@
   }
 
   document.addEventListener('mouseover', function(event) {
+    adoptNativeTitles(event.target);
     const target = targetFrom(event.target);
     if (target && target !== activeTarget) showTooltip(target);
   });
@@ -86,6 +105,7 @@
     if (activeTarget && !activeTarget.contains(event.relatedTarget)) hideTooltip();
   });
   document.addEventListener('focusin', function(event) {
+    adoptNativeTitles(event.target);
     const target = targetFrom(event.target);
     if (target) showTooltip(target);
   });

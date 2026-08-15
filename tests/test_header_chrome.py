@@ -97,6 +97,18 @@ def test_header_icon_widgets_share_the_dock_hover_zoom():
             in TEMPLATE)
 
 
+def test_every_native_title_is_adopted_by_the_shared_css_tooltip():
+    tooltips_js = Path("tasks/io/chat_ui/tooltips.js").read_text(encoding="utf-8")
+    # One tooltip look everywhere: grips, header icon widgets, and any element
+    # carrying a native title are all rendered by the shared CSS tooltip.
+    assert ".pf-grip, .hdr-icon-btn, [data-pf-title]" in tooltips_js
+    assert "function adoptNativeTitles(node)" in tooltips_js
+    assert "el.removeAttribute('title')" in tooltips_js
+    assert "target.dataset.pfTitle" in tooltips_js
+    # The tab bar's home-grown attr(title) tooltip is gone.
+    assert ".tab-btn[title]::after" not in TEMPLATE
+
+
 def test_header_popover_pattern_toggles_and_closes_the_others():
     assert ".hdr-pop-wrap { position: relative;" in TEMPLATE
     assert ".hdr-pop.open { display: block; }" in TEMPLATE

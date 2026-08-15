@@ -929,12 +929,8 @@ pre code.hljs{background:transparent!important;padding:0!important}
                        background: rgba(233,69,96,0.3); color: #e94560; cursor: pointer; }
 .tab-btn:hover .tab-close { display: block; }
 .tab-btn .tab-close:hover { background: #e94560; color: #fff; }
-.tab-btn[title]::after { content: attr(title); position: absolute; left: 48px; top: 50%; transform: translateY(-50%);
-                          background: #16213e; color: #c0c0d0; padding: 4px 10px; border-radius: 4px;
-                          font-size: 11px; white-space: nowrap; pointer-events: none;
-                          opacity: 0; transition: opacity 0.15s; z-index: 100;
-                          border: 1px solid #0f3460; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
-.tab-btn:hover[title]::after { opacity: 1; }
+/* Tab tooltips go through the shared CSS tooltip (tooltips.js adopts every
+   native title), so the tab bar carries no tooltip rendering of its own. */
 .tab-spacer { flex: 1; }
 /* The tab rail folds together with the sidebar: collapsed, only the grip on
    the boundary line remains visible at the left edge. */

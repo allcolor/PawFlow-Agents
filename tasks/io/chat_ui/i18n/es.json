@@ -1628,5 +1628,6 @@
   "refreshConversationTitle": "Actualizar conversación",
   "noPackageResults": "No se encontraron paquetes.",
   "updateAvailable": "Actualización disponible",
-  "updateAvailableDesc": "Abrir la pantalla de actualizaciones"
+  "updateAvailableDesc": "Abrir la pantalla de actualizaciones",
+  "openInNewTab": "Abrir en una nueva pestaña"
 }

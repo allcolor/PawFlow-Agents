@@ -27,8 +27,13 @@ page state, and navigation history while sharing the server login cookie.
 Closing the final tab returns to the server selector.
 
 The native chrome (toolbar + tab strip) folds away to the right like a
-drawer: a small `|||` grip floating in the top-right corner of the web area
-toggles it, giving the webchat the whole screen.
+drawer: a vertical grip tab hugging the right edge of the web area toggles
+it, giving the webchat the whole screen.
+
+A specific conversation deep-links via `…/chat?conversation_id=<id>` — in a
+browser and in the app. The webchat sidebar's right-click menu offers
+**Open in new tab**; inside the app, `window.open`/`target=_blank` becomes a
+new native chat tab (`setSupportMultipleWindows` + `onCreateWindow`).
 
 ## System bars and keyboard
 

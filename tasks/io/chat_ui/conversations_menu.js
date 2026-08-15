@@ -37,6 +37,9 @@ function showConvMenu(e, cid, status) {
     menu.appendChild(s);
   };
 
+  item('\u2197 ' + t('openInNewTab'), () => window.open(
+    window.location.pathname + '?conversation_id=' + encodeURIComponent(cid),
+    '_blank'));
   item('\u2699 ' + t('conversationControls'), () => showConversationSettings(cid));
   item('\u{1F4E5} ' + t('export'), () => showExportDialog(cid));
   item('\u{1F91D} ' + t('shareConversation'), () => showShareDialog(cid));

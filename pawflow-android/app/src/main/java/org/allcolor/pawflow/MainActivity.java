@@ -504,6 +504,10 @@ public final class MainActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setSafeBrowsingEnabled(true);
+        // window.open / target=_blank (the webchat's "Open in new tab" on a
+        // conversation) opens a NEW native chat tab instead of being
+        // silently dropped by the WebView.
+        settings.setSupportMultipleWindows(true);
         // Without a DownloadListener a WebView silently ignores downloads
         // (files shared by the agent, exports). Hand them to DownloadManager
         // with the session cookie so authenticated FileStore URLs work; the
@@ -543,6 +547,20 @@ public final class MainActivity extends Activity {
             }
         });
         view.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onCreateWindow(WebView webView, boolean isDialog,
+                    boolean isUserGesture, android.os.Message resultMsg) {
+                WebView tab = new WebView(MainActivity.this);
+                configureWebView(tab, server);
+                int index = chatTabs.add(tab);
+                switchChatTab(index);
+                WebView.WebViewTransport transport =
+                        (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(tab);
+                resultMsg.sendToTarget();
+                return true;
+            }
+
             @Override
             public boolean onShowFileChooser(WebView webView,
                     ValueCallback<Uri[]> callback, FileChooserParams params) {

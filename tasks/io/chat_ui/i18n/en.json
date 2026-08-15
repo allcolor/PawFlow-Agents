@@ -1628,5 +1628,6 @@
   "refreshConversationTitle": "Refresh conversation",
   "noPackageResults": "No packages found.",
   "updateAvailable": "Update available",
-  "updateAvailableDesc": "Open the Updates screen"
+  "updateAvailableDesc": "Open the Updates screen",
+  "openInNewTab": "Open in new tab"
 }

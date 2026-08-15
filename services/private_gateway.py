@@ -512,6 +512,19 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
         _send_page(handler, 403, b"Forbidden", "text/plain")
         return True
 
+    # An explicit gateway submit is ALWAYS handled here, before the
+    # already-authenticated bypasses. The Android app (and any client that
+    # keeps its cookies) posts /_gateway with the secret to (re)open a
+    # session: with a still-valid cookie the bypass let the POST fall
+    # through to normal routing, where no route matches /_gateway — the
+    # WebView showed a raw 404 JSON instead of the chat. Submitting while
+    # already authenticated simply refreshes the cookie and redirects.
+    if handler.command == "POST" and path == "/_gateway":
+        content_length = int(handler.headers.get('Content-Length', 0))
+        body = handler.rfile.read(content_length) if content_length > 0 else b""
+        return _handle_submit(handler, ip, body, secret_refs, cookie_name,
+                              cookie_max_age, skin)
+
     gateway_key = handler.headers.get("X-PawFlow-Gateway-Key", "")
     if gateway_key and verify_secret(gateway_key, secret_refs):
         return False
@@ -524,12 +537,6 @@ def _check_request_inner(handler, config: Dict[str, Any]) -> bool:
             if _verify_cookie(cookie_val, ip, max_age=cookie_max_age,
                               secret_refs=secret_refs):
                 return False
-
-    if handler.command == "POST" and path == "/_gateway":
-        content_length = int(handler.headers.get('Content-Length', 0))
-        body = handler.rfile.read(content_length) if content_length > 0 else b""
-        return _handle_submit(handler, ip, body, secret_refs, cookie_name,
-                              cookie_max_age, skin)
 
     # Show challenge page, preserving original URL for post-auth redirect
     original_url = handler.path  # includes query string

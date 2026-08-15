@@ -42,3 +42,36 @@ def test_cidr_trusted_proxies():
     cfg = {"trusted_proxies": "172.18.0.0/16"}
     headers = {"x-forwarded-for": "203.0.113.9"}
     assert _effective_client_ip("172.18.0.2", headers, cfg) == "203.0.113.9"
+
+
+def test_explicit_gateway_submit_wins_over_a_valid_cookie(monkeypatch):
+    """Regression: POST /_gateway must be handled even when already authed.
+
+    The Android app (and any client that keeps its cookies) posts /_gateway
+    with the secret to (re)open a session. The already-authenticated cookie
+    bypass used to run first, so the POST fell through to normal routing,
+    where no route matches /_gateway: the WebView displayed a raw 404 JSON
+    instead of the chat.
+    """
+    import io
+
+    import services.private_gateway as pg
+
+    calls = []
+    monkeypatch.setattr(
+        pg, "_handle_submit",
+        lambda handler, ip, body, *a, **k: calls.append(ip) or True)
+
+    class Handler:
+        command = "POST"
+        path = "/_gateway"
+        client_address = ("203.0.113.5", 1234)
+        server = None
+        headers = {
+            "Cookie": pg._COOKIE_NAME + "=" + pg._make_cookie_value("203.0.113.5"),
+            "Content-Length": "0",
+        }
+        rfile = io.BytesIO(b"")
+
+    assert pg._check_request_inner(Handler(), {"enabled": True}) is True
+    assert calls == ["203.0.113.5"]

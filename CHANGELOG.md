@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Private gateway: an explicit `POST /_gateway` submit is handled even when
+  the client already holds a valid gateway cookie. The bypass used to let
+  the POST fall through to normal routing (no route matches `/_gateway`),
+  so the Android app showed a raw 404 JSON instead of the chat when
+  reopening a still-authenticated session.
 - Android app: downloads from the webchat now work — the WebView hands them
   to the system DownloadManager with the session cookie, into the Downloads
   folder with a notification. Previously the WebView ignored them silently.

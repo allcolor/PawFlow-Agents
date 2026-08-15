@@ -87,6 +87,11 @@ def test_composer_grip_rides_the_separation_line():
     assert ".input-area { position: relative;" in TEMPLATE
 
 
+def test_header_icon_widgets_share_the_dock_hover_zoom():
+    assert (".hdr-icon-btn:hover, .header-logo a:hover { transform: scale(1.4);"
+            in TEMPLATE)
+
+
 def test_header_popover_pattern_toggles_and_closes_the_others():
     assert ".hdr-pop-wrap { position: relative;" in TEMPLATE
     assert ".hdr-pop.open { display: block; }" in TEMPLATE

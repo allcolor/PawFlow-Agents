@@ -226,7 +226,8 @@ class BothUpdatePathsClean(unittest.TestCase):
         script = um._installer_updater_script(
             info, "ghcr.io/allcolor/pawflow:1.0.0-beta.62", pull_source=False)
         self.assertNotIn(self.MARKER, script)
-        self.assertIn("bash scripts/install-pawflow.sh", script)
+        self.assertIn('PAWFLOW_INSTALLER="scripts/install-pawflow.sh"', script)
+        self.assertIn('bash "$PAWFLOW_INSTALLER"', script)
         self.assertIn("--pull-images", script)
 
     def test_the_image_being_installed_is_pinned_for_the_installer(self):

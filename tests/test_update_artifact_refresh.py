@@ -86,7 +86,8 @@ def test_the_script_hands_over_to_the_installer_with_the_full_update_flags():
 
     lines = script.splitlines()
     assert lines[0] == "set -eu"
-    assert "bash scripts/install-pawflow.sh --port 19990 --pull-images" in script
+    assert 'PAWFLOW_INSTALLER="scripts/install-pawflow.sh"' in script
+    assert 'bash "$PAWFLOW_INSTALLER" --port 19990 --pull-images' in script
     # The installer is the single source of truth: nothing here duplicates
     # its pull, artifact extraction, relay/CLI image handling, or cleanup.
     assert "docker pull" not in script

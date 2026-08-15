@@ -326,6 +326,22 @@ class _CCITurnCoordinator:
                 path = event.get("path", "") or ""
                 if (request_id and is_anthropic_messages_endpoint(path)
                         and not event.get("ignore_reason")):
+                    # The CLI's main loop streams ONE /v1/messages request at
+                    # a time: a fresh start proves every earlier "open"
+                    # request was aborted (retry, compact, preempt) with its
+                    # request_stop lost on the way. Left in the set, those
+                    # ghosts counted as answers still owed and held the
+                    # post-Stop drain for the full cap — the webchat showed
+                    # the agent working for 90s after the tmux visibly
+                    # finished (observed open=5 on a 17-minute turn).
+                    stale = self._open_messages_requests - {request_id}
+                    if stale:
+                        logger.info(
+                            "[cci-provider] session=%s new request %s "
+                            "supersedes %d stale open request(s)",
+                            self.session_token[:8], request_id[:8],
+                            len(stale))
+                        self._open_messages_requests.clear()
                     self._request_saw_model_content.setdefault(request_id, False)
                     self._request_saw_tool_use.setdefault(request_id, False)
                     self._open_messages_requests.add(request_id)

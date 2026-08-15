@@ -29,6 +29,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Claude Code interactive: the Active Agents panel no longer shows the agent
+  working for ~90 seconds after the tmux visibly finished. Aborted
+  `/v1/messages` retries whose `request_stop` was lost piled up as "open"
+  requests and held the post-Stop drain for the full pending-response cap; a
+  fresh `request_start` now supersedes every earlier open request (the CLI's
+  main loop streams one at a time).
 - Updating the server from the Updates screen now performs the full
   command-line update: the installer-deployment updater hands over to
   `install-pawflow.sh --port <port> --pull-images` (server image, host

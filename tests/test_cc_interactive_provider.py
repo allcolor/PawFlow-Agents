@@ -589,6 +589,55 @@ def test_turn_coordinator_waits_for_stop_hook_after_request_stop():
     assert resp.content == "final from bytes still running"
 
 
+def test_stale_open_requests_do_not_hold_the_post_stop_drain(monkeypatch):
+    """Regression: ghost /v1/messages requests kept the turn 'active' 90s.
+
+    On a long turn the CLI aborts and retries requests (compact, preempt,
+    network): their request_start was observed but the request_stop was lost,
+    so `_open_messages_requests` accumulated ghosts (observed open=5 on a
+    17-minute turn). At Stop, `_response_still_owed` treated them as answers
+    still streaming and held the drain for the full pending-response cap —
+    the Active Agents panel showed the agent working for 90 seconds after
+    the tmux visibly finished. The CLI's main loop streams one request at a
+    time, so a fresh request_start must supersede every earlier open one.
+    """
+    import core.llm_providers.claude_code_interactive as cci
+    import core.llm_providers._cci_turn as cci_turn
+
+    for mod in (cci, cci_turn):
+        monkeypatch.setattr(mod, "_POST_STOP_IDLE_DRAIN_SECONDS", 0, raising=False)
+        monkeypatch.setattr(mod, "_POST_STOP_PENDING_RESPONSE_CAP_SECONDS", 30,
+                            raising=False)
+
+    events = [
+        # r1 and r2: aborted mid-turn, their request_stop never delivered.
+        {"type": "request_start", "request_id": "r1", "path": "/v1/messages"},
+        {"type": "request_start", "request_id": "r2", "path": "/v1/messages"},
+        # r3: the real final answer, cleanly terminated.
+        {"type": "request_start", "request_id": "r3", "path": "/v1/messages"},
+        _sse("content_block_delta", {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "the answer"},
+        }) | {"request_id": "r3"},
+        _sse("content_block_stop", {"type": "content_block_stop", "index": 0}) | {"request_id": "r3"},
+        _sse("message_delta", {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+        }) | {"request_id": "r3"},
+        _sse("message_stop", {"type": "message_stop"}) | {"request_id": "r3"},
+        {"type": "request_stop", "request_id": "r3"},
+        {"type": "hook", "hook_event_name": "Stop", "input": {"hook_event_name": "Stop"}},
+    ]
+
+    started = time.time()
+    resp = _CCITurnCoordinator(_Events(events), "sess").run()
+
+    assert resp.content == "the answer"
+    # With the ghosts held, run() only returns after the 30s cap.
+    assert time.time() - started < 5
+
+
 def test_turn_coordinator_prefixed_preempt_after_stop_keeps_final_answer(
         monkeypatch):
     """Regression: a preempt that extends the turn past a Stop must not be cut

@@ -337,6 +337,12 @@ Timing controls are read once when the provider modules are imported:
   waits at most `20` seconds. When a delayed response completes with
   nothing further owed, the coordinator re-arms the stop latch itself,
   since no second `Stop` hook ever comes for a delayed replay.
+  Only genuinely open requests count: the CLI's main loop streams one
+  `/v1/messages` request at a time, so a fresh `request_start` supersedes
+  every earlier open one — aborted retries whose `request_stop` was lost
+  used to pile up (observed `open=5` on a 17-minute turn) and hold the
+  drain for the full cap, showing the agent active for 90 seconds after
+  the tmux had visibly finished.
 - `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_SECONDS` sets how long a submitted tmux
   prompt may produce no observed proxy event before PawFlow treats the turn as
   failed. Default: `300` seconds.

@@ -636,7 +636,7 @@ def test_no_published_release_yields_no_image(monkeypatch):
     assert update_manager.published_server_image("ghcr.io/allcolor/pawflow:1.0.0b40") == ""
 
 
-def test_the_installer_script_pulls_before_it_touches_the_server(monkeypatch):
+def test_the_installer_script_hands_over_to_the_installer(monkeypatch):
     _patch_inspect(monkeypatch)
     info = installer_deployment.installer_info()
 
@@ -649,19 +649,14 @@ def test_the_installer_script_pulls_before_it_touches_the_server(monkeypatch):
     # carries both Bash and the Docker CLI. Bootstrap must not depend on Alpine
     # package repositories before it can even report an update failure.
     assert "apk" not in script
-    # A failed pull must leave the server running, so it comes first.
-    assert script.index("docker pull") < script.index("run-pawflow-docker.sh")
-    # Restarting the server is the last step that touches it; the image
-    # cleanup that follows only reclaims disk, once the new version is up.
-    restart = max(i for i, line in enumerate(lines)
-                  if line.endswith("bash scripts/run-pawflow-docker.sh"))
-    assert lines[restart + 1].startswith(
-        "echo 'Cleaning older PawFlow image tags"), lines[restart + 1:]
+    # The whole update is the installer's own sequence — the same command an
+    # operator runs on the host — not a re-implementation of a subset of it.
+    assert "bash scripts/install-pawflow.sh --port 19990 --pull-images" in script
+    assert "run-pawflow-docker.sh" not in script
     assert f"cd {APP_DIR}" in script
     # The deployment's identity rides along, quoted.
     assert "PAWFLOW_BOOTSTRAP_GATEWAY_KEY=not-roy-batty" in script
     assert "PAWFLOW_BOOTSTRAP_RESET=''" in script
-    assert "PAWFLOW_PORT=19990" in script
     assert "git pull" not in script
 
 
@@ -672,7 +667,7 @@ def test_the_installer_script_pulls_source_only_when_asked(monkeypatch):
     script = update_manager._installer_updater_script(info, "img", pull_source=True)
 
     assert "git pull --ff-only" in script
-    assert script.index("git pull") < script.index("docker pull")
+    assert script.index("git pull") < script.index("install-pawflow.sh")
 
 
 def test_update_server_runs_the_installer_script_for_an_installer_deployment(monkeypatch):
@@ -696,7 +691,7 @@ def test_update_server_runs_the_installer_script_for_an_installer_deployment(mon
     assert result["deployment"] == "installer"
     assert result["target_image"].endswith("1.0.0-beta.41")
     run_cmd = calls[1]
-    assert "run-pawflow-docker.sh" in run_cmd[-1]
+    assert "install-pawflow.sh" in run_cmd[-1]
     assert "docker compose" not in run_cmd[-1]
     # The install directory is mounted at its own host path: the start script
     # resolves $PAWFLOW_HOME against it and hands the daemon host paths.
@@ -763,11 +758,10 @@ def test_update_action_does_not_refuse_because_agents_are_running(monkeypatch):
 
     monkeypatch.setattr(update_manager, "running_agent_count", lambda: 7)
     monkeypatch.setattr(update_manager, "update_server",
-                        lambda pull_source=False, force_artifacts=False: {
+                        lambda pull_source=False: {
                             "ok": True, "started": True,
                             "container": "pawflow-updater",
-                            "pull_source": pull_source,
-                            "force_artifacts": force_artifacts})
+                            "pull_source": pull_source})
 
     result = admin_settings._handle_admin_settings(
         None, "admin_update_server", {"pull_source": True}, None, "admin",
@@ -776,15 +770,13 @@ def test_update_action_does_not_refuse_because_agents_are_running(monkeypatch):
 
     assert payload["started"] is True
     assert payload["pull_source"] is True
-    # Forcing past a failed artifact refresh is opt-in, never the default.
-    assert payload["force_artifacts"] is False
 
 
 def test_update_action_reports_a_refusal_as_409(monkeypatch):
     from tasks.ai.actions import admin_settings
 
     monkeypatch.setattr(update_manager, "update_server",
-                        lambda pull_source=False, force_artifacts=False: {
+                        lambda pull_source=False: {
                             "ok": False,
                             "reason": "not a compose deployment"})
 
@@ -839,7 +831,7 @@ def test_the_dialog_names_what_an_installer_update_will_actually_do():
     # It used to promise a compose project to every operator, including the
     # majority who never ran compose.
     assert "deployment === 'installer'" in js
-    assert "run-pawflow-docker.sh" in js
+    assert "install-pawflow.sh --pull-images" in js
     assert "target_image" in js
 
 

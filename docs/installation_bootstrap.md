@@ -121,11 +121,18 @@ bash scripts/install-pawflow.sh --self-update
 bash scripts/install-pawflow.sh --version 1.0.0.prealpha.2 --port PORT --pull-images
 ```
 
-The in-app update (Admin → Update server) writes the same per-version runtime
-directory, but its updater container runs as root and hands the files back to
-the deployment's uid afterwards. If an update fails in a way that skips that
-step, the installer refuses the directory rather than failing later inside
-`docker cp`, and prints the command that takes it back:
+The in-app update (Admin → Update server, or the header update icon that
+appears when a newer release is published) runs exactly that command:
+the updater container hands over to `scripts/install-pawflow.sh --port <port>
+--pull-images` with the deployment's environment replayed, so one click
+updates the server image, the host-side artifacts, the local CLI tools image,
+both relay images, and cleans old tags — the same full sequence as the manual
+command line. AppArmor loading is skipped inside the container (the host's
+loaded profiles remain). The updater container may run as root and hands the
+new per-version runtime directory back to the deployment's uid afterwards. If
+an update fails in a way that skips that step, the installer refuses the
+directory rather than failing later inside `docker cp`, and prints the
+command that takes it back:
 
 ```bash
 sudo chown -R "$(id -u):$(id -g)" ~/.pawflow/runtime

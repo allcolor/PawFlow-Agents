@@ -218,23 +218,22 @@ class BothUpdatePathsClean(unittest.TestCase):
                         script.index(self.MARKER),
                         "cleanup must run after the stack is back up")
 
-    def test_the_installer_updater_cleans_after_the_start_script(self):
+    def test_the_installer_updater_delegates_cleanup_to_the_installer(self):
+        # ``install-pawflow.sh`` cleans old images itself (CLEAN_OLD_IMAGES
+        # defaults on), so the installer updater emits no cleanup of its own —
+        # a second cleanup here would be the drift the handover removed.
         info = {"host_app_dir": "/srv/pawflow"}
         script = um._installer_updater_script(
             info, "ghcr.io/allcolor/pawflow:1.0.0-beta.62", pull_source=False)
-        self.assertIn(self.MARKER, script)
-        self.assertLess(script.index("run-pawflow-docker.sh"),
-                        script.index(self.MARKER),
-                        "cleanup must run after the server is restarted")
+        self.assertNotIn(self.MARKER, script)
+        self.assertIn("bash scripts/install-pawflow.sh", script)
+        self.assertIn("--pull-images", script)
 
-    def test_the_image_being_installed_is_always_spared(self):
+    def test_the_image_being_installed_is_pinned_for_the_installer(self):
         target = "ghcr.io/allcolor/pawflow:1.0.0-beta.62"
         script = um._installer_updater_script(
             {"host_app_dir": "/srv/pawflow"}, target, pull_source=False)
-        keep_line = [ln for ln in script.split("\n")
-                     if ln.startswith("_pf_keep=")]
-        self.assertTrue(keep_line, "no keep list in the generated script")
-        self.assertIn(target, keep_line[0])
+        self.assertIn(f"PAWFLOW_IMAGE={target}", script)
 
     def test_every_generated_script_is_valid_posix_shell(self):
         """The updater runs under Alpine ash, not bash."""

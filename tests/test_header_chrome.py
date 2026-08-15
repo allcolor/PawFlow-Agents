@@ -149,6 +149,35 @@ def test_context_gauge_is_a_battery_icon_with_the_badge_in_its_popover():
     assert "gaugeWrap.style.display = ''" in CMD_AGENT_JS
 
 
+def test_update_available_icon_opens_the_updates_screen():
+    start = TEMPLATE.index('id="updateAvailableBtn"')
+    button = TEMPLATE[TEMPLATE.rindex("<button", 0, start):
+                      TEMPLATE.index("</button>", start)]
+    assert 'onclick="openUpdatesDialog()"' in button
+    assert "header-dock-item" in button  # dock tooltip + hover zoom
+    assert 'style="display:none"' in button  # hidden until an update exists
+    # It sits right beside the notification icon.
+    assert (TEMPLATE.index('id="updateAvailableBtn"')
+            < TEMPLATE.index('id="notificationCenterBtn"'))
+    admin_js = Path("tasks/io/chat_ui/admin_settings.js").read_text(encoding="utf-8")
+    assert "function refreshUpdateBadge()" in admin_js
+    assert "admin_check_updates" in admin_js
+    assert "c.update_available" in admin_js
+
+
+def test_send_is_an_icon_button_sized_like_attach_with_hover_zoom():
+    start = TEMPLATE.index('id="sendBtn"')
+    button = TEMPLATE[TEMPLATE.rindex("<button", 0, start):
+                      TEMPLATE.index("</button>", start)]
+    assert "<svg" in button
+    assert 'data-i18n-aria-label="send"' in button
+    assert 'data-i18n="send"' not in button
+    assert "#sendBtn { padding: 10px 12px; font-size: 18px;" in TEMPLATE
+    assert "#fileAttachBtn:hover, #sendBtn:hover { transform: scale(1.4);" in TEMPLATE
+    i18n_js = Path("tasks/io/chat_ui/i18n.js").read_text(encoding="utf-8")
+    assert "_setText('#sendBtn'" not in i18n_js
+
+
 def test_i18n_keys_present_in_all_languages():
     for lang in ("en", "fr", "es"):
         data = json.loads(Path(f"tasks/io/chat_ui/i18n/{lang}.json")

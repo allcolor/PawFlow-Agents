@@ -650,7 +650,10 @@ def test_primary_chat_controls_are_i18n_bound():
     assert 'id="input"' in TEMPLATE_HTML
     assert 'data-i18n-placeholder="placeholder"' in TEMPLATE_HTML
     assert 'id="sendBtn"' in TEMPLATE_HTML
-    assert 'data-i18n="send"' in TEMPLATE_HTML
+    # Send is an icon button: its name is i18n-bound through the aria label
+    # and native title, not visible text.
+    assert 'data-i18n-aria-label="send"' in TEMPLATE_HTML
+    assert 'data-i18n-title="send"' in TEMPLATE_HTML
     # The composer stop button was removed on purpose: the per-agent stop
     # controls in the Active Agents panel are the only stop surface.
     assert 'id="stopBtn"' not in TEMPLATE_HTML

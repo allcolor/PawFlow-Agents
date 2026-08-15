@@ -185,7 +185,6 @@ function applyI18n(root) {
   document.documentElement.lang = _currentLanguage;
   document.title = t('pageTitle');
   _setText('#status', t('ready'));
-  _setText('#sendBtn', t('send'));
   _setTitle('.btn-attach', t('promptLibraryTitle'));
   _setTitle('#fileAttachBtn', t('attachTitle'));
   _setTitle('#permissionMode', t('permissionModeTitle'));

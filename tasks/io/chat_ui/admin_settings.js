@@ -314,6 +314,23 @@ function _admUpdateStateCell(comp) {
   return 'up to date';
 }
 
+// Header badge: the update icon appears (admins only) when any component
+// reports an update; clicking it opens the Updates screen. Checked shortly
+// after load — once the user role is known — then twice a day.
+function refreshUpdateBadge() {
+  if (!_isAdmin()) return;
+  action$('admin_check_updates', {}, { silent: true }).subscribe(function(data) {
+    var btn = document.getElementById('updateAvailableBtn');
+    if (!btn || data.error) return;
+    var has = (data.components || []).some(function(c) { return !!c.update_available; });
+    btn.style.display = has ? '' : 'none';
+  });
+}
+document.addEventListener('DOMContentLoaded', function() {
+  window.setTimeout(refreshUpdateBadge, 8000);
+  window.setInterval(refreshUpdateBadge, 12 * 3600 * 1000);
+});
+
 function openUpdatesDialog() {
   if (!_isAdmin()) return;
   action$('admin_check_updates').subscribe(function(data) {
@@ -376,8 +393,9 @@ function _admServerSection() {
     + '<div style="color:var(--pf-muted);font-size:11px;margin:4px 0 8px;">Updating restarts the whole stack: '
     + 'every running agent turn is killed, exactly as if you re-ran the deployment yourself. '
     + 'A compose stack is updated with <code>docker compose up -d</code>; an installer deployment '
-    + 'pulls the published image and re-runs <code>run-pawflow-docker.sh</code>, the same script '
-    + 'the installer used. Either way the directory comes from the container itself.</div>'
+    + 're-runs <code>install-pawflow.sh --pull-images</code> — the full command-line update: server '
+    + 'image, host files, CLI tools image, both relay images, and old-image cleanup. Either way the '
+    + 'directory comes from the container itself.</div>'
     + '<button id="adm-server-update" onclick="adminUpdateServer()">Update server\u2026</button>'
     + '<pre id="adm-server-log" style="display:none;margin-top:8px;max-height:160px;overflow:auto;font-size:11px;white-space:pre-wrap;"></pre>'
     + '</div>';
@@ -406,8 +424,10 @@ function _admConfirmServerUpdate(info) {
   var installer = info.deployment === 'installer';
   var body = '<div style="font-size:12px;line-height:1.6;">'
     + '<p>' + (installer
-        ? 'This will pull the published server image and re-run the installer\'s start script, '
-          + 'recreating this container in place.'
+        ? 'This will re-run <code>install-pawflow.sh --pull-images</code>: pull the published server '
+          + 'image, refresh the host files, rebuild the CLI tools image, pull both relay images, '
+          + 'recreate this container in place, and clean old images \u2014 exactly what the manual '
+          + 'command-line update does.'
         : 'This will pull and recreate the compose project, then restart this server.') + '</p>'
     + '<table style="width:100%;font-size:12px;border-collapse:collapse;">'
     + (installer
@@ -429,11 +449,6 @@ function _admConfirmServerUpdate(info) {
           + (info.artifact_dir
               ? 'the image and the host files it carries are refreshed.'
               : 'only images are refreshed.') + '</div>')
-    + (info.artifact_dir
-        ? '<label style="display:block;margin-top:6px;"><input type="checkbox" id="adm-server-force"> '
-          + 'Continue even if the host files cannot be refreshed (the server would start '
-          + 'with the previous version\'s start script)</label>'
-        : '')
     + '<p style="margin-top:12px;">The interface will go dark for a minute or two while the server restarts.</p>'
     + '<button onclick="adminUpdateServerConfirm()" style="background:#c0392b;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Update and restart</button>'
     + '</div>';
@@ -442,7 +457,6 @@ function _admConfirmServerUpdate(info) {
 
 function adminUpdateServerConfirm() {
   var pull = !!(document.getElementById('adm-server-git') || {}).checked;
-  var force = !!(document.getElementById('adm-server-force') || {}).checked;
   // Identify the process we are about to kill *before* killing it: an update
   // that dies before touching the container leaves this exact server
   // answering, and without a baseline that is indistinguishable from a server
@@ -451,7 +465,7 @@ function adminUpdateServerConfirm() {
     .then(function(r) { return r.json(); })
     .catch(function() { return {}; })
     .then(function(before) {
-      action$('admin_update_server', { pull_source: pull, force_artifacts: force }).subscribe(function(d) {
+      action$('admin_update_server', { pull_source: pull }).subscribe(function(d) {
         if (d.error) { addMsg('error', d.error); return; }
         _admWaitForServer(d, before || {});
       });

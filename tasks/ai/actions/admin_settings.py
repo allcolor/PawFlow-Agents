@@ -666,18 +666,12 @@ def _handle_admin_settings(self, action, body, store, user_id, flowfile):
         # `docker compose up -d` by hand. The UI names that cost; the decision
         # is the operator's, so nothing here refuses on their behalf.
         pull_source = bool(body.get("pull_source"))
-        # Off by default: the host artifacts refreshed from the new image
-        # include the start script the update is about to run, so a failed
-        # refresh aborts unless the operator explicitly accepts starting the
-        # new server image with the previous version's host side.
-        force_artifacts = bool(body.get("force_artifacts"))
         logging.getLogger(__name__).warning(
             "[update] Server update requested by %s (pull_source=%s, "
-            "force_artifacts=%s, %s agent turn(s) in flight)",
-            user_id or "?", pull_source, force_artifacts,
+            "%s agent turn(s) in flight)",
+            user_id or "?", pull_source,
             update_manager.running_agent_count())
-        result = update_manager.update_server(pull_source=pull_source,
-                                              force_artifacts=force_artifacts)
+        result = update_manager.update_server(pull_source=pull_source)
         if not result.get("ok"):
             return _json(flowfile, {"error": result.get("reason", "Update refused")}, "409")
         return _json(flowfile, result)

@@ -81,15 +81,14 @@ def test_account_actions_live_in_header_not_composer_dock_or_resource_tree():
         < header_controls.index('id="userInfo"')
         < header_controls.index('id="logoutBtn"')
     )
-    # The username is the LABEL of the linked-accounts button itself, not a
-    # separate span beside it: userInfo must sit inside linkAccountBtn (after
-    # its opening tag, before its closing </button>) so the header renders one
-    # control [icon username] instead of [icon] [username].
+    # The username is NOT shown on the icon: it is the tooltip's ami-desc
+    # (still inside linkAccountBtn) and appears in the linked-accounts dialog.
     btn_end = header_controls.index('</button>', header_controls.index('id="linkAccountBtn"'))
-    assert 'id="userInfo"' in header_controls[
-        header_controls.index('id="linkAccountBtn"'):btn_end]
-    assert "#linkAccountBtn { width: auto; min-width: 30px; padding: 0 8px; gap: 5px; }" in TEMPLATE_HTML
-    assert "#linkAccountBtn .user-info" in TEMPLATE_HTML
+    link_btn = header_controls[header_controls.index('id="linkAccountBtn"'):btn_end]
+    assert '<div class="ami-desc user-info" id="userInfo"></div>' in link_btn
+    assert "#linkAccountBtn { width: auto;" not in TEMPLATE_HTML
+    assert "linked-account-me" in STATE_JS
+    assert ".linked-account-me {" in TEMPLATE_HTML
     assert "window.PAWFLOW_EXTENSION_CONTEXT" in state_js
     assert "userInfo.textContent = activeUser" in state_js
     assert "userInfo.style.display = activeUser ? '' : 'none'" in state_js
@@ -123,7 +122,9 @@ def test_header_account_actions_reuse_dock_tooltip_and_hover_zoom():
         assert "title=" not in button
         assert 'class="ami-icon"' in button
         assert 'class="ami-label"' in button
-        assert 'class="ami-desc"' in button
+        # linkAccountBtn's desc is the username (id="userInfo"), so the desc
+        # class may carry extra classes; presence is what matters.
+        assert 'class="ami-desc' in button
 
     assert ".header-dock-item" in TOOLTIPS_JS
     assert (

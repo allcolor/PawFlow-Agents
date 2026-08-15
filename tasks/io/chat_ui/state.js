@@ -224,6 +224,13 @@ function showLinkedAccountsDialog() {
   const title = document.createElement('div');
   title.className = 'dialog-title';
   title.textContent = t('linkedAccounts');
+  // The authenticated principal is no longer shown on the header icon: it
+  // appears here and in the icon's hover tooltip.
+  const me = String((window.PAWFLOW_EXTENSION_CONTEXT || {}).user || '').trim();
+  const meLine = document.createElement('div');
+  meLine.className = 'linked-account-me';
+  meLine.textContent = me;
+  meLine.style.display = me ? '' : 'none';
   const body = document.createElement('div');
   body.className = 'dialog-body';
   const actions = document.createElement('div');
@@ -239,7 +246,7 @@ function showLinkedAccountsDialog() {
   close.textContent = t('close');
   close.onclick = () => overlay.remove();
   actions.append(link, close);
-  dialog.append(title, body, actions);
+  dialog.append(title, meLine, body, actions);
   overlay.appendChild(dialog);
   overlay.onclick = (event) => { if (event.target === overlay) overlay.remove(); };
   document.body.appendChild(overlay);

@@ -1626,5 +1626,7 @@
   "usageDashAddBudget": "Ajouter un budget",
   "usageDashScopeValuePlaceholder": "id user/conv/agent/service",
   "refreshConversationTitle": "Actualiser la conversation",
-  "noPackageResults": "Aucun paquet trouvé."
+  "noPackageResults": "Aucun paquet trouvé.",
+  "updateAvailable": "Mise à jour disponible",
+  "updateAvailableDesc": "Ouvrir l'écran des mises à jour"
 }

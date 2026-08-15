@@ -1626,5 +1626,7 @@
   "usageDashAddBudget": "Add budget",
   "usageDashScopeValuePlaceholder": "user/conv/agent/service id",
   "refreshConversationTitle": "Refresh conversation",
-  "noPackageResults": "No packages found."
+  "noPackageResults": "No packages found.",
+  "updateAvailable": "Update available",
+  "updateAvailableDesc": "Open the Updates screen"
 }

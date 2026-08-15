@@ -370,8 +370,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   .simple-turn-idle-dot { animation: none; transition: none; }
   .simple-turn-block.turn-working .simple-turn-ephemeral::after { animation: none; }
 }
-.header .user-info { display: inline-block; max-width: min(240px, 24vw); overflow: hidden;
-                     text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #8888aa; }
+/* Send is an icon button sized like the attachment button; both zoom on hover. */
+#sendBtn { padding: 10px 12px; font-size: 18px; display: inline-flex;
+           align-items: center; justify-content: center; }
+#sendBtn svg { display: block; }
+#fileAttachBtn, #sendBtn { transform-origin: center bottom;
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.15s ease; }
+#fileAttachBtn:hover, #sendBtn:hover { transform: scale(1.4); z-index: 3; }
 /* ── Mobile layout (narrow viewports) ──
    Base layout above assumes desktop width: sidebar pushes .main over at a
    fixed 260px, and .header lays every control out on one row. Neither
@@ -820,6 +825,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .todo-error { color: #ff6b6b; }
 #linkedAccountsDialog .dialog { max-width: 520px; }
 .linked-account-list { display: flex; flex-direction: column; gap: 8px; }
+.linked-account-me { padding: 0 20px 8px; font-size: 12px; color: var(--pf-muted);
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .linked-account-row { display: grid; grid-template-columns: minmax(0, 1fr) auto;
                       align-items: center; gap: 12px; min-width: 0; padding: 10px 12px;
                       background: var(--pf-sidebar); border: 1px solid var(--pf-border);
@@ -991,13 +998,13 @@ body.desktop-fullscreen .tab-content.active iframe {
 .header-dock-item .ami-icon { width: auto; font-size: 15px; }
 #logoutBtn svg.ami-icon { width: 16px; height: 16px; display: block; flex: none;
                           fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-#linkAccountBtn .user-info { display: inline-block; color: inherit !important;
-                             font-size: 12px; font-weight: 500; max-width: min(160px, 22vw);
-                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#linkAccountBtn { width: auto; min-width: 30px; padding: 0 8px; gap: 5px; }
-#notificationCenterBtn svg.ami-icon { width: 16px; height: 16px; display: block; flex: none;
+/* The username is not shown on the icon: it lives in the hover tooltip
+   (as the ami-desc) and in the linked-accounts dialog. */
+#notificationCenterBtn svg.ami-icon,
+#updateAvailableBtn svg.ami-icon { width: 16px; height: 16px; display: block; flex: none;
                                      fill: none; stroke: currentColor; stroke-width: 1.8;
                                      stroke-linecap: round; stroke-linejoin: round; }
+#updateAvailableBtn { color: var(--pf-warning, #f0a500); }
 .pf-notif-badge { position: absolute; top: -6px; right: -7px; min-width: 16px; height: 16px;
                   padding: 0 4px; border: 2px solid var(--pf-bg); border-radius: 999px;
                   background: var(--pf-danger); color: #fff; font-size: 9px; font-weight: 800;
@@ -1242,6 +1249,15 @@ if (typeof hljs !== 'undefined') {
     <div class="hdr-pop" id="activeAgentsPop"></div>
   </span>
   <div class="actions">
+    <button class="btn header-auth-btn header-dock-item" id="updateAvailableBtn" type="button"
+            onclick="openUpdatesDialog()" aria-label="Update available"
+            data-i18n-aria-label="updateAvailable" style="display:none">
+      <svg class="ami-icon" aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+        <circle cx="12" cy="12" r="9"></circle>
+        <path d="M12 16V8 M8.5 11.5 12 8l3.5 3.5"></path>
+      </svg>
+      <div><div class="ami-label" data-i18n="updateAvailable">Update available</div><div class="ami-desc" data-i18n="updateAvailableDesc">Open the Updates screen</div></div>
+    </button>
     <button class="btn header-auth-btn header-dock-item" id="notificationCenterBtn" type="button"
             onclick="openNotificationCenter()" aria-label="Notifications"
             data-i18n-aria-label="notifications">
@@ -1256,8 +1272,7 @@ if (typeof hljs !== 'undefined') {
             onclick="showLinkedAccountsDialog()" aria-label="Linked accounts"
             data-i18n-aria-label="linkedAccounts" style="display:none">
       <span class="ami-icon" aria-hidden="true">&#x1F517;</span>
-      <span class="user-info" id="userInfo" style="display:none"></span>
-      <div><div class="ami-label" data-i18n="linkedAccounts">Linked accounts</div><div class="ami-desc" data-i18n="linkAccountDesc">Link another sign-in identity</div></div>
+      <div><div class="ami-label" data-i18n="linkedAccounts">Linked accounts</div><div class="ami-desc user-info" id="userInfo"></div></div>
     </button>
     <button class="btn header-auth-btn header-dock-item" id="logoutBtn" type="button"
             onclick="doLogout()"
@@ -1491,7 +1506,13 @@ if (typeof hljs !== 'undefined') {
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"
               rows="1" onkeydown="handleKey(event)"></textarea>
     <div class="attachments-preview" id="attachPreview" aria-live="polite"></div>
-    <button id="sendBtn" onclick="send()" data-i18n="send">Send</button>
+    <button id="sendBtn" onclick="send()" aria-label="Send" data-i18n-aria-label="send"
+            title="Send" data-i18n-title="send">
+      <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false" width="18" height="18">
+        <path d="M3 11l18-8-8 18-2.5-7.5z" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+    </button>
   </div>
 </div>
 </div><!-- /tab-content chat -->

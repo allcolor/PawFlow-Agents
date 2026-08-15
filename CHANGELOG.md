@@ -4,6 +4,26 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Webchat header: the linked-accounts icon no longer shows the username — it
+  lives in the icon's hover tooltip and in the Linked accounts dialog. The
+  Send button is a paper-plane icon sized like the attachment button; both
+  get the dock hover zoom. A new update icon (beside notifications, admins
+  only) appears when a PawFlow update is available and opens the Updates
+  screen.
+
+### Fixed
+
+- Updating the server from the Updates screen now performs the full
+  command-line update: the installer-deployment updater hands over to
+  `install-pawflow.sh --port <port> --pull-images` (server image, host
+  artifacts, CLI tools image, both relay images, old-image cleanup) instead
+  of re-implementing only the server pull + restart, which left the relay and
+  CLI images behind until three more manual rebuilds.
+
 ## [1.0.0-beta.191] — 2026-08-15
 
 ### Added

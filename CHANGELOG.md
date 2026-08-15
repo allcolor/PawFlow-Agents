@@ -4,6 +4,20 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- CCI proxy observers: HTTP framing no longer desyncs when a leaf observer
+  fails. Brotli-encoded JSON responses (`count_tokens`, `event_logging`) made
+  the JSON observer raise mid-parse and corrupted the connection's
+  request/response pairing — later SSE responses were observed a full turn
+  late under the wrong request id, the coordinator finalized turns without
+  their final message, and the webchat only received the final answer and its
+  `done` after the next user prompt. Leaf decode/emit failures are now logged
+  and swallowed, unsupported content encodings emit `response_ignored`, and a
+  terminating chunk split across TCP segments still ends the response body.
+
 ## [1.0.0-beta.192] — 2026-08-15
 
 ### Added

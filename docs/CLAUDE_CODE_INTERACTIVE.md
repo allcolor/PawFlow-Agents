@@ -116,7 +116,19 @@ marker; a manual tmux prompt that resembles the sentinel remains a user prompt.
 If Anthropic compresses an
 observed response (`gzip` or `deflate`), only the side-channel copy is decoded
 before SSE/JSON parsing; the proxied bytes sent back to Claude Code remain
-unchanged.
+unchanged. Unsupported encodings (`br`, `zstd`) make the observer emit
+`response_ignored` instead of decoding.
+
+HTTP framing in the observers is isolated from leaf-observer failures: an
+exception while decoding or emitting a response body (undecodable JSON,
+unsupported encoding, malformed SSE) is logged and swallowed, and the chunked
+parser always finishes the current response and hands the leftover bytes to
+the next one. A terminating `0\r\n` whose closing CRLF arrives in a later TCP
+segment still terminates the body. Without both guarantees a single bad
+response desynced request/response pairing for the rest of the connection:
+later responses were observed a full turn late under the wrong request id,
+the coordinator finalized turns without their final message, and the webchat
+only received the final answer (and `done`) when the next user prompt arrived.
 
 ### Stream ownership
 

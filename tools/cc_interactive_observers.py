@@ -364,7 +364,10 @@ class HTTPRequestObserver:
                 "body_bytes": len(body),
                 "ignore_reason": reason,
             })
-            _emit_observed_tool_blocks(request_id, path, body)
+            try:
+                _emit_observed_tool_blocks(request_id, path, body)
+            except Exception as exc:
+                _log(f"request body observer failed; framing continues: {exc}")
             if is_websocket_upgrade(headers):
                 # Everything after an upgrade request is frames, not HTTP.
                 # The exchange is published on the tracker so the response
@@ -396,29 +399,42 @@ class ChunkedBodyObserver:
                     return None
                 size_line, self.buf = self.buf.split(b"\r\n", 1)
                 self.remaining = int(size_line.split(b";", 1)[0], 16)
-                if self.remaining == 0:
-                    if len(self.buf) < 2:
+            if self.remaining == 0:
+                # Terminating chunk. `remaining` stays 0 across feeds so a
+                # closing CRLF split into the next TCP segment re-enters here
+                # instead of the data-chunk branch below — falling through
+                # there consumed the NEXT response's bytes as body and
+                # desynced request/response pairing for the connection.
+                if len(self.buf) < 2:
+                    return None
+                if self.buf.startswith(b"\r\n"):
+                    leftover = self.buf[2:]
+                else:
+                    trailer_end = self.buf.find(b"\r\n\r\n")
+                    if trailer_end < 0:
                         return None
-                    if self.buf.startswith(b"\r\n"):
-                        leftover = self.buf[2:]
-                    else:
-                        trailer_end = self.buf.find(b"\r\n\r\n")
-                        if trailer_end < 0:
-                            return None
-                        leftover = self.buf[trailer_end + 4:]
-                    self.buf = b""
-                    self.done = True
-                    finish = getattr(self.observer, "finish", None)
-                    if finish:
+                    leftover = self.buf[trailer_end + 4:]
+                self.buf = b""
+                self.done = True
+                finish = getattr(self.observer, "finish", None)
+                if finish:
+                    # A leaf observer failure must not swallow `leftover`:
+                    # those bytes are the next response's start.
+                    try:
                         finish()
-                    return leftover
+                    except Exception as exc:
+                        _log(f"chunked leaf observer finish failed; framing continues: {exc}")
+                return leftover
             if len(self.buf) < self.remaining + 2:
                 return None
             chunk_data = self.buf[:self.remaining]
             self.buf = self.buf[self.remaining + 2:]
             self.remaining = None
             if chunk_data:
-                self.observer.feed(chunk_data)
+                try:
+                    self.observer.feed(chunk_data)
+                except Exception as exc:
+                    _log(f"chunked leaf observer feed failed; framing continues: {exc}")
         return self.buf
 
 class DecodingObserver:
@@ -655,7 +671,10 @@ class HTTPResponseObserver:
             return
         if "text/event-stream" in ctype:
             sse = SSEObserver({"type": "sse", "request_id": request_id})
-            sse.feed(body)
+            try:
+                sse.feed(body)
+            except Exception as exc:
+                _log(f"sse leaf observer failed; framing continues: {exc}")
             return
         if "json" in ctype:
             json_observer = JSONResponseObserver(
@@ -663,8 +682,11 @@ class HTTPResponseObserver:
                 content_length=len(body),
                 encoding=encoding,
             )
-            json_observer.feed(body)
-            json_observer.finish()
+            try:
+                json_observer.feed(body)
+                json_observer.finish()
+            except Exception as exc:
+                _log(f"json leaf observer failed; framing continues: {exc}")
 
 class JSONResponseObserver:
     def __init__(self, base_event: dict, content_length: int = 0, encoding: str = ""):
@@ -688,9 +710,20 @@ class JSONResponseObserver:
         raw = self.buf[:self.content_length] if self.content_length else self.buf
         if not raw:
             return
-        if "gzip" in self.encoding:
-            raw = gzip.decompress(raw)
-        payload = json.loads(raw.decode("utf-8"))
+        # Anthropic sends brotli/zstd on JSON endpoints (count_tokens,
+        # event_logging). An exception escaping here corrupts the HTTP
+        # framing state of the whole connection — every later response gets
+        # mislabeled and captured turns lose their final message.
+        try:
+            if "gzip" in self.encoding:
+                raw = gzip.decompress(raw)
+            elif self.encoding and "identity" not in self.encoding:
+                self._ignore("unsupported_content_encoding", self.encoding)
+                return
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception:
+            self._ignore("json_undecodable", self.encoding)
+            return
         if not isinstance(payload, dict):
             self._ignore("json_payload_not_object", "")
             return

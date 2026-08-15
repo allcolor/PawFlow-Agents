@@ -8,6 +8,38 @@ user's data/repository, data/runtime, or data/system directories.
 import pytest
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _benign_sigterm_handler():
+    """Keep a stray SIGTERM from aborting whichever test is running.
+
+    The container pools lazily install SIGTERM handlers that chain to the
+    previously installed handler, or sys.exit(143) when it was SIG_DFL.
+    During a suite run that exit lands inside an unrelated test (seen as
+    SystemExit 143 in test_add_context_message_async). Installing a
+    logging no-op handler up front makes the pools chain to it instead:
+    container cleanup still runs, the suite survives.
+    """
+    import logging
+    import signal
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _log_only(signum, frame):
+        logging.getLogger("tests.conftest").warning(
+            "Ignoring signal %s during test session", signum)
+
+    prev = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, _log_only)
+    yield
+    try:
+        signal.signal(signal.SIGTERM, prev)
+    except (ValueError, TypeError):
+        pass
+
+
 @pytest.fixture(autouse=True)
 def _neutralize_cci_realtime_waits(monkeypatch):
     """Default the CCI tmux-submit settle/verify waits to 0 in tests.

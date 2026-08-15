@@ -10,8 +10,35 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.project_graph import ProjectGraph, _RELAY_PAYLOAD_PREFIX
+from core.project_graph import (
+    ProjectGraph, _RELAY_PAYLOAD_PREFIX, _RELAY_EXTRACT_SCRIPT,
+    _decode_relay_payload,
+)
 from core._relay_naming import _prepare_relay_code_dir
+
+_SCRIPT_COMMAND = (
+    "python3 -c \"import base64,os;"
+    "exec(base64.b64decode(os.environ['PAWFLOW_GRAPH_SCRIPT']))\"")
+
+
+def _encode_known(known: dict) -> str:
+    return base64.b64encode(gzip.compress(
+        json.dumps(known, separators=(",", ":")).encode("utf-8"))).decode("ascii")
+
+
+def _decode_known(env: dict) -> dict:
+    return json.loads(gzip.decompress(
+        base64.b64decode(env["PAWFLOW_GRAPH_KNOWN"])).decode("utf-8"))
+
+
+def _script_env(root, known: dict) -> dict:
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    env["PAWFLOW_GRAPH_ROOT"] = str(root)
+    env["PAWFLOW_GRAPH_SCRIPT"] = base64.b64encode(
+        _RELAY_EXTRACT_SCRIPT.encode("utf-8")).decode("ascii")
+    env["PAWFLOW_GRAPH_KNOWN"] = _encode_known(known)
+    return env
 
 
 @pytest.fixture(autouse=True)
@@ -67,12 +94,13 @@ def test_build_from_relay(tmp_path):
     svc.write_file.assert_not_called()
     svc.delete_file.assert_not_called()
     command = svc.exec.call_args.args[1]
-    prefix = "python3 -c \"import base64;exec(base64.b64decode('"
-    suffix = "'))\""
-    assert command.startswith(prefix)
-    assert command.endswith(suffix)
-    encoded_script = command[len(prefix):-len(suffix)]
-    script = base64.b64decode(encoded_script)
+    env = svc.exec.call_args.kwargs["env"]
+    # The script travels via env var, never the command line: cmd.exe
+    # caps a command at 8191 chars, an env var at 32767.
+    assert command == _SCRIPT_COMMAND
+    assert len(command) < 8191
+    assert len(env["PAWFLOW_GRAPH_SCRIPT"]) < 32767
+    script = base64.b64decode(env["PAWFLOW_GRAPH_SCRIPT"])
     assert b"PAWFLOW_GRAPH_ROOT" in script
     assert b"parallel=False" in script
     assert b"max_workers=1" in script
@@ -169,6 +197,60 @@ def test_managed_relay_runtime_stages_importable_graphify(tmp_path):
         capture_output=True, text=True, env=env, check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_relay_script_runs_from_env_var_command(tmp_path):
+    """The exact command build_from_relay sends works end-to-end with the
+    script and the gzip+base64 known map delivered via env vars only.
+    Uses a cache-hit project so the run stops before the graphify import."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    src = project / "a.py"
+    src.write_text("x = 1\n", encoding="utf-8")
+    known = {"a.py": int(src.stat().st_mtime)}
+
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import base64,os;"
+         "exec(base64.b64decode(os.environ['PAWFLOW_GRAPH_SCRIPT']))"],
+        capture_output=True, text=True, check=False,
+        env=_script_env(project, known),
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "unchanged"
+    assert data["mtimes"] == known
+
+
+def test_relay_script_bootstraps_sys_path_for_graphify(tmp_path):
+    """The extraction script locates vendored graphify itself via
+    PAWFLOW_RELAY_CODE_DIR — the relay exec env carries no PYTHONPATH."""
+    code_dir = tmp_path / "code"
+    pkg = code_dir / "graphify"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "extract.py").write_text(
+        "def extract(files, root=None, parallel=False, max_workers=1):\n"
+        "    return {'nodes': [], 'edges': []}\n", encoding="utf-8")
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    env = _script_env(project, {})
+    env["PAWFLOW_RELAY_CODE_DIR"] = str(code_dir)
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import base64,os;"
+         "exec(base64.b64decode(os.environ['PAWFLOW_GRAPH_SCRIPT']))"],
+        capture_output=True, text=True, check=False, env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    data = _decode_relay_payload(result.stdout.strip())
+    assert data["status"] == "built"
+    assert data["parsed_files"] == ["a.py"]
 
 
 def test_build_from_relay_invalid_json(tmp_path):
@@ -343,7 +425,7 @@ def test_root_change_discards_old_graph_and_sends_empty_known_map(tmp_path):
     assert [node["id"] for node in pg.nodes] == ["new"]
     assert pg.edges == []
     assert pg._graph["metadata"]["root"] == "new-root"
-    assert json.loads(svc.exec.call_args.kwargs["env"]["PAWFLOW_GRAPH_KNOWN"]) == {}
+    assert _decode_known(svc.exec.call_args.kwargs["env"]) == {}
 
 
 def test_incremental_replaces_reparsed_file(tmp_path):
@@ -448,13 +530,12 @@ def test_incremental_passes_known_mtimes_to_script(tmp_path):
         "stderr": "", "returncode": 0,
     })
     pg.build_from_relay(svc, ".")
-    # exec was called with env containing the JSON-serialised known
+    # exec was called with env containing the gzip+base64 known
     # files map.
     _, kwargs = svc.exec.call_args
     env = kwargs.get("env", {})
     assert "PAWFLOW_GRAPH_KNOWN" in env
-    known = json.loads(env["PAWFLOW_GRAPH_KNOWN"])
-    assert known == {"a.py": 42, "b.py": 99}
+    assert _decode_known(env) == {"a.py": 42, "b.py": 99}
 
 
 def test_incremental_first_build_sends_empty_known(tmp_path):
@@ -477,6 +558,6 @@ def test_incremental_first_build_sends_empty_known(tmp_path):
     pg.build_from_relay(svc, ".")
     _, kwargs = svc.exec.call_args
     env = kwargs.get("env", {})
-    assert env["PAWFLOW_GRAPH_KNOWN"] == "{}"
+    assert _decode_known(env) == {}
     # Cache populated for next time
     assert pg._graph["metadata"]["files"] == {"a.py": 100}

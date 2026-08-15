@@ -261,11 +261,16 @@ The project graph builds a structural code graph from a codebase using tree-sitt
 Initial context preparation schedules a background build automatically. Successful
 relay writes and shell commands schedule a debounced incremental refresh. The
 manual `build` action remains available for recovery or an explicit root change.
-Each build runs as a single relay exec; the extraction script is passed directly
-to Python and executed in memory, without writing a helper file into the source
-tree. Managed relay runtimes stage the integrated `graphify` package alongside
-the relay handlers and include it in the runtime source hash, so server upgrades
-cannot reuse a stale runtime that lacks the extractor. Small deltas retain
+Each build runs as a single relay exec; the extraction script travels
+base64-encoded in the `PAWFLOW_GRAPH_SCRIPT` env var and is executed in memory
+by a tiny fixed command, without writing a helper file into the source tree.
+Nothing sizeable rides in the command line, keeping it under the Windows
+cmd.exe 8191-char cap. The script bootstraps `sys.path` itself before importing
+the extractor, trying `PAWFLOW_RELAY_CODE_DIR` then `/opt/pawflow`, since the
+relay exec env carries no `PYTHONPATH`. Managed relay runtimes stage the
+integrated `graphify` package alongside the relay handlers and include it in
+the runtime source hash, so server upgrades cannot reuse a stale runtime that
+lacks the extractor. Small deltas retain
 Graphify's normal grouped cross-file resolution. Large
 deltas are AST-parsed one file at a time in a memory-bounded sequential pass.
 Nodes are compressed as they are produced and edges use an anonymous disk spool,
@@ -274,7 +279,8 @@ below the relay's bounded text-output transport; the server validates and decode
 that versioned payload before merging it.
 
 1. **Server sends** the cached `{rel_path: mtime}` map to the relay
-   via `PAWFLOW_GRAPH_KNOWN`.
+   via `PAWFLOW_GRAPH_KNOWN` (gzip+base64, so large maps stay under the
+   ~32K per-variable Windows cap).
 2. **Relay walks** the workspace tree, skipping standard junk dirs
    (venv, node_modules, .git, build, dist, __pycache__, etc.).
 3. **Re-parses only files** whose mtime differs from `known` (or are

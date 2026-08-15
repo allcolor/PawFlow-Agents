@@ -98,7 +98,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        python-docx openpyxl python-pptx striprtf PyPDF2 ebooklib \
        playwright patchright 'scrapling[all]>=0.4.0' \
        sentence-transformers kafka-python paho-mqtt fastavro pyarrow \
-       networkx graphifyy tree-sitter \
+       networkx tree-sitter \
        pyfuse3 trio \
        tree-sitter-python tree-sitter-javascript tree-sitter-typescript \
        tree-sitter-go tree-sitter-rust tree-sitter-java \

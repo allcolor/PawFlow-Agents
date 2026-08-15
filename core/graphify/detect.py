@@ -359,7 +359,7 @@ def detect(root: Path) -> dict:
                     total_words += count_words(md_path)
                 else:
                     # Conversion failed (library not installed) - skip with note
-                    skipped_sensitive.append(str(p) + " [office conversion failed - pip install graphifyy[office]]")
+                    skipped_sensitive.append(str(p) + " [office conversion failed - install python-docx/openpyxl/python-pptx]")
                 continue
             files[ftype].append(str(p))
             total_words += count_words(p)

@@ -52,11 +52,15 @@ root = Path(os.environ.get("PAWFLOW_GRAPH_ROOT", ".")).resolve()
 # file whose current mtime matches — the server will keep the cached
 # nodes/edges. Files in `known` but missing from disk get reported
 # as `removed`; the server uses that to garbage-collect orphans.
+# The map arrives gzip+base64-encoded: it can outgrow the ~32K
+# per-variable cap on Windows if sent as plain JSON.
 try:
-    known = json.loads(os.environ.get("PAWFLOW_GRAPH_KNOWN", "") or "{}")
+    raw_known = os.environ.get("PAWFLOW_GRAPH_KNOWN", "")
+    known = json.loads(gzip.decompress(
+        base64.b64decode(raw_known)).decode("utf-8")) if raw_known else {}
     if not isinstance(known, dict):
         known = {}
-except (json.JSONDecodeError, ValueError):
+except (json.JSONDecodeError, ValueError, OSError):
     known = {}
 
 all_files = []   # rel paths discovered now (for orphan detection)
@@ -104,9 +108,16 @@ files = to_parse  # only re-parse the changed ones
 import contextlib
 
 # graphify is bundled in core/graphify/ on the server, vendored in
-# /opt/pawflow on the relay container at startup. No fallback path:
-# if the import fails the relay setup is broken and the agent should
-# see the real error instead of a degraded import-only graph.
+# /opt/pawflow on the relay container at startup. The exec env carries
+# no PYTHONPATH, so add the staging locations to sys.path ourselves.
+# No fallback beyond that: if the import still fails the relay setup
+# is broken and the agent should see the real error instead of a
+# degraded import-only graph.
+# Reverse order: each insert(0) prepends, so PAWFLOW_RELAY_CODE_DIR
+# must go last to end up FIRST and win over the /opt/pawflow default.
+for cand in ("/opt/pawflow", os.environ.get("PAWFLOW_RELAY_CODE_DIR", "")):
+    if cand and cand not in sys.path and os.path.isdir(os.path.join(cand, "graphify")):
+        sys.path.insert(0, cand)
 from graphify.extract import extract
 
 FULL_BATCH_MAX_FILES = 32
@@ -328,14 +339,21 @@ class ProjectGraph:
                 old_meta.get("root") and old_meta.get("root") != root_path)
             known_files: Dict[str, int] = (
                 {} if root_changed else old_meta.get("files", {}) or {})
+            # The script and the known-files map travel via env vars,
+            # never the command line: cmd.exe caps a command at 8191
+            # chars while an env var holds up to 32767. KNOWN is
+            # gzip+base64 so large projects stay under that too.
             encoded_script = base64.b64encode(
                 _RELAY_EXTRACT_SCRIPT.encode("utf-8")).decode("ascii")
+            encoded_known = base64.b64encode(gzip.compress(json.dumps(
+                known_files, separators=(',', ':')).encode("utf-8"))).decode("ascii")
             command = (
-                "python3 -c \"import base64;"
-                f"exec(base64.b64decode('{encoded_script}'))\"")
+                "python3 -c \"import base64,os;"
+                "exec(base64.b64decode(os.environ['PAWFLOW_GRAPH_SCRIPT']))\"")
             env = {
                 "PAWFLOW_GRAPH_ROOT": root_path,
-                "PAWFLOW_GRAPH_KNOWN": json.dumps(known_files),
+                "PAWFLOW_GRAPH_SCRIPT": encoded_script,
+                "PAWFLOW_GRAPH_KNOWN": encoded_known,
             }
             result = fs_service.exec(".", command, env=env, local=local)
 

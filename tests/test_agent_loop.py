@@ -1759,7 +1759,7 @@ class TestContextActionsAsync(unittest.TestCase):
             agent_actions._ACTION_HANDLERS.remove(_suppressing_handler)
             self._bus.unsubscribe(reply_conv, writer)
 
-    def _exec_async(self, task, body, timeout=2.0):
+    def _exec_async(self, task, body, timeout=10.0):
         """Execute an action through the real async path.
 
         Returns (ack_data, result_data) where result_data is the

@@ -145,6 +145,7 @@ function Extract-ImageArtifacts($image, $outDir) {
     try {
         foreach ($rel in @(
             "scripts/run-pawflow-docker.sh",
+            "scripts/install-pawflow.sh",
             "scripts/doctor-pawflow.sh",
             "scripts/doctor-pawflow.ps1",
             "scripts/install-pawflow.ps1",

@@ -582,6 +582,7 @@ extract_image_artifacts() (
 
   for rel in \
     scripts/run-pawflow-docker.sh \
+    scripts/install-pawflow.sh \
     scripts/doctor-pawflow.sh \
     scripts/doctor-pawflow.ps1 \
     scripts/install-pawflow.ps1 \
@@ -610,6 +611,7 @@ extract_image_artifacts() (
 
   chmod +x \
     "$out_dir/scripts/run-pawflow-docker.sh" \
+    "$out_dir/scripts/install-pawflow.sh" \
     "$out_dir/scripts/doctor-pawflow.sh" \
     "$out_dir/docker/claude-code/build.sh"
   chmod +x \

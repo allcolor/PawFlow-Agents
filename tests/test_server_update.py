@@ -580,6 +580,11 @@ def test_installer_preflight_reports_the_image_it_would_move_to(monkeypatch):
     assert probed["image"] == "ghcr.io/allcolor/pawflow:1.0.0-beta.40"
     assert "command -v bash" in probed["script"]
     assert "docker version" in probed["script"]
+    # The updater hands over to install-pawflow.sh; a directory carrying
+    # neither a host copy nor an image copy must fail preflight, not the
+    # detached updater after the server is already gone.
+    assert "scripts/install-pawflow.sh" in probed["script"]
+    assert "|| test -f /app/scripts/install-pawflow.sh" in probed["script"]
 
 
 def test_an_unresolvable_published_image_stops_the_update(monkeypatch):
@@ -651,7 +656,14 @@ def test_the_installer_script_hands_over_to_the_installer(monkeypatch):
     assert "apk" not in script
     # The whole update is the installer's own sequence — the same command an
     # operator runs on the host — not a re-implementation of a subset of it.
-    assert "bash scripts/install-pawflow.sh --port 19990 --pull-images" in script
+    # Artifact dirs extracted by older installers never received
+    # install-pawflow.sh (only run-pawflow-docker.sh), so the handover must
+    # fall back to the copy the updater image ships at /app instead of dying
+    # on "bash: scripts/install-pawflow.sh: No such file or directory".
+    assert 'PAWFLOW_INSTALLER="scripts/install-pawflow.sh"' in script
+    assert '[ -f "$PAWFLOW_INSTALLER" ] || ' \
+           'PAWFLOW_INSTALLER=/app/scripts/install-pawflow.sh' in script
+    assert 'bash "$PAWFLOW_INSTALLER" --port 19990 --pull-images' in script
     assert "run-pawflow-docker.sh" not in script
     assert f"cd {APP_DIR}" in script
     # The deployment's identity rides along, quoted.

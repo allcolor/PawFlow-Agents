@@ -4,6 +4,21 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- UI "Update server" on installer deployments died with exit 127 (`bash:
+  scripts/install-pawflow.sh: No such file or directory`): the artifact
+  directories the installer extracts to the host never included
+  `install-pawflow.sh` itself, only `run-pawflow-docker.sh`, while the updater
+  hands over to the installer. The updater now falls back to the copy shipped
+  in the updater image at `/app/scripts/install-pawflow.sh`, the preflight
+  probes for a reachable installer before the server is told to die, and both
+  installers (bash and PowerShell) extract `install-pawflow.sh` into future
+  artifact directories. A test pins `IMAGE_ARTIFACTS` to the installer's
+  extraction list so the two can no longer drift apart.
+
 ## [1.0.0-beta.194] — 2026-08-15
 
 ### Fixed

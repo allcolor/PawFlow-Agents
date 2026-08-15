@@ -561,10 +561,17 @@ the common case — is not a compose stack at all: the installer ends on
 `scripts/run-pawflow-docker.sh`, a plain `docker run`. It runs:
 
 ```bash
-git pull --ff-only                           # only when asked, and only fast-forward
-docker pull ghcr.io/allcolor/pawflow:<latest release>
-PAWFLOW_IMAGE=… PAWFLOW_PORT=… bash scripts/run-pawflow-docker.sh
+git pull --ff-only     # only when asked, and only fast-forward
+PAWFLOW_IMAGE=... bash scripts/install-pawflow.sh --port <port> --pull-images
 ```
+
+The installer script itself is resolved with a fallback: the copy in the
+install directory when it carries one, else the copy the updater image ships
+at `/app/scripts/install-pawflow.sh`. Artifact directories extracted by older
+installers only received `run-pawflow-docker.sh`, so without the fallback the
+updater died on `bash: scripts/install-pawflow.sh: No such file or directory`
+(exit 127) after the server was already committed to dying; the preflight now
+refuses up front when neither copy exists.
 
 The helper for this path runs in the currently installed PawFlow image, which
 is already local and contains Bash plus the static Docker CLI. It therefore has
@@ -581,7 +588,8 @@ latest GitHub release tag, which is exactly how the publish workflow tags it.
 
 **The host-side files are refreshed too.** `install-pawflow.sh` copies a set of
 artifacts out of the image onto the host (`extract_image_artifacts`): the start
-script itself, `doctor-pawflow.sh`, `config/relay_image_catalog.json`,
+script itself, `install-pawflow.sh`, `doctor-pawflow.sh`,
+`config/relay_image_catalog.json`,
 `docker/apparmor`, `docker/claude-code`, `docker/pawflow_sdk`,
 `tools/mcp_bridge.py`, `core/tool_json.py` and `pawflow_relay`. These run
 *outside* the container, so pulling a new image does not touch them. Until they

@@ -1032,7 +1032,14 @@ def _installer_updater_script(info: Dict[str, Any], image: str,
         # update instead of being merged behind the operator's back.
         lines.append("git pull --ff-only")
     port = str(info.get("port", ""))
-    lines.append(f"{assignments} bash scripts/install-pawflow.sh "
+    # Artifact directories extracted by older installers carry
+    # run-pawflow-docker.sh but not install-pawflow.sh, so the host copy
+    # may simply not exist. The updater image is the server image, which
+    # ships the installer at /app — fall back to that copy.
+    lines.append('PAWFLOW_INSTALLER="scripts/install-pawflow.sh"')
+    lines.append('[ -f "$PAWFLOW_INSTALLER" ] || '
+                 'PAWFLOW_INSTALLER=/app/scripts/install-pawflow.sh')
+    lines.append(f"{assignments} bash \"$PAWFLOW_INSTALLER\" "
                  f"--port {shlex.quote(port)} --pull-images")
     if artifact_dir:
         uid = (env.get("PAWFLOW_RUN_UID") or "").strip()
@@ -1177,6 +1184,11 @@ def _installer_preflight(installer: Dict[str, Any]) -> Dict[str, Any]:
         "command -v bash >/dev/null\n"
         "docker version >/dev/null\n"
         f"test -f {shlex.quote(app_dir)}/scripts/run-pawflow-docker.sh\n"
+        # The updater hands over to install-pawflow.sh: the host copy when
+        # the directory carries one, else the copy shipped in the updater
+        # image at /app. Refuse up front when neither exists.
+        f"test -f {shlex.quote(app_dir)}/scripts/install-pawflow.sh "
+        "|| test -f /app/scripts/install-pawflow.sh\n"
         f"test -w {shlex.quote(mount_dir)}\n"
         f"test -d {shlex.quote(app_dir)}/.git && echo PAWFLOW_GIT=1 || true\n"
     )
@@ -1189,7 +1201,9 @@ def _installer_preflight(installer: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "installer": installer,
                 "reason": f"The updater image '{image}' does not provide Bash "
                           "and a working Docker CLI, the install directory "
-                          f"'{app_dir}' does not carry scripts/run-pawflow-docker.sh, or "
+                          f"'{app_dir}' does not carry scripts/run-pawflow-docker.sh, "
+                          "no install-pawflow.sh is reachable (neither in the "
+                          "install directory nor at /app in the updater image), or "
                           f"'{mount_dir}' is not writable, so the update "
                           "cannot start the server the way the installer did: "
                           f"{(probe.stderr or probe.stdout).strip()[:200]}"}

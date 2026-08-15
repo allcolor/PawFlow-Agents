@@ -229,6 +229,32 @@ def test_the_installer_refuses_a_runtime_dir_it_does_not_own(tmp_path):
     assert "docker" not in foreign.stdout
 
 
+def test_image_artifacts_mirror_the_installer_extract_list():
+    """IMAGE_ARTIFACTS documents what the installer extracts to the host.
+
+    The lists drifting apart is exactly how the UI update broke: the
+    updater ran `bash scripts/install-pawflow.sh` from an artifact
+    directory that never received it (exit 127, after the server was
+    already committed to dying). Both installers must extract every
+    mirrored artifact, required and optional alike.
+    """
+    from core.installer_deployment import (
+        IMAGE_ARTIFACTS, OPTIONAL_IMAGE_ARTIFACTS)
+
+    src = Path("scripts/install-pawflow.sh").read_text(encoding="utf-8")
+    block = src.split("for rel in \\\n", 1)[1].split("\n  do", 1)[0]
+    extracted = {
+        line.strip().rstrip("\\").strip()
+        for line in block.splitlines() if line.strip()
+    }
+    assert extracted == set(IMAGE_ARTIFACTS) | set(OPTIONAL_IMAGE_ARTIFACTS)
+
+    # The PowerShell installer extracts the bash installer too, so a
+    # Windows-installed deployment can also update itself in-app.
+    ps1 = Path("scripts/install-pawflow.ps1").read_text(encoding="utf-8")
+    assert '"scripts/install-pawflow.sh",' in ps1
+
+
 def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     install = Path("scripts/install-pawflow.sh")
     install_zip = Path("scripts/build-pawflow-install-zip.sh")

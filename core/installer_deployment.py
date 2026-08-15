@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 #: list mirrors it.
 IMAGE_ARTIFACTS: Tuple[str, ...] = (
     "scripts/run-pawflow-docker.sh",
+    "scripts/install-pawflow.sh",
     "scripts/doctor-pawflow.sh",
     "scripts/doctor-pawflow.ps1",
     "config/relay_image_catalog.json",

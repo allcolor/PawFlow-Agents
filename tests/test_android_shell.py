@@ -33,7 +33,7 @@ def test_keyboard_resizes_the_layout():
 
 
 def test_webchat_chrome_folds_behind_a_floating_grip():
-    assert 'Button grip = button("|||");' in MAIN
+    assert 'Button grip = button("\\u2261");' in MAIN
     assert "chrome.animate().translationX(chrome.getWidth())" in MAIN
     assert "chrome.setVisibility(View.GONE)" in MAIN
     # The grip survives tab switches: it lives beside webContainer, which is

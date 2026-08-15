@@ -377,14 +377,18 @@ public final class MainActivity extends Activity {
         webStack.addView(webContainer, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
-        Button grip = button("|||");
+        // The chrome slides horizontally, so its grip is a VERTICAL tab
+        // (narrow and tall, horizontal bars) hugging the right edge — the
+        // same convention as the webchat grips.
+        Button grip = button("\u2261");
         grip.setAlpha(0.75f);
+        grip.setPadding(0, 0, 0, 0);
+        grip.setMinWidth(0);
+        grip.setMinimumWidth(0);
         FrameLayout.LayoutParams gripParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.END);
+                dp(26), dp(64), Gravity.TOP | Gravity.END);
         gripParams.topMargin = dp(2);
-        gripParams.rightMargin = dp(2);
+        gripParams.rightMargin = 0;
         webStack.addView(grip, gripParams);
         root.addView(webStack, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));

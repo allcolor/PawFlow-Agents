@@ -4,7 +4,14 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0-beta.192] — 2026-08-15
+
+### Added
+
+- Conversations deep-link via `?conversation_id=<id>`: the sidebar's
+  right-click menu offers "Open in new tab", and the Android app turns
+  `window.open`/`target=_blank` into a new native chat tab instead of
+  silently dropping it. The Android chrome grip is a vertical edge tab.
 
 ### Fixed
 

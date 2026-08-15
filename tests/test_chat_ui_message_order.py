@@ -342,17 +342,23 @@ def test_action_dock_is_horizontal_and_scrollable():
     assert "overflow-x: auto; overflow-y: visible;" in TEMPLATE_HTML
 
 
-def test_mobile_breakpoints_wrap_header_and_overlay_sidebar():
+def test_mobile_breakpoints_scroll_header_and_overlay_sidebar():
     # Regression: zero @media queries existed anywhere in the chat UI --
-    # .header had no flex-wrap (controls squeezed/overflowed on narrow
-    # screens instead of wrapping) and .sidebar had no overlay mode
-    # (sidebar-toggle only shrank it to 0 width, .main was always squeezed
-    # next to it rather than the sidebar floating on top).
+    # .header had no narrow-screen handling (controls squeezed/overflowed)
+    # and .sidebar had no overlay mode (sidebar-toggle only shrank it to 0
+    # width, .main was always squeezed next to it rather than the sidebar
+    # floating on top). The header stays ONE line and scrolls horizontally
+    # like the action dock, icons at full size, scrollbar hidden; its
+    # popovers escape the scrollbox as fixed panels under the header.
     assert "@media (max-width: 768px)" in TEMPLATE_HTML
     mobile_block = TEMPLATE_HTML[
         TEMPLATE_HTML.index("@media (max-width: 768px)"):
         TEMPLATE_HTML.index("@media (max-width: 480px)")]
-    assert ".header { flex-wrap: wrap;" in mobile_block
+    assert ".header { flex-wrap: nowrap;" in mobile_block
+    assert "overflow-x: auto; scrollbar-width: none;" in mobile_block
+    assert ".header::-webkit-scrollbar" in mobile_block
+    assert ".header > * { flex: 0 0 auto; }" in mobile_block
+    assert ".hdr-pop { position: fixed;" in mobile_block
     # Only the compact account control remains on the right. It no longer needs
     # the full-width second row used by the old crowded header.
     assert ".header .actions { margin-left: auto;" in mobile_block

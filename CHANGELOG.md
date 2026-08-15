@@ -4,7 +4,7 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0-beta.191] — 2026-08-15
 
 ### Added
 
@@ -14,20 +14,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   get the dock hover zoom. A new update icon (beside notifications, admins
   only) appears when a PawFlow update is available and opens the Updates
   screen.
-
-### Fixed
-
-- Updating the server from the Updates screen now performs the full
-  command-line update: the installer-deployment updater hands over to
-  `install-pawflow.sh --port <port> --pull-images` (server image, host
-  artifacts, CLI tools image, both relay images, old-image cleanup) instead
-  of re-implementing only the server pull + restart, which left the relay and
-  CLI images behind until three more manual rebuilds.
-
-## [1.0.0-beta.191] — 2026-08-15
-
-### Added
-
 - Webchat chrome maximizes the transcript: the header bar, the left sidebar
   (with the tab rail, which folds with it) and the composer drawer (the
   whole zone above the prompt) each fold completely behind a small grip that
@@ -38,7 +24,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   status text and the agent context gauge became header icons too (animated
   glyph while actions run, battery-style fill + percentage for context).
   Each icon toggles a popover with the full widget on click. The header
-  title is the PawFlow logo linking to pawflow.allcolor.org.
+  title is the PawFlow logo linking to pawflow.allcolor.org. The chrome
+  grips share the dock's hover zoom.
+
+### Fixed
+
+- Updating the server from the Updates screen now performs the full
+  command-line update: the installer-deployment updater hands over to
+  `install-pawflow.sh --port <port> --pull-images` (server image, host
+  artifacts, CLI tools image, both relay images, old-image cleanup) instead
+  of re-implementing only the server pull + restart, which left the relay and
+  CLI images behind until three more manual rebuilds.
 
 ## [1.0.0-beta.190] — 2026-08-15
 

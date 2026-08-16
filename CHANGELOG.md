@@ -9,8 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Windows/WSL relays using `local=true` now route host-helper traffic through a
-  tracked bridge container, wait for authenticated readiness before connecting,
-  and detect helper loss instead of reporting a stale connected state.
+  tracked bridge container, wait for authenticated readiness, and re-resolve the
+  current Windows route for every connection. Transient route loss recovers
+  automatically without restarting the bridge or worker and never reports a
+  stale connected state.
 - Antigravity tmux submission tests now isolate the Docker commands under test
   from unrelated background subprocess calls, eliminating a Python 3.13 CI race.
 

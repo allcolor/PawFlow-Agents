@@ -950,7 +950,8 @@ def test_published_mcp_ui_is_loaded_and_translated():
     # The one-way bootstrap prompt covers the full connector contract.
     for marker in ("_publishedMcpConnectorPrompt", "get_initial_context",
                    "get_context_updates", "send_user_message",
-                   "send_agent_message", "schedule_continuation"):
+                   "send_agent_message", "schedule_continuation",
+                   "Problem initializing pawflow mcp"):
         assert marker in source
 
 

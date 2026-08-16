@@ -21,6 +21,7 @@ from pathlib import Path  # noqa: F401  # re-exported: tests read srm.Path(srm._
 from typing import Any, Dict, Optional
 
 from core.apparmor import relay_apparmor_security_opts
+from core._server_relay_container import start_managed_relay_container
 from core.docker_utils import (docker_cmd, get_host_ip,
                                pawflow_container_labels)
 from core._relay_naming import (
@@ -299,8 +300,9 @@ class ServerRelayManager:
         kind: str = _KIND_WORKSPACE,
         internal_token: str = "",
         allow_service_tunnels: bool = False,
+        replace: bool = False,
     ) -> Dict[str, Any]:
-        """Spawn a managed server relay container for an installed relay service."""
+        """Start or reuse a managed container for an installed relay service."""
         kind = _validate_kind(kind)
         kind_cfg = _relay_kind_config(kind)
         if not relay_id:
@@ -341,7 +343,6 @@ class ServerRelayManager:
         code_dir = _prepare_relay_code_dir(runtime_dir)
         code_host_dir = _relay_runtime_host_dir(code_dir)
 
-        self._cleanup_container(container_name, remove=True)
         ws_url_for_container = f"{ws_scheme}://{host_ip}:{main_port}{path}"
         docker_run_args = [
             "--rm",
@@ -401,15 +402,9 @@ class ServerRelayManager:
         # Logging it exposes live credentials; the container identity is enough
         # to correlate spawn failures with Docker diagnostics.
         logger.info("Spawning managed server relay service: %s", container_name)
-        result = subprocess.run(  # nosec B603
-            cmd, capture_output=True, text=True,
+        container_id, reused = start_managed_relay_container(
+            container_name, cmd, replace=replace,
         )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to start relay container: {result.stderr.strip()}"
-            )
-
-        container_id = result.stdout.strip()
         metadata = {
             "relay_id": relay_id,
             "container_id": container_id,
@@ -428,9 +423,11 @@ class ServerRelayManager:
             "image": relay_image,
             "cpus": relay_cpus,
             "memory": relay_memory,
-            "internal_token": internal_token,
+            "internal_token": "" if reused else internal_token,
+            "reused": reused,
         }
-        logger.info("Managed server relay service spawned: %s", relay_id)
+        logger.info("Managed server relay service %s: %s", relay_id,
+                    "reused" if reused else "spawned")
         return metadata
 
     def service_relay_running(self, relay_id: str,

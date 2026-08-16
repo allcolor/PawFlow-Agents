@@ -68,7 +68,7 @@ class _RelayConnMixin:
         if self.config.get("server_managed"):
             self._start_managed_server_relay()
 
-    def _start_managed_server_relay(self):
+    def _start_managed_server_relay(self, *, replace: bool = False):
         token = str(self.config.get("token") or "")
         if not token:
             logger.warning("RelayService %s: managed relay has no token; cannot start container", self._service_id)
@@ -80,6 +80,9 @@ class _RelayConnMixin:
             user_id = scope_id
         try:
             from core.server_relay_manager import ServerRelayManager
+            spawn_kwargs = {}
+            if replace:
+                spawn_kwargs["replace"] = True
             ServerRelayManager.get_instance().spawn_service_relay(
                 self._service_id,
                 token,
@@ -89,6 +92,7 @@ class _RelayConnMixin:
                 kind=str(self.config.get("server_kind") or "workspace"),
                 allow_service_tunnels=bool(
                     self.config.get("allow_service_tunnels")),
+                **spawn_kwargs,
             )
             self._managed_container_started = True
         except Exception as e:
@@ -112,7 +116,7 @@ class _RelayConnMixin:
         try:
             self._managed_respawn_at = time.monotonic()
             self._managed_disconnected_at = 0.0
-            self._start_managed_server_relay()
+            self._start_managed_server_relay(replace=True)
             return True
         finally:
             self._managed_respawn_lock.release()
@@ -189,7 +193,7 @@ class _RelayConnMixin:
             self._managed_respawn_at = time.monotonic()
             self._managed_disconnected_at = 0.0
             try:
-                self._start_managed_server_relay()
+                self._start_managed_server_relay(replace=running)
             except Exception:
                 # Already logged with a traceback by _start_managed_server_relay.
                 # Reported, never fatal: the caller is a transport retry that has

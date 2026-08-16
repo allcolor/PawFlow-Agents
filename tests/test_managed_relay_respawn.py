@@ -41,11 +41,12 @@ class _Manager:
 
     def spawn_service_relay(self, relay_id, token, *, scope, scope_id,
                             user_id, kind="workspace", internal_token="",
-                            allow_service_tunnels=False):
+                            allow_service_tunnels=False, replace=False):
         self.spawned.append({
             "relay_id": relay_id, "token": token, "scope": scope,
             "scope_id": scope_id, "user_id": user_id, "kind": kind,
             "allow_service_tunnels": allow_service_tunnels,
+            "replace": replace,
         })
         return {"relay_id": relay_id}
 
@@ -79,6 +80,7 @@ def test_gone_container_is_respawned_with_the_services_own_identity(manager):
         "relay_id": "MyWorkspace", "token": "tok", "scope": "user",
         "scope_id": "allcolor", "user_id": "allcolor", "kind": "workspace",
         "allow_service_tunnels": False,
+        "replace": False,
     }]
 
 
@@ -128,6 +130,7 @@ def test_a_persistently_disconnected_running_relay_is_replaced(
     now[0] += 0.2
     assert svc.ensure_managed_relay_alive() is True
     assert len(mgr.spawned) == 1
+    assert mgr.spawned[0]["replace"] is True
 
 
 def test_a_reconnect_during_container_inspection_cancels_respawn(
@@ -170,6 +173,7 @@ def test_explicit_restart_replaces_a_managed_relay_even_when_connected(manager):
     assert svc.restart_managed_relay() is True
 
     assert len(mgr.spawned) == 1
+    assert mgr.spawned[0]["replace"] is True
     assert svc._managed_respawn_at > 0.0
 
 

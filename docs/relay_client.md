@@ -65,6 +65,12 @@ service calls `ensure_managed_relay_alive()`:
   disconnected running process past the grace is treated as wedged.
 - **One respawn per cooldown window** (60 s), so a burst of failing tool calls
   asks for one container start rather than one per call.
+- **Container-name recovery is idempotent.** Starts for the same deterministic
+  Docker name are serialized. A healthy container started by an overlapping
+  attempt is reused instead of replaced, while an explicit reconnect or a relay
+  that stayed disconnected past its grace requests replacement. PawFlow verifies
+  the spawned, server-id, and managed-relay labels before removal; an unlabelled
+  container or one owned by another server is never touched.
 - **A failed respawn is logged, not raised.** The caller is a transport retry
   that has its own error to report.
 

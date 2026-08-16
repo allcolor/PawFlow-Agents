@@ -810,6 +810,8 @@
   "mcpPublishConnectorHint": "Créez une clé connecteur, puis collez l'URL générée dans une app ChatGPT en mode développeur avec l'authentification « No Authentication ».",
   "mcpPublishConnectorSection": "Connecteur ChatGPT",
   "mcpPublishConnectorUrlOnce": "Cette URL de connecteur intègre sa clé. Copiez-la maintenant — elle ne sera plus affichée.",
+  "mcpPublishConnectorPromptHint": "Collez ceci comme premier message de la conversation ChatGPT (ou de tout client MCP one-way). Le client répond « Ready » une fois le contexte PawFlow chargé.",
+  "mcpPublishConnectorPromptTitle": "Prompt de bootstrap (clients one-way)",
   "mcpPublishCreateConnectorKey": "Créer une clé connecteur",
   "mcpPublishCopied": "Copié dans le presse-papiers.",
   "mcpPublishCreate": "Publier la conversation",

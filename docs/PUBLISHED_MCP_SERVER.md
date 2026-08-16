@@ -83,6 +83,15 @@ Setup:
 2. In ChatGPT, enable **Settings → Security and login → Developer mode**,
    then create a new app from the Plugins page with the connector URL and
    authentication set to **No Authentication**.
+3. Copy the **Bootstrap prompt** from the same dialog section and paste it as
+   the first message of the ChatGPT conversation. It instructs the remote
+   model to load the PawFlow context (`get_initial_context`), keep its cursor
+   in sync (`get_context_updates`), persist both sides of the dialogue
+   (`send_user_message` / `send_agent_message` with idempotent `message_id`s),
+   discover tools lazily (`get_tool_schema` → `use_tool`), and respect the
+   one-way limits. The client answers "Ready — PawFlow context loaded" once
+   bootstrapped. The prompt is generic: it works for any one-way MCP client,
+   not only ChatGPT.
 
 Connector routes are exempt from the Private Gateway challenge (connector
 clients cannot send `X-PawFlow-Gateway-Key`); the embedded key is the sole

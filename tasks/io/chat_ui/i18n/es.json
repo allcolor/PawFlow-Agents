@@ -810,6 +810,8 @@
   "mcpPublishConnectorHint": "Cree una clave de conector y pegue la URL generada en una app de ChatGPT en modo desarrollador con autenticación « No Authentication ».",
   "mcpPublishConnectorSection": "Conector ChatGPT",
   "mcpPublishConnectorUrlOnce": "Esta URL de conector incorpora su clave. Cópiela ahora — no se mostrará de nuevo.",
+  "mcpPublishConnectorPromptHint": "Pegue esto como primer mensaje de la conversación de ChatGPT (o de cualquier cliente MCP unidireccional). El cliente responde « Ready » cuando el contexto PawFlow está cargado.",
+  "mcpPublishConnectorPromptTitle": "Prompt de arranque (clientes unidireccionales)",
   "mcpPublishCreateConnectorKey": "Crear clave de conector",
   "mcpPublishCopied": "Copiado al portapapeles.",
   "mcpPublishCreate": "Publicar conversación",

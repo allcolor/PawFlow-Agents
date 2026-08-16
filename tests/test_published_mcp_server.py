@@ -944,6 +944,14 @@ def test_published_mcp_ui_is_loaded_and_translated():
         assert catalog["mcpPublishConnectorUrlOnce"]
         assert catalog["mcpPublishCreateConnectorKey"]
         assert catalog["mcpPublishToolAllowlist"]
+        assert catalog["mcpPublishConnectorPromptTitle"]
+        assert catalog["mcpPublishConnectorPromptHint"]
+
+    # The one-way bootstrap prompt covers the full connector contract.
+    for marker in ("_publishedMcpConnectorPrompt", "get_initial_context",
+                   "get_context_updates", "send_user_message",
+                   "send_agent_message", "schedule_continuation"):
+        assert marker in source
 
 
 def test_store_connector_keys_are_kind_scoped(tmp_path):

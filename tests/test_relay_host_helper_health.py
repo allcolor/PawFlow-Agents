@@ -4,6 +4,7 @@ import threading
 
 import pytest
 
+from pawflow_relay import host_bridge
 from pawflow_relay._thread_host import _RelayHostHelperMixin
 from pawflow_relay.auth import probe_host_helper
 from pawflow_relay.host_bridge import serve
@@ -105,3 +106,50 @@ def test_wsl_bridge_forwards_authenticated_helper_ping():
         bridge_thread.join(timeout=2)
         helper._stop_event.set()
         helper_thread.join(timeout=3)
+
+
+def test_wsl_bridge_resolves_the_windows_route_for_each_connection(monkeypatch):
+    helper = _HostHelper()
+    target_port, helper_thread = _start_helper(helper)
+    listen_port = find_free_port()
+    stop_event = threading.Event()
+    ready_event = threading.Event()
+    selected = []
+
+    def _select_target(port, token, extra_target="", timeout=2):
+        selected.append((port, token, extra_target))
+        return "127.0.0.1"
+
+    monkeypatch.setattr(host_bridge, "select_target", _select_target)
+    bridge_thread = threading.Thread(
+        target=host_bridge.serve,
+        args=(listen_port, target_port, "test-token", ""),
+        kwargs={"stop_event": stop_event, "ready_event": ready_event},
+        daemon=True,
+    )
+    bridge_thread.start()
+    assert ready_event.wait(timeout=2)
+    try:
+        endpoint = f"127.0.0.1:{listen_port}"
+        assert probe_host_helper(endpoint, "test-token", timeout=1) is True
+        assert probe_host_helper(endpoint, "test-token", timeout=1) is True
+        assert selected == [
+            (target_port, "test-token", ""),
+            (target_port, "test-token", ""),
+        ]
+    finally:
+        stop_event.set()
+        bridge_thread.join(timeout=2)
+        helper._stop_event.set()
+        helper_thread.join(timeout=3)
+
+
+def test_worker_keeps_connection_during_transient_host_helper_loss():
+    source = inspect.getsource(__import__(
+        "pawflow_relay.worker", fromlist=["_ws_connect"])._ws_connect)
+    health_block = source.split(
+        "Host helper health check failed:", 1)[1].split(
+        "idle = time.time()", 1)[0]
+
+    assert "keeping relay connection active" in health_block
+    assert "sock.close()" not in health_block

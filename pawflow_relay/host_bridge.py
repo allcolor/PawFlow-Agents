@@ -70,9 +70,17 @@ def select_target(target_port, token, extra_target="", timeout=2):
         + "; ".join(failures))
 
 
-def _relay_connection(client, target_host, target_port):
+def _relay_connection(client, target_port, token, extra_target=""):
+    """Forward one connection through the currently reachable Windows route.
+
+    WSL's host-facing address can change while the relay stays running (for
+    example after a VPN or network transition).  Resolve it here rather than
+    once in ``serve`` so the next request heals without restarting either
+    container.
+    """
     upstream = None
     try:
+        target_host = select_target(target_port, token, extra_target)
         upstream = socket.create_connection((target_host, target_port), timeout=10)
         sockets = (client, upstream)
         while True:
@@ -87,7 +95,7 @@ def _relay_connection(client, target_host, target_port):
                     return
                 destination = upstream if source is client else client
                 destination.sendall(data)
-    except OSError:
+    except (OSError, RuntimeError, ValueError):
         return
     finally:
         client.close()
@@ -100,7 +108,6 @@ def serve(listen_port, target_port, token, extra_target="",
     """Serve the raw bridge until stopped."""
     if not token:
         raise ValueError("PAWFLOW_HOST_HELPER_TOKEN is required")
-    target_host = select_target(target_port, token, extra_target)
     stop_event = stop_event or threading.Event()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -111,7 +118,8 @@ def serve(listen_port, target_port, token, extra_target="",
             ready_event.set()
         sys.stderr.write(
             f"[HostBridge] listening on {listen_port}; "
-            f"Windows helper route={target_host}:{target_port}\n")
+            f"Windows helper route is resolved per connection "
+            f"(port {target_port})\n")
         while not stop_event.is_set():
             try:
                 client, _address = server.accept()
@@ -119,7 +127,7 @@ def serve(listen_port, target_port, token, extra_target="",
                 continue
             threading.Thread(
                 target=_relay_connection,
-                args=(client, target_host, target_port),
+                args=(client, target_port, token, extra_target),
                 daemon=True,
                 name="host-bridge-connection",
             ).start()

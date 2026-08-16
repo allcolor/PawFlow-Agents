@@ -211,11 +211,18 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         _disconnect_reason = "connect setup"
         _last_activity = [time.time()]
         if _host_helper:
-            # This sits outside the connection try/except deliberately. A
-            # failed bridge must terminate the worker so its parent recreates
-            # the complete worker/bridge pair instead of reconnecting with a
-            # false host capability.
-            _probe_host_helper(_host_helper, _host_helper_token)
+            try:
+                _probe_host_helper(_host_helper, _host_helper_token)
+            except (OSError, RuntimeError, ValueError) as exc:
+                # Keep this process alive while the WSL/Windows route changes.
+                # The bridge resolves the target afresh on every connection,
+                # so retrying here recovers without a container restart.
+                sys.stderr.write(
+                    f"[FSRelay] Host helper unavailable before registration: "
+                    f"{exc}; retrying in {reconnect_delay}s\n")
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, 60)
+                continue
         try:
             sys.stderr.write(f"[FSRelay] Connecting to {url} ...\n")
             sock = _connect_and_handshake(
@@ -253,11 +260,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 "local_close": "",
                 "last_send": "",
                 "last_send_error": "",
+                "host_helper": "",
             }
 
             def _diag_summary():
                 parts = []
-                for key in ("local_close", "last_send", "last_send_error"):
+                for key in ("local_close", "last_send", "last_send_error",
+                            "host_helper"):
                     value = _socket_diag.get(key) or ""
                     if value:
                         parts.append(f"{key}={value}")
@@ -274,18 +283,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         try:
                             _probe_host_helper(
                                 _host_helper, _host_helper_token, timeout=3)
+                            _socket_diag["host_helper"] = ""
                         except (OSError, RuntimeError, ValueError) as exc:
-                            _socket_diag["local_close"] = (
-                                f"host_helper_unreachable={exc}")
+                            _socket_diag["host_helper"] = f"unreachable={exc}"
                             sys.stderr.write(
                                 f"[FSRelay] Host helper health check failed: "
-                                f"{exc}; forcing reconnect\n")
-                            try:
-                                sock.close()
-                            except Exception:
-                                logging.getLogger(__name__).debug(
-                                    "Ignored exception", exc_info=True)
-                            break
+                                f"{exc}; keeping relay connection active and "
+                                f"retrying the dynamic route\n")
                     idle = time.time() - _last_activity[0]
                     if idle > _DEAD_TIMEOUT:
                         _socket_diag["local_close"] = f"watchdog idle={idle:.0f}s"

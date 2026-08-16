@@ -247,7 +247,7 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
             raise ValueError(f"Service name '{service_id}' is reserved (builtin FileStore alias)")
 
         try:
-            ServiceFactory.get(service_type)
+            service_class = ServiceFactory.get(service_type)
         except Exception:
             raise ValueError(f"Unknown service type: {service_type}")
 
@@ -255,6 +255,10 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         # Compare the load-bearing fields (type + config + enabled); we
         # ignore description and timestamps (not connection-relevant).
         _new_config = config or {}
+        validator = (getattr(service_class, "validate_config", None)
+                     if "validate_config" in service_class.__dict__ else None)
+        if callable(validator):
+            validator(_new_config, service_id=service_id)
         with self._data_lock:
             _existing_def = self._definitions.get(sid, {}).get(service_id)
             _existing_live = self._live_instances.get(sid, {}).get(service_id)
@@ -328,6 +332,11 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
 
         # Check with merged config (existing + new values)
         merged = {**svc_def.config, **config}
+        service_class = ServiceFactory.get(svc_def.service_type)
+        validator = (getattr(service_class, "validate_config", None)
+                     if "validate_config" in service_class.__dict__ else None)
+        if callable(validator):
+            validator(merged, service_id=service_id)
         self._check_resource_conflict(
             svc_def.service_type, merged,
             exclude_scope_id=sid, exclude_service_id=service_id,

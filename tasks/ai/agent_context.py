@@ -85,8 +85,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                                independent_context: bool = False,
                                force_cold: bool = False,
                                force_delta: bool = False,
-                               failover_attempt: int = 0,
-                               failover_failures: Optional[List[Dict]] = None,
+                               route_plan=None,
+                               route_attempt: int = 0,
+                               route_failures: Optional[List[Dict]] = None,
                                resume_checkpoint=None):
         """Extract common context from flowfile and config for both sync and streaming modes.
 
@@ -104,10 +105,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                 after the probe said otherwise. Same reasoning in the other
                 direction: the provider observed the process at launch time,
                 which outranks anything the probe concluded a second earlier.
-            failover_attempt: Ordered candidate index selected by an
-                llmFailover handoff. Zero always means the configured main.
-            failover_failures: Sanitized failures accumulated before the
-                selected candidate. Kept across cold-start client replacement.
+            route_plan: Immutable route snapshot selected for this logical turn.
+            route_attempt: Candidate index selected by an llmRouter handoff.
+            route_failures: Sanitized failures accumulated before the selected
+                candidate. Kept across cold-start client replacement.
             resume_checkpoint: A cancel checkpoint the previous build already
                 consumed. Only a rebuild passes it, so the resume instruction
                 survives the restart instead of being lost with the context it
@@ -120,8 +121,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
         st.independent_context = independent_context
         st.force_cold = bool(force_cold)
         st.force_delta = bool(force_delta)
-        st.failover_attempt = int(failover_attempt)
-        st.failover_failures = list(failover_failures or [])
+        st.route_plan = route_plan
+        st.route_attempt = int(route_attempt)
+        st.route_failures = list(route_failures or [])
         st.resume_checkpoint = resume_checkpoint
         self._pac_p1(st)
         self._pac_p2(st)
@@ -157,8 +159,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin,
                 st.flowfile.get_attribute("agent.permission_mode") or ""),
             "active_agent_name": st._active_agent_name,  # MUST be non-empty — see _ensure_active_agent
             "active_llm_service": st._active_llm_service,
-            "_llm_failover_attempt": st.failover_attempt,
-            "_llm_failover_failures": st.failover_failures,
+            "_llm_route_plan": (
+                getattr(st.client, "route_plan", None) or st.route_plan),
+            "_llm_route_attempt": st.route_attempt,
+            "_llm_route_failures": st.route_failures,
             "title_llm_service": self._resolve_service_param(
                 "title_llm_service", st.user_id, st.conversation_id),
             "resolved_svc": st.resolved_svc,

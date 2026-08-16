@@ -408,6 +408,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                 st._processed = st.emitter.on_no_pending_work(st.response_content or "", st.ctx)
                 if st._processed is None:
                     st.new_messages.clear()
+                    if hasattr(st.client, "finalize_route"):
+                        st.client.finalize_route(False)
                     st.result = _make_result("discarded")
                     st.emitter.on_done(st.result)
                     return st.result
@@ -418,6 +420,8 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                 try:
                     from core.usage_ledger import UsageLedger
                     st._ci, st._co, st._ccr, st._ccw = _svc_rates(st.ctx)
+                    st._route_plan = getattr(st.client, "route_plan", None)
+                    st._physical_ref = getattr(st.client, "active_service_ref", None)
                     st._turn_cost_ref[0] = UsageLedger.instance().record(
                         user_id=st.user_id or "system",
                         channel=("task" if "::task::" in st.conversation_id
@@ -434,7 +438,26 @@ class AgentCoreMixin(_ALCSetupMixin, _ALCIterationMixin, _ALCLlmTurnMixin,
                         cost_per_1m_cache_read=st._ccr,
                         cost_per_1m_cache_write=st._ccw,
                         subscription=_svc_subscription(st.ctx),
+                        physical_llm_service=(
+                            st._physical_ref.service_id if st._physical_ref
+                            else st.ctx.get("active_llm_service", "")),
+                        logical_service_scope=(
+                            st._route_plan.router.scope if st._route_plan else ""),
+                        logical_service_scope_id=(
+                            st._route_plan.router.scope_id if st._route_plan else ""),
+                        physical_service_scope=(
+                            st._physical_ref.scope if st._physical_ref else ""),
+                        physical_service_scope_id=(
+                            st._physical_ref.scope_id if st._physical_ref else ""),
+                        route_plan_id=(
+                            st._route_plan.plan_id if st._route_plan else ""),
+                        route_attempt_id=getattr(
+                            st.client, "route_attempt_id", "") or "",
+                        route_attempt_index=getattr(
+                            st.client, "route_attempt_index", -1),
                     )
+                    if hasattr(st.client, "finalize_route"):
+                        st.client.finalize_route(True)
                     st._turn_cost_ref[0] += float(
                         st.ctx.get("_additional_usage_cost_usd", 0) or 0)
                     # Live cost gauge: one SSE event per turn with the

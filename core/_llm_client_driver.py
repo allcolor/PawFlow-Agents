@@ -18,6 +18,7 @@ from core._llm_types import (
     CCCompactDetected,
     ColdStartRequired,
     DeltaContextRequired,
+    LLMCallError,
     LLMClientError,
     LLMMessage,
     LLMResponse,
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 #: Providers whose requests are OpenAI chat-completions bodies. They share the
 #: whole OpenAI path; only the URL layout and auth header differ, and that is
 #: decided in core.llm_providers.openai_dialects.
-OPENAI_WIRE_PROVIDERS = ("openai", "azure-openai", "copilot")
+OPENAI_WIRE_PROVIDERS = ("openai", "azure-openai", "copilot", "omniroute")
 
 #: Endpoints speaking OpenAI's Responses API. A different wire format from
 #: chat/completions -- typed input items, `instructions`, flat tools, and a
@@ -258,7 +259,8 @@ class _LLMClientDriverMixin:
                             overflow, reduced,
                         )
 
-                if self._is_permanent_request_error(err_str):
+                if ((isinstance(e, LLMCallError) and not e.retryable)
+                        or self._is_permanent_request_error(err_str)):
                     if isinstance(last_error, LLMClientError):
                         raise last_error
                     raise LLMClientError(str(last_error))
@@ -267,7 +269,10 @@ class _LLMClientDriverMixin:
                 # matching fired false positives on captured CC PIDs like
                 # 165500 / 1429xx, turning our own intentional kills into
                 # retriable "500"/"429" errors.
-                is_429 = bool(re.search(r'\b429\b', err_str)) or "rate_limit" in err_str.lower()
+                is_429 = ((isinstance(e, LLMCallError)
+                           and e.category in {"rate_limited", "quota_exhausted"})
+                          or bool(re.search(r'\b429\b', err_str))
+                          or "rate_limit" in err_str.lower())
                 is_529 = bool(re.search(r'\b529\b', err_str)) or "overloaded" in err_str.lower()
                 is_500 = (bool(re.search(r'\b500\b', err_str))
                            or "Internal server error" in err_str)
@@ -298,7 +303,10 @@ class _LLMClientDriverMixin:
                      or bool(_other_code_re.search(err_str)))
                     and not _is_cc_our_exit)
                 if retryable and attempt < self.max_retries:
-                    server_delay = self._parse_retry_after(err_str)
+                    server_delay = (e.retry_after_seconds
+                                    if isinstance(e, LLMCallError)
+                                    and e.retry_after_seconds > 0
+                                    else self._parse_retry_after(err_str))
                     base_delay = 2.0
                     exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)  # nosec B311
                     wait = server_delay if server_delay != 2.0 else exp_delay
@@ -573,7 +581,8 @@ class _LLMClientDriverMixin:
                             overflow, reduced,
                         )
 
-                if self._is_permanent_request_error(err_str):
+                if ((isinstance(e, LLMCallError) and not e.retryable)
+                        or self._is_permanent_request_error(err_str)):
                     if isinstance(last_error, LLMClientError):
                         raise last_error
                     raise LLMClientError(str(last_error))
@@ -584,7 +593,10 @@ class _LLMClientDriverMixin:
                 # "429" and the retry loop treated our own intentional
                 # kills as transient upstream failures, spawning
                 # concurrent compact/main CC replays that ate pool slots.
-                is_429 = bool(re.search(r'\b429\b', err_str)) or "rate_limit" in err_str.lower()
+                is_429 = ((isinstance(e, LLMCallError)
+                           and e.category in {"rate_limited", "quota_exhausted"})
+                          or bool(re.search(r'\b429\b', err_str))
+                          or "rate_limit" in err_str.lower())
                 is_529 = bool(re.search(r'\b529\b', err_str)) or "overloaded" in err_str.lower()
                 is_500 = (bool(re.search(r'\b500\b', err_str))
                            or "Internal server error" in err_str)
@@ -646,7 +658,10 @@ class _LLMClientDriverMixin:
 
                 if retryable and attempt < self.max_retries:
                     # Prefer server-specified delay, fall back to exponential backoff with jitter
-                    server_delay = self._parse_retry_after(err_str)
+                    server_delay = (e.retry_after_seconds
+                                    if isinstance(e, LLMCallError)
+                                    and e.retry_after_seconds > 0
+                                    else self._parse_retry_after(err_str))
                     base_delay = 2.0
                     exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)  # nosec B311
                     wait = server_delay if server_delay != 2.0 else exp_delay

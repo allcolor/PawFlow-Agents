@@ -40,6 +40,22 @@ def conv_store(tmp_path):
 
 
 class TestRecord:
+    def test_route_dimensions_are_stored_without_duplicate_cost(self, ledger):
+        cost = ledger.record(
+            user_id="alice", channel="chat", conversation_id="c1",
+            llm_service="router", physical_llm_service="child",
+            logical_service_scope="user", logical_service_scope_id="alice",
+            physical_service_scope="conv", physical_service_scope_id="c1",
+            route_plan_id="plan", route_attempt_id="attempt",
+            route_attempt_index=1, tokens_in=100,
+            cost_per_1m_input=10.0)
+        row = ledger.export_rows(conversation_id="c1")[0]
+        assert cost == pytest.approx(0.001)
+        assert row["llm_service"] == "router"
+        assert row["physical_llm_service"] == "child"
+        assert row["route_plan_id"] == "plan"
+        assert row["route_attempt_index"] == 1
+
     def test_requires_user_and_channel(self, ledger):
         with pytest.raises(ValueError, match="user_id"):
             ledger.record(user_id="", channel="chat", tokens_in=1)

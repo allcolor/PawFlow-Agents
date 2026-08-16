@@ -727,29 +727,39 @@ final LLM consumes tool results. Only final-LLM tokens populate the main
 `LLMResponse` counters; advisor usage is attached separately to internal raw
 response metadata and remains tracked by each underlying service.
 
-### 12.6. Fault-Tolerant LLM (`llmFailover`)
+### 12.6. Adaptive LLM Router (`llmRouter`)
 
-**File**: `services/llm_failover.py`
-**Description**: Ordered main-to-fallback LLM continuation. Every agent turn
-starts with the main connection. If an AgentLoop provider fails, PawFlow flushes
-the work already persisted by streaming callbacks, rebuilds the canonical
-context as a cold start, and continues with the next connection. The selected
-fallback remains active for all later LLM calls in that turn. If it fails too,
-PawFlow advances again; only the next user turn retries the main connection.
+**File**: `services/llm_router.py`
+**Description**: Deterministic, turn-affine routing across direct LLM connections.
+Every turn receives an immutable plan of exact `(scope, scope_id, service_id,
+definition_revision)` references. Selection can be ordered, round-robin,
+sticky round-robin, or least recently used. Provider failure preserves the
+existing cold-start handoff and never replays completed work.
 
 **Parameters**:
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `main_llm_service` | service reference | Yes | - | Primary `llmConnection`, tried first at the start of every agent turn |
-| `fallback_llm_services` | JSON array | Yes | `[]` | Ordered, unique `llmConnection` IDs; at least one is required |
+| `candidates` | ordered service-reference list | Yes | `[]` | Unique direct `llmConnection` candidates; at least two must be enabled when saved |
+| `strategy` | select | Yes | `ordered` | `ordered`, `round_robin`, `sticky_round_robin`, or `least_recently_used` |
+| `sticky_successful_turns` | integer | No | `1` | Successful terminal turns retained by sticky round robin |
+| `affinity_ttl_seconds` | integer | No | `86400` | Expiry for per-user/conversation/agent affinity |
 
-Fallback handoff is control flow, not a user-visible LLM error. Persisted text,
+Route handoff is control flow, not a user-visible LLM error. Persisted text,
 tool calls, and tool results remain visible and enter the next provider's cold
 context. A tool call that has no persisted result is represented to the next
 provider as an unknown outcome and must be inspected before it is retried.
 Cancellation and force stop never advance to another candidate. If all
 candidates fail, PawFlow returns one sanitized exhaustion error while retaining
-the work already completed in the conversation.
+the work already completed in the conversation. The Health, Explain last
+decision, and Reset health service actions expose bounded, secret-free state.
+
+Legacy `llmFailover` definitions migrate before service connection. Valid
+definitions become ordered routers while preserving identity and enabled state.
+Invalid global definitions abort startup. Invalid user/conversation definitions
+are backed up under `data/system/migrations/llm-router-v1/backups`, replaced by
+disabled owner-visible quarantine placeholders, and never block unrelated
+tenants. To roll back before repair, stop PawFlow and restore the protected JSON
+backup to its original scope; do not run old and new runtime types together.
 
 ### 12.7. Distributed Map Cache Client (`distributedMapCache`)
 

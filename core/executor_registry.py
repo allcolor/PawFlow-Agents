@@ -230,6 +230,9 @@ class ExecutorRegistry:
             logger.debug("[startup-timing] global services connect: %.1fms",
                         (time.monotonic() - _t0) * 1000)
         except Exception as e:
+            from core.llm_router_migration import LLMRouterMigrationError
+            if isinstance(e, LLMRouterMigrationError):
+                raise
             logger.warning("Failed to connect global services: %s", e)
 
         dr = _get_deployment_registry()

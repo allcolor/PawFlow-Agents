@@ -682,10 +682,18 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
                 base_url, ("/" + path.lstrip("/")) if path else "")
             conn.request("POST", full_path, body=json_body, headers=headers)
             response = conn.getresponse()
+            # Per-call clients may consume an explicit response-header
+            # allowlist after this generic JSON helper returns. Keeping the
+            # raw tuple only on the isolated client avoids changing the
+            # normalized response payload used by existing providers.
+            self._last_http_response_headers = tuple(response.getheaders())
             response_body = response.read().decode("utf-8")
             if response.status >= 400:
-                from core.llm_client import LLMClientError
-                raise LLMClientError(f"LLM API error {response.status}: {response_body[:500]}")
+                from core.llm_failure_classifier import classify_http_error
+                raise classify_http_error(
+                    response.status, headers=dict(response.getheaders()),
+                    body=response_body, provider=getattr(self, "provider", ""),
+                    model=str(body.get("model", "") or ""))
             return json.loads(response_body)
         finally:
             conn.close()

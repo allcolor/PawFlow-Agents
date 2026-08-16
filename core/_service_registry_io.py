@@ -10,6 +10,8 @@ ServiceRegistry: ``self._definitions``, ``self._data_lock``,
 
 import json
 import logging
+import math
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -36,12 +38,16 @@ class _ServiceRegistryIOMixin:
     @staticmethod
     def _sensitive_keys(service_type: str) -> set:
         """Return the set of config keys marked sensitive in the service schema."""
+        from core.service_definition_revision import service_sensitive_keys
+        return service_sensitive_keys(service_type)
+
+    @staticmethod
+    def _valid_created_at(value) -> bool:
         try:
-            svc_cls = ServiceFactory.get(service_type)
-            schema = svc_cls.get_parameter_schema(svc_cls)
-            return {k for k, v in schema.items() if v.get("sensitive")}
-        except Exception:
-            return set()
+            parsed = float(value)
+            return math.isfinite(parsed) and parsed > 0
+        except (TypeError, ValueError):
+            return False
 
     @staticmethod
     def _encrypted_prefix() -> str:
@@ -115,6 +121,9 @@ class _ServiceRegistryIOMixin:
                 "CRITICAL: Failed to load %s services (id=%s): %s — "
                 "registry is READ-ONLY for this scope until restart",
                 scope, scope_id[:8] if len(scope_id) > 8 else scope_id, e)
+            from core.llm_router_migration import LLMRouterMigrationError
+            if isinstance(e, LLMRouterMigrationError):
+                raise
         if _diag_t0 is not None:
             import time as _t
             logger.debug("[svc-load] END user scope id=%s took=%.0fms",
@@ -129,6 +138,27 @@ class _ServiceRegistryIOMixin:
         for f in svc_dir.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
+                from core.llm_router_migration import migrate_definition_payload
+                data, migration_outcome = migrate_definition_payload(
+                    data, scope=scope, scope_id=scope_id,
+                    service_id=data.get("service_id", f.stem))
+                if migration_outcome != "unchanged":
+                    tmp_migration = f.with_suffix(".migration.tmp")
+                    tmp_migration.write_text(
+                        json.dumps(data, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+                    tmp_migration.replace(f)
+                if not self._valid_created_at(data.get("created_at")):
+                    data["created_at"] = time.time()
+                    tmp_path = f.with_suffix(".created-at.tmp")
+                    # _load_dir() is reached from _ensure_loaded() while the
+                    # non-reentrant registry data lock is already held. Taking
+                    # it again here deadlocks every legacy definition that needs
+                    # this timestamp backfill.
+                    tmp_path.write_text(
+                        json.dumps(data, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+                    tmp_path.replace(f)
                 sid = data.get("service_id", f.stem)
                 data["service_id"] = sid
                 data["scope"] = scope
@@ -139,6 +169,9 @@ class _ServiceRegistryIOMixin:
                     data["config"] = self._decrypt_config(data["config"], sk)
                 defs[sid] = ServiceDef.from_dict(data)
             except Exception as e:
+                from core.llm_router_migration import LLMRouterMigrationError
+                if isinstance(e, LLMRouterMigrationError):
+                    raise
                 logger.warning("Failed to load service from %s: %s", f, e)
         self._definitions[scope_id] = defs
         logger.info("Loaded %d %s service(s) (id=%s)", len(defs), scope,
@@ -150,8 +183,19 @@ class _ServiceRegistryIOMixin:
         store = ConversationStore.instance()
         raw = store.get_extra(scope_id, CONV_EXTRAS_KEY) or {}
         defs = {}
+        created_at_backfilled = False
         for sid, data in raw.items():
             data = dict(data)
+            from core.llm_router_migration import migrate_definition_payload
+            data, migration_outcome = migrate_definition_payload(
+                data, scope=SCOPE_CONV, scope_id=scope_id, service_id=sid)
+            if migration_outcome != "unchanged":
+                raw[sid] = dict(data)
+                created_at_backfilled = True
+            if not self._valid_created_at(data.get("created_at")):
+                data["created_at"] = time.time()
+                raw[sid] = dict(data)
+                created_at_backfilled = True
             data["service_id"] = sid
             data["scope"] = SCOPE_CONV
             data["scope_id"] = scope_id
@@ -160,6 +204,8 @@ class _ServiceRegistryIOMixin:
             if sk and "config" in data:
                 data["config"] = self._decrypt_config(data["config"], sk)
             defs[sid] = ServiceDef.from_dict(data)
+        if created_at_backfilled:
+            store.set_extra(scope_id, CONV_EXTRAS_KEY, raw)
         self._definitions[scope_id] = defs
         if defs:
             logger.info("Loaded %d conv service(s) for conv '%s'", len(defs), scope_id[:8])

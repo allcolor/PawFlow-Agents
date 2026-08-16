@@ -10,6 +10,7 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 |---|---|---|---|
 | `openai` | Direct API | OpenAI and OpenAI-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. This is the generic OpenAI-compatible API surface. |
 | `openai-responses` | Direct API | Endpoints speaking OpenAI's **Responses API** | Same fields as `openai`, different wire format and a different endpoint (`/responses`). See [Responses API](#responses-api). |
+| `omniroute` | Explicit gateway API | OmniRoute Chat Completions and virtual routes such as `auto` | Requires an explicit `base_url`, `auth_mode`, and `default_model`. Supports bounded routing controls, sanitized gateway metadata, and model discovery. |
 | `anthropic` | Direct API | Claude API and Anthropic-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
 | `claude-code-interactive` | Interactive CLI container with observed provider stream | **Preferred** Claude subscription and Claude Code agent sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
 | `antigravity-interactive` | Interactive `agy` CLI in tmux with observed provider stream | Default Gemini subscription provider | Uses the Gemini OAuth credential pool, starts the real `agy` CLI, and routes tools through PawFlow MCP. |
@@ -19,6 +20,33 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 | `codex-app-server` | Legacy Codex `app-server` transport in a pooled container | Existing agent configurations only | Migrate to `codex-interactive`; the identifier remains canonical for the shared Codex OAuth pool. |
 
 Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge.
+
+`llmRouter` is a composite service, not a provider. It selects among direct
+`llmConnection` services once per logical turn, keeps the chosen child through
+tool iterations, and records logical versus physical service attribution. Its
+Health and Explain actions report sanitized selection and cooldown state.
+
+### OmniRoute
+
+`omniroute` is an `llmConnection` provider that reuses PawFlow's OpenAI Chat
+Completions transport. PawFlow does not mirror OmniRoute's internal provider
+graph and does not add gateway-reported cost to the PawFlow usage cost. The wire
+contract is pinned to OmniRoute commit
+`c6c134300bd9d1c7a54448de1e5d5009b7143f3f`.
+
+Required configuration is explicit: `base_url`, `default_model`, and
+`auth_mode`. `auth_mode=bearer` also requires `api_key`; `auth_mode=none` is the
+only way to select an unauthenticated private gateway. PawFlow never infers
+no-auth mode from an empty key. Optional request controls are
+`omniroute_mode`, `omniroute_budget_usd`, and
+`omniroute_budget_fallback`. A zero budget sends no budget header.
+
+PawFlow accepts only a fixed `X-OmniRoute-*` response allowlist. Values are
+length-bounded, control characters and invalid numbers are rejected, and
+arbitrary response headers are never copied into `LLMResponse.provider_metadata`.
+The **Refresh OmniRoute models** service action reads the bounded public
+`GET /v1/models` shape without changing `default_model` or persisting the key.
+V1 intentionally does not implement OmniRoute's Responses API or admin APIs.
 
 ## Which Provider To Use
 
@@ -113,7 +141,7 @@ Common fields:
 
 | Field | Required | Description |
 |---|---:|---|
-| `provider` | yes | Provider name: `openai`, `openai-responses`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, `codex-interactive`, or `gemini`. |
+| `provider` | yes | Provider name: `openai`, `openai-responses`, `omniroute`, `anthropic`, `claude-code`, `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`, `codex-interactive`, or `gemini`. |
 | `default_model` / `model` | yes | Model used when the agent does not override it. |
 | `api_key` | provider-dependent | Required for direct API providers. Optional for CLI providers: when present, it bypasses OAuth credentials and configures key-based CLI auth. |
 | `credential_service_id` | CLI OAuth mode | References an `llmCredentialOAuthProvider` service. Used when `api_key` is empty for CLI-backed providers. |

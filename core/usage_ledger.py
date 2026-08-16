@@ -69,6 +69,14 @@ CREATE TABLE IF NOT EXISTS usage_events (
     duration_ms INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0,
     virtual_cost_usd REAL NOT NULL DEFAULT 0
+    ,physical_llm_service TEXT NOT NULL DEFAULT ''
+    ,logical_service_scope TEXT NOT NULL DEFAULT ''
+    ,logical_service_scope_id TEXT NOT NULL DEFAULT ''
+    ,physical_service_scope TEXT NOT NULL DEFAULT ''
+    ,physical_service_scope_id TEXT NOT NULL DEFAULT ''
+    ,route_plan_id TEXT NOT NULL DEFAULT ''
+    ,route_attempt_id TEXT NOT NULL DEFAULT ''
+    ,route_attempt_index INTEGER NOT NULL DEFAULT -1
 );
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage_events (user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_conv_ts
@@ -114,6 +122,22 @@ class UsageLedger:
         self._conn.row_factory = sqlite3.Row
         with self._db_lock:
             self._conn.executescript(_SCHEMA)
+            existing = {
+                row[1] for row in self._conn.execute(
+                    "PRAGMA table_info(usage_events)").fetchall()}
+            for name, declaration in (
+                ("physical_llm_service", "TEXT NOT NULL DEFAULT ''"),
+                ("logical_service_scope", "TEXT NOT NULL DEFAULT ''"),
+                ("logical_service_scope_id", "TEXT NOT NULL DEFAULT ''"),
+                ("physical_service_scope", "TEXT NOT NULL DEFAULT ''"),
+                ("physical_service_scope_id", "TEXT NOT NULL DEFAULT ''"),
+                ("route_plan_id", "TEXT NOT NULL DEFAULT ''"),
+                ("route_attempt_id", "TEXT NOT NULL DEFAULT ''"),
+                ("route_attempt_index", "INTEGER NOT NULL DEFAULT -1"),
+            ):
+                if name not in existing:
+                    self._conn.execute(
+                        f"ALTER TABLE usage_events ADD COLUMN {name} {declaration}")
             try:
                 self._conn.execute("PRAGMA journal_mode=WAL")
             except sqlite3.DatabaseError:
@@ -152,6 +176,13 @@ class UsageLedger:
                cost_per_1m_cache_read: Optional[float] = None,
                cost_per_1m_cache_write: Optional[float] = None,
                virtual_cost_usd: float = 0.0,
+               physical_llm_service: str = "",
+               logical_service_scope: str = "",
+               logical_service_scope_id: str = "",
+               physical_service_scope: str = "",
+               physical_service_scope_id: str = "",
+               route_plan_id: str = "", route_attempt_id: str = "",
+               route_attempt_index: int = -1,
                subscription: bool = False,
                ts: Optional[float] = None) -> float:
         """Record one usage event; returns the REAL cost recorded (USD).
@@ -183,13 +214,19 @@ class UsageLedger:
                 "INSERT INTO usage_events (id, ts, day, user_id, "
                 "conversation_id, agent_name, llm_service, model, provider, "
                 "channel, tokens_in, tokens_out, cache_read, cache_write, "
-                "duration_ms, cost_usd, virtual_cost_usd) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "duration_ms, cost_usd, virtual_cost_usd,"
+                "physical_llm_service,logical_service_scope,"
+                "logical_service_scope_id,physical_service_scope,"
+                "physical_service_scope_id,route_plan_id,route_attempt_id,"
+                "route_attempt_index) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (str(uuid.uuid4()), ts, day, user_id, conversation_id,
                  agent_name, llm_service, model, provider, channel,
                  int(tokens_in), int(tokens_out), int(cache_read),
                  int(cache_write), int(duration_ms), cost,
-                 float(virtual_cost_usd or 0.0)))
+                 float(virtual_cost_usd or 0.0), physical_llm_service,
+                 logical_service_scope, logical_service_scope_id,
+                 physical_service_scope, physical_service_scope_id,
+                 route_plan_id, route_attempt_id, int(route_attempt_index)))
             self._conn.commit()
         # Best-effort: notify on any spend-budget threshold crossed by this
         # event (core/budget_store.py). Never affects usage recording.

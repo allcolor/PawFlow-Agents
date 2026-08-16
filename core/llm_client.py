@@ -32,6 +32,7 @@ from core._llm_types import (  # noqa: F401 -- re-exported for back-compat (inva
     CCCompactDetected,
     ColdStartRequired,
     DeltaContextRequired,
+    LLMCallError,
     LLMClientError,
     LLMMessage,
     LLMResponse,
@@ -89,7 +90,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
+    PROVIDERS = ("openai", "openai-responses", "azure-openai", "copilot", "omniroute", "anthropic", "claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",

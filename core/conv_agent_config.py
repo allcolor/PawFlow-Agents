@@ -230,12 +230,12 @@ def guess_llm_service(agent_name: str, conv_id: str = "",
         for candidate in (f"{agent_name}_llm_service", f"{agent_name}_llm"):
             sdef = all_defs.get(candidate)
             if sdef and sdef.service_type in {
-                "llmConnection", "llmAggregator", "llmFailover"}:
+                "llmConnection", "llmAggregator", "llmRouter"}:
                 return candidate
         all_llm = [
             sdef for sdef in all_defs.values()
             if sdef.service_type in {
-                "llmConnection", "llmAggregator", "llmFailover"}
+                "llmConnection", "llmAggregator", "llmRouter"}
         ]
         if all_llm:
             return all_llm[0].service_id

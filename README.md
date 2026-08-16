@@ -265,19 +265,22 @@ An `llmAggregator` consults several direct `llmConnection` services in parallel 
 
 Advisor contexts are silent and ephemeral. With `enforce_read_only: true` (the default), advisors receive a fail-closed read-only tool set, including through CLI-backed providers; the final LLM keeps the conversation's normal tools and approval policy. Advisor usage is tracked separately so it does not inflate the main context gauge. See the [multi-LLM aggregator how-to](https://pawflow.allcolor.org/howtos.html#multi-llm-aggregator) and [technical guide](docs/llm_aggregator.md).
 
-### Fault-Tolerant LLM Service
+### Adaptive LLM Router
 
-An `llmFailover` service starts every agent turn with its main `llmConnection`, then tries the configured fallbacks in order only when the active provider fails. After a handoff, that fallback remains active for every later LLM call in the same turn, including calls that consume tool results. If it also fails, PawFlow advances to the next fallback. Only the next user turn retries the main connection.
+An `llmRouter` selects one direct `llmConnection` for each logical agent turn. It supports `ordered`, `round_robin`, `sticky_round_robin`, and `least_recently_used` selection. The immutable candidate plan remains fixed for every later LLM/tool iteration in that turn; a classified provider failure advances within that snapshot.
 
 ```json
 {
-  "type": "llmFailover",
-  "main_llm_service": "llm_primary",
-  "fallback_llm_services": ["llm_backup_1", "llm_backup_2"]
+  "type": "llmRouter",
+  "strategy": "sticky_round_robin",
+  "candidates": [
+    {"service_id": "llm_primary", "priority": 10, "enabled": true},
+    {"service_id": "llm_backup", "priority": 20, "enabled": true}
+  ]
 }
 ```
 
-During an agent turn, PawFlow flushes the work already persisted in the conversation and cold-starts the next provider from that current context. Completed text, tool calls, and tool results remain visible and are not replayed as if the turn had restarted. An unresolved tool call is marked with an unknown outcome so the fallback inspects state before retrying it. Cancellation and force stop never trigger failover; the user sees an error only when every configured connection has failed or PawFlow cannot confirm a safe handoff. See the [fault-tolerant LLM how-to](https://pawflow.allcolor.org/howtos.html#fault-tolerant-llm) and [technical service reference](docs/02_REFERENCE_TASKS_SERVICES.md#126-fault-tolerant-llm-llmfailover).
+During handoff PawFlow flushes persisted work and cold-starts the next provider from the current context. Completed work is not replayed, unresolved tool outcomes are marked unknown, and cancellation or force stop never affects route health. Health and Explain actions expose sanitized operational state. Legacy `llmFailover` definitions migrate once to ordered routers; invalid user/conversation definitions are disabled and quarantined, while invalid global definitions stop startup for administrator repair. See the [technical service reference](docs/02_REFERENCE_TASKS_SERVICES.md#126-adaptive-llm-router-llmrouter).
 
 ### Delegated Vision for Text-Only Models
 

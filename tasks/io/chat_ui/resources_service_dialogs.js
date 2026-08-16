@@ -350,6 +350,15 @@ function _renderSchemaFields(schema, values, readonly) {
       }
       html += '</select>';
       if (fillHelper) html += fillHelper + '</div>';
+    } else if (ptype === 'service_ref_list') {
+      const list = Array.isArray(val) ? val : [];
+      const st = escapeHtml(pdef.service_type || '');
+      html += '<div id="svc-p-' + pname + '" data-service-ref-list="1" data-service-type="' + st + '"' + (readonly ? ' data-readonly="1"' : '') + '>';
+      html += '<div class="svc-ref-list-rows">';
+      list.forEach((item, index) => { html += _renderServiceRefListRow(item, index, readonly); });
+      html += '</div>';
+      if (!readonly) html += '<button type="button" class="svc-ref-list-add" style="margin-top:5px;">+ Add candidate</button>';
+      html += '</div>';
     } else if (ptype === 'service_ref') {
       const st = (pdef.service_type || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       const pf = (pdef.provider_field || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
@@ -385,6 +394,41 @@ function _renderSchemaFields(schema, values, readonly) {
   return html;
 }
 
+function _renderServiceRefListRow(item, index, readonly) {
+  item = item || {};
+  const dis = readonly ? ' disabled' : '';
+  const id = escapeHtml(item.service_id || '');
+  const priority = Number.isFinite(Number(item.priority)) ? Number(item.priority) : ((index + 1) * 10);
+  const checked = item.enabled !== false ? ' checked' : '';
+  return '<div class="svc-ref-list-row" draggable="' + (!readonly) + '" data-index="' + index + '" style="display:grid;grid-template-columns:minmax(140px,1fr) 82px 70px 28px;gap:5px;align-items:center;margin:4px 0;">'
+    + '<select data-candidate-service data-current="' + id + '"' + dis + ' style="' + _svcInputStyle + '"><option value="' + id + '">' + (id || '(select)') + '</option></select>'
+    + '<input data-candidate-priority type="number" value="' + priority + '"' + dis + ' title="Priority" style="' + _svcInputStyle + '"/>'
+    + '<label style="font-size:11px;color:var(--pf-muted);"><input data-candidate-enabled type="checkbox"' + checked + dis + '> enabled</label>'
+    + (readonly ? '<span></span>' : '<button type="button" data-candidate-remove title="Remove">×</button>')
+    + '</div>';
+}
+
+function _wireServiceRefLists(container) {
+  container.querySelectorAll('[data-service-ref-list="1"]').forEach(list => {
+    const rows = list.querySelector('.svc-ref-list-rows');
+    const readonly = list.dataset.readonly === '1';
+    const wireRows = () => {
+      rows.querySelectorAll('[data-candidate-remove]').forEach(btn => btn.onclick = () => { btn.closest('.svc-ref-list-row').remove(); });
+      let dragged = null;
+      rows.querySelectorAll('.svc-ref-list-row').forEach(row => {
+        row.ondragstart = () => { dragged = row; };
+        row.ondragover = e => e.preventDefault();
+        row.ondrop = e => { e.preventDefault(); if (dragged && dragged !== row) rows.insertBefore(dragged, row); };
+      });
+    };
+    if (!readonly) list.querySelector('.svc-ref-list-add').onclick = () => {
+      rows.insertAdjacentHTML('beforeend', _renderServiceRefListRow({}, rows.children.length, false));
+      _populateServiceRefs(container); wireRows();
+    };
+    wireRows();
+  });
+}
+
 function _serviceRefProviderMatches(serviceProvider, wantedProvider, aliases) {
   const canonical = (provider) => {
     provider = String(provider || '').trim();
@@ -394,6 +438,7 @@ function _serviceRefProviderMatches(serviceProvider, wantedProvider, aliases) {
 }
 
 async function _populateServiceRefs(container) {
+  _wireServiceRefLists(container);
   const refs = Array.from(container.querySelectorAll('select[data-service-ref="1"]'));
   for (const sel of refs) {
     const serviceType = sel.dataset.serviceType || '';
@@ -426,6 +471,25 @@ async function _populateServiceRefs(container) {
       // Keep the raw current option if service listing fails.
     }
   }
+  for (const list of container.querySelectorAll('[data-service-ref-list="1"]')) {
+    try {
+      const data = await rxjs.firstValueFrom(listServices$(list.dataset.serviceType || ''));
+      const services = data.services || [];
+      list.querySelectorAll('select[data-candidate-service]').forEach(sel => {
+        const current = sel.value || sel.dataset.current || '';
+        sel.innerHTML = '<option value="">(select)</option>' + services.map(s => {
+          const id = escapeHtml(String(s.service_id || ''));
+          const label = id + (s.scope ? ' [' + escapeHtml(s.scope) + ']' : '');
+          return '<option value="' + id + '">' + label + '</option>';
+        }).join('');
+        sel.value = current;
+        if (current && sel.value !== current) {
+          sel.insertAdjacentHTML('afterbegin', '<option value="' + escapeHtml(current) + '">' + escapeHtml(current) + ' (missing)</option>');
+          sel.value = current;
+        }
+      });
+    } catch (_) {}
+  }
 }
 
 function _collectSchemaValues(schema) {
@@ -437,7 +501,14 @@ function _collectSchemaValues(schema) {
     const wrapper = el.closest('.svc-field');
     if (wrapper && wrapper.style.display === 'none') continue;
     const ptype = pdef.type || 'string';
-    if (ptype === 'boolean') {
+    if (ptype === 'service_ref_list') {
+      config[pname] = Array.from(el.querySelectorAll('.svc-ref-list-row')).map((row, index) => ({
+        service_id: row.querySelector('[data-candidate-service]').value,
+        priority: parseInt(row.querySelector('[data-candidate-priority]').value, 10) || ((index + 1) * 10),
+        weight: 1.0,
+        enabled: row.querySelector('[data-candidate-enabled]').checked,
+      }));
+    } else if (ptype === 'boolean') {
       config[pname] = el.checked;
     } else if (ptype === 'integer') {
       config[pname] = parseInt(el.value) || 0;

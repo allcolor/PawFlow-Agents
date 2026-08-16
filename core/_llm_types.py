@@ -324,12 +324,35 @@ class LLMResponse:
     # See LLMMessage.reasoning_item: the turn's reasoning items, JSON-encoded,
     # to be handed back with this assistant turn on the next request.
     reasoning_item: str = ""
+    # Sanitized, provider-owned diagnostics. Never contains arbitrary headers,
+    # raw response bodies, endpoint URLs, or credentials.
+    provider_metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 
 class LLMClientError(Exception):
     """Error from LLM client."""
     pass
+
+
+class LLMCallError(LLMClientError):
+    """Structured provider-call failure safe for routing decisions."""
+
+    def __init__(self, safe_message: str, *, category: str = "unknown",
+                 origin: str = "provider", provider_status: int = 0,
+                 retryable: bool = True, retry_after_seconds: float = 0,
+                 provider: str = "", model: str = "",
+                 caused_by_local_timeout: bool = False):
+        super().__init__(str(safe_message or "LLM call failed"))
+        self.category = str(category or "unknown")
+        self.origin = str(origin or "provider")
+        self.provider_status = int(provider_status or 0)
+        self.retryable = bool(retryable)
+        self.retry_after_seconds = float(retry_after_seconds or 0)
+        self.provider = str(provider or "")
+        self.model = str(model or "")
+        self.safe_message = str(safe_message or "LLM call failed")
+        self.caused_by_local_timeout = bool(caused_by_local_timeout)
 
 
 class AgentSuperseded(Exception):

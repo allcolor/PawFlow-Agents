@@ -77,7 +77,7 @@ Agents can be created through:
 ### LLM Service Reference
 
 The `llm_service` field points to an LLM-capable service: a direct
-`llmConnection`, a composite `llmAggregator`, or an ordered `llmFailover`.
+`llmConnection`, a composite `llmAggregator`, or an adaptive `llmRouter`.
 Built-in direct providers are
 `openai`, `openai-responses`, `anthropic`, `claude-code`,
 `claude-code-interactive`, `antigravity-interactive`, `codex-app-server`,
@@ -87,12 +87,11 @@ API provider. For new agent services, use `claude-code-interactive` and
 `codex-interactive`; `claude-code` (`cc -p`) and `codex-app-server` are legacy
 agent transports retained for existing configurations. An `llmAggregator` consults its configured advisor connections in
 parallel and passes their internal plans to its final connection. An
-`llmFailover` starts every agent turn with its main connection and cold-starts
-each ordered fallback from PawFlow's latest persisted agent context when the
-active provider fails. The selected fallback stays active through every later
-LLM/tool iteration in that turn, advancing again only if it also fails. The next
-user turn retries the main connection, while completed messages and tool work
-remain part of the prior handoff.
+`llmRouter` snapshots exact scoped child references at the start of a turn and
+selects them with an ordered, round-robin, sticky-round-robin, or least-recently-
+used policy. A healthy route stays fixed through all LLM/tool iterations. On a
+classified provider failure, PawFlow cold-starts the next snapshotted child from
+the latest persisted context; cancellation and force stop never penalize health.
 Expression
 language references like `${llm_default_service}` are resolved at runtime from
 the expression cascade: flow -> conversation -> user -> global.

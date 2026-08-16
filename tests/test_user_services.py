@@ -109,6 +109,9 @@ class TestServiceRegistryCRUD:
         assert "MyWorkspace" in services
         assert calls and calls[0]["_service_id"] == "MyWorkspace"
         assert calls[0]["server_managed"] is True
+        persisted = json.loads((user_dir / "MyWorkspace.json").read_text(
+            encoding="utf-8"))
+        assert persisted["created_at"] > 0
 
     def test_install_replaces_existing(self):
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE, config={"host": "a"})
@@ -1268,10 +1271,13 @@ class TestAgentServiceActions:
                 "advisor_llm_services": ["advisor_llm"],
             })
         self.reg.install(
-            self.SCOPE, "testuser", "resilient", "llmFailover",
+            self.SCOPE, "testuser", "resilient", "llmRouter",
             config={
-                "main_llm_service": "direct_llm",
-                "fallback_llm_services": ["backup_llm"],
+                "candidates": [
+                    {"service_id": "direct_llm", "enabled": True},
+                    {"service_id": "backup_llm", "enabled": True},
+                ],
+                "strategy": "ordered",
             })
         self.reg.install(self.SCOPE, "testuser", "db1", SVC_TYPE)
 
@@ -1287,7 +1293,7 @@ class TestAgentServiceActions:
 
         assert by_id["direct_llm"]["service_type"] == "llmConnection"
         assert by_id["council"]["service_type"] == "llmAggregator"
-        assert by_id["resilient"]["service_type"] == "llmFailover"
+        assert by_id["resilient"]["service_type"] == "llmRouter"
         assert "db1" not in by_id
 
     def test_service_list_marks_stateless_tts_started_when_enabled(self):

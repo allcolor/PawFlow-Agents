@@ -32,7 +32,7 @@
   </header>
   <main>
     <section class="page-hero"><div class="container narrow" data-reveal><p class="eyebrow">How-tos</p><h1>Small recipes for the first useful PawFlow sessions.</h1><p class="hero-copy">Install the runtime, connect relays, configure providers, publish packages, and turn useful agent work into flows.</p></div></section>
-    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#agent-tool-selection">Tool selection</a><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#published-mcp-client">MCP client</a><a href="#desktop-novnc-audio">Desktop</a><a href="#multi-llm-aggregator">Multi-LLM</a><a href="#fault-tolerant-llm">LLM failover</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a><a href="#comfyui">ComfyUI</a></div></section>
+    <section class="band compact-band"><div class="container howto-nav" data-reveal><a href="#agent-tool-selection">Tool selection</a><a href="#install">Install</a><a href="#install-wizard">Wizard</a><a href="#published-mcp-client">MCP client</a><a href="#desktop-novnc-audio">Desktop</a><a href="#multi-llm-aggregator">Multi-LLM</a><a href="#fault-tolerant-llm">LLM router</a><a href="#delegated-vision">Vision fallback</a><a href="#pawcode-installer">PawCode</a><a href="#pawcode-usage">PawCode usage</a><a href="#vscode-plugin-installer">VS Code plugin</a><a href="#relay-desktop-installer">Relay Desktop</a><a href="#relay-cli-installer">Relay CLI</a><a href="#identity">Identity</a><a href="#resources">Resources</a><a href="#flows">Flows</a><a href="#channels">Telegram</a><a href="#security-context">Security</a><a href="#encryption">Encryption</a><a href="#media-voice">Media</a><a href="#comfyui">ComfyUI</a></div></section>
     <section class="section surface"><div class="container howto-list">
       <article class="recipe process-recipe" id="agent-tool-selection" data-reveal>
         <div class="recipe-meta">Agent routing, work state, delegation, continuations</div>
@@ -159,25 +159,25 @@
         <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/llm_aggregator.md">Read the complete multi-LLM guide</a>
       </article>
       <article class="recipe process-recipe" id="fault-tolerant-llm" data-reveal>
-        <div class="recipe-meta">Agents, provider continuity, ordered fallback</div>
-        <h2>Keep an agent turn running when an LLM provider fails</h2>
-        <p><strong>Objective:</strong> start every agent turn on a preferred LLM connection, then keep that turn running on ordered backups when the active provider returns an error or crashes.</p>
+        <div class="recipe-meta">Agents, provider continuity, turn-level routing</div>
+        <h2>Route each agent turn across LLM providers safely</h2>
+        <p><strong>Objective:</strong> select a direct LLM connection once per turn, retain it through tool iterations, and cold-handoff safely after a classified provider failure.</p>
         <div class="wizard-grid">
-          <div><strong>Turn-sticky fallback</strong><span>Every new user turn starts with <code>main_llm_service</code>. After a handoff, the selected fallback handles every later LLM and tool-result call until that turn is done. If it fails too, PawFlow advances again; only the next turn retries the main connection.</span></div>
+          <div><strong>Immutable turn plan</strong><span><code>ordered</code>, <code>round_robin</code>, <code>sticky_round_robin</code>, and <code>least_recently_used</code> select exact scoped candidates without rotating mid-turn.</span></div>
           <div><strong>Current state</strong><span>During AgentLoop work, PawFlow flushes persisted messages and cold-starts the next provider from the latest conversation context.</span></div>
-          <div><strong>Safe boundaries</strong><span>Cancel and force stop never trigger a fallback. PawFlow reports one sanitized error only after all candidates fail.</span></div>
+          <div><strong>Safe boundaries</strong><span>Cancel and force stop never alter route health. PawFlow reports one sanitized error only after all planned candidates fail.</span></div>
         </div>
-        <ol><li>Create and test at least two enabled direct <code>llmConnection</code> services.</li><li>In Resources &rarr; Services, create a <strong>Fault-Tolerant LLM Service</strong>.</li><li>Select the preferred connection in <code>main_llm_service</code>.</li><li>Enter backup connection IDs in <code>fallback_llm_services</code> in the exact order PawFlow should try them. IDs must be unique.</li><li>Select the new <code>llmFailover</code> service as the agent or conversation LLM service.</li><li>Test with the main provider unavailable. Work already visible in the conversation remains part of the cold-started fallback context; unresolved tool work is marked unknown and must be inspected before retry.</li></ol>
-        <div class="code-card"><div class="code-top"><span>Fault-tolerant LLM service</span><button type="button" data-copy="#fault-tolerant-llm-config">Copy</button></div><pre id="fault-tolerant-llm-config"><code>{
-  "type": "llmFailover",
-  "main_llm_service": "llm_primary",
-  "fallback_llm_services": [
-    "llm_backup_1",
-    "llm_backup_2"
+        <ol><li>Create and test at least two enabled direct <code>llmConnection</code> services.</li><li>In Resources &rarr; Services, create an <strong>Adaptive LLM Router</strong>.</li><li>Add candidates with the structured editor, set priority and enabled state, then choose a strategy.</li><li>Select the new <code>llmRouter</code> as the agent or conversation LLM service.</li><li>Use Health and Explain last decision for sanitized diagnostics.</li><li>Test with one provider unavailable; persisted work remains in the cold-started child context.</li></ol>
+        <div class="code-card"><div class="code-top"><span>Adaptive LLM router</span><button type="button" data-copy="#fault-tolerant-llm-config">Copy</button></div><pre id="fault-tolerant-llm-config"><code>{
+  "type": "llmRouter",
+  "strategy": "ordered",
+  "candidates": [
+    {"service_id": "llm_primary", "priority": 10, "enabled": true},
+    {"service_id": "llm_backup", "priority": 20, "enabled": true}
   ]
 }</code></pre></div>
-        <p>If PawFlow cannot confirm that queued conversation writes are durable, it stops instead of handing an incomplete context to the next provider. Under normal failover, the provider error itself is hidden and the turn continues; only exhaustion or an unsafe handoff becomes user-visible.</p>
-        <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/02_REFERENCE_TASKS_SERVICES.md#126-fault-tolerant-llm-llmfailover">Read the technical service reference</a>
+        <p>If PawFlow cannot confirm that queued conversation writes are durable, it stops instead of handing an incomplete context to the next provider. Health and decision details are bounded and secret-free.</p>
+        <a class="inline-link" href="https://github.com/allcolor/PawFlow-Agents/blob/main/docs/02_REFERENCE_TASKS_SERVICES.md#126-adaptive-llm-router-llmrouter">Read the technical service reference</a>
       </article>
       <article class="recipe process-recipe" id="pawcode-installer" data-reveal>
         <div class="recipe-meta">PawCode installer</div>

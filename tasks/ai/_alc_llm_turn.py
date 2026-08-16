@@ -9,7 +9,7 @@ from core.llm_client import (
     DeltaContextRequired,
     LLMMessage,
 )
-from services.llm_failover import LLMFailoverRequired
+from services.llm_router import LLMRouteHandoffRequired
 from tasks.ai.agent_exceptions import AgentCancelled
 from tasks.ai.agent_compaction import COMPACT_TAIL_MESSAGES
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class _ALCLlmTurnMixin:
     @staticmethod
-    def _alc_failover_context_messages(messages, conversation_id, handoff):
+    def _alc_route_context_messages(messages, conversation_id, handoff):
         """Close ambiguous tool blocks and add one ephemeral resume directive."""
         completed_tool_ids = {
             getattr(message, "tool_call_id", "")
@@ -66,7 +66,7 @@ class _ALCLlmTurnMixin:
         ))
         return rebuilt
 
-    def _alc_handoff_to_fallback(self, st, handoff):
+    def _alc_handoff_to_route(self, st, handoff):
         """Flush durable work, cold-rebuild, and continue on the next child."""
         st.emitter.check_cancelled()
         rebuild_args = dict(st.ctx.get("_context_rebuild_args") or {})
@@ -90,12 +90,13 @@ class _ALCLlmTurnMixin:
         new_ctx = self._prepare_agent_context(
             flowfile,
             force_cold=True,
-            failover_attempt=handoff.next_attempt,
-            failover_failures=handoff.failures,
+            route_plan=handoff.plan,
+            route_attempt=handoff.next_attempt,
+            route_failures=handoff.failures,
             resume_checkpoint=st.ctx.get("_consumed_cancel_checkpoint"),
             **rebuild_args,
         )
-        new_ctx["messages"] = self._alc_failover_context_messages(
+        new_ctx["messages"] = self._alc_route_context_messages(
             list(new_ctx.get("messages") or []), st.conversation_id, handoff)
         self._alc_rebind_context(st, new_ctx)
         return _ALC_CONTINUE
@@ -443,8 +444,8 @@ class _ALCLlmTurnMixin:
             st.iteration = max(0, st.iteration - 1)
             st.ctx["_iteration"] = st.iteration
             return _ALC_CONTINUE
-        except LLMFailoverRequired as handoff:
-            return self._alc_handoff_to_fallback(st, handoff)
+        except LLMRouteHandoffRequired as handoff:
+            return self._alc_handoff_to_route(st, handoff)
         except Exception as llm_err:
             st.err_str = str(llm_err)
             # AgentCancelled may be wrapped in LLMClientError

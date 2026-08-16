@@ -95,7 +95,21 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
-        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
+        if self.provider == "omniroute":
+            from urllib.parse import urlparse
+            from core.llm_providers.omniroute import auth_headers, request_headers
+            parsed = urlparse(str(self.base_url or "").strip())
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ServiceError(
+                    "omniroute requires an explicit HTTP(S) base_url")
+            if not str(self.default_model or "").strip():
+                raise ServiceError("omniroute requires default_model")
+            try:
+                auth_headers(self.api_key, self.config.get("auth_mode", ""))
+                request_headers(self.config)
+            except ValueError as exc:
+                raise ServiceError(str(exc)) from exc
+        elif self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
             # CLI providers — binary auto-detected at runtime, OAuth pool is
             # the default credential source, api_key is an optional fallback.
             pass
@@ -446,6 +460,25 @@ class LLMConnectionService(BaseService):
                     "without one."
                 ),
             },
+            "auth_mode": {
+                "type": "select", "default": "bearer",
+                "options": ["bearer", "none"],
+                "description": "OmniRoute gateway authentication mode",
+            },
+            "omniroute_mode": {
+                "type": "select", "default": "balanced",
+                "options": ["balanced", "fast", "quality", "cheap", "reliable", "offline"],
+                "description": "Per-request OmniRoute routing mode",
+            },
+            "omniroute_budget_usd": {
+                "type": "float", "default": 0,
+                "description": "Strict per-request gateway budget in USD (0 disables it)",
+            },
+            "omniroute_budget_fallback": {
+                "type": "select", "default": "strict",
+                "options": ["cheapest", "strict"],
+                "description": "Gateway behavior when every route exceeds the budget",
+            },
             "relay_local": {
                 "type": "boolean", "default": True,
                 "description": (
@@ -722,7 +755,7 @@ class LLMConnectionService(BaseService):
                 # Every provider except the two Azure-only fields, which the
                 # azure-openai rule below turns back on.
                 "when": {"provider": ["openai", "openai-responses", "azure-openai",
-                                     "copilot", "anthropic",
+                                     "copilot", "omniroute", "anthropic",
                                      "claude-code", "claude-code-interactive",
                                      "antigravity-interactive", "codex-app-server",
                                      "codex-interactive",
@@ -730,11 +763,15 @@ class LLMConnectionService(BaseService):
                 "set": {
                     "azure_deployment":  {"visible": False},
                     "azure_api_version": {"visible": False},
+                    "auth_mode": {"visible": False},
+                    "omniroute_mode": {"visible": False},
+                    "omniroute_budget_usd": {"visible": False},
+                    "omniroute_budget_fallback": {"visible": False},
                 }
             },
             {
                 "when": {"provider": ["openai", "openai-responses", "azure-openai",
-                                     "copilot", "anthropic"]},
+                                     "copilot", "omniroute", "anthropic"]},
                 "set": {
                     "api_key":       {"visible": True, "required": True},
                     "credential_service_id": {"visible": False},
@@ -798,6 +835,23 @@ class LLMConnectionService(BaseService):
                                       "description": "GitHub token from the device login below (exchanged for a Copilot token per session)"},
                     "base_url":      {"visible": True,
                                       "description": "Copilot chat endpoint (empty = api.githubcopilot.com)"},
+                }
+            },
+            {
+                "when": {"provider": ["omniroute"]},
+                "set": {
+                    "api_key": {"visible": True, "required": False,
+                                "description": "Gateway bearer key; required only in bearer auth mode"},
+                    "base_url": {"visible": True, "required": True,
+                                 "description": "Explicit OmniRoute gateway URL, normally ending in /v1"},
+                    "default_model": {"visible": True, "required": True,
+                                      "description": "OmniRoute model or virtual route, for example auto"},
+                    "auth_mode": {"visible": True, "required": True},
+                    "omniroute_mode": {"visible": True},
+                    "omniroute_budget_usd": {"visible": True},
+                    "omniroute_budget_fallback": {"visible": True},
+                    "extra_body": {"visible": False},
+                    "reasoning_effort": {"visible": False},
                 }
             },
             {
@@ -985,6 +1039,14 @@ class LLMConnectionService(BaseService):
         """
         return [
             {
+                "id": "omniroute_models_list",
+                "label": "Refresh OmniRoute models",
+                "icon": "",
+                "when": {"provider": ["omniroute"]},
+                "server_action": "omniroute_models_list",
+                "flow": "simple",
+            },
+            {
                 "id": "copilot_device_login",
                 "label": "Sign in with GitHub",
                 "icon": "",
@@ -993,6 +1055,13 @@ class LLMConnectionService(BaseService):
                 "flow": "device_code",
             },
         ]
+
+    def list_omniroute_models(self) -> List[Dict[str, str]]:
+        """Return bounded public model metadata from this OmniRoute gateway."""
+        if self.provider != "omniroute":
+            raise ServiceError("Model discovery is available only for omniroute")
+        from core.llm_providers.omniroute import fetch_models
+        return fetch_models(self.get_client())
 
 
 ServiceFactory.register(LLMConnectionService)

@@ -393,14 +393,20 @@ class _PACPhase1Mixin:
                 f"No LLM service resolved for agent '{st._active_agent_name or '?'}'. "
                 f"Set llm_service in the conversation agent config.")
 
-        # A failover rebuild resolves the same logical composite service, then
-        # selects the physical child that must receive this cold context. Do it
+        # A router rebuild resolves the same logical composite service, then
+        # selects the snapshotted physical child that receives this cold context. Do it
         # before provider/session detection so every derived decision describes
-        # that child rather than the main connection.
-        if hasattr(st.client, "select_attempt"):
-            st.client.select_attempt(
-                getattr(st, "failover_attempt", 0),
-                failures=getattr(st, "failover_failures", []),
+        # that child rather than re-running current configuration resolution.
+        for _source, _target in (
+                (st._user_id_for_svc, "_user_id"),
+                (st.conversation_id, "_conversation_id"),
+                (st._active_agent_name, "_agent_name")):
+            setattr(st.client, _target, _source or "")
+        if hasattr(st.client, "select_route") and getattr(st, "route_plan", None):
+            st.client.select_route(
+                st.route_plan,
+                getattr(st, "route_attempt", 0),
+                failures=getattr(st, "route_failures", []),
             )
 
         # Per-agent resolution above may replace the task-level client after the

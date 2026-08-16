@@ -321,6 +321,8 @@ def test_the_github_login_button_only_shows_for_copilot():
 
     actions = svc.get_service_actions()
 
-    assert [a["id"] for a in actions] == ["copilot_device_login"]
-    assert actions[0]["when"] == {"provider": ["copilot"]}
-    assert actions[0]["flow"] == "device_code"
+    assert [a["id"] for a in actions] == [
+        "omniroute_models_list", "copilot_device_login"]
+    copilot = next(a for a in actions if a["id"] == "copilot_device_login")
+    assert copilot["when"] == {"provider": ["copilot"]}
+    assert copilot["flow"] == "device_code"

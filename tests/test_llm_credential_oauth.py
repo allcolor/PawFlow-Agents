@@ -32,7 +32,7 @@ def test_llm_service_references_external_credential_provider():
     # CLI providers own no login action here — they reference a credential
     # pool. Copilot is not a pool: its device flow just fills api_key.
     assert [a["id"] for a in LLMConnectionService({}).get_service_actions()] == [
-        "copilot_device_login"]
+        "omniroute_models_list", "copilot_device_login"]
 
 
 def test_credential_provider_exposes_login_and_pool_actions():

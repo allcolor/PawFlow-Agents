@@ -122,7 +122,11 @@ class LLMAnthropicMixin:
 
             if response.status >= 400:
                 error_body = response.read().decode("utf-8")
-                raise LLMClientError(f"LLM API error {response.status}: {error_body[:500]}")
+                from core.llm_failure_classifier import classify_http_error
+                raise classify_http_error(
+                    response.status, headers=dict(response.getheaders()),
+                    body=error_body, provider=getattr(self, "provider", ""),
+                    model=model)
 
             content_parts: List[str] = []
             tool_calls: list = []

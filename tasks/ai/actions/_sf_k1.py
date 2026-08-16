@@ -101,7 +101,7 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                     return True
                 if filter_type == "llm":
                     return sdef.service_type in {
-                        "llmConnection", "llmAggregator", "llmFailover"}
+                        "llmConnection", "llmAggregator", "llmRouter"}
                 return sdef.service_type == filter_type
             conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
             services = []

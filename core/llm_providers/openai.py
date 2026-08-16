@@ -48,9 +48,25 @@ class LLMOpenaiMixin:
         """Authentication headers for this provider's dialect."""
         from core.llm_providers.openai_dialects import DIALECTS, auth_headers
         provider = getattr(self, "provider", "openai")
+        if provider == "omniroute":
+            from core.llm_providers.omniroute import auth_headers
+            return auth_headers(self.api_key, self._cfg("auth_mode", ""))
         if provider in DIALECTS:
             return auth_headers(provider, self.api_key)
         return {"Authorization": f"Bearer {self.api_key}"}
+
+    def _openai_provider_headers(self) -> Dict[str, str]:
+        """Return provider-specific Chat Completions request headers."""
+        if getattr(self, "provider", "openai") != "omniroute":
+            return {}
+        from core.llm_providers.omniroute import request_headers
+        return request_headers(self._config_ref)
+
+    def _openai_provider_metadata(self, response_headers=(), sse_comments=()):
+        if getattr(self, "provider", "openai") != "omniroute":
+            return {}
+        from core.llm_providers.omniroute import parse_response_metadata
+        return parse_response_metadata(response_headers, sse_comments)
 
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback,
                         thinking_callback=None, *,
@@ -125,6 +141,7 @@ class LLMOpenaiMixin:
                 "Content-Length": str(len(json_body)),
             }
             headers.update(self._openai_auth_headers())
+            headers.update(self._openai_provider_headers())
             logger.info(
                 "OpenAI stream request model=%s host=%s port=%s path=%s base_url=%s body_bytes=%d",
                 model, host, port, full_path, safe_base_url, len(json_body),
@@ -164,9 +181,17 @@ class LLMOpenaiMixin:
                         pass
                     else:
                         error_body = response.read().decode("utf-8")
-                        raise LLMClientError(f"LLM API error {response.status}: {error_body[:500]}")
+                        from core.llm_failure_classifier import classify_http_error
+                        raise classify_http_error(
+                            response.status, headers=dict(response.getheaders()),
+                            body=error_body, provider=getattr(self, "provider", ""),
+                            model=model)
                 else:
-                    raise LLMClientError(f"LLM API error {response.status}: {error_body[:500]}")
+                    from core.llm_failure_classifier import classify_http_error
+                    raise classify_http_error(
+                        response.status, headers=dict(response.getheaders()),
+                        body=error_body, provider=getattr(self, "provider", ""),
+                        model=model)
 
             # Parse SSE stream
             content_parts: List[str] = []
@@ -175,6 +200,9 @@ class LLMOpenaiMixin:
             finish_reason = ""
             resp_model = model
             usage_data: Dict[str, Any] = {}
+            provider_comments: List[str] = []
+            getheaders = getattr(response, "getheaders", None)
+            response_headers = tuple(getheaders()) if callable(getheaders) else ()
 
             buffer = ""
             while True:
@@ -199,7 +227,10 @@ class LLMOpenaiMixin:
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()
-                    if not line or line.startswith(":"):
+                    if not line:
+                        continue
+                    if line.startswith(":"):
+                        provider_comments.append(line)
                         continue
                     if line == "data: [DONE]":
                         break
@@ -318,6 +349,8 @@ class LLMOpenaiMixin:
                 thinking=thinking,
                 cache_read_tokens=cached_tokens,
                 input_usage_native=input_usage_native,
+                provider_metadata=self._openai_provider_metadata(
+                    response_headers, provider_comments),
             )
         finally:
             self._active_http_conn = None
@@ -641,7 +674,9 @@ class LLMOpenaiMixin:
             data = self._http_post(
                 self._openai_endpoint_path(base_url, model),
                 body,
-                headers={**self._openai_auth_headers(), "Content-Type": "application/json"},
+                headers={**self._openai_auth_headers(),
+                         **self._openai_provider_headers(),
+                         "Content-Type": "application/json"},
                 base_url=base_url,
             )
         except Exception as exc:
@@ -657,7 +692,9 @@ class LLMOpenaiMixin:
             data = self._http_post(
                 self._openai_endpoint_path(base_url, model),
                 body,
-                headers={**self._openai_auth_headers(), "Content-Type": "application/json"},
+                headers={**self._openai_auth_headers(),
+                         **self._openai_provider_headers(),
+                         "Content-Type": "application/json"},
                 base_url=base_url,
             )
         choice = data.get("choices", [{}])[0]
@@ -728,4 +765,6 @@ class LLMOpenaiMixin:
             raw=data,
             cache_read_tokens=cached_tokens,
             input_usage_native="prompt_tokens" in usage,
+            provider_metadata=self._openai_provider_metadata(
+                getattr(self, "_last_http_response_headers", ())),
         )

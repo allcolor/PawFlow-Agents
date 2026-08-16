@@ -175,6 +175,8 @@ SPILL_DIR = RUNTIME_DIR / "spill"
 TOKEN_USAGE_FILE = RUNTIME_DIR / "token_usage.json"
 # Event-level usage/cost ledger (core/usage_ledger.py).
 USAGE_DB_FILE = SYSTEM_DIR / "usage.db"
+# Operational LLM route health, affinity, counters, probes, and events.
+LLM_ROUTING_DB_FILE = SYSTEM_DIR / "llm_routing.db"
 # Spend budgets (core/budget_store.py).
 USAGE_BUDGETS_FILE = SYSTEM_DIR / "usage_budgets.json"
 

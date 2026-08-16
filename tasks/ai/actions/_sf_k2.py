@@ -242,6 +242,78 @@ def _handle_sf_k2(self, action, body, store, user_id, flowfile, _helpers):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "omniroute_models_list":
+        sid = body.get("service_id", "")
+        scope = _normalize_service_scope(body.get("scope", "user"))
+        conv_id = (body.get("conversation_id", "")
+                   or flowfile.get_attribute("http.conversation_id") or "")
+        if not sid:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+        if scope == "global" and not _is_admin(flowfile):
+            flowfile.set_content(json.dumps({
+                "error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            scope_id = _service_scope_id(scope, user_id, conv_id)
+            sdef = reg.get_definition(scope, scope_id, sid)
+            if not sdef or sdef.service_type != "llmConnection":
+                raise ValueError(f"LLM connection '{sid}' not found")
+            svc = reg.get_live_instance(scope, scope_id, sid)
+            if not svc or getattr(svc, "provider", "") != "omniroute":
+                raise ValueError(f"Service '{sid}' is not an OmniRoute connection")
+            models = svc.list_omniroute_models()
+            flowfile.set_content(json.dumps({
+                "models": models,
+                "message": f"Found {len(models)} OmniRoute models.",
+            }, ensure_ascii=False).encode())
+        except Exception as exc:
+            logger.warning("OmniRoute model discovery failed", exc_info=True)
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+        return [flowfile]
+
+    if action in {"llm_router_health", "llm_router_explain",
+                  "llm_router_health_reset"}:
+        sid = body.get("service_id", "")
+        scope = _normalize_service_scope(body.get("scope", "user"))
+        conv_id = (body.get("conversation_id", "")
+                   or flowfile.get_attribute("http.conversation_id") or "")
+        if not sid:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+        if scope == "global" and not _is_admin(flowfile):
+            flowfile.set_content(json.dumps({
+                "error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            scope_id = _service_scope_id(scope, user_id, conv_id)
+            sdef = reg.get_definition(scope, scope_id, sid)
+            if not sdef or sdef.service_type != "llmRouter":
+                raise ValueError(f"LLM router '{sid}' not found")
+            svc = reg.get_live_instance(scope, scope_id, sid)
+            if not svc:
+                raise ValueError(f"LLM router '{sid}' is unavailable")
+            if action == "llm_router_health":
+                payload = {"health": svc.health_snapshot(
+                    user_id=user_id, conversation_id=conv_id)}
+            elif action == "llm_router_explain":
+                payload = {"decision": svc.explain_last_decision()}
+            else:
+                payload = {"cleared": svc.reset_health(
+                    user_id=user_id, conversation_id=conv_id,
+                    service_id=str(body.get("child_service_id", "") or ""))}
+            flowfile.set_content(json.dumps(payload, ensure_ascii=False).encode())
+        except Exception as exc:
+            logger.warning("LLM router action failed", exc_info=True)
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+        return [flowfile]
+
     if action in {"voicebox_profiles_list", "voicebox_preset_voices_list", "voicebox_profile_save", "voicebox_tasks_clear"}:
         sid = body.get("service_id", "")
         scope = _normalize_service_scope(body.get("scope", "global"))

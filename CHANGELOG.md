@@ -4,6 +4,21 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.198] — 2026-08-16
+
+### Fixed
+
+- Windows/WSL relays using `local=true` now route host-helper traffic through a
+  tracked bridge container, wait for authenticated readiness before connecting,
+  and detect helper loss instead of reporting a stale connected state.
+- Antigravity tmux submission tests now isolate the Docker commands under test
+  from unrelated background subprocess calls, eliminating a Python 3.13 CI race.
+
+### Security
+
+- Every host-helper request is authenticated, including readiness and liveness
+  probes used by the relay worker.
+
 ## [1.0.0-beta.197] — 2026-08-16
 
 ### Fixed

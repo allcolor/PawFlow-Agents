@@ -4,6 +4,38 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.196] — 2026-08-16
+
+### Added
+
+- Adaptive LLM routing with immutable per-turn route plans, deterministic
+  candidate selection and handoff, terminal-success affinity, typed failure
+  classification, cooldown/probe state, scoped health controls, and
+  per-successful-call usage accounting. The service editor exposes filtered
+  candidate references, activation, priority, health explanation, and reset.
+- Native `omniroute` provider support for OpenAI-compatible OmniRoute
+  endpoints, including `model: "auto"`, bounded model discovery, and
+  allowlisted routing metadata.
+- One-shot migration from persisted `llmFailover` definitions to
+  `llmRouter`: global failures stop startup, while user/conversation failures
+  are quarantined and disabled with a recoverable backup.
+- ChatGPT connector access for published conversations, with copyable
+  bootstrap prompts for one-way connector clients and explicit bootstrap
+  initialization failure reporting.
+
+### Fixed
+
+- Managed relay reconnects now serialize Docker container creation per name,
+  reuse the winning concurrent generation, and refuse to remove containers
+  not owned by PawFlow. This prevents duplicate-name races during overlapping
+  reconnects while preserving explicit restart semantics.
+
+### Security
+
+- Router definition revisions are canonical SHA-256 digests, routing state is
+  scoped by owner and service identity, migration backups exclude secrets, and
+  provider response metadata is restricted to an explicit allowlist.
+
 ## [1.0.0-beta.195] — 2026-08-15
 
 ### Fixed

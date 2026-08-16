@@ -842,10 +842,14 @@ def test_antigravity_tmux_submit_pastes_complete_prompt_before_enter(monkeypatch
     )
 
     assert AntigravityObserverPool().send_text(state, "hello") is True
-    flat = [cmd for cmd, _kw in calls]
+    tmux_calls = [
+        (cmd, kwargs) for cmd, kwargs in calls
+        if cmd[:2] == ["docker", "exec"]
+    ]
+    flat = [cmd for cmd, _kw in tmux_calls]
     assert flat[0][-6:] == ["tmux", "send-keys", "-t", "pawflow-agy:0.0", "-X", "cancel"]
     assert flat[1][-3:] == ["tmux", "load-buffer", "-"]
-    assert calls[1][1]["input"] == b"hello"
+    assert tmux_calls[1][1]["input"] == b"hello"
     assert flat[2][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
     assert flat[3][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
     assert sleeps and sleeps[0] >= 0.15
@@ -877,9 +881,13 @@ def test_antigravity_tmux_submit_strips_trailing_submit_newline(monkeypatch, tmp
     )
 
     assert AntigravityObserverPool().send_text(state, "hello\n") is True
-    flat = [cmd for cmd, _kw in calls]
+    tmux_calls = [
+        (cmd, kwargs) for cmd, kwargs in calls
+        if cmd[:2] == ["docker", "exec"]
+    ]
+    flat = [cmd for cmd, _kw in tmux_calls]
     assert flat[0][-6:] == ["tmux", "send-keys", "-t", "pawflow-agy:0.0", "-X", "cancel"]
-    assert calls[1][1]["input"] == b"hello"
+    assert tmux_calls[1][1]["input"] == b"hello"
     assert flat[2][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]
     assert flat[3][-4:] == ["send-keys", "-t", "pawflow-agy:0.0", "Enter"]
 
@@ -913,14 +921,20 @@ def test_antigravity_tmux_submit_rejects_duplicate_in_flight_prompt(monkeypatch,
     assert pool.send_text(state, "hello\n") is True
     assert pool.send_text(state, "hello\n") is False
     assert state.last_error == "duplicate in-flight Antigravity tmux submit"
-    flat = [cmd for cmd, _kw in calls]
+    flat = [
+        cmd for cmd, _kw in calls
+        if cmd[:2] == ["docker", "exec"]
+    ]
     assert [cmd[-3:] for cmd in flat].count(["tmux", "load-buffer", "-"]) == 1
     assert [cmd[-4:] for cmd in flat].count(["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]) == 1
     assert [cmd[-4:] for cmd in flat].count(["send-keys", "-t", "pawflow-agy:0.0", "Enter"]) == 1
 
     pool.mark_submit_complete(state)
     assert pool.send_text(state, "hello\n") is True
-    flat = [cmd for cmd, _kw in calls]
+    flat = [
+        cmd for cmd, _kw in calls
+        if cmd[:2] == ["docker", "exec"]
+    ]
     assert [cmd[-3:] for cmd in flat].count(["tmux", "load-buffer", "-"]) == 2
 
 

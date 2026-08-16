@@ -64,6 +64,64 @@ vision service. The call fails explicitly if the published agent has no usable
 vision service. PawFlow persists the ordinary text and compact image metadata
 in the conversation transcript, never inline image base64 payloads.
 
+## ChatGPT connector (URL-key access)
+
+ChatGPT web's developer-mode apps only support OAuth or "No Authentication";
+they cannot send an `Authorization` header. For those clients a publication
+can issue **connector keys** (prefix `pfmcc_`), which embed the credential in
+the endpoint URL instead:
+
+```text
+https://pawflow.example/mcp/<opaque-server-id>/k/<pfmcc-connector-key>
+```
+
+Setup:
+
+1. In the publish dialog, use **ChatGPT connector → Create connector key**.
+   The full URL (with the embedded key) is shown once; PawFlow stores only
+   the key's SHA-256 hash.
+2. In ChatGPT, enable **Settings → Security and login → Developer mode**,
+   then create a new app from the Plugins page with the connector URL and
+   authentication set to **No Authentication**.
+
+Connector routes are exempt from the Private Gateway challenge (connector
+clients cannot send `X-PawFlow-Gateway-Key`); the embedded key is the sole
+credential, like a provider callback URL.
+
+Key kinds never cross surfaces: a connector key is only valid as the URL path
+segment and is rejected as a Bearer header; a regular API key is only valid as
+a Bearer header and is rejected in the path. Revoking a connector key closes
+the URL immediately. PawFlow redacts the key segment from its own HTTP logs,
+but the URL is still a secret — treat it like an API key, and prefer a tool
+allowlist (below) for third-party clients.
+
+This mechanism is transitional: it will be replaced by a spec-compliant OAuth
+authorization server (see `CHATGPT_CONNECTOR_PLAN.md`), at which point
+connector keys and the `/k/` routes are removed.
+
+## Scheduling tools and one-way clients
+
+`schedule_continuation` and `ScheduleWakeup` promise an autonomous resume,
+which needs a return channel to the external client. When the publication has
+no registered client terminal, `use_tool` refuses them with an explicit error
+instead of scheduling a wake the client could never observe. The refusal
+lifts automatically while a client terminal is registered.
+
+Independently, the agent poller never runs an `external_mcp` agent's
+scheduled wake through PawFlow's internal LLM loop: the wake prompt is
+persisted to the conversation (visible to one-way clients through
+`get_context_updates` on their next turn) and injected into the client
+terminal when one is available.
+
+## Tool allowlist
+
+Each publication can restrict which PawFlow tools it exposes. The allowlist is
+edited in the publish dialog (comma-separated tool names; empty means every
+tool) and stored per publication. It applies to both Bearer and connector
+traffic: `get_tool_schema` lists and describes only allowlisted tools, and
+`use_tool` refuses excluded tools with an explicit error. The conversation
+transport tools below are always available.
+
 ## Conversation transport tools
 
 Published servers expose four direct conversation tools in addition to

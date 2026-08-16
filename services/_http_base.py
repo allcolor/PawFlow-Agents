@@ -22,6 +22,15 @@ logger = logging.getLogger("services.http_listener_service")  # canonical name p
 _HTTP_TIMING_DIAG_MS = float(os.getenv("PAWFLOW_HTTP_TIMING_DIAG_MS", "100") or "100")
 
 
+# Published-MCP connector URLs carry their credential as a path segment
+# (/mcp/{server_id}/k/{connector_key}); that segment must never reach logs.
+_SECRET_PATH_RE = re.compile(r"(/mcp/[^/]+/k/)[^/?#]+")
+
+
+def sanitize_path_for_log(path: str) -> str:
+    return _SECRET_PATH_RE.sub(r"\1[redacted]", path or "")
+
+
 _SECURITY_HEADERS = {
     # The chat UI pulls rxjs from jsDelivr, highlight.js (script + theme CSS)
     # from cdnjs, and the embedded flow graph's ESM imports from esm.sh. These
@@ -247,7 +256,7 @@ def _emit_timing_summary(req: "PendingRequest") -> None:
     meta = _request_action_meta(req)
     msg = "[http-timing] req_id=%s %s %s%s%s total=%dms %s status=%d"
     args = (
-        req.request_id[:8], req.method, req.path,
+        req.request_id[:8], req.method, sanitize_path_for_log(req.path),
         f" action={action}" if action else "", meta,
         total, " ".join(segments), req.response_status,
     )

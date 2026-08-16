@@ -169,12 +169,18 @@ def _authenticate(req, server_id: str) -> Tuple[Optional[Dict[str, Any]], Option
         _json_response(req, 403, {"error": "Origin is not allowed"})
         return None, None
     store = MCPServerStore.instance()
-    key = store.validate_key(server_id, _bearer(req.headers))
+    connector_key = str((req.path_params or {}).get("connector_key") or "")
+    if connector_key:
+        # ChatGPT-style "No Authentication" connectors carry the credential
+        # as an opaque URL segment; only connector-kind keys are valid there.
+        key = store.validate_key(server_id, connector_key, kind="connector")
+    else:
+        key = store.validate_key(server_id, _bearer(req.headers), kind="bearer")
     server = store.get(server_id) if key else None
     if not key or not server:
         _json_response(
             req, 401, {"error": "Unauthorized"},
-            {"WWW-Authenticate": "Bearer"},
+            None if connector_key else {"WWW-Authenticate": "Bearer"},
         )
         return None, None
     try:
@@ -299,10 +305,26 @@ def _available_tool_rows(registry) -> list:
     } for definition in registry.get_tool_definitions()]
 
 
-def _tool_schema(registry, tool_name: str) -> Any:
+def _publication_allowlist(server: Dict[str, Any]) -> frozenset:
+    """Tool names this publication exposes; empty set means every tool."""
+    return frozenset(
+        name for name in (server.get("tool_allowlist") or []) if name)
+
+
+def _allowlist_error(tool_name: str) -> str:
+    return f"Error: tool '{tool_name}' is not exposed by this publication"
+
+
+def _tool_schema(registry, tool_name: str,
+                 allowlist: frozenset = frozenset()) -> Any:
     definitions = registry.get_tool_definitions()
     if not tool_name:
-        return _available_tool_rows(registry)
+        rows = _available_tool_rows(registry)
+        if allowlist:
+            rows = [row for row in rows if row.get("name") in allowlist]
+        return rows
+    if allowlist and tool_name not in allowlist:
+        return _allowlist_error(tool_name)
     for definition in definitions:
         if definition.get("name") == tool_name:
             return definition
@@ -614,6 +636,11 @@ def _persist_tool_call(server: Dict[str, Any], key: Dict[str, Any],
 
 _EXTERNAL_ASYNC_TOOLS = {"delegate", "flash_delegate"}
 
+# Scheduling tools promise an autonomous resume, which needs a return channel
+# to the external client. One-way clients (ChatGPT connectors without a
+# registered client terminal) would get a wake their runtime can never see.
+_RETURN_CHANNEL_TOOLS = {"schedule_continuation", "ScheduleWakeup"}
+
 
 def _external_call_id(server: Dict[str, Any], session_id: str,
                       request_id: Any) -> str:
@@ -698,7 +725,8 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
             "send_user_message", "send_agent_message"}:
         result = _conversation_tool_result(server, key, name, args)
     elif name == "get_tool_schema":
-        result = _tool_schema(registry, str(args.get("tool_name") or ""))
+        result = _tool_schema(registry, str(args.get("tool_name") or ""),
+                              _publication_allowlist(server))
     elif name == "use_tool":
         tool_name = str(args.get("tool_name") or "").strip()
         if tool_name in {"use_tool", "mcp__pawflow__use_tool", "mcp_pawflow_use_tool"}:
@@ -713,8 +741,20 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
             tool_args = parse_tool_arguments(raw, tool_name=tool_name,
                                              provider="published_mcp")
             parse_error = tool_argument_parse_error(tool_args)
+            allowlist = _publication_allowlist(server)
             if not tool_name:
                 result = "Error: missing required parameter 'tool_name'"
+            elif allowlist and tool_name not in allowlist:
+                result = _allowlist_error(tool_name)
+            elif (tool_name in _RETURN_CHANNEL_TOOLS
+                    and not server.get("terminal_ready")):
+                result = (
+                    f"Error: '{tool_name}' is unavailable on this publication: "
+                    "the MCP client has no return channel (no registered "
+                    "client terminal), so a scheduled wake-up could never "
+                    "reach it. Do the work now, or persist state in the "
+                    "conversation so the next user turn can resume it."
+                )
             elif parse_error:
                 result = parse_error
             elif not isinstance(tool_args, dict):
@@ -1164,8 +1204,11 @@ def register_mcp_routes(listener) -> None:
     """Register idempotent public-token routes on an HTTP listener.
 
     ``public=True`` means the generic browser/session gate is skipped; every
-    callback performs its own scoped Bearer authentication.  The listener's
-    Private Gateway still runs first and remains mandatory when configured.
+    callback performs its own scoped key authentication (Bearer header, or
+    the connector-key path segment on ``/k/`` routes).  The listener's
+    Private Gateway still runs first and remains mandatory when configured,
+    except on connector routes, which are gateway-exempt because their URL
+    carries the credential.
     """
     _start_lease_sweeper()
     existing = {row.get("pattern", "") for row in listener.get_routes()}
@@ -1178,11 +1221,25 @@ def register_mcp_routes(listener) -> None:
         ("POST", "/mcp/{server_id}/relay/terminal", handle_relay_terminal),
         ("POST", "/mcp/{server_id}/relay/disconnect", handle_relay_disconnect),
     ]
+    # Connector routes carry their credential in the URL; clients such as
+    # ChatGPT connectors cannot send the Private Gateway header, so these
+    # routes are gateway-exempt like provider callbacks.
+    connector_routes = [
+        ("POST", "/mcp/{server_id}/k/{connector_key}", handle_mcp_post),
+        ("DELETE", "/mcp/{server_id}/k/{connector_key}", handle_mcp_delete),
+        ("GET", "/mcp/{server_id}/k/{connector_key}", handle_mcp_get),
+    ]
     for method, pattern, callback in routes:
         if pattern not in existing:
             listener.register_route(
                 method, pattern, _ROUTE_OWNER,
                 callback=callback, public=True,
+            )
+    for method, pattern, callback in connector_routes:
+        if pattern not in existing:
+            listener.register_route(
+                method, pattern, _ROUTE_OWNER,
+                callback=callback, public=True, gateway_exempt=True,
             )
 
 

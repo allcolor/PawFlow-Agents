@@ -47,6 +47,68 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
     """Methods extracted from AgentLoopTask."""
 
 
+    def _redirect_external_mcp_wake(self, conversation_id: str,
+                                    reasons: List[str]) -> bool:
+        """Keep autonomous wakes for external_mcp agents out of the LLM loop.
+
+        Returns True when the wake targets a published external agent and was
+        handled here: the wake prompt is persisted to the conversation (so a
+        one-way client sees it through get_context_updates on its next turn)
+        and injected into the client terminal when one is registered.
+        """
+        agent = self._extract_agent_from_reasons(reasons) or ""
+        from core.conversation_store import ConversationStore
+        if not agent:
+            try:
+                extra = ConversationStore.instance().get_extra(
+                    conversation_id, "active_resources") or {}
+                agent = str(extra.get("agent", "") or "")
+            except Exception:
+                agent = ""
+        if not agent:
+            return False
+        from core.conv_agent_config import get_agent_config
+        runtime_kind = str(get_agent_config(
+            conversation_id, agent).get("runtime_kind") or "llm")
+        if runtime_kind != "external_mcp":
+            return False
+
+        import uuid as _uuid
+        from core.conversation_writer import ConversationWriter
+        from core.llm_client import stamp_message
+        content = (
+            "[System: Scheduled wake-up. "
+            + "; ".join(reasons or ["scheduled recheck"])
+            + "]"
+        )
+        message = stamp_message({
+            "role": "user", "content": content,
+            "source": {"type": "context", "target_agent": agent},
+            "msg_id": _uuid.uuid4().hex[:12],
+        }, conversation_id)
+        try:
+            meta = ConversationStore.instance().get_metadata(conversation_id)
+            user_id = meta["user_id"] if meta else ""
+        except Exception:
+            user_id = ""
+        ConversationWriter.for_conversation(conversation_id).enqueue_message(
+            message, agent_name=agent, user_id=user_id, wait=True)
+        from services.mcp_terminal_router import (
+            route_published_terminal_prompt)
+        routed = route_published_terminal_prompt(
+            conversation_id, agent, content, message["msg_id"])
+        if routed is True:
+            logger.info(
+                "[poller] Routed external_mcp wake to published terminal "
+                "%s/%s", conversation_id[:8], agent)
+        else:
+            logger.warning(
+                "[poller] External_mcp wake for %s/%s has no reachable "
+                "terminal; prompt persisted for the external client only",
+                conversation_id[:8], agent)
+        return True
+
+
     def _poll_conversations(self, interval: int) -> None:
         """Background poller: periodically check active conversations for pending work.
 
@@ -274,6 +336,12 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             if conversation_id not in scheduled_ids:
                 if not self._is_eligible_for_poll(conversation_id, messages_data):
                     continue
+
+            # An external_mcp agent is operated by its published client; its
+            # wakes must never run through the internal LLM loop.
+            if self._redirect_external_mcp_wake(
+                    conversation_id, scheduled_reasons.get(conversation_id, [])):
+                continue
 
             logger.info(f"[poller] Waking up conversation {conversation_id[:8]}")
 

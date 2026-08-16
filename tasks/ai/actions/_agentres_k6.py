@@ -72,6 +72,14 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
             return _reply(flowfile, {
                 "error": "image_output must be 'native' or 'describe'"
             }, 400)
+        tool_allowlist = body.get("tool_allowlist")
+        if tool_allowlist is not None and (
+                not isinstance(tool_allowlist, list)
+                or any(not isinstance(item, str) or not item.strip()
+                       for item in tool_allowlist)):
+            return _reply(flowfile, {
+                "error": "tool_allowlist must be a list of non-empty tool names"
+            }, 400)
         from core.conv_agent_config import get_all_agent_configs
         configs = get_all_agent_configs(conversation_id) or {}
         needle = agent_name.lower()
@@ -97,6 +105,7 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
             label=str(body.get("label") or canonical).strip(),
             enabled=enabled,
             image_output=image_output,
+            tool_allowlist=tool_allowlist,
         )
         from services.mcp_server_endpoint import ensure_mcp_routes
         ensure_mcp_routes()
@@ -110,8 +119,15 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
     server_id = server["server_id"]
 
     if action == "mcp_server_create_key":
+        kind = str(body.get("kind") or "bearer").strip().lower()
+        if kind not in {"bearer", "connector"}:
+            return _reply(flowfile, {
+                "error": "kind must be 'bearer' or 'connector'"
+            }, 400)
+        default_label = "CLI key" if kind == "bearer" else "Connector key"
         raw, key = mcp_store.create_key(
-            server_id, str(body.get("label") or "CLI key").strip())
+            server_id, str(body.get("label") or default_label).strip(),
+            kind=kind)
         return _reply(flowfile, {
             "api_key": raw,
             "key": key,

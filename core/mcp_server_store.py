@@ -23,6 +23,8 @@ import core.paths as _paths
 
 _CLIENT_LEASE_TTL_SECONDS = 120.0
 _IMAGE_OUTPUTS = frozenset({"native", "describe"})
+_KEY_KINDS = frozenset({"bearer", "connector"})
+_KEY_PREFIXES = {"bearer": "pfmcp_", "connector": "pfmcc_"}
 
 
 class MCPServerStore:
@@ -78,7 +80,8 @@ class MCPServerStore:
                     terminal_target TEXT NOT NULL DEFAULT '',
                     terminal_secret TEXT NOT NULL DEFAULT '',
                     terminal_state_path TEXT NOT NULL DEFAULT '',
-                    image_output TEXT NOT NULL DEFAULT 'native'
+                    image_output TEXT NOT NULL DEFAULT 'native',
+                    tool_allowlist TEXT NOT NULL DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS idx_mcp_servers_owner_conversation
                     ON mcp_servers(owner_user_id, conversation_id);
@@ -92,7 +95,8 @@ class MCPServerStore:
                     token_hash TEXT NOT NULL UNIQUE,
                     created_at REAL NOT NULL,
                     last_used_at REAL NOT NULL DEFAULT 0,
-                    revoked_at REAL NOT NULL DEFAULT 0
+                    revoked_at REAL NOT NULL DEFAULT 0,
+                    kind TEXT NOT NULL DEFAULT 'bearer'
                 );
                 CREATE INDEX IF NOT EXISTS idx_mcp_keys_server
                     ON mcp_api_keys(server_id, revoked_at);
@@ -114,12 +118,33 @@ class MCPServerStore:
                     connection.execute(
                         f"ALTER TABLE mcp_servers ADD COLUMN "
                         f"{name} TEXT NOT NULL DEFAULT ''")
+            if "tool_allowlist" not in columns:
+                connection.execute(
+                    "ALTER TABLE mcp_servers ADD COLUMN "
+                    "tool_allowlist TEXT NOT NULL DEFAULT ''"
+                )
+            key_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(mcp_api_keys)")
+            }
+            if "kind" not in key_columns:
+                connection.execute(
+                    "ALTER TABLE mcp_api_keys ADD COLUMN "
+                    "kind TEXT NOT NULL DEFAULT 'bearer'"
+                )
 
     @staticmethod
     def _server_row(row: sqlite3.Row) -> Dict[str, Any]:
         data = dict(row)
         data.pop("terminal_secret", None)
         data["enabled"] = bool(data.get("enabled"))
+        raw_allowlist = str(data.get("tool_allowlist") or "")
+        try:
+            parsed = json.loads(raw_allowlist) if raw_allowlist else []
+        except json.JSONDecodeError:
+            parsed = []
+        data["tool_allowlist"] = [
+            str(item) for item in parsed if isinstance(item, str) and item]
         heartbeat = float(data.get("client_heartbeat_at") or 0)
         data["client_active"] = bool(
             data.get("active_client_id")
@@ -137,12 +162,22 @@ class MCPServerStore:
 
     def configure(self, owner_user_id: str, conversation_id: str,
                   agent_name: str, label: str = "", enabled: bool = True,
-                  image_output: str = "native") -> Dict[str, Any]:
+                  image_output: str = "native",
+                  tool_allowlist: Optional[List[str]] = None) -> Dict[str, Any]:
         if not owner_user_id or not conversation_id or not agent_name:
             raise ValueError("owner_user_id, conversation_id and agent_name are required")
         image_output = str(image_output or "").strip().lower()
         if image_output not in _IMAGE_OUTPUTS:
             raise ValueError("image_output must be 'native' or 'describe'")
+        allowlist_json: Optional[str] = None
+        if tool_allowlist is not None:
+            if (not isinstance(tool_allowlist, list)
+                    or any(not isinstance(item, str) or not item.strip()
+                           for item in tool_allowlist)):
+                raise ValueError(
+                    "tool_allowlist must be a list of non-empty tool names")
+            names = [item.strip() for item in tool_allowlist]
+            allowlist_json = json.dumps(names) if names else ""
         now = time.time()
         with self._lock, self._connect() as connection:
             row = connection.execute(
@@ -161,15 +196,22 @@ class MCPServerStore:
                     (agent_name, label or agent_name, int(bool(enabled)),
                      image_output, now, server_id),
                 )
+                if allowlist_json is not None:
+                    connection.execute(
+                        "UPDATE mcp_servers SET tool_allowlist = ? WHERE server_id = ?",
+                        (allowlist_json, server_id),
+                    )
             else:
                 server_id = "srv_" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
                 connection.execute(
                     """INSERT INTO mcp_servers (
                            server_id, owner_user_id, conversation_id, agent_name,
-                           label, enabled, image_output, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           label, enabled, image_output, tool_allowlist,
+                           created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (server_id, owner_user_id, conversation_id, agent_name,
-                     label or agent_name, int(bool(enabled)), image_output, now, now),
+                     label or agent_name, int(bool(enabled)), image_output,
+                     allowlist_json or "", now, now),
                 )
         result = self.get(server_id)
         if result is None:
@@ -214,24 +256,31 @@ class MCPServerStore:
             )
         return bool(cur.rowcount)
 
-    def create_key(self, server_id: str, label: str = "") -> Tuple[str, Dict[str, Any]]:
+    def create_key(self, server_id: str, label: str = "",
+                   kind: str = "bearer") -> Tuple[str, Dict[str, Any]]:
+        kind = str(kind or "").strip().lower()
+        if kind not in _KEY_KINDS:
+            raise ValueError("kind must be 'bearer' or 'connector'")
         if not self.get(server_id):
             raise KeyError("MCP server not found")
-        raw = "pfmcp_" + secrets.token_urlsafe(32)
+        raw = _KEY_PREFIXES[kind] + secrets.token_urlsafe(32)
         digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         key_id = "key_" + secrets.token_hex(8)
         now = time.time()
         prefix = raw[:14]
+        default_label = "CLI key" if kind == "bearer" else "Connector key"
         with self._lock, self._connect() as connection:
             connection.execute(
                 """INSERT INTO mcp_api_keys (
-                       key_id, server_id, label, prefix, token_hash, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (key_id, server_id, label or "CLI key", prefix, digest, now),
+                       key_id, server_id, label, prefix, token_hash, created_at,
+                       kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (key_id, server_id, label or default_label, prefix, digest, now,
+                 kind),
             )
         return raw, {
             "key_id": key_id, "server_id": server_id,
-            "label": label or "CLI key", "prefix": prefix,
+            "label": label or default_label, "prefix": prefix, "kind": kind,
             "created_at": now, "last_used_at": 0, "revoked_at": 0,
             "revoked": False,
         }
@@ -254,16 +303,21 @@ class MCPServerStore:
             )
         return bool(cur.rowcount)
 
-    def validate_key(self, server_id: str, raw_token: str) -> Optional[Dict[str, Any]]:
+    def validate_key(self, server_id: str, raw_token: str,
+                     kind: str = "bearer") -> Optional[Dict[str, Any]]:
         if not raw_token:
+            return None
+        kind = str(kind or "").strip().lower()
+        if kind not in _KEY_KINDS:
             return None
         digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 """SELECT k.*, s.enabled AS server_enabled
                    FROM mcp_api_keys k JOIN mcp_servers s ON s.server_id = k.server_id
-                   WHERE k.server_id = ? AND k.token_hash = ? AND k.revoked_at = 0""",
-                (server_id, digest),
+                   WHERE k.server_id = ? AND k.token_hash = ? AND k.revoked_at = 0
+                     AND k.kind = ?""",
+                (server_id, digest, kind),
             ).fetchone()
             if not row or not row["server_enabled"]:
                 return None

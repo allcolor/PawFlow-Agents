@@ -817,7 +817,7 @@ def test_reconfiguring_published_agent_releases_old_cli_relay(monkeypatch):
             return True
 
         def configure(self, owner, conversation_id, agent_name, label="", enabled=True,
-                      image_output="native"):
+                      image_output="native", tool_allowlist=None):
             calls.append(("configure", owner, conversation_id, agent_name, enabled))
             return dict(server, agent_name=agent_name, enabled=enabled,
                         image_output=image_output)
@@ -940,3 +940,345 @@ def test_published_mcp_ui_is_loaded_and_translated():
         assert catalog["mcpPublishDisconnectClient"]
         assert catalog["mcpPublishKeyOnce"]
         assert catalog["mcpRelayBadge"]
+        assert catalog["mcpPublishConnectorSection"]
+        assert catalog["mcpPublishConnectorUrlOnce"]
+        assert catalog["mcpPublishCreateConnectorKey"]
+        assert catalog["mcpPublishToolAllowlist"]
+
+
+def test_store_connector_keys_are_kind_scoped(tmp_path):
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    server = store.configure("alice", "conv-1", "agent-a")
+    server_id = server["server_id"]
+    raw_bearer, bearer = store.create_key(server_id, "Codex")
+    raw_connector, connector = store.create_key(
+        server_id, "ChatGPT", kind="connector")
+
+    assert raw_bearer.startswith("pfmcp_")
+    assert raw_connector.startswith("pfmcc_")
+    assert bearer["kind"] == "bearer"
+    assert connector["kind"] == "connector"
+    assert store.validate_key(
+        server_id, raw_connector, kind="connector")["key_id"] == connector["key_id"]
+    # No cross-kind use: a bearer key never validates on the connector surface
+    # and a connector key never validates as an Authorization bearer.
+    assert store.validate_key(server_id, raw_bearer, kind="connector") is None
+    assert store.validate_key(server_id, raw_connector) is None
+    assert store.validate_key(server_id, raw_connector, kind="header") is None
+    kinds = {key["key_id"]: key["kind"] for key in store.list_keys(server_id)}
+    assert kinds == {bearer["key_id"]: "bearer",
+                     connector["key_id"]: "connector"}
+    with pytest.raises(ValueError, match="kind"):
+        store.create_key(server_id, kind="urlsafe")
+
+
+def test_store_migrates_pre_kind_keys_to_bearer(tmp_path):
+    database = tmp_path / "published.sqlite3"
+    raw = "pfmcp_legacy-token"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """CREATE TABLE mcp_servers (
+                   server_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL,
+                   conversation_id TEXT NOT NULL UNIQUE, agent_name TEXT NOT NULL,
+                   label TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+                   created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                   active_client_id TEXT NOT NULL DEFAULT '',
+                   active_client_name TEXT NOT NULL DEFAULT '',
+                   active_relay_id TEXT NOT NULL DEFAULT '',
+                   client_heartbeat_at REAL NOT NULL DEFAULT 0
+               )"""
+        )
+        connection.execute(
+            """CREATE TABLE mcp_api_keys (
+                   key_id TEXT PRIMARY KEY, server_id TEXT NOT NULL,
+                   label TEXT NOT NULL, prefix TEXT NOT NULL,
+                   token_hash TEXT NOT NULL UNIQUE, created_at REAL NOT NULL,
+                   last_used_at REAL NOT NULL DEFAULT 0,
+                   revoked_at REAL NOT NULL DEFAULT 0
+               )"""
+        )
+        connection.execute(
+            """INSERT INTO mcp_servers (
+                   server_id, owner_user_id, conversation_id, agent_name,
+                   label, enabled, created_at, updated_at)
+               VALUES ('srv-old', 'alice', 'conv-old', 'agent-a',
+                       'Old server', 1, 1, 1)"""
+        )
+        connection.execute(
+            """INSERT INTO mcp_api_keys (
+                   key_id, server_id, label, prefix, token_hash, created_at)
+               VALUES ('key-old', 'srv-old', 'CLI', ?, ?, 1)""",
+            (raw[:14], hashlib.sha256(raw.encode("utf-8")).hexdigest()),
+        )
+
+    store = MCPServerStore(database)
+
+    assert store.validate_key("srv-old", raw)["kind"] == "bearer"
+    assert store.validate_key("srv-old", raw, kind="connector") is None
+    assert store.get("srv-old")["tool_allowlist"] == []
+
+
+def test_store_tool_allowlist_round_trip(tmp_path):
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    server = store.configure("alice", "conv-1", "agent-a")
+    assert server["tool_allowlist"] == []
+
+    server = store.configure(
+        "alice", "conv-1", "agent-a", tool_allowlist=["read", " grep "])
+    assert server["tool_allowlist"] == ["read", "grep"]
+
+    # Omitting the parameter preserves the stored allowlist.
+    server = store.configure("alice", "conv-1", "agent-a")
+    assert server["tool_allowlist"] == ["read", "grep"]
+
+    server = store.configure("alice", "conv-1", "agent-a", tool_allowlist=[])
+    assert server["tool_allowlist"] == []
+
+    with pytest.raises(ValueError, match="tool_allowlist"):
+        store.configure("alice", "conv-1", "agent-a", tool_allowlist=[""])
+    with pytest.raises(ValueError, match="tool_allowlist"):
+        store.configure("alice", "conv-1", "agent-a", tool_allowlist="read")
+
+
+def test_connector_key_authenticates_only_via_path(monkeypatch, tmp_path):
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    server = store.configure("alice", "conv-1", "agent-a")
+    server_id = server["server_id"]
+    raw_bearer, _bearer_key = store.create_key(server_id, "Codex")
+    raw_connector, connector = store.create_key(
+        server_id, "ChatGPT", kind="connector")
+
+    monkeypatch.setattr(
+        MCPServerStore, "instance", classmethod(lambda cls: store))
+
+    class ConvStore:
+        def resolve_owner(self, _conversation_id):
+            return "alice"
+
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance",
+        lambda: ConvStore())
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_all_agent_configs",
+        lambda _cid: {"agent-a": {}})
+
+    def request(path_key="", headers=None):
+        req = _Request({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-03-26"},
+        }, server_id=server_id, headers=headers)
+        if path_key:
+            req.path_params["connector_key"] = path_key
+        return req
+
+    endpoint._sessions.clear()
+    accepted = request(path_key=raw_connector)
+    endpoint.handle_mcp_post(accepted)
+    status, headers, payload = _decoded(accepted)
+    assert status == 200
+    assert payload["result"]["protocolVersion"] == "2025-03-26"
+    assert headers["Mcp-Session-Id"] in endpoint._sessions
+
+    # A bearer key in the path is rejected: kinds never cross surfaces.
+    bearer_in_path = request(path_key=raw_bearer)
+    endpoint.handle_mcp_post(bearer_in_path)
+    status, headers, _payload = _decoded(bearer_in_path)
+    assert status == 401
+    assert "WWW-Authenticate" not in headers
+
+    # A connector key in the Authorization header is rejected too.
+    connector_as_bearer = request(
+        headers={"Authorization": f"Bearer {raw_connector}"})
+    endpoint.handle_mcp_post(connector_as_bearer)
+    assert _decoded(connector_as_bearer)[0] == 401
+
+    store.revoke_key(server_id, connector["key_id"])
+    revoked = request(path_key=raw_connector)
+    endpoint.handle_mcp_post(revoked)
+    assert _decoded(revoked)[0] == 401
+
+
+def test_call_tool_enforces_publication_allowlist(monkeypatch):
+    class Registry:
+        def get_tool_definitions(self):
+            return [
+                {"name": "read", "description": "Read", "parameters": {}},
+                {"name": "bash", "description": "Shell", "parameters": {}},
+            ]
+
+        def get(self, _name):
+            return None
+
+    server = {
+        "server_id": "srv-1",
+        "owner_user_id": "alice",
+        "conversation_id": "conv-1",
+        "agent_name": "agent-a",
+        "tool_allowlist": ["read"],
+    }
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: (_ for _ in ()).throw(
+        AssertionError("excluded tools must not reach the runtime")))
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+
+    listing = endpoint._call_tool(server, {"key_id": "key-1"},
+                                  "get_tool_schema", {})
+    assert not listing["isError"]
+    names = [row.get("name") for row in listing["content"]]
+    assert "read" in names and "bash" not in names
+
+    excluded_schema = endpoint._call_tool(
+        server, {"key_id": "key-1"}, "get_tool_schema", {"tool_name": "bash"})
+    assert excluded_schema["isError"]
+
+    blocked = endpoint._call_tool(server, {"key_id": "key-1"}, "use_tool", {
+        "tool_name": "bash", "arguments_json": "{}",
+    })
+    assert blocked["isError"]
+    assert "not exposed by this publication" in blocked["content"][0]["text"]
+
+
+def test_one_way_publication_refuses_scheduling_tools(monkeypatch):
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": "schedule_continuation", "description": "",
+                     "parameters": {}}]
+
+        def get(self, _name):
+            return None
+
+    class Runtime:
+        def _do_execute(self, request_id, name, arguments, user_id, conv_id,
+                        agent):
+            return {"type": "result", "request_id": request_id, "data": "ok"}
+
+    server = {
+        "server_id": "srv-1",
+        "owner_user_id": "alice",
+        "conversation_id": "conv-1",
+        "agent_name": "agent-a",
+    }
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: (_ for _ in ()).throw(
+        AssertionError("one-way scheduling must not reach the runtime")))
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+
+    for tool in ("schedule_continuation", "ScheduleWakeup"):
+        blocked = endpoint._call_tool(server, {"key_id": "key-1"}, "use_tool", {
+            "tool_name": tool, "arguments_json": "{}",
+        })
+        assert blocked["isError"]
+        assert "no return channel" in blocked["content"][0]["text"]
+
+    # With a registered client terminal, the wake has a transport: allowed.
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    allowed = endpoint._call_tool(
+        dict(server, terminal_ready=True), {"key_id": "key-1"}, "use_tool", {
+            "tool_name": "schedule_continuation", "arguments_json": "{}",
+        })
+    assert allowed == {"content": [{"type": "text", "text": "ok"}],
+                       "isError": False}
+
+
+def test_poller_redirects_external_mcp_wake(monkeypatch):
+    from tasks.ai.agent_poller import AgentPollerMixin
+
+    persisted = []
+    routed = []
+
+    class Writer:
+        def enqueue_message(self, message, agent_name="", user_id="",
+                            wait=False, **_kwargs):
+            assert wait is True
+            persisted.append((message, agent_name, user_id))
+
+    class ConvStore:
+        def get_extra(self, _cid, _key):
+            return {"agent": "agent-a"}
+
+        def get_metadata(self, _cid):
+            return {"user_id": "alice"}
+
+    configs = {"agent-a": {"runtime_kind": "external_mcp"}}
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance",
+        lambda: ConvStore())
+    monkeypatch.setattr(
+        "core.conversation_writer.ConversationWriter.for_conversation",
+        lambda _cid: Writer())
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda _cid, agent: configs.get(agent, {"runtime_kind": "llm"}))
+
+    import services.mcp_terminal_router as terminal_router
+    monkeypatch.setattr(
+        terminal_router, "route_published_terminal_prompt",
+        lambda cid, agent, content, msg_id, **_kwargs: (
+            routed.append((agent, content, msg_id)) or True))
+
+    poller = AgentPollerMixin()
+
+    # An llm agent is untouched: the internal loop stays in charge.
+    assert poller._redirect_external_mcp_wake(
+        "conv-1", ["[scheduled:agent-b] [continuation] finish"]) is False
+    assert not persisted
+
+    # The external agent's wake is persisted and injected, never looped.
+    handled = poller._redirect_external_mcp_wake(
+        "conv-1", ["[scheduled:agent-a] [continuation] finish the report"])
+    assert handled is True
+    assert len(persisted) == 1
+    message, agent_name, user_id = persisted[0]
+    assert agent_name == "agent-a" and user_id == "alice"
+    assert "finish the report" in message["content"]
+    assert routed and routed[0][2] == message["msg_id"]
+
+    # Terminal unavailable: still handled (persisted only), never looped.
+    monkeypatch.setattr(
+        terminal_router, "route_published_terminal_prompt",
+        lambda *_args, **_kwargs: False)
+    assert poller._redirect_external_mcp_wake(
+        "conv-1", ["[scheduled:agent-a] [continuation] retry"]) is True
+    assert len(persisted) == 2
+
+    # Agent resolved from active_resources when reasons carry no agent tag.
+    assert poller._redirect_external_mcp_wake("conv-1", []) is True
+    assert len(persisted) == 3
+
+
+def test_register_mcp_routes_includes_connector_paths(monkeypatch):
+    monkeypatch.setattr(endpoint, "_start_lease_sweeper", lambda: None)
+
+    class Listener:
+        def __init__(self):
+            self.routes = []
+
+        def get_routes(self):
+            return []
+
+        def register_route(self, method, pattern, _owner, callback=None,
+                           public=False, gateway_exempt=False):
+            self.routes.append((method, pattern, public, gateway_exempt))
+
+    listener = Listener()
+    endpoint.register_mcp_routes(listener)
+    exemptions = {(method, pattern): gateway_exempt
+                  for method, pattern, _public, gateway_exempt in listener.routes}
+
+    for method in ("POST", "DELETE", "GET"):
+        # Connector clients cannot send the gateway header; the key in the
+        # URL is the credential, so the gateway challenge is skipped.
+        assert exemptions[(method, "/mcp/{server_id}/k/{connector_key}")] is True
+        assert exemptions[(method, "/mcp/{server_id}")] is False
+    assert all(public for _m, _p, public, _g in listener.routes)
+
+
+def test_sanitize_path_for_log_redacts_connector_key():
+    from services._http_base import sanitize_path_for_log
+
+    assert sanitize_path_for_log("/mcp/srv_x/k/pfmcc_secret-token") == (
+        "/mcp/srv_x/k/[redacted]")
+    assert sanitize_path_for_log("/mcp/srv_x") == "/mcp/srv_x"
+    assert sanitize_path_for_log("/mcp/srv_x/relay/status") == (
+        "/mcp/srv_x/relay/status")
+    assert sanitize_path_for_log("") == ""

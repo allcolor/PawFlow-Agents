@@ -7,6 +7,12 @@ function _publishedMcpEndpoint(serverId) {
   return new URL('/mcp/' + encodeURIComponent(serverId), window.location.origin).href;
 }
 
+function _publishedMcpConnectorUrl(serverId, rawKey) {
+  return new URL(
+    '/mcp/' + encodeURIComponent(serverId) + '/k/' + encodeURIComponent(rawKey),
+    window.location.origin).href;
+}
+
 function _publishedMcpClose() {
   const overlay = document.getElementById('publishedMcpOverlay');
   if (overlay) overlay.remove();
@@ -91,12 +97,17 @@ function _publishedMcpRender(state) {
   const keyRows = keys.length ? keys.map(function(key) {
     const label = escapeHtml(key.label || key.prefix || key.key_id);
     const stateLabel = key.revoked ? t('mcpPublishRevoked') : (key.prefix + '...');
+    const kindBadge = key.kind === 'connector'
+      ? '<code style="color:var(--pf-accent);">' + escapeHtml(t('mcpPublishConnectorBadge')) + '</code>'
+      : '';
     const action = key.revoked ? '' : '<button type="button" onclick="_publishedMcpRevokeKey('
       + _pfpJsArg(key.key_id) + ')" style="color:var(--pf-danger);">' + escapeHtml(t('mcpPublishRevoke')) + '</button>';
     return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'
-      + '<span style="flex:1;color:var(--pf-text);">' + label + '</span>'
+      + '<span style="flex:1;color:var(--pf-text);">' + label + '</span>' + kindBadge
       + '<code style="color:var(--pf-muted);">' + escapeHtml(stateLabel) + '</code>' + action + '</div>';
   }).join('') : '<div style="color:var(--pf-muted);">' + escapeHtml(t('mcpPublishNoKeys')) + '</div>';
+  const allowlist = server && Array.isArray(server.tool_allowlist)
+    ? server.tool_allowlist.join(', ') : '';
 
   overlay.innerHTML = '<div class="exec-dialog" style="width:min(720px,92vw);max-height:88vh;overflow:auto;">'
     + '<h3>' + escapeHtml(t('mcpPublishTitle')) + '</h3>'
@@ -111,6 +122,9 @@ function _publishedMcpRender(state) {
     + escapeHtml(t('mcpPublishImageNative')) + '</option>'
     + '<option value="describe"' + (imageOutput === 'describe' ? ' selected' : '') + '>'
     + escapeHtml(t('mcpPublishImageDescribe')) + '</option></select></label>'
+    + '<label style="display:block;margin-bottom:12px;">' + escapeHtml(t('mcpPublishToolAllowlist'))
+    + '<input id="publishedMcpAllowlist" value="' + _pfpAttr(allowlist)
+    + '" style="display:block;width:100%;margin-top:4px;"></label>'
     + '<div style="display:flex;gap:8px;margin-bottom:14px;"><button type="button" onclick="_publishedMcpSave()">'
     + escapeHtml(server ? t('contextSave') : t('mcpPublishCreate')) + '</button>'
     + (server ? '<button type="button" onclick="_publishedMcpDelete()" style="color:var(--pf-danger);">'
@@ -129,6 +143,13 @@ function _publishedMcpRender(state) {
       + _pfpAttr(t('mcpPublishKeyLabel')) + '" style="flex:1;"><button type="button" onclick="_publishedMcpCreateKey()">'
       + escapeHtml(t('mcpPublishCreateKey')) + '</button></div>'
       + '<div id="publishedMcpNewKey"></div>'
+      + '<div style="font-weight:600;margin:12px 0 5px;">' + escapeHtml(t('mcpPublishConnectorSection')) + '</div>'
+      + '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:6px;">'
+      + escapeHtml(t('mcpPublishConnectorHint')) + '</div>'
+      + '<div style="display:flex;gap:5px;margin:8px 0 12px;"><input id="publishedMcpConnectorLabel" placeholder="'
+      + _pfpAttr(t('mcpPublishKeyLabel')) + '" style="flex:1;"><button type="button" onclick="_publishedMcpCreateConnectorKey()">'
+      + escapeHtml(t('mcpPublishCreateConnectorKey')) + '</button></div>'
+      + '<div id="publishedMcpNewConnector"></div>'
       + '<div style="font-weight:600;margin:12px 0 5px;">' + escapeHtml(t('mcpPublishCliConfig')) + '</div>'
       + '<pre id="publishedMcpConfig" style="white-space:pre-wrap;user-select:text;">'
       + escapeHtml(_publishedMcpCliConfig(server)) + '</pre>'
@@ -152,6 +173,8 @@ function _publishedMcpSave() {
   const agent = document.getElementById('publishedMcpAgent')?.value || '';
   const enabled = !!document.getElementById('publishedMcpEnabled')?.checked;
   const imageOutput = document.getElementById('publishedMcpImageOutput')?.value || 'native';
+  const allowlist = (document.getElementById('publishedMcpAllowlist')?.value || '')
+    .split(',').map(function(name) { return name.trim(); }).filter(Boolean);
   if (!agent) {
     addMsg('error', t('mcpPublishSelectAgent'));
     return;
@@ -161,6 +184,7 @@ function _publishedMcpSave() {
     label: agent,
     enabled: enabled,
     image_output: imageOutput,
+    tool_allowlist: allowlist,
   }, function(data) {
     _publishedMcpRender({ server: data.server || null });
     loadResources();
@@ -195,6 +219,26 @@ function _publishedMcpRevokeKey(keyId) {
   if (!confirm(t('mcpPublishConfirmRevoke'))) return;
   _publishedMcpAction('mcp_server_revoke_key', { key_id: keyId }, function() {
     showPublishedMcpDialog();
+  });
+}
+
+function _publishedMcpCreateConnectorKey() {
+  const label = document.getElementById('publishedMcpConnectorLabel')?.value || '';
+  const serverId = _publishedMcpState && _publishedMcpState.server
+    ? _publishedMcpState.server.server_id : '';
+  _publishedMcpAction('mcp_server_create_key', { label: label, kind: 'connector' }, function(data) {
+    const url = _publishedMcpConnectorUrl(serverId, data.api_key || '');
+    _publishedMcpAction('mcp_server_get', {}, function(refreshed) {
+      _publishedMcpRender({ server: refreshed.server || null });
+      const target = document.getElementById('publishedMcpNewConnector');
+      if (target) {
+        target.innerHTML = '<div style="color:var(--pf-danger);font-size:12px;margin-bottom:4px;">'
+          + escapeHtml(t('mcpPublishConnectorUrlOnce')) + '</div><div style="display:flex;gap:5px;">'
+          + '<input id="publishedMcpConnectorRawUrl" readonly value="' + _pfpAttr(url) + '" style="flex:1;">'
+          + '<button type="button" onclick="_publishedMcpCopy(\'publishedMcpConnectorRawUrl\')">'
+          + escapeHtml(t('copy')) + '</button></div>';
+      }
+    });
   });
 }
 

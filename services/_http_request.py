@@ -25,6 +25,7 @@ from services._http_base import (
     _is_long_lived_stream_path,
     _rate_limit_policy,
     _request_action_label,
+    sanitize_path_for_log,
 )
 
 logger = logging.getLogger("services.http_listener_service")  # canonical name preserved across the module split
@@ -502,7 +503,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
         try:
             entry.callback(req)
         except Exception as e:
-            logger.error(f"Route callback error for {method} {path}: {e}")
+            logger.error(
+                f"Route callback error for {method} "
+                f"{sanitize_path_for_log(path)}: {e}")
             self.server._pending_requests.pop(req.request_id, None)
             self.send_response(500)
             self.send_header("Content-Type", "application/json")
@@ -517,7 +520,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # flow response cannot starve unrelated UI/API requests.
         if not req.completed:
             if not self.server.transfer_current_dispatch_to_long_lived(
-                    f"flow response wait {method} {path}"):
+                    f"flow response wait {method} {sanitize_path_for_log(path)}"):
                 self.server._pending_requests.pop(req.request_id, None)
                 self.send_response(503)
                 self.send_header("Content-Type", "application/json")
@@ -541,7 +544,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             _action = _request_action_label(req)
             logger.warning("[http] slow response — %s %s%s took %.0fms "
                             "(request_id=%s, status=%d)",
-                            method, path,
+                            method, sanitize_path_for_log(path),
                             f" action={_action}" if _action else "",
                             _waited_ms, req.request_id[:8],
                             req.response_status)

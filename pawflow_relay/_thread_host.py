@@ -27,25 +27,37 @@ class _RelayHostHelperMixin:
 
     def _run_host_helper(self, port: int):
         """TCP server on the host for commands that must run outside Docker."""
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind(("0.0.0.0", port))  # nosec B104 - host helper must be reachable from relay container.
-        srv.listen(5)
-        srv.settimeout(2)
-        self._log(f"[Relay] Host helper listening on port {port}")
+        srv = None
+        try:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("0.0.0.0", port))  # nosec B104 - relay container must connect.
+            srv.listen(5)
+            srv.settimeout(2)
+            self._log(f"[Relay] Host helper listening on port {port}")
+        except OSError as exc:
+            self._host_helper_error = exc
+            self._log(f"[Relay] Host helper failed to listen on port {port}: {exc}")
+            return
+        finally:
+            ready = getattr(self, "_host_helper_ready", None)
+            if ready is not None:
+                ready.set()
 
-        while not self._stop_event.is_set():
-            try:
-                conn, addr = srv.accept()
-            except socket.timeout:
-                continue
-            except Exception:
-                break
-            # Handle each connection in its own thread (terminal sessions are persistent)
-            threading.Thread(
-                target=self._handle_host_helper_conn_safe, args=(conn,),
-                daemon=True, name="host-helper-conn").start()
-        srv.close()
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    conn, _addr = srv.accept()
+                except socket.timeout:
+                    continue
+                except Exception:
+                    break
+                # Handle each connection in its own thread (terminal sessions are persistent)
+                threading.Thread(
+                    target=self._handle_host_helper_conn_safe, args=(conn,),
+                    daemon=True, name="host-helper-conn").start()
+        finally:
+            srv.close()
 
     def _handle_host_helper_conn_safe(self, conn):
         """Wrapper that closes conn unless the handler takes ownership."""
@@ -72,20 +84,27 @@ class _RelayHostHelperMixin:
 
         req = json.loads(buf.split(b"\n")[0])
         action = req.get("action", "")
+        expected = str(getattr(self, "_host_helper_token", "") or "")
+        supplied = str(req.pop("_host_helper_token", "") or "")
+        if not expected or not hmac.compare_digest(expected, supplied):
+            resp = json.dumps({
+                "type": "error", "error": "Invalid host helper capability",
+            }) + "\n"
+            conn.sendall(resp.encode("utf-8"))
+            return
+
+        if action == "host_helper_ping":
+            resp = json.dumps({
+                "type": "result", "data": {"ok": True},
+            }) + "\n"
+            conn.sendall(resp.encode("utf-8"))
+            return
 
         tools_dir = _relay_tools_dir()
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
 
         if action.startswith("service_tunnel_"):
-            expected = str(getattr(self, "_host_helper_token", "") or "")
-            supplied = str(req.pop("_host_helper_token", "") or "")
-            if not expected or not hmac.compare_digest(expected, supplied):
-                resp = json.dumps({
-                    "type": "error", "error": "Invalid host helper capability",
-                }) + "\n"
-                conn.sendall(resp.encode("utf-8"))
-                return
             from pawflow_relay.service_tunnels import handle_action
             try:
                 result = handle_action(action, req)

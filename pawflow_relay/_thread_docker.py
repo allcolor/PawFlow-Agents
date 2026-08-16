@@ -26,10 +26,22 @@ class _RelayDockerMixin:
         # Start host helper (TCP server for host-level commands)
         host_helper_port = find_free_port()
         self._host_helper_token = secrets.token_urlsafe(32)
+        self._host_helper_error = None
+        self._host_helper_ready = threading.Event()
         self._host_helper_thread = threading.Thread(
             target=self._run_host_helper, args=(host_helper_port,),
             daemon=True, name="pawflow-host-helper")
         self._host_helper_thread.start()
+        if not self._host_helper_ready.wait(timeout=5):
+            self._log(
+                "[Relay] FATAL: host helper did not become ready within 5s; "
+                "Docker relay will not start")
+            return
+        if self._host_helper_error is not None:
+            self._log(
+                f"[Relay] FATAL: host helper failed to start: "
+                f"{self._host_helper_error}")
+            return
 
         import subprocess as _sp  # nosec B404
 
@@ -105,6 +117,7 @@ class _RelayDockerMixin:
             _tools_dir = os.path.join(_project_root, "tools")
             _sdk_dir = os.path.join(_project_root, "docker", "pawflow_sdk")
             _pkg_dir = os.path.join(_project_root, "pawflow_relay")
+            _translated_pkg = ""
             _relay_script_mounts = []
             _mount_report = []
             # (source_dir, filename) pairs — all mount onto /opt/pawflow/.
@@ -173,6 +186,10 @@ class _RelayDockerMixin:
                     _ef.write(
                         f"PAWFLOW_RELAY_PRIVKEY_B64="
                         f"{os.environ.get('PAWFLOW_RELAY_PRIVKEY_B64', '')}\n")
+                    _ef.write(
+                        f"PAWFLOW_HOST_HELPER_TOKEN={self._host_helper_token}\n")
+                    _ef.write(
+                        f"PAWFLOW_WINDOWS_HOST_IP={get_host_ip()}\n")
                 try:
                     os.chmod(_env_file_path, 0o600)
                 except Exception:
@@ -209,6 +226,35 @@ class _RelayDockerMixin:
                 _relay_permission_args += ["--allow-automation", "--allow-local-screen"]
             if self.allow_service_tunnels:
                 _relay_permission_args.append("--allow-service-tunnels")
+
+            # A Docker daemon reached through WSL cannot reliably route back
+            # to Windows through a LAN/VPN address. Run a tiny host-network
+            # bridge in WSL; the main worker reaches it through host-gateway,
+            # and it selects an authenticated Windows route at runtime.
+            if os.name == "nt":
+                if not _translated_pkg:
+                    raise RuntimeError(
+                        "Relay package mount is required for the Windows "
+                        "host-helper bridge")
+                self._host_bridge_container = _make_relay_container_name(
+                    self.relay_id, "hostbridge")
+                _bridge_cmd = docker_cmd() + [
+                    "run", "-d", "--rm",
+                    "--name", self._host_bridge_container,
+                    "--network", "host",
+                    "--env-file", _env_file_container,
+                    "-v", f"{_translated_pkg}:/opt/pawflow/pawflow_relay:ro",
+                    self.docker_image,
+                    "python3", "-u", "-m", "pawflow_relay.host_bridge",
+                    "--listen-port", str(host_helper_port),
+                    "--target-port", str(host_helper_port),
+                ]
+                _bridge_result = _sp.run(  # nosec B603
+                    _bridge_cmd, capture_output=True, text=True, timeout=30)
+                if _bridge_result.returncode != 0:
+                    raise RuntimeError(
+                        "Windows host-helper bridge failed to start: "
+                        f"{_bridge_result.stderr.strip()[:500]}")
 
             docker_run_cmd = docker_cmd() + [
                 "run", "--rm",
@@ -248,8 +294,7 @@ class _RelayDockerMixin:
                 "-e", "GIT_CONFIG_VALUE_2=false",
                 "-e", "GIT_CONFIG_KEY_3=core.untrackedCache",
                 "-e", "GIT_CONFIG_VALUE_3=false",
-                "-e", f"PAWFLOW_HOST_HELPER={get_host_ip()}:{host_helper_port}",
-                "-e", f"PAWFLOW_HOST_HELPER_TOKEN={self._host_helper_token}",
+                "-e", f"PAWFLOW_HOST_HELPER=host.docker.internal:{host_helper_port}",
                 "-e", f"PAWFLOW_SESSION_TOKEN={self.session_token}",
                 *_desktop_publish_args,
                 "-e", f"PAWFLOW_HOST_WORKDIR={self.directory.replace(chr(92), '/')}",

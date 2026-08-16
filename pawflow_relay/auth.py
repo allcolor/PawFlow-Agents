@@ -375,6 +375,44 @@ def gemini_auth_login(req, *, send_progress=None):
     return {"credentials": credentials, "accounts": accounts}
 
 
+def probe_host_helper(host_helper, token, timeout=3):
+    """Verify that the configured endpoint is the authenticated host helper."""
+    import socket as _sock
+
+    if not host_helper:
+        raise RuntimeError("Host helper address is missing")
+    if not token:
+        raise RuntimeError("Host helper token is missing")
+    host, port_str = host_helper.rsplit(":", 1)
+    try:
+        port = int(port_str)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid host helper address: {host_helper}") from exc
+
+    with _sock.create_connection((host, port), timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        request = json.dumps({
+            "action": "host_helper_ping",
+            "_host_helper_token": token,
+        }) + "\n"
+        sock.sendall(request.encode("utf-8"))
+        buf = b""
+        while b"\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+            if len(buf) > 65536:
+                raise RuntimeError("Host helper ping response is too large")
+
+    if b"\n" not in buf:
+        raise RuntimeError("Host helper closed the ping connection")
+    response = json.loads(buf.split(b"\n", 1)[0])
+    if response.get("type") != "result" or response.get("data", {}).get("ok") is not True:
+        raise RuntimeError(response.get("error") or "Host helper ping was rejected")
+    return True
+
+
 def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
     """Forward a command to the host helper (CLI process outside Docker).
 

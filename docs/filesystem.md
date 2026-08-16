@@ -97,7 +97,7 @@ On Windows/WSL2 network changes, a relay socket may surface the network failure 
 
 For TLS relay connections, PawFlow serializes reads and writes on the accepted `SSLSocket`. The server bridge uses a short bounded receive poll so server-initiated commands are not starved while preventing concurrent TLS operations from corrupting or closing the connection during cold-start synchronization and chunked filesystem traffic.
 
-When a Docker relay is started with `--allow-local`, `local=true` operations are forwarded to the host helper. For Windows hosts whose project root is a UNC path such as `\\wsl$\...`, cmd-based execution uses `pushd`/`popd` instead of setting the process current directory to the UNC path, because `cmd.exe` cannot run with a UNC cwd.
+When a Docker relay is started with `--allow-local`, `local=true` operations are forwarded to the host helper. The Docker worker performs an authenticated helper health check before registering and every 15 seconds afterward; a failed helper therefore disconnects the relay instead of leaving a misleading green connected state. On Windows, PawFlow starts a tracked host-network bridge in WSL. The worker reaches that bridge through Docker's `host-gateway`; the bridge selects an authenticated route to Windows using WSL loopback or its NAT gateway. This avoids stale Wi-Fi/VPN addresses and works in both WSL mirrored and NAT modes. Every helper request is authenticated. For Windows hosts whose project root is a UNC path such as `\\wsl$\...`, cmd-based execution uses `pushd`/`popd` instead of setting the process current directory to the UNC path, because `cmd.exe` cannot run with a UNC cwd.
 
 ## Cloud Storage — Google Drive
 

@@ -29,6 +29,7 @@ from pathlib import Path
 
 from pawflow_relay.auth import (
     forward_to_host_helper as _forward_to_host_helper,
+    probe_host_helper as _probe_host_helper,
 )
 
 
@@ -136,6 +137,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     user's skill tree). Read-only — it lets non-CLI providers reach a
     skill's asset files referenced from its instructions.
     """
+    _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
+    _host_helper_token = os.environ.get("PAWFLOW_HOST_HELPER_TOKEN", "")
     _cp = _build_connection_params(
         url, root_dir, readonly, allow_exec, allow_automation,
         allow_local_screen, allow_local, allow_service_tunnels)
@@ -204,10 +207,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         _remote_mount_mgr = None
 
     reconnect_delay = 1
-
     while True:
         _disconnect_reason = "connect setup"
         _last_activity = [time.time()]
+        if _host_helper:
+            # This sits outside the connection try/except deliberately. A
+            # failed bridge must terminate the worker so its parent recreates
+            # the complete worker/bridge pair instead of reconnecting with a
+            # false host capability.
+            _probe_host_helper(_host_helper, _host_helper_token)
         try:
             sys.stderr.write(f"[FSRelay] Connecting to {url} ...\n")
             sock = _connect_and_handshake(
@@ -262,6 +270,22 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _watchdog_stop.wait(15)
                     if _watchdog_stop.is_set():
                         break
+                    if _host_helper:
+                        try:
+                            _probe_host_helper(
+                                _host_helper, _host_helper_token, timeout=3)
+                        except (OSError, RuntimeError, ValueError) as exc:
+                            _socket_diag["local_close"] = (
+                                f"host_helper_unreachable={exc}")
+                            sys.stderr.write(
+                                f"[FSRelay] Host helper health check failed: "
+                                f"{exc}; forcing reconnect\n")
+                            try:
+                                sock.close()
+                            except Exception:
+                                logging.getLogger(__name__).debug(
+                                    "Ignored exception", exc_info=True)
+                            break
                     idle = time.time() - _last_activity[0]
                     if idle > _DEAD_TIMEOUT:
                         _socket_diag["local_close"] = f"watchdog idle={idle:.0f}s"

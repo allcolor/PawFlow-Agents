@@ -4,6 +4,21 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.197] — 2026-08-16
+
+### Fixed
+
+- The `least_recently_used` router strategy now orders candidates by each
+  candidate's latest recorded route selection for that router; it previously
+  degenerated to plain `ordered` because no recency data reached the policy.
+- The router's "Explain last decision" action only reads events recorded by
+  that router's own scope and identity, instead of the most recent selection
+  from any router sharing the routing store.
+- Migration backups of legacy `llmFailover` definitions strip secret-named
+  config keys before the backup is written, matching the documented guarantee.
+- The redaction-sentinel `nosec` suppression no longer emits bandit parser
+  warnings in CI logs.
+
 ## [1.0.0-beta.196] — 2026-08-16
 
 ### Added

@@ -238,11 +238,14 @@ class RouterLLMClient:
         counter = (store.next_counter(self._router_key)
                    if self._service.strategy in {
                        "round_robin", "sticky_round_robin"} else 0)
+        last_selected = (store.last_selected_map(self._router_key)
+                         if self._service.strategy == "least_recently_used"
+                         else {})
         selected = select_candidates(
             resolved, strategy=self._service.strategy, health=health,
             counter=counter, affinity=affinity,
             sticky_successful_turns=self._service.sticky_successful_turns,
-            now=time.time())
+            last_selected=last_selected, now=time.time())
         if not selected.ordered:
             raise LLMRouteExhausted(failures + [
                 {"service_id": item.child.service_id,
@@ -494,6 +497,14 @@ class LLMRouterService(BaseService):
         return max(60, int(self.config.get("affinity_ttl_seconds", 86400) or 86400))
 
     @property
+    def router_key(self) -> tuple[str, str, str]:
+        return (
+            str(self.config.get("_scope", "global") or "global"),
+            str(self.config.get("_scope_id", "__global__") or "__global__"),
+            str(self.config.get("_service_id", "") or ""),
+        )
+
+    @property
     def routing_store(self):
         if not hasattr(self, "_routing_store"):
             self._routing_store = LLMRoutingStore()
@@ -620,7 +631,8 @@ class LLMRouterService(BaseService):
         return rows
 
     def explain_last_decision(self):
-        events = self.routing_store.list_events(limit=100)
+        events = self.routing_store.list_events(
+            router_key=self.router_key, limit=100)
         selected = next((event for event in events
                          if event["event_type"] == "llm.route.selected"), None)
         if selected is None:

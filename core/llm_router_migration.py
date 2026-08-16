@@ -13,6 +13,9 @@ import core.paths as _paths
 
 
 MIGRATION_VERSION = "llm-router-v1"
+_SENSITIVE_PARTS = (
+    "authorization", "api_key", "apikey", "access_token", "refresh_token",
+    "password", "secret", "cookie")
 
 
 class LLMRouterMigrationError(RuntimeError):
@@ -95,6 +98,18 @@ def _new_config(config: Any) -> dict:
     }
 
 
+def _backup_payload(payload: dict) -> dict:
+    """Copy the legacy payload with sensitive-named config keys removed."""
+    backup = dict(payload)
+    config = payload.get("config")
+    if isinstance(config, dict):
+        backup["config"] = {
+            key: value for key, value in config.items()
+            if not any(part in str(key).lower().replace("-", "_")
+                       for part in _SENSITIVE_PARTS)}
+    return backup
+
+
 def migrate_definition_payload(payload: dict, *, scope: str, scope_id: str,
                                service_id: str) -> tuple[dict, str]:
     """Return migrated payload and outcome; non-legacy input is unchanged."""
@@ -103,7 +118,7 @@ def migrate_definition_payload(payload: dict, *, scope: str, scope_id: str,
     backup = _backup_path(scope, scope_id, service_id)
     try:
         if not backup.exists():
-            _atomic_json(backup, payload)
+            _atomic_json(backup, _backup_payload(payload))
     except Exception as exc:
         raise LLMRouterMigrationError(
             f"Cannot protect legacy service '{service_id}' before migration") from exc

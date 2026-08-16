@@ -355,13 +355,38 @@ class LLMRoutingStore:
                 (self.event_retention,))
         return event_id
 
-    def list_events(self, *, plan_id: str = "", limit: int = 100) -> list[dict]:
+    def last_selected_map(
+            self, router_key: tuple[str, str, str]) -> dict[tuple[str, str, str], float]:
+        """Latest selection timestamp per child, for one router only."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT child_scope, child_scope_id, child_service_id, "
+                "MAX(ts) AS ts FROM router_events WHERE router_scope=? "
+                "AND router_scope_id=? AND router_service_id=? "
+                "AND event_type='llm.route.selected' "
+                "GROUP BY child_scope, child_scope_id, child_service_id",
+                tuple(router_key)).fetchall()
+        return {
+            (row["child_scope"], row["child_scope_id"],
+             row["child_service_id"]): float(row["ts"])
+            for row in rows}
+
+    def list_events(self, *, plan_id: str = "",
+                    router_key: tuple[str, str, str] | None = None,
+                    limit: int = 100) -> list[dict]:
         limit = max(1, min(1000, int(limit)))
         query = "SELECT * FROM router_events"
+        clauses = []
         args: tuple[Any, ...] = ()
         if plan_id:
-            query += " WHERE plan_id=?"
-            args = (plan_id,)
+            clauses.append("plan_id=?")
+            args += (plan_id,)
+        if router_key is not None:
+            clauses.append(
+                "router_scope=? AND router_scope_id=? AND router_service_id=?")
+            args += tuple(router_key)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY ts DESC,id DESC LIMIT ?"
         with self._lock:
             rows = self._conn.execute(query, args + (limit,)).fetchall()

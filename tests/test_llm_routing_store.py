@@ -110,6 +110,29 @@ def test_events_have_uuid_timestamp_retention_and_no_secret_fields(store):
             details={"safe": "x" * 5000})
 
 
+def test_last_selected_map_and_router_scoped_events(store):
+    child_a = ResolvedServiceRef("global", "__global__", "child-a", REVISION)
+    child_b = ResolvedServiceRef("global", "__global__", "child-b", REVISION)
+    mine = ("user", "u", "router")
+    other = ("user", "u", "other")
+    store.append_event(event_type="llm.route.selected", router_key=mine,
+                       child=child_a, ts=100)
+    store.append_event(event_type="llm.route.selected", router_key=mine,
+                       child=child_b, ts=110)
+    store.append_event(event_type="llm.route.selected", router_key=mine,
+                       child=child_a, ts=120)
+    store.append_event(event_type="llm.route.recovered", router_key=mine,
+                       child=child_b, ts=130)
+    store.append_event(event_type="llm.route.selected", router_key=other,
+                       child=child_b, ts=140)
+    assert store.last_selected_map(mine) == {
+        ("global", "__global__", "child-a"): 120.0,
+        ("global", "__global__", "child-b"): 110.0}
+    assert {event["router_service_id"]
+            for event in store.list_events(router_key=mine)} == {"router"}
+    assert len(store.list_events(router_key=other)) == 1
+
+
 def test_database_contains_no_secret_columns(store):
     rows = store._conn.execute("PRAGMA table_info(router_health)").fetchall()
     columns = {row[1] for row in rows}

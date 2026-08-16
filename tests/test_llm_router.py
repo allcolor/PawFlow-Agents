@@ -265,6 +265,55 @@ def test_health_explain_and_reset_actions_are_sanitized(tmp_path):
             user_id="alice", conversation_id="conv-1")[0]["state"] == "unknown"
 
 
+def test_least_recently_used_prefers_unselected_candidates(tmp_path):
+    registry = FakeRegistry({
+        "main": FakeClient("main", [response("first")]),
+        "fallback-1": FakeClient("fallback-1", [response("second")]),
+        "fallback-2": FakeClient("fallback-2", [response("third")]),
+    })
+    service = make_service(tmp_path, strategy="least_recently_used")
+    with patch("core.service_registry.ServiceRegistry.get_instance",
+               return_value=registry):
+        first = service.get_client()
+        first.complete(user_message(), call_user_id="alice",
+                       call_conversation_id="conv-1",
+                       call_agent_name="assistant")
+        assert first.active_service_id == "main"
+        second = service.get_client()
+        second.complete(user_message(), call_user_id="alice",
+                        call_conversation_id="conv-1",
+                        call_agent_name="assistant")
+    assert second.active_service_id == "fallback-1"
+    assert [ref.service_id for ref in second.route_plan.ordered_candidates] == [
+        "fallback-1", "fallback-2", "main"]
+
+
+def test_explain_last_decision_is_scoped_to_this_router(tmp_path):
+    registry = FakeRegistry({
+        "main": FakeClient("main", [response("ok")]),
+        "fallback-1": FakeClient("fallback-1", []),
+        "fallback-2": FakeClient("fallback-2", []),
+    })
+    service = make_service(tmp_path)
+    client = service.get_client()
+    with patch("core.service_registry.ServiceRegistry.get_instance",
+               return_value=registry):
+        client.complete(user_message(), call_user_id="alice",
+                        call_conversation_id="conv-1",
+                        call_agent_name="assistant")
+    import uuid as _uuid
+    service.routing_store.append_event(
+        event_type="llm.route.selected",
+        router_key=("user", "alice", "other-router"),
+        plan_id=str(_uuid.uuid4()), outcome="selected",
+        reason_code="ordered")
+    explanation = service.explain_last_decision()
+    assert explanation["plan_id"] == client.route_plan.plan_id
+    assert explanation["selected"] == "main"
+    assert all(event["router_service_id"] == "resilient"
+               for event in explanation["events"])
+
+
 class TurnHarness(_ALCLlmTurnMixin):
     def __init__(self):
         self.prepare_calls = []

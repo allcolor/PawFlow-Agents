@@ -65,6 +65,20 @@ def test_invalid_user_is_quarantined_without_raw_config(tmp_path, monkeypatch):
         "invalid_legacy_llm_failover")
 
 
+def test_backup_excludes_sensitive_named_config_keys(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "SYSTEM_DIR", tmp_path)
+    migrate_definition_payload(
+        legacy({"main_llm_service": "main",
+                "fallback_llm_services": ["backup-1"],
+                "api_key": "sk-leak", "Refresh-Token": "rt-leak"}),
+        scope="user", scope_id="alice", service_id="resilient")
+    backup = json.loads((tmp_path / "migrations" / "llm-router-v1" / "backups"
+                         / "user" / "alice" / "resilient.json").read_text())
+    assert backup["config"] == {
+        "main_llm_service": "main", "fallback_llm_services": ["backup-1"]}
+    assert "leak" not in json.dumps(backup)
+
+
 def test_nonlegacy_payload_is_idempotently_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "SYSTEM_DIR", tmp_path)
     payload = {"service_type": "llmRouter", "config": {"candidates": []}}

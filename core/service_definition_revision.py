@@ -10,7 +10,8 @@ from typing import Any, Mapping
 from core import ServiceFactory
 
 
-SECRET_MARKER = "<sensitive>"  # nosec B105 - redaction sentinel, not a credential
+# Redaction sentinel written in place of secret values, not a credential.
+SECRET_MARKER = "<sensitive>"  # nosec B105
 
 
 def service_sensitive_keys(service_type: str) -> set[str]:

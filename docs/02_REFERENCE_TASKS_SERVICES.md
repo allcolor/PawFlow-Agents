@@ -750,13 +750,18 @@ context. A tool call that has no persisted result is represented to the next
 provider as an unknown outcome and must be inspected before it is retried.
 Cancellation and force stop never advance to another candidate. If all
 candidates fail, PawFlow returns one sanitized exhaustion error while retaining
-the work already completed in the conversation. The Health, Explain last
-decision, and Reset health service actions expose bounded, secret-free state.
+the work already completed in the conversation. `least_recently_used` orders
+eligible candidates by the timestamp of their latest recorded route selection
+for this router, oldest (or never selected) first, with priority and position
+as tie-breakers. The Health, Explain last decision, and Reset health service
+actions expose bounded, secret-free state; Explain last decision only reads
+events recorded by this router's own scope and identity.
 
 Legacy `llmFailover` definitions migrate before service connection. Valid
 definitions become ordered routers while preserving identity and enabled state.
 Invalid global definitions abort startup. Invalid user/conversation definitions
-are backed up under `data/system/migrations/llm-router-v1/backups`, replaced by
+are backed up under `data/system/migrations/llm-router-v1/backups` (config
+keys with secret-like names are stripped from the backup), replaced by
 disabled owner-visible quarantine placeholders, and never block unrelated
 tenants. To roll back before repair, stop PawFlow and restore the protected JSON
 backup to its original scope; do not run old and new runtime types together.

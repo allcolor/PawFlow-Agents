@@ -672,6 +672,27 @@ def test_the_installer_script_hands_over_to_the_installer(monkeypatch):
     assert "git pull" not in script
 
 
+def test_the_installer_script_pins_the_runtime_dir_to_the_host_lineage(monkeypatch):
+    """Regression: without PAWFLOW_RUNTIME_DIR the installer resolved the
+    per-version directory against the updater container's $HOME (/root),
+    extracted the artifacts into the container's own filesystem, and labeled
+    the new server with a host-app-dir that does not exist on the host —
+    breaking every subsequent update's preflight."""
+    _patch_inspect(monkeypatch)
+    info = installer_deployment.installer_info()
+
+    script = update_manager._installer_updater_script(
+        info, "ghcr.io/allcolor/pawflow:1.0.0-beta.41", pull_source=False,
+        artifact_dir="/data/lineage/1.0.0-beta.41")
+    assert "PAWFLOW_RUNTIME_DIR=/data/lineage/1.0.0-beta.41" in script
+
+    # Without a computed artifact directory nothing is pinned: the operator
+    # chose their own layout and the installer refreshes it in place.
+    bare = update_manager._installer_updater_script(
+        info, "ghcr.io/allcolor/pawflow:1.0.0-beta.41", pull_source=False)
+    assert "PAWFLOW_RUNTIME_DIR" not in bare
+
+
 def test_the_installer_script_pulls_source_only_when_asked(monkeypatch):
     _patch_inspect(monkeypatch)
     info = installer_deployment.installer_info()

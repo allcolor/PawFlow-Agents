@@ -1020,6 +1020,15 @@ def _installer_updater_script(info: Dict[str, Any], image: str,
     env = start_script_env(info, image)
     env.pop("PAWFLOW_SOURCE_DIR", None)
     env["PAWFLOW_SKIP_APPARMOR"] = "1"
+    if artifact_dir:
+        # Left to itself, the installer derives the per-version directory from
+        # $HOME — which inside the updater container is /root, not the mounted
+        # host lineage. The artifacts would land in the updater's own
+        # filesystem (lost when it exits) and the recreated server would carry
+        # a host-app-dir label that does not exist on the host, so every
+        # subsequent update would fail preflight. Pin the exact host directory
+        # the preflight already validated as writable.
+        env["PAWFLOW_RUNTIME_DIR"] = artifact_dir
     assignments = " ".join(
         f"{k}={shlex.quote(v)}" for k, v in sorted(env.items())
         if v != "" or k in RESET_ON_UPDATE)

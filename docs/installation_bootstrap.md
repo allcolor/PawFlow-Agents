@@ -127,7 +127,11 @@ the updater container hands over to `scripts/install-pawflow.sh --port <port>
 --pull-images` with the deployment's environment replayed, so one click
 updates the server image, the host-side artifacts, the local CLI tools image,
 both relay images, and cleans old tags — the same full sequence as the manual
-command line. AppArmor loading is skipped inside the container (the host's
+command line. The updater pins `PAWFLOW_RUNTIME_DIR` to the new per-version
+directory inside the mounted host lineage — the installer must not derive it
+from the updater container's own `$HOME`, or the artifacts land in the
+container's filesystem and the recreated server is labeled with a host path
+that does not exist. AppArmor loading is skipped inside the container (the host's
 loaded profiles remain). The updater container may run as root and hands the
 new per-version runtime directory back to the deployment's uid afterwards. If
 an update fails in a way that skips that step, the installer refuses the

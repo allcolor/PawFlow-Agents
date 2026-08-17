@@ -4,6 +4,16 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.199] — 2026-08-17
+
+### Fixed
+
+- Installer-driven builds of the local agent CLI image now use the bundled
+  Docker Buildx plugin and BuildKit instead of Docker's deprecated legacy
+  builder. This removes the per-instruction intermediate-container delay seen
+  during admin-UI updates while preserving a warned fallback for older Docker
+  environments.
+
 ## [1.0.0-beta.198] — 2026-08-16
 
 ### Fixed

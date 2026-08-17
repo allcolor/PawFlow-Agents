@@ -283,6 +283,65 @@ def test_published_mcp_conversation_context_and_idempotent_messages(monkeypatch)
     assert writer.events[0]["data"]["msg_id"] == "external-1"
 
 
+def test_every_builtin_tool_call_is_audited_in_conversation(monkeypatch):
+    """tools/call rows must appear in the conversation like a normal agent's
+    tool calls; context reads audit a compact summary, not the document."""
+    server = {
+        "server_id": "srv-1",
+        "owner_user_id": "alice",
+        "conversation_id": "conv-1",
+        "agent_name": "agent-a",
+    }
+    key = {"key_id": "key-1", "label": "ChatGPT", "kind": "connector"}
+
+    class Store:
+        def load_agent_context(self, _cid, _agent):
+            return [{"role": "user", "content": "first", "msg_id": "m1",
+                     "seq": 3}]
+
+    class Task:
+        system_prompt = "Published agent system prompt"
+
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": "read", "description": "Read", "parameters": {}}]
+
+        def get(self, _name):
+            return None
+
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance", lambda: Store())
+    monkeypatch.setattr(
+        "core.agent_executor.resolve_agent_task",
+        lambda *_args, **_kwargs: Task())
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    audits = []
+    monkeypatch.setattr(
+        endpoint, "_persist_tool_call_start",
+        lambda _s, _k, name, args, call_id: audits.append(("start", name)))
+    monkeypatch.setattr(
+        endpoint, "_persist_tool_call",
+        lambda _s, _k, name, args, result, call_id: audits.append(
+            ("result", name, result)))
+
+    endpoint._call_tool(server, key, "get_initial_context", {})
+    endpoint._call_tool(server, key, "get_context_updates", {"after_seq": 0})
+    endpoint._call_tool(server, key, "get_tool_schema", {"tool_name": "read"})
+
+    assert [item[1] for item in audits if item[0] == "start"] == [
+        "get_initial_context", "get_context_updates", "get_tool_schema"]
+    initial = next(item[2] for item in audits
+                   if item[0] == "result" and item[1] == "get_initial_context")
+    assert "document_chars" in initial
+    assert "PawFlow Initial Context" not in initial
+    updates = next(item[2] for item in audits
+                   if item[0] == "result" and item[1] == "get_context_updates")
+    assert "new_messages" in updates
+    schema = next(item[2] for item in audits
+                  if item[0] == "result" and item[1] == "get_tool_schema")
+    assert "read" in schema
+
+
 def test_use_tool_runs_through_canonical_owner_agent_runtime(monkeypatch):
     calls = {}
 

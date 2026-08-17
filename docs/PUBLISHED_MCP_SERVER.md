@@ -42,8 +42,11 @@ runs with the conversation owner's identity and that agent's configuration,
 through the normal PawFlow approval gate, hooks, secret resolution, redaction,
 and tool metrics. The selected agent is a capability profile, not the caller:
 the MCP client owns the call and receives its result. Calls and results are
-appended to the ordinary conversation transcript as display-only audit rows;
-they are not injected into the selected agent's context.
+appended to the ordinary conversation transcript as display-only audit rows —
+every `tools/call` (context reads and schema discovery included), rendered
+like a normal agent's tool calls; they are not injected into the selected
+agent's context. `get_initial_context`/`get_context_updates` results are
+audited as a compact summary (size and cursor), never the full document.
 
 `delegate` and `flash_delegate` remain asynchronous inside PawFlow, but the
 published MCP adapter keeps the originating `tools/call` open until every

@@ -664,6 +664,21 @@ def _persist_tool_call(server: Dict[str, Any], key: Dict[str, Any],
         server, key, tool_name, result_text, tool_call_id)
 
 
+def _context_audit_summary(name: str, result: str) -> str:
+    """Compact audit text for context reads — never the full document."""
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return str(result)[:200]
+    if name == "get_initial_context":
+        return json.dumps({
+            "document_chars": len(str(payload.get("document") or "")),
+            "cursor": payload.get("cursor", 0)})
+    return json.dumps({
+        "new_messages": len(payload.get("messages") or []),
+        "cursor": payload.get("cursor", 0)})
+
+
 _EXTERNAL_ASYNC_TOOLS = {"delegate", "flash_delegate"}
 
 # Scheduling tools promise an autonomous resume, which needs a return channel
@@ -878,10 +893,24 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
 
     content, is_error, result_text = _encode_tool_content(
         registry, executed_name, executed_args, result)
-    # Schema discovery is read-only protocol chatter; only real executions
-    # belong in the ordinary conversation transcript. Call/result rows are
-    # display-only because the published agent supplies capabilities but is not
-    # the external caller.
+    # Every tools/call is audited in the conversation like a normal agent's
+    # tool calls. Call/result rows are display-only because the published
+    # agent supplies capabilities but is not the external caller. Context
+    # reads persist a compact summary instead of their full result — the
+    # result IS the transcript, embedding it would duplicate the conversation
+    # into itself on every sync.
+    if name != "use_tool":
+        try:
+            audit_id = uuid.uuid4().hex[:12]
+            _persist_tool_call_start(server, key, name, args, audit_id)
+            summary = (
+                _context_audit_summary(name, result_text)
+                if name in {"get_initial_context", "get_context_updates"}
+                else result_text)
+            _persist_tool_call(server, key, name, args, summary, audit_id)
+        except Exception:
+            logger.error(
+                "Could not persist published MCP tool audit", exc_info=True)
     if name == "use_tool" and executed_name != "use_tool":
         try:
             _persist_tool_call(

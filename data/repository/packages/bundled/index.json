@@ -85,6 +85,27 @@
       "objects": [
         "repository_resource:pawflow-bot"
       ]
+    },
+    {
+      "package": "pawflow.comfyui-operator",
+      "version": "1.0.0",
+      "description": "Operational skill for installing, configuring, running, validating, and troubleshooting self-hosted ComfyUI through PawFlow relays and media services.",
+      "category": "Media & AI",
+      "artifact": "pawflow.comfyui-operator-1.0.0.pfp",
+      "sha256": "sha256:f71d581a879f8a2fc73939c1ad0486f12d47695a4c7a2cff649b9e60f78e5406",
+      "package_size": 7460,
+      "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
+      "tags": [
+        "comfyui",
+        "self-hosted",
+        "skill",
+        "image",
+        "video",
+        "audio"
+      ],
+      "objects": [
+        "skill:operate-comfyui"
+      ]
     }
   ]
 }

@@ -53,6 +53,28 @@ The connector uses direct Streamable HTTP from the PawFlow server. It does not
 require a relay, a local ComfyUI installation, or a PawFlow ComfyUI generation
 service. The account's Comfy Cloud usage and billing rules still apply.
 
+## Bundled self-hosted operator skill
+
+PawFlow releases include the signed `pawflow.comfyui-operator` package in the
+local package catalog. Its `operate-comfyui` skill guides an assigned agent
+through self-hosted ComfyUI installation and repair, relay routing, trusted API
+workflow preparation, model and custom-node installation, image/video/audio
+generation, queue-safe operation, media validation, and FileStore delivery.
+
+The package is available but is not installed or assigned automatically:
+
+1. Open **Resources -> PawFlow Packages**, search for `ComfyUI Operator`, and
+   inspect `pawflow.comfyui-operator@1.0.0`.
+2. Install `skill:operate-comfyui` at user scope so it can be shared across
+   conversations.
+3. Assign `operate-comfyui` only to agents that should operate the local media
+   stack.
+
+Installing the skill does not install ComfyUI, download models, expose port
+8188, or grant access to a relay by itself. The agent still uses the
+conversation's relay bindings and the normal PawFlow approval and service
+boundaries.
+
 ## 1. Install and start ComfyUI
 
 Choose one of the installation methods in the

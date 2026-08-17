@@ -1,0 +1,21 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.comfyui-operator",
+  "version": "1.0.0",
+  "description": "Operational skill for installing, configuring, running, validating, and troubleshooting self-hosted ComfyUI through PawFlow relays and media services.",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": ""
+  },
+  "origin": {
+    "source": "packages/pawflow.comfyui-operator.pfpdir"
+  },
+  "objects": [
+    {
+      "id": "skill:operate-comfyui",
+      "type": "skill",
+      "name": "operate-comfyui",
+      "path": "content/skills/operate-comfyui/SKILL.md"
+    }
+  ]
+}

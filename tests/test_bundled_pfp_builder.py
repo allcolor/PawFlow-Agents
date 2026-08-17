@@ -84,6 +84,7 @@ def test_bundled_avatar_catalog_build_is_signed_and_reproducible(
         "pawflow.avatar-runtime",
         "pawflow.avatar-helper",
         "pawflow.avatar-pack.starter",
+        "pawflow.comfyui-operator",
     ]
     for row in first["packages"][1:]:
         assert row["developer_key"] == keypair["public_key"]

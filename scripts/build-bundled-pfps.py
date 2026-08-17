@@ -38,6 +38,11 @@ PACKAGE_SPECS = (
         "category": "Media & AI",
         "tags": ["avatar", "starter", "3d", "model"],
     },
+    {
+        "source": ROOT / "packages" / "pawflow.comfyui-operator.pfpdir",
+        "category": "Media & AI",
+        "tags": ["comfyui", "self-hosted", "skill", "image", "video", "audio"],
+    },
 )
 
 

@@ -4,6 +4,19 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.205] — 2026-08-17
+
+### Fixed
+
+- The `get_initial_context` Bootstrap Contract and the one-way connector
+  prompt are now mode-aware. Read-only publications no longer instruct the
+  client to persist messages with `send_user_message`/`send_agent_message` —
+  tools they deliberately do not expose; they now tell the client to never
+  attempt message persistence and to use only the advertised tools. The full
+  modes describe direct tool exposure instead of the dropped `use_tool`
+  gateway. A real-registry security invariant test guarantees every tool
+  advertised by `full_readonly` is classified read-only by `ToolApprovalGate`.
+
 ## [1.0.0-beta.204] — 2026-08-17
 
 ### Added

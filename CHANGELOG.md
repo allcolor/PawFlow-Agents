@@ -4,6 +4,17 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.201] — 2026-08-17
+
+### Fixed
+
+- The in-app server update pins `PAWFLOW_RUNTIME_DIR` to the new per-version
+  directory inside the mounted host lineage. Previously the installer derived
+  it from the updater container's own `$HOME` (`/root`): the host artifacts
+  were extracted into the updater's filesystem and lost, and the recreated
+  server carried a `host-app-dir` label pointing at a path that does not
+  exist on the host, so the next in-app update failed preflight.
+
 ## [1.0.0-beta.200] — 2026-08-17
 
 ### Fixed

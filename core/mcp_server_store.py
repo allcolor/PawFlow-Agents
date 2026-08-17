@@ -23,6 +23,15 @@ import core.paths as _paths
 
 _CLIENT_LEASE_TTL_SECONDS = 120.0
 _IMAGE_OUTPUTS = frozenset({"native", "describe"})
+# Tool exposure modes for a published conversation:
+#  - 'api':  publish the six meta tools (get_initial_context, use_tool, …).
+#            Every PawFlow tool is reached through use_tool; a single opaque
+#            surface, but MCP clients see only use_tool's write annotation.
+#  - 'full': publish every PawFlow tool directly, each with its real MCP
+#            behavior annotations (readOnlyHint/destructiveHint), so clients
+#            such as ChatGPT can invoke the read-only tools even on plans that
+#            gate write actions.
+_MODES = frozenset({"api", "full"})
 _KEY_KINDS = frozenset({"bearer", "connector"})
 _KEY_PREFIXES = {"bearer": "pfmcp_", "connector": "pfmcc_"}
 
@@ -81,7 +90,8 @@ class MCPServerStore:
                     terminal_secret TEXT NOT NULL DEFAULT '',
                     terminal_state_path TEXT NOT NULL DEFAULT '',
                     image_output TEXT NOT NULL DEFAULT 'native',
-                    tool_allowlist TEXT NOT NULL DEFAULT ''
+                    tool_allowlist TEXT NOT NULL DEFAULT '',
+                    mode TEXT NOT NULL DEFAULT 'api'
                 );
                 CREATE INDEX IF NOT EXISTS idx_mcp_servers_owner_conversation
                     ON mcp_servers(owner_user_id, conversation_id);
@@ -123,6 +133,11 @@ class MCPServerStore:
                     "ALTER TABLE mcp_servers ADD COLUMN "
                     "tool_allowlist TEXT NOT NULL DEFAULT ''"
                 )
+            if "mode" not in columns:
+                connection.execute(
+                    "ALTER TABLE mcp_servers ADD COLUMN "
+                    "mode TEXT NOT NULL DEFAULT 'api'"
+                )
             key_columns = {
                 str(row["name"])
                 for row in connection.execute("PRAGMA table_info(mcp_api_keys)")
@@ -145,6 +160,9 @@ class MCPServerStore:
             parsed = []
         data["tool_allowlist"] = [
             str(item) for item in parsed if isinstance(item, str) and item]
+        data["mode"] = str(data.get("mode") or "api").strip().lower()
+        if data["mode"] not in _MODES:
+            data["mode"] = "api"
         heartbeat = float(data.get("client_heartbeat_at") or 0)
         data["client_active"] = bool(
             data.get("active_client_id")
@@ -163,12 +181,18 @@ class MCPServerStore:
     def configure(self, owner_user_id: str, conversation_id: str,
                   agent_name: str, label: str = "", enabled: bool = True,
                   image_output: str = "native",
-                  tool_allowlist: Optional[List[str]] = None) -> Dict[str, Any]:
+                  tool_allowlist: Optional[List[str]] = None,
+                  mode: Optional[str] = None) -> Dict[str, Any]:
         if not owner_user_id or not conversation_id or not agent_name:
             raise ValueError("owner_user_id, conversation_id and agent_name are required")
         image_output = str(image_output or "").strip().lower()
         if image_output not in _IMAGE_OUTPUTS:
             raise ValueError("image_output must be 'native' or 'describe'")
+        mode_value: Optional[str] = None
+        if mode is not None:
+            mode_value = str(mode or "").strip().lower()
+            if mode_value not in _MODES:
+                raise ValueError("mode must be 'api' or 'full'")
         allowlist_json: Optional[str] = None
         if tool_allowlist is not None:
             if (not isinstance(tool_allowlist, list)
@@ -201,17 +225,22 @@ class MCPServerStore:
                         "UPDATE mcp_servers SET tool_allowlist = ? WHERE server_id = ?",
                         (allowlist_json, server_id),
                     )
+                if mode_value is not None:
+                    connection.execute(
+                        "UPDATE mcp_servers SET mode = ? WHERE server_id = ?",
+                        (mode_value, server_id),
+                    )
             else:
                 server_id = "srv_" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
                 connection.execute(
                     """INSERT INTO mcp_servers (
                            server_id, owner_user_id, conversation_id, agent_name,
-                           label, enabled, image_output, tool_allowlist,
+                           label, enabled, image_output, tool_allowlist, mode,
                            created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (server_id, owner_user_id, conversation_id, agent_name,
                      label or agent_name, int(bool(enabled)), image_output,
-                     allowlist_json or "", now, now),
+                     allowlist_json or "", mode_value or "api", now, now),
                 )
         result = self.get(server_id)
         if result is None:
@@ -285,13 +314,18 @@ class MCPServerStore:
             "revoked": False,
         }
 
-    def list_keys(self, server_id: str) -> List[Dict[str, Any]]:
+    def list_keys(self, server_id: str,
+                  include_revoked: bool = False) -> List[Dict[str, Any]]:
+        # Revoked keys are excluded by default: they can never authenticate
+        # again (validate_key requires revoked_at = 0), so surfacing them only
+        # makes the publication dialog grow without bound. The rows stay in the
+        # table as an audit trail; pass include_revoked=True to read them.
+        query = "SELECT * FROM mcp_api_keys WHERE server_id = ?"
+        if not include_revoked:
+            query += " AND revoked_at = 0"
+        query += " ORDER BY created_at DESC"
         with self._lock, self._connect() as connection:
-            rows = connection.execute(
-                """SELECT * FROM mcp_api_keys WHERE server_id = ?
-                   ORDER BY created_at DESC""",
-                (server_id,),
-            ).fetchall()
+            rows = connection.execute(query, (server_id,)).fetchall()
         return [self._key_row(row) for row in rows]
 
     def revoke_key(self, server_id: str, key_id: str) -> bool:

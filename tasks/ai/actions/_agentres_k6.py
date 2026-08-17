@@ -80,6 +80,11 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
             return _reply(flowfile, {
                 "error": "tool_allowlist must be a list of non-empty tool names"
             }, 400)
+        mode = body.get("mode")
+        if mode is not None and str(mode).strip().lower() not in {"api", "full"}:
+            return _reply(flowfile, {
+                "error": "mode must be 'api' or 'full'"
+            }, 400)
         from core.conv_agent_config import get_all_agent_configs
         configs = get_all_agent_configs(conversation_id) or {}
         needle = agent_name.lower()
@@ -106,6 +111,7 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
             enabled=enabled,
             image_output=image_output,
             tool_allowlist=tool_allowlist,
+            mode=(str(mode).strip().lower() if mode is not None else None),
         )
         from services.mcp_server_endpoint import ensure_mcp_routes
         ensure_mcp_routes()

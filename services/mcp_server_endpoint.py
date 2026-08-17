@@ -382,6 +382,57 @@ def _tool_schema(registry, tool_name: str,
     return f"Error: unknown tool '{tool_name}'"
 
 
+# Meta tools kept when a publication exposes its tools directly (full mode).
+# get_tool_schema and use_tool are dropped: in full mode every tool is a
+# first-class MCP tool, so the schema-lookup and dispatch shims are redundant.
+_FULL_MODE_META = frozenset({
+    "get_initial_context", "get_context_updates",
+    "send_user_message", "send_agent_message",
+})
+
+
+def _mcp_tool_annotations(tool_name: str) -> Dict[str, Any]:
+    """Real MCP behavior hints for a directly-exposed PawFlow tool.
+
+    ToolApprovalGate is the single source of truth for what counts as
+    read-only, so a client such as ChatGPT sees the true read/write nature of
+    each tool instead of the blanket write annotation that use_tool carries.
+    """
+    from core.tool_approval import ToolApprovalGate
+    if ToolApprovalGate.is_read_only_allowed(tool_name):
+        return {"readOnlyHint": True, "openWorldHint": False}
+    return {
+        "readOnlyHint": False, "destructiveHint": True, "openWorldHint": True,
+    }
+
+
+def _tools_for_server(server: Dict[str, Any]) -> list:
+    """MCP tool list advertised for this publication, honoring its mode.
+
+    api mode: the six meta tools (every PawFlow tool reached via use_tool).
+    full mode: the conversation/messaging meta tools plus every PawFlow tool
+    exposed directly, each carrying its real behavior annotations.
+    """
+    if str(server.get("mode") or "api") != "full":
+        return _MCP_TOOLS
+    tools = [tool for tool in _MCP_TOOLS if tool["name"] in _FULL_MODE_META]
+    allowlist = _publication_allowlist(server)
+    for definition in _registry(server).get_tool_definitions():
+        name = definition.get("name", "")
+        if not name or name in _FULL_MODE_META:
+            continue
+        if allowlist and name not in allowlist:
+            continue
+        tools.append({
+            "name": name,
+            "description": definition.get("description", ""),
+            "inputSchema": definition.get("parameters")
+            or {"type": "object", "properties": {}},
+            "annotations": _mcp_tool_annotations(name),
+        })
+    return tools
+
+
 def _agent_context_rows(server: Dict[str, Any]) -> list:
     from core.conversation_store import ConversationStore
 
@@ -784,6 +835,15 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
                mcp_request_id: Any = None) -> Dict[str, Any]:
     registry = _registry(server)
     args = arguments if isinstance(arguments, dict) else {}
+    # Full mode advertises every PawFlow tool directly. A direct call to one of
+    # them is funneled through the exact use_tool path below, so allowlist
+    # enforcement, return-channel checks, async task handling, image output and
+    # auditing all behave identically — only the entry point differs.
+    if (str(server.get("mode") or "api") == "full"
+            and name not in _FULL_MODE_META
+            and name not in {"get_tool_schema", "use_tool"}):
+        args = {"tool_name": name, "arguments": args}
+        name = "use_tool"
     executed_name = name
     executed_args = args
     if name in {
@@ -961,7 +1021,8 @@ def _dispatch_session_message(server: Dict[str, Any], key: Dict[str, Any],
     if method == "ping":
         return _rpc_result(request_id, {}) if request_id is not None else None
     if method == "tools/list":
-        return _rpc_result(request_id, {"tools": _MCP_TOOLS}) if request_id is not None else None
+        return (_rpc_result(request_id, {"tools": _tools_for_server(server)})
+                if request_id is not None else None)
     if method == "tools/call":
         name = str(params.get("name") or "")
         if not name:

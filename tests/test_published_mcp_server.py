@@ -54,6 +54,24 @@ def test_store_hashes_keys_and_supports_revocation(tmp_path):
     assert store.validate_key(server["server_id"], raw) is None
 
 
+def test_list_keys_hides_revoked_by_default(tmp_path):
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    server = store.configure("alice", "conv-1", "agent-a")
+    server_id = server["server_id"]
+    _, keep = store.create_key(server_id, "live")
+    _, drop = store.create_key(server_id, "doomed")
+
+    store.revoke_key(server_id, drop["key_id"])
+
+    # A revoked key can never authenticate again, so it must disappear from
+    # the publication dialog instead of accumulating forever.
+    listed = {k["key_id"] for k in store.list_keys(server_id)}
+    assert listed == {keep["key_id"]}
+    # The row is retained as an audit trail and reachable on request.
+    all_ids = {k["key_id"] for k in store.list_keys(server_id, include_revoked=True)}
+    assert all_ids == {keep["key_id"], drop["key_id"]}
+
+
 def test_store_enforces_one_fresh_cli_and_expires_stale_lease(tmp_path):
     store = MCPServerStore(tmp_path / "published.sqlite3")
     server = store.configure("alice", "conv-1", "agent-a")
@@ -876,10 +894,10 @@ def test_reconfiguring_published_agent_releases_old_cli_relay(monkeypatch):
             return True
 
         def configure(self, owner, conversation_id, agent_name, label="", enabled=True,
-                      image_output="native", tool_allowlist=None):
+                      image_output="native", tool_allowlist=None, mode=None):
             calls.append(("configure", owner, conversation_id, agent_name, enabled))
             return dict(server, agent_name=agent_name, enabled=enabled,
-                        image_output=image_output)
+                        image_output=image_output, mode=mode or "api")
 
         def list_keys(self, _server_id):
             return []
@@ -1012,8 +1030,14 @@ def test_published_mcp_ui_is_loaded_and_translated():
         assert catalog["mcpPublishConnectorPromptHint"]
         assert "{agent}" in catalog["mcpPublishedRowEnabled"]
         assert "{agent}" in catalog["mcpPublishedRowDisabled"]
+        assert catalog["mcpPublishMode"]
+        assert catalog["mcpPublishModeApi"]
+        assert catalog["mcpPublishModeFull"]
+        assert catalog["mcpPublishModeHint"]
 
     # The one-way bootstrap prompt covers the full connector contract.
+    assert "publishedMcpMode" in source
+    assert "mode: mode" in source
     for marker in ("_publishedMcpConnectorPrompt", "get_initial_context",
                    "get_context_updates", "send_user_message",
                    "send_agent_message", "schedule_continuation",
@@ -1107,6 +1131,8 @@ def test_store_migrates_pre_kind_keys_to_bearer(tmp_path):
     assert store.validate_key("srv-old", raw)["kind"] == "bearer"
     assert store.validate_key("srv-old", raw, kind="connector") is None
     assert store.get("srv-old")["tool_allowlist"] == []
+    # A server row created before the mode column existed defaults to api.
+    assert store.get("srv-old")["mode"] == "api"
 
 
 def test_store_tool_allowlist_round_trip(tmp_path):
@@ -1129,6 +1155,22 @@ def test_store_tool_allowlist_round_trip(tmp_path):
         store.configure("alice", "conv-1", "agent-a", tool_allowlist=[""])
     with pytest.raises(ValueError, match="tool_allowlist"):
         store.configure("alice", "conv-1", "agent-a", tool_allowlist="read")
+
+
+def test_store_mode_round_trip(tmp_path):
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    # Default exposure is the api gateway.
+    assert store.configure("alice", "conv-1", "agent-a")["mode"] == "api"
+
+    assert store.configure(
+        "alice", "conv-1", "agent-a", mode="full")["mode"] == "full"
+    # Omitting the parameter preserves the stored mode.
+    assert store.configure("alice", "conv-1", "agent-a")["mode"] == "full"
+    assert store.configure(
+        "alice", "conv-1", "agent-a", mode="api")["mode"] == "api"
+
+    with pytest.raises(ValueError, match="mode"):
+        store.configure("alice", "conv-1", "agent-a", mode="bogus")
 
 
 def test_connector_key_authenticates_only_via_path(monkeypatch, tmp_path):
@@ -1309,6 +1351,79 @@ def test_call_tool_enforces_publication_allowlist(monkeypatch):
     blocked = endpoint._call_tool(server, {"key_id": "key-1"}, "use_tool", {
         "tool_name": "bash", "arguments_json": "{}",
     })
+    assert blocked["isError"]
+    assert "not exposed by this publication" in blocked["content"][0]["text"]
+
+
+def test_full_mode_lists_tools_with_real_annotations(monkeypatch):
+    class Registry:
+        def get_tool_definitions(self):
+            return [
+                {"name": "read", "description": "Read",
+                 "parameters": {"type": "object", "properties": {}}},
+                {"name": "bash", "description": "Shell",
+                 "parameters": {"type": "object", "properties": {}}},
+            ]
+
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "mode": "full",
+    }
+    tools = {tool["name"]: tool for tool in endpoint._tools_for_server(server)}
+    # Conversation/messaging meta tools stay; the use_tool/get_tool_schema
+    # shims are dropped because every tool is now first-class.
+    assert "get_initial_context" in tools
+    assert "use_tool" not in tools and "get_tool_schema" not in tools
+    # Real tools carry honest behavior annotations.
+    assert tools["read"]["annotations"]["readOnlyHint"] is True
+    assert tools["bash"]["annotations"]["readOnlyHint"] is False
+    assert tools["bash"]["annotations"]["destructiveHint"] is True
+    assert tools["read"]["inputSchema"]["type"] == "object"
+
+    # api mode still advertises exactly the six meta tools.
+    api_names = {tool["name"] for tool in endpoint._tools_for_server(
+        dict(server, mode="api"))}
+    assert "use_tool" in api_names and "read" not in api_names
+
+
+def test_full_mode_direct_call_dispatches_like_use_tool(monkeypatch):
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": "read", "description": "Read", "parameters": {}}]
+
+        def get(self, _name):
+            return None
+
+    class Runtime:
+        def _do_execute(self, request_id, name, arguments, user_id, conv_id,
+                        agent):
+            assert name == "read"
+            return {"type": "result", "request_id": request_id, "data": "ok"}
+
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "mode": "full",
+    }
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+
+    # A direct call to `read` (not use_tool) reaches the runtime through the
+    # shared dispatch path and returns the tool result.
+    result = endpoint._call_tool(server, {"key_id": "key-1"}, "read",
+                                 {"path": "x"})
+    assert result == {"content": [{"type": "text", "text": "ok"}],
+                      "isError": False}
+
+    # The publication allowlist still applies to direct calls.
+    guarded = dict(server, tool_allowlist=["list_dir"])
+    monkeypatch.setattr(endpoint, "_runtime", lambda: (_ for _ in ()).throw(
+        AssertionError("allowlisted-out tools must not reach the runtime")))
+    blocked = endpoint._call_tool(guarded, {"key_id": "key-1"}, "read",
+                                  {"path": "x"})
     assert blocked["isError"]
     assert "not exposed by this publication" in blocked["content"][0]["text"]
 

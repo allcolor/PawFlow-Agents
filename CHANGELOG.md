@@ -4,6 +4,43 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.206] — 2026-08-17
+
+### Added
+
+- Interactive Project Graph view: the webchat panel's new **View** button
+  opens a force-directed canvas tab (custom renderer, no external
+  dependencies) that navigates the code graph by capped ego subgraphs —
+  overview of the most-connected nodes first, then 1–2-hop neighborhoods
+  re-centered by double-click/double-tap, with confidence-colored edges,
+  node detail (file, location, degree), and mouse/touch pan-zoom-pinch.
+  Backed by `ProjectGraph.ego_subgraph` and a `project_graph_ego` UI action
+  (clamped to 300 nodes, depth 3); the blob-tab page requests subgraphs
+  from the panel over `postMessage`, so the full 40k-node graph is never
+  rendered at once.
+
+### Changed
+
+- The Android client is now documented everywhere users look for clients:
+  README client section and release-artifact list, ROADMAP shipped list (the
+  "Mobile client (PWA)" item became "Mobile clients" with the native app
+  marked shipped), the website product strip/architecture diagram/docs hub,
+  and a new "Install the native Android app" how-to recipe with a direct
+  APK download link resolved from the latest GitHub release.
+
+### Fixed
+
+- Cognitive-panel dialogs (Project Graph, Knowledge Graph, Project Wiki,
+  Scratchpad, Diary, Memories, Context editor) are usable on mobile again:
+  the header row now wraps and the close button is pinned to the dialog's
+  top-right corner instead of riding at the end of a non-wrapping flex row,
+  which pushed it off-screen on narrow viewports. Wiki and Scratchpad
+  two-pane layouts stack vertically under 768px.
+- The conversation-controls row above the composer scrolls horizontally on
+  mobile like the header and action dock, so trailing buttons are no longer
+  clipped at the screen edge; the view menu escapes the scrollbox as a
+  fixed full-width sheet.
+
 ## [1.0.0-beta.205] — 2026-08-17
 
 ### Fixed

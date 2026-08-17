@@ -4,6 +4,25 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.203] — 2026-08-17
+
+### Added
+
+- Published MCP connectors can choose a tool exposure mode. **API mode** (the
+  default) keeps the single `use_tool` gateway. **Full mode** publishes every
+  PawFlow tool directly as its own MCP tool, each carrying its real behavior
+  annotations (`readOnlyHint`/`destructiveHint`, derived from the
+  `ToolApprovalGate` classification), so clients such as ChatGPT can invoke the
+  read-only tools even on plans that gate write actions. Direct full-mode calls
+  reuse the entire `use_tool` dispatch path (allowlist enforcement, one-way
+  return-channel checks, async task handling, and auditing).
+
+### Fixed
+
+- Revoked publication keys are excluded from the publication dialog listing
+  instead of accumulating forever; a revoked key can never authenticate again,
+  and the rows are retained in the store only as an audit trail.
+
 ## [1.0.0-beta.202] — 2026-08-17
 
 ### Added

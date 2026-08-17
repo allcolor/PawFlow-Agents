@@ -182,8 +182,7 @@ with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as edge_spool, \
         first_node = True
         with contextlib.redirect_stdout(sys.stderr):
             for batch in extraction_batches:
-                extraction = extract(
-                    batch, root=root, parallel=False, max_workers=1)
+                extraction = extract(batch)
                 node_by_id = {
                     str(node["id"]): node
                     for node in extraction.get("nodes", [])

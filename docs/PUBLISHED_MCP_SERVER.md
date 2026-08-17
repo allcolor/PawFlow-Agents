@@ -95,7 +95,15 @@ Setup:
 
 Connector routes are exempt from the Private Gateway challenge (connector
 clients cannot send `X-PawFlow-Gateway-Key`); the embedded key is the sole
-credential, like a provider callback URL.
+credential, like a provider callback URL. They are also exempt from the
+cross-authority `Origin` rejection (ChatGPT sends `Origin: https://chatgpt.com`;
+the DNS-rebinding defense stays on Bearer routes, where the browser is the
+threat model), and they tolerate session loss: a connector request with a
+missing or stale `Mcp-Session-Id` gets a fresh synthesized session instead of
+a 404, because one-way clients replay stale sessions instead of
+re-initializing and then surface the 404 as "Resource not found" before
+disabling the whole connector. Every published-MCP request is logged at INFO
+level (`[published-mcp]`, key redacted) for diagnosis.
 
 Key kinds never cross surfaces: a connector key is only valid as the URL path
 segment and is rejected as a Bearer header; a regular API key is only valid as

@@ -17,7 +17,7 @@ from core.mcp_server_store import MCPServerStore
 logger = logging.getLogger(__name__)
 _ROUTE_OWNER = "_published_mcp_server"
 _PROTOCOL_VERSION = "2025-03-26"
-_SUPPORTED_PROTOCOLS = {_PROTOCOL_VERSION}
+_SUPPORTED_PROTOCOLS = {_PROTOCOL_VERSION, "2025-06-18"}
 _MAX_REQUEST_BYTES = 2_000_000
 _SESSION_TTL_SECONDS = 8 * 3600
 
@@ -165,11 +165,19 @@ def _bearer(headers: Dict[str, str]) -> str:
 
 
 def _authenticate(req, server_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    if not _origin_allowed(req):
-        _json_response(req, 403, {"error": "Origin is not allowed"})
-        return None, None
     store = MCPServerStore.instance()
     connector_key = str((req.path_params or {}).get("connector_key") or "")
+    # The cross-authority Origin rejection prevents DNS rebinding, where a
+    # hostile page in a browser reaches a private PawFlow through the victim's
+    # resolver. Connector-key routes are exempt: the URL segment is the sole
+    # credential, a rebound page without it stops at 401 below, and legitimate
+    # connector clients (ChatGPT web apps) send their own Origin, which must
+    # not be mistaken for an attack.
+    if not connector_key and not _origin_allowed(req):
+        logger.info("[published-mcp] %s origin rejected server=%s",
+                    getattr(req, "method", "?"), server_id[:12])
+        _json_response(req, 403, {"error": "Origin is not allowed"})
+        return None, None
     if connector_key:
         # ChatGPT-style "No Authentication" connectors carry the credential
         # as an opaque URL segment; only connector-kind keys are valid there.
@@ -178,6 +186,9 @@ def _authenticate(req, server_id: str) -> Tuple[Optional[Dict[str, Any]], Option
         key = store.validate_key(server_id, _bearer(req.headers), kind="bearer")
     server = store.get(server_id) if key else None
     if not key or not server:
+        logger.info("[published-mcp] %s unauthorized server=%s connector=%s",
+                    getattr(req, "method", "?"), server_id[:12],
+                    bool(connector_key))
         _json_response(
             req, 401, {"error": "Unauthorized"},
             None if connector_key else {"WWW-Authenticate": "Bearer"},
@@ -265,21 +276,40 @@ def _new_session(server: Dict[str, Any], key: Dict[str, Any], protocol: str) -> 
 
 def _require_session(req, server: Dict[str, Any], key: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     session_id = _header(req, "Mcp-Session-Id")
-    if not session_id:
-        _json_response(req, 400, {"error": "Mcp-Session-Id header is required"})
-        return None
     now = time.time()
     with _sessions_lock:
         session = _sessions.get(session_id) if session_id else None
-        if (not session or session.get("server_id") != server["server_id"]
-                or session.get("key_id") != key["key_id"]
-                or float(session.get("last_seen") or 0) < now - _SESSION_TTL_SECONDS):
-            if session_id:
-                _sessions.pop(session_id, None)
-            _json_response(req, 404, {"error": "MCP session not found"})
-            return None
-        session["last_seen"] = now
-        return dict(session, session_id=session_id)
+        if (session and session.get("server_id") == server["server_id"]
+                and session.get("key_id") == key["key_id"]
+                and float(session.get("last_seen") or 0) >= now - _SESSION_TTL_SECONDS):
+            session["last_seen"] = now
+            return dict(session, session_id=session_id)
+        if session_id:
+            _sessions.pop(session_id, None)
+    if str(key.get("kind") or "") == "connector":
+        # One-way connector clients (ChatGPT web apps) do not reliably
+        # re-initialize after their session is dropped: they keep replaying
+        # the stale Mcp-Session-Id, surface the resulting 404 as "Resource
+        # not found", and then disable the whole connector. The connector
+        # key already scopes every request to one publication, so a fresh
+        # session is synthesized instead of failing the request.
+        new_id = _new_session(server, key, _PROTOCOL_VERSION)
+        with _sessions_lock:
+            synthesized = _sessions.get(new_id)
+            if synthesized is not None:
+                synthesized["initialized"] = True
+                session = dict(synthesized)
+        logger.info(
+            "[published-mcp] synthesized connector session server=%s stale=%s",
+            server["server_id"][:12], bool(session_id))
+        return dict(session or {}, session_id=new_id)
+    if not session_id:
+        _json_response(req, 400, {"error": "Mcp-Session-Id header is required"})
+        return None
+    logger.info("[published-mcp] session not found server=%s",
+                server["server_id"][:12])
+    _json_response(req, 404, {"error": "MCP session not found"})
+    return None
 
 
 def _runtime():
@@ -896,6 +926,17 @@ def _dispatch_session_message(server: Dict[str, Any], key: Dict[str, Any],
     )
 
 
+def _rpc_summary(item: Any) -> str:
+    """One request's log label: the JSON-RPC method, plus the tool name."""
+    if not isinstance(item, dict):
+        return "invalid"
+    method = str(item.get("method") or "response")
+    if method != "tools/call":
+        return method
+    params = item.get("params") if isinstance(item.get("params"), dict) else {}
+    return method + ":" + str(params.get("name") or "?")
+
+
 def handle_mcp_post(req) -> None:
     server_id = str((req.path_params or {}).get("server_id") or "")
     server, key = _authenticate(req, server_id)
@@ -931,6 +972,10 @@ def handle_mcp_post(req) -> None:
         requested = str(params.get("protocolVersion") or _PROTOCOL_VERSION)
         protocol = requested if requested in _SUPPORTED_PROTOCOLS else _PROTOCOL_VERSION
         session_id = _new_session(server, key, protocol)
+        logger.info(
+            "[published-mcp] initialize server=%s kind=%s protocol=%s",
+            server["server_id"][:12], str(key.get("kind") or "bearer"),
+            protocol)
         response = _rpc_result(initialize.get("id"), {
             "protocolVersion": protocol,
             "capabilities": {"tools": {}},
@@ -950,6 +995,12 @@ def handle_mcp_post(req) -> None:
             for item in messages
         ) if response is not None
     ]
+    logger.info(
+        "[published-mcp] POST server=%s kind=%s rpc=%s errors=%s",
+        server["server_id"][:12], str(key.get("kind") or "bearer"),
+        ",".join(_rpc_summary(item) for item in messages) or "-",
+        sum(1 for response in responses
+            if isinstance(response, dict) and "error" in response))
     if not responses:
         _json_response(req, 202, None, session_headers)
     else:

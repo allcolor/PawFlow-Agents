@@ -1107,6 +1107,90 @@ def test_connector_key_authenticates_only_via_path(monkeypatch, tmp_path):
     assert _decoded(revoked)[0] == 401
 
 
+def test_connector_requests_ignore_foreign_origin(monkeypatch, tmp_path):
+    """ChatGPT sends its own Origin; the connector key is the credential."""
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    server = store.configure("alice", "conv-1", "agent-a")
+    server_id = server["server_id"]
+    raw_connector, _meta = store.create_key(server_id, "ChatGPT", kind="connector")
+    monkeypatch.setattr(
+        MCPServerStore, "instance", classmethod(lambda cls: store))
+
+    class ConvStore:
+        def resolve_owner(self, _conversation_id):
+            return "alice"
+
+    monkeypatch.setattr(
+        "core.conversation_store.ConversationStore.instance",
+        lambda: ConvStore())
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_all_agent_configs",
+        lambda _cid: {"agent-a": {}})
+    endpoint._sessions.clear()
+
+    foreign = {
+        "Origin": "https://chatgpt.com",
+        "X-Forwarded-Proto": "https",
+        "X-Forwarded-Host": "pawflow.example",
+    }
+    connector = _Request({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18"},
+    }, server_id=server_id, headers=dict(foreign))
+    connector.path_params["connector_key"] = raw_connector
+    endpoint.handle_mcp_post(connector)
+    status, _headers, payload = _decoded(connector)
+    assert status == 200
+    assert payload["result"]["protocolVersion"] == "2025-06-18"
+
+    # Bearer routes keep the DNS-rebinding rejection.
+    bearer = _Request({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2025-03-26"},
+    }, server_id=server_id, headers=dict(foreign))
+    endpoint.handle_mcp_post(bearer)
+    assert _decoded(bearer)[0] == 403
+
+
+def test_connector_synthesizes_session_for_stale_or_missing_id(monkeypatch):
+    """One-way clients replaying a dropped session must not receive 404."""
+    server = {
+        "server_id": "srv_test",
+        "owner_user_id": "alice",
+        "conversation_id": "conv-1",
+        "agent_name": "agent-a",
+    }
+    connector_key = {"key_id": "key-c", "label": "ChatGPT", "kind": "connector"}
+    monkeypatch.setattr(
+        endpoint, "_authenticate", lambda _req, _sid: (server, connector_key))
+    endpoint._sessions.clear()
+
+    stale = _Request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                     headers={"Mcp-Session-Id": "gone"})
+    endpoint.handle_mcp_post(stale)
+    status, headers, payload = _decoded(stale)
+    assert status == 200
+    assert payload["result"]["tools"] == endpoint._MCP_TOOLS
+    assert headers["Mcp-Session-Id"] != "gone"
+    assert headers["Mcp-Session-Id"] in endpoint._sessions
+
+    missing = _Request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    endpoint.handle_mcp_post(missing)
+    assert _decoded(missing)[0] == 200
+
+    # Bearer keys keep the strict session contract.
+    bearer_key = {"key_id": "key-b", "label": "Codex", "kind": "bearer"}
+    monkeypatch.setattr(
+        endpoint, "_authenticate", lambda _req, _sid: (server, bearer_key))
+    strict = _Request({"jsonrpc": "2.0", "id": 3, "method": "tools/list"},
+                      headers={"Mcp-Session-Id": "gone"})
+    endpoint.handle_mcp_post(strict)
+    assert _decoded(strict)[0] == 404
+    absent = _Request({"jsonrpc": "2.0", "id": 4, "method": "tools/list"})
+    endpoint.handle_mcp_post(absent)
+    assert _decoded(absent)[0] == 400
+
+
 def test_call_tool_enforces_publication_allowlist(monkeypatch):
     class Registry:
         def get_tool_definitions(self):

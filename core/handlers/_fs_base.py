@@ -396,8 +396,15 @@ class BaseFsHandler(ToolHandler):
             content_type=metadata.get("content_type", ""),
             image_label=f"fs://filestore/{file_id}/{fname}")
 
-    def _filestore_list(self) -> str:
-        """List all files in server FileStore."""
+    def _filestore_list(self, pattern: str = "", limit: int = 50) -> str:
+        """List FileStore files, newest first, optionally filtered.
+
+        The pattern matches the filename (fnmatch; a plain substring is
+        wrapped as *substring*) or the content type (e.g. 'video/*'),
+        case-insensitively.
+        """
+        import fnmatch
+        from datetime import datetime, timezone
         from core.file_store import FileStore
         store = FileStore.instance()
         entries = store.list_files(
@@ -405,12 +412,34 @@ class BaseFsHandler(ToolHandler):
             conversation_id=self._conversation_id or "",
             include_internal=False,
         )
+        total = len(entries)
+        if pattern:
+            pat = pattern.lower()
+            name_pat = pat if any(c in pat for c in "*?[") else f"*{pat}*"
+            entries = [
+                e for e in entries
+                if fnmatch.fnmatch((e.get("filename") or "").lower(), name_pat)
+                or fnmatch.fnmatch((e.get("content_type") or "").lower(), pat)
+            ]
+        entries.sort(key=lambda e: e.get("created_at") or 0, reverse=True)
         if not entries:
+            if pattern:
+                return (f"(no FileStore file matches '{pattern}' — "
+                        f"{total} files total)")
             return "(FileStore is empty)"
-        lines = [f"📄 fs://filestore/{e['file_id']}/{e['filename']} ({e.get('size', '?')} bytes)"
-                 for e in entries[:50]]
-        if len(entries) > 50:
-            lines.append(f"... +{len(entries) - 50} more")
+        limit = max(1, int(limit or 50))
+        lines = []
+        for e in entries[:limit]:
+            ts = e.get("created_at") or 0
+            when = datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
+                "%Y-%m-%d %H:%M") if ts else "?"
+            ctype = e.get("content_type") or "?"
+            lines.append(
+                f"📄 fs://filestore/{e['file_id']}/{e['filename']} "
+                f"({e.get('size', '?')} bytes, {ctype}, {when} UTC)")
+        if len(entries) > limit:
+            lines.append(f"... +{len(entries) - limit} more "
+                         "(newest first — raise limit or narrow the pattern)")
         return "\n".join(lines)
 
     def _filestore_delete(self, path: str = "", file_id: str = "") -> str:

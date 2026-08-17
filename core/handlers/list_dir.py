@@ -12,7 +12,9 @@ class ListDirHandler(BaseFsHandler):
 
     @property
     def description(self):
-        return "List files and directories. Use source='filestore' to list server FileStore."
+        return ("List files and directories. Use source='filestore' to list the "
+                "server FileStore (newest first; filter with pattern, e.g. "
+                "'*.mp4' or 'video/*').")
 
     @property
     def parameters_schema(self):
@@ -22,7 +24,8 @@ class ListDirHandler(BaseFsHandler):
                 "path": {"type": "string", "description": "Directory path (default: root)"},
                 "source": {"type": "string", "description": "Filesystem service name. Omit for default."},
                 "recursive": {"type": "boolean", "description": "List descendants recursively."},
-                "max_entries": {"type": "integer", "description": "Maximum number of entries to return when listing recursively."},
+                "max_entries": {"type": "integer", "description": "Maximum number of entries to return (recursive listings and FileStore)."},
+                "pattern": {"type": "string", "description": "FileStore only: filter by filename glob/substring or content type (e.g. '*.mp4', 'video/*'). Results are newest first."},
             },
         }
 
@@ -44,7 +47,9 @@ class ListDirHandler(BaseFsHandler):
         svc, workdir = self._resolve(source)
 
         if svc == "filestore":
-            return self._filestore_list()
+            return self._filestore_list(
+                pattern=str(arguments.get("pattern") or ""),
+                limit=max_entries or 50)
 
         if workdir:
             return self._workdir_list(path, recursive=recursive, max_entries=max_entries)

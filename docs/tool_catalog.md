@@ -84,7 +84,7 @@ Editing preference: use `apply_patch` for patch-shaped changes and `batch_edit` 
 | `mkdir` | Create a directory. |
 | `stat` | Get file metadata. |
 | `exists` | Check existence. |
-| `list_dir` | List directory contents. |
+| `list_dir` | List directory contents. With `source='filestore'`, lists the server FileStore newest first; `pattern` filters by filename glob/substring or content type (`*.mp4`, `video/*`) and `max_entries` caps the output. |
 | `glob` | Find files by glob. |
 | `grep` | Search file contents. Relay-backed searches use bounded `ripgrep --json` output when the binary is available and transparently fall back to the Python scanner when it is not or cannot parse the requested regex. |
 | `search` | Combined glob + regex + ranked snippets for fewer discovery calls. |

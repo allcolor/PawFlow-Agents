@@ -53,7 +53,7 @@ class GlobHandler(BaseFsHandler):
         svc, workdir = self._resolve(source)
 
         if svc == "filestore":
-            return self._filestore_list()
+            return self._filestore_list(pattern=pattern, limit=limit)
 
         if workdir:
             return self._workdir_glob(pattern, path, limit=limit)

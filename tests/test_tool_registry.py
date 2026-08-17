@@ -1335,7 +1335,62 @@ class TestMetaToolAliases(unittest.TestCase):
 
                 result = reg.execute("list_dir", {"source": "filestore", "path": ""})
 
-                assert result == f"📄 fs://filestore/{visible_id}/image.png (3 bytes)"
+                assert result.startswith(
+                    f"📄 fs://filestore/{visible_id}/image.png (3 bytes, image/png, ")
+                assert "other.png" not in result
+                assert "speech.wav" not in result
+            finally:
+                FileStore._instance = old_instance
+
+    def test_filestore_list_filters_and_sorts_newest_first(self):
+        from core.file_store import FileStore
+        from core.handlers.list_dir import ListDirHandler
+
+        old_instance = FileStore._instance
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                store = FileStore(base_dir=str(Path(tmp) / "filestore"))
+                FileStore._instance = store
+                old_vid = store.store(
+                    "clip-old.mp4", b"v1", "video/mp4",
+                    user_id="user-1", conversation_id="conv-1")
+                store.store(
+                    "notes.txt", b"t", "text/plain",
+                    user_id="user-1", conversation_id="conv-1")
+                new_vid = store.store(
+                    "clip-new.mp4", b"v2", "video/mp4",
+                    user_id="user-1", conversation_id="conv-1")
+                store._entries[old_vid]["created_at"] = 1_000
+                store._entries[new_vid]["created_at"] = 2_000
+
+                handler = ListDirHandler()
+                handler.set_user_id("user-1")
+                handler.set_conversation_id("conv-1")
+                reg = ToolRegistry()
+                reg.register(handler)
+
+                by_name = reg.execute("list_dir", {
+                    "source": "filestore", "pattern": "*.mp4"})
+                assert "notes.txt" not in by_name
+                assert by_name.index("clip-new.mp4") < by_name.index("clip-old.mp4")
+
+                by_type = reg.execute("list_dir", {
+                    "source": "filestore", "pattern": "video/*"})
+                assert "clip-new.mp4" in by_type and "clip-old.mp4" in by_type
+                assert "notes.txt" not in by_type
+
+                capped = reg.execute("list_dir", {
+                    "source": "filestore", "pattern": "*.mp4", "max_entries": 1})
+                assert "clip-new.mp4" in capped
+                assert "+1 more" in capped
+
+                substring = reg.execute("list_dir", {
+                    "source": "filestore", "pattern": "clip"})
+                assert "clip-new.mp4" in substring and "notes.txt" not in substring
+
+                none = reg.execute("list_dir", {
+                    "source": "filestore", "pattern": "*.zip"})
+                assert "no FileStore file matches" in none
             finally:
                 FileStore._instance = old_instance
 

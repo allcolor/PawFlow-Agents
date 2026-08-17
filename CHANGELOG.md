@@ -4,6 +4,18 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- FileStore listings are usable for disambiguation: `list_dir` on
+  `source='filestore'` now returns newest-first entries with content type
+  and creation time, accepts a `pattern` filter (filename glob/substring
+  or content type such as `video/*`) and honors `max_entries`; `glob` on
+  the FileStore applies its pattern instead of ignoring it. Agents no
+  longer have to page through an unfiltered, unordered dump to find the
+  latest attachment.
+
 ## [1.0.0-beta.206] — 2026-08-17
 
 ### Added

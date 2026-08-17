@@ -131,6 +131,7 @@ function _publishedMcpRender(state) {
   const keys = server && Array.isArray(server.keys) ? server.keys : [];
   const endpoint = server ? _publishedMcpEndpoint(server.server_id) : '';
   const imageOutput = server ? String(server.image_output || 'native') : 'native';
+  const mode = server ? String(server.mode || 'api') : 'api';
   const relay = server && server.client_active
     ? escapeHtml(t('mcpPublishClientActive', { client: server.active_client_name || 'CLI' }))
     : escapeHtml(t('mcpPublishNoClient'));
@@ -164,6 +165,14 @@ function _publishedMcpRender(state) {
     + '<select id="publishedMcpAgent" style="display:block;width:100%;margin-top:4px;">' + agentOptions + '</select></label>'
     + '<label style="display:flex;align-items:center;gap:7px;margin-bottom:12px;"><input id="publishedMcpEnabled" type="checkbox"'
     + ((!server || server.enabled) ? ' checked' : '') + '> ' + escapeHtml(t('mcpPublishEnabled')) + '</label>'
+    + '<label style="display:block;margin-bottom:4px;">' + escapeHtml(t('mcpPublishMode'))
+    + '<select id="publishedMcpMode" style="display:block;width:100%;margin-top:4px;">'
+    + '<option value="api"' + (mode === 'api' ? ' selected' : '') + '>'
+    + escapeHtml(t('mcpPublishModeApi')) + '</option>'
+    + '<option value="full"' + (mode === 'full' ? ' selected' : '') + '>'
+    + escapeHtml(t('mcpPublishModeFull')) + '</option></select></label>'
+    + '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:12px;">'
+    + escapeHtml(t('mcpPublishModeHint')) + '</div>'
     + '<label style="display:block;margin-bottom:12px;">' + escapeHtml(t('mcpPublishImageOutput'))
     + '<select id="publishedMcpImageOutput" style="display:block;width:100%;margin-top:4px;">'
     + '<option value="native"' + (imageOutput === 'native' ? ' selected' : '') + '>'
@@ -227,6 +236,7 @@ function _publishedMcpSave() {
   const agent = document.getElementById('publishedMcpAgent')?.value || '';
   const enabled = !!document.getElementById('publishedMcpEnabled')?.checked;
   const imageOutput = document.getElementById('publishedMcpImageOutput')?.value || 'native';
+  const mode = document.getElementById('publishedMcpMode')?.value || 'api';
   const allowlist = (document.getElementById('publishedMcpAllowlist')?.value || '')
     .split(',').map(function(name) { return name.trim(); }).filter(Boolean);
   if (!agent) {
@@ -238,6 +248,7 @@ function _publishedMcpSave() {
     label: agent,
     enabled: enabled,
     image_output: imageOutput,
+    mode: mode,
     tool_allowlist: allowlist,
   }, function(data) {
     _publishedMcpRender({ server: data.server || null });

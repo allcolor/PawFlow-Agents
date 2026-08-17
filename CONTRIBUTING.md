@@ -72,9 +72,10 @@ See [docs/development.md](docs/development.md) for a detailed guide.
 
 ## Releasing
 
-Releases are lightweight git tags named `1.0.0-beta.<N>` on `main`. The
-version bump and changelog entry go in the **same commit**, *before* the tag,
-so the tagged commit carries the correct version.
+Releases are lightweight git tags named exactly `1.0.0-beta.<N>` on `main`.
+The tag **must not** have a leading `v`: `v1.0.0-beta.<N>` is forbidden.
+The version bump and changelog entry go in the **same commit**, *before* the
+tag, so the tagged commit carries the correct version.
 
 Checklist (replace `bN` / `beta.N` with the new number):
 

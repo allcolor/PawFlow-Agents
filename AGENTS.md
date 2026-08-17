@@ -15,3 +15,5 @@ It is the authoritative release circuit. Two rules from it are non-negotiable:
   commit.
 - Tag only a SHA whose full branch CI matrix is green; never push tag and
   release commit together.
+- Release tags are named exactly `1.0.0-beta.N`. A leading `v` is forbidden:
+  never create or push `v1.0.0-beta.N`.

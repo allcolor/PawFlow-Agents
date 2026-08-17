@@ -102,8 +102,11 @@ def test_build_from_relay(tmp_path):
     assert len(env["PAWFLOW_GRAPH_SCRIPT"]) < 32767
     script = base64.b64decode(env["PAWFLOW_GRAPH_SCRIPT"])
     assert b"PAWFLOW_GRAPH_ROOT" in script
-    assert b"parallel=False" in script
-    assert b"max_workers=1" in script
+    # extract() only accepts the path list — no kwargs (they caused a
+    # TypeError on every relay build).
+    assert b"extract(batch)" in script
+    assert b"parallel=" not in script
+    assert b"max_workers" not in script
     assert b"FULL_BATCH_MAX_FILES = 32" in script
     assert b"FULL_BATCH_MAX_BYTES = 8 * 1024 * 1024" in script
     assert b"gzip.open" in script
@@ -231,7 +234,7 @@ def test_relay_script_bootstraps_sys_path_for_graphify(tmp_path):
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     (pkg / "extract.py").write_text(
-        "def extract(files, root=None, parallel=False, max_workers=1):\n"
+        "def extract(files):\n"
         "    return {'nodes': [], 'edges': []}\n", encoding="utf-8")
 
     project = tmp_path / "proj"

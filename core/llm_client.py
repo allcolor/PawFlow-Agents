@@ -285,12 +285,7 @@ class LLMClient(
 
     @property
     def default_model(self):
-        configured = self._cfg("default_model", "")
-        if configured:
-            return configured
-        if self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
-            return ""
-        return self.DEFAULT_MODELS.get(self.provider, "")
+        return resolve_default_model(self.provider, self._config_ref)
 
     @property
     def supports_live_preempt(self) -> bool:
@@ -601,3 +596,24 @@ class LLMClient(
         """
         client = cls(provider=config.get("provider", "openai"), config=config)
         return client
+
+
+_PROVIDERS_WITHOUT_DEFAULT_MODEL = (
+    "claude-code", "claude-code-interactive", "antigravity-interactive",
+    "codex-app-server", "codex-interactive", "gemini")
+
+
+def resolve_default_model(provider: str, config: Optional[Dict[str, Any]]) -> str:
+    """Default model an LLMClient with this provider/config would report.
+
+    The adaptive LLM router keys candidate health on (service, model). It must
+    resolve the model from the stored definition through this same logic, or
+    plan-time health reads miss the keys record_failure/record_success wrote
+    with client.default_model.
+    """
+    configured = str((config or {}).get("default_model", "") or "")
+    if configured:
+        return configured
+    if provider in _PROVIDERS_WITHOUT_DEFAULT_MODEL:
+        return ""
+    return LLMClient.DEFAULT_MODELS.get(provider, "")

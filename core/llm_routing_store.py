@@ -22,6 +22,11 @@ from core.llm_routing_types import (
 
 
 logger = logging.getLogger(__name__)
+# Backoff applied when a candidate crosses the transient-failure threshold
+# without a provider Retry-After: doubles per extra failure, capped.
+_BASE_COOLDOWN_SECONDS = 30.0
+_MAX_COOLDOWN_SECONDS = 1800.0
+
 _SENSITIVE_PARTS = (
     "authorization", "api_key", "apikey", "access_token", "refresh_token",
     "password", "secret", "cookie")
@@ -201,10 +206,19 @@ class LLMRoutingStore:
                 "AND child_scope=? AND child_scope_id=? AND child_service_id=? "
                 "AND model=? AND credential_id=?", key.as_tuple()).fetchone()
             failures = int(row[0] if row else 0) + 1
+            cooldown_until = float(cooldown_until or 0)
             state = (
                 "locked" if locked else
-                "cooldown" if float(cooldown_until or 0) > now or failures >= threshold
+                "cooldown" if cooldown_until > now or failures >= threshold
                 else "degraded")
+            if state == "cooldown" and cooldown_until <= now:
+                # Provider gave no Retry-After: without a deadline the policy
+                # never excludes the candidate ("cooldown" with
+                # cooldown_until=0 is inert). Exponential backoff from the
+                # transient threshold, capped.
+                cooldown_until = now + min(
+                    _MAX_COOLDOWN_SECONDS,
+                    _BASE_COOLDOWN_SECONDS * (2 ** max(0, failures - threshold)))
             self._conn.execute(
                 "INSERT INTO router_health VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,1,?) "
                 "ON CONFLICT(router_scope,router_scope_id,router_service_id,"
@@ -217,7 +231,7 @@ class LLMRoutingStore:
                 "last_status=excluded.last_status,revision=revision+1,"
                 "updated_at=excluded.updated_at",
                 key.as_tuple() + (
-                    state, failures, now, float(cooldown_until or 0),
+                    state, failures, now, cooldown_until,
                     str(failure_kind or "unknown")[:64], int(provider_status or 0), now))
         return self.get_health(key)
 

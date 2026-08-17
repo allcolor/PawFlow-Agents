@@ -59,7 +59,7 @@ class FakeService:
         self.client = client
         self.config = {
             "provider": client.provider,
-            "model": client.default_model,
+            "default_model": client.default_model,
             "cost_per_1m_input": 1,
             "cost_per_1m_output": 2,
         }
@@ -159,6 +159,51 @@ def test_direct_call_falls_back_in_immutable_plan_order(tmp_path):
     assert [ref.service_id for ref in client.route_plan.ordered_candidates] == [
         "main", "fallback-1", "fallback-2"]
     assert client.active_service_id == "fallback-1"
+
+
+def test_recorded_failures_are_visible_to_the_next_plan(tmp_path):
+    """Regression: plans keyed health on config 'model' (always empty) while
+    failures were recorded under client.default_model — never read back."""
+    registry = FakeRegistry({
+        "main": FakeClient("main", [RuntimeError("down")]),
+        "fallback-1": FakeClient("fallback-1", [response("continued")]),
+        "fallback-2": FakeClient("fallback-2", []),
+    })
+    service = make_service(tmp_path)
+    with patch("core.service_registry.ServiceRegistry.get_instance",
+               return_value=registry):
+        client = service.get_client()
+        client.complete(user_message(), call_user_id="alice",
+                        call_conversation_id="conv-1",
+                        call_agent_name="assistant")
+        resolved = client._resolved_candidate(service.candidates[0], 0)
+    assert resolved.model == "main-model"
+    record = service.routing_store.get_health(
+        client._candidate_key(resolved.service, resolved.model))
+    assert record.consecutive_failures == 1
+
+
+def test_repeated_failures_put_candidate_in_cooldown_for_next_plans(tmp_path):
+    registry = FakeRegistry({
+        "main": FakeClient("main", [RuntimeError("down")] * 3),
+        "fallback-1": FakeClient(
+            "fallback-1", [response(str(i)) for i in range(3)]),
+        "fallback-2": FakeClient("fallback-2", []),
+    })
+    service = make_service(tmp_path)
+    with patch("core.service_registry.ServiceRegistry.get_instance",
+               return_value=registry):
+        for _ in range(3):
+            service.get_client().complete(
+                user_message(), call_user_id="alice",
+                call_conversation_id="conv-1", call_agent_name="assistant")
+        fresh = service.get_client()
+        fresh._user_id = "alice"
+        fresh._conversation_id = "conv-1"
+        fresh._agent_name = "assistant"
+        plan = fresh._ensure_plan()
+    assert [ref.service_id for ref in plan.ordered_candidates] == [
+        "fallback-1", "fallback-2"]
 
 
 def test_agent_handoff_reuses_snapshot_after_scope_resolution_changes(tmp_path):

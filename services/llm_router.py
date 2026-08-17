@@ -210,8 +210,12 @@ class RouterLLMClient:
         ref = ResolvedServiceRef(
             sdef.scope, sdef.scope_id, sdef.service_id,
             compute_service_definition_revision(sdef))
+        from core.llm_client import resolve_default_model
         return ResolvedCandidate(
-            definition, ref, str((sdef.config or {}).get("model", "") or ""),
+            definition, ref,
+            resolve_default_model(
+                str((sdef.config or {}).get("provider", "openai") or "openai"),
+                sdef.config),
             position)
 
     def _ensure_plan(self) -> RoutePlan:

@@ -61,6 +61,25 @@ def test_schema_health_and_persistence_across_reopen(tmp_path, clock):
         second.close()
 
 
+def test_threshold_cooldown_without_retry_after_gets_a_deadline(store, clock):
+    """Regression: state='cooldown' with cooldown_until=0 was inert."""
+    key = _candidate_key()
+    for _ in range(2):
+        record = store.record_failure(key, failure_kind="provider_error")
+    assert record.state == "degraded"
+    assert record.cooldown_until == 0
+    record = store.record_failure(key, failure_kind="provider_error")
+    assert record.state == "cooldown"
+    assert record.cooldown_until > clock[1]()
+    # Backoff doubles per extra failure and a provider Retry-After still wins.
+    deeper = store.record_failure(key, failure_kind="provider_error")
+    assert deeper.cooldown_until > record.cooldown_until
+    explicit = store.record_failure(
+        key, failure_kind="rate_limited", cooldown_until=clock[1]() + 5)
+    assert explicit.cooldown_until == clock[1]() + 5
+    assert store.record_success(key).cooldown_until == 0
+
+
 def test_counter_increment_is_atomic_under_threads(store):
     key = ("global", "__global__", "router")
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:

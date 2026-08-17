@@ -753,7 +753,11 @@ candidates fail, PawFlow returns one sanitized exhaustion error while retaining
 the work already completed in the conversation. `least_recently_used` orders
 eligible candidates by the timestamp of their latest recorded route selection
 for this router, oldest (or never selected) first, with priority and position
-as tie-breakers. The Health, Explain last decision, and Reset health service
+as tie-breakers. Candidate health is keyed on the service's resolved default
+model (same resolution as the client). A provider Retry-After sets the
+cooldown deadline; without one, crossing the transient-failure threshold
+applies an exponential backoff (30s doubling per extra failure, capped at
+30 minutes). The Health, Explain last decision, and Reset health service
 actions expose bounded, secret-free state; Explain last decision only reads
 events recorded by this router's own scope and identity.
 

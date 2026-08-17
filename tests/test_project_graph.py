@@ -308,6 +308,67 @@ def test_get_node_fuzzy(tmp_path):
     assert pg.get_node("nonexistent") is None
 
 
+def test_ego_subgraph_around_label(tmp_path):
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    pg._graph = {
+        "nodes": [
+            {"id": "auth", "label": "AuthService"},
+            {"id": "user", "label": "User"},
+            {"id": "session", "label": "Session"},
+            {"id": "far", "label": "Far"},
+        ],
+        "edges": [
+            {"source": "auth", "target": "user", "relation": "uses", "confidence": "EXTRACTED"},
+            {"source": "auth", "target": "session", "relation": "creates", "confidence": "EXTRACTED"},
+            {"source": "session", "target": "far", "relation": "uses", "confidence": "INFERRED"},
+        ],
+        "metadata": {},
+    }
+
+    one_hop = pg.ego_subgraph("auth", depth=1)
+    assert one_hop["center"] == "auth"
+    assert {n["id"] for n in one_hop["nodes"]} == {"auth", "user", "session"}
+    # Induced edges only: session→far is excluded because far is outside.
+    assert len(one_hop["edges"]) == 2
+    assert one_hop["total_nodes"] == 4
+    assert not one_hop["truncated"]
+
+    two_hops = pg.ego_subgraph("auth", depth=2)
+    assert {n["id"] for n in two_hops["nodes"]} == {"auth", "user", "session", "far"}
+    assert len(two_hops["edges"]) == 3
+
+    capped = pg.ego_subgraph("auth", depth=2, max_nodes=2)
+    assert len(capped["nodes"]) == 2
+    assert capped["truncated"]
+
+    assert "not found" in pg.ego_subgraph("nonexistent")["error"]
+
+
+def test_ego_subgraph_overview_ranks_by_degree(tmp_path):
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    pg._graph = {
+        "nodes": [
+            {"id": "hub", "label": "Hub"},
+            {"id": "a", "label": "A"},
+            {"id": "b", "label": "B"},
+            {"id": "leaf", "label": "Leaf"},
+        ],
+        "edges": [
+            {"source": "hub", "target": "a", "relation": "r", "confidence": "EXTRACTED"},
+            {"source": "hub", "target": "b", "relation": "r", "confidence": "EXTRACTED"},
+            {"source": "a", "target": "leaf", "relation": "r", "confidence": "EXTRACTED"},
+        ],
+        "metadata": {},
+    }
+
+    overview = pg.ego_subgraph("", max_nodes=3)
+    ids = [n["id"] for n in overview["nodes"]]
+    assert ids[0] == "hub"
+    assert overview["center"] is None
+    assert overview["truncated"]
+    assert overview["nodes"][0]["degree"] == 2
+
+
 def test_get_report(tmp_path):
     pg = ProjectGraph(str(tmp_path / "graph.json"))
     pg._graph = {

@@ -110,6 +110,32 @@ def test_explicit_disconnected_relay_still_rejects_build(monkeypatch):
     assert flowfile.payload() == {"error": "Relay 'relay-b' is not connected."}
 
 
+def test_project_graph_ego_clamps_params_and_requires_graph(monkeypatch):
+    graph = MagicMock()
+    graph.has_graph.return_value = True
+    graph.ego_subgraph.return_value = {"center": "n", "nodes": [], "edges": []}
+    monkeypatch.setattr(
+        "core.project_context.resolve_active_project",
+        lambda *_args, **_kwargs: ("relay-a", None, False))
+    monkeypatch.setattr(
+        "core.project_graph.ProjectGraph.for_relay", MagicMock(return_value=graph))
+    flowfile = _FlowFile()
+
+    _handle_cognitive_ui(
+        None, "project_graph_ego",
+        {"conversation_id": "conv-a", "label": "Auth", "depth": 9, "max_nodes": 9999},
+        None, "alice", flowfile)
+
+    assert flowfile.payload()["center"] == "n"
+    graph.ego_subgraph.assert_called_once_with(label="Auth", depth=3, max_nodes=300)
+
+    graph.has_graph.return_value = False
+    _handle_cognitive_ui(
+        None, "project_graph_ego", {"conversation_id": "conv-a"},
+        None, "alice", flowfile)
+    assert "No project graph" in flowfile.payload()["error"]
+
+
 def test_project_wiki_ui_lists_and_saves_on_active_relay(monkeypatch):
     service = MagicMock()
     wiki = MagicMock()

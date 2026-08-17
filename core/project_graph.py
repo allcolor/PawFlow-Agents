@@ -506,6 +506,71 @@ class ProjectGraph:
                 return {**n, "neighbors": len(neighbors), "neighbor_edges": neighbors[:20]}
         return None
 
+    def ego_subgraph(self, label: str = "", depth: int = 1,
+                     max_nodes: int = 150) -> Dict:
+        """Induced subgraph for the interactive graph view.
+
+        With a label: BFS neighborhood around the first matching node,
+        capped at max_nodes. Without a label: the most-connected nodes
+        as an overview entry point. Edges are those whose both ends are
+        in the selection.
+        """
+        by_id = {n["id"]: n for n in self.nodes}
+        adj: Dict[str, List[Dict]] = {}
+        degree: Dict[str, int] = {}
+        for e in self.edges:
+            adj.setdefault(e["source"], []).append(e)
+            adj.setdefault(e["target"], []).append(e)
+            degree[e["source"]] = degree.get(e["source"], 0) + 1
+            degree[e["target"]] = degree.get(e["target"], 0) + 1
+
+        center = None
+        truncated = False
+        if label:
+            q = label.lower()
+            center = next(
+                (n["id"] for n in self.nodes
+                 if q in n.get("label", "").lower()
+                 or q in n.get("id", "").lower()),
+                None)
+            if center is None:
+                return {"error": f"Node '{label}' not found"}
+            seen = {center}
+            order = [center]
+            frontier = [center]
+            for _ in range(max(1, depth)):
+                nxt = []
+                for node in frontier:
+                    # Most-connected neighbors first so hubs survive the cap.
+                    others = sorted(
+                        {e["target"] if e["source"] == node else e["source"]
+                         for e in adj.get(node, [])},
+                        key=lambda o: -degree.get(o, 0))
+                    for other in others:
+                        if other in seen or other not in by_id:
+                            continue
+                        if len(order) >= max_nodes:
+                            truncated = True
+                            break
+                        seen.add(other)
+                        order.append(other)
+                        nxt.append(other)
+                frontier = nxt
+            selected = order
+        else:
+            ranked = sorted(degree, key=lambda n: -degree[n])
+            selected = [n for n in ranked if n in by_id][:max_nodes]
+            truncated = len(ranked) > len(selected)
+
+        keep = set(selected)
+        edges = [e for e in self.edges
+                 if e["source"] in keep and e["target"] in keep]
+        nodes = [{**by_id[i], "degree": degree.get(i, 0)} for i in selected]
+        return {"center": center, "nodes": nodes, "edges": edges,
+                "truncated": truncated,
+                "total_nodes": len(self.nodes),
+                "total_edges": len(self.edges)}
+
     def get_report(self) -> str:
         """Generate a concise graph report."""
         meta = self._graph.get("metadata", {})

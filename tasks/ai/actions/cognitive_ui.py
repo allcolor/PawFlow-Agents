@@ -234,6 +234,26 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "project_graph_ego":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            pg, _svc, _local, _relay_id = _resolve_project_graph(user_id, body)
+            if not pg.has_graph():
+                flowfile.set_content(json.dumps(
+                    {"error": "No project graph built yet."}).encode())
+                return [flowfile]
+            result = pg.ego_subgraph(
+                label=str(body.get("label") or ""),
+                depth=min(3, max(1, int(body.get("depth", 1) or 1))),
+                max_nodes=min(300, max(10, int(body.get("max_nodes", 150) or 150))))
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     # ── Project Wiki ───────────────────────────────────────────────
 
     if action.startswith("project_wiki_"):

@@ -386,7 +386,7 @@ commands.
 
 | Panel | Available actions |
 |---|---|
-| **Project Graph** | Select an explicitly linked relay, automatically load its existing report, build or refresh the derived AST index, search nodes and edges, and inspect a node's source location and neighbors. Stored reports remain readable while that relay is disconnected. The graph is read-only because source code is its source of truth. |
+| **Project Graph** | Select an explicitly linked relay, automatically load its existing report, build or refresh the derived AST index, search nodes and edges, and inspect a node's source location and neighbors. **View** opens an interactive force-directed canvas in a tab: it starts from an overview of the most-connected nodes and navigates by capped ego subgraphs (`project_graph_ego`, ≤300 nodes, 1–2 hops) — click selects a node, double-click/double-tap re-centers on it, edges are colored by confidence, and pan/zoom/pinch work with mouse and touch. The full graph is never rendered at once; the view page requests subgraphs from the panel over `postMessage`. Stored reports remain readable while that relay is disconnected. The graph is read-only because source code is its source of truth. |
 | **Project Wiki** | Select an explicitly linked relay, list and search pages, render Markdown, create or edit a page, delete a page, refresh source metadata, and run lint checks. |
 | **Scratchpad** | Select a conversation agent, list and search working notes, create or edit a note with tags and a required TTL, delete one note, or clear that agent's notes. |
 | **Diary** | Select a conversation agent, read structured diary entries, filter them by type, and add an entry. |

@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Graph View</title>
+<style>
+html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+             background: #0d1117; color: #c0c0d0;
+             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+#bar { position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+       display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+       padding: 8px 10px; background: rgba(26,26,46,0.92);
+       border-bottom: 1px solid #292944; }
+#bar h1 { margin: 0; font-size: 13px; color: #e0e0e0; font-weight: 600; }
+#bar input { background: #1e1e3a; color: #c0c0d0; border: 1px solid #444;
+             border-radius: 6px; padding: 4px 8px; font-size: 12px; width: 160px; }
+#bar select, #bar button { background: #2a2a4a; color: #a0a0c0; border: 1px solid #444;
+              border-radius: 6px; padding: 4px 10px; font-size: 11px; cursor: pointer; }
+#stats { color: #6c6c8a; font-size: 11px; }
+#legend { display: flex; gap: 6px; margin-left: auto; }
+#legend span { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 6px; }
+#status { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+          color: #6c6c8a; font-size: 13px; z-index: 5; pointer-events: none; }
+#detail { position: fixed; left: 10px; bottom: 10px; z-index: 10; max-width: min(420px, calc(100vw - 20px));
+          background: rgba(26,26,46,0.94); border: 1px solid #292944; border-radius: 8px;
+          padding: 8px 10px; font-size: 12px; display: none; }
+#detail b { color: #e0e0e0; }
+#detail .meta { color: #6c6c8a; font-size: 11px; margin-top: 2px; word-break: break-all; }
+#detail button { margin-top: 6px; background: #1e3a5f; color: #4fc3f7; border: none;
+                 border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; }
+#hint { position: fixed; right: 10px; bottom: 10px; color: #3a3a55; font-size: 10px; z-index: 5; }
+canvas { display: block; touch-action: none; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <h1>Project Graph</h1>
+  <input id="q" type="text" placeholder="Center on node...">
+  <select id="depth"><option value="1">1 hop</option><option value="2">2 hops</option></select>
+  <button id="go">Center</button>
+  <button id="overview">Overview</button>
+  <span id="stats"></span>
+  <div id="legend">
+    <span style="background:#1b4332;color:#52b788">EXTRACTED</span>
+    <span style="background:#1e3a5f;color:#4fc3f7">INFERRED</span>
+    <span style="background:#5a3a1a;color:#ffb347">AMBIGUOUS</span>
+  </div>
+</div>
+<div id="status">Loading graph...</div>
+<div id="detail"></div>
+<div id="hint">drag: move &middot; wheel/pinch: zoom &middot; double-click: expand</div>
+<canvas id="c"></canvas>
+<script>
+(function() {
+  'use strict';
+  var canvas = document.getElementById('c');
+  var ctx = canvas.getContext('2d');
+  var statusEl = document.getElementById('status');
+  var statsEl = document.getElementById('stats');
+  var detailEl = document.getElementById('detail');
+
+  var RELAY = (window.__PG_INIT && window.__PG_INIT.relay) || '';
+  var nodes = [], edges = [], byId = {}, center = null;
+  var view = { scale: 1, tx: 0, ty: 0 };
+  var selected = null, hovered = null;
+  var simHeat = 0;
+  var pendingReq = null;
+
+  var CONF_COLORS = { EXTRACTED: '#2d6a4f', INFERRED: '#1e5a8f', AMBIGUOUS: '#8a5a1a' };
+
+  function resize() {
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = window.innerWidth * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', function() { resize(); draw(); });
+  resize();
+
+  // ── Data loading (via parent panel's action bus) ───────────────
+  function requestEgo(label, depth) {
+    statusEl.textContent = 'Loading...';
+    statusEl.style.display = 'block';
+    var requestId = Math.random().toString(36).slice(2);
+    pendingReq = requestId;
+    window.parent.postMessage({
+      type: 'pgv-ego', requestId: requestId, relay: RELAY,
+      label: label || '', depth: depth || 1,
+    }, '*');
+  }
+
+  window.addEventListener('message', function(ev) {
+    var m = ev.data;
+    if (!m || m.type !== 'pgv-ego-result' || m.requestId !== pendingReq) return;
+    pendingReq = null;
+    if (!m.data || m.data.error) {
+      statusEl.textContent = (m.data && m.data.error) || 'No data';
+      return;
+    }
+    setGraph(m.data);
+  });
+
+  function setGraph(data) {
+    statusEl.style.display = 'none';
+    var prev = {};
+    nodes.forEach(function(n) { prev[n.id] = n; });
+    center = data.center || null;
+    byId = {};
+    nodes = (data.nodes || []).map(function(n, i) {
+      var old = prev[n.id];
+      var angle = (i / Math.max(1, (data.nodes || []).length)) * Math.PI * 2;
+      var node = {
+        id: n.id, label: n.label || n.id, degree: n.degree || 1,
+        file: n.source_file || '', loc: n.source_location || '',
+        // Keep known positions so expanding feels continuous.
+        x: old ? old.x : Math.cos(angle) * 220 + (Math.random() - 0.5) * 40,
+        y: old ? old.y : Math.sin(angle) * 220 + (Math.random() - 0.5) * 40,
+        vx: 0, vy: 0, fixed: false,
+      };
+      byId[node.id] = node;
+      return node;
+    });
+    if (center && byId[center] && !prev[center]) { byId[center].x = 0; byId[center].y = 0; }
+    edges = (data.edges || []).filter(function(e) { return byId[e.source] && byId[e.target]; });
+    selected = center ? byId[center] : null;
+    showDetail(selected);
+    statsEl.textContent = nodes.length + ' / ' + (data.total_nodes || nodes.length) + ' nodes, '
+      + edges.length + ' edges' + (data.truncated ? ' (truncated)' : '');
+    if (!Object.keys(prev).length) {
+      view.scale = 1;
+      view.tx = window.innerWidth / 2;
+      view.ty = window.innerHeight / 2;
+    }
+    simHeat = 1;
+    kick();
+  }
+
+  // ── Force simulation ───────────────────────────────────────────
+  var raf = null;
+  function kick() { if (!raf) raf = requestAnimationFrame(tick); }
+  function tick() {
+    raf = null;
+    if (simHeat > 0.005) { step(); simHeat *= 0.985; kick(); }
+    draw();
+  }
+  function step() {
+    var i, j, n, m, dx, dy, d2, d, f;
+    for (i = 0; i < nodes.length; i++) {
+      n = nodes[i];
+      // Weak gravity toward the origin keeps disconnected parts on screen.
+      n.vx -= n.x * 0.0015; n.vy -= n.y * 0.0015;
+      for (j = i + 1; j < nodes.length; j++) {
+        m = nodes[j];
+        dx = n.x - m.x; dy = n.y - m.y;
+        d2 = dx * dx + dy * dy + 0.01;
+        if (d2 > 160000) continue;
+        f = 900 / d2;
+        dx *= f; dy *= f;
+        n.vx += dx; n.vy += dy; m.vx -= dx; m.vy -= dy;
+      }
+    }
+    edges.forEach(function(e) {
+      var a = byId[e.source], b = byId[e.target];
+      var ex = b.x - a.x, ey = b.y - a.y;
+      var len = Math.sqrt(ex * ex + ey * ey) || 1;
+      var want = 80 + 4 * Math.min(10, Math.sqrt(a.degree) + Math.sqrt(b.degree));
+      var k = 0.02 * (len - want) / len;
+      ex *= k; ey *= k;
+      a.vx += ex; a.vy += ey; b.vx -= ex; b.vy -= ey;
+    });
+    nodes.forEach(function(n2) {
+      if (n2.fixed) { n2.vx = 0; n2.vy = 0; return; }
+      n2.vx *= 0.82; n2.vy *= 0.82;
+      var sp = Math.sqrt(n2.vx * n2.vx + n2.vy * n2.vy);
+      if (sp > 14) { n2.vx *= 14 / sp; n2.vy *= 14 / sp; }
+      n2.x += n2.vx * simHeat; n2.y += n2.vy * simHeat;
+    });
+  }
+
+  // ── Rendering ──────────────────────────────────────────────────
+  function radius(n) { return 4 + Math.min(12, Math.sqrt(n.degree)); }
+  function draw() {
+    ctx.save();
+    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    ctx.translate(view.tx, view.ty);
+    ctx.scale(view.scale, view.scale);
+    ctx.lineWidth = 1 / view.scale;
+    edges.forEach(function(e) {
+      var a = byId[e.source], b = byId[e.target];
+      ctx.strokeStyle = CONF_COLORS[(e.confidence || 'EXTRACTED').toUpperCase()] || '#2d6a4f';
+      ctx.globalAlpha = (selected && e.source !== selected.id && e.target !== selected.id) ? 0.25 : 0.7;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+    nodes.forEach(function(n) {
+      var r = radius(n);
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = n.id === center ? '#e94560' : (n === selected ? '#4fc3f7' : '#8888c0');
+      ctx.fill();
+      if (n === hovered || n === selected) {
+        ctx.strokeStyle = '#e0e0e0'; ctx.stroke();
+      }
+      var showLabel = view.scale > 0.7 || r > 8 || n === selected || n === hovered || n.id === center;
+      if (showLabel) {
+        ctx.fillStyle = n === selected || n.id === center ? '#e0e0e0' : '#9a9ab8';
+        ctx.font = (11 / view.scale) + 'px sans-serif';
+        ctx.fillText(n.label, n.x + r + 3 / view.scale, n.y + 3 / view.scale);
+      }
+    });
+    ctx.restore();
+  }
+
+  function showDetail(n) {
+    if (!n) { detailEl.style.display = 'none'; return; }
+    detailEl.style.display = 'block';
+    detailEl.innerHTML = '<b></b><div class="meta"></div>'
+      + '<button type="button">Expand from here</button>';
+    detailEl.querySelector('b').textContent = n.label + ' (' + n.degree + ' connections)';
+    detailEl.querySelector('.meta').textContent = (n.file || '') + (n.loc ? ' ' + n.loc : '');
+    detailEl.querySelector('button').onclick = function() { expand(n); };
+  }
+
+  function expand(n) {
+    requestEgo(n.label, parseInt(document.getElementById('depth').value, 10) || 1);
+  }
+
+  // ── Hit test + interactions ────────────────────────────────────
+  function toWorld(px, py) {
+    return { x: (px - view.tx) / view.scale, y: (py - view.ty) / view.scale };
+  }
+  function pick(px, py) {
+    var w = toWorld(px, py), best = null, bestD = 1e9;
+    nodes.forEach(function(n) {
+      var dx = n.x - w.x, dy = n.y - w.y;
+      var d = Math.sqrt(dx * dx + dy * dy);
+      var r = radius(n) + 6 / view.scale;
+      if (d < r && d < bestD) { best = n; bestD = d; }
+    });
+    return best;
+  }
+
+  var drag = null; // {mode:'pan'|'node', node, lastX, lastY, moved}
+  var pinch = null;
+
+  function pointerDown(px, py) {
+    var n = pick(px, py);
+    drag = { mode: n ? 'node' : 'pan', node: n, lastX: px, lastY: py, moved: false };
+    if (n) { n.fixed = true; }
+  }
+  function pointerMove(px, py) {
+    if (!drag) {
+      var h = pick(px, py);
+      if (h !== hovered) { hovered = h; draw(); }
+      return;
+    }
+    var dx = px - drag.lastX, dy = py - drag.lastY;
+    if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
+    drag.lastX = px; drag.lastY = py;
+    if (drag.mode === 'pan') { view.tx += dx; view.ty += dy; }
+    else {
+      drag.node.x += dx / view.scale; drag.node.y += dy / view.scale;
+      simHeat = Math.max(simHeat, 0.15); kick();
+    }
+    draw();
+  }
+  function pointerUp(px, py) {
+    if (drag && drag.node) drag.node.fixed = false;
+    if (drag && !drag.moved) {
+      selected = pick(px, py);
+      showDetail(selected);
+      draw();
+    }
+    drag = null;
+  }
+  function zoomAt(px, py, factor) {
+    var w = toWorld(px, py);
+    view.scale = Math.min(6, Math.max(0.1, view.scale * factor));
+    view.tx = px - w.x * view.scale;
+    view.ty = py - w.y * view.scale;
+    draw();
+  }
+
+  canvas.addEventListener('mousedown', function(e) { pointerDown(e.clientX, e.clientY); });
+  window.addEventListener('mousemove', function(e) { pointerMove(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', function(e) { pointerUp(e.clientX, e.clientY); });
+  canvas.addEventListener('dblclick', function(e) {
+    var n = pick(e.clientX, e.clientY);
+    if (n) expand(n);
+  });
+  canvas.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+  }, { passive: false });
+
+  var lastTap = 0;
+  canvas.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 2) {
+      var dx = e.touches[0].clientX - e.touches[1].clientX;
+      var dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinch = { dist: Math.sqrt(dx * dx + dy * dy) };
+      drag = null;
+      return;
+    }
+    var t = e.touches[0];
+    pointerDown(t.clientX, t.clientY);
+  }, { passive: true });
+  canvas.addEventListener('touchmove', function(e) {
+    if (pinch && e.touches.length === 2) {
+      e.preventDefault();
+      var dx = e.touches[0].clientX - e.touches[1].clientX;
+      var dy = e.touches[0].clientY - e.touches[1].clientY;
+      var d = Math.sqrt(dx * dx + dy * dy);
+      var cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      var cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      if (pinch.dist > 0) zoomAt(cx, cy, d / pinch.dist);
+      pinch.dist = d;
+      return;
+    }
+    if (e.touches.length === 1) {
+      e.preventDefault();
+      var t = e.touches[0];
+      pointerMove(t.clientX, t.clientY);
+    }
+  }, { passive: false });
+  canvas.addEventListener('touchend', function(e) {
+    if (pinch) { pinch = null; return; }
+    if (!drag) return;
+    var px = drag.lastX, py = drag.lastY;
+    var wasTap = !drag.moved;
+    pointerUp(px, py);
+    if (wasTap) {
+      var now = Date.now();
+      if (now - lastTap < 350 && selected) expand(selected);
+      lastTap = now;
+    }
+  });
+
+  document.getElementById('go').onclick = function() {
+    var q = document.getElementById('q').value.trim();
+    if (q) requestEgo(q, parseInt(document.getElementById('depth').value, 10) || 1);
+  };
+  document.getElementById('q').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('go').onclick();
+  });
+  document.getElementById('overview').onclick = function() {
+    nodes = []; edges = [];  // fresh layout for a different topology
+    requestEgo('', 1);
+  };
+
+  if (window.__PG_INIT && window.__PG_INIT.data && !window.__PG_INIT.data.error) {
+    setGraph(window.__PG_INIT.data);
+  } else {
+    requestEgo('', 1);
+  }
+})();
+</script>
+</body>
+</html>

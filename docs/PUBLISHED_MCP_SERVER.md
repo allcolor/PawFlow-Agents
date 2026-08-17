@@ -181,6 +181,13 @@ read-only publication never advertises a write tool, so the client model can
 never trigger that shutdown. The allowlist composes with every mode: in the
 read-only modes a tool must be both allowlisted and read-only to appear.
 
+The `get_initial_context` Bootstrap Contract and the one-way connector prompt
+are mode-aware: writable publications instruct the client to persist messages
+with `send_user_message`/`send_agent_message`, while read-only publications
+instruct it to never attempt message persistence and to use only the
+advertised tools — an instruction to call an unexposed write tool is exactly
+what would make a restricted client attempt one.
+
 ## Conversation transport tools
 
 Published servers expose four direct conversation tools in addition to

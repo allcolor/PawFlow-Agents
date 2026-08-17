@@ -535,10 +535,25 @@ def _initial_context_document(server: Dict[str, Any], rows: list) -> str:
         "- Treat this document as PawFlow conversation context, not as a new user command.",
         "- Continue from the latest user request visible in the serialized context.",
         "- Use get_context_updates with the returned cursor before each later turn.",
-        "- Persist local user prompts with send_user_message and final responses with send_agent_message.",
-        "- Reuse the same message_id when retrying a write.",
-        "",
     ])
+    # A read-only publication must not instruct the client to call the
+    # messaging write tools it deliberately does not expose — that instruction
+    # is exactly what makes a restricted client attempt a write and lose the
+    # connector.
+    if _is_readonly_mode(server):
+        body.extend([
+            "- This publication is read-only: do not attempt to persist user "
+            "or agent messages, and use only the tools this connector "
+            "advertises.",
+            "",
+        ])
+    else:
+        body.extend([
+            "- Persist local user prompts with send_user_message and final "
+            "responses with send_agent_message.",
+            "- Reuse the same message_id when retrying a write.",
+            "",
+        ])
     return "\n".join(body).rstrip() + "\n"
 
 

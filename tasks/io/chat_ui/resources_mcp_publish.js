@@ -20,6 +20,50 @@ function _publishedMcpConnectorPrompt(server) {
   if (!server) return '';
   const agent = String(server.agent_name || 'the published agent');
   const label = String(server.label || agent);
+  const mode = String(server.mode || 'api');
+  const readonly = mode === 'api_readonly' || mode === 'full_readonly';
+  const full = mode === 'full' || mode === 'full_readonly';
+  const everyTurn = readonly ? [
+    'Every later turn:',
+    '- First call get_context_updates with your last cursor: other channels (webchat, CLI,',
+    '  other agents) may have added messages. Update your cursor from the response.',
+    '- This publication is read-only: it does not expose send_user_message,',
+    '  send_agent_message, or any write tool. Never attempt them; use only the tools the',
+    '  connector advertises.',
+  ] : [
+    'Every later turn:',
+    '- First call get_context_updates with your last cursor: other channels (webchat, CLI,',
+    '  other agents) may have added messages. Update your cursor from the response.',
+    '- Persist the user\'s new message with send_user_message (content plus a fresh unique',
+    '  message_id such as a UUID). A retry must reuse the same message_id.',
+    '- When your turn is finished, persist your final answer with send_agent_message',
+    '  (content plus a fresh message_id). If you are answering a prompt injected by PawFlow,',
+    '  pass its message_id as reply_to_message_id.',
+  ];
+  const toolsBlock = full ? [
+    'PawFlow tools:',
+    '- Every PawFlow tool this publication exposes is advertised directly as its own MCP',
+    '  tool with its real input schema and read-only/write annotations. Call them directly;',
+    '  never guess parameters.',
+  ] : [
+    'PawFlow tools:',
+    '- get_tool_schema without arguments lists the tools this publication exposes; with',
+    '  tool_name it returns one full schema. Never guess parameters.',
+    '- use_tool executes a tool: tool_name plus arguments_json, a JSON object encoded as a',
+    '  string (use "{}" when there are no arguments). Use PawFlow tools for anything that',
+    '  touches the user\'s PawFlow workspace, files, or services.',
+  ];
+  const oneWayLimits = readonly ? [
+    'One-way limits:',
+    '- No wake-up can ever reach you. Finish work in the current turn.',
+    '- Never invent tool results; report tool errors as errors.',
+  ] : [
+    'One-way limits:',
+    '- schedule_continuation and ScheduleWakeup are refused on this connector: no wake-up',
+    '  can ever reach you. Finish work in the current turn, or persist state with',
+    '  send_agent_message so the next user turn can resume it.',
+    '- Never invent tool results; report tool errors as errors.',
+  ];
   return [
     'You are connected to a PawFlow conversation through the "' + label + '" MCP connector.',
     'It publishes one PawFlow conversation and its agent "' + agent + '". The connector is',
@@ -35,30 +79,10 @@ function _publishedMcpConnectorPrompt(server) {
     '   "Problem initializing pawflow mcp: <the exact problem>" and stop - do not pretend',
     '   the context is loaded.',
     '',
-    'Every later turn:',
-    '- First call get_context_updates with your last cursor: other channels (webchat, CLI,',
-    '  other agents) may have added messages. Update your cursor from the response.',
-    '- Persist the user\'s new message with send_user_message (content plus a fresh unique',
-    '  message_id such as a UUID). A retry must reuse the same message_id.',
-    '- When your turn is finished, persist your final answer with send_agent_message',
-    '  (content plus a fresh message_id). If you are answering a prompt injected by PawFlow,',
-    '  pass its message_id as reply_to_message_id.',
-    '',
-    'PawFlow tools:',
-    '- get_tool_schema without arguments lists the tools this publication exposes; with',
-    '  tool_name it returns one full schema. Never guess parameters.',
-    '- use_tool executes a tool: tool_name plus arguments_json, a JSON object encoded as a',
-    '  string (use "{}" when there are no arguments). Use PawFlow tools for anything that',
-    '  touches the user\'s PawFlow workspace, files, or services.',
-    '',
-    'One-way limits:',
-    '- schedule_continuation and ScheduleWakeup are refused on this connector: no wake-up',
-    '  can ever reach you. Finish work in the current turn, or persist state with',
-    '  send_agent_message so the next user turn can resume it.',
-    '- Never invent tool results; report tool errors as errors.',
+  ].concat(everyTurn, [''], toolsBlock, [''], oneWayLimits, [
     '',
     'Complete the startup steps now and reply with the readiness line.',
-  ].join('\n');
+  ]).join('\n');
 }
 
 function _publishedMcpClose() {

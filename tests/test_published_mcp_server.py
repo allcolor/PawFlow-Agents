@@ -1698,3 +1698,42 @@ def test_full_readonly_direct_read_call_executes(monkeypatch):
         {"path": "x"})
     assert result == {"content": [{"type": "text", "text": "ok"}],
                       "isError": False}
+
+
+def test_bootstrap_contract_is_mode_aware():
+    rows = [{"seq": 1, "role": "user", "content": "hi"}]
+    # A read-only publication must never instruct the client to call the
+    # messaging write tools it does not expose.
+    for mode in ("api_readonly", "full_readonly"):
+        doc = endpoint._initial_context_document(_readonly_server(mode), rows)
+        assert "read-only" in doc
+        assert "send_user_message" not in doc
+        assert "send_agent_message" not in doc
+    for mode in ("api", "full"):
+        doc = endpoint._initial_context_document(_readonly_server(mode), rows)
+        assert "send_user_message" in doc
+        assert "send_agent_message" in doc
+
+
+def test_full_readonly_real_registry_invariant(monkeypatch):
+    """Long-term security invariant: with the real default tool registry,
+    every tool a full_readonly publication advertises must be classified
+    read-only by ToolApprovalGate, and the critical mutable tools must be
+    absent. A misclassification here is a hole in the read-only guarantee."""
+    from core.tool_approval import ToolApprovalGate
+    from core.tool_registry import create_default_registry
+
+    registry = create_default_registry()
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: registry)
+    tools = endpoint._tools_for_server(_readonly_server("full_readonly"))
+    names = {tool["name"] for tool in tools}
+    assert len(names) > 3, "expected real read-only tools beyond the meta pair"
+    for tool in tools:
+        if tool["name"] in endpoint._READONLY_META:
+            continue
+        assert ToolApprovalGate.is_read_only_allowed(tool["name"]), tool["name"]
+        assert tool["annotations"]["readOnlyHint"] is True, tool["name"]
+    for critical in ("bash", "write", "edit", "apply_patch", "batch_edit",
+                     "use_tool", "send_user_message", "send_agent_message",
+                     "schedule_continuation", "manage_resource"):
+        assert critical not in names, critical

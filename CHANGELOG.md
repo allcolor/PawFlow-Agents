@@ -4,6 +4,35 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.200] — 2026-08-17
+
+### Fixed
+
+- Adaptive LLM router health is now actually adaptive: plans key candidate
+  health on the service's resolved default model (the same resolution the
+  client reports), so cooldown/lock state written on failures is read back at
+  plan time, and crossing the transient-failure threshold without a provider
+  Retry-After now applies a real exponential cooldown (30s doubling, capped at
+  30 minutes) instead of an inert deadline of zero.
+- Project graph relay builds work again: the extraction script called
+  graphify's `extract()` with keyword arguments it never accepted, so every
+  build since beta.183 failed with a TypeError; the call now matches the real
+  signature and an end-to-end relay-script test guards it.
+- Published MCP ChatGPT connector routes survive real one-way clients:
+  missing or stale `Mcp-Session-Id` values get a synthesized session instead
+  of a 404 (which ChatGPT surfaced as "Resource not found" before disabling
+  the connector), the cross-authority `Origin` rejection no longer applies to
+  connector-key routes (`Origin: https://chatgpt.com` is legitimate there),
+  protocol 2025-06-18 is accepted, and every published-MCP request is logged
+  at INFO with the key redacted. Every `tools/call` from an MCP client is now
+  audited in the conversation as display-only tool call/result rows like a
+  normal agent turn (context reads summarize to size + cursor instead of
+  embedding the transcript into itself).
+- Chat UI dialogs built from JavaScript (new conversation, import, export,
+  file mention) now follow the `--pf-*` theme variable contract instead of
+  ad-hoc variables no theme defines, fixing unreadable dark-on-dark dialogs
+  on light themes.
+
 ## [1.0.0-beta.199] — 2026-08-17
 
 ### Fixed

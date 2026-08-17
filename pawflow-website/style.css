@@ -341,6 +341,7 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
 .howto-nav a { color: var(--muted); border: 1px solid var(--line-soft); background: var(--surface); border-radius: 8px; padding: 9px 12px; font-weight: 800; font-size: 14px; }
 .howto-nav a:hover { color: var(--text); border-color: rgba(38,212,255,.55); }
 .howto-list { display: grid; gap: 18px; }
+.howto-section, .recipe { scroll-margin-top: 92px; }
 .howto-section { padding: 26px 0 8px; border-top: 1px solid var(--line-soft); }
 .howto-section:first-child { border-top: 0; padding-top: 0; }
 .howto-section h2 { max-width: 820px; }
@@ -349,7 +350,8 @@ pre { margin: 0; padding: 18px; overflow-x: auto; color: #d9f5ff; font-size: 14p
 .recipe figure { margin: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--line-soft); }
 .recipe figure img { aspect-ratio: 16 / 10; object-fit: cover; width: 100%; }
 .recipe figure.phone-shot { background: #0c1118; }
-.recipe figure.phone-shot img { aspect-ratio: 3 / 4; object-fit: contain; max-height: 540px; }
+.recipe figure.phone-shot img, .recipe figure.phone-shot video { aspect-ratio: 3 / 4; object-fit: contain; width: 100%; max-height: 540px; display: block; }
+.recipe figure.phone-shot figcaption { color: var(--quiet); border-top: 1px solid var(--line-soft); padding: 10px 12px; font-size: 12px; }
 .recipe-meta { color: var(--amber); text-transform: uppercase; font-weight: 900; font-size: 13px; margin-bottom: 8px; }
 .recipe h2 { font-size: clamp(26px, 3vw, 38px); }
 .recipe ol { color: var(--muted); padding-left: 20px; }

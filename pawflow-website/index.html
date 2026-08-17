@@ -191,7 +191,7 @@
       <div class="container split reverse">
         <figure class="visual-card" data-reveal>
           <img src="assets/media/product/webchat-workspace-menu.webp" onerror="this.onerror=null;this.src='assets/media/product/resource-panel.webp';this.onerror=function(){this.src='assets/feature-channels.png';};" alt="PawFlow webchat workspace menu with relay tools">
-          <figcaption>Planned capture: webchat side menu showing relay desktop, terminals, context, memory, and VS Code/code-server entries.</figcaption>
+          <figcaption>The live workspace and resource controls beside a relay-backed terminal.</figcaption>
         </figure>
         <div data-reveal>
           <p class="eyebrow">Webchat workspace</p>
@@ -214,6 +214,25 @@
         <article class="feature"><span>07</span><h3>Encryption at rest</h3><p>Opt-in, per-conversation passphrase encryption of message content and tool I/O (and conv-scoped relay workspaces via CryFS). Keys stay in RAM only, so a stopped server leaves ciphertext on disk. Off by default, transparent when unused.</p></article>
         <article class="feature"><span>08</span><h3>Live turn view</h3><p>New conversations open in the simplified view: your message, one live activity block that shows what the agent is doing while it works — thinking, tool calls, artifacts, and the seconds elapsed — then the turn's last message below it. Switch any conversation back to the classic transcript from the View menu.</p></article>
         <article class="feature"><span>09</span><h3>Update from the browser</h3><p>Admin &rarr; Update server pulls a new release and recreates the server from a throw-away updater container. The page waits for a different server process to answer before reloading, so a failed update says so instead of looking finished.</p></article>
+      </div>
+    </section>
+
+    <section class="section surface" id="mcp-live-workspace">
+      <div class="container split">
+        <div data-reveal>
+          <p class="eyebrow">Live workspace through MCP</p>
+          <h2>Bring the AI to the project — without uploading the project.</h2>
+          <p class="lead">Publish a PawFlow conversation as an MCP server, bind it to a real relay workspace, and let compatible clients inspect the current files and Git history directly. Exposure can stay read-only when exploration is all the client needs.</p>
+          <div class="compare-row">
+            <div><strong>The actual workspace</strong><span>No ZIP archive, stale copy, or repeated project upload.</span></div>
+            <div><strong>Controlled access</strong><span>Expose read-only tools without granting edits or shell execution.</span></div>
+          </div>
+          <a class="inline-link" href="howtos.html#published-mcp-client">Install the published MCP client</a>
+        </div>
+        <figure class="visual-card" data-reveal>
+          <video controls preload="metadata" poster="assets/media/video/chatgpt-mcp-live-workspace-poster.webp"><source src="assets/media/video/chatgpt-mcp-live-workspace.mp4" type="video/mp4"></video>
+          <figcaption>ChatGPT reads the live MyWorkspace Git history through PawFlow MCP in read-only mode.</figcaption>
+        </figure>
       </div>
     </section>
 
@@ -301,7 +320,7 @@
       <div class="container split reverse">
         <figure class="visual-card" data-reveal>
           <video controls preload="metadata" poster="assets/media/video/private-gateway-poster.webp"><source src="assets/media/video/private-gateway.mp4" type="video/mp4"></video>
-          <figcaption>Video: gateway skin, sign-in with an external provider, and the workspace behind it.</figcaption>
+          <figcaption>Video: the Matrix gateway skin protects access with a masked code before PawFlow sign-in.</figcaption>
         </figure>
         <div data-reveal>
           <p class="eyebrow">Private Gateway</p>

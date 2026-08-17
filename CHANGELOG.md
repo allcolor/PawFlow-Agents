@@ -4,6 +4,22 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.204] — 2026-08-17
+
+### Added
+
+- Published MCP connectors gain two read-only exposure modes, `api_readonly`
+  and `full_readonly`, alongside the existing `api` and `full` modes. The
+  read-only variants neither advertise nor execute any write tool — the
+  `send_user_message`/`send_agent_message` transport tools included — because
+  some clients (ChatGPT plans that gate write actions) disable the entire
+  connector for a conversation the moment the model merely attempts a
+  write-annotated tool, killing reads too. Read-only status comes from the
+  `ToolApprovalGate` classification and is enforced at `tools/list`, at
+  `get_tool_schema`, and at execution time; in `api_readonly` the `use_tool`
+  gateway only executes read-only tools and is honestly annotated
+  `readOnlyHint: true`.
+
 ## [1.0.0-beta.203] — 2026-08-17
 
 ### Added

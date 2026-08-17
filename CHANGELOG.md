@@ -6,15 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.207] — 2026-08-17
+
+### Added
+
+- The PawFlow website now includes real product demos for the Android app,
+  ChatGPT MCP workspace access, ComfyUI through a Windows relay, themes,
+  Private Gateway, and the workspace menu; the private Android server URL is
+  blurred throughout the selector sequence.
+- A signed, opt-in `pawflow.comfyui-operator` bundled package ships the
+  `operate-comfyui` skill for queue-safe self-hosted ComfyUI installation,
+  relay routing, workflow/model/custom-node operation, media QA, and FileStore
+  delivery.
+
 ### Fixed
 
-- FileStore listings are usable for disambiguation: `list_dir` on
-  `source='filestore'` now returns newest-first entries with content type
-  and creation time, accepts a `pattern` filter (filename glob/substring
-  or content type such as `video/*`) and honors `max_entries`; `glob` on
-  the FileStore applies its pattern instead of ignoring it. Agents no
-  longer have to page through an unfiltered, unordered dump to find the
-  latest attachment.
+- FileStore listings are newest-first and filterable by filename
+  glob/substring or content type across `list_dir` and `glob`, so recent
+  attachments can be found without scanning an unfiltered dump.
+- The release procedure now explicitly forbids `v`-prefixed tags and has a
+  CI guard requiring the exact `1.0.0-beta.N` form.
 
 ## [1.0.0-beta.206] — 2026-08-17
 

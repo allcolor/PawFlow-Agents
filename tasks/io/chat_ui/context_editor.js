@@ -476,14 +476,14 @@ function showContextOverlay(data) {
         + escapeHtml(t('contextLoadOlder', { shown: _ctxCurrentOffset, total: _ctxTotalCount })) + '</button></div>';
     }
   }
-  overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
-    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+  overlay.innerHTML = '<div class="cog-dialog" style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
+    + '<div class="cog-head">'
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('contextTitle')) + '</h3>'
     + statusBadge
     + _buildCtxAgentDropdown(data)
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + escapeHtml(t('contextMessages', {n:data.message_count})) + ' &middot; ' + escapeHtml(t('contextTokens', {n:data.token_estimate})) + '</span>'
     + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + escapeAttr(_isReadonly ? t('contextInvalidateRuntimeTitle') : t('contextDeleteContextTitle')) + '">\u{1F5D1} ' + escapeHtml(_isReadonly ? t('contextInvalidate') : t('contextDelete')) + '</button>' : '')
-    + '<button onclick="ctxClose()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
+    + '<button class="cog-close" onclick="ctxClose()">&times;</button>'
     + '</div>'
     + usageHtml
     + '<div id="ctx-msg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'

@@ -20,8 +20,8 @@ function showScratchpadOverlay() {
   const overlay = document.createElement('div');
   overlay.id = 'scratchpadOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;z-index:9999';
-  overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:16px;width:min(980px,94vw);height:min(700px,86vh);display:flex;flex-direction:column">'
-    + '<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px">'
+  overlay.innerHTML = '<div class="cog-dialog" style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:16px;width:min(980px,94vw);height:min(700px,86vh);display:flex;flex-direction:column">'
+    + '<div class="cog-head">'
     + '<h3 id="spTitle" style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('scratchpad')) + '</h3>'
     + '<label style="color:#888;font-size:11px">' + escapeHtml(t('agent'))
     + ' <select id="spAgent" onchange="spAgentChanged()" style="background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:6px;padding:3px 7px"><option>'
@@ -30,9 +30,9 @@ function showScratchpadOverlay() {
     + '<button type="button" onclick="closeScratchpadOverlay();showProjectWikiOverlay()" class="btn">Wiki</button>'
     + '<button type="button" onclick="spEditNote()" class="btn">New note</button>'
     + '<button type="button" onclick="spClear()" class="btn">Clear all</button>'
-    + '<button type="button" onclick="closeScratchpadOverlay()" style="margin-left:auto;background:none;border:none;color:#aaa;cursor:pointer;font-size:20px">&times;</button>'
+    + '<button type="button" class="cog-close" onclick="closeScratchpadOverlay()">&times;</button>'
     + '</div>'
-    + '<div style="display:grid;grid-template-columns:minmax(220px,32%) 1fr;gap:10px;min-height:0;flex:1">'
+    + '<div class="cog-split" style="display:grid;grid-template-columns:minmax(220px,32%) 1fr;gap:10px;min-height:0;flex:1">'
     + '<aside style="display:flex;flex-direction:column;min-height:0;border:1px solid #292944;border-radius:8px;background:#111124">'
     + '<input id="spSearch" type="search" placeholder="Search topics, contents and tags" style="margin:9px;background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:6px;padding:7px" oninput="spScheduleSearch(this.value)">'
     + '<div id="spNotes" style="overflow:auto;padding:0 8px 8px;flex:1"></div>'

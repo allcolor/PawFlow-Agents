@@ -70,8 +70,8 @@ function showDiaryOverlay(entries, agentName, agents) {
     });
   }
 
-  overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
-    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+  overlay.innerHTML = '<div class="cog-dialog" style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
+    + '<div class="cog-head">'
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('diaryTitle', { agent: agentName || '?' })) + '</h3>'
     + '<select id="diaryAgent" onchange="diaryAgentChanged()" style="background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:6px;padding:3px 7px">'
     + agents.map(function(agent) { return '<option value="' + escapeHtml(agent) + '"'
@@ -79,7 +79,7 @@ function showDiaryOverlay(entries, agentName, agents) {
     + '<span style="color:#6c6c8a;font-size:12px">' + entries.length + ' entries</span>'
     + filterHtml
     + '<button onclick="diaryAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ ' + escapeHtml(t('add')) + '</button>'
-    + '<button onclick="document.getElementById(\'diaryOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px">&times;</button>'
+    + '<button class="cog-close" onclick="document.getElementById(\'diaryOverlay\').remove()">&times;</button>'
     + '</div>'
     + '<div id="diary-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + rowsHtml + '</div>'
     + '</div>';

@@ -46,6 +46,21 @@ def test_project_graph_panel_has_build_report_search_and_node_navigation():
     assert "relay_id: _pgRelay" in source
 
 
+def test_project_graph_panel_opens_interactive_view():
+    source = _text("tasks/io/chat_ui/project_graph.js")
+    view = _text("tasks/io/chat_ui/project_graph_view.html")
+    # The panel relays ego requests from the blob-tab view over postMessage.
+    assert "pgOpenGraphView()" in source
+    assert "project_graph_ego" in source
+    assert "'pgv-ego'" in source
+    assert "pgv-ego-result" in source
+    assert "addBlobHtmlTab" in source
+    assert "project_graph_view.html" in source
+    assert "pgv-ego" in view
+    assert "pgv-ego-result" in view
+    assert "__PG_INIT" in view and "__PG_INIT" in source
+
+
 def test_wiki_panel_has_search_edit_refresh_lint_and_delete_actions():
     source = _text("tasks/io/chat_ui/project_wiki.js")
     for action in (
@@ -95,6 +110,41 @@ def test_i18n_catalogs_have_identical_keys():
     catalogs = [json.loads(_text(f"tasks/io/chat_ui/i18n/{lang}.json"))
                 for lang in ("en", "fr", "es")]
     assert set(catalogs[0]) == set(catalogs[1]) == set(catalogs[2])
+
+
+def test_panel_dialogs_use_mobile_safe_header_chrome():
+    # Headers wrap and the close button is pinned top-right (cog-close) so it
+    # can never be pushed off-screen on narrow viewports.
+    panels = (
+        "tasks/io/chat_ui/project_graph.js",
+        "tasks/io/chat_ui/knowledge_graph.js",
+        "tasks/io/chat_ui/project_wiki.js",
+        "tasks/io/chat_ui/scratchpad.js",
+        "tasks/io/chat_ui/diary.js",
+        "tasks/io/chat_ui/memories.js",
+        "tasks/io/chat_ui/context_editor.js",
+    )
+    for relative in panels:
+        source = _text(relative)
+        assert 'class="cog-dialog"' in source, relative
+        assert 'class="cog-head"' in source, relative
+        assert "cog-close" in source, relative
+    for relative in ("tasks/io/chat_ui/project_wiki.js",
+                     "tasks/io/chat_ui/scratchpad.js"):
+        assert 'class="cog-split"' in _text(relative), relative
+    template = _text("tasks/io/chat_ui/template.html")
+    assert ".cog-dialog { position: relative; }" in template
+    assert "flex-wrap: wrap" in template.split(".cog-head")[1].split("}")[0]
+    assert "position: absolute" in template.split(".cog-close")[1].split("}")[0]
+
+
+def test_conversation_controls_row_scrolls_on_mobile():
+    template = _text("tasks/io/chat_ui/template.html")
+    mobile = template.split("@media (max-width: 768px)")[1].split("@media")[0]
+    row = mobile.split(".prompt-controls-row {")[1].split("}")[0]
+    assert "overflow-x: auto" in row
+    assert ".view-menu { position: fixed;" in mobile
+    assert ".cog-split { grid-template-columns: 1fr !important;" in mobile
 
 
 def test_cognitive_panel_files_stay_below_split_limit():

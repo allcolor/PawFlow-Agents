@@ -36,13 +36,13 @@ function showKgOverlay(triples) {
   const filtered = _kgFilterTriples(triples, _kgFilter);
   const rowsHtml = _kgBuildRows(filtered);
 
-  overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:750px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
-    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+  overlay.innerHTML = '<div class="cog-dialog" style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:750px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
+    + '<div class="cog-head">'
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + t('knowledgeGraph') + '</h3>'
     + statsHtml
     + filterHtml
     + '<button onclick="kgAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ ' + escapeHtml(t('add')) + '</button>'
-    + '<button onclick="document.getElementById(\'kgOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px">&times;</button>'
+    + '<button class="cog-close" onclick="document.getElementById(\'kgOverlay\').remove()">&times;</button>'
     + '</div>'
     + '<div id="kg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + rowsHtml + '</div>'
     + '</div>';

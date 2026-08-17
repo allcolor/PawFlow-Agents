@@ -409,6 +409,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   .composer-context-row > .prompt-controls-panel,
   .composer-context-row > .composer-action-mount { justify-self: stretch; }
   .prompt-controls-panel { max-width: 100%; }
+  /* Conversation-controls row scrolls horizontally like the header/dock. */
+  .prompt-controls-row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .prompt-controls-row::-webkit-scrollbar { width: 0; height: 0; display: none; }
+  .prompt-controls-row > * { flex: 0 0 auto; }
+  /* The view menu escapes the row scrollbox (overflow-x would clip it):
+     fixed at the bottom of the viewport, full width. */
+  .view-menu { position: fixed; left: 8px; right: 8px; bottom: 8px; min-width: 0; z-index: 300; }
+  /* Cognitive-panel two-pane grids stack vertically on phones. */
+  .cog-split { grid-template-columns: 1fr !important; grid-template-rows: minmax(0, 38%) minmax(0, 1fr); }
   .action-dock-menu { max-width: 100%; }
   #adminSettingsMenu { left: 8px; right: 8px; transform: none; }
   .sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;
@@ -626,6 +635,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .prompt-controls-row #permissionMode { max-width: 170px; height: 30px; }
 .prompt-controls-row button { width: 30px; height: 30px; padding: 0; border-radius: 6px;
                               display: inline-flex; align-items: center; justify-content: center; }
+/* Cognitive-panel dialog chrome: header wraps on narrow screens and the
+   close button is pinned to the dialog's top-right corner so it can never
+   be pushed off-screen by the other header controls. */
+.cog-dialog { position: relative; }
+.cog-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-right: 30px; margin-bottom: 10px; }
+.cog-close { position: absolute; top: 8px; right: 10px; background: none; border: none; color: #aaa; cursor: pointer; font-size: 20px; line-height: 1; padding: 4px 8px; }
 .active-panel-title { font-size: 10px; color: #6c6c8a; margin-bottom: 2px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .active-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
 .active-row .a-spinner { animation: spin 1.2s linear infinite; font-style: normal; font-size: 10px; }

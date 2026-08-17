@@ -15,17 +15,18 @@ function showProjectGraphOverlay() {
   overlay.id = 'pgOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
 
-  overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:750px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
-    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+  overlay.innerHTML = '<div class="cog-dialog" style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:750px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
+    + '<div class="cog-head">'
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">Project Graph</h3>'
     + '<label style="color:#888;font-size:11px">' + escapeHtml(t('relays'))
     + ' <select id="pgRelaySelect" onchange="pgRelayChanged()" style="background:#1e1e3a;color:#ddd;border:1px solid #444;border-radius:6px;padding:3px 7px"><option>'
     + escapeHtml(t('loadingRelays')) + '</option></select></label>'
     + '<button onclick="pgBuild()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Build</button>'
     + '<button onclick="pgReport()" style="background:#1b4332;color:#52b788;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">Report</button>'
+    + '<button onclick="pgOpenGraphView()" style="background:#3a2a5f;color:#b088ff;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600">View</button>'
     + '<button onclick="document.getElementById(\'pgOverlay\').remove();showProjectWikiOverlay()" style="background:#2a2a4a;color:#a0a0c0;border:1px solid #444;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Wiki</button>'
     + '<button onclick="document.getElementById(\'pgOverlay\').remove();showScratchpadOverlay()" style="background:#2a2a4a;color:#a0a0c0;border:1px solid #444;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Scratchpad</button>'
-    + '<button onclick="document.getElementById(\'pgOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:auto">&times;</button>'
+    + '<button class="cog-close" onclick="document.getElementById(\'pgOverlay\').remove()">&times;</button>'
     + '</div>'
     + '<div style="display:flex;gap:6px;margin-bottom:10px">'
     + '<input id="pgSearchInput" type="text" placeholder="' + escapeHtml(t('searchNodesEdges')) + '" style="flex:1;background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:5px 10px;font-size:12px" onkeydown="if(event.key===\'Enter\')pgSearch()">'
@@ -353,4 +354,41 @@ function _pgRenderNode(node) {
 function _pgSetContent(html) {
   var content = document.getElementById('pg-content');
   if (content) content.innerHTML = html;
+}
+
+// ── Interactive graph view (project_graph_view.html in a blob tab) ──
+// The view page has no action bus of its own: it asks this window for
+// ego subgraphs over postMessage and we relay through action$.
+window.addEventListener('message', function(ev) {
+  var m = ev.data;
+  if (!m || m.type !== 'pgv-ego' || !ev.source) return;
+  action$('project_graph_ego', {
+    relay_id: m.relay || _pgRelay,
+    label: m.label || '',
+    depth: m.depth || 1,
+  }).subscribe({
+    next: function(data) {
+      ev.source.postMessage({ type: 'pgv-ego-result', requestId: m.requestId, data: data }, '*');
+    },
+    error: function(e) {
+      ev.source.postMessage({ type: 'pgv-ego-result', requestId: m.requestId, data: { error: e.message } }, '*');
+    },
+  });
+});
+
+async function pgOpenGraphView() {
+  var relay = _pgRelay;
+  try {
+    var resp = await fetch('/chat/js/project_graph_view.html?v=' + encodeURIComponent(Date.now()),
+      { credentials: 'same-origin', cache: 'no-store' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var html = await resp.text();
+    var bootstrap = '<script>window.__PG_INIT=' + JSON.stringify({ relay: relay }) + ';<\/script>\n';
+    html = html.replace('<script>', bootstrap + '<script>');
+    var overlay = document.getElementById('pgOverlay');
+    if (overlay) overlay.remove();
+    addBlobHtmlTab('pg-view-' + relay, html);
+  } catch (e) {
+    _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(e.message || String(e)) + '</div>');
+  }
 }

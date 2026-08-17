@@ -4,6 +4,19 @@ All notable changes to PawFlow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.202] — 2026-08-17
+
+### Added
+
+- Published MCP connector tools now declare MCP behavior annotations
+  (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so
+  clients such as ChatGPT no longer treat the read-only context tools as
+  unrestricted write actions and refuse to invoke them.
+- The resources panel shows a published-MCP status row (agent, enabled state,
+  key count) in the MCP Repository section; selecting it reopens the
+  publication configuration dialog, which was previously unreachable-looking
+  once a conversation had been published.
+
 ## [1.0.0-beta.201] — 2026-08-17
 
 ### Fixed

@@ -21,6 +21,7 @@ The beta release includes:
 - **Docker Support** — Containerized deployment with relay for isolated tool execution.
 - **Relay Service Tunnels** — Owner-scoped, relay-to-relay access to approved TCP services through loopback-only listeners, short-lived signed grants, and FRPS authorization.
 - **PawCode CLI & VS Code** — Terminal and editor clients connected to the same PawFlow runtime.
+- **Android App** — Native client with encrypted multi-server profiles, native built-in/OAuth2 login (PKCE handoff), parallel webchat tabs, system-managed downloads, and an APK published with every release.
 - **Package Ecosystem** — Signed `.pfp` packages, package registries, package runtime proxies, Resources sidebar package workflows, and external skill marketplace import.
 
 ---
@@ -54,8 +55,8 @@ Ollama, Mistral, vLLM, LM Studio, Together.ai — most work via the OpenAI-compa
 ### Full AWS-native deployment (remote execution mode)
 Add a new, additive `remote` execution mode so PawFlow runs on AWS managed compute (ECS Fargate, EKS) — and, by generalization, plain EC2 and ECS-on-EC2 — without a local Docker socket, shared host filesystem, or host-gateway networking. Today PawFlow spawns sibling containers on the host Docker daemon via `docker.sock`; the new mode introduces an `ExecBackend` abstraction (Docker backend preserves current behavior bit-for-bit; a remote backend dispatches execution to a WS-reachable worker fleet over the existing relay protocol, with ECS RunTask / K8s Job orchestration for elasticity), a `RemoteProcess` Popen-compatible shim for stream/kill parity, network-shared session storage (EFS or the server-fs FUSE relay), RDS/Aurora Postgres, ECR images, and Secrets Manager/SSM. The remote backend is strictly more general, so supporting Fargate/EKS transitively covers EC2 and ECS-on-EC2. The existing Docker mode stays the default and unchanged. See [docs/AWS_REMOTE_EXEC_PLAN.md](docs/AWS_REMOTE_EXEC_PLAN.md).
 
-### Mobile client (PWA)
-Progressive Web App installable on iOS and Android. Offline caching, push notifications when agents respond, mobile-optimized layout.
+### Mobile clients
+The native Android app is shipped (server profiles, native login, tabbed webchat, per-release APK — see [docs/ANDROID_APP.md](docs/ANDROID_APP.md)). Remaining work: a release-signed/Play Store build, push notifications when agents respond, an iOS client, and PWA offline caching for browsers without the native app.
 
 ### External webchat clients
 Telegram is shipped as a first-class agent client (shared history, streaming, voice messages, identity linking). Remaining work: bring Discord, Slack, and WhatsApp to the same level — the bot services and flow-level receiver/send tasks exist, but not the full conversation-client experience.

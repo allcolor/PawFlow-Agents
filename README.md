@@ -64,7 +64,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - **Native CLI engines, not API reimplementations**: subscription providers run the real interactive Codex, Claude Code, Antigravity, and Gemini CLI engines per conversation — native harness and reasoning preserved — with native Codex plugins (`codex_plugins`) and Claude Code plugin marketplaces (`claude_plugins`/`claude_marketplaces`) declarable per LLM service.
 - **External agent interoperability**: publish a conversation as an authenticated MCP or A2A endpoint, call remote A2A agents, or attach Claude Code, Codex, Agy/Gemini, OpenCode, JCode, Pi, or Hermes as a first-class external MCP agent.
 - **Delegated vision**: pair a strong text-only reasoning model with a separate vision-enabled LLM so uploads, screenshots, and desktop views become detailed descriptions with UI coordinates before the reasoning turn. Images sent to a text-only model are never silently dropped: any model — including free-tier ones — gets vision, and clicks stay accurate because coordinates come from the vision model, verified locally by the pre-click screen guard.
-- **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, API clients, or channel integrations.
+- **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, the Android app, API clients, or channel integrations.
 - **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
 - **Package ecosystem**: distribute agents, skills, tools, services, flow tasks, flows, and UI extensions as signed `.pfp` packages or import skills from supported marketplaces.
 
@@ -91,7 +91,7 @@ The easiest path is the Docker installer from the latest release. It starts PawF
 
 ### Docker Installer
 
-Downloadable artifacts are published on the [latest GitHub release](https://github.com/allcolor/PawFlow-Agents/releases/latest): installer zip, PawCode packages, Relay CLI archives, Relay Desktop installers, checksums, and source archives.
+Downloadable artifacts are published on the [latest GitHub release](https://github.com/allcolor/PawFlow-Agents/releases/latest): installer zip, PawCode packages, Relay CLI archives, Relay Desktop installers, the Android APK (`pawflow-android-<version>-debug.apk`), checksums, and source archives.
 
 ```bash
 PAWFLOW_VERSION=$(curl -fsSL https://api.github.com/repos/allcolor/PawFlow-Agents/releases/latest \
@@ -195,6 +195,10 @@ echo '{"type":"user","message":{"role":"user","content":"hello"}}' | \
 ### VS Code
 
 The VS Code extension attaches to the same PawFlow conversation and resource panel from inside your editor.
+
+### Android app
+
+The native Android client (`pawflow-android/`, APK on every release) manages multiple server profiles — HTTPS origin plus private gateway key, encrypted with Android Keystore — signs in natively (built-in credentials or OAuth2 in a Custom Tab with a PKCE handoff that never exposes the session token), then opens the authenticated webchat in parallel native tabs. Webchat downloads go through the system DownloadManager, and the native chrome folds away to give the chat the whole screen. See [docs/ANDROID_APP.md](docs/ANDROID_APP.md).
 
 ### Telegram
 
@@ -440,7 +444,7 @@ Expressions resolve through a cascade: secrets → flow parameters → conversat
 - Real-time streaming via SSE
 - Two conversation views: **Simplified** (the default) shows each turn as your message, one live activity block, and the turn's last message below it; **Classic** keeps the flat transcript. Switch per conversation from the View menu.
 - New conversations start in **auto** permission mode; change it per conversation from the permission selector, or with `/permission default|approve_edits|read_only|auto` (see [Security Model](docs/security_model.md#permission-modes)).
-- Shared conversations across web, PawCode CLI, VS Code, API clients, and channel flows
+- Shared conversations across web, PawCode CLI, VS Code, the Android app, API clients, and channel flows
 - File explorer with relay filesystem access
 - Context editor (view/edit agent context)
 - Conversation management with auto-titles

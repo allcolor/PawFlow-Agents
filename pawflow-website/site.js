@@ -29,6 +29,7 @@ const releaseAssets = (version) => ({
   relayDesktopWindows: `PawFlow.Relay.Desktop.Setup.${version}.exe`,
   relayDesktopWindowsZip: `PawFlow.Relay.Desktop-${version}-win.zip`,
   vscodeVsix: `pawflow-vscode-${version}.vsix`,
+  androidApk: `pawflow-android-${version}-debug.apk`,
 });
 
 // Patterns to pick each download out of the live release asset list, so
@@ -50,6 +51,7 @@ const ASSET_PATTERNS = {
   relayDesktopWindows: /Relay[ .]Desktop[ .]Setup[ .].*\.exe$/,
   relayDesktopWindowsZip: /Relay[ .]Desktop-.*-win\.zip$/,
   vscodeVsix: /^pawflow-vscode-.*\.vsix$/,
+  androidApk: /^pawflow-android-.*\.apk$/,
 };
 
 const release = {

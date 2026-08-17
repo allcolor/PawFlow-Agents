@@ -1,3 +1,5 @@
+ARG BUILDX_VERSION=0.36.1
+
 FROM rust:1.89-bookworm AS search-cli-builder
 
 ARG SEARCH_CLI_COMMIT=3ebd955e51035c53c7f8bf3c5b62be652ff441ff
@@ -6,6 +8,8 @@ RUN git clone https://github.com/paperfoot/search-cli.git /src/search-cli \
     && git checkout --detach "$SEARCH_CLI_COMMIT" \
     && test "$(git rev-parse HEAD)" = "$SEARCH_CLI_COMMIT" \
     && cargo build --release --locked --no-default-features
+
+FROM docker/buildx-bin:${BUILDX_VERSION} AS buildx
 
 FROM python:3.12-slim
 
@@ -22,10 +26,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash build-essential ca-certificates curl git openssl ffmpeg procps gosu tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Docker CLI used by first-run server login to start the noVNC login desktop
-# through the mounted host Docker socket. Keep this independent of distro
-# packages so slim images consistently expose /usr/local/bin/docker.
+# Docker CLI used through the mounted host socket. The installer-update helper
+# also builds the local-only agent CLI image, so bundle Buildx: without it
+# `docker build` falls back to the deprecated legacy builder and commits every
+# Dockerfile instruction as a separate intermediate container.
 ARG DOCKER_CLI_VERSION=27.5.1
+COPY --from=buildx /buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
@@ -35,8 +41,9 @@ RUN set -eux; \
     esac; \
     curl -fsSL "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_CLI_VERSION}.tgz" \
       | tar -xz --strip-components=1 -C /usr/local/bin docker/docker; \
-    chmod +x /usr/local/bin/docker; \
-    docker --version
+    chmod +x /usr/local/bin/docker /usr/local/libexec/docker/cli-plugins/docker-buildx; \
+    docker --version; \
+    docker buildx version
 
 # Python deps
 COPY requirements.txt .

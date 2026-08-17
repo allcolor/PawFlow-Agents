@@ -40,6 +40,10 @@ The project source code is licensed separately under the repository license. Thi
 
 ## Bundled Command-Line Tools
 
+- `docker-buildx` — [Docker Buildx](https://github.com/docker/buildx) 0.36.1,
+  Apache-2.0. The PawFlow server image copies the pinned, architecture-matched
+  CLI plugin from the official `docker/buildx-bin` image so installer-driven
+  local builds use BuildKit.
 - `search` — [paperfoot/search-cli](https://github.com/paperfoot/search-cli)
   0.9.0, MIT. The PawFlow server image builds the Linux binary from pinned
   commit `3ebd955e51035c53c7f8bf3c5b62be652ff441ff` with Cargo's locked

@@ -167,7 +167,14 @@ function Extract-ImageArtifacts($image, $outDir) {
 }
 function Build-CliImage($repoDir) {
     $context = Join-Path $repoDir "docker\claude-code"
-    $args = @("build")
+    & docker buildx version *> $null
+    if ($LASTEXITCODE -eq 0) {
+        $args = @("buildx", "build", "--load")
+        Info "Using Docker BuildKit for the CLI LLM image"
+    } else {
+        $args = @("build")
+        Warn "Docker Buildx is unavailable; the deprecated legacy builder may be slow."
+    }
     if ($DockerPlatform) { $args += @("--platform", $DockerPlatform) }
     $args += @("-t", $CliLlmImage, $context)
     Info "Building PawFlow CLI LLM image locally: $CliLlmImage"

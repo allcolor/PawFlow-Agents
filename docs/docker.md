@@ -40,6 +40,13 @@ from source. It always builds the shared CLI LLM image locally
 because Claude Code and Antigravity are not redistributed by PawFlow images. It
 then creates persistent directories under `~/pawflow`, starts `pawflow-server`,
 and exposes the port selected with `--port` / `PAWFLOW_PORT`.
+The local build prefers Docker Buildx and BuildKit, then loads the result into
+the local daemon. Published PawFlow server images bundle a pinned Buildx plugin
+so an update launched from the admin UI uses the same fast builder as a normal
+host-side install. On an older/manual environment without Buildx, the script
+prints a warning and falls back to Docker's deprecated legacy builder; repeated
+`Running in ...` and `Removed intermediate container ...` lines then describe
+builder-internal layers and can make metadata-only Dockerfile steps much slower.
 On macOS, the installer defaults Docker builds to `linux/amd64` unless
 `PAWFLOW_DOCKER_PLATFORM` or `--platform` is set.
 Use `bash scripts/install-pawflow.sh --native` when the PawFlow server itself
@@ -340,6 +347,11 @@ This creates `pawflow-claude-code:latest` (~500MB) with:
 - Git
 
 The build resolves the latest published version of each agent CLI (Claude Code, Codex, Gemini) and pins it. The version is part of the npm-install layer's cache key, so a rebuild reinstalls a CLI only when a new version is actually published; otherwise it reuses the cached layer.
+
+The script uses `docker buildx build --load` when Buildx is available. `--load`
+places the single-platform BuildKit result in the local Docker image store, where
+PawFlow's agent pools expect `pawflow-claude-code:latest`. A warned `docker build`
+fallback remains for installations made with an older Docker CLI.
 
 The build also stamps `/opt/pawflow/cli_versions.json` inside the image (`docker/claude-code/stamp_versions.sh`) with the versions the installed binaries actually report, Antigravity included. That file is the server's only way to know what is in the image.
 

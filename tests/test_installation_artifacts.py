@@ -50,6 +50,10 @@ def test_server_dockerfile_supports_bootstrap_docker_builds():
     src = Path("Dockerfile").read_text(encoding="utf-8")
 
     assert "DOCKER_CLI_VERSION" in src
+    assert "BUILDX_VERSION=0.36.1" in src
+    assert "docker/buildx-bin:${BUILDX_VERSION}" in src
+    assert "/usr/local/libexec/docker/cli-plugins/docker-buildx" in src
+    assert "docker buildx version" in src
     assert "download.docker.com/linux/static/stable" in src
     assert "/usr/local/bin/docker" in src
     assert "gosu" in src
@@ -543,6 +547,8 @@ def test_claude_code_image_pins_latest_cli_versions():
     assert "npm view" in build_src
     assert "node:22-slim" in build_src
     assert "--build-arg" in build_src
+    assert "docker buildx build --load" in build_src
+    assert "deprecated legacy builder" in build_src
     for pkg in ("@anthropic-ai/claude-code", "@openai/codex", "@google/gemini-cli"):
         assert pkg in build_src
 
@@ -554,6 +560,51 @@ def test_claude_code_image_pins_latest_cli_versions():
     assert "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" in dockerfile
     assert "@openai/codex@${CODEX_VERSION}" in dockerfile
     assert "@google/gemini-cli@${GEMINI_VERSION}" in dockerfile
+
+
+def _run_cli_image_build_script(tmp_path, buildx_exit):
+    docker = tmp_path / "docker"
+    calls = tmp_path / "docker.calls"
+    docker.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$*\" >> \"$PAWFLOW_TEST_DOCKER_CALLS\"\n"
+        "if [ \"$1\" = buildx ] && [ \"$2\" = version ]; then\n"
+        "  exit \"$PAWFLOW_TEST_BUILDX_EXIT\"\n"
+        "fi\n"
+        "if [ \"$1\" = run ]; then printf '9.9.9\\n'; fi\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = os.environ.copy()
+    env.update({
+        "PATH": f"{tmp_path}:{env['PATH']}",
+        "PAWFLOW_TEST_DOCKER_CALLS": str(calls),
+        "PAWFLOW_TEST_BUILDX_EXIT": str(buildx_exit),
+        "PAWFLOW_CLI_LLM_IMAGE": "pawflow-cli-test:latest",
+    })
+    result = subprocess.run(
+        ["bash", "docker/claude-code/build.sh"],
+        capture_output=True, text=True, env=env, timeout=30, check=False,
+    )
+    return result, calls.read_text(encoding="utf-8").splitlines()
+
+
+def test_cli_image_build_uses_buildkit_when_buildx_is_available(tmp_path):
+    result, calls = _run_cli_image_build_script(tmp_path, buildx_exit=0)
+
+    assert result.returncode == 0, result.stderr
+    assert "Building with Docker BuildKit" in result.stdout
+    assert any(line.startswith("buildx build --load ") for line in calls)
+    assert not any(line.startswith("build --build-arg ") for line in calls)
+
+
+def test_cli_image_build_warns_and_falls_back_without_buildx(tmp_path):
+    result, calls = _run_cli_image_build_script(tmp_path, buildx_exit=1)
+
+    assert result.returncode == 0, result.stderr
+    assert "deprecated legacy builder" in result.stderr
+    assert any(line.startswith("build --build-arg ") for line in calls)
+    assert not any(line.startswith("buildx build --load ") for line in calls)
 
 
 def test_minimal_install_zip_contains_only_bootstrap_files(tmp_path):

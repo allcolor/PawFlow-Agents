@@ -51,6 +51,12 @@ for spec in \
   BUILD_ARGS+=(--build-arg "$arg=$ver")
 done
 
-docker build "${BUILD_ARGS[@]}" -t "$IMAGE" "$SCRIPT_DIR"
+if docker buildx version >/dev/null 2>&1; then
+  echo "Building with Docker BuildKit (buildx --load)"
+  docker buildx build --load "${BUILD_ARGS[@]}" -t "$IMAGE" "$SCRIPT_DIR"
+else
+  echo "WARNING: Docker Buildx is unavailable; using the deprecated legacy builder. Metadata-only steps may be slow." >&2
+  docker build "${BUILD_ARGS[@]}" -t "$IMAGE" "$SCRIPT_DIR"
+fi
 
 echo "Built $IMAGE"

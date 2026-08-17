@@ -153,7 +153,33 @@ edited in the publish dialog (comma-separated tool names; empty means every
 tool) and stored per publication. It applies to both Bearer and connector
 traffic: `get_tool_schema` lists and describes only allowlisted tools, and
 `use_tool` refuses excluded tools with an explicit error. The conversation
-transport tools below are always available.
+transport tools below are not subject to the allowlist; the read-only
+exposure modes are the only thing that removes any of them.
+
+## Exposure modes
+
+Each publication has one of four exposure modes, chosen in the publish dialog
+and stored per publication:
+
+| Mode | Advertised surface |
+|---|---|
+| `api` | The six meta tools; every PawFlow tool is reached through the `use_tool` gateway. |
+| `full` | The four conversation transport tools plus every PawFlow tool as a first-class MCP tool with its real behavior annotations; the `use_tool`/`get_tool_schema` shims are dropped. |
+| `api_readonly` | The `api` surface minus `send_user_message`/`send_agent_message`; `get_tool_schema` lists and `use_tool` executes only read-only tools, and `use_tool` is honestly annotated `readOnlyHint: true`. |
+| `full_readonly` | The `full` surface reduced to `get_initial_context`, `get_context_updates`, and the read-only PawFlow tools. |
+
+Read-only status comes from `ToolApprovalGate.READ_ONLY_ALLOWED`, the same
+source of truth as tool approval. The read-only modes enforce the restriction
+at execution time as well as at `tools/list` time: a direct or gateway call to
+a write tool — the messaging transport tools included — returns an explicit
+error and never reaches the runtime.
+
+The read-only modes exist because some clients (ChatGPT plans that gate write
+actions) disable the entire connector for a conversation the moment the model
+merely *attempts* a write-annotated tool, which kills the read tools too. A
+read-only publication never advertises a write tool, so the client model can
+never trigger that shutdown. The allowlist composes with every mode: in the
+read-only modes a tool must be both allowlisted and read-only to appear.
 
 ## Conversation transport tools
 

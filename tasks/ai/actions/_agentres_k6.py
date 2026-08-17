@@ -81,9 +81,11 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
                 "error": "tool_allowlist must be a list of non-empty tool names"
             }, 400)
         mode = body.get("mode")
-        if mode is not None and str(mode).strip().lower() not in {"api", "full"}:
+        if mode is not None and str(mode).strip().lower() not in {
+                "api", "full", "api_readonly", "full_readonly"}:
             return _reply(flowfile, {
-                "error": "mode must be 'api' or 'full'"
+                "error": ("mode must be one of 'api', 'full', "
+                          "'api_readonly', 'full_readonly'")
             }, 400)
         from core.conv_agent_config import get_all_agent_configs
         configs = get_all_agent_configs(conversation_id) or {}

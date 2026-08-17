@@ -1572,3 +1572,129 @@ def test_sanitize_path_for_log_redacts_connector_key():
     assert sanitize_path_for_log("/mcp/srv_x/relay/status") == (
         "/mcp/srv_x/relay/status")
     assert sanitize_path_for_log("") == ""
+
+
+def test_store_readonly_modes_round_trip(tmp_path):
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    assert store.configure(
+        "alice", "conv-1", "agent-a",
+        mode="api_readonly")["mode"] == "api_readonly"
+    assert store.configure(
+        "alice", "conv-1", "agent-a",
+        mode="full_readonly")["mode"] == "full_readonly"
+    # Omitting the parameter preserves the stored mode.
+    assert store.configure("alice", "conv-1", "agent-a")["mode"] == "full_readonly"
+
+
+class _ReadWriteRegistry:
+    def get_tool_definitions(self):
+        return [
+            {"name": "read", "description": "Read",
+             "parameters": {"type": "object", "properties": {}}},
+            {"name": "bash", "description": "Shell",
+             "parameters": {"type": "object", "properties": {}}},
+        ]
+
+    def get(self, _name):
+        return None
+
+
+def _readonly_server(mode):
+    return {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "mode": mode,
+    }
+
+
+def test_api_readonly_advertises_no_write_tool(monkeypatch):
+    monkeypatch.setattr(
+        endpoint, "_registry", lambda _server: _ReadWriteRegistry())
+    tools = {tool["name"]: tool for tool in endpoint._tools_for_server(
+        _readonly_server("api_readonly"))}
+    assert "send_user_message" not in tools
+    assert "send_agent_message" not in tools
+    assert "get_initial_context" in tools and "get_context_updates" in tools
+    # The gateway only executes read-only tools, so it is honestly read-only.
+    assert tools["use_tool"]["annotations"]["readOnlyHint"] is True
+    assert "read-only" in tools["use_tool"]["description"]
+    assert tools["get_tool_schema"]["annotations"]["readOnlyHint"] is True
+    # The api-mode module constant is not mutated by the copy-on-write above.
+    assert next(t for t in endpoint._MCP_TOOLS if t["name"] == "use_tool")[
+        "annotations"]["readOnlyHint"] is False
+
+
+def test_full_readonly_advertises_only_read_tools(monkeypatch):
+    monkeypatch.setattr(
+        endpoint, "_registry", lambda _server: _ReadWriteRegistry())
+    tools = {tool["name"]: tool for tool in endpoint._tools_for_server(
+        _readonly_server("full_readonly"))}
+    assert set(tools) == {"get_initial_context", "get_context_updates", "read"}
+    assert tools["read"]["annotations"]["readOnlyHint"] is True
+
+
+def test_readonly_schema_listing_excludes_write_tools(monkeypatch):
+    registry = _ReadWriteRegistry()
+    rows = endpoint._tool_schema(registry, "", frozenset(), readonly=True)
+    assert [row["name"] for row in rows] == ["read"]
+    denied = endpoint._tool_schema(registry, "bash", frozenset(), readonly=True)
+    assert "read-only" in denied
+    assert endpoint._tool_schema(
+        registry, "read", frozenset(), readonly=True)["name"] == "read"
+
+
+def test_readonly_modes_block_write_execution(monkeypatch):
+    monkeypatch.setattr(
+        endpoint, "_registry", lambda _server: _ReadWriteRegistry())
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+    monkeypatch.setattr(
+        endpoint, "_persist_tool_call_start", lambda *_args, **_kw: None)
+    monkeypatch.setattr(endpoint, "_runtime", lambda: (_ for _ in ()).throw(
+        AssertionError("write tools must not reach the runtime")))
+    monkeypatch.setattr(
+        endpoint, "_conversation_tool_result",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("blocked write meta tools must not persist")))
+
+    # The messaging meta tools are writes: blocked in both read-only modes.
+    for mode in ("api_readonly", "full_readonly"):
+        blocked = endpoint._call_tool(
+            _readonly_server(mode), {"key_id": "key-1"}, "send_user_message",
+            {"content": "hi", "message_id": "m-1"})
+        assert blocked["isError"]
+        assert "read-only" in blocked["content"][0]["text"]
+
+    # The api_readonly gateway refuses write tools before execution.
+    blocked = endpoint._call_tool(
+        _readonly_server("api_readonly"), {"key_id": "key-1"}, "use_tool",
+        {"tool_name": "bash", "arguments_json": "{}"})
+    assert blocked["isError"]
+    assert "read-only" in blocked["content"][0]["text"]
+
+    # A full_readonly direct call to a write tool is funneled and refused too.
+    blocked = endpoint._call_tool(
+        _readonly_server("full_readonly"), {"key_id": "key-1"}, "bash",
+        {"command": "ls"})
+    assert blocked["isError"]
+    assert "read-only" in blocked["content"][0]["text"]
+
+
+def test_full_readonly_direct_read_call_executes(monkeypatch):
+    class Runtime:
+        def _do_execute(self, request_id, name, arguments, user_id, conv_id,
+                        agent):
+            assert name == "read"
+            return {"type": "result", "request_id": request_id, "data": "ok"}
+
+    monkeypatch.setattr(
+        endpoint, "_registry", lambda _server: _ReadWriteRegistry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+    monkeypatch.setattr(
+        endpoint, "_persist_tool_call_start", lambda *_args, **_kw: None)
+
+    result = endpoint._call_tool(
+        _readonly_server("full_readonly"), {"key_id": "key-1"}, "read",
+        {"path": "x"})
+    assert result == {"content": [{"type": "text", "text": "ok"}],
+                      "isError": False}

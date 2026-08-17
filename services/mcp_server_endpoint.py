@@ -367,15 +367,20 @@ def _allowlist_error(tool_name: str) -> str:
 
 
 def _tool_schema(registry, tool_name: str,
-                 allowlist: frozenset = frozenset()) -> Any:
+                 allowlist: frozenset = frozenset(),
+                 readonly: bool = False) -> Any:
     definitions = registry.get_tool_definitions()
     if not tool_name:
         rows = _available_tool_rows(registry)
         if allowlist:
             rows = [row for row in rows if row.get("name") in allowlist]
+        if readonly:
+            rows = [row for row in rows if _is_readonly_tool(row.get("name", ""))]
         return rows
     if allowlist and tool_name not in allowlist:
         return _allowlist_error(tool_name)
+    if readonly and not _is_readonly_tool(tool_name):
+        return _readonly_error(tool_name)
     for definition in definitions:
         if definition.get("name") == tool_name:
             return definition
@@ -389,6 +394,37 @@ _FULL_MODE_META = frozenset({
     "get_initial_context", "get_context_updates",
     "send_user_message", "send_agent_message",
 })
+
+# Meta tools kept by the read-only modes: pure context reads. The messaging
+# meta tools are writes, and merely attempting a write tool makes some clients
+# (ChatGPT) disable the whole connector for the conversation, reads included —
+# so a read-only publication must never advertise or execute one.
+_READONLY_META = frozenset({"get_initial_context", "get_context_updates"})
+_WRITE_META = frozenset({"send_user_message", "send_agent_message"})
+
+
+def _publication_mode(server: Dict[str, Any]) -> str:
+    mode = str(server.get("mode") or "api").strip().lower()
+    return mode if mode in {
+        "api", "full", "api_readonly", "full_readonly"} else "api"
+
+
+def _is_full_mode(server: Dict[str, Any]) -> bool:
+    return _publication_mode(server).startswith("full")
+
+
+def _is_readonly_mode(server: Dict[str, Any]) -> bool:
+    return _publication_mode(server).endswith("_readonly")
+
+
+def _is_readonly_tool(tool_name: str) -> bool:
+    from core.tool_approval import ToolApprovalGate
+    return ToolApprovalGate.is_read_only_allowed(tool_name)
+
+
+def _readonly_error(tool_name: str) -> str:
+    return (f"Error: tool '{tool_name}' is not exposed by this read-only "
+            "publication")
 
 
 def _mcp_tool_annotations(tool_name: str) -> Dict[str, Any]:
@@ -412,16 +448,38 @@ def _tools_for_server(server: Dict[str, Any]) -> list:
     api mode: the six meta tools (every PawFlow tool reached via use_tool).
     full mode: the conversation/messaging meta tools plus every PawFlow tool
     exposed directly, each carrying its real behavior annotations.
+    api_readonly / full_readonly: the same surfaces restricted to read-only
+    tools, with the messaging meta tools dropped entirely.
     """
-    if str(server.get("mode") or "api") != "full":
-        return _MCP_TOOLS
-    tools = [tool for tool in _MCP_TOOLS if tool["name"] in _FULL_MODE_META]
+    mode = _publication_mode(server)
+    readonly = mode.endswith("_readonly")
+    if not mode.startswith("full"):
+        if not readonly:
+            return _MCP_TOOLS
+        tools = []
+        for tool in _MCP_TOOLS:
+            if tool["name"] in _WRITE_META:
+                continue
+            if tool["name"] == "use_tool":
+                # In api_readonly the gateway only executes read-only tools,
+                # so its honest annotation IS read-only.
+                tool = dict(tool, description=(
+                    tool["description"]
+                    + " This publication is read-only: only read-only tools "
+                    "are available."),
+                    annotations={"readOnlyHint": True, "openWorldHint": False})
+            tools.append(tool)
+        return tools
+    meta = _READONLY_META if readonly else _FULL_MODE_META
+    tools = [tool for tool in _MCP_TOOLS if tool["name"] in meta]
     allowlist = _publication_allowlist(server)
     for definition in _registry(server).get_tool_definitions():
         name = definition.get("name", "")
         if not name or name in _FULL_MODE_META:
             continue
         if allowlist and name not in allowlist:
+            continue
+        if readonly and not _is_readonly_tool(name):
             continue
         tools.append({
             "name": name,
@@ -839,20 +897,24 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
     # them is funneled through the exact use_tool path below, so allowlist
     # enforcement, return-channel checks, async task handling, image output and
     # auditing all behave identically — only the entry point differs.
-    if (str(server.get("mode") or "api") == "full"
+    if (_is_full_mode(server)
             and name not in _FULL_MODE_META
             and name not in {"get_tool_schema", "use_tool"}):
         args = {"tool_name": name, "arguments": args}
         name = "use_tool"
+    readonly = _is_readonly_mode(server)
     executed_name = name
     executed_args = args
-    if name in {
+    if readonly and name in _WRITE_META:
+        result = _readonly_error(name)
+    elif name in {
             "get_initial_context", "get_context_updates",
             "send_user_message", "send_agent_message"}:
         result = _conversation_tool_result(server, key, name, args)
     elif name == "get_tool_schema":
         result = _tool_schema(registry, str(args.get("tool_name") or ""),
-                              _publication_allowlist(server))
+                              _publication_allowlist(server),
+                              readonly=readonly)
     elif name == "use_tool":
         tool_name = str(args.get("tool_name") or "").strip()
         if tool_name in {"use_tool", "mcp__pawflow__use_tool", "mcp_pawflow_use_tool"}:
@@ -872,6 +934,8 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
                 result = "Error: missing required parameter 'tool_name'"
             elif allowlist and tool_name not in allowlist:
                 result = _allowlist_error(tool_name)
+            elif readonly and not _is_readonly_tool(tool_name):
+                result = _readonly_error(tool_name)
             elif (tool_name in _RETURN_CHANNEL_TOOLS
                     and not server.get("terminal_ready")):
                 result = (

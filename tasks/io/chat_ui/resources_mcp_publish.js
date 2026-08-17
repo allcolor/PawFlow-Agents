@@ -170,7 +170,11 @@ function _publishedMcpRender(state) {
     + '<option value="api"' + (mode === 'api' ? ' selected' : '') + '>'
     + escapeHtml(t('mcpPublishModeApi')) + '</option>'
     + '<option value="full"' + (mode === 'full' ? ' selected' : '') + '>'
-    + escapeHtml(t('mcpPublishModeFull')) + '</option></select></label>'
+    + escapeHtml(t('mcpPublishModeFull')) + '</option>'
+    + '<option value="api_readonly"' + (mode === 'api_readonly' ? ' selected' : '') + '>'
+    + escapeHtml(t('mcpPublishModeApiReadonly')) + '</option>'
+    + '<option value="full_readonly"' + (mode === 'full_readonly' ? ' selected' : '') + '>'
+    + escapeHtml(t('mcpPublishModeFullReadonly')) + '</option></select></label>'
     + '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:12px;">'
     + escapeHtml(t('mcpPublishModeHint')) + '</div>'
     + '<label style="display:block;margin-bottom:12px;">' + escapeHtml(t('mcpPublishImageOutput'))

@@ -31,7 +31,12 @@ _IMAGE_OUTPUTS = frozenset({"native", "describe"})
 #            behavior annotations (readOnlyHint/destructiveHint), so clients
 #            such as ChatGPT can invoke the read-only tools even on plans that
 #            gate write actions.
-_MODES = frozenset({"api", "full"})
+#  - 'api_readonly' / 'full_readonly': same surfaces restricted to read-only
+#            tools. Write tools (including send_user_message/send_agent_message)
+#            are neither advertised nor executable: some clients (ChatGPT)
+#            disable the whole connector for a conversation as soon as the
+#            model merely attempts a write tool, killing reads too.
+_MODES = frozenset({"api", "full", "api_readonly", "full_readonly"})
 _KEY_KINDS = frozenset({"bearer", "connector"})
 _KEY_PREFIXES = {"bearer": "pfmcp_", "connector": "pfmcc_"}
 
@@ -192,7 +197,9 @@ class MCPServerStore:
         if mode is not None:
             mode_value = str(mode or "").strip().lower()
             if mode_value not in _MODES:
-                raise ValueError("mode must be 'api' or 'full'")
+                raise ValueError(
+                    "mode must be one of 'api', 'full', 'api_readonly', "
+                    "'full_readonly'")
         allowlist_json: Optional[str] = None
         if tool_allowlist is not None:
             if (not isinstance(tool_allowlist, list)

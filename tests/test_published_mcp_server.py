@@ -986,6 +986,11 @@ def test_published_mcp_ui_is_loaded_and_translated():
 
     assert '"resources_mcp_publish.js"' in serve
     assert "showPublishedMcpDialog()" in render
+    # The published-server status row is rendered from the list_resources
+    # payload so an existing publication stays visible and reachable.
+    assert "mcp_published_server" in render
+    assert "mcpPublishedRowEnabled" in render
+    assert "mcpPublishedRowDisabled" in render
     assert module.exists()
     source = module.read_text(encoding="utf-8")
     assert "t('close')" in source
@@ -1005,6 +1010,8 @@ def test_published_mcp_ui_is_loaded_and_translated():
         assert catalog["mcpPublishToolAllowlist"]
         assert catalog["mcpPublishConnectorPromptTitle"]
         assert catalog["mcpPublishConnectorPromptHint"]
+        assert "{agent}" in catalog["mcpPublishedRowEnabled"]
+        assert "{agent}" in catalog["mcpPublishedRowDisabled"]
 
     # The one-way bootstrap prompt covers the full connector contract.
     for marker in ("_publishedMcpConnectorPrompt", "get_initial_context",

@@ -24,6 +24,12 @@ Only the conversation owner can configure publication, create or revoke keys,
 enable or disable the endpoint, or delete it. The conversation and its normal
 agent/relay controls remain visible and usable.
 
+Once published, the MCP Repository section replaces the publish link with a
+status row — *Published as MCP — agent `<name>` (`<n>` keys)*, or a disabled
+variant when the endpoint is switched off. Selecting the row reopens the same
+configuration dialog, so an existing publication can always be reviewed and
+edited from its conversation.
+
 The endpoint is:
 
 ```text

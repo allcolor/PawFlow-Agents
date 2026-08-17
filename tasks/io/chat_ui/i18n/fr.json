@@ -803,6 +803,8 @@
   "mcpPublishCliConfig": "Configuration MCP du CLI",
   "mcpPublishClientActive": "CLI actif : {client}",
   "mcpPublishConfigure": "Publier/configurer cette conversation",
+  "mcpPublishedRowEnabled": "Publiée en MCP — agent {agent} ({keys} clés)",
+  "mcpPublishedRowDisabled": "Publication MCP désactivée — agent {agent}",
   "mcpPublishConfirmDelete": "Supprimer ce serveur MCP publié et toutes ses clés API ?",
   "mcpPublishConfirmDisconnectClient": "Déconnecter le relay du CLI actif et révoquer son bail actuel ?",
   "mcpPublishConfirmRevoke": "Révoquer cette clé API ?",

@@ -30,6 +30,13 @@ variant when the endpoint is switched off. Selecting the row reopens the same
 configuration dialog, so an existing publication can always be reviewed and
 edited from its conversation.
 
+Every published tool carries MCP behavior annotations (`readOnlyHint`,
+`destructiveHint`, `idempotentHint`, `openWorldHint`). Clients such as ChatGPT
+treat unannotated tools as unrestricted write actions and may refuse to invoke
+them in restricted surfaces; the context/schema readers are declared read-only,
+the two send tools as idempotent non-destructive writes, and `use_tool` as a
+potentially destructive open-world action.
+
 The endpoint is:
 
 ```text

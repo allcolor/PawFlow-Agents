@@ -37,6 +37,9 @@ _MCP_TOOLS = [
             "agent as a bootstrap document, plus the current sequence cursor."
         ),
         "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {
+            "readOnlyHint": True, "openWorldHint": False,
+        },
     },
     {
         "name": "get_context_updates",
@@ -54,6 +57,9 @@ _MCP_TOOLS = [
             },
             "required": ["after_seq"],
         },
+        "annotations": {
+            "readOnlyHint": True, "openWorldHint": False,
+        },
     },
     {
         "name": "send_user_message",
@@ -68,6 +74,10 @@ _MCP_TOOLS = [
                 "message_id": {"type": "string"},
             },
             "required": ["content", "message_id"],
+        },
+        "annotations": {
+            "readOnlyHint": False, "destructiveHint": False,
+            "idempotentHint": True, "openWorldHint": False,
         },
     },
     {
@@ -91,6 +101,10 @@ _MCP_TOOLS = [
             },
             "required": ["content", "message_id"],
         },
+        "annotations": {
+            "readOnlyHint": False, "destructiveHint": False,
+            "idempotentHint": True, "openWorldHint": False,
+        },
     },
     {
         "name": "get_tool_schema",
@@ -106,6 +120,9 @@ _MCP_TOOLS = [
                     "description": "Tool name to inspect; omit to list tools",
                 }
             },
+        },
+        "annotations": {
+            "readOnlyHint": True, "openWorldHint": False,
         },
     },
     {
@@ -124,6 +141,10 @@ _MCP_TOOLS = [
                 },
             },
             "required": ["tool_name", "arguments_json"],
+        },
+        "annotations": {
+            "readOnlyHint": False, "destructiveHint": True,
+            "openWorldHint": True,
         },
     },
 ]

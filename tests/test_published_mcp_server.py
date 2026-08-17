@@ -1021,6 +1021,22 @@ def test_published_mcp_ui_is_loaded_and_translated():
         assert marker in source
 
 
+def test_mcp_tools_carry_behavior_annotations():
+    # ChatGPT (and other MCP clients) treat unannotated tools as write
+    # actions and may refuse them outright; every published tool must
+    # declare its behavior hints.
+    from services.mcp_server_endpoint import _MCP_TOOLS
+    read_only = {"get_initial_context", "get_context_updates", "get_tool_schema"}
+    for tool in _MCP_TOOLS:
+        annotations = tool["annotations"]
+        assert isinstance(annotations["readOnlyHint"], bool)
+        assert annotations["readOnlyHint"] is (tool["name"] in read_only)
+    by_name = {tool["name"]: tool["annotations"] for tool in _MCP_TOOLS}
+    assert by_name["send_user_message"]["idempotentHint"] is True
+    assert by_name["send_agent_message"]["idempotentHint"] is True
+    assert by_name["use_tool"]["destructiveHint"] is True
+
+
 def test_store_connector_keys_are_kind_scoped(tmp_path):
     store = MCPServerStore(tmp_path / "published.sqlite3")
     server = store.configure("alice", "conv-1", "agent-a")

@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import re
 import shutil
 import subprocess
 import zipfile
@@ -58,6 +59,23 @@ def test_conversation_theme_is_server_backed_across_browsers():
     assert "conversation_override: !!conversationOverride" in THEMES_JS
     assert "applyThemeRef(value || _themeGetGlobalRef(), true, !!value)" in THEMES_JS
     assert "CONV_THEME_COOKIE" not in THEMES_JS
+
+
+def test_chat_ui_js_uses_only_pf_theme_variables():
+    """JS-built dialogs must stick to the --pf-* theme variable contract.
+
+    Themes only define --pf-* custom properties. An ad-hoc variable such as
+    var(--bg2,#1e1e2e) always resolves to its hardcoded dark fallback while
+    the text color follows the active theme, making light themes render
+    dark-on-dark, unreadable dialogs.
+    """
+    offenders = []
+    for js in Path("tasks/io/chat_ui").glob("*.js"):
+        for match in re.finditer(r"var\(--([a-zA-Z0-9_-]+)",
+                                 js.read_text(encoding="utf-8")):
+            if not match.group(1).startswith("pf-"):
+                offenders.append(f"{js.name}: --{match.group(1)}")
+    assert offenders == []
 
 
 @pytest.mark.skipif(shutil.which("node") is None,

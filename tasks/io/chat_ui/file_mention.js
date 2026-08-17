@@ -63,7 +63,7 @@ function _showMentionDropdown() {
     _mentionDropdown.id = 'mentionDropdown';
     _mentionDropdown.style.cssText =
       'position:absolute;bottom:100%;left:0;right:0;max-height:250px;'
-      + 'overflow-y:auto;background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);'
+      + 'overflow-y:auto;background:var(--pf-panel,#1e1e2e);border:1px solid var(--pf-border,#444);'
       + 'border-radius:6px;z-index:1000;font-size:12px;';
     const inputArea = document.querySelector('.input-area');
     inputArea.style.position = 'relative';
@@ -74,7 +74,7 @@ function _showMentionDropdown() {
     return '<div class="mention-item' + (sel ? ' selected' : '') + '" '
       + 'data-idx="' + i + '" '
       + 'style="padding:6px 10px;cursor:pointer;'
-      + (sel ? 'background:var(--accent,#7c6af7);color:#fff;' : '')
+      + (sel ? 'background:var(--pf-accent,#7c6af7);color:#fff;' : '')
       + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
       + '\u{1F4C4} ' + escapeHtml(f) + '</div>';
   }).join('');

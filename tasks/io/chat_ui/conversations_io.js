@@ -114,8 +114,8 @@ function _showImportProgress(label) {
   overlay.id = 'importProgressOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
   var box = document.createElement('div');
-  box.style.cssText = 'background:#1a1a2e;border:1px solid #6c5ce7;border-radius:10px;padding:24px 32px;display:flex;align-items:center;gap:14px;color:#e0e0e0;font-size:14px;min-width:260px;box-shadow:0 10px 40px rgba(0,0,0,0.5);';
-  box.innerHTML = '<span class="spinner" style="color:#6c5ce7;font-size:22px;animation:spin 1.2s linear infinite;display:inline-block;">\u273B</span><span id="importProgressLabel">' + label + '</span>';
+  box.style.cssText = 'background:var(--pf-panel,#1a1a2e);border:1px solid var(--pf-accent,#6c5ce7);border-radius:10px;padding:24px 32px;display:flex;align-items:center;gap:14px;color:var(--pf-text,#e0e0e0);font-size:14px;min-width:260px;box-shadow:0 10px 40px rgba(0,0,0,0.5);';
+  box.innerHTML = '<span class="spinner" style="color:var(--pf-accent,#6c5ce7);font-size:22px;animation:spin 1.2s linear infinite;display:inline-block;">\u273B</span><span id="importProgressLabel">' + label + '</span>';
   overlay.appendChild(box);
   document.body.appendChild(overlay);
   return {
@@ -182,46 +182,46 @@ function _showImportConvDialog(info, fmt) {
     var overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
     var box = document.createElement('div');
-    box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:min(640px, calc(100vw - 32px));max-width:min(780px, calc(100vw - 32px));max-height:85vh;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:relative;';
+    box.style.cssText = 'background:var(--pf-panel,#1e1e2e);border:1px solid var(--pf-border,#444);border-radius:8px;padding:20px;min-width:min(640px, calc(100vw - 32px));max-width:min(780px, calc(100vw - 32px));max-height:85vh;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:relative;';
     box.onclick = e => e.stopPropagation();
 
-    var _listCss = 'width:100%;min-height:100px;max-height:240px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);';
-    var _relCss = 'width:100%;min-height:60px;max-height:120px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);';
-    var _btnCss = 'padding:4px 10px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg2,#1e1e2e);color:inherit;cursor:pointer;font-size:16px;font-weight:600;';
+    var _listCss = 'width:100%;min-height:100px;max-height:240px;overflow-y:auto;border:1px solid var(--pf-border,#444);border-radius:4px;padding:4px;background:var(--pf-bg,#141420);';
+    var _relCss = 'width:100%;min-height:60px;max-height:120px;overflow-y:auto;border:1px solid var(--pf-border,#444);border-radius:4px;padding:4px;background:var(--pf-bg,#141420);';
+    var _btnCss = 'padding:4px 10px;border:1px solid var(--pf-border,#444);border-radius:4px;background:var(--pf-panel,#1e1e2e);color:inherit;cursor:pointer;font-size:16px;font-weight:600;';
 
     var fileRestoreHtml = '';
     if (fmt === 'pawflow' && (info.filestore_count || 0) > 0) {
       var mb = ((info.filestore_bytes || 0) / (1024 * 1024)).toFixed(1);
-      fileRestoreHtml = '<label style="display:flex;gap:8px;align-items:center;font-size:12px;color:#ccc;border:1px solid var(--border,#444);border-radius:4px;padding:8px;background:var(--bg,#141420);">'
+      fileRestoreHtml = '<label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--pf-muted,#ccc);border:1px solid var(--pf-border,#444);border-radius:4px;padding:8px;background:var(--pf-bg,#141420);">'
         + '<input id="_impRestoreFiles" type="checkbox" checked style="margin:0;">'
         + '<span>Restore attached/generated files (' + escapeHtml(String(info.filestore_count)) + ' files, ' + escapeHtml(mb) + ' MB)</span>'
         + '</label>';
     }
 
     box.innerHTML =
-      '<span id="_impCloseX" style="position:absolute;top:8px;right:12px;cursor:pointer;color:#888;font-size:18px;" title="' + escapeHtml(t('contextCancel')) + '">\u2715</span>'
+      '<span id="_impCloseX" style="position:absolute;top:8px;right:12px;cursor:pointer;color:var(--pf-muted,#888);font-size:18px;" title="' + escapeHtml(t('contextCancel')) + '">\u2715</span>'
       + '<div style="font-weight:600;font-size:1.1em;">' + escapeHtml(t('importConversation')) + '</div>'
-      + '<div style="color:#888;font-size:11px;">' + escapeHtml(t('contextMessages', { n: info.message_count })) + ' \u2014 ' + escapeHtml(t('formatLabel', { format: fmt })) + '</div>'
-      + '<div><label style="font-size:11px;color:#888;">' + escapeHtml(t('title')) + '</label>'
-      + '<input id="_impTitle" type="text" value="' + escapeHtml(t('importedConversationTitle')) + '" style="width:100%;padding:6px 10px;border-radius:5px;border:1px solid var(--border,#444);background:var(--bg,#141420);color:inherit;font-size:0.95em;box-sizing:border-box;"></div>'
+      + '<div style="color:var(--pf-muted,#888);font-size:11px;">' + escapeHtml(t('contextMessages', { n: info.message_count })) + ' \u2014 ' + escapeHtml(t('formatLabel', { format: fmt })) + '</div>'
+      + '<div><label style="font-size:11px;color:var(--pf-muted,#888);">' + escapeHtml(t('title')) + '</label>'
+      + '<input id="_impTitle" type="text" value="' + escapeHtml(t('importedConversationTitle')) + '" style="width:100%;padding:6px 10px;border-radius:5px;border:1px solid var(--pf-border,#444);background:var(--pf-bg,#141420);color:inherit;font-size:0.95em;box-sizing:border-box;"></div>'
       + fileRestoreHtml
-      + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">' + escapeHtml(t('agentMapping')) + '</div>'
+      + '<div style="font-size:12px;font-weight:600;color:var(--pf-accent,#6c5ce7);">' + escapeHtml(t('agentMapping')) + '</div>'
       + '<div style="display:flex;gap:12px;align-items:stretch;">'
       +   '<div id="_impAgentTree" style="' + _listCss + 'flex:1;"></div>'
-      +   '<div id="_impAgentDetail" style="flex:1;border:1px solid var(--border,#444);border-radius:4px;padding:10px;background:var(--bg,#141420);min-height:100px;max-height:240px;overflow-y:auto;font-size:12px;color:#aaa;display:flex;align-items:center;justify-content:center;">' + escapeHtml(t('selectAgentConfigure')) + '</div>'
+      +   '<div id="_impAgentDetail" style="flex:1;border:1px solid var(--pf-border,#444);border-radius:4px;padding:10px;background:var(--pf-bg,#141420);min-height:100px;max-height:240px;overflow-y:auto;font-size:12px;color:var(--pf-muted,#aaa);display:flex;align-items:center;justify-content:center;">' + escapeHtml(t('selectAgentConfigure')) + '</div>'
       + '</div>'
-      + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">' + escapeHtml(t('relays')) + '</div>'
+      + '<div style="font-size:12px;font-weight:600;color:var(--pf-accent,#6c5ce7);">' + escapeHtml(t('relays')) + '</div>'
       + '<div style="display:flex;gap:8px;align-items:stretch;">'
-      +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">' + escapeHtml(t('available')) + '</div><div id="_impRelaysAvail" style="' + _relCss + '"></div></div>'
+      +   '<div style="flex:1;"><div style="font-size:10px;color:var(--pf-muted,#888);margin-bottom:2px;">' + escapeHtml(t('available')) + '</div><div id="_impRelaysAvail" style="' + _relCss + '"></div></div>'
       +   '<div style="display:flex;flex-direction:column;justify-content:center;gap:4px;">'
       +     '<button id="_impRelayAdd" style="' + _btnCss + '" title="' + escapeHtml(t('link')) + '">\u25B6</button>'
       +     '<button id="_impRelayRem" style="' + _btnCss + '" title="' + escapeHtml(t('unlink')) + '">\u25C0</button>'
       +   '</div>'
-      +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">' + escapeHtml(t('linkedRelaysDefaultHint')) + '</div><div id="_impRelaysSel" style="' + _relCss + '"></div></div>'
+      +   '<div style="flex:1;"><div style="font-size:10px;color:var(--pf-muted,#888);margin-bottom:2px;">' + escapeHtml(t('linkedRelaysDefaultHint')) + '</div><div id="_impRelaysSel" style="' + _relCss + '"></div></div>'
       + '</div>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">'
-      +   '<button id="_impCancelBtn" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
-      +   '<button id="_impGoBtn" style="padding:6px 14px;border-radius:5px;border:none;background:var(--accent,#7c6af7);color:#fff;cursor:pointer;font-weight:600;">' + escapeHtml(t('import')) + '</button>'
+      +   '<button id="_impCancelBtn" style="padding:6px 14px;border-radius:5px;border:1px solid var(--pf-border,#444);background:transparent;color:inherit;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+      +   '<button id="_impGoBtn" style="padding:6px 14px;border-radius:5px;border:none;background:var(--pf-accent,#7c6af7);color:#fff;cursor:pointer;font-weight:600;">' + escapeHtml(t('import')) + '</button>'
       + '</div>';
 
     overlay.appendChild(box);
@@ -250,7 +250,7 @@ function _showImportConvDialog(info, fmt) {
       var tree = document.getElementById('_impAgentTree');
       tree.innerHTML = '';
       var hdr = document.createElement('div');
-      hdr.style.cssText = 'font-size:10px;color:#666;padding:2px 4px;';
+      hdr.style.cssText = 'font-size:10px;color:var(--pf-muted,#666);padding:2px 4px;';
       hdr.textContent = t('importedAgentsCount', { n: Object.keys(agentInstances).length });
       tree.appendChild(hdr);
       Object.keys(agentInstances).forEach(iname => {
@@ -262,7 +262,7 @@ function _showImportConvDialog(info, fmt) {
         label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         label.textContent = iname;
         var badge = document.createElement('span');
-        badge.style.cssText = 'font-size:10px;color:#888;';
+        badge.style.cssText = 'font-size:10px;color:var(--pf-muted,#888);';
         badge.textContent = inst.definition ? '\u2192 ' + inst.definition : '\u26A0 ' + t('unmapped');
         row.appendChild(label);
         row.appendChild(badge);
@@ -297,7 +297,7 @@ function _showImportConvDialog(info, fmt) {
     function _renderDetail() {
       var panel = document.getElementById('_impAgentDetail');
       if (!focusedAgent || !agentInstances[focusedAgent]) {
-        panel.innerHTML = '<span style="color:#666;">' + escapeHtml(t('selectAgentConfigure')) + '</span>';
+        panel.innerHTML = '<span style="color:var(--pf-muted,#666);">' + escapeHtml(t('selectAgentConfigure')) + '</span>';
         panel.style.display = 'flex'; panel.style.alignItems = 'center'; panel.style.justifyContent = 'center';
         return;
       }
@@ -313,19 +313,19 @@ function _showImportConvDialog(info, fmt) {
       ).join('');
 
       var html = '<div style="font-weight:600;font-size:13px;color:#fff;margin-bottom:8px;">' + escapeHtml(focusedAgent) + '</div>';
-      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">' + escapeHtml(t('instanceName')) + '</label>';
-      html += '<input id="_impInstName" value="' + escapeHtml(focusedAgent) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
-      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">' + escapeHtml(t('definitionRequired')) + '</label>';
-      html += '<select id="_impDefSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;">' + defOptions + '</select></div>';
-      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">' + escapeHtml(t('llmServiceRequired')) + '</label>';
-      html += '<select id="_impLlmSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;">' + svcOpts + '</select></div>';
+      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:var(--pf-muted,#888);">' + escapeHtml(t('instanceName')) + '</label>';
+      html += '<input id="_impInstName" value="' + escapeHtml(focusedAgent) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--pf-border,#444);background:var(--pf-panel,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
+      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:var(--pf-muted,#888);">' + escapeHtml(t('definitionRequired')) + '</label>';
+      html += '<select id="_impDefSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--pf-border,#444);background:var(--pf-panel,#1e1e2e);color:inherit;font-size:12px;">' + defOptions + '</select></div>';
+      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:var(--pf-muted,#888);">' + escapeHtml(t('llmServiceRequired')) + '</label>';
+      html += '<select id="_impLlmSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--pf-border,#444);background:var(--pf-panel,#1e1e2e);color:inherit;font-size:12px;">' + svcOpts + '</select></div>';
       if (paramKeys.length) {
-        html += '<div style="margin-bottom:6px;"><div style="font-size:10px;color:#888;margin-bottom:4px;">' + escapeHtml(t('parameters')) + '</div>';
+        html += '<div style="margin-bottom:6px;"><div style="font-size:10px;color:var(--pf-muted,#888);margin-bottom:4px;">' + escapeHtml(t('parameters')) + '</div>';
         paramKeys.forEach(k => {
           var spec = paramSchema[k] || {};
           var val = inst.params[k] || spec.default || '';
-          html += '<div style="margin-bottom:4px;"><label style="font-size:10px;color:#888;">' + escapeHtml(k + (spec.required ? ' *' : '')) + '</label>';
-          html += '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(val)) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
+          html += '<div style="margin-bottom:4px;"><label style="font-size:10px;color:var(--pf-muted,#888);">' + escapeHtml(k + (spec.required ? ' *' : '')) + '</label>';
+          html += '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(val)) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--pf-border,#444);background:var(--pf-panel,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
         });
         html += '</div>';
       }
@@ -445,15 +445,15 @@ function showExportDialog(cid) {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
   overlay.dataset.conversationId = targetCid;
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:340px;max-width:calc(100vw - 32px);border:1px solid #333;';
-  panel.innerHTML = '<h3 style="margin:0 0 16px;color:#e0e0e0;font-size:14px;">Export Conversation</h3>'
+  panel.style.cssText = 'background:var(--pf-panel,#16213e);border-radius:8px;padding:20px;width:340px;max-width:calc(100vw - 32px);border:1px solid var(--pf-border,#333);';
+  panel.innerHTML = '<h3 style="margin:0 0 16px;color:var(--pf-text,#e0e0e0);font-size:14px;">Export Conversation</h3>'
     + '<div style="display:flex;flex-direction:column;gap:8px;">'
-    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cid=p.dataset.conversationId;p.remove();exportConversation(cid)" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>HTML</b><br><span style=font-size:11px;color:#888>Standalone HTML file for viewing/sharing</span></button>'
-    + '<label style="display:flex;gap:8px;align-items:center;color:#ccc;font-size:12px;background:#0f3460;border:1px solid #333;padding:8px 10px;border-radius:6px;"><input id="_expIncludeFiles" type="checkbox" style="margin:0;"> Include attached/generated files</label>'
-    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cb=p.querySelector(\'#_expIncludeFiles\');var cid=p.dataset.conversationId;p.remove();exportPawflow(cb&&cb.checked,cid)" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>PawFlow (.pfconv.zip)</b><br><span style=font-size:11px;color:#888>Full conversation archive, re-importable</span></button>'
-    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cid=p.dataset.conversationId;p.remove();exportClaudeCode(cid)" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>Claude Code (.jsonl)</b><br><span style=font-size:11px;color:#888>Claude Code compatible format</span></button>'
+    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cid=p.dataset.conversationId;p.remove();exportConversation(cid)" style="background:var(--pf-code-bg,#0f3460);color:var(--pf-text,#e0e0e0);border:1px solid var(--pf-border,#333);padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>HTML</b><br><span style=font-size:11px;color:var(--pf-muted,#888)>Standalone HTML file for viewing/sharing</span></button>'
+    + '<label style="display:flex;gap:8px;align-items:center;color:var(--pf-muted,#ccc);font-size:12px;background:var(--pf-code-bg,#0f3460);border:1px solid var(--pf-border,#333);padding:8px 10px;border-radius:6px;"><input id="_expIncludeFiles" type="checkbox" style="margin:0;"> Include attached/generated files</label>'
+    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cb=p.querySelector(\'#_expIncludeFiles\');var cid=p.dataset.conversationId;p.remove();exportPawflow(cb&&cb.checked,cid)" style="background:var(--pf-code-bg,#0f3460);color:var(--pf-text,#e0e0e0);border:1px solid var(--pf-border,#333);padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>PawFlow (.pfconv.zip)</b><br><span style=font-size:11px;color:var(--pf-muted,#888)>Full conversation archive, re-importable</span></button>'
+    + '<button onclick="var p=this.closest(\'div[style*=fixed]\');var cid=p.dataset.conversationId;p.remove();exportClaudeCode(cid)" style="background:var(--pf-code-bg,#0f3460);color:var(--pf-text,#e0e0e0);border:1px solid var(--pf-border,#333);padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>Claude Code (.jsonl)</b><br><span style=font-size:11px;color:var(--pf-muted,#888)>Claude Code compatible format</span></button>'
     + '</div>'
-    + '<div style="margin-top:12px;text-align:right;"><button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button></div>';
+    + '<div style="margin-top:12px;text-align:right;"><button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:var(--pf-code-bg,#333);color:var(--pf-text,#ccc);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button></div>';
   overlay.appendChild(panel);
 
   document.body.appendChild(overlay);

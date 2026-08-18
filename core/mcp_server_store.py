@@ -79,7 +79,7 @@ class MCPServerStore:
                 CREATE TABLE IF NOT EXISTS mcp_servers (
                     server_id TEXT PRIMARY KEY,
                     owner_user_id TEXT NOT NULL,
-                    conversation_id TEXT NOT NULL UNIQUE,
+                    conversation_id TEXT NOT NULL,
                     agent_name TEXT NOT NULL,
                     label TEXT NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1,
@@ -96,7 +96,8 @@ class MCPServerStore:
                     terminal_state_path TEXT NOT NULL DEFAULT '',
                     image_output TEXT NOT NULL DEFAULT 'native',
                     tool_allowlist TEXT NOT NULL DEFAULT '',
-                    mode TEXT NOT NULL DEFAULT 'api'
+                    mode TEXT NOT NULL DEFAULT 'api',
+                    UNIQUE(conversation_id, agent_name COLLATE NOCASE)
                 );
                 CREATE INDEX IF NOT EXISTS idx_mcp_servers_owner_conversation
                     ON mcp_servers(owner_user_id, conversation_id);
@@ -152,6 +153,109 @@ class MCPServerStore:
                     "ALTER TABLE mcp_api_keys ADD COLUMN "
                     "kind TEXT NOT NULL DEFAULT 'bearer'"
                 )
+            connection.commit()
+            self._migrate_single_publication_constraint(connection)
+
+    @staticmethod
+    def _migrate_single_publication_constraint(
+            connection: sqlite3.Connection) -> None:
+        """Replace the legacy one-publication-per-conversation constraint."""
+        legacy_unique = False
+        for index in connection.execute("PRAGMA index_list(mcp_servers)"):
+            if not int(index["unique"]):
+                continue
+            columns = [
+                str(row["name"])
+                for row in connection.execute(
+                    f"PRAGMA index_info('{index['name']}')")
+            ]
+            if columns == ["conversation_id"]:
+                legacy_unique = True
+                break
+        if not legacy_unique:
+            return
+
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.executescript(
+                """
+                BEGIN IMMEDIATE;
+                ALTER TABLE mcp_api_keys RENAME TO mcp_api_keys_single_agent;
+                ALTER TABLE mcp_servers RENAME TO mcp_servers_single_agent;
+                DROP INDEX IF EXISTS idx_mcp_servers_owner_conversation;
+                DROP INDEX IF EXISTS idx_mcp_keys_server;
+
+                CREATE TABLE mcp_servers (
+                    server_id TEXT PRIMARY KEY,
+                    owner_user_id TEXT NOT NULL,
+                    conversation_id TEXT NOT NULL,
+                    agent_name TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    active_client_id TEXT NOT NULL DEFAULT '',
+                    active_client_name TEXT NOT NULL DEFAULT '',
+                    active_relay_id TEXT NOT NULL DEFAULT '',
+                    client_heartbeat_at REAL NOT NULL DEFAULT 0,
+                    terminal_session_id TEXT NOT NULL DEFAULT '',
+                    terminal_kind TEXT NOT NULL DEFAULT '',
+                    terminal_target TEXT NOT NULL DEFAULT '',
+                    terminal_secret TEXT NOT NULL DEFAULT '',
+                    terminal_state_path TEXT NOT NULL DEFAULT '',
+                    image_output TEXT NOT NULL DEFAULT 'native',
+                    tool_allowlist TEXT NOT NULL DEFAULT '',
+                    mode TEXT NOT NULL DEFAULT 'api',
+                    UNIQUE(conversation_id, agent_name COLLATE NOCASE)
+                );
+                CREATE INDEX idx_mcp_servers_owner_conversation
+                    ON mcp_servers(owner_user_id, conversation_id);
+
+                INSERT INTO mcp_servers (
+                    server_id, owner_user_id, conversation_id, agent_name,
+                    label, enabled, created_at, updated_at,
+                    active_client_id, active_client_name, active_relay_id,
+                    client_heartbeat_at, terminal_session_id, terminal_kind,
+                    terminal_target, terminal_secret, terminal_state_path,
+                    image_output, tool_allowlist, mode)
+                SELECT
+                    server_id, owner_user_id, conversation_id, agent_name,
+                    label, enabled, created_at, updated_at,
+                    active_client_id, active_client_name, active_relay_id,
+                    client_heartbeat_at, terminal_session_id, terminal_kind,
+                    terminal_target, terminal_secret, terminal_state_path,
+                    image_output, tool_allowlist, mode
+                FROM mcp_servers_single_agent;
+
+                CREATE TABLE mcp_api_keys (
+                    key_id TEXT PRIMARY KEY,
+                    server_id TEXT NOT NULL REFERENCES mcp_servers(server_id)
+                        ON DELETE CASCADE,
+                    label TEXT NOT NULL,
+                    prefix TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at REAL NOT NULL,
+                    last_used_at REAL NOT NULL DEFAULT 0,
+                    revoked_at REAL NOT NULL DEFAULT 0,
+                    kind TEXT NOT NULL DEFAULT 'bearer'
+                );
+                CREATE INDEX idx_mcp_keys_server
+                    ON mcp_api_keys(server_id, revoked_at);
+                INSERT INTO mcp_api_keys (
+                    key_id, server_id, label, prefix, token_hash, created_at,
+                    last_used_at, revoked_at, kind)
+                SELECT
+                    key_id, server_id, label, prefix, token_hash, created_at,
+                    last_used_at, revoked_at, kind
+                FROM mcp_api_keys_single_agent;
+
+                DROP TABLE mcp_api_keys_single_agent;
+                DROP TABLE mcp_servers_single_agent;
+                COMMIT;
+                """
+            )
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
 
     @staticmethod
     def _server_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -211,21 +315,28 @@ class MCPServerStore:
             allowlist_json = json.dumps(names) if names else ""
         now = time.time()
         with self._lock, self._connect() as connection:
-            row = connection.execute(
-                "SELECT server_id, owner_user_id FROM mcp_servers WHERE conversation_id = ?",
+            owner_row = connection.execute(
+                """SELECT owner_user_id FROM mcp_servers
+                   WHERE conversation_id = ? LIMIT 1""",
                 (conversation_id,),
             ).fetchone()
-            if row and row["owner_user_id"] != owner_user_id:
-                raise PermissionError("MCP server belongs to another conversation owner")
+            if owner_row and owner_row["owner_user_id"] != owner_user_id:
+                raise PermissionError(
+                    "MCP server belongs to another conversation owner")
+            row = connection.execute(
+                """SELECT server_id, owner_user_id FROM mcp_servers
+                   WHERE conversation_id = ? AND agent_name = ? COLLATE NOCASE""",
+                (conversation_id, agent_name),
+            ).fetchone()
             if row:
                 server_id = row["server_id"]
                 connection.execute(
                     """UPDATE mcp_servers
-                       SET agent_name = ?, label = ?, enabled = ?, image_output = ?,
+                       SET label = ?, enabled = ?, image_output = ?,
                            updated_at = ?
                        WHERE server_id = ?""",
-                    (agent_name, label or agent_name, int(bool(enabled)),
-                     image_output, now, server_id),
+                    (label or agent_name, int(bool(enabled)), image_output,
+                     now, server_id),
                 )
                 if allowlist_json is not None:
                     connection.execute(
@@ -261,13 +372,30 @@ class MCPServerStore:
             ).fetchone()
         return self._server_row(row) if row else None
 
-    def get_for_conversation(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+    def get_for_conversation(
+            self, conversation_id: str,
+            agent_name: str = "") -> Optional[Dict[str, Any]]:
+        query = "SELECT * FROM mcp_servers WHERE conversation_id = ?"
+        params: tuple = (conversation_id,)
+        if agent_name:
+            query += " AND agent_name = ? COLLATE NOCASE"
+            params += (agent_name,)
+        query += " ORDER BY created_at, server_id LIMIT 1"
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM mcp_servers WHERE conversation_id = ?",
-                (conversation_id,),
+                query, params,
             ).fetchone()
         return self._server_row(row) if row else None
+
+    def list_for_conversation(
+            self, conversation_id: str) -> List[Dict[str, Any]]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM mcp_servers WHERE conversation_id = ?
+                   ORDER BY created_at, server_id""",
+                (conversation_id,),
+            ).fetchall()
+        return [self._server_row(row) for row in rows]
 
     def has_servers(self) -> bool:
         """Return whether at least one inbound MCP publication exists."""

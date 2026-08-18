@@ -31,9 +31,8 @@ def route_published_terminal_prompt(
     try:
         from core.mcp_server_store import MCPServerStore
         store = MCPServerStore.instance()
-        server = store.get_for_conversation(conversation_id)
-        if (not server or not server.get("enabled")
-                or server.get("agent_name") != agent_name):
+        server = store.get_for_conversation(conversation_id, agent_name)
+        if not server or not server.get("enabled"):
             return None
         if not server.get("terminal_ready"):
             return False
@@ -152,8 +151,9 @@ def complete_published_terminal_target(
     """Resolve one published target and complete its correlated turn."""
     try:
         from core.mcp_server_store import MCPServerStore
-        server = MCPServerStore.instance().get_for_conversation(conversation_id)
-        if (not server or str(server.get("agent_name") or "") != agent_name):
+        server = MCPServerStore.instance().get_for_conversation(
+            conversation_id, agent_name)
+        if not server:
             return False
         return complete_published_terminal_turn(
             server, reply_to_message_id, content, error=error)

@@ -572,12 +572,18 @@ async function _renderResourcesData(data) {
     });
     if (!_isSectionCollapsed('_mcp_repo')) {
       const mcps = data.mcp_servers || [];
-      const published = data.mcp_published_server || null;
-      if (published) {
-        const publishedLabel = t(
-          published.enabled ? 'mcpPublishedRowEnabled' : 'mcpPublishedRowDisabled',
-          { agent: published.agent_name || '', keys: String(published.key_count || 0) });
-        repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="showPublishedMcpDialog()">\u21F1 ' + escapeHtml(publishedLabel) + '</div>';
+      const publishedServers = Array.isArray(data.mcp_published_servers)
+        ? data.mcp_published_servers
+        : (data.mcp_published_server ? [data.mcp_published_server] : []);
+      if (publishedServers.length) {
+        publishedServers.forEach(function(published) {
+          const publishedLabel = t(
+            published.enabled ? 'mcpPublishedRowEnabled' : 'mcpPublishedRowDisabled',
+            { agent: published.agent_name || '', keys: String(published.key_count || 0) });
+          repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="showPublishedMcpDialog('
+            + _pfpJsArg(published.agent_name || '') + ')">\u21F1 '
+            + escapeHtml(publishedLabel) + '</div>';
+        });
       } else {
         repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="showPublishedMcpDialog()">\u21F1 ' + escapeHtml(t('mcpPublishConfigure')) + '</div>';
       }

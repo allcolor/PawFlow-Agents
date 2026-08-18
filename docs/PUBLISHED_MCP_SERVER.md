@@ -1,7 +1,7 @@
 # Published Conversation MCP Servers
 
-PawFlow can publish one existing conversation and one attached agent as an
-authenticated inbound MCP server. This is separate from the MCP Repository:
+PawFlow can publish multiple attached agents from one existing conversation as
+independent authenticated inbound MCP servers. This is separate from the MCP Repository:
 repository entries are outbound servers consumed by PawFlow, while a published
 conversation exposes PawFlow tools to Claude Code, Codex, Gemini CLI/Agy,
 OpenCode, JCode, Pi, Hermes, and other MCP clients.
@@ -11,24 +11,26 @@ OpenCode, JCode, Pi, Hermes, and other MCP clients.
 1. Select the conversation in the chat UI.
 2. Open **Resources → MCP Repository**.
 3. Select **Publish/configure this conversation**.
-4. Choose an agent already attached to the conversation and save.
+4. Choose an agent already attached to the conversation and save. Repeat with
+   another agent to create another publication for the same conversation.
    Select how image-producing tools such as `see` return their results:
    **Native MCP images** sends images to the external client's active model;
    **Text descriptions** uses the published agent's vision-capable LLM or its
    configured delegated `vision_llm_service` and returns text only.
-5. Create an API key and copy it immediately. PawFlow stores only its SHA-256
+5. Create an API key for that agent publication and copy it immediately. PawFlow stores only its SHA-256
    hash and never displays the raw key again.
 6. Copy the endpoint and CLI configuration from the dialog.
 
-Only the conversation owner can configure publication, create or revoke keys,
-enable or disable the endpoint, or delete it. The conversation and its normal
-agent/relay controls remain visible and usable.
+Only the conversation owner can configure publications, create or revoke keys,
+enable or disable an endpoint, or delete it. Each agent publication has its own
+opaque endpoint, keys, tool allowlist, client lease, and terminal registration.
+The conversation and its normal agent/relay controls remain visible and usable.
 
-Once published, the MCP Repository section replaces the publish link with a
-status row — *Published as MCP — agent `<name>` (`<n>` keys)*, or a disabled
-variant when the endpoint is switched off. Selecting the row reopens the same
-configuration dialog, so an existing publication can always be reviewed and
-edited from its conversation.
+Once published, the MCP Repository section shows one status row per published
+agent — *Published as MCP — agent `<name>` (`<n>` keys)*, or a disabled
+variant when that endpoint is switched off. Selecting a row reopens that
+agent's configuration; choosing an unpublished agent in the dialog creates an
+additional publication without replacing or disconnecting the existing ones.
 
 Every published tool carries MCP behavior annotations (`readOnlyHint`,
 `destructiveHint`, `idempotentHint`, `openWorldHint`). Clients such as ChatGPT

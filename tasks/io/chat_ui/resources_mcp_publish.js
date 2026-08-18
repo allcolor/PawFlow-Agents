@@ -140,7 +140,23 @@ function _publishedMcpCopy(elementId) {
 }
 
 function _publishedMcpRender(state) {
-  _publishedMcpState = state || {};
+  const incoming = state || {};
+  const servers = Array.isArray(incoming.servers)
+    ? incoming.servers : (incoming.server ? [incoming.server] : []);
+  const agents = _publishedMcpAgents();
+  const preferredAgent = String(incoming.selected_agent
+    || (incoming.server && incoming.server.agent_name)
+    || (_publishedMcpState && _publishedMcpState.selected_agent)
+    || ((typeof selectedAgent !== 'undefined' && selectedAgent) || '')
+    || agents[0] || '');
+  const server = servers.find(function(item) {
+    return String(item.agent_name || '').toLowerCase() === preferredAgent.toLowerCase();
+  }) || null;
+  _publishedMcpState = {
+    servers: servers,
+    server: server,
+    selected_agent: preferredAgent,
+  };
   let overlay = document.getElementById('publishedMcpOverlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -148,10 +164,7 @@ function _publishedMcpRender(state) {
     overlay.className = 'exec-overlay';
     document.body.appendChild(overlay);
   }
-  const server = _publishedMcpState.server || null;
-  const agents = _publishedMcpAgents();
-  const selected = server ? server.agent_name
-    : ((typeof selectedAgent !== 'undefined' && selectedAgent) || agents[0] || '');
+  const selected = preferredAgent;
   const keys = server && Array.isArray(server.keys) ? server.keys : [];
   const endpoint = server ? _publishedMcpEndpoint(server.server_id) : '';
   const imageOutput = server ? String(server.image_output || 'native') : 'native';
@@ -186,7 +199,8 @@ function _publishedMcpRender(state) {
     + '<h3>' + escapeHtml(t('mcpPublishTitle')) + '</h3>'
     + '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:12px;">' + escapeHtml(t('mcpPublishDescription')) + '</div>'
     + '<label style="display:block;margin-bottom:10px;">' + escapeHtml(t('agent'))
-    + '<select id="publishedMcpAgent" style="display:block;width:100%;margin-top:4px;">' + agentOptions + '</select></label>'
+    + '<select id="publishedMcpAgent" onchange="_publishedMcpSelectAgent(this.value)" style="display:block;width:100%;margin-top:4px;">'
+    + agentOptions + '</select></label>'
     + '<label style="display:flex;align-items:center;gap:7px;margin-bottom:12px;"><input id="publishedMcpEnabled" type="checkbox"'
     + ((!server || server.enabled) ? ' checked' : '') + '> ' + escapeHtml(t('mcpPublishEnabled')) + '</label>'
     + '<label style="display:block;margin-bottom:4px;">' + escapeHtml(t('mcpPublishMode'))
@@ -250,13 +264,27 @@ function _publishedMcpRender(state) {
     + escapeHtml(t('close')) + '</button></div></div>';
 }
 
-function showPublishedMcpDialog() {
+function _publishedMcpSelectAgent(agentName) {
+  const state = _publishedMcpState || {};
+  _publishedMcpRender({
+    servers: state.servers || [],
+    selected_agent: String(agentName || ''),
+  });
+}
+
+function showPublishedMcpDialog(agentName) {
   if (!conversationId) {
     addMsg('error', t('mcpPublishSelectConversation'));
     return;
   }
-  _publishedMcpAction('mcp_server_get', {}, function(data) {
-    _publishedMcpRender({ server: data.server || null });
+  _publishedMcpAction('mcp_server_get', {
+    agent_name: String(agentName || ''),
+  }, function(data) {
+    _publishedMcpRender({
+      servers: data.servers || (data.server ? [data.server] : []),
+      server: data.server || null,
+      selected_agent: String(agentName || ''),
+    });
   });
 }
 
@@ -279,14 +307,22 @@ function _publishedMcpSave() {
     mode: mode,
     tool_allowlist: allowlist,
   }, function(data) {
-    _publishedMcpRender({ server: data.server || null });
+    _publishedMcpRender({
+      servers: data.servers || (data.server ? [data.server] : []),
+      server: data.server || null,
+      selected_agent: agent,
+    });
     loadResources();
   });
 }
 
 function _publishedMcpCreateKey() {
   const label = document.getElementById('publishedMcpKeyLabel')?.value || '';
-  _publishedMcpAction('mcp_server_create_key', { label: label }, function(data) {
+  const serverId = _publishedMcpState && _publishedMcpState.server
+    ? _publishedMcpState.server.server_id : '';
+  _publishedMcpAction('mcp_server_create_key', {
+    server_id: serverId, label: label,
+  }, function(data) {
     const target = document.getElementById('publishedMcpNewKey');
     if (target) {
       target.innerHTML = '<div style="color:var(--pf-danger);font-size:12px;margin-bottom:4px;">'
@@ -294,9 +330,13 @@ function _publishedMcpCreateKey() {
         + '<input id="publishedMcpRawKey" readonly value="' + _pfpAttr(data.api_key || '') + '" style="flex:1;">'
         + '<button type="button" onclick="_publishedMcpCopy(\'publishedMcpRawKey\')">' + escapeHtml(t('copy')) + '</button></div>';
     }
-    _publishedMcpAction('mcp_server_get', {}, function(refreshed) {
+    _publishedMcpAction('mcp_server_get', { server_id: serverId }, function(refreshed) {
       const raw = data.api_key || '';
-      _publishedMcpRender({ server: refreshed.server || null });
+      _publishedMcpRender({
+        servers: refreshed.servers || [],
+        server: refreshed.server || null,
+        selected_agent: _publishedMcpState.selected_agent,
+      });
       const freshTarget = document.getElementById('publishedMcpNewKey');
       if (freshTarget) {
         freshTarget.innerHTML = '<div style="color:var(--pf-danger);font-size:12px;margin-bottom:4px;">'
@@ -310,7 +350,11 @@ function _publishedMcpCreateKey() {
 
 function _publishedMcpRevokeKey(keyId) {
   if (!confirm(t('mcpPublishConfirmRevoke'))) return;
-  _publishedMcpAction('mcp_server_revoke_key', { key_id: keyId }, function() {
+  const serverId = _publishedMcpState && _publishedMcpState.server
+    ? _publishedMcpState.server.server_id : '';
+  _publishedMcpAction('mcp_server_revoke_key', {
+    server_id: serverId, key_id: keyId,
+  }, function() {
     showPublishedMcpDialog();
   });
 }
@@ -319,10 +363,16 @@ function _publishedMcpCreateConnectorKey() {
   const label = document.getElementById('publishedMcpConnectorLabel')?.value || '';
   const serverId = _publishedMcpState && _publishedMcpState.server
     ? _publishedMcpState.server.server_id : '';
-  _publishedMcpAction('mcp_server_create_key', { label: label, kind: 'connector' }, function(data) {
+  _publishedMcpAction('mcp_server_create_key', {
+    server_id: serverId, label: label, kind: 'connector',
+  }, function(data) {
     const url = _publishedMcpConnectorUrl(serverId, data.api_key || '');
-    _publishedMcpAction('mcp_server_get', {}, function(refreshed) {
-      _publishedMcpRender({ server: refreshed.server || null });
+    _publishedMcpAction('mcp_server_get', { server_id: serverId }, function(refreshed) {
+      _publishedMcpRender({
+        servers: refreshed.servers || [],
+        server: refreshed.server || null,
+        selected_agent: _publishedMcpState.selected_agent,
+      });
       const target = document.getElementById('publishedMcpNewConnector');
       if (target) {
         target.innerHTML = '<div style="color:var(--pf-danger);font-size:12px;margin-bottom:4px;">'
@@ -337,7 +387,11 @@ function _publishedMcpCreateConnectorKey() {
 
 function _publishedMcpDisconnectClient() {
   if (!confirm(t('mcpPublishConfirmDisconnectClient'))) return;
-  _publishedMcpAction('mcp_server_disconnect_client', {}, function() {
+  const serverId = _publishedMcpState && _publishedMcpState.server
+    ? _publishedMcpState.server.server_id : '';
+  _publishedMcpAction('mcp_server_disconnect_client', {
+    server_id: serverId,
+  }, function() {
     showPublishedMcpDialog();
     loadResources();
   });
@@ -345,8 +399,12 @@ function _publishedMcpDisconnectClient() {
 
 function _publishedMcpDelete() {
   if (!confirm(t('mcpPublishConfirmDelete'))) return;
-  _publishedMcpAction('mcp_server_delete', {}, function() {
-    _publishedMcpClose();
+  const serverId = _publishedMcpState && _publishedMcpState.server
+    ? _publishedMcpState.server.server_id : '';
+  _publishedMcpAction('mcp_server_delete', {
+    server_id: serverId,
+  }, function() {
+    showPublishedMcpDialog();
     loadResources();
   });
 }

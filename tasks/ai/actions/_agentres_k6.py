@@ -56,12 +56,33 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
 
     from core.mcp_server_store import MCPServerStore
     mcp_store = MCPServerStore.instance()
-    server = mcp_store.get_for_conversation(conversation_id)
+    requested_server_id = str(body.get("server_id") or "").strip()
+    requested_agent = str(body.get("agent_name") or "").strip()
+    servers = mcp_store.list_for_conversation(conversation_id)
+
+    server = None
+    if requested_server_id:
+        candidate = mcp_store.get(requested_server_id)
+        if candidate and candidate.get("conversation_id") == conversation_id:
+            server = candidate
+    elif requested_agent:
+        server = mcp_store.get_for_conversation(
+            conversation_id, requested_agent)
+    elif len(servers) == 1:
+        server = servers[0]
 
     if action == "mcp_server_get":
+        public_servers = [
+            _public_server(item, mcp_store.list_keys(item["server_id"]))
+            for item in servers
+        ]
         return _reply(flowfile, {
-            "server": _public_server(
-                server, mcp_store.list_keys(server["server_id"]) if server else [])
+            "servers": public_servers,
+            # Compatibility: return the requested/sole publication as server.
+            "server": (
+                next((item for item in public_servers
+                      if server and item["server_id"] == server["server_id"]), None)
+                if server else None),
         })
 
     if action == "mcp_server_configure":
@@ -101,12 +122,14 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
         from core.conv_agent_config import set_agent_config
         set_agent_config(
             conversation_id, canonical, {"runtime_kind": "external_mcp"})
-        if server and (not enabled or server["agent_name"].lower() != canonical.lower()):
+        existing = mcp_store.get_for_conversation(
+            conversation_id, canonical)
+        if existing and not enabled:
             from services.mcp_server_endpoint import remove_mcp_relay
-            remove_mcp_relay(server)
-            active_client_id = str(server.get("active_client_id") or "")
+            remove_mcp_relay(existing)
+            active_client_id = str(existing.get("active_client_id") or "")
             if active_client_id:
-                mcp_store.release_client(server["server_id"], active_client_id)
+                mcp_store.release_client(existing["server_id"], active_client_id)
         configured = mcp_store.configure(
             owner, conversation_id, canonical,
             label=str(body.get("label") or canonical).strip(),
@@ -117,13 +140,24 @@ def _handle_agentres_k6(self, action, body, store, user_id, flowfile):
         )
         from services.mcp_server_endpoint import ensure_mcp_routes
         ensure_mcp_routes()
+        refreshed = mcp_store.list_for_conversation(conversation_id)
         return _reply(flowfile, {
+            "servers": [
+                _public_server(item, mcp_store.list_keys(item["server_id"]))
+                for item in refreshed
+            ],
             "server": _public_server(
                 configured, mcp_store.list_keys(configured["server_id"]))
         })
 
     if not server:
-        return _reply(flowfile, {"error": "Conversation is not published as MCP"}, 404)
+        if servers and not requested_server_id and not requested_agent:
+            return _reply(flowfile, {
+                "error": "server_id is required when multiple MCP agents are published"
+            }, 400)
+        return _reply(flowfile, {
+            "error": "MCP publication not found for this conversation"
+        }, 404)
     server_id = server["server_id"]
 
     if action == "mcp_server_create_key":

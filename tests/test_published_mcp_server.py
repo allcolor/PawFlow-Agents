@@ -72,6 +72,88 @@ def test_list_keys_hides_revoked_by_default(tmp_path):
     assert all_ids == {keep["key_id"], drop["key_id"]}
 
 
+def test_store_supports_independent_agents_in_one_conversation(tmp_path):
+    store = MCPServerStore(tmp_path / "published.sqlite3")
+    first = store.configure("alice", "conv-1", "agent-a")
+    second = store.configure("alice", "conv-1", "agent-b")
+
+    assert first["server_id"] != second["server_id"]
+    assert [item["agent_name"] for item in
+            store.list_for_conversation("conv-1")] == ["agent-a", "agent-b"]
+    assert store.get_for_conversation(
+        "conv-1", "AGENT-B")["server_id"] == second["server_id"]
+
+    updated = store.configure(
+        "alice", "conv-1", "Agent-A", mode="full")
+    assert updated["server_id"] == first["server_id"]
+    assert updated["mode"] == "full"
+    assert len(store.list_for_conversation("conv-1")) == 2
+
+    raw, _key = store.create_key(first["server_id"], "first")
+    assert store.validate_key(first["server_id"], raw)
+    assert store.validate_key(second["server_id"], raw) is None
+
+
+def test_management_api_addresses_each_agent_publication(
+        monkeypatch, tmp_path):
+    from tasks.ai.actions import _agentres_k6
+
+    mcp_store = MCPServerStore(tmp_path / "published.sqlite3")
+
+    class ConversationStore:
+        def resolve_owner(self, _conversation_id):
+            return "alice"
+
+    class FlowFile:
+        def __init__(self):
+            self.attributes = {}
+            self.content = b""
+
+        def set_content(self, content):
+            self.content = content
+
+        def set_attribute(self, key, value):
+            self.attributes[key] = value
+
+    monkeypatch.setattr(
+        MCPServerStore, "instance", classmethod(lambda cls: mcp_store))
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_all_agent_configs",
+        lambda _conversation_id: {"agent-a": {}, "agent-b": {}})
+    monkeypatch.setattr(
+        "core.conv_agent_config.set_agent_config", lambda *_args: None)
+    monkeypatch.setattr(endpoint, "ensure_mcp_routes", lambda: None)
+
+    configured = []
+    for agent in ("agent-a", "agent-b"):
+        flowfile = FlowFile()
+        _agentres_k6._handle_agentres_k6(
+            None, "mcp_server_configure", {
+                "conversation_id": "conv-1", "agent_name": agent,
+            }, ConversationStore(), "alice", flowfile)
+        configured.append(json.loads(flowfile.content)["server"])
+
+    listed = FlowFile()
+    _agentres_k6._handle_agentres_k6(
+        None, "mcp_server_get", {"conversation_id": "conv-1"},
+        ConversationStore(), "alice", listed)
+    payload = json.loads(listed.content)
+    assert {item["agent_name"] for item in payload["servers"]} == {
+        "agent-a", "agent-b"}
+    assert payload["server"] is None
+
+    keyed = FlowFile()
+    _agentres_k6._handle_agentres_k6(
+        None, "mcp_server_create_key", {
+            "conversation_id": "conv-1",
+            "server_id": configured[1]["server_id"],
+            "label": "agent-b-key",
+        }, ConversationStore(), "alice", keyed)
+    assert json.loads(keyed.content)["key"]["server_id"] == (
+        configured[1]["server_id"])
+    assert not mcp_store.list_keys(configured[0]["server_id"])
+
+
 def test_store_enforces_one_fresh_cli_and_expires_stale_lease(tmp_path):
     store = MCPServerStore(tmp_path / "published.sqlite3")
     server = store.configure("alice", "conv-1", "agent-a")
@@ -122,6 +204,9 @@ def test_store_migrates_existing_publications_to_native_image_output(tmp_path):
     store = MCPServerStore(database)
 
     assert store.get("srv-old")["image_output"] == "native"
+    second = store.configure("alice", "conv-old", "agent-b")
+    assert second["server_id"] != "srv-old"
+    assert len(store.list_for_conversation("conv-old")) == 2
 
 
 def test_link_relay_can_skip_automatic_default(monkeypatch):
@@ -868,7 +953,7 @@ def test_relay_disconnect_keeps_cli_lease_until_bridge_closes(monkeypatch):
     assert removed == [server, server]
 
 
-def test_reconfiguring_published_agent_releases_old_cli_relay(monkeypatch):
+def test_configuring_second_published_agent_keeps_first_cli_relay(monkeypatch):
     from tasks.ai.actions import _agentres_k6
 
     server = {
@@ -886,8 +971,22 @@ def test_reconfiguring_published_agent_releases_old_cli_relay(monkeypatch):
             return "alice"
 
     class Store:
-        def get_for_conversation(self, _conversation_id):
-            return dict(server)
+        def __init__(self):
+            self.servers = [dict(server)]
+
+        def list_for_conversation(self, _conversation_id):
+            return [dict(item) for item in self.servers]
+
+        def get(self, server_id):
+            return next((
+                dict(item) for item in self.servers
+                if item["server_id"] == server_id), None)
+
+        def get_for_conversation(self, _conversation_id, agent_name=""):
+            return next((
+                dict(item) for item in self.servers
+                if not agent_name
+                or item["agent_name"].lower() == agent_name.lower()), None)
 
         def release_client(self, server_id, client_id):
             calls.append(("release", server_id, client_id))
@@ -896,8 +995,12 @@ def test_reconfiguring_published_agent_releases_old_cli_relay(monkeypatch):
         def configure(self, owner, conversation_id, agent_name, label="", enabled=True,
                       image_output="native", tool_allowlist=None, mode=None):
             calls.append(("configure", owner, conversation_id, agent_name, enabled))
-            return dict(server, agent_name=agent_name, enabled=enabled,
-                        image_output=image_output, mode=mode or "api")
+            configured = dict(
+                server, server_id="srv-2", agent_name=agent_name,
+                active_client_id="", active_relay_id="", enabled=enabled,
+                image_output=image_output, mode=mode or "api")
+            self.servers.append(configured)
+            return dict(configured)
 
         def list_keys(self, _server_id):
             return []
@@ -927,11 +1030,10 @@ def test_reconfiguring_published_agent_releases_old_cli_relay(monkeypatch):
         ConversationStore(), "alice", FlowFile(),
     )
 
-    assert calls[:2] == [
-        ("remove", "relay-1"),
-        ("release", "srv-1", "cli-1"),
+    assert calls == [
+        ("configure", "alice", "conv-1", "agent-b", True),
     ]
-    assert calls[2] == ("configure", "alice", "conv-1", "agent-b", True)
+    assert mcp_store.servers[0]["active_client_id"] == "cli-1"
 
 
 def test_configure_rejects_unknown_image_output(monkeypatch):
@@ -942,7 +1044,13 @@ def test_configure_rejects_unknown_image_output(monkeypatch):
             return "alice"
 
     class Store:
-        def get_for_conversation(self, _conversation_id):
+        def list_for_conversation(self, _conversation_id):
+            return []
+
+        def get(self, _server_id):
+            return None
+
+        def get_for_conversation(self, _conversation_id, _agent_name=""):
             return None
 
     class FlowFile:

@@ -84,7 +84,9 @@ def test_webchat_router_uses_existing_relay_and_distinguishes_unavailable(
     class Store:
         ready = True
 
-        def get_for_conversation(self, _conversation_id):
+        def get_for_conversation(self, _conversation_id, agent_name=""):
+            if agent_name and agent_name != "External":
+                return None
             return {
                 "server_id": "srv-1", "owner_user_id": "alice",
                 "conversation_id": "conv-1", "agent_name": "External",

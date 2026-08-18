@@ -82,6 +82,16 @@ vision service. The call fails explicitly if the published agent has no usable
 vision service. PawFlow persists the ordinary text and compact image metadata
 in the conversation transcript, never inline image base64 payloads.
 
+Every `tools/call` response contains MCP content blocks. Native text, image,
+audio, resource-link, and embedded-resource blocks are forwarded only when
+their required fields are valid; other structured Python results are serialized
+as JSON in one text block. Invalid dynamic input schemas are replaced by a
+valid empty-object schema so one broken tool cannot invalidate `tools/list`;
+tool names outside MCP's 1–128-character ASCII identifier grammar are omitted.
+Malformed calls and unknown tools produce JSON-RPC invalid-parameter errors;
+tool, approval, hook, runtime, and upstream MCP failures set `isError=true`
+instead of appearing as successful results.
+
 ## Web connectors (URL-key access)
 
 Web clients such as ChatGPT and Claude support OAuth or a no-authentication
@@ -162,7 +172,8 @@ tool) and stored per publication. It applies to both Bearer and connector
 traffic: `get_tool_schema` lists and describes only allowlisted tools, and
 `use_tool` refuses excluded tools with an explicit error. The conversation
 transport tools below are not subject to the allowlist; the read-only
-exposure modes are the only thing that removes any of them.
+exposure modes are the only thing that removes any of them. Allowlist matching
+is case-insensitive while `tools/list` preserves each tool's canonical name.
 
 ## Exposure modes
 

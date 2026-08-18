@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Published MCP servers now emit only valid tool definitions and content blocks,
+  enforce case-insensitive publication filters without re-exposing dispatch
+  shims, distinguish protocol errors from execution failures, propagate nested
+  MCP/runtime/HTTP failures through `isError`, and reuse retained results when a
+  client replays the same session request instead of executing a tool twice.
+
 ## [1.0.0-beta.210] — 2026-08-18
 
 ### Added

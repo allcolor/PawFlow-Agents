@@ -30,7 +30,7 @@ class _ExternalCall:
     results: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     event: threading.Event = field(default_factory=threading.Event)
     backgrounded: bool = False
-    late_result: Optional[str] = None
+    late_result: Any = None
     late_event: threading.Event = field(default_factory=threading.Event)
 
 
@@ -61,7 +61,7 @@ def _cleanup_locked() -> None:
 
 
 def register_call(call_id: str, conversation_id: str, source_id: str,
-                  display_name: str, llm_service: str = "") -> None:
+                  display_name: str, llm_service: str = "") -> bool:
     if not call_id or not conversation_id or not source_id:
         raise ValueError("external call requires call_id, conversation_id, and source_id")
     with _lock:
@@ -74,7 +74,7 @@ def register_call(call_id: str, conversation_id: str, source_id: str,
                     f"external call id collision for '{call_id}'")
             existing.display_name = display_name or existing.display_name
             existing.llm_service = llm_service or existing.llm_service
-            return
+            return False
         _calls[call_id] = _ExternalCall(
             call_id=call_id,
             conversation_id=conversation_id,
@@ -82,6 +82,7 @@ def register_call(call_id: str, conversation_id: str, source_id: str,
             display_name=display_name or "External client",
             llm_service=llm_service or "",
         )
+        return True
 
 
 @contextmanager
@@ -185,18 +186,18 @@ def wait_for_results(call_id: str, timeout: Optional[float] = None
         return [dict(call.results[task_id]) for task_id in call.expected]
 
 
-def complete_call(call_id: str, result: str) -> bool:
+def complete_call(call_id: str, result: Any) -> bool:
     with _lock:
         call = _calls.get(call_id)
         if not call:
             return False
-        call.late_result = str(result or "")
+        call.late_result = result
         call.late_event.set()
         return True
 
 
 def wait_for_call_result(call_id: str, timeout: Optional[float] = None
-                         ) -> Optional[str]:
+                         ) -> Any:
     with _lock:
         call = _calls.get(call_id)
         if not call:

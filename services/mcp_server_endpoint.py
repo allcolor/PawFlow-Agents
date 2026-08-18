@@ -11,6 +11,8 @@ import uuid
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlsplit
 
+import jsonschema
+
 from core.identifier import identifier_key
 from core.mcp_server_store import MCPServerStore
 
@@ -450,6 +452,30 @@ def _mcp_tool_annotations(tool_name: str) -> Dict[str, Any]:
     }
 
 
+def _mcp_input_schema(value: Any, tool_name: str) -> Dict[str, Any]:
+    fallback = {"type": "object", "properties": {}}
+    if not isinstance(value, dict):
+        return fallback
+    try:
+        json.dumps(value)
+        jsonschema.validators.validator_for(value).check_schema(value)
+    except (TypeError, ValueError, jsonschema.SchemaError):
+        logger.warning(
+            "Invalid MCP input schema for tool %s; using empty object schema",
+            tool_name)
+        return fallback
+    return value
+
+
+def _is_mcp_tool_name(value: str) -> bool:
+    return (
+        1 <= len(value) <= 128
+        and all(character.isascii()
+                and (character.isalnum() or character in "_.-")
+                for character in value)
+    )
+
+
 def _tools_for_server(server: Dict[str, Any]) -> list:
     """MCP tool list advertised for this publication, honoring its mode.
 
@@ -481,19 +507,24 @@ def _tools_for_server(server: Dict[str, Any]) -> list:
     meta = _READONLY_META if readonly else _FULL_MODE_META
     tools = [tool for tool in _MCP_TOOLS if tool["name"] in meta]
     allowlist = _publication_allowlist(server)
+    allowlist_keys = {identifier_key(name) for name in allowlist}
+    reserved_meta_keys = {
+        identifier_key(tool["name"]) for tool in _MCP_TOOLS
+    }
     for definition in _registry(server).get_tool_definitions():
-        name = definition.get("name", "")
-        if not name or name in _FULL_MODE_META:
+        name = str(definition.get("name") or "").strip()
+        name_key = identifier_key(name)
+        if not _is_mcp_tool_name(name) or name_key in reserved_meta_keys:
             continue
-        if allowlist and name not in allowlist:
+        if allowlist_keys and name_key not in allowlist_keys:
             continue
         if readonly and not _is_readonly_tool(name):
             continue
         tools.append({
             "name": name,
-            "description": definition.get("description", ""),
-            "inputSchema": definition.get("parameters")
-            or {"type": "object", "properties": {}},
+            "description": str(definition.get("description") or ""),
+            "inputSchema": _mcp_input_schema(
+                definition.get("parameters"), name),
             "annotations": _mcp_tool_annotations(name),
         })
     return tools
@@ -723,12 +754,48 @@ def _compact_content_for_transcript(blocks: list) -> str:
     return "\n".join(lines) or "(no output)"
 
 
+def _is_mcp_content_block(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    block_type = value.get("type")
+    if block_type == "text":
+        return isinstance(value.get("text"), str)
+    if block_type in {"image", "audio"}:
+        return (isinstance(value.get("data"), str)
+                and isinstance(value.get("mimeType"), str))
+    if block_type == "resource":
+        resource = value.get("resource")
+        return (isinstance(resource, dict)
+                and isinstance(resource.get("uri"), str)
+                and (isinstance(resource.get("text"), str)
+                     or isinstance(resource.get("blob"), str)))
+    if block_type == "resource_link":
+        return (isinstance(value.get("name"), str)
+                and isinstance(value.get("uri"), str))
+    return False
+
+
+def _is_tool_error_text(value: str) -> bool:
+    if value.startswith((
+            "Error:", "Error ", "Blocked by hook:", "MCP error:")):
+        return True
+    first_line = value.splitlines()[0] if value else ""
+    if first_line.startswith("HTTP "):
+        status = first_line[5:].split(None, 1)[0]
+        return status.isdigit() and int(status) >= 400
+    return False
+
+
 def _encode_tool_content(registry, tool_name: str, arguments: dict,
                          result: Any) -> Tuple[list, bool, str]:
-    if isinstance(result, list):
+    if (isinstance(result, list) and result
+            and all(_is_mcp_content_block(block) for block in result)):
         compact = _compact_content_for_transcript(result)
-        return result, compact.startswith("Error:"), compact
-    text = str(result if result is not None and result != "" else "(no output)")
+        return result, _is_tool_error_text(compact), compact
+    if isinstance(result, (dict, list)):
+        text = json.dumps(result, ensure_ascii=False, default=str)
+    else:
+        text = str(result if result is not None and result != "" else "(no output)")
     handler = registry.get(tool_name)
     if (handler is not None and getattr(handler, "_returns_images", False)
             and "__image_data__:" in text):
@@ -742,8 +809,8 @@ def _encode_tool_content(registry, tool_name: str, arguments: dict,
                 blocks.append({"type": "text", "text": line})
         if blocks:
             compact = _compact_content_for_transcript(blocks)
-            return blocks, compact.startswith("Error:"), compact
-    return [{"type": "text", "text": text}], text.startswith("Error:"), text
+            return blocks, _is_tool_error_text(compact), compact
+    return [{"type": "text", "text": text}], _is_tool_error_text(text), text
 
 
 def _mcp_call_source(server: Dict[str, Any], key: Dict[str, Any],
@@ -979,78 +1046,89 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
                 tool_args, expected_task_ids = (
                     _prepare_external_async_arguments(
                         tool_name, tool_args, tool_call_id))
-                from core.conv_agent_config import get_agent_config
-                agent_service = str(get_agent_config(
-                    server["conversation_id"], server["agent_name"]
-                ).get("llm_service") or "")
                 from core import external_call_router
-                external_call_router.register_call(
-                    tool_call_id, server["conversation_id"],
-                    source_id=_external_source_id(server, key),
-                    display_name=(
-                        key.get("label") or key.get("prefix")
-                        or "MCP client"),
-                    llm_service=agent_service,
-                )
-                if expected_task_ids:
-                    external_call_router.set_expected_tasks(
-                        tool_call_id, expected_task_ids)
                 try:
-                    _persist_tool_call_start(
-                        server, key, tool_name, tool_args, tool_call_id)
-                except Exception:
-                    logger.error(
-                        "Could not persist published MCP tool call start",
-                        exc_info=True)
-
-                def _late_result_callback(payload, was_cancelled):
-                    external_call_router.complete_call(
-                        tool_call_id,
-                        "[Cancelled by user]" if was_cancelled else payload)
-
-                runtime = _runtime()
-                if hasattr(runtime, "_handle_execute"):
-                    execution = runtime._handle_execute(
-                        tool_call_id, tool_name, tool_args,
-                        server["owner_user_id"], server["conversation_id"],
-                        server["agent_name"],
-                        external_call_id=tool_call_id,
-                        late_result_callback=_late_result_callback,
+                    from core.conv_agent_config import get_agent_config
+                    agent_service = str(get_agent_config(
+                        server["conversation_id"], server["agent_name"]
+                    ).get("llm_service") or "")
+                    is_new_call = external_call_router.register_call(
+                        tool_call_id, server["conversation_id"],
+                        source_id=_external_source_id(server, key),
+                        display_name=(
+                            key.get("label") or key.get("prefix")
+                            or "MCP client"),
+                        llm_service=agent_service,
                     )
-                else:
-                    with external_call_router.call_scope(tool_call_id):
-                        execution = runtime._do_execute(
-                            tool_call_id, tool_name, tool_args,
-                            server["owner_user_id"],
-                            server["conversation_id"],
-                            server["agent_name"],
-                        )
-                result = (
-                    execution.get("data")
-                    if isinstance(execution, dict) else execution)
-
-                if (isinstance(result, str)
-                        and result.startswith("[Running in background")):
-                    result = (
-                        external_call_router.wait_for_call_result(
-                            tool_call_id) or "")
-
-                if (tool_name in _EXTERNAL_ASYNC_TOOLS
-                        and not (
-                            isinstance(result, str)
-                            and result.startswith("Error:"))):
-                    actual_task_ids = _task_ids_from_ack(result)
-                    if actual_task_ids:
-                        expected_task_ids = (
+                    if not is_new_call:
+                        result = external_call_router.wait_for_call_result(
+                            tool_call_id)
+                    else:
+                        if expected_task_ids:
                             external_call_router.set_expected_tasks(
-                                tool_call_id, actual_task_ids))
-                    if expected_task_ids:
-                        task_results = (
-                            external_call_router.wait_for_results(tool_call_id))
-                        result = json.dumps({
-                            "status": "completed",
-                            "task_results": task_results or [],
-                        }, ensure_ascii=False)
+                                tool_call_id, expected_task_ids)
+                        try:
+                            _persist_tool_call_start(
+                                server, key, tool_name, tool_args, tool_call_id)
+                        except Exception:
+                            logger.error(
+                                "Could not persist published MCP tool call start",
+                                exc_info=True)
+
+                        def _late_result_callback(payload, was_cancelled):
+                            external_call_router.complete_call(
+                                tool_call_id,
+                                "[Cancelled by user]" if was_cancelled else payload)
+
+                        runtime = _runtime()
+                        if hasattr(runtime, "_handle_execute"):
+                            execution = runtime._handle_execute(
+                                tool_call_id, tool_name, tool_args,
+                                server["owner_user_id"], server["conversation_id"],
+                                server["agent_name"],
+                                external_call_id=tool_call_id,
+                                late_result_callback=_late_result_callback,
+                            )
+                        else:
+                            with external_call_router.call_scope(tool_call_id):
+                                execution = runtime._do_execute(
+                                    tool_call_id, tool_name, tool_args,
+                                    server["owner_user_id"],
+                                    server["conversation_id"],
+                                    server["agent_name"],
+                                )
+                        result = (
+                            execution.get("data")
+                            if isinstance(execution, dict) else execution)
+
+                        if (isinstance(result, str)
+                                and result.startswith("[Running in background")):
+                            result = (
+                                external_call_router.wait_for_call_result(
+                                    tool_call_id) or "")
+
+                        if (tool_name in _EXTERNAL_ASYNC_TOOLS
+                                and not (
+                                    isinstance(result, str)
+                                    and result.startswith("Error:"))):
+                            actual_task_ids = _task_ids_from_ack(result)
+                            if actual_task_ids:
+                                expected_task_ids = (
+                                    external_call_router.set_expected_tasks(
+                                        tool_call_id, actual_task_ids))
+                            if expected_task_ids:
+                                task_results = (
+                                    external_call_router.wait_for_results(tool_call_id))
+                                result = json.dumps({
+                                    "status": "completed",
+                                    "task_results": task_results or [],
+                                }, ensure_ascii=False)
+                except Exception as exc:
+                    result = f"Error: tool '{tool_name}' failed: {exc}"
+                    external_call_router.complete_call(tool_call_id, result)
+                    logger.error(
+                        "Published MCP tool execution failed: %s", tool_name,
+                        exc_info=True)
         executed_name = tool_name or "use_tool"
         executed_args = tool_args if isinstance(tool_args, dict) else {}
     else:
@@ -1059,6 +1137,9 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
     if name == "use_tool" and executed_name != "use_tool":
         result = _apply_published_image_output(
             server, registry, executed_name, executed_args, result)
+        if locals().get("tool_call_id"):
+            from core import external_call_router
+            external_call_router.complete_call(tool_call_id, result)
 
     content, is_error, result_text = _encode_tool_content(
         registry, executed_name, executed_args, result)
@@ -1098,7 +1179,10 @@ def _dispatch_session_message(server: Dict[str, Any], key: Dict[str, Any],
         return _rpc_error(request_id, -32600, "Invalid Request")
     method = str(message.get("method") or "")
     request_id = message.get("id")
-    params = message.get("params") if isinstance(message.get("params"), dict) else {}
+    raw_params = message.get("params")
+    if raw_params is not None and not isinstance(raw_params, dict):
+        return _rpc_error(request_id, -32602, "Params must be an object")
+    params = raw_params or {}
     if not method and ("result" in message or "error" in message):
         return None
     if method == "notifications/initialized":
@@ -1112,11 +1196,22 @@ def _dispatch_session_message(server: Dict[str, Any], key: Dict[str, Any],
         return (_rpc_result(request_id, {"tools": _tools_for_server(server)})
                 if request_id is not None else None)
     if method == "tools/call":
-        name = str(params.get("name") or "")
-        if not name:
+        raw_name = params.get("name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
             return _rpc_error(request_id, -32602, "Tool name is required")
+        name = raw_name.strip()
+        advertised = {
+            identifier_key(tool.get("name"))
+            for tool in _tools_for_server(server)
+        }
+        if identifier_key(name) not in advertised:
+            return _rpc_error(request_id, -32602, f"Unknown tool: {name}")
+        arguments = params.get("arguments", {})
+        if not isinstance(arguments, dict):
+            return _rpc_error(
+                request_id, -32602, "Tool arguments must be an object")
         result = _call_tool(
-            server, key, name, params.get("arguments") or {},
+            server, key, name, arguments,
             session_id=session_id, mcp_request_id=request_id)
         return _rpc_result(request_id, result) if request_id is not None else None
     return (

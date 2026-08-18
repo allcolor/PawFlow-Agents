@@ -487,7 +487,7 @@ class MCPToolHandler(ConfigurableToolHandler):
             })
             if isinstance(result, dict):
                 if result.get("isError"):
-                    return f"MCP error: {result.get('result', 'unknown error')}"
+                    return f"Error: MCP tool: {result.get('result', 'unknown error')}"
                 return result.get("result", json.dumps(result))
             return str(result)
         except Exception as e:
@@ -518,7 +518,7 @@ class MCPToolHandler(ConfigurableToolHandler):
                 url, headers=self._headers, timeout=self._timeout)
             result = client.call_tool(self._mcp_tool_name, arguments)
             if result.get("isError"):
-                return f"MCP error: {flatten_tool_content(result)}"
+                return f"Error: MCP tool: {flatten_tool_content(result)}"
             return flatten_tool_content(result)
         except Exception as e:
             return f"Error calling MCP server {url}: {e}"

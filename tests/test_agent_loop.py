@@ -1190,6 +1190,23 @@ class TestMCPToolHandler(unittest.TestCase):
         result = h.execute({})
         assert "Error" in result
 
+    @patch("core.mcp_http_client.MCPHttpClient.call_tool")
+    def test_execute_tool_error_uses_standard_error_prefix(self, call_tool):
+        call_tool.return_value = {
+            "content": [{"type": "text", "text": "upstream failed"}],
+            "isError": True,
+        }
+        h = MCPToolHandler(
+            tool_name="upstream",
+            tool_description="Upstream",
+            tool_parameters={"type": "object", "properties": {}},
+            server_url="http://localhost:3001/mcp",
+        )
+
+        result = h.execute({})
+
+        assert result == "Error: MCP tool: upstream failed"
+
 
 class TestDiscoverMCPTools(unittest.TestCase):
 

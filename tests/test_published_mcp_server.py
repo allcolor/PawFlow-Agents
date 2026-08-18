@@ -6,6 +6,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 from core.mcp_server_store import MCPServerStore
@@ -1458,7 +1459,10 @@ def test_call_tool_enforces_publication_allowlist(monkeypatch):
     listing = endpoint._call_tool(server, {"key_id": "key-1"},
                                   "get_tool_schema", {})
     assert not listing["isError"]
-    names = [row.get("name") for row in listing["content"]]
+    assert len(listing["content"]) == 1
+    assert listing["content"][0]["type"] == "text"
+    rows = json.loads(listing["content"][0]["text"])
+    names = [row.get("name") for row in rows]
     assert "read" in names and "bash" not in names
 
     excluded_schema = endpoint._call_tool(
@@ -1472,6 +1476,32 @@ def test_call_tool_enforces_publication_allowlist(monkeypatch):
     assert "not exposed by this publication" in blocked["content"][0]["text"]
 
 
+def test_get_tool_schema_empty_listing_is_valid_mcp_text(monkeypatch):
+    class Registry:
+        def get_tool_definitions(self):
+            return []
+
+        def get(self, _name):
+            return None
+
+    server = {
+        "server_id": "srv-1",
+        "owner_user_id": "alice",
+        "conversation_id": "conv-1",
+        "agent_name": "agent-a",
+    }
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+
+    listing = endpoint._call_tool(server, {"key_id": "key-1"},
+                                  "get_tool_schema", {})
+
+    assert listing == {
+        "content": [{"type": "text", "text": "[]"}],
+        "isError": False,
+    }
+
+
 def test_full_mode_lists_tools_with_real_annotations(monkeypatch):
     class Registry:
         def get_tool_definitions(self):
@@ -1480,6 +1510,11 @@ def test_full_mode_lists_tools_with_real_annotations(monkeypatch):
                  "parameters": {"type": "object", "properties": {}}},
                 {"name": "bash", "description": "Shell",
                  "parameters": {"type": "object", "properties": {}}},
+                {"name": "get_tool_schema", "description": "shim",
+                 "parameters": {"type": "object", "properties": {}}},
+                {"name": "use_tool", "description": "shim",
+                 "parameters": {"type": "object", "properties": {}}},
+                {"name": "odd", "description": None, "parameters": None},
             ]
 
     monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
@@ -1498,11 +1533,145 @@ def test_full_mode_lists_tools_with_real_annotations(monkeypatch):
     assert tools["bash"]["annotations"]["readOnlyHint"] is False
     assert tools["bash"]["annotations"]["destructiveHint"] is True
     assert tools["read"]["inputSchema"]["type"] == "object"
+    assert tools["odd"]["description"] == ""
+    assert tools["odd"]["inputSchema"] == {
+        "type": "object", "properties": {}}
 
     # api mode still advertises exactly the six meta tools.
     api_names = {tool["name"] for tool in endpoint._tools_for_server(
         dict(server, mode="api"))}
     assert "use_tool" in api_names and "read" not in api_names
+
+
+def test_full_mode_allowlist_is_case_insensitive(monkeypatch):
+    class Registry:
+        def get_tool_definitions(self):
+            return [
+                {"name": "Read", "description": "Read",
+                 "parameters": {"type": "object", "properties": {}}},
+                {"name": "bash", "description": "Shell",
+                 "parameters": {"type": "object", "properties": {}}},
+            ]
+
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "mode": "full", "tool_allowlist": ["READ"],
+    }
+
+    names = {tool["name"] for tool in endpoint._tools_for_server(server)}
+
+    assert "Read" in names
+    assert "bash" not in names
+
+
+def test_full_mode_replaces_invalid_dynamic_input_schema(monkeypatch):
+    class Registry:
+        def get_tool_definitions(self):
+            return [
+                {"name": "broken", "description": "Broken",
+                 "parameters": {"type": 7}},
+                {"name": "invalid name", "description": "Space",
+                 "parameters": {}},
+                {"name": "é", "description": "Unicode",
+                 "parameters": {}},
+                {"name": "x" * 129, "description": "Long",
+                 "parameters": {}},
+            ]
+
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "mode": "full",
+    }
+
+    tools = {tool["name"]: tool for tool in endpoint._tools_for_server(server)}
+
+    assert tools["broken"]["inputSchema"] == {
+        "type": "object", "properties": {}}
+    assert "invalid name" not in tools
+    assert "é" not in tools
+    assert "x" * 129 not in tools
+
+
+def test_full_mode_real_registry_tools_are_mcp_well_formed(monkeypatch):
+    from core.tool_registry import create_default_registry
+
+    registry = create_default_registry()
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: registry)
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+        "mode": "full",
+    }
+
+    tools = endpoint._tools_for_server(server)
+    names = [tool["name"] for tool in tools]
+    normalized_names = [name.casefold() for name in names]
+
+    assert len(names) == len(set(normalized_names))
+    assert "get_tool_schema" not in normalized_names
+    assert "use_tool" not in normalized_names
+    for tool in tools:
+        name = tool["name"]
+        assert 1 <= len(name) <= 128
+        assert all(character.isascii()
+                   and (character.isalnum() or character in "_.-")
+                   for character in name)
+        assert isinstance(tool["description"], str)
+        jsonschema.Draft202012Validator.check_schema(tool["inputSchema"])
+        annotations = tool["annotations"]
+        assert isinstance(annotations, dict)
+        assert all(isinstance(value, bool)
+                   for value in annotations.values())
+
+
+@pytest.mark.parametrize("message", [
+    "Error: invalid arguments",
+    "Error calling remote service: disconnected",
+    "Blocked by hook: writes are frozen",
+    "MCP error: upstream tool failed",
+    "HTTP 404\nnot found",
+    "HTTP 503\nunavailable",
+])
+def test_published_mcp_marks_all_tool_error_prefixes(message):
+    class Registry:
+        def get(self, _name):
+            return None
+
+    content, is_error, compact = endpoint._encode_tool_content(
+        Registry(), "tool", {}, message)
+
+    assert content == [{"type": "text", "text": message}]
+    assert compact == message
+    assert is_error is True
+
+
+def test_published_mcp_does_not_mark_successful_http_result_as_error():
+    class Registry:
+        def get(self, _name):
+            return None
+
+    _content, is_error, _compact = endpoint._encode_tool_content(
+        Registry(), "tool", {}, "HTTP 200\nok")
+
+    assert is_error is False
+
+
+def test_malformed_typed_content_is_serialized_instead_of_forwarded():
+    class Registry:
+        def get(self, _name):
+            return None
+
+    malformed = [{"type": "resource", "resource": {}}]
+    content, is_error, compact = endpoint._encode_tool_content(
+        Registry(), "tool", {}, malformed)
+
+    assert content == [{"type": "text", "text": json.dumps(malformed)}]
+    assert compact == json.dumps(malformed)
+    assert is_error is False
 
 
 def test_full_mode_direct_call_dispatches_like_use_tool(monkeypatch):
@@ -1543,6 +1712,103 @@ def test_full_mode_direct_call_dispatches_like_use_tool(monkeypatch):
                                   {"path": "x"})
     assert blocked["isError"]
     assert "not exposed by this publication" in blocked["content"][0]["text"]
+
+
+def test_dispatch_rejects_unknown_tools_and_non_object_arguments(monkeypatch):
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+    }
+    key = {"key_id": "key-1"}
+
+    unknown = endpoint._dispatch_session_message(server, key, {
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "missing", "arguments": {}},
+    }, "session-1")
+    malformed = endpoint._dispatch_session_message(server, key, {
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "get_initial_context", "arguments": []},
+    }, "session-1")
+
+    assert unknown["error"]["code"] == -32602
+    assert "Unknown tool" in unknown["error"]["message"]
+    assert malformed["error"]["code"] == -32602
+    assert "arguments" in malformed["error"]["message"]
+
+
+def test_runtime_exception_becomes_mcp_tool_error(monkeypatch):
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": "read", "description": "Read", "parameters": {}}]
+
+        def get(self, _name):
+            return None
+
+    class Runtime:
+        def _do_execute(self, *_args, **_kwargs):
+            raise RuntimeError("relay unavailable")
+
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+    }
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    monkeypatch.setattr(endpoint, "_persist_tool_call_start", lambda *_args: None)
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda *_args: {"llm_service": "test"})
+
+    result = endpoint._call_tool(
+        server, {"key_id": "key-1"}, "use_tool",
+        {"tool_name": "read", "arguments_json": "{}"},
+        session_id="session-1", mcp_request_id=3)
+
+    assert result["isError"] is True
+    assert "relay unavailable" in result["content"][0]["text"]
+
+
+def test_replayed_request_id_reuses_result_without_reexecuting(monkeypatch):
+    from core import external_call_router
+
+    external_call_router.reset_for_tests()
+    calls = []
+
+    class Registry:
+        def get_tool_definitions(self):
+            return [{"name": "write", "description": "Write", "parameters": {}}]
+
+        def get(self, _name):
+            return None
+
+    class Runtime:
+        def _do_execute(self, *_args, **_kwargs):
+            calls.append("executed")
+            return {"type": "result", "data": {"saved": True}}
+
+    server = {
+        "server_id": "srv-1", "owner_user_id": "alice",
+        "conversation_id": "conv-1", "agent_name": "agent-a",
+    }
+    monkeypatch.setattr(endpoint, "_registry", lambda _server: Registry())
+    monkeypatch.setattr(endpoint, "_runtime", lambda: Runtime())
+    monkeypatch.setattr(endpoint, "_persist_tool_call_start", lambda *_args: None)
+    monkeypatch.setattr(endpoint, "_persist_tool_call", lambda *_args: None)
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda *_args: {"llm_service": "test"})
+    arguments = {"tool_name": "write", "arguments_json": "{}"}
+
+    first = endpoint._call_tool(
+        server, {"key_id": "key-1"}, "use_tool", arguments,
+        session_id="session-1", mcp_request_id=4)
+    replay = endpoint._call_tool(
+        server, {"key_id": "key-1"}, "use_tool", arguments,
+        session_id="session-1", mcp_request_id=4)
+
+    assert first == replay
+    assert calls == ["executed"]
 
 
 def test_one_way_publication_refuses_scheduling_tools(monkeypatch):

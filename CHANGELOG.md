@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.209] — 2026-08-18
+
+### Fixed
+
+- Published MCP connectors now negotiate the Claude web connector's legacy
+  `2025-11-25` protocol version instead of falling back to the oldest supported
+  version and disconnecting immediately after initialization.
+
 ## [1.0.0-beta.208] — 2026-08-18
 
 ### Added

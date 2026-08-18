@@ -72,36 +72,20 @@ See [docs/development.md](docs/development.md) for a detailed guide.
 
 ## Releasing
 
-Releases are lightweight git tags named exactly `1.0.0-beta.<N>` on `main`.
-The tag **must not** have a leading `v`: `v1.0.0-beta.<N>` is forbidden.
-The version bump and changelog entry go in the **same commit**, *before* the
-tag, so the tagged commit carries the correct version.
+Follow the blocking [complete release procedure](docs/RELEASE_PROCEDURE.md).
+In particular:
 
-Checklist (replace `bN` / `beta.N` with the new number):
+- land feature, fix, test, and documentation changes in dedicated commits;
+- keep the `Release 1.0.0-beta.N` commit limited to release metadata;
+- push that release commit alone and wait for the full branch CI matrix to be
+  green for its exact SHA;
+- only then create and separately push the lightweight
+  `1.0.0-beta.N` tag, without a leading `v`;
+- verify the tag-triggered asset and container publication workflows and the
+  final normal GitHub release.
 
-1. **Bump the package version** in `pyproject.toml`:
-   - `pyproject.toml` → `version = "1.0.0bN"`
-   - `core.__version__` is derived from `pyproject.toml` in source checkouts and
-     package metadata in installed builds; do not hardcode it in `core/__init__.py`.
-2. **Update release metadata** where applicable: `CHANGELOG.md`,
-   `PROJECT_SUMMARY.md`, and website fallback version metadata.
-3. **Update `CHANGELOG.md`**: add a `## [1.0.0-beta.N] — YYYY-MM-DD`
-   section at the top (newest first), grouped into `Added` / `Fixed` /
-   `Security`, summarizing the commits since the previous tag
-   (`git log --format='%h %s' 1.0.0-beta.<N-1>..HEAD`).
-4. **Commit** the bump and changelog together:
-   `git commit -m "Release 1.0.0-beta.N"`.
-5. **Verify**: `python cli.py --version` prints `1.0.0bN`, and the relevant
-   test suite is green.
-6. **Tag and push** the release commit:
-   ```bash
-   git push origin main
-   git tag 1.0.0-beta.N
-   git push origin 1.0.0-beta.N
-   ```
-
-Note: the version string is `1.0.0bN` (PEP 440, used in packaging) but the
-tag is `1.0.0-beta.N` (SemVer pre-release).
+The package version is `1.0.0bN` (PEP 440), while the Git tag and release
+name are `1.0.0-beta.N`.
 
 ## Reporting Issues
 

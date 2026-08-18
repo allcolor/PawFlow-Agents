@@ -4,9 +4,11 @@ This file complements `CLAUDE.md` (development conventions). Read both.
 
 ## Releases
 
-Before preparing or executing any release, read the project wiki page
+Before preparing or executing any release, read
+`docs/RELEASE_PROCEDURE.md` and the project wiki page
 `complete-release-procedure` (`project_wiki(action='page', slug='complete-release-procedure')`).
-It is the authoritative release circuit. Two rules from it are non-negotiable:
+The version-controlled document is the source of truth and the wiki page must
+mirror it. These rules are non-negotiable:
 
 - A `Release 1.0.0-beta.N` commit contains **only** release metadata
   (`pyproject.toml`, `CHANGELOG.md`, `PROJECT_SUMMARY.md`, version-string

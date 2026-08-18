@@ -55,6 +55,7 @@
 | [Security Model](security_model.md) | Trust boundaries, relay risk, desktop/VNC, provider egress, production checklist |
 | [Observability](OBSERVABILITY.md) | Session correlation in logs (always on) and optional OpenTelemetry tracing |
 | [Development](development.md) | Creating custom tasks and services |
+| [Release Procedure](RELEASE_PROCEDURE.md) | Blocking release circuit: scoped commits, CI gates, tagging, publication, and recovery |
 | [Relay Server Filesystem](relay_server_fs.md) | Relay filesystem server details |
 | [Example: Agent-Created Flow](examples/first_agent_flow.md) | Minimal daily digest flow pattern |
 

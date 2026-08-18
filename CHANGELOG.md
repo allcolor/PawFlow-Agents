@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.208] — 2026-08-18
+
+### Added
+
+- External secret providers now support pluggable provider services, scoped
+  access policies, cached resolution, secret-entry references, runtime
+  expression expansion, package integration, and operator documentation.
+- Published MCP servers can expose multiple conversation agents with isolated
+  routing and per-agent tool filtering instead of being limited to one agent.
+- Direct Anthropic API services expose model reasoning effort in the service UI
+  and send supported `low`, `medium`, `high`, `xhigh`, or `max` values through
+  `output_config.effort` for streaming and non-streaming requests.
+
+### Changed
+
+- The evaluation-harness plan now defines a broader verification strategy for
+  reward quality, reproducibility, adversarial cases, and release readiness.
+- Agent `max_tokens` now limits only the visible terminal answer. Reasoning and
+  tool-call turns no longer consume that response budget; total usage remains
+  governed by the existing cost budgets, including agent-scoped limits.
+
+### Fixed
+
+- External secret provider configuration is validated strictly, all supported
+  runtime paths use the shared resolver, and expression regression coverage
+  verifies provider-backed secret expansion.
+- Skill reviews accept fenced JSON, retry once after invalid or truncated JSON,
+  and fail closed only when the corrected verdict is still invalid.
+- Conversation context menus use active theme colors and consistent hover
+  states; unsafe branch mutations are hidden while a conversation is running
+  instead of appearing as confusing disabled actions.
+
 ## [1.0.0-beta.207] — 2026-08-17
 
 ### Added

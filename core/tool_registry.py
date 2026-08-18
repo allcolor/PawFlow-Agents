@@ -217,15 +217,25 @@ class ToolRegistry:
 
     def register(self, handler: ToolHandler):
         """Register a tool handler."""
+        from core.identifier import resolve_identifier
+        existing = resolve_identifier(self._handlers, handler.name)
+        if existing and existing != handler.name:
+            raise ValueError(
+                f"Tool '{handler.name}' conflicts with existing tool '{existing}'")
         self._handlers[handler.name] = handler
 
     def unregister(self, name: str):
         """Remove a tool handler."""
-        self._handlers.pop(name, None)
+        from core.identifier import resolve_identifier
+        canonical = resolve_identifier(self._handlers, name)
+        if canonical:
+            self._handlers.pop(canonical, None)
 
     def get(self, name: str) -> Optional[ToolHandler]:
         """Get a handler by name."""
-        return self._handlers.get(name)
+        from core.identifier import resolve_identifier
+        canonical = resolve_identifier(self._handlers, name)
+        return self._handlers.get(canonical) if canonical else None
 
     def list_tools(self) -> List[ToolHandler]:
         """List all registered handlers."""
@@ -265,9 +275,12 @@ class ToolRegistry:
 
     def prepare(self, name: str, arguments: Dict[str, Any]):
         """Return the exact normalized arguments that a gate must authorize."""
-        handler = self._handlers.get(name)
+        from core.identifier import resolve_identifier
+        canonical = resolve_identifier(self._handlers, name)
+        handler = self._handlers.get(canonical) if canonical else None
         if not handler:
             return f"Error: unknown tool '{name}'"
+        name = canonical
         args = arguments
         for hook in (
                 self._hooks.get(f"pre:{name}", [])
@@ -429,9 +442,12 @@ class ToolRegistry:
             return message
 
         try:
-            handler = self._handlers.get(name)
+            from core.identifier import resolve_identifier
+            canonical = resolve_identifier(self._handlers, name)
+            handler = self._handlers.get(canonical) if canonical else None
             if not handler:
                 return _fail(f"Error: unknown tool '{name}'")
+            name = canonical
             # Run pre-hooks (specific then wildcard)
             args = arguments
             for hook in self._hooks.get(f"pre:{name}", []) + self._hooks.get("pre:*", []):

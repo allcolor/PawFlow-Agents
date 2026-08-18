@@ -223,12 +223,6 @@ class ResourceStore:
         if result is not None:
             return result
 
-        # Case-insensitive fallback
-        items = repo.list(rtype, scope, user_id=uid, conv_id=cid)
-        name_lower = name.lower()
-        for item in items:
-            if item.get("name", "").lower() == name_lower:
-                return item
         return None
 
     def update(self, resource_type: str, name: str, user_id: str,

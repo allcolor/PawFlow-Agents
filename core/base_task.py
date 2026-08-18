@@ -264,12 +264,15 @@ class BaseTask(VariableResolverMixin, Task, ABC):
         Returns:
             The service instance, or None if not found
         """
-        svc = self._services.get(service_id)
+        from core.identifier import resolve_identifier
+        canonical = resolve_identifier(self._services, service_id)
+        svc = self._services.get(canonical) if canonical else None
         if svc is None:
             # Also try resolving from config (e.g. "service_id": "my_cache")
             config_svc_id = self.config.get("service_id", "")
-            if config_svc_id and config_svc_id in self._services:
-                return self._services[config_svc_id]
+            canonical = resolve_identifier(self._services, config_svc_id)
+            if canonical:
+                return self._services[canonical]
         return svc
 
     def set_services(self, services: Dict[str, Any]):

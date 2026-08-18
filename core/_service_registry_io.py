@@ -350,7 +350,8 @@ class _ServiceRegistryIOMixin:
                         continue
                     if enabled_only and not sdef.enabled:
                         continue
-                    result[svc_id] = sdef
+                    from core.identifier import identifier_key
+                    result[identifier_key(svc_id)] = sdef
         return list(result.values())
 
     def resolve_all(self, *, user_id: str = "", conv_id: str = "",
@@ -366,5 +367,8 @@ class _ServiceRegistryIOMixin:
                 for svc_id, sdef in self._definitions.get(rsid, {}).items():
                     if enabled_only and not sdef.enabled:
                         continue
-                    result[svc_id] = sdef
-        return result
+                    from core.identifier import identifier_key
+                    folded = identifier_key(svc_id)
+                    result.pop(folded, None)
+                    result[folded] = sdef
+        return {sdef.service_id: sdef for sdef in result.values()}

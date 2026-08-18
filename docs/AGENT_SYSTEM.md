@@ -53,7 +53,7 @@ Agents are stored as resources in the `ResourceStore`. Global agents are defined
 
 | Field | Description |
 |-------|-------------|
-| `name` | Unique agent identifier (case-sensitive). Used in routing and multi-agent conversations. |
+| `name` | Unique agent identifier (case-insensitive). Used in routing and multi-agent conversations. |
 | `prompt` | The system prompt. This is the agent's personality and instructions. |
 | `llm_service` | Reference to an LLM service (supports expression language: `${var_name}`). Determines which LLM provider and model the agent uses. |
 | `model` | Optional model override. If empty, uses the service's default model. |

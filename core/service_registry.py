@@ -162,7 +162,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         with self._data_lock:
             for sid, scope_defs in self._definitions.items():
                 for svc_id, sdef in scope_defs.items():
-                    if sid == exclude_scope_id and svc_id == exclude_service_id:
+                    from core.identifier import identifiers_equal
+                    if (sid == exclude_scope_id
+                            and identifiers_equal(svc_id, exclude_service_id)):
                         continue
                     if self._resource_key(sdef.service_type, sdef.config) == rk:
                         keys = _UNIQUE_RESOURCE_KEYS[service_type]
@@ -187,11 +189,13 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         with self._data_lock:
             for sid, scope_defs in self._definitions.items():
                 for svc_id, sdef in scope_defs.items():
-                    if sid == exclude_scope_id and svc_id == exclude_service_id:
+                    from core.identifier import identifiers_equal
+                    if (sid == exclude_scope_id
+                            and identifiers_equal(svc_id, exclude_service_id)):
                         continue
                     if sdef.service_type != "relay":
                         continue
-                    if svc_id == service_id:
+                    if identifiers_equal(svc_id, service_id):
                         raise ResourceConflictError(
                             f"Relay service id '{service_id}' already exists "
                             f"in scope={sdef.scope}. Relay websocket routes are "
@@ -241,6 +245,13 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         """
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
+
+        from core.identifier import resolve_identifier
+        with self._data_lock:
+            canonical_id = resolve_identifier(
+                self._definitions.get(sid, {}), service_id)
+        if canonical_id:
+            service_id = canonical_id
 
         _RESERVED = {"filestore", "store", "server"}
         if service_id.lower() in _RESERVED:
@@ -325,6 +336,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         self._ensure_loaded(scope, scope_id)
 
         with self._data_lock:
+            from core.identifier import resolve_identifier
+            service_id = (resolve_identifier(
+                self._definitions.get(sid, {}), service_id) or service_id)
             svc_def = self._definitions.get(sid, {}).get(service_id)
             if not svc_def:
                 raise KeyError(f"Service '{service_id}' not found (scope={scope}, id={sid[:8]})")
@@ -361,6 +375,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         self._ensure_loaded(scope, scope_id)
         value = bool(enabled)
         with self._data_lock:
+            from core.identifier import resolve_identifier
+            service_id = (resolve_identifier(
+                self._definitions.get(sid, {}), service_id) or service_id)
             svc_def = self._definitions.get(sid, {}).get(service_id)
             if not svc_def:
                 raise KeyError(
@@ -381,6 +398,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         self._ensure_loaded(scope, scope_id)
         value = bool(enabled)
         with self._data_lock:
+            from core.identifier import resolve_identifier
+            service_id = (resolve_identifier(
+                self._definitions.get(sid, {}), service_id) or service_id)
             svc_def = self._definitions.get(sid, {}).get(service_id)
             if not svc_def:
                 raise KeyError(
@@ -399,11 +419,14 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
         with self._data_lock:
+            from core.identifier import resolve_identifier
             scope_defs = self._definitions.get(sid, {})
+            old_id = resolve_identifier(scope_defs, old_id) or old_id
             svc_def = scope_defs.get(old_id)
             if not svc_def:
                 raise KeyError(f"Service '{old_id}' not found (scope={scope}, id={sid[:8]})")
-            if new_id in scope_defs:
+            conflicting_id = resolve_identifier(scope_defs, new_id)
+            if conflicting_id and conflicting_id != old_id:
                 raise ValueError(f"Service '{new_id}' already exists (scope={scope}, id={sid[:8]})")
             needs_disconnect = old_id in self._live_instances.get(sid, {})
         if needs_disconnect:
@@ -422,6 +445,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
         with self._data_lock:
+            from core.identifier import resolve_identifier
+            service_id = (resolve_identifier(
+                self._definitions.get(sid, {}), service_id) or service_id)
             svc_def = self._definitions.get(sid, {}).get(service_id)
             if svc_def:
                 svc_def.description = description
@@ -431,6 +457,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
         with self._data_lock:
+            from core.identifier import resolve_identifier
+            service_id = (resolve_identifier(
+                self._definitions.get(sid, {}), service_id) or service_id)
             svc_def = self._definitions.get(sid, {}).get(service_id)
             if not svc_def:
                 return
@@ -442,6 +471,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
         with self._data_lock:
+            from core.identifier import resolve_identifier
+            service_id = (resolve_identifier(
+                self._definitions.get(sid, {}), service_id) or service_id)
             svc_def = self._definitions.get(sid, {}).get(service_id)
             if not svc_def:
                 return
@@ -453,6 +485,10 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         """Remove a service entirely."""
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
+        with self._data_lock:
+            from core.identifier import resolve_identifier
+            service_id = (resolve_identifier(
+                self._definitions.get(sid, {}), service_id) or service_id)
         self._disconnect_one(sid, service_id)
         with self._data_lock:
             self._definitions.get(sid, {}).pop(service_id, None)
@@ -467,7 +503,10 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
         with self._data_lock:
-            return self._definitions.get(sid, {}).get(service_id)
+            from core.identifier import resolve_identifier
+            definitions = self._definitions.get(sid, {})
+            canonical = resolve_identifier(definitions, service_id)
+            return definitions.get(canonical) if canonical else None
 
     def get_all(self, scope: str, scope_id: str) -> Dict[str, ServiceDef]:
         """Get all service definitions for a scope."""
@@ -520,6 +559,9 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
         with self._data_lock:
+            from core.identifier import resolve_identifier
+            definitions = self._definitions.get(sid, {})
+            service_id = resolve_identifier(definitions, service_id) or service_id
             svc = self._live_instances.get(sid, {}).get(service_id)
             if svc is not None:
                 return svc
@@ -535,7 +577,10 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         """Return a live instance snapshot without lazy-connecting."""
         sid = self._resolve_scope_id(scope, scope_id)
         with self._data_lock:
-            return self._live_instances.get(sid, {}).get(service_id)
+            from core.identifier import resolve_identifier
+            live = self._live_instances.get(sid, {})
+            canonical = resolve_identifier(live, service_id)
+            return live.get(canonical) if canonical else None
 
     def get_compatible(self, scope: str, scope_id: str,
                        service_type: str) -> List[ServiceDef]:
@@ -551,7 +596,10 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
     def is_connected(self, scope: str, scope_id: str, service_id: str) -> bool:
         sid = self._resolve_scope_id(scope, scope_id)
         with self._data_lock:
-            svc = self._live_instances.get(sid, {}).get(service_id)
+            from core.identifier import resolve_identifier
+            live = self._live_instances.get(sid, {})
+            canonical = resolve_identifier(live, service_id)
+            svc = live.get(canonical) if canonical else None
             if svc is None:
                 return False
             return svc.is_connected() if hasattr(svc, 'is_connected') else False

@@ -165,11 +165,15 @@ def create_tunnel(user_id: str, conversation_id: str,
     _resolve_relay(user_id, conversation_id, access_relay)
     services = list_catalog(user_id, conversation_id, service_relay)
     service_id = str(payload.get("service_id") or "").strip()
+    from core.identifier import identifiers_equal
     authorized = next(
-        (entry for entry in services if entry.get("service_id") == service_id), None)
+        (entry for entry in services
+         if identifiers_equal(entry.get("service_id"), service_id)), None)
     if authorized is None:
         raise KeyError(
             f"Service '{service_id}' is not approved on relay '{service_relay}'")
+    service_id = str(authorized.get("service_id") or service_id)
+    payload["service_id"] = service_id
     bind_port = int(payload.get("bind_port") or 0)
     for existing in service_tunnels.list_tunnels(user_id):
         if (existing.get("access_relay") == access_relay

@@ -154,7 +154,9 @@ class BaseFsHandler(ToolHandler):
         if self._filesystem_scope_enforced:
             allowed_ids = [s.get("id", "") for s in self._available_services if s.get("id")]
             if service_name:
-                if service_name not in allowed_ids:
+                from core.identifier import resolve_identifier
+                service_name = resolve_identifier(allowed_ids, service_name)
+                if not service_name:
                     return None
             elif self._default_service_id:
                 service_name = self._default_service_id

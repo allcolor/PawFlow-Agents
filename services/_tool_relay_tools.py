@@ -214,8 +214,11 @@ class _ToolRelayToolsMixin:
             default_id = ""
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         ids = [item.get("id", "") for item in available or [] if item.get("id")]
-        if default_id and default_id in ids:
-            return default_id
+        if default_id:
+            from core.identifier import resolve_identifier
+            canonical = resolve_identifier(ids, default_id)
+            if canonical:
+                return canonical
         if not default_id and len(ids) == 1:
             return ids[0]
         return ""
@@ -260,7 +263,10 @@ class _ToolRelayToolsMixin:
                     if service_id in ("", "workspace", "ws", "local"):
                         service_id = _ToolRelayToolsMixin._default_filesystem_id(
                             available, conversation_id, agent_name)
-                    if not service_id or service_id not in allowed:
+                    else:
+                        from core.identifier import resolve_identifier
+                        service_id = resolve_identifier(allowed, service_id)
+                    if not service_id:
                         return None
                 return reg.resolve(service_id, user_id=user_id, conv_id=conversation_id)
             except Exception:

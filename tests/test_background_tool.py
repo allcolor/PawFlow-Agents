@@ -160,6 +160,7 @@ def test_tool_relay_default_filesystem_does_not_fallback_to_other_linked_relay(m
     resolver = ToolRelayService._make_filesystem_resolver("alice", "conv1", "assistant")
     assert resolver("") is None
     assert resolver("relay-other") is relay_other
+    assert resolver("RELAY-OTHER") is relay_other
     assert resolver("relay-unlinked") is None
 
 

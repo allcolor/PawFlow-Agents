@@ -14,8 +14,8 @@ from core.tool_registry import create_default_registry
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: PawFlow tools registered under a CamelCase name. Lowercasing any of them
-#: makes them unreachable through use_tool.
+#: PawFlow tools registered under a canonical CamelCase name. Lookups keep the
+#: canonical spelling while accepting any case.
 CAMEL_TOOLS = ("Monitor", "ScheduleWakeup", "PushNotification",
                "EnterPlanMode", "ExitPlanMode")
 
@@ -32,12 +32,13 @@ def test_pawflow_registers_camelcase_tools_that_must_survive_name_mapping():
         assert tool in names, f"{tool} is no longer registered under that name"
 
 
-def test_monitor_is_registered_so_use_tool_can_reach_it():
+def test_monitor_lookup_is_case_insensitive():
     registry = create_default_registry()
 
-    assert registry.get("Monitor") is not None
-    # ...and not under the lowered spelling the bridge used to rewrite to.
-    assert registry.get("monitor") is None
+    handler = registry.get("Monitor")
+    assert handler is not None
+    assert registry.get("monitor") is handler
+    assert registry.get("MONITOR") is handler
 
 
 def test_bridge_tries_the_name_as_written_before_lowering_it():

@@ -160,6 +160,12 @@ the other external providers.
 
 ## Filesystem and Relay Services
 
+Service and relay IDs are resolved case-insensitively at every public lookup
+boundary. PawFlow preserves the spelling used when the object was created and
+rejects a second ID that differs only by case. This policy also applies to
+agent, tool, resource, and flow task/service identifiers; opaque UUIDs, tokens,
+and cryptographic IDs remain exact values.
+
 | Type | Purpose |
 |---|---|
 | `relay` | WebSocket relay. Leave `token` empty to create a managed server relay; provide a token for a standalone relay client. |

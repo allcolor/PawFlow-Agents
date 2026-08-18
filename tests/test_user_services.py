@@ -1102,7 +1102,7 @@ class TestAgentServiceActions:
         })
 
         with pytest.raises(ValueError, match="websocket routes are global"):
-            self.reg.install("user", "testuser", "MyWorkspace", "relay", config={
+            self.reg.install("user", "testuser", "myworkspace", "relay", config={
                 "token": "user-token",
             })
 
@@ -1157,7 +1157,7 @@ class TestAgentServiceActions:
         task = AgentLoopTask({"conversation_store": True, "api_key": "test-key"})
         ff = self._make_flowfile({
             "action": "service_uninstall",
-            "service_id": "mydb",
+            "service_id": "MYDB",
         })
         result = task._handle_action(ff)
         data = json.loads(result[0].get_content())

@@ -6,7 +6,7 @@ PawFlow agents can create, inspect, edit, and transform media through provider-b
 
 Most media tools accept:
 
-- `destination`: `filestore` by default, or a relay filesystem service name. Filesystem service IDs are case-sensitive;
+- `destination`: `filestore` by default, or a relay filesystem service name. Filesystem service IDs are case-insensitive;
 - `path`: output filename/path when writing to a filesystem service;
 - provider-specific model overrides such as `model`.
 

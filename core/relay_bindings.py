@@ -26,6 +26,17 @@ _EXTRA_KEY = "relay_bindings"
 _CONV = "*"  # conv-wide scope key
 
 
+def _stored_id(values, requested: str) -> str:
+    from core.identifier import resolve_identifier
+    return resolve_identifier(values, requested) or ""
+
+
+def _agent_scope(mapping: Dict[str, Any], agent: str) -> str:
+    if not agent or agent == _CONV:
+        return _CONV
+    return _stored_id(mapping, agent) or agent.strip().casefold()
+
+
 def _get_store():
     from core.conversation_store import ConversationStore
     return ConversationStore.instance()
@@ -83,7 +94,7 @@ def get_linked(cid: str, agent: str = "") -> List[str]:
             if rid not in result:
                 result.append(rid)
         if agent and agent != _CONV:
-            for rid in linked.get(agent, []):
+            for rid in linked.get(_agent_scope(linked, agent), []):
                 if rid not in result:
                     result.append(rid)
     return result
@@ -112,7 +123,7 @@ def get_default(cid: str, agent: str = "") -> Optional[str]:
         b = get_bindings(lookup_cid)
         defaults = b.get("default", {})
         if agent and agent != _CONV:
-            d = defaults.get(agent)
+            d = defaults.get(_agent_scope(defaults, agent))
             if d:
                 return d
         d = defaults.get(_CONV)
@@ -125,12 +136,14 @@ def link_relay(cid: str, relay_id: str, agent: str = "", user_id: str = "",
                auto_default: bool = True) -> bool:
     """Link a relay to a conversation (optionally to a specific agent)."""
     if user_id:
-        _assert_relay_service(relay_id, user_id=user_id, conv_id=cid)
-    scope = agent if agent else _CONV
+        relay_id = _assert_relay_service(
+            relay_id, user_id=user_id, conv_id=cid)
     b = get_bindings(cid)
     linked = b.setdefault("linked", {})
+    scope = _agent_scope(linked, agent)
     scope_list = linked.setdefault(scope, [])
-    if relay_id in scope_list:
+    canonical = _stored_id(scope_list, relay_id)
+    if canonical:
         return False
     scope_list.append(relay_id)
     # Interactive/manual links preserve the historic first-relay default.
@@ -148,11 +161,12 @@ def link_relay(cid: str, relay_id: str, agent: str = "", user_id: str = "",
 
 def unlink_relay(cid: str, relay_id: str, agent: str = "") -> bool:
     """Unlink a relay from a conversation (optionally from a specific agent)."""
-    scope = agent if agent else _CONV
     b = get_bindings(cid)
     linked = b.get("linked", {})
+    scope = _agent_scope(linked, agent)
     scope_list = linked.get(scope, [])
-    if relay_id not in scope_list:
+    relay_id = _stored_id(scope_list, relay_id)
+    if not relay_id:
         return False
     scope_list.remove(relay_id)
     if not scope_list:
@@ -171,14 +185,15 @@ def unlink_relay(cid: str, relay_id: str, agent: str = "") -> bool:
 
 def set_default_relay(cid: str, relay_id: str, agent: str = "") -> bool:
     """Set the default relay for a scope. Must be linked first."""
-    scope = agent if agent else _CONV
     b = get_bindings(cid)
     linked = b.get("linked", {})
+    scope = _agent_scope(linked, agent)
     # Relay must be linked in this scope or conv-wide
     all_linked = set(linked.get(_CONV, []))
     if scope != _CONV:
         all_linked.update(linked.get(scope, []))
-    if relay_id not in all_linked:
+    relay_id = _stored_id(all_linked, relay_id)
+    if not relay_id:
         return False
     defaults = b.setdefault("default", {})
     defaults[scope] = relay_id
@@ -201,6 +216,7 @@ def get_default_local(cid: str, relay_id: str = "", agent: str = "") -> Optional
     rid = relay_id or get_default(cid, agent) or ""
     if not rid:
         return None
+    rid = _stored_id(dl, rid) or rid
     relay_dl = dl.get(rid, {})
     if not isinstance(relay_dl, dict):
         return None
@@ -219,6 +235,7 @@ def set_default_local(cid: str, relay_id: str, local: bool, agent: str = "") -> 
     scope = agent if agent else _CONV
     b = get_bindings(cid)
     dl = b.setdefault("default_local", {})
+    relay_id = _stored_id(dl, relay_id) or relay_id
     relay_dl = dl.setdefault(relay_id, {})
     relay_dl[scope] = local
     _get_store().set_extra(cid, _EXTRA_KEY, b)
@@ -266,19 +283,19 @@ def list_available_relays(user_id: str = "", conv_id: str = "") -> List[Dict[str
     return relays
 
 
-def _assert_relay_service(relay_id: str, *, user_id: str = "", conv_id: str = "") -> None:
+def _assert_relay_service(relay_id: str, *, user_id: str = "", conv_id: str = "") -> str:
     try:
         from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
-        matches = [
-            sdef for sid, sdef in reg.resolve_all(user_id=user_id, conv_id=conv_id).items()
-            if sid == relay_id
-        ]
+        sdef = reg.resolve_definition(
+            relay_id, user_id=user_id, conv_id=conv_id)
+        matches = [sdef] if sdef is not None else []
     except Exception:
         logger.debug("Relay service validation failed", exc_info=True)
         matches = []
     if not matches or not any(sdef.service_type == "relay" for sdef in matches):
         raise ValueError(f"Relay service '{relay_id}' not found")
+    return matches[0].service_id
 
 
 def resolve_relay(cid: str, relay_param: Optional[str] = None,
@@ -295,12 +312,13 @@ def resolve_relay(cid: str, relay_param: Optional[str] = None,
     default = get_default(cid, agent)
 
     if relay_param:
-        if relay_param not in linked:
+        canonical = _stored_id(linked, relay_param)
+        if not canonical:
             raise ValueError(f"Relay '{relay_param}' is not linked to this conversation. "
                              f"Use /relay link {relay_param} first.")
-        relay_id = relay_param
-    elif default and default in linked:
-        relay_id = default
+        relay_id = canonical
+    elif default and _stored_id(linked, default):
+        relay_id = _stored_id(linked, default)
     elif len(linked) == 1:
         relay_id = linked[0]
     elif len(linked) == 0:

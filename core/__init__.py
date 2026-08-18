@@ -302,16 +302,29 @@ class Flow:
         self.source_dir: str = config.get('_source_dir', '')
 
     def add_task(self, task_id: str, task: Task):
+        from core.identifier import resolve_identifier
+        existing = resolve_identifier(self.tasks, task_id)
+        if existing and existing != task_id:
+            raise ValueError(f"Task ID '{task_id}' conflicts with '{existing}'")
         self.tasks[task_id] = task
 
     def add_service(self, service_id: str, service: Service):
+        from core.identifier import resolve_identifier
+        existing = resolve_identifier(self.services, service_id)
+        if existing and existing != service_id:
+            raise ValueError(
+                f"Service ID '{service_id}' conflicts with '{existing}'")
         self.services[service_id] = service
 
     def get_task(self, task_id: str) -> Optional[Task]:
-        return self.tasks.get(task_id)
+        from core.identifier import resolve_identifier
+        canonical = resolve_identifier(self.tasks, task_id)
+        return self.tasks.get(canonical) if canonical else None
 
     def get_service(self, service_id: str) -> Optional[Service]:
-        return self.services.get(service_id)
+        from core.identifier import resolve_identifier
+        canonical = resolve_identifier(self.services, service_id)
+        return self.services.get(canonical) if canonical else None
 
     def to_dict(self) -> Dict[str, Any]:
         return {'id': self.id, 'name': self.name, 'tasks': list(self.tasks.keys())}

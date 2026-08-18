@@ -75,6 +75,11 @@ The agent's `filesystem` tool automatically detects your service:
 - "Search for all Python files"
 - "Find TODO comments in the codebase"
 
+User-defined identifiers are resolved case-insensitively while their original
+spelling is preserved for display and persistence. For example, `MyWorkspace`,
+`myworkspace`, and `MYWORKSPACE` select the same relay. PawFlow rejects names
+that would differ from an existing identifier only by case.
+
 ### 4. Use from a flow
 
 Add a `filesystemOps` task with `service_id=myfiles` and configure the action.

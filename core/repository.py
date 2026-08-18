@@ -114,6 +114,14 @@ class ScopedRepository(_RepositorySerdeMixin):
               user_id: str = "", conv_id: str = "") -> Dict[str, Any]:
         """Create a definition. Raises ValueError if it already exists."""
         self._validate(rtype, scope, user_id, conv_id)
+        from core.identifier import resolve_identifier
+        existing = resolve_identifier(
+            [item.get("name", "") for item in self.list(
+                rtype, scope, user_id=user_id, conv_id=conv_id)], name)
+        if existing:
+            raise ValueError(
+                f"{rtype}/{name} already exists as '{existing}' "
+                "(identifiers are case-insensitive)")
         if rtype in _DIRECTORY_TYPES:
             path = repo_dir(rtype, scope, user_id, conv_id) / name
             if path.exists():
@@ -144,6 +152,11 @@ class ScopedRepository(_RepositorySerdeMixin):
     def get(self, rtype: str, name: str, scope: str,
             user_id: str = "", conv_id: str = "") -> Optional[Dict[str, Any]]:
         """Read a definition from a specific scope."""
+        from core.identifier import resolve_identifier
+        canonical = resolve_identifier(
+            [item.get("name", "") for item in self.list(
+                rtype, scope, user_id=user_id, conv_id=conv_id)], name)
+        name = canonical or name
         if rtype in _DIRECTORY_TYPES:
             return self._read_directory_resource(
                 rtype, repo_dir(rtype, scope, user_id, conv_id) / name)
@@ -154,6 +167,11 @@ class ScopedRepository(_RepositorySerdeMixin):
                data: Dict[str, Any],
                user_id: str = "", conv_id: str = "") -> Dict[str, Any]:
         """Update a definition. Raises KeyError if not found."""
+        from core.identifier import resolve_identifier
+        canonical = resolve_identifier(
+            [item.get("name", "") for item in self.list(
+                rtype, scope, user_id=user_id, conv_id=conv_id)], name)
+        name = canonical or name
         if rtype in _DIRECTORY_TYPES:
             path = repo_dir(rtype, scope, user_id, conv_id) / name
             existing = self._read_directory_resource(rtype, path)
@@ -178,6 +196,11 @@ class ScopedRepository(_RepositorySerdeMixin):
     def delete(self, rtype: str, name: str, scope: str,
                user_id: str = "", conv_id: str = "") -> bool:
         """Delete a definition. Returns True if deleted."""
+        from core.identifier import resolve_identifier
+        canonical = resolve_identifier(
+            [item.get("name", "") for item in self.list(
+                rtype, scope, user_id=user_id, conv_id=conv_id)], name)
+        name = canonical or name
         if rtype in _DIRECTORY_TYPES:
             path = repo_dir(rtype, scope, user_id, conv_id) / name
             if not path.exists():

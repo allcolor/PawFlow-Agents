@@ -11,6 +11,7 @@ import uuid
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlsplit
 
+from core.identifier import identifier_key
 from core.mcp_server_store import MCPServerStore
 
 
@@ -375,19 +376,21 @@ def _tool_schema(registry, tool_name: str,
                  allowlist: frozenset = frozenset(),
                  readonly: bool = False) -> Any:
     definitions = registry.get_tool_definitions()
+    allowlist_keys = {identifier_key(name) for name in allowlist}
     if not tool_name:
         rows = _available_tool_rows(registry)
         if allowlist:
-            rows = [row for row in rows if row.get("name") in allowlist]
+            rows = [row for row in rows
+                    if identifier_key(row.get("name")) in allowlist_keys]
         if readonly:
             rows = [row for row in rows if _is_readonly_tool(row.get("name", ""))]
         return rows
-    if allowlist and tool_name not in allowlist:
+    if allowlist and identifier_key(tool_name) not in allowlist_keys:
         return _allowlist_error(tool_name)
     if readonly and not _is_readonly_tool(tool_name):
         return _readonly_error(tool_name)
     for definition in definitions:
-        if definition.get("name") == tool_name:
+        if identifier_key(definition.get("name")) == identifier_key(tool_name):
             return definition
     return f"Error: unknown tool '{tool_name}'"
 
@@ -952,7 +955,8 @@ def _call_tool(server: Dict[str, Any], key: Dict[str, Any],
             allowlist = _publication_allowlist(server)
             if not tool_name:
                 result = "Error: missing required parameter 'tool_name'"
-            elif allowlist and tool_name not in allowlist:
+            elif (allowlist and identifier_key(tool_name) not in {
+                    identifier_key(name) for name in allowlist}):
                 result = _allowlist_error(tool_name)
             elif readonly and not _is_readonly_tool(tool_name):
                 result = _readonly_error(tool_name)

@@ -139,6 +139,7 @@ def link_filesystem(cid: str, user_id: str, service_id: str,
     if not service_id:
         raise ValueError("service_id is required")
     sdef = _resolve_service_definition(user_id, cid, service_id, scope)
+    service_id = sdef.service_id
     is_rclone = is_rclone_service(sdef.service_type)
     if is_rclone:
         _check_mount_collision(cid, service_id)
@@ -157,7 +158,8 @@ def link_filesystem(cid: str, user_id: str, service_id: str,
     if is_rclone:
         entry["mount_path"] = mount_path_for(service_id)
     for idx, existing in enumerate(linked):
-        if existing.get("service_id") == service_id:
+        from core.identifier import identifiers_equal
+        if identifiers_equal(existing.get("service_id"), service_id):
             linked[idx] = {**existing, **entry}
             _store_bindings(cid, bindings)
             notify_linked_relays(cid, user_id)
@@ -172,7 +174,10 @@ def unlink_filesystem(cid: str, user_id: str, service_id: str) -> bool:
     bindings = get_bindings(cid)
     linked = bindings.setdefault("linked", [])
     before = len(linked)
-    bindings["linked"] = [item for item in linked if item.get("service_id") != service_id]
+    from core.identifier import identifiers_equal
+    bindings["linked"] = [
+        item for item in linked
+        if not identifiers_equal(item.get("service_id"), service_id)]
     removed = len(bindings["linked"]) != before
     if removed:
         _store_bindings(cid, bindings)
@@ -197,7 +202,8 @@ def conversation_ids_for_relay(relay_id: str, user_id: str) -> List[str]:
     result = []
     for cid in _conversation_ids_for_user(user_id):
         try:
-            if relay_id in get_linked_all(cid):
+            from core.identifier import resolve_identifier
+            if resolve_identifier(get_linked_all(cid), relay_id):
                 result.append(cid)
         except Exception:
             logger.debug("Relay binding scan failed for %s", cid, exc_info=True)

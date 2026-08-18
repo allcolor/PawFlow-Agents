@@ -60,9 +60,17 @@ PawFlow gives agents a real operating surface without handing your workspace to 
   restarts.
 - **Skill learning loop**: agents crystallize hard-won procedures into skills, update skills that proved wrong during use, and get conservative skill drafts proposed from compaction summaries; skill usage is tracked and a `skillCurator` flow task produces review-first maintenance reports — nothing is archived or promoted without your confirmation.
 - **Encryption at rest (opt-in)**: per-conversation passphrase encryption of message content, thinking, and tool I/O (and conv-scoped relay workspaces via CryFS); keys live in RAM only, so a stopped server leaves only ciphertext on disk. Off by default and transparent to conversations that don't use it.
+- **External secret providers**: keep the existing logical secret names while
+  resolving values from AWS Secrets Manager or SSM, HashiCorp Vault, Azure Key
+  Vault, Google Cloud Secret Manager, or Keeper. Remote values are cached only
+  in memory, and conversation plus per-agent allowlists bound their exposure.
 - **Multi-provider agents**: mix Codex interactive, Claude Code interactive, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, and OpenAI-compatible services per agent or conversation. The old Codex app-server and Claude Code `-p` agent transports remain available only for legacy configurations.
 - **Native CLI engines, not API reimplementations**: subscription providers run the real interactive Codex, Claude Code, Antigravity, and Gemini CLI engines per conversation — native harness and reasoning preserved — with native Codex plugins (`codex_plugins`) and Claude Code plugin marketplaces (`claude_plugins`/`claude_marketplaces`) declarable per LLM service.
-- **External agent interoperability**: publish a conversation as an authenticated MCP or A2A endpoint, call remote A2A agents, or attach Claude Code, Codex, Agy/Gemini, OpenCode, JCode, Pi, or Hermes as a first-class external MCP agent.
+- **External agent interoperability**: publish several agents from one
+  conversation as independent authenticated MCP endpoints, publish one or more
+  A2A endpoints, call remote A2A agents, or attach Claude Code, Codex,
+  Agy/Gemini, OpenCode, JCode, Pi, or Hermes as a first-class external MCP
+  agent.
 - **Delegated vision**: pair a strong text-only reasoning model with a separate vision-enabled LLM so uploads, screenshots, and desktop views become detailed descriptions with UI coordinates before the reasoning turn. Images sent to a text-only model are never silently dropped: any model — including free-tier ones — gets vision, and clicks stay accurate because coordinates come from the vision model, verified locally by the pre-click screen guard.
 - **Shared clients**: continue the same conversation from the web UI, PawCode CLI, VS Code, the Android app, API clients, or channel integrations.
 - **Deterministic flows**: turn repeated work into NiFi-style DAGs with scheduling, backpressure, checkpoints, approvals, and explicit LLM steps.
@@ -361,20 +369,36 @@ copied into every prompt.
 - Assign steps to different agents
 - Verify completed work before moving on
 
+### External Secret Providers
+
+A PawFlow secret name can store its encrypted value locally or point to a
+read-only entry in AWS Secrets Manager, AWS SSM Parameter Store, HashiCorp
+Vault KV, Azure Key Vault, Google Cloud Secret Manager, or Keeper Secrets
+Manager. Expressions, flows, services, packages, and tools keep using the same
+logical name, so moving a value out of PawFlow does not rewrite consumers.
+
+External values are materialized through a bounded in-memory TTL cache. Optional
+conversation and per-agent allowlists intersect, so an agent can never expand
+the conversation's secret envelope. Resolution fails closed and never falls
+back to a lower-scope value when the winning external reference is denied or
+unavailable. See [External Secret Providers](docs/EXTERNAL_SECRET_PROVIDERS.md).
+
 ### PawFlow as an MCP Server
 
-Publish an existing conversation and attached agent as an authenticated
-Streamable HTTP MCP endpoint. Claude Code, Codex, Gemini CLI/Agy, OpenCode,
-JCode, Pi, Hermes, and other MCP
-clients can then use the conversation's PawFlow tools under the owner's normal
-permissions, hooks, and relay configuration. The optional local stdio bridge
-also shares the CLI's current project directory without changing the
-conversation's default relay. Release assets include a universal ZIP and
-tar.gz with guided installers for Windows, Linux, and macOS. The wizard
-configures Claude Code, Codex, Agy, OpenCode, JCode, Pi, and Hermes while
-keeping API and gateway keys in one
-private local profile. See the [MCP client installation guide](docs/MCP_CLIENT_INSTALLER.md)
-and [Published Conversation MCP Servers](docs/PUBLISHED_MCP_SERVER.md).
+Publish one or more attached agents from an existing conversation as
+independent authenticated Streamable HTTP MCP endpoints. Each publication has
+its own endpoint, keys, tool allowlist, client lease, and terminal registration.
+Claude Code, Codex, Gemini CLI/Agy, OpenCode, JCode, Pi, Hermes, and other MCP
+clients can then use the selected agent's PawFlow tools under the owner's normal
+permissions, hooks, and relay configuration.
+
+The optional local stdio bridge also shares the CLI's current project directory
+without changing the conversation's default relay. Release assets include a
+universal ZIP and tar.gz with guided installers for Windows, Linux, and macOS.
+The wizard configures Claude Code, Codex, Agy, OpenCode, JCode, Pi, and Hermes
+while keeping API and gateway keys in one private local profile. See the
+[MCP client installation guide](docs/MCP_CLIENT_INSTALLER.md) and
+[Published Conversation MCP Servers](docs/PUBLISHED_MCP_SERVER.md).
 
 An authenticated MCP client can also become a first-class `external_mcp`
 conversation agent. Its terminal receives user, delegate, and shared-context A2A

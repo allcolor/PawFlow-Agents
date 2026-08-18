@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -243,3 +244,27 @@ def test_generic_service_fetches_from_registered_adapter():
     )
     assert value.value == b"resolved"
     service.disconnect()
+
+
+def test_external_secret_delivery_is_documented_across_product_surfaces():
+    root = Path(__file__).resolve().parents[1]
+    guide = (root / "docs" / "EXTERNAL_SECRET_PROVIDERS.md").read_text(
+        encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    howto = (root / "pawflow-website" / "howtos.html").read_text(
+        encoding="utf-8")
+    docs_hub = (root / "pawflow-website" / "docs.html").read_text(
+        encoding="utf-8")
+    homepage = (root / "pawflow-website" / "index.html").read_text(
+        encoding="utf-8")
+
+    for provider in (
+            "AWS Secrets Manager", "HashiCorp Vault", "Azure Key Vault",
+            "Google Cloud Secret Manager", "Keeper Secrets Manager"):
+        assert provider in guide
+    assert "per-agent allowlists" in guide
+    assert "External Secret Providers" in readme
+    assert "one or more attached agents" in readme
+    assert "Use local or external secrets" in howto
+    assert "External secret provider reference" in docs_hub
+    assert "Secrets can stay in your vault" in homepage

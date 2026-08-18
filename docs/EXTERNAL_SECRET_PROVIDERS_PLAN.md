@@ -1,6 +1,10 @@
 # External Secret Providers Implementation Plan
 
-Status: **in progress**.
+Status: **core delivery implemented; operational follow-ups planned**.
+
+For operator-facing configuration, supported locators, access-policy semantics,
+and deployment dependencies, see
+[External Secret Providers](EXTERNAL_SECRET_PROVIDERS.md).
 
 Implemented on 2026-08-18:
 

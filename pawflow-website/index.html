@@ -151,6 +151,7 @@
             <div><strong>Your files stay reachable through relays.</strong><span>Agents can read, edit, search, run commands, use browser/desktop actions, and generate media through controlled tool routes.</span></div>
             <div><strong>Context keeps the right lifetime.</strong><span>Durable facts go to memory or the knowledge graph; agent lessons go to the diary; unfinished work goes to todo; expiring evidence goes to a pull-only scratchpad; project structure and sourced docs follow the relay.</span></div>
             <div><strong>Agents learn on the job.</strong><span>Hard-won procedures become reusable skills, skill drafts are proposed from past work, usage is tracked, and a curator flow reports what to keep or archive — you confirm every change.</span></div>
+            <div><strong>Secrets can stay in your vault.</strong><span>Keep one logical name while values resolve from AWS, HashiCorp Vault, Azure, Google Cloud, or Keeper. In-memory caching limits remote reads, and conversation plus per-agent allowlists limit exposure.</span></div>
             <div><strong>Providers are interchangeable and fault-tolerant.</strong><span>Use Codex interactive, Claude Code interactive, Antigravity/Agy, Gemini CLI, Anthropic, OpenAI, or compatible endpoints per agent or conversation. Interactive is the recommended path for Codex and Claude Code; the old Codex app-server and Claude Code `cc -p` agent transports are legacy and remain only for existing configurations. Subscription providers run the real CLI engine — native harness preserved, native Codex and Claude Code plugins declarable per service. Wrap a preferred connection with ordered fallbacks so an agent can cold-start the next provider from its current persisted context instead of abandoning the turn.</span></div>
           </div>
         </div>
@@ -222,7 +223,7 @@
         <div data-reveal>
           <p class="eyebrow">Live workspace through MCP</p>
           <h2>Bring the AI to the project — without uploading the project.</h2>
-          <p class="lead">Publish a PawFlow conversation as an MCP server, bind it to a real relay workspace, and let compatible clients inspect the current files and Git history directly. Exposure can stay read-only when exploration is all the client needs.</p>
+          <p class="lead">Publish one or more attached agents from a PawFlow conversation as independent MCP servers, bind them to real relay workspaces, and let compatible clients inspect the current files and Git history directly. Each agent keeps its own endpoint, keys, lease, terminal, and tool allowlist; exposure can stay read-only when exploration is all the client needs.</p>
           <div class="compare-row">
             <div><strong>The actual workspace</strong><span>No ZIP archive, stale copy, or repeated project upload.</span></div>
             <div><strong>Controlled access</strong><span>Expose read-only tools without granting edits or shell execution.</span></div>
@@ -249,7 +250,7 @@
           <article class="feature" data-reveal><span>04</span><h3>Desktop and browser tasks</h3><p>Operate controlled desktops, browsers, VNC sessions, and forwarded local services from the same runtime.</p></article>
           <article class="feature" data-reveal><span>05</span><h3>Media generation</h3><p>Generate and transform images, video, audio, voice, 3D assets, try-on outputs, and upscaled media into FileStore.</p></article>
           <article class="feature" data-reveal><span>06</span><h3>Deterministic automations</h3><p>Run NiFi-style JSON flows with 100+ task types across IO, data, control, system, and AI categories.</p></article>
-          <article class="feature" data-reveal><span>07</span><h3>Self-hosted security model</h3><p>Use explicit relays, stored secrets, provider boundaries, private gateways, and per-agent permissions.</p></article>
+          <article class="feature" data-reveal><span>07</span><h3>Self-hosted security model</h3><p>Use explicit relays, local or external secret providers, conversation and per-agent secret allowlists, private gateways, and per-agent tool permissions.</p></article>
           <article class="feature" data-reveal><span>08</span><h3>Purpose-built context</h3><p>Keep durable facts, structured relationships, agent lessons, unfinished work, temporary evidence, code structure, and sourced project docs in separate scoped systems with explicit retrieval rules. <a class="inline-link" href="howtos.html#agent-tool-selection">See how agents choose the right tool.</a></p></article>
         </div>
       </div>

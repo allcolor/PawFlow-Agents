@@ -51,6 +51,7 @@ def _secret_env_vars(request: Dict[str, Any]) -> Dict[str, str]:
             bound_key,
             user_id=str((context or {}).get("user_id") or ""),
             conversation_id=str((context or {}).get("conversation_id") or ""),
+            agent_name=str((context or {}).get("agent_name") or ""),
         )
         if value is None:
             raise PackageRuntimeError(f"PFP bound secret is not available: {name}")
@@ -59,29 +60,19 @@ def _secret_env_vars(request: Dict[str, Any]) -> Dict[str, str]:
     return result
 
 def _resolve_secret_value(secret_key: str, *, user_id: str,
-                          conversation_id: str) -> str | None:
-    if conversation_id:
-        try:
-            from core.conversation_store import ConversationStore
-            from core.secrets import SecretsManager
-            raw = ConversationStore.instance().get_extra(
-                conversation_id, "conv_secrets") or {}
-            if secret_key in raw:
-                value = raw[secret_key]
-                sm = SecretsManager.get_instance()
-                return sm.decrypt(value) if str(value).startswith("enc:") else str(value)
-        except Exception as exc:
-            raise PackageRuntimeError("PFP conversation secret could not be loaded") from exc
-    if user_id:
-        from core.expression import _load_user_secrets
-        secrets = _load_user_secrets(user_id)
-        if secret_key in secrets:
-            return str(secrets[secret_key])
-    from core.expression import _load_global_secrets
-    secrets = _load_global_secrets()
-    if secret_key in secrets:
-        return str(secrets[secret_key])
-    return None
+                          conversation_id: str,
+                          agent_name: str = "") -> str | None:
+    try:
+        from core.secret_resolver import SecretResolver
+        value = SecretResolver().resolve_name(
+            secret_key,
+            owner_user_id=user_id,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+        )
+        return None if value is None else value.as_str()
+    except Exception as exc:
+        raise PackageRuntimeError("PFP secret could not be resolved") from exc
 
 def _secret_env_name(name: str) -> str:
     clean = "".join(ch if ch.isalnum() else "_" for ch in str(name or "")).upper().strip("_")

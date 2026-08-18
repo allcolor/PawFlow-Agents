@@ -244,7 +244,8 @@ def test_read_only_search_does_not_resolve_full_env_for_plain_args(monkeypatch):
 
     monkeypatch.setattr(
         ToolRelayService, "_secret_config_fingerprint",
-        classmethod(lambda cls, uid, conv: fingerprint_calls.append((uid, conv)) or ("fp",)))
+        classmethod(lambda cls, uid, conv, agent_name="":
+                    fingerprint_calls.append((uid, conv, agent_name)) or ("fp",)))
 
     def _secret_values(*_args):
         secret_calls.append(1)
@@ -285,7 +286,8 @@ def test_bash_still_receives_secret_environment(monkeypatch):
 
     monkeypatch.setattr(
         ToolRelayService, "_secret_config_fingerprint",
-        classmethod(lambda cls, uid, conv: fingerprint_calls.append((uid, conv)) or ("fp",)))
+        classmethod(lambda cls, uid, conv, agent_name="":
+                    fingerprint_calls.append((uid, conv, agent_name)) or ("fp",)))
 
     def _env(*_args):
         env_calls.append(1)
@@ -329,13 +331,16 @@ def test_subconversation_tool_execution_uses_parent_runtime_scope(monkeypatch):
         ToolRelayService, "_conversation_extra_fast", staticmethod(_extra))
     monkeypatch.setattr(
         ToolRelayService, "_secret_config_fingerprint",
-        classmethod(lambda cls, uid, conv: ("fp", conv)))
+        classmethod(lambda cls, uid, conv, agent_name="":
+                    ("fp", conv, agent_name)))
     monkeypatch.setattr(
         _trb_mod, "resolve_secrets_env",
-        lambda uid, conv: env_cids.append(conv) or {"TOKEN": "secret"})
+        lambda uid, conv, agent_name="":
+        env_cids.append(conv) or {"TOKEN": "secret"})
     monkeypatch.setattr(
         _trb_mod, "resolve_secret_values",
-        lambda uid, conv: secret_cids.append(conv) or (set(), {}))
+        lambda uid, conv, agent_name="":
+        secret_cids.append(conv) or (set(), {}))
 
     for cid in ("conv1::task_verify::t_1", "conv1::delegate::assistant"):
         assert svc._do_execute("rid", "bash", {"command": "echo $TOKEN"},

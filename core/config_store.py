@@ -11,7 +11,7 @@ import logging
 import re
 import threading
 from pathlib import Path
-from typing import Dict, Set
+from typing import Any, Dict, Set
 
 try:
     import fcntl  # POSIX advisory file locking (Linux/macOS)
@@ -183,6 +183,11 @@ class ConfigStore:
 
         result = {}
         for key, value in raw.items():
+            from core.secret_entries import is_external_secret_raw
+            if is_external_secret_raw(value):
+                # External entries are materialized by SecretResolver, which
+                # applies scope/agent authorization before decrypting locators.
+                continue
             if isinstance(value, dict) and value.get(_SIDECAR_MARKER) == _SIDECAR_TYPE:
                 ref_file = path.parent / value["$ref"]
                 if ref_file.exists():
@@ -223,13 +228,44 @@ class ConfigStore:
         return result
 
     @staticmethod
+    def decode_secret_entry(path: Path, key: str, value: Any) -> ConfigValue:
+        """Decrypt one local entry without touching sibling secrets."""
+        from core.secret_entries import is_external_secret_raw
+        from core.secrets import get_secrets_manager
+
+        if is_external_secret_raw(value):
+            raise ValueError("external secret entries require SecretResolver")
+        sm = get_secrets_manager()
+        if isinstance(value, dict) and value.get(_SIDECAR_MARKER) == _SIDECAR_TYPE:
+            ref_name = value.get("$ref")
+            if not isinstance(ref_name, str) or not ref_name:
+                raise ValueError(f"invalid sidecar reference for secret '{key}'")
+            ref_file = path.parent / ref_name
+            if not ref_file.exists():
+                raise ValueError(f"sidecar file missing for secret '{key}'")
+            return ConfigValue(data=sm.decrypt_bytes(ref_file.read_bytes()))
+        if not isinstance(value, str):
+            raise ValueError(f"invalid local secret entry '{key}'")
+        return ConfigValue(value=sm.decrypt(value))
+
+    @staticmethod
     def save_secrets(path: Path, data: Dict[str, ConfigValue]) -> None:
-        """Encrypt, save JSON, spill large encrypted values to .enc sidecars."""
+        """Save local values while preserving typed external references.
+
+        External entries must be removed with delete_secret_entry or replaced
+        with an explicit upsert. This prevents legacy read-modify-write callers
+        from silently deleting references they cannot materialize.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
         from core.secrets import get_secrets_manager
+        from core.secret_entries import is_external_secret_raw
         sm = get_secrets_manager()
 
-        json_data = {}
+        json_data = {
+            key: value
+            for key, value in ConfigStore.load_secrets_raw(path).items()
+            if is_external_secret_raw(value)
+        }
         valid_sidecars: Set[str] = set()
 
         for key, cv in data.items():
@@ -253,7 +289,7 @@ class ConfigStore:
         ConfigStore._cleanup_sidecars(path, valid_sidecars, encrypted=True)
 
     @staticmethod
-    def load_secrets_raw(path: Path) -> Dict[str, str]:
+    def load_secrets_raw(path: Path) -> Dict[str, Any]:
         """Load raw (encrypted) secret values as strings, for GUI display.
 
         Returns the encrypted strings as-is (no decryption).
@@ -268,13 +304,77 @@ class ConfigStore:
         return raw
 
     @staticmethod
-    def save_secrets_raw(path: Path, data: Dict[str, str]) -> None:
+    def save_secrets_raw(path: Path, data: Dict[str, Any]) -> None:
         """Save raw encrypted secret values for GUI display/edit flows."""
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         ConfigStore._cache_invalidate(path)
+
+    @staticmethod
+    def _referenced_secret_sidecars(data: Dict[str, Any]) -> Set[str]:
+        return {
+            str(value["$ref"])
+            for value in data.values()
+            if (isinstance(value, dict)
+                and value.get(_SIDECAR_MARKER) == _SIDECAR_TYPE
+                and isinstance(value.get("$ref"), str))
+        }
+
+    @staticmethod
+    def upsert_local_secret(path: Path, key: str, value: ConfigValue) -> None:
+        """Store one local secret while preserving external sibling entries."""
+        if not key:
+            raise ValueError("secret key is required")
+        if not isinstance(value, ConfigValue):
+            raise TypeError("value must be ConfigValue")
+        from core.secrets import get_secrets_manager
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = ConfigStore.load_secrets_raw(path)
+        sm = get_secrets_manager()
+        if value.is_large:
+            sidecar = _sidecar_path(path, key, encrypted=True)
+            sidecar.write_bytes(sm.encrypt_bytes(value.as_bytes()))
+            data[key] = {
+                "$ref": sidecar.name,
+                "size": value.size,
+                _SIDECAR_MARKER: _SIDECAR_TYPE,
+            }
+        else:
+            data[key] = sm.encrypt(value.as_str())
+        ConfigStore.save_secrets_raw(path, data)
+        ConfigStore._cleanup_sidecars(
+            path, ConfigStore._referenced_secret_sidecars(data),
+            encrypted=True)
+
+    @staticmethod
+    def upsert_external_secret(path: Path, key: str, provider_service: str,
+                               locator: Dict[str, Any]) -> None:
+        """Store one external reference while preserving local siblings."""
+        if not key:
+            raise ValueError("secret key is required")
+        from core.secret_entries import encode_external_secret_ref
+
+        data = ConfigStore.load_secrets_raw(path)
+        data[key] = encode_external_secret_ref(provider_service, locator)
+        ConfigStore.save_secrets_raw(path, data)
+        ConfigStore._cleanup_sidecars(
+            path, ConfigStore._referenced_secret_sidecars(data),
+            encrypted=True)
+
+    @staticmethod
+    def delete_secret_entry(path: Path, key: str) -> bool:
+        """Delete one local or external entry without rewriting other values."""
+        data = ConfigStore.load_secrets_raw(path)
+        existed = key in data
+        data.pop(key, None)
+        ConfigStore.save_secrets_raw(path, data)
+        ConfigStore._cleanup_sidecars(
+            path, ConfigStore._referenced_secret_sidecars(data),
+            encrypted=True)
+        return existed
 
     @staticmethod
     def _cleanup_sidecars(path: Path, valid_names: Set[str],

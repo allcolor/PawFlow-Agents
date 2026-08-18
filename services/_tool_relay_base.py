@@ -107,7 +107,8 @@ def _redact_secrets(text: str, secret_values: set,
     return text
 
 
-def resolve_secrets_env(user_id: str, conversation_id: str) -> dict:
+def resolve_secrets_env(user_id: str, conversation_id: str,
+                        agent_name: str = "") -> dict:
     """Resolve ALL variables + secrets into a flat dict for env injection.
 
     Cascade: global → user → conversation (later overrides earlier).
@@ -115,6 +116,7 @@ def resolve_secrets_env(user_id: str, conversation_id: str) -> dict:
     Returns dict of {KEY: value}. Keys are uppercased.
     """
     from core.config_store import ConfigStore
+    from core.secret_resolver import SecretResolver
 
     env = {}
 
@@ -124,91 +126,62 @@ def resolve_secrets_env(user_id: str, conversation_id: str) -> dict:
     for k, cv in ConfigStore.load_params(GLOBAL_PARAMS_FILE).items():
         env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
 
-    # ── Global secrets ──
-    for k, cv in ConfigStore.load_secrets(GLOBAL_SECRETS_FILE).items():
-        env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
+    records = SecretResolver().resolve_all(
+        owner_user_id=user_id, conversation_id=conversation_id,
+        agent_name=agent_name)
+
+    def _apply_secrets(scope):
+        for key, record in records.items():
+            if record.identity.source_scope == scope:
+                env[key.upper()] = record.value.as_str()
+
+    # ── Winning global secrets ──
+    _apply_secrets("global")
 
     # ── User variables (override global) ──
     if user_id:
         for k, cv in ConfigStore.load_params(USER_CONFIG_DIR / user_id / "params.json").items():
             env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
 
-    # ── User secrets (override global) ──
-    if user_id:
-        for k, cv in ConfigStore.load_secrets(USER_CONFIG_DIR / user_id / "secrets.json").items():
-            env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
+    # ── Winning user secrets (override global) ──
+    _apply_secrets("user")
 
     # ── Conversation variables + secrets (override user) ──
     if conversation_id:
         try:
             from core.conversation_store import ConversationStore
-            from core.secrets import get_secrets_manager
             store = ConversationStore.instance()
-            sm = get_secrets_manager()
 
             # Conv params (variables)
             _conv_params = store.get_extra(conversation_id, "conv_params") or {}
             for k, v in _conv_params.items():
                 env[k.upper()] = str(v)
 
-            # Conv secrets
-            _conv_secrets = store.get_extra(conversation_id, "conv_secrets") or {}
-            for k, v in _conv_secrets.items():
-                try:
-                    env[k.upper()] = sm.decrypt(v) if isinstance(v, str) and v.startswith("enc:") else str(v)
-                except Exception:
-                    env[k.upper()] = str(v)
+            # Winning conversation secrets
+            _apply_secrets("conv")
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
 
     return env
 
 
-def resolve_secret_values(user_id: str, conversation_id: str) -> tuple:
+def resolve_secret_values(user_id: str, conversation_id: str,
+                          agent_name: str = "") -> tuple:
     """Resolve ONLY secret values for redaction (not variables).
 
     Returns (secret_values: set, secret_names: dict{value→key}).
     """
-    from core.config_store import ConfigStore
-
     values = set()
     names = {}
-
-    from core.paths import GLOBAL_SECRETS_FILE, USER_CONFIG_DIR
-
-    # Global secrets
-    for k, cv in ConfigStore.load_secrets(GLOBAL_SECRETS_FILE).items():
-        v = cv.value if hasattr(cv, 'value') else str(cv)
-        if v and len(v) >= 4:
-            values.add(v)
-            names[v] = k.upper()
-
-    # User secrets
-    if user_id:
-        for k, cv in ConfigStore.load_secrets(USER_CONFIG_DIR / user_id / "secrets.json").items():
-            v = cv.value if hasattr(cv, 'value') else str(cv)
-            if v and len(v) >= 4:
-                values.add(v)
-                names[v] = k.upper()
-
-    # Conversation secrets
-    if conversation_id:
-        try:
-            from core.conversation_store import ConversationStore
-            from core.secrets import get_secrets_manager
-            _raw = ConversationStore.instance().get_extra(
-                conversation_id, "conv_secrets") or {}
-            sm = get_secrets_manager()
-            for k, v in _raw.items():
-                try:
-                    v = sm.decrypt(v) if isinstance(v, str) and v.startswith("enc:") else str(v)
-                except Exception:
-                    v = str(v)
-                if v and len(v) >= 4:
-                    values.add(v)
-                    names[v] = k.upper()
-        except Exception:
-            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+    from core.secret_resolver import SecretResolver
+    records = SecretResolver().resolve_all(
+        owner_user_id=user_id, conversation_id=conversation_id,
+        agent_name=agent_name)
+    for key, record in records.items():
+        value = record.value.as_str()
+        if value and len(value) >= 4:
+            values.add(value)
+            names[value] = key.upper()
 
     return values, names
 

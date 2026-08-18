@@ -95,7 +95,7 @@ class _ToolRelayCacheReqMixin:
             keys = (set(cls._secret_env_cache.keys()) |
                     set(cls._secret_values_cache.keys()))
             for key in list(keys):
-                _uid, _conv = key
+                _uid, _conv = key[:2]
                 if uid and _uid != uid:
                     continue
                 if conv and _conv != conv:
@@ -112,7 +112,8 @@ class _ToolRelayCacheReqMixin:
             return (str(path), -1, -1)
 
     @classmethod
-    def _secret_config_fingerprint(cls, user_id: str, conversation_id: str) -> tuple:
+    def _secret_config_fingerprint(cls, user_id: str, conversation_id: str,
+                                   agent_name: str = "") -> tuple:
         from core.paths import GLOBAL_PARAMS_FILE, GLOBAL_SECRETS_FILE, USER_CONFIG_DIR
         conv = cls._root_conversation_id(conversation_id)
         parts = [
@@ -131,12 +132,29 @@ class _ToolRelayCacheReqMixin:
                     cls._conversation_extra_fast(conv, "conv_params", {}) or {})),
                 ("conv_secrets", cls._stable_config_fingerprint(
                     cls._conversation_extra_fast(conv, "conv_secrets", {}) or {})),
+                ("secret_access", cls._stable_config_fingerprint(
+                    cls._conversation_extra_fast(conv, "secret_access", None))),
             ))
+            if agent_name:
+                try:
+                    from core.conv_agent_config import resolve_agent_config_entry
+                    _source, canonical, config = resolve_agent_config_entry(
+                        conv, agent_name)
+                    parts.append(("agent_secret_access", canonical,
+                                  cls._stable_config_fingerprint(
+                                      config.get("secret_access")
+                                      if canonical else None)))
+                except Exception:
+                    parts.append(("agent_secret_access", agent_name, (0, "")))
+        from core.external_secret_cache import ExternalSecretCache
+        parts.append(("external_secret_cache",
+                      ExternalSecretCache.instance().freshness_token()))
         return tuple(parts)
 
     @classmethod
     def _cached_secrets_env(cls, user_id: str, conversation_id: str,
-                            fingerprint: tuple = None) -> dict:
+                            fingerprint: tuple = None,
+                            agent_name: str = "") -> dict:
         """Secrets env for tool execution, cached per (user, root conv).
 
         The fingerprint (file mtimes + conv extras) is the staleness check
@@ -148,35 +166,43 @@ class _ToolRelayCacheReqMixin:
         if not user_id:
             return {}
         conv = cls._root_conversation_id(conversation_id)
-        key = (user_id or "", conv)
+        key = (user_id or "", conv, agent_name or "")
         if fingerprint is None:
-            fingerprint = cls._secret_config_fingerprint(user_id, conv)
+            fingerprint = (
+                cls._secret_config_fingerprint(user_id, conv, agent_name)
+                if agent_name else cls._secret_config_fingerprint(user_id, conv))
         with cls._runtime_cache_lock:
             cached = cls._secret_env_cache.get(key)
             if cached and cached[0] == fingerprint:
                 return dict(cached[1])
-        env = _trb.resolve_secrets_env(user_id, conv)
+        env = (_trb.resolve_secrets_env(user_id, conv, agent_name)
+               if agent_name else _trb.resolve_secrets_env(user_id, conv))
         with cls._runtime_cache_lock:
             cls._secret_env_cache[key] = (fingerprint, dict(env))
         return env
 
     @classmethod
     def _cached_secret_values(cls, user_id: str, conversation_id: str,
-                              fingerprint: tuple = None) -> tuple:
+                              fingerprint: tuple = None,
+                              agent_name: str = "") -> tuple:
         """Redaction set/names, same staleness rule as _cached_secrets_env —
         a stale values cache would leave a freshly added secret unredacted
         in tool output."""
         if not user_id:
             return set(), {}
         conv = cls._root_conversation_id(conversation_id)
-        key = (user_id or "", conv)
+        key = (user_id or "", conv, agent_name or "")
         if fingerprint is None:
-            fingerprint = cls._secret_config_fingerprint(user_id, conv)
+            fingerprint = (
+                cls._secret_config_fingerprint(user_id, conv, agent_name)
+                if agent_name else cls._secret_config_fingerprint(user_id, conv))
         with cls._runtime_cache_lock:
             cached = cls._secret_values_cache.get(key)
             if cached and cached[0] == fingerprint:
                 return set(cached[1]), dict(cached[2])
-        values, names = _trb.resolve_secret_values(user_id, conv)
+        values, names = (
+            _trb.resolve_secret_values(user_id, conv, agent_name)
+            if agent_name else _trb.resolve_secret_values(user_id, conv))
         with cls._runtime_cache_lock:
             cls._secret_values_cache[key] = (fingerprint, set(values), dict(names))
         return values, names

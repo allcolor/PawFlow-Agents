@@ -1,6 +1,24 @@
 # External Secret Providers Implementation Plan
 
-Status: **proposed** (implementation plan only; no implementation yet).
+Status: **in progress**.
+
+Implemented on 2026-08-18:
+
+- the typed local/external entry union with encrypted locators;
+- raw-preserving single-entry mutations;
+- the provider registry and `secretProvider` service;
+- bounded in-memory TTL/LRU caching with single-flight fetches;
+- conversation and agent-instance allowlists with intersection semantics;
+- winner-before-authorization resolution with no lower-scope fallback;
+- integration with expressions, tool environment injection/redaction, and PFP
+  runtime secret bindings;
+- management actions for external bindings and access policies;
+- Wave A adapters for Keeper, AWS Secrets Manager, Azure Key Vault, Google Cloud
+  Secret Manager, and HashiCorp Vault KV, plus AWS SSM Parameter Store.
+
+The remaining phases cover expanded management UI, audit/metrics, dependency
+packaging, provider integration environments, rollout flags, and operational
+hardening.
 
 ## 1. Executive decision
 

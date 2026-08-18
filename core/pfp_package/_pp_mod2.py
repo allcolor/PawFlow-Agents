@@ -244,12 +244,11 @@ def create_stored_signing_key(secret_name: str, user_id: str) -> Dict[str, str]:
     from core.config_value import ConfigValue
 
     path = _paths.user_secrets_path(user_id)
-    secrets = ConfigStore.load_secrets(path)
-    if name in secrets:
+    if name in ConfigStore.load_secrets_raw(path):
         raise PfpError(f"Secret '{name}' already exists; refusing key rotation")
     keypair = create_signing_key()
-    secrets[name] = ConfigValue(value=keypair["private_key"])
-    ConfigStore.save_secrets(path, secrets)
+    ConfigStore.upsert_local_secret(
+        path, name, ConfigValue(value=keypair["private_key"]))
     return {
         "ok": True,
         "secret_name": name,

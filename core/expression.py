@@ -332,42 +332,22 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
         If exact_scope is set (via :!important), only look in that specific scope.
         No flow-level secrets exist.
         """
-        if exact_scope:
-            if exact_scope == "conv":
-                cs = _get_conv_secrets()
-                if key in cs:
-                    return str(cs[key]), True
-            elif exact_scope == "user":
-                if owner:
-                    us = _get_user_secrets()
-                    if key in us:
-                        resolved = _resolve_value(us[key])
-                        if resolved is not None:
-                            return resolved, True
-            elif exact_scope == "global":
-                gs = _get_global_secrets()
-                if key in gs:
-                    resolved = _resolve_value(gs[key])
-                    if resolved is not None:
-                        return resolved, True
+        try:
+            from core.secret_resolver import SecretResolver
+            value = SecretResolver().resolve_name(
+                key,
+                owner_user_id=owner or "",
+                conversation_id=conversation_id or "",
+                agent_name=str(params.get("agent_name") or ""),
+                exact_scope=exact_scope,
+            )
+            if value is None:
+                return None, False
+            resolved = _resolve_value(value)
+            return (resolved, True) if resolved is not None else (None, False)
+        except Exception as exc:
+            logger.warning("Failed to resolve secret '%s': %s", key, exc)
             return None, False
-
-        # Full cascade: conv → user → global
-        cs = _get_conv_secrets()
-        if key in cs:
-            return str(cs[key]), True
-        if owner:
-            us = _get_user_secrets()
-            if key in us:
-                resolved = _resolve_value(us[key])
-                if resolved is not None:
-                    return resolved, True
-        gs = _get_global_secrets()
-        if key in gs:
-            resolved = _resolve_value(gs[key])
-            if resolved is not None:
-                return resolved, True
-        return None, False
 
     def _parse_important(expr):
         """Parse :!important(scope) suffix. Returns (clean_expr, exact_scope_or_None).

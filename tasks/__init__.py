@@ -31,6 +31,7 @@ def _register_all_services():
     import services.http_listener_service    # noqa: F401
     import services.http_auth_service        # noqa: F401
     import services.web_search_service       # noqa: F401
+    import services.secret_provider_service  # noqa: F401
     import services.ssl_context_service      # noqa: F401
     import services.file_tracking_service    # noqa: F401
     import services.distributed_cache        # noqa: F401

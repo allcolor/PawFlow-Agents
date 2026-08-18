@@ -90,9 +90,21 @@ def _write_secret_value(scope: str, key: str, value: str, store, user_id: str, c
     from core.config_value import ConfigValue
     path = _secret_path(scope, user_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = ConfigStore.load_secrets(path)
-    data[key] = ConfigValue(value=value)
-    ConfigStore.save_secrets(path, data)
+    ConfigStore.upsert_local_secret(path, key, ConfigValue(value=value))
+
+
+def _write_external_secret(scope: str, key: str, provider_service: str,
+                           locator: Dict[str, Any], store, user_id: str,
+                           conv_id: str):
+    from core.secret_entries import encode_external_secret_ref
+    if scope == "conversation":
+        data = store.get_extra(conv_id, "conv_secrets") or {}
+        data[key] = encode_external_secret_ref(provider_service, locator)
+        store.set_extra(conv_id, "conv_secrets", data)
+        return
+    from core.config_store import ConfigStore
+    ConfigStore.upsert_external_secret(
+        _secret_path(scope, user_id), key, provider_service, locator)
 
 
 def _delete_param_value(scope: str, key: str, store, user_id: str, conv_id: str):
@@ -116,9 +128,29 @@ def _delete_secret_value(scope: str, key: str, store, user_id: str, conv_id: str
         return
     from core.config_store import ConfigStore
     path = _secret_path(scope, user_id)
-    data = ConfigStore.load_secrets(path)
-    data.pop(key, None)
-    ConfigStore.save_secrets(path, data)
+    ConfigStore.delete_secret_entry(path, key)
+
+
+def _secret_raw(scope: str, key: str, store, user_id: str, conv_id: str):
+    if scope == "conversation":
+        return (store.get_extra(conv_id, "conv_secrets") or {}).get(key)
+    from core.config_store import ConfigStore
+    return ConfigStore.load_secrets_raw(
+        _secret_path(scope, user_id)).get(key)
+
+
+def _write_secret_raw(scope: str, key: str, value: Any, store,
+                      user_id: str, conv_id: str):
+    if scope == "conversation":
+        data = store.get_extra(conv_id, "conv_secrets") or {}
+        data[key] = value
+        store.set_extra(conv_id, "conv_secrets", data)
+        return
+    from core.config_store import ConfigStore
+    path = _secret_path(scope, user_id)
+    data = ConfigStore.load_secrets_raw(path)
+    data[key] = value
+    ConfigStore.save_secrets_raw(path, data)
 
 
 def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
@@ -226,28 +258,39 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         params_out = []
         secrets_out = []
         # Global params
-        from core.expression import _load_global_parameters, _load_global_secrets
+        from core.expression import _load_global_parameters
+        from core.config_store import ConfigStore
+        from core.paths import GLOBAL_SECRETS_FILE, user_secrets_path
+        from core.secret_entries import external_secret_metadata
         for k, v in _load_global_parameters().items():
             params_out.append({"key": k, "value": str(v), "scope": "global"})
         # User params
         if uid and uid != "anonymous":
-            from core.expression import _load_user_parameters, _load_user_secrets
+            from core.expression import _load_user_parameters
             for k, v in _load_user_parameters(uid).items():
                 params_out.append({"key": k, "value": str(v), "scope": "user"})
             # User secrets (names only)
-            for k in _load_user_secrets(uid).keys():
-                secrets_out.append({"key": k, "scope": "user"})
+            for k, raw in ConfigStore.load_secrets_raw(
+                    user_secrets_path(uid)).items():
+                metadata = external_secret_metadata(raw) or {"type": "local"}
+                secrets_out.append({
+                    "key": k, "scope": "user", **metadata})
         # Global secrets (names only)
-        for k in _load_global_secrets().keys():
-            secrets_out.append({"key": k, "scope": "global"})
+        for k, raw in ConfigStore.load_secrets_raw(
+                GLOBAL_SECRETS_FILE).items():
+            metadata = external_secret_metadata(raw) or {"type": "local"}
+            secrets_out.append({
+                "key": k, "scope": "global", **metadata})
         # Conv params/secrets
         if conv_id:
             cp = store.get_extra(conv_id, "conv_parameters") or {}
             for k, v in cp.items():
                 params_out.append({"key": k, "value": str(v), "scope": "conversation"})
             cs = store.get_extra(conv_id, "conv_secrets") or {}
-            for k in cs.keys():
-                secrets_out.append({"key": k, "scope": "conversation"})
+            for k, raw in cs.items():
+                metadata = external_secret_metadata(raw) or {"type": "local"}
+                secrets_out.append({
+                    "key": k, "scope": "conversation", **metadata})
         flowfile.set_content(json.dumps({
             "parameters": params_out, "secrets": secrets_out,
         }, ensure_ascii=False).encode())
@@ -312,6 +355,71 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": True, "scope": scope}).encode())
         return [flowfile]
 
+    if action in {"set_external_secret", "bind_external_secret"}:
+        key = str(body.get("key") or "").strip()
+        provider_service = str(body.get("provider_service") or "").strip()
+        locator = body.get("locator")
+        conv_id = str(body.get("conversation_id") or "")
+        try:
+            scope = _requested_scope(body)
+        except ValueError as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if not key or not provider_service or not isinstance(locator, dict):
+            flowfile.set_content(json.dumps({
+                "error": "key, provider_service, and locator object are required"
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if scope == "conversation" and not conv_id:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id is required for conversation scope"
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if scope == "global" and not _is_admin(flowfile):
+            return _scope_error(
+                flowfile, "Cannot write global secrets from chat. Use the admin GUI.")
+        _write_external_secret(
+            scope, key, provider_service, locator, store, user_id, conv_id)
+        flowfile.set_content(json.dumps({
+            "ok": True, "scope": scope, "kind": "external",
+            "provider_service": provider_service,
+        }).encode())
+        return [flowfile]
+
+    if action == "set_secret_access":
+        conv_id = str(body.get("conversation_id") or "")
+        grants = body.get("allow")
+        agent_name = str(body.get("agent_name") or "").strip()
+        if not conv_id or not isinstance(grants, list):
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id and allow list are required"
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            if agent_name:
+                from core.secret_access_policy import set_agent_secret_access
+                policy = set_agent_secret_access(
+                    conv_id, agent_name, user_id, grants)
+            else:
+                from core.secret_access_policy import (
+                    set_conversation_secret_access,
+                )
+                policy = set_conversation_secret_access(
+                    conv_id, user_id, grants)
+        except PermissionError as exc:
+            return _scope_error(flowfile, str(exc))
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "conversation_id": conv_id,
+            "agent_name": agent_name,
+            "secret_access": policy,
+        }).encode())
+        return [flowfile]
+
     if action == "delete_secret":
         key = body.get("key", "").strip()
         scope = _requested_scope(body)
@@ -345,12 +453,20 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             if action == "move_secret_scope":
-                value = _load_secret_value(from_scope, key, store, user_id, conv_id)
+                value = _secret_raw(from_scope, key, store, user_id, conv_id)
                 if value is None:
                     flowfile.set_content(json.dumps({"error": f"Secret '{key}' not found in {from_scope}"}).encode())
                     flowfile.set_attribute("http.response.status", "404")
                     return [flowfile]
-                _write_secret_value(to_scope, key, value, store, user_id, conv_id)
+                from core.secret_entries import is_external_secret_raw
+                if is_external_secret_raw(value):
+                    _write_secret_raw(
+                        to_scope, key, value, store, user_id, conv_id)
+                else:
+                    local_value = _load_secret_value(
+                        from_scope, key, store, user_id, conv_id)
+                    _write_secret_value(
+                        to_scope, key, local_value, store, user_id, conv_id)
                 _delete_secret_value(from_scope, key, store, user_id, conv_id)
             else:
                 value = _load_param_value(from_scope, key, store, user_id, conv_id)

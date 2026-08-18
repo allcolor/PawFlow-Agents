@@ -682,9 +682,8 @@ class StoreSecretHandler(ToolHandler):
 
             from core.paths import user_secrets_path
             secrets_path = user_secrets_path(user_id)
-            secrets = ConfigStore.load_secrets(secrets_path)
-            secrets[key] = ConfigValue(value=value)
-            ConfigStore.save_secrets(secrets_path, secrets)
+            ConfigStore.upsert_local_secret(
+                secrets_path, key, ConfigValue(value=value))
             return f"Secret '{key}' stored securely. Reference it as ${{{key}}}"
         except Exception as e:
             return f"Error storing secret: {e}"
@@ -726,14 +725,19 @@ class ListSecretsHandler(ToolHandler):
         user_id = self._user_id
         from core.paths import user_secrets_path
         secrets_path = user_secrets_path(user_id)
-        secrets = ConfigStore.load_secrets(secrets_path)
+        raw = ConfigStore.load_secrets_raw(secrets_path)
 
-        if not secrets:
+        if not raw:
             return "No secrets stored yet. Use store_secret tool or /add-secret in chat."
 
-        lines = [f"Available secrets ({len(secrets)}):"]
-        for k in sorted(secrets.keys()):
-            cv = secrets[k]
-            suffix = f" (large: {cv.size / 1024:.0f}KB)" if cv.is_large else ""
+        lines = [f"Available secrets ({len(raw)}):"]
+        for k in sorted(raw):
+            value = raw[k]
+            if isinstance(value, dict) and value.get("$type") == "external_secret":
+                suffix = f" (external: {value.get('provider_service', '')})"
+            elif isinstance(value, dict) and value.get("$type") == "spilled":
+                suffix = f" (large: {int(value.get('size') or 0) / 1024:.0f}KB)"
+            else:
+                suffix = ""
             lines.append(f"- {k}{suffix}  →  ${{{k}}}")
         return "\n".join(lines)

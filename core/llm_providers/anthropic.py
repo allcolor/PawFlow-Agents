@@ -11,12 +11,24 @@ from core.cache_diagnostics import CacheBreakDetector
 
 logger = logging.getLogger(__name__)
 
+_ANTHROPIC_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
+
 
 class LLMAnthropicMixin:
     """Anthropic provider methods: complete, stream, message building."""
 
     # Shared cache break detector (one per LLMClient instance via mixin)
     _cache_detector: Optional[CacheBreakDetector] = None
+
+    def _apply_anthropic_effort(self, body: Dict[str, Any]) -> None:
+        """Apply Anthropic's request-level reasoning effort when configured."""
+        effort = str(self.reasoning_effort or "").strip().lower()
+        if not effort:
+            return
+        if effort not in _ANTHROPIC_EFFORT_LEVELS:
+            logger.warning("Ignoring unsupported Anthropic reasoning effort: %s", effort)
+            return
+        body["output_config"] = {"effort": effort}
 
     def _get_cache_detector(self) -> CacheBreakDetector:
         """Lazily create and return the cache break detector."""
@@ -73,6 +85,7 @@ class LLMAnthropicMixin:
             "temperature": temperature,
             "stream": True,
         }
+        self._apply_anthropic_effort(body)
         if thinking_budget > 0:
             body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
             body["temperature"] = 1  # Required by Anthropic when thinking is enabled
@@ -640,6 +653,7 @@ class LLMAnthropicMixin:
                                  conversation_id=call_conversation_id)
 
         body: Dict[str, Any] = {"model": model, "messages": api_messages, "max_tokens": max_tokens if max_tokens > 0 else 64000, "temperature": temperature}
+        self._apply_anthropic_effort(body)
         if thinking_budget > 0:
             body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
             body["temperature"] = 1  # Required by Anthropic when thinking is enabled

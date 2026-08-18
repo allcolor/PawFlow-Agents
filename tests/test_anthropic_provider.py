@@ -171,6 +171,7 @@ def test_anthropic_stream_accepts_compatible_text_delta_without_type(monkeypatch
         "api_key": "test",
         "default_model": "deepseek-v4-pro",
         "base_url": "https://api.deepseek.example/anthropic",
+        "reasoning_effort": "medium",
     })
     events = [
         {"type": "message_start", "message": {
@@ -197,11 +198,13 @@ def test_anthropic_stream_accepts_compatible_text_delta_without_type(monkeypatch
             return self._chunks.pop(0)
 
     class _Conn:
+        request_body = None
+
         def __init__(self, *args, **kwargs):
             pass
 
-        def request(self, *args, **kwargs):
-            pass
+        def request(self, method, path, body=None, headers=None):
+            type(self).request_body = json.loads(body)
 
         def getresponse(self):
             return _Resp()
@@ -222,6 +225,7 @@ def test_anthropic_stream_accepts_compatible_text_delta_without_type(monkeypatch
     assert seen == ["hello", " world"]
     assert resp.tokens_in == 10
     assert resp.tokens_out == 2
+    assert _Conn.request_body["output_config"] == {"effort": "medium"}
 
 
 def test_anthropic_stream_emits_interleaved_deltas_immediately(monkeypatch):

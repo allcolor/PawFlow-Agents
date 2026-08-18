@@ -401,6 +401,39 @@ class TestLLMConnectionService:
             and rule["set"].get("reasoning_effort", {}).get("visible") is True
             for rule in rules)
 
+    def test_anthropic_exposes_supported_reasoning_efforts(self):
+        svc = LLMConnectionService({"provider": "anthropic", "api_key": "test"})
+        rules = svc.get_parameter_rules()
+
+        anthropic_rule = next(
+            rule for rule in rules
+            if (rule.get("when") or {}).get("provider") == ["anthropic"]
+            and "reasoning_effort" in rule.get("set", {})
+        )
+        field = anthropic_rule["set"]["reasoning_effort"]
+        assert field["visible"] is True
+        assert field["options"] == ["", "low", "medium", "high", "xhigh", "max"]
+
+    def test_anthropic_sends_reasoning_effort_in_output_config(self):
+        svc = LLMConnectionService({
+            "provider": "anthropic",
+            "api_key": "test-key",
+            "reasoning_effort": "max",
+        })
+        svc.connect()
+        captured = {}
+
+        def mock_post(path, body, headers, *, base_url=""):
+            captured.update(body)
+            return ANTHROPIC_RESPONSE
+
+        with patch.object(LLMClient, "_http_post", side_effect=mock_post):
+            svc.complete(messages=[
+                LLMMessage("user", "Think carefully", conversation_id="test_conv"),
+            ])
+
+        assert captured["output_config"] == {"effort": "max"}
+
     def test_openai_complete(self):
         svc = LLMConnectionService({
             "provider": "openai",

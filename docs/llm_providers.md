@@ -148,6 +148,7 @@ Common fields:
 | `base_url` | no | Alternate API endpoint. For direct `openai`/`anthropic`, this changes the HTTP target. For Claude Code API-key mode, this maps to `ANTHROPIC_BASE_URL`; for Codex it maps to `OPENAI_BASE_URL`; for Gemini/Agy infrastructure it maps to `GEMINI_BASE_URL` where the underlying CLI supports it. |
 | `docker_image` | CLI providers | Container image used for server-side CLI sessions and pools. |
 | `max_context_size` | yes for CLI providers unless the CLI reports the window | Authoritative context window. PawFlow must not guess a hard default. |
+| `reasoning_effort` | no | Request-level reasoning effort. OpenAI supports `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` where the model allows them. Anthropic uses `low`, `medium`, `high`, `xhigh`, and `max`, sent as `output_config.effort`; empty uses the model default. |
 | `compact_target_tokens` | no | Target size after compaction. |
 | `compact_threshold_pct` | no | `0` disables proactive compaction. A positive value triggers compaction at that percentage of `max_context_size`. |
 | `token_multiplier` | no | Optional conservative multiplier for provider token estimates. |

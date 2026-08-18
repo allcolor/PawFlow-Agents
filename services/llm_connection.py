@@ -602,7 +602,7 @@ class LLMConnectionService(BaseService):
                 "type": "select", "default": "",
                 "options": ["", "minimal", "low", "medium", "high", "xhigh", "max"],
                 "description": (
-                    "Reasoning effort for OpenAI-compatible reasoning models. "
+                    "Reasoning effort for OpenAI and Anthropic reasoning models. "
                     "Empty omits the field and uses the model default."
                 ),
             },
@@ -807,6 +807,19 @@ class LLMConnectionService(BaseService):
                 "when": {"provider": ["openai", "openai-responses"]},
                 "set": {
                     "reasoning_effort": {"visible": True},
+                }
+            },
+            {
+                "when": {"provider": ["anthropic"]},
+                "set": {
+                    "reasoning_effort": {
+                        "visible": True,
+                        "options": ["", "low", "medium", "high", "xhigh", "max"],
+                        "description": (
+                            "Anthropic effort level (output_config.effort). Empty "
+                            "uses the model default, currently high."
+                        ),
+                    },
                 }
             },
             {

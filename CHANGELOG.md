@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.211] — 2026-08-18
+
 ### Fixed
 
 - Published MCP servers now emit only valid tool definitions and content blocks,

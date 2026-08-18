@@ -129,22 +129,17 @@ function showSharedConvMenu(e, cid) {
   if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:180px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
+  menu.style.minWidth = '180px';
+  _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:'
-      + (danger ? '#e94560' : '#e0e0e0');
-    d.onmouseenter = () => d.style.background = '#2a2a4a';
-    d.onmouseleave = () => d.style.background = '';
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
   item('\u{21BB} ' + t('refresh'), () => resumeConv(cid, true));
   item('\u{1F6AA} ' + t('leaveConversation'), () => leaveSharedConv(cid), true);
-  document.body.appendChild(menu);
   setTimeout(() => document.addEventListener('click', function _close() {
     menu.remove();
     document.removeEventListener('click', _close);

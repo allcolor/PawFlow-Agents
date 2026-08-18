@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Context menus now use active theme colors instead of hard-coded dark-theme
+  values, and Android opens flow graphs in native WebView tabs rather than
+  blob-backed iframes that could terminate the app's renderer.
+- Simplified conversations now reunify a turn split across loaded history
+  pages into one detail block, preserving `USER/SCHEDULE > DETAILS > LAST`
+  instead of exposing one block and message per page fragment.
+
 ## [1.0.0-beta.211] — 2026-08-18
 
 ### Fixed

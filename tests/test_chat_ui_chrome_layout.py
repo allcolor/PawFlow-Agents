@@ -179,6 +179,33 @@ def test_conversation_context_menu_uses_theme_and_hides_busy_git_actions():
     assert ".ctx-menu-item:hover { background: var(--pf-assistant" in TEMPLATE_HTML
 
 
+def test_context_menus_use_shared_theme_classes():
+    services_js = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
+    sharing_js = Path("tasks/io/chat_ui/conversations_share.js").read_text(
+        encoding="utf-8"
+    )
+    viewer_js = Path("tasks/io/chat_ui/file_viewer.js").read_text(
+        encoding="utf-8"
+    )
+    menu_sources = (
+        services_js.split("function showFlowInstanceMenu", 1)[1].split(
+            "async function _openFlowGraphTab", 1
+        )[0],
+        sharing_js.split("function showSharedConvMenu", 1)[1].split(
+            "function respondToShareInvite", 1
+        )[0],
+        viewer_js.split("function showParamMenu", 1)[1].split(
+            "function _showParamEditor", 1
+        )[0],
+    )
+
+    for source in menu_sources:
+        assert "d.className = 'ctx-menu-item'" in source
+        assert "d.onmouseenter = () => d.style.background = '#2a2a4a'" not in source
+        assert "background:#1a1a2e" not in source
+        assert "danger ? '#e94560' : '#e0e0e0'" not in source
+
+
 def test_language_selector_renders_catalog_flags():
     languages = json.loads(
         Path("tasks/io/chat_ui/i18n/languages.json").read_text(encoding="utf-8")

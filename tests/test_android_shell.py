@@ -13,6 +13,8 @@ MAIN = Path("pawflow-android/app/src/main/java/org/allcolor/pawflow/"
             "MainActivity.java").read_text(encoding="utf-8")
 MANIFEST = Path("pawflow-android/app/src/main/AndroidManifest.xml"
                 ).read_text(encoding="utf-8")
+TABS = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
+SERVICES = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
 
 
 def test_every_screen_root_goes_through_the_insets_helper():
@@ -54,3 +56,22 @@ def test_webview_downloads_go_through_download_manager():
 
 def test_inset_strips_match_the_app_chrome():
     assert "root.setBackgroundColor(getColor(R.color.pawflow_navy));" in MAIN
+
+
+def test_android_graphs_open_as_native_webview_tabs_instead_of_blob_iframes():
+    assert "settings.setUserAgentString(" in MAIN
+    assert "PawFlowAndroid" in MAIN
+    assert "function isPawFlowAndroidApp()" in TABS
+
+    instance_graph = SERVICES.split(
+        "async function _openFlowGraphTab", 1
+    )[1].split("async function _openFlowTemplateGraphTab", 1)[0]
+    template_graph = SERVICES.split(
+        "async function _openFlowTemplateGraphTab", 1
+    )[1].split("function _showFlowStartDialog", 1)[0]
+    for graph_source in (instance_graph, template_graph):
+        assert "isPawFlowAndroidApp()" in graph_source
+        assert "window.open(graphUrl, '_blank')" in graph_source
+        assert graph_source.index("window.open(graphUrl, '_blank')") < graph_source.index(
+            "fetch(graphUrl"
+        )

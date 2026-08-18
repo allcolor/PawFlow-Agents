@@ -5,21 +5,19 @@ function showParamMenu(e, key, scope, isSecret) {
   if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.minWidth = '140px';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
-    d.onmouseenter = () => d.style.background = '#2a2a4a';
-    d.onmouseleave = () => d.style.background = '';
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
   item('\u{1F441} ' + t('view'), () => _showParamEditor(key, scope, isSecret, false, true));
   if (_canEditScope(scope)) {
     item('✏ ' + t('editWithEllipsis'), () => _showParamEditor(key, scope, isSecret, false));
-    const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:#333;margin:4px 0;'; menu.appendChild(s); };
+    const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;'; menu.appendChild(s); };
     sep();
     const move = (toScope) => {
       const label = (scope === 'conversation' && toScope !== 'conversation') ? 'Promote to ' + toScope

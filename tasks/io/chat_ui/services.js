@@ -5,14 +5,12 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
   if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.minWidth = '140px';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
+    d.className = 'ctx-menu-item' + (danger ? ' danger' : '');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
-    d.onmouseenter = () => d.style.background = '#2a2a4a';
-    d.onmouseleave = () => d.style.background = '';
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
@@ -41,7 +39,7 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
     if (normScope !== 'global' && _isAdmin()) item('\u2B06 Promote to global', () => moveFlow('global'));
   }
   const sep = document.createElement('div');
-  sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+  sep.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
   menu.appendChild(sep);
   item('\u{1F5D1} ' + t('flowUndeploy'), () => {
     if (!confirm(t('flowUndeployConfirm', { id: instanceId }))) return;
@@ -54,6 +52,10 @@ async function _openFlowGraphTab(instanceId) {
   try {
     const graphUrl = '/chat/js/flow_graph.html?instance_id=' + encodeURIComponent(instanceId)
       + '&v=' + encodeURIComponent(Date.now());
+    if (isPawFlowAndroidApp()) {
+      window.open(graphUrl, '_blank');
+      return;
+    }
     const resp = await fetch(graphUrl, { credentials: 'same-origin', cache: 'no-store' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     let html = await resp.text();
@@ -71,6 +73,10 @@ async function _openFlowTemplateGraphTab(templateId) {
     const graphUrl = '/chat/js/flow_graph.html?template_id=' + encodeURIComponent(templateId)
       + (convId ? '&conversation_id=' + encodeURIComponent(convId) : '')
       + '&v=' + encodeURIComponent(Date.now());
+    if (isPawFlowAndroidApp()) {
+      window.open(graphUrl, '_blank');
+      return;
+    }
     const resp = await fetch(graphUrl, { credentials: 'same-origin', cache: 'no-store' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     let html = await resp.text();

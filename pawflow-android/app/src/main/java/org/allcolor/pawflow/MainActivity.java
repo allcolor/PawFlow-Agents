@@ -500,6 +500,11 @@ public final class MainActivity extends Activity {
         WebSettings settings = view.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+        // Let the webchat select Android-safe navigation paths. In particular,
+        // graph pages open as top-level native WebView tabs instead of blob
+        // iframes, which can terminate Android's WebView renderer.
+        settings.setUserAgentString(
+                settings.getUserAgentString() + " PawFlowAndroid");
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);

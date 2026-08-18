@@ -284,6 +284,11 @@ function closeAudioTab(tabId) {
   if (_activeTab === tabId) switchTab('chat');
 }
 
+/** Whether the webchat is hosted by PawFlow's native Android WebView. */
+function isPawFlowAndroidApp() {
+  return /(?:^|\s)PawFlowAndroid(?:\/|\s|$)/.test(navigator.userAgent || '');
+}
+
 /** Add a browser tab (iframe pointing to a URL). One per label. */
 function addBrowserTab(label, iframeSrc) {
   const tabId = 'browse-' + label.replace(/[^a-zA-Z0-9._-]/g, '_');

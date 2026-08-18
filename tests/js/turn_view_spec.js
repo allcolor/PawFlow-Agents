@@ -815,15 +815,10 @@ test('a load-more page of stamped wakeup turns builds one titled block per turn'
 });
 
 // A page bringing back the OLDER HALF of a turn whose block is already on
-// screen opens a fragment block with a derived '-frag' identity. The fragment
-// must keep OWNING rows stamped with the turn's real id: forgetting the
-// original id made every later row of the same turn read as an identity
-// change — narration texts were reclassified as wakeup boundaries and left
-// at top level (three consecutive top-level agent messages), tool rows were
-// filed into the LIVE block far below, and the fragment block sat empty
-// ('0s Completed' with nothing under it). Observed on load-more in a CCI
-// conversation whose last turn is a long wakeup turn.
-test('the older half of an on-screen turn regroups into its fragment block', () => {
+// screen must rejoin that block. Pagination is an implementation detail: the
+// reader is owed exactly SCHEDULE/USER > BLOCK > LAST MESSAGE for the whole
+// turn, never one synthetic block and promoted message per loaded page.
+test('the older half of an on-screen turn rejoins one block', () => {
   const e = env('simplified');
   // The live tail of turn T is on screen, already grouped.
   const c9 = e.row('c9');
@@ -850,18 +845,15 @@ test('the older half of an on-screen turn regroups into its fragment block', () 
   ]);
   e.ctx.turnViewReconcile();
 
-  eq(topLevelIds(e).join(','), 'BLOCK,m3,BLOCK,a9',
-     'the fragment is ONE block promoting its own last text');
+  eq(topLevelIds(e).join(','), 'BLOCK,a9',
+     'pagination does not create another block or another outside message');
   const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
-  eq(blocks.length, 2, 'fragment block + live block, nothing else');
-  const frag = blocks[0]; const liveBlock = blocks[1];
-  for (const id of ['c0', 'r0', 'm1', 'c1', 'r1', 'm2', 'c2']) {
-    assert(frag.querySelector('[data-msgid="' + id + '"]'),
-           id + ' belongs to the fragment block');
-    assert(!liveBlock.querySelector('[data-msgid="' + id + '"]'),
-           id + ' must never land in the live block');
+  eq(blocks.length, 1, 'one turn has one block across every loaded page');
+  const block = blocks[0];
+  for (const id of ['c0', 'r0', 'm1', 'c1', 'r1', 'm2', 'c2', 'm3']) {
+    assert(block.querySelector('[data-msgid="' + id + '"]'),
+           id + ' belongs to the single turn block');
   }
-  assert(!frag.classList.contains('turn-working'), 'the fragment is closed');
 });
 
 // Observed on a real transcript (2026-08-14): a page boundary split a turn
@@ -924,7 +916,7 @@ test('a top-level row between two blocks blocks the adjacent merge', () => {
 
 // Same page shape, but the window starts on a narration text instead of a
 // tool row — the first row itself opens the fragment.
-test('a fragment page starting on a text keeps its texts grouped', () => {
+test('a fragment page starting on the schedule message preserves that boundary', () => {
   const e = env('simplified');
   const a9 = e.row('a9');
   a9.dataset.messageRole = 'assistant';
@@ -941,19 +933,55 @@ test('a fragment page starting on a text keeps its texts grouped', () => {
   ]);
   e.ctx.turnViewReconcile();
 
-  eq(topLevelIds(e).join(','), 'BLOCK,m3,BLOCK,a9',
-     'no narration text is left stray at top level');
-  eq(e.messages.querySelectorAll('.simple-turn-block').length, 2);
+  eq(topLevelIds(e).join(','), 'm1,BLOCK,a9',
+     'the schedule message bounds one complete block and one last message');
+  eq(e.messages.querySelectorAll('.simple-turn-block').length, 1);
+  const block = e.messages.querySelector('.simple-turn-block');
+  for (const id of ['c1', 'm2', 'c2', 'm3']) {
+    assert(block.querySelector('[data-msgid="' + id + '"]'),
+           id + ' stays inside the single detail block');
+  }
+});
+
+test('successive load-more pages keep only the earliest schedule boundary', () => {
+  const e = env('simplified');
+  const a9 = e.row('a9');
+  a9.dataset.messageRole = 'assistant';
+  a9.dataset.rawText = 'final answer';
+  e.ctx.turnViewIngest('assistant',
+    { msg_id: 'a9', turn_id: 'T', content: 'final answer' }, a9);
+  e.ctx.turnViewReconcile();
+
+  prependDeferredRows(e, [
+    { type: 'assistant', msg_id: 'm2', content: 'later narration', turn_id: 'T' },
+    { type: 'tool_call', msg_id: 'c2', turn_id: 'T' },
+  ]);
+  e.ctx.turnViewReconcile();
+  eq(topLevelIds(e).join(','), 'm2,BLOCK,a9',
+     'the oldest loaded message temporarily bounds the partial turn');
+  eq(e.messages.querySelector('.simple-turn-block').dataset.turnId, 'T',
+     'the first page keeps the real turn state');
+
+  prependDeferredRows(e, [
+    { type: 'assistant', msg_id: 'm1', content: 'scheduled start', turn_id: 'T' },
+    { type: 'tool_call', msg_id: 'c1', turn_id: 'T' },
+  ]);
+  e.ctx.turnViewReconcile();
+
+  eq(topLevelIds(e).join(','), 'm1,BLOCK,a9',
+     'the newly discovered schedule start replaces the page-local boundary');
+  eq(e.messages.querySelectorAll('.simple-turn-block').length, 1);
+  const block = e.messages.querySelector('.simple-turn-block');
+  for (const id of ['c1', 'm2', 'c2']) {
+    assert(block.querySelector('[data-msgid="' + id + '"]'),
+           id + ' stays inside the one detail block');
+  }
 });
 
 // A later page can bring back the turn's own USER row along with its older
-// rows, while the block a newer page built sits far below. Adopting that far
-// block filed the tool rows downward and stranded every narration text at
-// top level (_turnPromoteLast refuses a text sitting above the block) --
-// the user saw 'user > m1 > m2 > m3 > empty block' after load-more, still
-// broken in beta.188. The user row must leave the turn unopened so the rows
-// after it open their own fragment right there.
-test("a page bringing back the turn's own user row keeps narrations grouped", () => {
+// rows, while the block a newer page built sits below. The boundary anchors
+// that existing block and all older rows join it: USER > BLOCK > LAST MESSAGE.
+test("a page bringing back the turn's own user row reunifies the turn", () => {
   const e = env('simplified');
   // Newer half of turn T already on screen, grouped by an earlier page.
   const c9 = e.row('c9');
@@ -978,18 +1006,18 @@ test("a page bringing back the turn's own user row keeps narrations grouped", ()
   ]);
   e.ctx.turnViewReconcile();
 
-  eq(topLevelIds(e).join(','), 'T,BLOCK,m3,BLOCK,a9',
-     'user row, ONE fragment block promoting its last text, then the live half');
+  eq(topLevelIds(e).join(','), 'T,BLOCK,a9',
+     'user row, one detail block for the complete turn, then its last message');
   const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
-  eq(blocks.length, 2, 'fragment block + existing block, nothing else');
-  const frag = blocks[0];
-  for (const id of ['m1', 'c1', 'r1', 'm2', 'c2']) {
-    assert(frag.querySelector('[data-msgid="' + id + '"]'),
-           id + ' belongs to the fragment block');
+  eq(blocks.length, 1, 'one turn has one block after loading its older half');
+  const block = blocks[0];
+  for (const id of ['m1', 'c1', 'r1', 'm2', 'c2', 'm3']) {
+    assert(block.querySelector('[data-msgid="' + id + '"]'),
+           id + ' belongs to the single turn block');
   }
   // Reconciling again must not move anything: the layout is settled.
   e.ctx.turnViewReconcile();
-  eq(topLevelIds(e).join(','), 'T,BLOCK,m3,BLOCK,a9', 'a second pass is a no-op');
+  eq(topLevelIds(e).join(','), 'T,BLOCK,a9', 'a second pass is a no-op');
 });
 
 // Two detail blocks may never sit next to each other. A turn that produced

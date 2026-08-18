@@ -35,6 +35,12 @@ browser and in the app. The webchat sidebar's right-click menu offers
 **Open in new tab**; inside the app, `window.open`/`target=_blank` becomes a
 new native chat tab (`setSupportMultipleWindows` + `onCreateWindow`).
 
+The WebView appends `PawFlowAndroid` to its user agent so the webchat can use
+Android-safe navigation. Flow instance and template graphs open their
+same-origin URL in a native WebView tab; browsers continue to use the embedded
+blob-backed graph tab. Avoiding a graph iframe backed by a `blob:` URL keeps
+the Android renderer stable while preserving the authenticated session.
+
 ## System bars and keyboard
 
 `targetSdk 35` enforces edge-to-edge on Android 15+: every screen root is set

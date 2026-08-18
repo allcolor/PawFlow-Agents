@@ -231,10 +231,10 @@ function _turnOpenOrphanTurn(element, data) {
   if (container && element.parentNode !== container) return null;
   let id = _turnId(data) || ('turn-' + (++_turnSeq));
   // A page can bring back the OLDER HALF of a turn whose block is already on
-  // screen (load-more cutting the live turn). Reusing its id would clobber
-  // the existing state in simplifiedTurns and hand the runtime protection to
-  // the fragment. The fragment is its own block with a derived identity; the
-  // only-last-block-active pass then keeps it closed.
+  // screen (load-more cutting the live turn). Give the temporary state a
+  // derived identity so it cannot clobber the existing state while the page
+  // is being walked. Reconciliation immediately folds it back into the real
+  // turn: page boundaries must never become visible turn boundaries.
   const existing = simplifiedTurns.get(id);
   let fragOf = '';
   if (existing && existing.blockEl && existing.blockEl.isConnected) {
@@ -243,10 +243,8 @@ function _turnOpenOrphanTurn(element, data) {
   }
   const state = _turnCreateState(id, null, data || {}, element);
   if (!state) return null;
-  // The fragment still OWNS rows stamped with the turn's real id: without
-  // this, every later row of the same turn read as an identity change --
-  // narration texts became wakeup boundaries left at top level, tool rows
-  // were filed into the live block far below, and the fragment sat empty.
+  // Until reconciliation folds it into the real state, the temporary fragment
+  // still owns rows stamped with the turn's real id.
   if (fragOf) state.fragOf = fragOf;
   _turnOpen = { turnId: id, userEl: null, data: data || {}, state };
   return state;
@@ -1332,8 +1330,26 @@ function _turnIsWakeupBoundary(el, state) {
   if (_turnRowRole(el) !== 'assistant') return false;
   if (!String((el.dataset && el.dataset.rawText) || '').trim()) return false;
   const rowTurn = (el.dataset && el.dataset.turnId) || '';
-  return !!(rowTurn && state && state.turnId && rowTurn !== state.turnId
-            && rowTurn !== state.fragOf);
+  if (!rowTurn) return false;
+  if (state && state.turnId) {
+    return rowTurn !== state.turnId && rowTurn !== state.fragOf;
+  }
+  if (_turnOpen && _turnOpen.userEl && _turnOpen.turnId === rowTurn
+      && _turnOpen.userEl.parentNode === el.parentNode) {
+    // A boundary already encountered ABOVE this row owns it. A boundary left
+    // from the previous reconciliation but sitting BELOW this newly prepended
+    // row does not: the older row becomes the schedule boundary instead.
+    for (let node = _turnOpen.userEl; node; node = node.nextSibling) {
+      if (node === el) return false;
+    }
+  }
+  // The loaded window can begin on the scheduled turn's first assistant
+  // message while a newer page has already built the rest of that same turn
+  // farther down. It is still the turn boundary, not a page-local "last"
+  // message: keep it top-level so the later fragment merge yields
+  // SCHEDULE > BLOCK > LAST.
+  const existing = simplifiedTurns.get(rowTurn);
+  return !!(existing && existing.blockEl && existing.blockEl.isConnected);
 }
 
 // ── The display rule, enforced on the DOM ──────────────────────────────────
@@ -1426,6 +1442,64 @@ function _turnMergeAnswerlessInto(prev, next) {
   if (_turnOpen && _turnOpen.state === prev) _turnOpen = null;
 }
 
+// Loading older history may split one real turn across pages. The temporary
+// fragment above the already-rendered state is not another turn: move all its
+// detail rows to the HEAD of the real block in chronological order, including
+// the fragment's promoted page-local "last" message, then discard the shell.
+// The real turn's last message remains the sole top-level answer.
+function _turnMergeFragmentInto(prev, next) {
+  for (const key of Object.keys(prev.tabs || {})) {
+    const src = prev.tabs[key] && prev.tabs[key].bodyEl;
+    const dst = next.tabs[key] && next.tabs[key].bodyEl;
+    if (!src || !dst) continue;
+    if (key === 'messages' && prev.finalDetailEl && prev.finalDetailEl.parentNode) {
+      prev.finalDetailEl.remove();
+    }
+    const rows = Array.from(src.children);
+    if (key === 'messages' && prev.finalEl && prev.finalEl.isConnected
+        && !rows.includes(prev.finalEl)) {
+      rows.push(prev.finalEl);
+    }
+    const anchor = dst.firstChild;
+    for (const row of rows) dst.insertBefore(row, anchor);
+  }
+  for (const [id, el] of prev.elementsByMsgId) {
+    if (!next.elementsByMsgId.has(id)) next.elementsByMsgId.set(id, el);
+  }
+  for (const [id, el] of prev.toolElementsByCallId) {
+    if (!next.toolElementsByCallId.has(id)) next.toolElementsByCallId.set(id, el);
+  }
+  for (const [id, el] of prev.artifactElementsByFileId) {
+    if (!next.artifactElementsByFileId.has(id)) next.artifactElementsByFileId.set(id, el);
+  }
+  for (const [id, fid] of prev.artifactFileIdByCallId) {
+    if (!next.artifactFileIdByCallId.has(id)) next.artifactFileIdByCallId.set(id, fid);
+  }
+  // The older fragment may reveal the real boundary after a newer page used
+  // its first assistant row as a temporary schedule boundary. The earliest
+  // boundary wins; an actual user row always outranks an assistant surrogate.
+  if (prev.userEl && (!next.userEl || !_turnIsUserRow(next.userEl)
+      || _turnIsUserRow(prev.userEl))) {
+    next.userEl = prev.userEl;
+    next.userMsgId = prev.userMsgId;
+  }
+  if (!next.agentName && prev.agentName) {
+    next.identityRendered = false;
+    _turnUpdateIdentity(next, {
+      agent_name: prev.agentName,
+      llm_service: prev.llmService,
+    });
+  }
+  if (prev.startedAt && prev.startedAt < next.startedAt) {
+    next.startedAt = prev.startedAt;
+    _turnRenderElapsed(next);
+  }
+  _turnStopTransient(prev); _turnStopElapsed(prev);
+  prev.blockEl.remove();
+  simplifiedTurns.delete(prev.turnId);
+  if (_turnOpen && _turnOpen.state === prev) _turnOpen = null;
+}
+
 function turnViewReconcile() {
   if (!turnViewIsSimplified()) return;
   const container = document.getElementById('messages');
@@ -1458,6 +1532,15 @@ function turnViewReconcile() {
     if (el.classList.contains('simple-turn-block')) {
       const owner = simplifiedTurns.get(el.dataset.turnId || '');
       if (owner) {
+        // A load-more page started in the older half of this very turn. It
+        // temporarily needed its own state while walking forward, but the
+        // display contract is one boundary, one block and one last message
+        // for the complete turn -- regardless of page cuts.
+        if (state && state !== owner && !stateSeparated
+            && state.fragOf === owner.turnId) {
+          _turnMergeFragmentInto(state, owner);
+          touched.delete(state);
+        }
         // The block being filed above this one produced no visible answer
         // and nothing else separates them: fold it into this one instead of
         // letting two blocks sit adjacent.
@@ -1503,6 +1586,12 @@ function turnViewReconcile() {
         open = { turnId: id, userEl: el, data: {}, state: null };
       }
       _turnOpen = open;
+      // Rows that follow this newly encountered boundary may create its state.
+      // _passedOpenUser was seeded from the boundary left by the previous
+      // pass, which can sit farther down after load-more; keeping it false
+      // would open an anchorless orphan and later move the real block inside
+      // its own detail panel when the old boundary is absorbed.
+      _passedOpenUser = true;
       stateSeparated = false;
       continue;
     }

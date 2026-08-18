@@ -17,7 +17,12 @@ from core.mcp_server_store import MCPServerStore
 logger = logging.getLogger(__name__)
 _ROUTE_OWNER = "_published_mcp_server"
 _PROTOCOL_VERSION = "2025-03-26"
-_SUPPORTED_PROTOCOLS = {_PROTOCOL_VERSION, "2025-06-18"}
+_LATEST_LEGACY_PROTOCOL_VERSION = "2025-11-25"
+_SUPPORTED_PROTOCOLS = {
+    _PROTOCOL_VERSION,
+    "2025-06-18",
+    _LATEST_LEGACY_PROTOCOL_VERSION,
+}
 _MAX_REQUEST_BYTES = 2_000_000
 _SESSION_TTL_SECONDS = 8 * 3600
 
@@ -1160,7 +1165,10 @@ def handle_mcp_post(req) -> None:
         initialize = initializers[0]
         params = initialize.get("params") if isinstance(initialize.get("params"), dict) else {}
         requested = str(params.get("protocolVersion") or _PROTOCOL_VERSION)
-        protocol = requested if requested in _SUPPORTED_PROTOCOLS else _PROTOCOL_VERSION
+        protocol = (
+            requested if requested in _SUPPORTED_PROTOCOLS
+            else _LATEST_LEGACY_PROTOCOL_VERSION
+        )
         session_id = _new_session(server, key, protocol)
         logger.info(
             "[published-mcp] initialize server=%s kind=%s protocol=%s",

@@ -82,12 +82,12 @@ vision service. The call fails explicitly if the published agent has no usable
 vision service. PawFlow persists the ordinary text and compact image metadata
 in the conversation transcript, never inline image base64 payloads.
 
-## ChatGPT connector (URL-key access)
+## Web connectors (URL-key access)
 
-ChatGPT web's developer-mode apps only support OAuth or "No Authentication";
-they cannot send an `Authorization` header. For those clients a publication
-can issue **connector keys** (prefix `pfmcc_`), which embed the credential in
-the endpoint URL instead:
+Web clients such as ChatGPT and Claude support OAuth or a no-authentication
+remote MCP URL, but cannot send PawFlow's `Authorization` header. For those
+clients a publication can issue **connector keys** (prefix `pfmcc_`), which
+embed the credential in the endpoint URL instead:
 
 ```text
 https://pawflow.example/mcp/<opaque-server-id>/k/<pfmcc-connector-key>
@@ -98,11 +98,11 @@ Setup:
 1. In the publish dialog, use **ChatGPT connector → Create connector key**.
    The full URL (with the embedded key) is shown once; PawFlow stores only
    the key's SHA-256 hash.
-2. In ChatGPT, enable **Settings → Security and login → Developer mode**,
-   then create a new app from the Plugins page with the connector URL and
-   authentication set to **No Authentication**.
+2. Add the URL as a custom remote MCP connector without an OAuth client ID.
+   ChatGPT exposes this under developer-mode apps; Claude exposes it under
+   **Customize → Connectors**.
 3. Copy the **Bootstrap prompt** from the same dialog section and paste it as
-   the first message of the ChatGPT conversation. It instructs the remote
+   the first message of the external client's conversation. It instructs the remote
    model to load the PawFlow context (`get_initial_context`), keep its cursor
    in sync (`get_context_updates`), persist both sides of the dialogue
    (`send_user_message` / `send_agent_message` with idempotent `message_id`s),
@@ -122,6 +122,12 @@ a 404, because one-way clients replay stale sessions instead of
 re-initializing and then surface the 404 as "Resource not found" before
 disabling the whole connector. Every published-MCP request is logged at INFO
 level (`[published-mcp]`, key redacted) for diagnosis.
+
+PawFlow negotiates the legacy Streamable HTTP protocol revisions used by web
+connectors through `2025-11-25`. A client requesting a different legacy
+revision receives `2025-11-25`, the newest handshake-based revision PawFlow
+supports. The stateless `2026-07-28` protocol is a separate transport-era
+migration and is not selected by an `initialize` request.
 
 Key kinds never cross surfaces: a connector key is only valid as the URL path
 segment and is rejected as a Bearer header; a regular API key is only valid as

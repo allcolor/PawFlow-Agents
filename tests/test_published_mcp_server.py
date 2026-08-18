@@ -235,7 +235,16 @@ def test_link_relay_can_skip_automatic_default(monkeypatch):
     assert relay_bindings.get_default("conv-1", "agent-a") is None
 
 
-def test_mcp_initialize_creates_scoped_session(monkeypatch):
+@pytest.mark.parametrize(
+    ("requested", "negotiated"),
+    [
+        ("2025-03-26", "2025-03-26"),
+        ("2025-11-25", "2025-11-25"),
+        ("2099-01-01", "2025-11-25"),
+    ],
+)
+def test_mcp_initialize_creates_scoped_session(
+        monkeypatch, requested, negotiated):
     server = {
         "server_id": "srv_test",
         "owner_user_id": "alice",
@@ -250,14 +259,14 @@ def test_mcp_initialize_creates_scoped_session(monkeypatch):
         "jsonrpc": "2.0",
         "id": 1,
         "method": "initialize",
-        "params": {"protocolVersion": "2025-03-26"},
+        "params": {"protocolVersion": requested},
     })
     endpoint.handle_mcp_post(request)
     status, headers, payload = _decoded(request)
 
     assert status == 200
     assert payload["result"]["capabilities"] == {"tools": {}}
-    assert payload["result"]["protocolVersion"] == "2025-03-26"
+    assert payload["result"]["protocolVersion"] == negotiated
     assert headers["Mcp-Session-Id"] in endpoint._sessions
 
 

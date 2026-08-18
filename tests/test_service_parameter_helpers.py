@@ -31,6 +31,32 @@ def test_service_parameter_helper_returns_llm_fallback_without_api_key():
     assert any(v["value"] == "gpt-5.5" for v in data["values"])
 
 
+def test_secret_helper_lists_external_alias_without_materializing(
+        tmp_path, monkeypatch):
+    import core.paths as paths
+    from core.config_store import ConfigStore
+    from core.secret_resolver import SecretResolver
+    from core.service_parameter_helpers import get_service_parameter_helper
+
+    secrets_path = tmp_path / "global_secrets.json"
+    monkeypatch.setattr(paths, "GLOBAL_SECRETS_FILE", secrets_path)
+    ConfigStore.upsert_external_secret(
+        secrets_path, "REMOTE_TOKEN", "provider", {"key": "remote"})
+    monkeypatch.setattr(
+        SecretResolver, "resolve_name",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("the helper must not materialize secrets")))
+
+    data = get_service_parameter_helper(
+        "llmConnection", "api_key", {})
+
+    assert {
+        "value": "${REMOTE_TOKEN}",
+        "label": "REMOTE_TOKEN [global]",
+        "description": "Global secret reference.",
+    } in data["values"]
+
+
 def test_base_url_helper_accepts_labeled_url_tuples():
     from core.service_parameter_helpers import get_service_parameter_helper
 

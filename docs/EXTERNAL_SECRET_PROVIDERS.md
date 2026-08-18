@@ -114,6 +114,12 @@ PawFlow chooses the winning definition before authorization or provider access.
 If that winning external reference is denied, unavailable, or invalid, resolution
 fails closed. It never falls back to a lower-scope secret with the same name.
 
+Service-parameter secret helpers list local and external aliases without
+materializing their values. Private Gateway can also use an external alias in
+its explicit `secret_refs`; because gateway authentication runs before a user or
+conversation identity exists, those aliases are resolved from global scope only
+and fail closed when the provider is unavailable.
+
 ## Restrict access by conversation and agent
 
 Access policies contain exact logical secret names, not provider paths. Set the

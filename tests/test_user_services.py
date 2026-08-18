@@ -439,8 +439,10 @@ class TestPersistence:
     def test_live_service_resolves_sensitive_expression_after_decrypt(self, monkeypatch):
         marker = "$" + "{rclone_pass}"
         monkeypatch.setattr(
-            "core.expression._load_user_secrets",
-            lambda username: {"rclone_pass": "resolved-pass"},
+            "core.secret_resolver.SecretResolver.resolve_name",
+            lambda _self, key, **_kwargs: (
+                "resolved-pass" if key == "rclone_pass" else None
+            ),
         )
 
         self.reg.install(
@@ -461,13 +463,13 @@ class TestPersistence:
         marker_github_id = "$" + "{auth.github.client_id}"
         marker_github_secret = "$" + "{auth.github.client_secret}"
         monkeypatch.setattr(
-            "core.expression._load_user_secrets",
-            lambda username: {
+            "core.secret_resolver.SecretResolver.resolve_name",
+            lambda _self, key, **_kwargs: {
                 "auth.google.client_id": "google-id",
                 "auth.google.client_secret": "google-secret",
                 "auth.github.client_id": "github-id",
                 "auth.github.client_secret": "github-secret",
-            },
+            }.get(key),
         )
 
         self.reg.install(

@@ -77,8 +77,14 @@ class TestOAuthProviderService(unittest.TestCase):
         marker_secret = "$" + "{pf_oauth_expr_client_secret}"
         with patch("core.expression._load_global_parameters",
                    lambda: {"pf_oauth_expr_client_id": "resolved-id"}), \
-             patch("core.expression._load_global_secrets",
-                   lambda: {"pf_oauth_expr_client_secret": "resolved-secret"}):
+             patch(
+                 "core.secret_resolver.SecretResolver.resolve_name",
+                 lambda _self, key, **_kwargs: (
+                     "resolved-secret"
+                     if key == "pf_oauth_expr_client_secret"
+                     else None
+                 ),
+             ):
             for cls in (GoogleAuthProvider, GitHubAuthProvider):
                 provider = cls({
                     "client_id": marker_id,

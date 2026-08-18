@@ -273,9 +273,21 @@ def _load_gateway_secrets(secret_refs: Any = None) -> Dict[str, str]:
     refs = _split_refs(secret_refs)
     if not refs:
         return {}
-    from core.expression import _load_global_secrets
-    all_secrets = _load_global_secrets()
-    return {ref: str(all_secrets[ref]) for ref in refs if ref in all_secrets}
+    from core.secret_resolver import SecretResolver
+
+    resolver = SecretResolver()
+    resolved = {}
+    for ref in refs:
+        try:
+            value = resolver.resolve_name(ref, exact_scope="global")
+        except Exception as exc:
+            logger.warning(
+                "Private gateway secret '%s' could not be resolved: %s",
+                ref, exc)
+            continue
+        if value is not None:
+            resolved[ref] = str(value)
+    return resolved
 
 
 def verify_secret(submitted: str, secret_refs: Any = None) -> bool:

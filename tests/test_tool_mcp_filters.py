@@ -277,9 +277,14 @@ def test_comfy_cloud_mcp_secret_is_resolved_into_request_headers(monkeypatch):
         lambda cls: FakeStore()))
     monkeypatch.setattr("core.tool_mcp_filters.is_enabled",
                         lambda *args, **kwargs: True)
-    monkeypatch.setattr("core.expression._load_user_secrets", lambda user_id: {
-        "comfy_api_key": ConfigValue(value="comfy-secret"),
-    })
+    monkeypatch.setattr(
+        "core.secret_resolver.SecretResolver.resolve_name",
+        lambda _self, key, **_kwargs: (
+            ConfigValue(value="comfy-secret")
+            if key == "comfy_api_key"
+            else None
+        ),
+    )
     monkeypatch.setattr("core.tool_registry.discover_mcp_tools", fake_discover)
 
     registry = FakeRegistry()

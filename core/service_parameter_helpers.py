@@ -402,11 +402,15 @@ def apply_service_parameter_helpers(service_type: str, schema: Dict[str, Any]) -
 def _secret_values(user_id: str, conversation_id: str, store: Any) -> List[Dict[str, str]]:
     values: List[Dict[str, str]] = []
     try:
-        from core.expression import _load_global_secrets, _load_user_secrets
-        for key in sorted(_load_global_secrets().keys()):
+        from core.config_store import ConfigStore
+        from core.paths import GLOBAL_SECRETS_FILE, user_secrets_path
+
+        for key in sorted(ConfigStore.load_secrets_raw(
+                GLOBAL_SECRETS_FILE).keys()):
             values.append({"value": "${" + key + "}", "label": key + " [global]", "description": "Global secret reference."})
         if user_id:
-            for key in sorted(_load_user_secrets(user_id).keys()):
+            for key in sorted(ConfigStore.load_secrets_raw(
+                    user_secrets_path(user_id)).keys()):
                 values.append({"value": "${" + key + "}", "label": key + " [user]", "description": "User secret reference."})
     except Exception as exc:
         logging.getLogger(__name__).debug("Could not load global/user secret references", exc_info=exc)

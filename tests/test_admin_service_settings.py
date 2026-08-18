@@ -52,8 +52,10 @@ def test_private_gateway_service_registered_and_uses_explicit_secret_refs(monkey
     assert "privateGateway" in ServiceFactory.list_types()
 
     monkeypatch.setattr(
-        "core.expression._load_global_secrets",
-        lambda: {"gateway_key": ConfigValue(value="RoyBatty")},
+        "core.secret_resolver.SecretResolver.resolve_name",
+        lambda _self, key, **_kwargs: (
+            ConfigValue(value="RoyBatty") if key == "gateway_key" else None
+        ),
     )
 
     svc = private_gateway.PrivateGateway({
@@ -72,8 +74,10 @@ def test_private_gateway_ws_accepts_gateway_key_header(monkeypatch):
     from core.config_value import ConfigValue
 
     monkeypatch.setattr(
-        "core.expression._load_global_secrets",
-        lambda: {"relay_gateway": ConfigValue(value="open-sesame")},
+        "core.secret_resolver.SecretResolver.resolve_name",
+        lambda _self, key, **_kwargs: (
+            ConfigValue(value="open-sesame") if key == "relay_gateway" else None
+        ),
     )
 
     svc = private_gateway.PrivateGateway({
@@ -99,8 +103,10 @@ def test_private_gateway_http_accepts_gateway_key_header(monkeypatch):
     from core.config_value import ConfigValue
 
     monkeypatch.setattr(
-        "core.expression._load_global_secrets",
-        lambda: {"relay_gateway": ConfigValue(value="open-sesame")},
+        "core.secret_resolver.SecretResolver.resolve_name",
+        lambda _self, key, **_kwargs: (
+            ConfigValue(value="open-sesame") if key == "relay_gateway" else None
+        ),
     )
 
     class Handler:

@@ -8,7 +8,6 @@ function showConvMenu(e, cid, status) {
   if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:180px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
   menu.style.left = e.clientX + 'px';
   menu.style.top = e.clientY + 'px';
   document.body.appendChild(menu);
@@ -19,16 +18,11 @@ function showConvMenu(e, cid, status) {
   });
 
   const idle = !status || status === 'idle';
-  const item = (label, fn, opts) => {
+  const item = (label, fn, opts = {}) => {
     const d = document.createElement('div');
     d.textContent = label;
-    const disabled = opts && opts.disabled;
-    d.style.cssText = 'padding:6px 16px;cursor:' + (disabled ? 'default' : 'pointer') + ';font-size:12px;color:' + (disabled ? '#555' : (opts && opts.danger ? '#e94560' : '#e0e0e0'));
-    if (!disabled) {
-      d.onmouseenter = () => d.style.background = '#2a2a4a';
-      d.onmouseleave = () => d.style.background = '';
-      d.onclick = () => { menu.remove(); fn(); };
-    }
+    d.className = 'ctx-menu-item' + (opts.danger ? ' danger' : '');
+    d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
   const sep = () => {
@@ -45,16 +39,20 @@ function showConvMenu(e, cid, status) {
   item('\u{1F91D} ' + t('shareConversation'), () => showShareDialog(cid));
   item('\u{21BB} ' + t('refresh'), () => resumeConv(cid, true));
   item('\u{1F5D1} ' + t('delete'), () => deleteConversationById(cid), { danger: true });
-  sep();
-  item('\u{1F500} Fork', () => convFork(cid), { disabled: !idle });
-  item('\u{1F33F} Branch...', () => convBranchPrompt(cid), { disabled: !idle });
-  item('\u{21C4} Switch branch...', () => convSwitchBranchDialog(cid), { disabled: !idle });
-  item('\u{23EA} Rollback to...', () => convRollbackDialog(cid), { disabled: !idle });
+  if (idle) {
+    sep();
+    item('\u{1F500} Fork', () => convFork(cid));
+    item('\u{1F33F} Branch...', () => convBranchPrompt(cid));
+    item('\u{21C4} Switch branch...', () => convSwitchBranchDialog(cid));
+    item('\u{23EA} Rollback to...', () => convRollbackDialog(cid));
+  }
   sep();
   item('\u{1F3F7} Tag...', () => convTagPrompt(cid));
   item('\u{1F4CB} Compare branches...', () => convCompareBranchesDialog(cid));
-  sep();
-  item('\u{1F5D1} Delete branch...', () => convDeleteBranchDialog(cid), { danger: true, disabled: !idle });
+  if (idle) {
+    sep();
+    item('\u{1F5D1} Delete branch...', () => convDeleteBranchDialog(cid), { danger: true });
+  }
 
   setTimeout(() => document.addEventListener('click', function _close() { menu.remove(); document.removeEventListener('click', _close); }), 0);
 }

@@ -167,6 +167,18 @@ def test_conversation_expiry_and_theme_open_from_the_context_menu():
     assert "function showConversationSettings(cid)" in menu_js
 
 
+def test_conversation_context_menu_uses_theme_and_hides_busy_git_actions():
+    menu_js = Path("tasks/io/chat_ui/conversations_menu.js").read_text(encoding="utf-8")
+
+    assert "d.className = 'ctx-menu-item'" in menu_js
+    assert "d.onmouseenter" not in menu_js
+    assert "disabled: !idle" not in menu_js
+    assert "if (idle) {" in menu_js
+    assert "var(--pf-panel, #16213e)" in TEMPLATE_HTML
+    assert "var(--pf-text, #c0c0d0)" in TEMPLATE_HTML
+    assert ".ctx-menu-item:hover { background: var(--pf-assistant" in TEMPLATE_HTML
+
+
 def test_language_selector_renders_catalog_flags():
     languages = json.loads(
         Path("tasks/io/chat_ui/i18n/languages.json").read_text(encoding="utf-8")

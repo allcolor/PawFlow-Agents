@@ -754,12 +754,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .sched-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
               font-size: 12px; background: #1a1a2e; border: 1px solid #0f3460; color: #c0c0d0; }
 .sched-chip .sched-icon { color: #f9a825; }
-.ctx-menu { position: fixed; z-index: 9999; background: #16213e; border: 1px solid #0f3460;
+.ctx-menu { position: fixed; z-index: 9999; background: var(--pf-panel, #16213e); border: 1px solid var(--pf-border, #0f3460);
             border-radius: 6px; padding: 4px 0; min-width: 120px; box-shadow: 0 4px 12px rgba(0,0,0,.5); }
-.ctx-menu-item { padding: 6px 14px; font-size: 13px; color: #c0c0d0; cursor: pointer; }
-.ctx-menu-item:hover { background: #0f3460; color: #e0e0f0; }
-.ctx-menu-item.danger { color: #e94560; }
-.ctx-menu-item.danger:hover { background: #e94560; color: #fff; }
+.ctx-menu-item { padding: 6px 14px; font-size: 13px; color: var(--pf-text, #c0c0d0); cursor: pointer; }
+.ctx-menu-item:hover { background: var(--pf-assistant, #0f3460); color: var(--pf-accent, #e0e0f0); }
+.ctx-menu-item.danger { color: var(--pf-danger, #e94560); }
+.ctx-menu-item.danger:hover { background: color-mix(in srgb, var(--pf-danger, #e94560) 14%, transparent); }
 .attachments-preview { display: flex; flex: 0 0 auto; align-items: center; min-width: 0;
                        max-width: 148px; height: 44px; padding: 0 5px; overflow: visible; }
 .attachments-preview:empty { display: none; }

@@ -125,8 +125,14 @@ class TestExpression(unittest.TestCase):
 
         with patch("core.expression._load_global_parameters",
                    lambda: {"pf_lazy_expr_client_id": "resolved-id"}), \
-             patch("core.expression._load_global_secrets",
-                   lambda: {"pf_lazy_expr_client_secret": "resolved-secret"}):
+             patch(
+                 "core.secret_resolver.SecretResolver.resolve_name",
+                 lambda _self, key, **_kwargs: (
+                     "resolved-secret"
+                     if key == "pf_lazy_expr_client_secret"
+                     else None
+                 ),
+             ):
             providers = cfg.get("providers")
             self.assertEqual(providers["github"]["client_id"], "resolved-id")
             self.assertEqual(providers["github"]["client_secret"], "resolved-secret")

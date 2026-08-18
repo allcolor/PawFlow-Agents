@@ -207,6 +207,21 @@ def test_aws_secrets_manager_adapter_extracts_json_field():
     assert value.version == "version-7"
 
 
+def test_vault_adapter_rejects_non_http_addresses():
+    from core.secret_provider_adapters import HashicorpVaultKvAdapter
+
+    adapter = HashicorpVaultKvAdapter({
+        "address": "file:///etc",
+        "token": "vault-token",
+    })
+
+    with pytest.raises(ValueError, match="http or https"):
+        adapter.fetch(
+            {"path": "passwd"},
+            SecretResolveContext("TOKEN", "global", ""),
+        )
+
+
 def test_wave_a_adapters_are_registered():
     import core.secret_provider_adapters  # noqa: F401
 

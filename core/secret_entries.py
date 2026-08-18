@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-EXTERNAL_SECRET_TYPE = "external_secret"
+EXTERNAL_SECRET_TYPE = "external_secret"  # nosec B105 - type discriminator
 EXTERNAL_SECRET_VERSION = 1
 _PROVIDER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 

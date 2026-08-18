@@ -123,6 +123,10 @@ class HashicorpVaultKvAdapter(SecretProviderAdapter):
 
     def fetch(self, locator, context):
         address = _required(self.config, "address").rstrip("/")
+        parsed_address = urllib.parse.urlparse(address)
+        if (parsed_address.scheme not in {"http", "https"}
+                or not parsed_address.netloc):
+            raise ValueError("Vault address must use http or https")
         token = _required(self.config, "token")
         path = _required(locator, "path").strip("/")
         mount = str(locator.get("mount") or self.config.get("mount") or "secret").strip("/")
@@ -142,7 +146,8 @@ class HashicorpVaultKvAdapter(SecretProviderAdapter):
         request = urllib.request.Request(url, headers=headers, method="GET")
         timeout = float(self.config.get("timeout_seconds", 15))
         try:
-            with urllib.request.urlopen(
+            # The address scheme and authority are validated above.
+            with urllib.request.urlopen(  # nosec B310
                     request, timeout=timeout,
                     context=ssl.create_default_context()) as response:
                 payload = json.loads(response.read().decode("utf-8"))

@@ -8,7 +8,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-SECRET_ACCESS_KEY = "secret_access"
+SECRET_ACCESS_KEY = "secret_access"  # nosec B105 - metadata key, not a password
 _VALID_SCOPES = {"conv", "user", "global"}
 
 

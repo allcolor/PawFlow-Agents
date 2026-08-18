@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.210] — 2026-08-18
+
+### Added
+
+- The complete blocking release procedure is now version-controlled under
+  `docs/` and mirrored by a sourced project wiki page.
+
+### Fixed
+
+- Named configurable identifiers, including relays, services, tools, flow
+  tasks, resources, filesystem selectors, tunnel bindings, and published MCP
+  filters, now resolve case-insensitively while preserving canonical spelling
+  and rejecting ambiguous case-only duplicates.
+
 ## [1.0.0-beta.209] — 2026-08-18
 
 ### Fixed

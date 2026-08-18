@@ -69,8 +69,92 @@ def test_summarizer_review_calls_llm_without_tools(monkeypatch):
     assert result["risk"] == "low"
     assert captured["tools"] is None
     assert captured["temperature"] == 0
+    assert captured["max_tokens"] == 0
     assert captured["response_format"] == "json"
     assert captured["call_agent_name"] == "package-reviewer"
+
+
+def test_review_parser_accepts_fenced_json():
+    from core.package_review import _parse_review
+
+    result = _parse_review(
+        "```json\n"
+        '{"risk":"low","allowed":true,"requires_human_review":false,'
+        '"findings":[],"sanitized_summary":"Safe.","recommended_changes":[]}'
+        "\n```",
+        "review_llm",
+    )
+
+    assert result["risk"] == "low"
+    assert result["allowed"] is True
+    assert result["findings"] == []
+
+
+def test_review_retries_once_after_truncated_json(monkeypatch):
+    from core import package_review
+
+    responses = iter([
+        '{"risk":"low","allowed":tr',
+        json.dumps({
+            "risk": "low",
+            "allowed": True,
+            "requires_human_review": False,
+            "findings": [],
+            "sanitized_summary": "Safe.",
+            "recommended_changes": [],
+        }),
+    ])
+    calls = []
+
+    class ReviewerService:
+        def complete(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(content=next(responses))
+
+    monkeypatch.setattr(
+        package_review,
+        "_resolve_review_llm",
+        lambda *_: (ReviewerService(), SimpleNamespace(service_id="reviewer"), "review_llm"),
+    )
+
+    result = package_review.review_skill_content(
+        {"prompt": "Summarize code carefully."}, operation="review"
+    )
+
+    assert result["risk"] == "low"
+    assert result["allowed"] is True
+    assert len(calls) == 2
+    assert calls[0]["max_tokens"] == 0
+    assert "invalid or truncated JSON" in calls[1]["messages"][-1].content
+
+
+def test_review_fails_closed_after_second_invalid_json(monkeypatch):
+    from core import package_review
+
+    calls = []
+
+    class ReviewerService:
+        def complete(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(content='{"risk":"low"')
+
+    monkeypatch.setattr(
+        package_review,
+        "_resolve_review_llm",
+        lambda *_: (ReviewerService(), None, "review_llm"),
+    )
+
+    result = package_review.review_skill_content(
+        {"prompt": "Summarize code carefully."}, operation="review"
+    )
+
+    assert result["risk"] == "block"
+    assert result["allowed"] is False
+    assert len(calls) == 2
+    assert any(
+        finding["category"] == "reviewer_invalid_json"
+        for finding in result["findings"]
+    )
 
 
 def test_manage_resource_review_skill_uses_summarizer(monkeypatch):

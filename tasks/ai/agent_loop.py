@@ -331,7 +331,10 @@ class AgentLoopTask(
             },
             "max_tokens": {
                 "type": "integer", "required": False, "default": 4096,
-                "description": "Maximum response tokens per LLM call",
+                "description": (
+                    "Maximum visible tokens in the final answer. Reasoning and "
+                    "tool calls do not consume this budget."
+                ),
             },
             "max_iterations": {
                 "type": "integer", "required": False, "default": 1000,

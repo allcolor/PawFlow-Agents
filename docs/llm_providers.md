@@ -348,11 +348,13 @@ Configure it exactly like `openai`: `api_key`, optional `base_url`,
 chat/completions — a `base_url` already carrying a version segment gets
 `/responses`, one without gets `/v1/responses`.
 
-`reasoning_effort` is sent as `reasoning.effort`, and `max_tokens` as
-`max_output_tokens` (one name, unlike chat/completions where it depends on the
-model generation). Unsupported top-level parameters are specified to be
-ignored rather than rejected, so the same payload shape is safe to send to any
-endpoint implementing the format.
+`reasoning_effort` is sent as `reasoning.effort`. PawFlow enforces `max_tokens`
+locally on the visible terminal answer instead of sending a provider-side output
+ceiling, because that ceiling may also count hidden reasoning or tool-call turns.
+Use a cost budget when the entire run, including reasoning and tools, needs a hard
+spending envelope. Unsupported top-level parameters are specified to be ignored
+rather than rejected, so the same payload shape is safe to send to any endpoint
+implementing the format.
 
 Known implementations: OpenAI, and DeepSeek at `https://api.deepseek.com`.
 DeepSeek's implementation is stateless — `previous_response_id`,

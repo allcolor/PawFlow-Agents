@@ -179,7 +179,7 @@ class _PACPhase1Mixin:
         st._svc_cfg = getattr(st.resolved_svc, 'config', {}) or {}
         st._cfg = lambda key, default: self._pac_cfg(st, key, default)
         st.temperature = float(st._cfg("temperature", 0.7))
-        st.max_tokens = int(self.config.get("max_context_size", 0))
+        st.max_tokens = int(st._cfg("max_tokens", 4096))
         st.max_iterations = int(st._cfg("max_iterations", 1000))
         st.max_consecutive_tool_calls = int(st._cfg("max_consecutive_tool_calls", 100))
         st._resilience_style = st._cfg("resilience_style", "balanced")

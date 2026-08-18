@@ -12,7 +12,7 @@ import time
 import errno
 from typing import List, Optional
 
-from core.token_counter import count_messages_tokens
+from core.token_counter import count_messages_tokens, truncate_tokens
 from core._llm_types import (
     AgentSuperseded,
     CCCompactDetected,
@@ -61,6 +61,18 @@ class _LLMClientDriverMixin:
             current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
         return False
 
+    @staticmethod
+    def _limit_final_content(result: LLMResponse,
+                             max_tokens: int) -> LLMResponse:
+        """Limit terminal visible text without touching reasoning or tools."""
+        if max_tokens <= 0 or result.tool_calls or not result.content:
+            return result
+        limited = truncate_tokens(result.content, max_tokens)
+        if limited != result.content:
+            result.content = limited
+            result.finish_reason = "length"
+        return result
+
     def _apply_call_identity(self, *, call_user_id=None,
                              call_conversation_id=None, call_agent_name=None,
                              call_event_cid=None) -> None:
@@ -102,7 +114,8 @@ class _LLMClientDriverMixin:
             messages: Conversation messages (supports tool_calls and tool results).
             model: Model name override.
             temperature: Sampling temperature.
-            max_tokens: Max response tokens.
+            max_tokens: Maximum visible tokens in the terminal response. Hidden
+                reasoning and tool calls do not consume this budget.
             response_format: "json" for JSON mode (OpenAI only).
             tools: Tool definitions for function calling / tool_use.
             call_user_id, call_conversation_id, call_agent_name,
@@ -130,19 +143,25 @@ class _LLMClientDriverMixin:
             call_event_cid=call_event_cid,
         )
         model = model or self.default_model
+        # Provider fields such as max_completion_tokens, max_output_tokens and
+        # Anthropic max_tokens include hidden reasoning and/or tool-call payloads.
+        # They therefore cannot represent PawFlow's final-visible-answer budget.
+        # Let the transport use its own ceiling and enforce max_tokens locally
+        # after the response type (tool turn vs terminal answer) is known.
+        wire_max_tokens = 0
 
         def _do_complete(mdl):
             self._circuit_before_call(mdl)
             start = time.time()
             if self.provider in OPENAI_WIRE_PROVIDERS:
-                result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools,
+                result = self._complete_openai(messages, mdl, temperature, wire_max_tokens, response_format, tools,
                                                 call_user_id=call_user_id or "",
                                                 call_conversation_id=call_conversation_id or "")
             elif self.provider in RESPONSES_WIRE_PROVIDERS:
                 # The Responses API has one parser, and it is the streaming
                 # one; complete() is the same call without callbacks.
                 result = self._stream_openai_responses(
-                    messages, mdl, temperature, max_tokens, tools, None,
+                    messages, mdl, temperature, wire_max_tokens, tools, None,
                     call_user_id=call_user_id or "",
                     call_conversation_id=call_conversation_id or "")
             elif self.provider == "claude-code":
@@ -151,7 +170,7 @@ class _LLMClientDriverMixin:
                 # streaming callback. The LLMResponse carries the final
                 # text + tool_calls.
                 result = self._stream_claude_code(
-                    messages, mdl, temperature, max_tokens, tools,
+                    messages, mdl, temperature, wire_max_tokens, tools,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
                     call_agent_name=call_agent_name,
@@ -160,7 +179,7 @@ class _LLMClientDriverMixin:
                 )
             elif self.provider == "claude-code-interactive":
                 result = self._stream_claude_code_interactive(
-                    messages, mdl, temperature, max_tokens, tools,
+                    messages, mdl, temperature, wire_max_tokens, tools,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
                     call_agent_name=call_agent_name,
@@ -169,7 +188,7 @@ class _LLMClientDriverMixin:
                 )
             elif self.provider == "antigravity-interactive":
                 result = self._stream_antigravity_interactive(
-                    messages, mdl, temperature, max_tokens, tools,
+                    messages, mdl, temperature, wire_max_tokens, tools,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
                     call_agent_name=call_agent_name,
@@ -178,7 +197,7 @@ class _LLMClientDriverMixin:
                 )
             elif self.provider == "codex-app-server":
                 result = self._stream_codex_app_server(
-                    messages, mdl, temperature, max_tokens, tools,
+                    messages, mdl, temperature, wire_max_tokens, tools,
                     thinking_budget=thinking_budget,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
@@ -188,7 +207,7 @@ class _LLMClientDriverMixin:
                 )
             elif self.provider == "codex-interactive":
                 result = self._stream_codex_interactive(
-                    messages, mdl, temperature, max_tokens, tools,
+                    messages, mdl, temperature, wire_max_tokens, tools,
                     thinking_budget=thinking_budget,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
@@ -198,7 +217,7 @@ class _LLMClientDriverMixin:
                 )
             elif self.provider == "gemini":
                 result = self._stream_gemini(
-                    messages, mdl, temperature, max_tokens, tools,
+                    messages, mdl, temperature, wire_max_tokens, tools,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
                     call_agent_name=call_agent_name,
@@ -206,10 +225,11 @@ class _LLMClientDriverMixin:
                     call_ephemeral_stream=call_ephemeral_stream,
                 )
             else:
-                result = self._complete_anthropic(messages, mdl, temperature, max_tokens, tools, thinking_budget=thinking_budget,
+                result = self._complete_anthropic(messages, mdl, temperature, wire_max_tokens, tools, thinking_budget=thinking_budget,
                                                    call_user_id=call_user_id or "",
                                                    call_conversation_id=call_conversation_id or "")
             result.duration_ms = (time.time() - start) * 1000
+            self._limit_final_content(result, max_tokens)
             self._record_response_context_usage(
                 result,
                 call_conversation_id=call_conversation_id or "",
@@ -234,30 +254,6 @@ class _LLMClientDriverMixin:
             except (LLMClientError, Exception) as e:
                 last_error = e
                 err_str = str(e)
-
-                # Context overflow auto-recovery: reduce max_tokens and retry once
-                overflow = self._parse_context_overflow(err_str)
-                if overflow is not None and max_tokens > 0:
-                    safety_buffer = 1000
-                    reduced = max_tokens - overflow - safety_buffer
-                    if reduced > 0:
-                        logger.warning(
-                            "Context overflow detected (overflow=%d tokens). "
-                            "Reducing max_tokens %d → %d and retrying.",
-                            overflow, max_tokens, reduced,
-                        )
-                        max_tokens = reduced
-                        try:
-                            return _do_complete(model)
-                        except Exception as retry_err:
-                            logger.error("Context overflow retry also failed: %s", retry_err)
-                            raise
-                    else:
-                        logger.error(
-                            "Context overflow detected (overflow=%d) but reduced max_tokens "
-                            "would be non-positive (%d). Cannot auto-recover.",
-                            overflow, reduced,
-                        )
 
                 if ((isinstance(e, LLMCallError) and not e.retryable)
                         or self._is_permanent_request_error(err_str)):
@@ -412,13 +408,54 @@ class _LLMClientDriverMixin:
             call_event_cid=call_event_cid,
         )
         model = model or self.default_model
+        wire_max_tokens = 0
+        streamed_raw = ""
+        streamed_visible = ""
+
+        def _visible_callback(delta):
+            nonlocal streamed_raw, streamed_visible
+            if not callback or not delta:
+                return
+            streamed_raw += delta
+            if max_tokens <= 0:
+                callback(delta)
+                streamed_visible += delta
+                return
+            limited = truncate_tokens(streamed_raw, max_tokens)
+            if limited.startswith(streamed_visible):
+                visible_delta = limited[len(streamed_visible):]
+                if visible_delta:
+                    callback(visible_delta)
+                streamed_visible = limited
+
+        def _terminal_turn_callback(text, tool_calls, thinking=""):
+            nonlocal streamed_raw, streamed_visible
+            if tool_calls:
+                if callback and streamed_raw.startswith(streamed_visible):
+                    remainder = streamed_raw[len(streamed_visible):]
+                    if remainder:
+                        callback(remainder)
+                # A tool turn is outside the terminal-response budget. Start a
+                # fresh visible counter for the answer produced after the tool.
+                streamed_raw = ""
+                streamed_visible = ""
+            if not turn_callback:
+                return
+            visible = text
+            if not tool_calls and max_tokens > 0:
+                visible = truncate_tokens(text or "", max_tokens)
+            try:
+                turn_callback(visible, tool_calls, thinking)
+            except TypeError:
+                turn_callback(visible, tool_calls)
 
         def _do_stream(mdl):
+            nonlocal streamed_visible
             self._circuit_before_call(mdl)
             start = time.time()
             if self.provider in OPENAI_WIRE_PROVIDERS:
                 try:
-                    result = self._stream_openai(messages, mdl, temperature, max_tokens, tools, callback,
+                    result = self._stream_openai(messages, mdl, temperature, wire_max_tokens, tools, _visible_callback,
                                                   thinking_callback=thinking_callback,
                                                   call_user_id=call_user_id or "",
                                                   call_conversation_id=call_conversation_id or "")
@@ -435,28 +472,28 @@ class _LLMClientDriverMixin:
                         mdl, self._redact_relay_proxy_url(base_url), err,
                     )
                     result = self._complete_openai(
-                        messages, mdl, temperature, max_tokens, None, tools,
+                        messages, mdl, temperature, wire_max_tokens, None, tools,
                         call_user_id=call_user_id or "",
                         call_conversation_id=call_conversation_id or "",
                     )
                     if result.thinking and thinking_callback:
                         thinking_callback(result.thinking)
-                    if result.content and callback:
-                        callback(result.content)
+                    if result.content:
+                        _visible_callback(result.content)
                     logger.info(
                         "OpenAI relay non-streaming fallback succeeded model=%s base_url=%s tokens_out=%s",
                         result.model or mdl, self._redact_relay_proxy_url(base_url), result.tokens_out,
                     )
             elif self.provider in RESPONSES_WIRE_PROVIDERS:
                 result = self._stream_openai_responses(
-                    messages, mdl, temperature, max_tokens, tools, callback,
+                    messages, mdl, temperature, wire_max_tokens, tools, _visible_callback,
                     thinking_callback=thinking_callback,
                     call_user_id=call_user_id or "",
                     call_conversation_id=call_conversation_id or "")
             elif self.provider == "claude-code":
-                result = self._stream_claude_code(messages, mdl, temperature, max_tokens, tools, callback,
+                result = self._stream_claude_code(messages, mdl, temperature, wire_max_tokens, tools, _visible_callback,
                                                   thinking_callback=thinking_callback,
-                                                  turn_callback=turn_callback,
+                                                  turn_callback=_terminal_turn_callback,
                                                   block_callback=block_callback,
                                                   call_user_id=call_user_id,
                                                   call_conversation_id=call_conversation_id,
@@ -465,9 +502,9 @@ class _LLMClientDriverMixin:
                                                   call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "claude-code-interactive":
                 result = self._stream_claude_code_interactive(
-                    messages, mdl, temperature, max_tokens, tools, callback,
+                    messages, mdl, temperature, wire_max_tokens, tools, _visible_callback,
                     thinking_callback=thinking_callback,
-                    turn_callback=turn_callback,
+                    turn_callback=_terminal_turn_callback,
                     block_callback=block_callback,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
@@ -476,9 +513,9 @@ class _LLMClientDriverMixin:
                     call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "antigravity-interactive":
                 result = self._stream_antigravity_interactive(
-                    messages, mdl, temperature, max_tokens, tools, callback,
+                    messages, mdl, temperature, wire_max_tokens, tools, _visible_callback,
                     thinking_callback=thinking_callback,
-                    turn_callback=turn_callback,
+                    turn_callback=_terminal_turn_callback,
                     block_callback=block_callback,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
@@ -486,10 +523,10 @@ class _LLMClientDriverMixin:
                     call_event_cid=call_event_cid,
                     call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "codex-app-server":
-                result = self._stream_codex_app_server(messages, mdl, temperature, max_tokens, tools, callback,
+                result = self._stream_codex_app_server(messages, mdl, temperature, wire_max_tokens, tools, _visible_callback,
                                                        thinking_budget=thinking_budget,
                                                        thinking_callback=thinking_callback,
-                                                       turn_callback=turn_callback,
+                                                       turn_callback=_terminal_turn_callback,
                                                        block_callback=block_callback,
                                                        call_user_id=call_user_id,
                                                        call_conversation_id=call_conversation_id,
@@ -498,10 +535,10 @@ class _LLMClientDriverMixin:
                                                        call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "codex-interactive":
                 result = self._stream_codex_interactive(
-                    messages, mdl, temperature, max_tokens, tools, callback,
+                    messages, mdl, temperature, wire_max_tokens, tools, _visible_callback,
                     thinking_budget=thinking_budget,
                     thinking_callback=thinking_callback,
-                    turn_callback=turn_callback,
+                    turn_callback=_terminal_turn_callback,
                     block_callback=block_callback,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
@@ -509,9 +546,9 @@ class _LLMClientDriverMixin:
                     call_event_cid=call_event_cid,
                     call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "gemini":
-                result = self._stream_gemini(messages, mdl, temperature, max_tokens, tools, callback,
+                result = self._stream_gemini(messages, mdl, temperature, wire_max_tokens, tools, _visible_callback,
                                                thinking_budget=thinking_budget,
-                                               turn_callback=turn_callback,
+                                               turn_callback=_terminal_turn_callback,
                                                block_callback=block_callback,
                                                call_user_id=call_user_id,
                                                call_conversation_id=call_conversation_id,
@@ -519,12 +556,18 @@ class _LLMClientDriverMixin:
                                                call_event_cid=call_event_cid,
                                                call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "anthropic":
-                result = self._stream_anthropic(messages, mdl, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback,
+                result = self._stream_anthropic(messages, mdl, temperature, wire_max_tokens, tools, _visible_callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback,
                                                  call_user_id=call_user_id or "",
                                                  call_conversation_id=call_conversation_id or "")
             else:
                 raise LLMClientError(f"Unknown provider '{self.provider}'")
             result.duration_ms = (time.time() - start) * 1000
+            if result.tool_calls and callback and streamed_raw.startswith(streamed_visible):
+                remainder = streamed_raw[len(streamed_visible):]
+                if remainder:
+                    callback(remainder)
+                    streamed_visible = streamed_raw
+            self._limit_final_content(result, max_tokens)
             self._record_response_context_usage(
                 result,
                 call_conversation_id=call_conversation_id or "",
@@ -556,30 +599,6 @@ class _LLMClientDriverMixin:
                     raise
                 last_error = e
                 err_str = str(e)
-
-                # Context overflow auto-recovery: reduce max_tokens and retry once
-                overflow = self._parse_context_overflow(err_str)
-                if overflow is not None and max_tokens > 0:
-                    safety_buffer = 1000
-                    reduced = max_tokens - overflow - safety_buffer
-                    if reduced > 0:
-                        logger.warning(
-                            "Context overflow detected in stream (overflow=%d tokens). "
-                            "Reducing max_tokens %d → %d and retrying.",
-                            overflow, max_tokens, reduced,
-                        )
-                        max_tokens = reduced
-                        try:
-                            return _do_stream(model)
-                        except Exception as retry_err:
-                            logger.error("Context overflow stream retry also failed: %s", retry_err)
-                            raise
-                    else:
-                        logger.error(
-                            "Context overflow in stream (overflow=%d) but reduced max_tokens "
-                            "would be non-positive (%d). Cannot auto-recover.",
-                            overflow, reduced,
-                        )
 
                 if ((isinstance(e, LLMCallError) and not e.retryable)
                         or self._is_permanent_request_error(err_str)):

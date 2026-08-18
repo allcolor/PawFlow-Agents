@@ -2,6 +2,7 @@
 
 import json
 import time
+from types import SimpleNamespace
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -10,6 +11,7 @@ register_all_tasks()
 
 from core import FlowFile, TaskFactory, ServiceFactory
 from core.llm_client import LLMClient, LLMClientError
+from core.token_counter import count_tokens
 from services.llm_connection import LLMConnectionService, LLMMessage, LLMResponse
 
 
@@ -52,6 +54,151 @@ def test_transport_stream_disconnect_is_retryable_marker():
     )
 
     assert LLMClient._is_transient_transport_error(err) is True
+
+
+def test_response_budget_limits_only_terminal_visible_content(monkeypatch):
+    client = LLMClient(provider="openai", config={"api_key": "sk-test", "max_retries": 1})
+    captured = {}
+
+    def fake_complete(self, messages, model, temperature, max_tokens, response_format, tools, **kwargs):
+        captured["wire_max_tokens"] = max_tokens
+        return LLMResponse(
+            content="one two three four five six",
+            model=model,
+            tokens_out=42,
+            finish_reason="stop",
+        )
+
+    monkeypatch.setattr(LLMClient, "_complete_openai", fake_complete)
+
+    result = client.complete(
+        [LLMMessage("user", "hi", conversation_id="conv1")], max_tokens=3
+    )
+
+    assert captured["wire_max_tokens"] == 0
+    assert count_tokens(result.content) <= 3
+    assert result.finish_reason == "length"
+    assert result.tokens_out == 42
+
+
+def test_response_budget_does_not_truncate_tool_turn(monkeypatch):
+    client = LLMClient(provider="openai", config={"api_key": "sk-test", "max_retries": 1})
+    content = "one two three four five six"
+
+    def fake_complete(self, messages, model, temperature, max_tokens, response_format, tools, **kwargs):
+        assert max_tokens == 0
+        return LLMResponse(
+            content=content,
+            model=model,
+            finish_reason="tool_calls",
+            tool_calls=[SimpleNamespace(id="call_1", name="lookup", arguments={})],
+        )
+
+    monkeypatch.setattr(LLMClient, "_complete_openai", fake_complete)
+
+    result = client.complete(
+        [LLMMessage("user", "hi", conversation_id="conv1")], max_tokens=3
+    )
+
+    assert result.content == content
+    assert result.finish_reason == "tool_calls"
+
+
+def test_stream_response_budget_limits_visible_terminal_content(monkeypatch):
+    client = LLMClient(provider="openai", config={"api_key": "sk-test", "max_retries": 1})
+    emitted = []
+
+    def fake_stream(self, messages, model, temperature, max_tokens, tools, callback, **kwargs):
+        assert max_tokens == 0
+        callback("one two three ")
+        callback("four five six")
+        return LLMResponse(
+            content="one two three four five six",
+            model=model,
+            tokens_out=42,
+            finish_reason="stop",
+        )
+
+    monkeypatch.setattr(LLMClient, "_stream_openai", fake_stream)
+
+    result = client.complete_stream(
+        [LLMMessage("user", "hi", conversation_id="conv1")],
+        max_tokens=3,
+        callback=emitted.append,
+    )
+
+    assert count_tokens("".join(emitted)) <= 3
+    assert count_tokens(result.content) <= 3
+    assert result.finish_reason == "length"
+    assert result.tokens_out == 42
+
+
+def test_stream_response_budget_restores_complete_tool_turn(monkeypatch):
+    client = LLMClient(provider="openai", config={"api_key": "sk-test", "max_retries": 1})
+    content = "one two three four five six"
+    emitted = []
+
+    def fake_stream(self, messages, model, temperature, max_tokens, tools, callback, **kwargs):
+        assert max_tokens == 0
+        callback(content)
+        return LLMResponse(
+            content=content,
+            model=model,
+            finish_reason="tool_calls",
+            tool_calls=[SimpleNamespace(id="call_1", name="lookup", arguments={})],
+        )
+
+    monkeypatch.setattr(LLMClient, "_stream_openai", fake_stream)
+
+    result = client.complete_stream(
+        [LLMMessage("user", "hi", conversation_id="conv1")],
+        max_tokens=3,
+        callback=emitted.append,
+    )
+
+    assert "".join(emitted) == content
+    assert result.content == content
+    assert result.finish_reason == "tool_calls"
+
+
+def test_stream_response_budget_resets_after_internal_tool_turn(monkeypatch):
+    client = LLMClient(provider="claude-code", config={"max_retries": 1})
+    tool_text = "one two three four five six"
+    final_text = "alpha beta gamma delta epsilon zeta"
+    emitted = []
+    turns = []
+
+    def fake_stream(self, messages, model, temperature, max_tokens, tools, callback, **kwargs):
+        assert max_tokens == 0
+        callback(tool_text)
+        kwargs["turn_callback"](tool_text, [SimpleNamespace(name="lookup")])
+        callback(final_text)
+        kwargs["turn_callback"](final_text, [])
+        return LLMResponse(
+            content=final_text,
+            model=model,
+            tokens_out=99,
+            finish_reason="stop",
+        )
+
+    monkeypatch.setattr(LLMClient, "_stream_claude_code", fake_stream)
+
+    result = client.complete_stream(
+        [LLMMessage("user", "hi", conversation_id="conv1")],
+        max_tokens=3,
+        callback=emitted.append,
+        turn_callback=lambda text, tool_calls, thinking="": turns.append(
+            (text, tool_calls)
+        ),
+    )
+
+    visible = "".join(emitted)
+    assert visible.startswith(tool_text)
+    assert count_tokens(visible[len(tool_text):]) <= 3
+    assert turns[0][0] == tool_text
+    assert count_tokens(turns[1][0]) <= 3
+    assert count_tokens(result.content) <= 3
+    assert result.tokens_out == 99
 
 
 def test_non_transport_cli_exit_is_not_retryable_marker():

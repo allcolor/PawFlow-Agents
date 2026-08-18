@@ -670,6 +670,7 @@ class TestAgentLoopTask(unittest.TestCase):
             "api_key": "test-key",
             "provider": "openai",
             "system_prompt": "You are helpful.",
+            "max_tokens": 123,
         })
         ff = FlowFile(content=b"Hi there")
         ff.set_attribute("http.auth.principal", "testuser")
@@ -680,6 +681,7 @@ class TestAgentLoopTask(unittest.TestCase):
         assert results[0].get_attribute("agent.iterations") == "1"
         assert results[0].get_attribute("agent.tools_called") == ""
         assert results[0].get_attribute("agent.model") == "gpt-4o"
+        assert mock_complete.call_args.kwargs["max_tokens"] == 123
 
     @patch.object(LLMClient, 'complete')
     def test_tool_call_loop(self, mock_complete):

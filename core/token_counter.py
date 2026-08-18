@@ -77,6 +77,28 @@ def count_tokens(text: str, multiplier: float = 1.0) -> int:
     return raw
 
 
+def truncate_tokens(text: str, max_tokens: int) -> str:
+    """Return a prefix containing at most ``max_tokens`` visible tokens.
+
+    This helper is deliberately about visible text only. Provider usage can
+    also include hidden reasoning and tool-call payloads; those remain intact
+    for accounting and must never consume a final-answer token budget.
+    """
+    if not text or max_tokens <= 0:
+        return text
+    encoding = _get_encoding()
+    if encoding is not None:
+        tokens = encoding.encode(text, disallowed_special=())
+        if len(tokens) <= max_tokens:
+            return text
+        return encoding.decode(tokens[:max_tokens])
+    raw = text.encode("utf-8")
+    byte_limit = max_tokens * 4
+    if len(raw) <= byte_limit:
+        return text
+    return raw[:byte_limit].decode("utf-8", errors="ignore")
+
+
 def count_messages_tokens(messages: list, multiplier: float = 1.0) -> int:
     """Count tokens for a list of LLM messages, scaled by `multiplier`."""
     total = 0

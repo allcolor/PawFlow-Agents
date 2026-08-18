@@ -322,21 +322,53 @@ def _llm_review(payload: Dict[str, Any], *, user_id: str,
         }
     try:
         from core.llm_client import LLMMessage
-        response = svc.complete(
-            messages=[
-                LLMMessage(role="system", content=_REVIEW_SYSTEM_PROMPT, conversation_id=conversation_id or "package_review"),
-                LLMMessage(role="user", content=json.dumps(payload, ensure_ascii=False, indent=2), conversation_id=conversation_id or "package_review"),
-            ],
-            temperature=0,
-            max_tokens=1600,
-            response_format="json",
-            tools=None,
-            call_user_id=user_id,
-            call_conversation_id=conversation_id,
-            call_agent_name="package-reviewer",
-            call_ephemeral_stream=True,
-        )
-        parsed = _parse_review(getattr(response, "content", ""), llm_service)
+        scope_id = conversation_id or "package_review"
+        messages = [
+            LLMMessage(role="system", content=_REVIEW_SYSTEM_PROMPT,
+                       conversation_id=scope_id),
+            LLMMessage(role="user",
+                       content=json.dumps(payload, ensure_ascii=False, indent=2),
+                       conversation_id=scope_id),
+        ]
+        parsed = None
+        for attempt in range(2):
+            response = svc.complete(
+                messages=messages,
+                temperature=0,
+                # Review size depends on findings. A provider-facing ceiling can
+                # include hidden reasoning and truncate otherwise valid JSON.
+                max_tokens=0,
+                response_format="json",
+                tools=None,
+                call_user_id=user_id,
+                call_conversation_id=conversation_id,
+                call_agent_name="package-reviewer",
+                call_ephemeral_stream=True,
+            )
+            raw = getattr(response, "content", "")
+            parsed = _parse_review(raw, llm_service)
+            invalid_json = any(
+                finding.get("category") == "reviewer_invalid_json"
+                for finding in parsed.get("findings", [])
+                if isinstance(finding, dict)
+            )
+            if not invalid_json or attempt:
+                break
+            messages.extend([
+                LLMMessage(role="assistant", content=str(raw or ""),
+                           conversation_id=scope_id),
+                LLMMessage(
+                    role="user",
+                    content=(
+                        "Your previous response was invalid or truncated JSON. "
+                        "Return one complete, compact JSON object only, with all "
+                        "required review keys and no markdown commentary."
+                    ),
+                    conversation_id=scope_id,
+                ),
+            ])
+        if parsed is None:
+            raise RuntimeError("reviewer returned no verdict")
         if sdef is not None:
             parsed["service_id"] = getattr(sdef, "service_id", "")
         return parsed
@@ -372,7 +404,16 @@ def _resolve_review_llm(user_id: str, conversation_id: str):
 
 def _parse_review(raw: str, reviewer: str) -> Dict[str, Any]:
     try:
-        data = json.loads(str(raw or "").strip())
+        text = str(raw or "").strip()
+        if text.startswith("```"):
+            first_newline = text.find("\n")
+            if first_newline >= 0:
+                text = text[first_newline + 1:]
+            if text.rstrip().endswith("```"):
+                text = text.rstrip()[:-3].rstrip()
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("reviewer JSON must be an object")
     except Exception as exc:
         return {
             "risk": "block",

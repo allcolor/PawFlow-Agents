@@ -15,3 +15,11 @@ def test_release_tag_explicitly_forbids_the_v_prefix():
     assert "git push origin 1.0.0-beta.N" in contributing
     assert "git tag v1.0.0-beta" not in contributing
     assert "git push origin v1.0.0-beta" not in contributing
+
+
+def test_release_workflow_marks_semver_suffixes_as_prereleases():
+    workflow = Path(".github/workflows/release-assets.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "prerelease: ${{ contains(env.RELEASE_TAG, '-') }}" in workflow

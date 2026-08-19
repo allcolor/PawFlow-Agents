@@ -120,7 +120,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                         conversation_id, agent_name),
                     emitted_tool_use_ids=state.emitted_tool_use_ids,
                     emitted_tool_result_ids=state.emitted_tool_result_ids,
-                    consumer_epoch=consumer_epoch)
+                    consumer_epoch=consumer_epoch,
+                    liveness_callback=lambda: pool.session_is_live(state.name))
                 response = coord.run(getattr(self, "_abort", None))
             finally:
                 event_service.release_consumer(
@@ -181,7 +182,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
                     conversation_id, agent_name),
                 emitted_tool_use_ids=state.emitted_tool_use_ids,
                 emitted_tool_result_ids=state.emitted_tool_result_ids,
-                consumer_epoch=consumer_epoch)
+                consumer_epoch=consumer_epoch,
+                liveness_callback=lambda: pool.session_is_live(state.name))
             response = coord.run(getattr(self, "_abort", None))
         finally:
             event_service.release_consumer(state.session_token, consumer_epoch)

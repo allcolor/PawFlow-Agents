@@ -61,6 +61,18 @@ _NO_PROXY_EVENT_TIMEOUT_SECONDS = _env_seconds(
     ("PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS", "PAWFLOW_CCI_NOEVENT_TIMEOUT_MS"),
     default=300.0,
 )
+# Mid-turn dead-session detection. A tmux server that crashes mid-turn takes
+# the CLI down with it: no Stop hook, no proxy event and no error ever arrive,
+# so the coordinator would wait forever while queued messages pile up behind an
+# "active" turn that can never end (the user's only way out was a force stop).
+# After the event stream has been silent this long, probe container/tmux
+# liveness; two consecutive dead probes fail the turn. A silent wire is normal
+# during long local tool runs, so a live probe just resets and waits.
+_LIVENESS_PROBE_IDLE_SECONDS = _env_seconds(
+    ("PAWFLOW_CCI_LIVENESS_PROBE_IDLE_SECONDS",),
+    ("PAWFLOW_CCI_LIVENESS_PROBE_IDLE_MS",),
+    default=20.0,
+)
 
 
 def _event_tool_args(event: dict) -> dict:
@@ -115,7 +127,8 @@ class _CCITurnCoordinator:
                  turn_callback=None, touch_callback=None,
                  usage_callback=None,
                  emitted_tool_use_ids=None, emitted_tool_result_ids=None,
-                 consumer_epoch: int = 0, consumer_kind: str = "request"):
+                 consumer_epoch: int = 0, consumer_kind: str = "request",
+                 liveness_callback=None):
         self.event_service = event_service
         self.session_token = session_token
         # Exclusive read ownership of the session's event queue. Without it
@@ -203,6 +216,11 @@ class _CCITurnCoordinator:
         self._pending_response_hold_logged = False
         self._turn_callback_sent = False
         self._saw_proxy_event = False
+        # Mid-turn dead-session probe (container + tmux). None disables it —
+        # test doubles and callers without a pool keep the old behavior.
+        self.liveness_callback = liveness_callback
+        self._last_liveness_probe_at = 0.0
+        self._liveness_dead_probes = 0
         self._first_event_at = 0.0
         self._first_model_content_at = 0.0
         self._last_event_at = 0.0
@@ -262,6 +280,44 @@ class _CCITurnCoordinator:
                 len(self._open_messages_requests), self._awaiting_followup)
         return True
 
+    def _probe_liveness(self, started_at: float) -> None:
+        """Fail the turn when the interactive session died mid-turn.
+
+        Called only on empty polls. Not armed post-Stop (that drain is
+        already bounded) and throttled to one probe per idle window; a
+        probe that ERRORS is not evidence of death (a slow docker daemon
+        must not kill a live turn), only two consecutive dead probes are.
+        """
+        if self.liveness_callback is None or self._stop_seen:
+            return
+        now = time.time()
+        idle_since = self._last_event_at or started_at
+        if now - idle_since < _LIVENESS_PROBE_IDLE_SECONDS:
+            return
+        if now - self._last_liveness_probe_at < _LIVENESS_PROBE_IDLE_SECONDS:
+            return
+        self._last_liveness_probe_at = now
+        try:
+            alive = bool(self.liveness_callback())
+        except Exception:
+            logger.debug("cci liveness probe errored; treating as alive",
+                         exc_info=True)
+            alive = True
+        if alive:
+            self._liveness_dead_probes = 0
+            return
+        self._liveness_dead_probes += 1
+        logger.warning(
+            "[cci-provider] session=%s liveness probe found the container/"
+            "tmux dead mid-turn (%d/2)",
+            self.session_token[:8], self._liveness_dead_probes)
+        if self._liveness_dead_probes < 2:
+            return
+        raise RuntimeError(
+            "Interactive CLI session died mid-turn (container or tmux "
+            "session gone); failing the turn so queued messages are not "
+            "stuck behind it — the session is recreated on the next message")
+
     def _wait_event(self, timeout: float) -> dict:
         """Poll the session queue, asserting we still own the stream.
 
@@ -291,6 +347,7 @@ class _CCITurnCoordinator:
             timeout = 0.05 if self._stop_seen else 0.25
             event = self._wait_event(timeout)
             if not event:
+                self._probe_liveness(started_at)
                 if not self._saw_proxy_event:
                     waited = time.time() - started_at
                     if waited >= _NO_PROXY_EVENT_TIMEOUT_SECONDS:

@@ -617,6 +617,18 @@ class _InteractiveContainerSpawnMixin:
         except Exception:
             return False
 
+    def session_is_live(self, name: str) -> bool:
+        """Whether the interactive session can still complete a turn.
+
+        True only while the container runs AND its ``pawflow`` tmux session
+        exists. Used as the turn coordinator's mid-turn liveness probe: a
+        tmux server that crashes mid-turn takes the CLI down with it, so no
+        Stop hook, proxy event or error ever arrives on its own — without
+        this probe the coordinator waits forever and every queued message
+        stays stuck behind a turn that can never end.
+        """
+        return self._is_alive(name) and self._tmux_is_alive(name)
+
     def _tmux_is_alive(self, name: str) -> bool:
         """Return whether the interactive ``pawflow`` tmux session exists.
 

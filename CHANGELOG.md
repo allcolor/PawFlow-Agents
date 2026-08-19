@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Openspace 3D view: the floor ring around each agent is now a status
+  carousel — brains (🧠) orbit and zoom in/out while the agent thinks, tools
+  (🔧🛠️⚙️) spin around it while a tool runs, and Zzz (💤) drift around an
+  idle agent. The carousel derives from the live SSE state every frame and
+  its sprite textures are disposed on every swap and on desk retirement.
+
+### Fixed
+
+- Relay: the host helper no longer dies silently when an aborted client makes
+  `accept()` report `ConnectionAbortedError`/`ConnectionResetError` (observed
+  on Windows as repeated "Host helper health check failed: [Errno 104]
+  Connection reset by peer"); those failures are transient and the helper
+  keeps accepting. The WSL bridge now listens on its own free port instead of
+  the Windows helper target port, so loopback route discovery can no longer
+  reconnect the bridge to itself.
+- Claude Code / Codex interactive: a tmux server crash mid-turn no longer
+  hangs the agent forever. The tmux takes the CLI down with it, so no Stop
+  hook, proxy event or error ever arrived and the turn coordinator waited
+  indefinitely — every new message queued behind an "active" turn that could
+  never end, and only a force stop + resend unblocked the conversation. The
+  coordinator now probes container/tmux liveness once the event stream has
+  been silent for `PAWFLOW_CCI_LIVENESS_PROBE_IDLE_SECONDS` (default 20s,
+  never post-Stop); two consecutive dead probes fail the turn with a clear
+  error, the pending queue drains, and the next message recreates the
+  session. Wired on the request, interrupt, and manual-capture paths of both
+  interactive providers; probe errors (slow docker daemon) never count as
+  death.
+
 ## [1.0.0-beta.219] — 2026-08-19
 
 ### Added

@@ -1592,6 +1592,27 @@ class CCInteractiveEventService(BaseService):
             logger.debug("CC interactive capture meta publish failed",
                          exc_info=True)
 
+    def _capture_liveness_callback(self, state):
+        """Mid-turn dead-session probe for captured (human-typed) turns.
+
+        A capture holds the active-agent marker: if the tmux server crashes
+        mid-capture, its coordinator would otherwise wait forever with the
+        marker up and every new message queued behind a turn that can never
+        end. Returns None (probe disabled) when the proxy never reported the
+        container it runs in.
+        """
+        container = getattr(state, "container_id", "") or ""
+        if not container:
+            return None
+        if state.provider == "codex-interactive":
+            from core.codex_interactive_pool import CodexInteractivePool
+            pool = CodexInteractivePool.instance()
+        else:
+            from core.claude_code_interactive_pool import (
+                InteractiveClaudeCodePool)
+            pool = InteractiveClaudeCodePool.instance()
+        return lambda: pool.session_is_live(container)
+
     def _run_manual_capture(self, session_token: str) -> None:
         state = self.session_state(session_token)
         announced = False
@@ -1638,7 +1659,8 @@ class CCInteractiveEventService(BaseService):
                 self, session_token, callback=_text_cb,
                 block_callback=_block_cb, emitted_tool_use_ids=_use_ids,
                 emitted_tool_result_ids=_result_ids,
-                consumer_kind="capture", consumer_epoch=capture_epoch)
+                consumer_kind="capture", consumer_epoch=capture_epoch,
+                liveness_callback=self._capture_liveness_callback(state))
             response = coord.run()
             _ensure_final_text(response.content or "")
             self._publish_capture_meta(state, response)

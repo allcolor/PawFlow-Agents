@@ -360,6 +360,22 @@ Timing controls are read once when the provider modules are imported:
   failed. Default: `300` seconds.
 - `PAWFLOW_CCI_NO_PROXY_EVENT_TIMEOUT_MS` is the millisecond alias for the same
   value. The seconds variable wins if both are set.
+- `PAWFLOW_CCI_LIVENESS_PROBE_IDLE_SECONDS` (default `20`; `_MS` alias) arms
+  the mid-turn dead-session probe. A tmux server crash mid-turn takes the CLI
+  down with it — no `Stop` hook, proxy event or error ever arrives — so the
+  coordinator used to wait forever while new messages queued behind an
+  "active" turn that could never end. Once the event stream has been silent
+  for this long (never post-Stop, where the drain is already bounded), the
+  coordinator probes container + tmux liveness (`session_is_live`); two
+  consecutive dead probes fail the turn with a clear error so the pending
+  queue drains and the next message recreates the session. A probe that
+  ERRORS (slow docker daemon) never counts as death, and a live probe clears
+  accumulated strikes. Silence itself stays legal: long local tool runs
+  produce no wire events, and their probes simply come back alive. Wired on
+  the request, interrupt, and manual-capture paths of both Claude Code and
+  Codex interactive (the capture derives its probe from the proxy-reported
+  `container_id`; a session whose proxy never reported one keeps the old
+  behavior).
 - `PAWFLOW_CCI_PASTE_SETTLE_SECONDS` sets the delay after `paste-buffer` and
   before the first `Enter`. Claude Code defaults to `0.2` seconds. Codex uses
   at most `0.2` seconds even when a larger inherited override is configured.

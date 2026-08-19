@@ -3236,8 +3236,12 @@ def test_cc_interactive_event_service_publishes_manual_tmux_response(monkeypatch
         def __init__(self, service, session_token, callback=None,
                      block_callback=None, consumer_kind="request",
                      emitted_tool_use_ids=None,
-                     emitted_tool_result_ids=None, consumer_epoch=0):
+                     emitted_tool_result_ids=None, consumer_epoch=0,
+                     liveness_callback=None):
             assert session_token == "sess"
+            # No proxy ever reported a container for this session, so the
+            # mid-turn dead-session probe stays disarmed.
+            assert liveness_callback is None
             # The capture path must declare itself as the safety net so it
             # yields to a live request coordinator instead of splitting the
             # session's event stream with it.

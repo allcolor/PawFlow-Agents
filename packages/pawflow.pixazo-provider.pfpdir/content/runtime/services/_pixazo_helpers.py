@@ -8,6 +8,7 @@ catalog must monkeypatch ``_CATALOG_CACHE`` on THIS module.
 
 import json
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core import ServiceError
@@ -47,9 +48,11 @@ def _as_bool(value: Any) -> bool:
 
 
 def _catalog_path() -> str:
-    """Locate the Pixazo catalog JSON in the repository."""
-    import core.paths as _p
-    return str(_p.REPOSITORY_DIR / "configs" / "pixazo_catalog.json")
+    """Locate the Pixazo catalog bundled beside this runtime."""
+    return str(
+        Path(__file__).resolve().parents[1]
+        / "repository" / "configs" / "pixazo_catalog.json"
+    )
 
 
 _CATALOG_CACHE: Optional[Dict[str, Any]] = None

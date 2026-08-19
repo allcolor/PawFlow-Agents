@@ -198,6 +198,11 @@ def _register_flow_task_proxy(data: Dict[str, Any]) -> None:
     register_package_task_proxy(data["task_type"], data)
 
 
+def _register_service_provider_proxy(data: Dict[str, Any]) -> None:
+    from services.package_runtime_service import register_package_service_proxy
+    register_package_service_proxy(data)
+
+
 def _install_default_relay_id(conversation_id: str, agent_name: str = "") -> str:
     if not conversation_id:
         return ""
@@ -335,8 +340,6 @@ def _write_service(data: Dict[str, Any], user_id: str, conversation_id: str,
     service_type = str(data.get("service_type") or data.get("type") or "")
     if not service_id or not service_type:
         raise PfpError("service_id and service_type are required")
-    if service_type == "packageRuntime":
-        import services.package_runtime_service  # noqa: F401
     reg_scope = SCOPE_CONV if scope == "conversation" else SCOPE_USER
     scope_id = conversation_id if scope == "conversation" else user_id
     reg = ServiceRegistry.get_instance()
@@ -348,12 +351,6 @@ def _write_service(data: Dict[str, Any], user_id: str, conversation_id: str,
     config = dict(data.get("config") or {})
     config["installed_from"] = data.get("installed_from", {})
     config["package_capabilities"] = data.get("package_capabilities", {})
-    if service_type == "packageRuntime":
-        config["package_runtime_context"] = {
-            "user_id": user_id,
-            "conversation_id": conversation_id if scope == "conversation" else "",
-            "scope": scope,
-        }
     reg.install(
         reg_scope, scope_id, service_id, service_type,
         config=config,

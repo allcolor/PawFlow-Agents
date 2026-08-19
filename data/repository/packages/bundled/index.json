@@ -106,6 +106,78 @@
       "objects": [
         "skill:operate-comfyui"
       ]
+    },
+    {
+      "package": "pawflow.pixazo-provider",
+      "version": "1.0.0",
+      "description": "Official Pixazo media service providers extracted from PawFlow core.",
+      "category": "Media providers",
+      "artifact": "pawflow.pixazo-provider-1.0.0.pfp",
+      "sha256": "sha256:bb038109daef92c3d7114bca3fb82f25ee1e5da8ebd08c21547a3b6da3eb6c32",
+      "package_size": 36464,
+      "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
+      "tags": [
+        "pixazo",
+        "image",
+        "video",
+        "audio",
+        "3d"
+      ],
+      "objects": [
+        "service_provider:image",
+        "service_provider:video",
+        "service_provider:audio",
+        "service_provider:3d",
+        "service_provider:upscale",
+        "service_provider:try-on",
+        "service_provider:lipsync",
+        "service_provider:trainer"
+      ]
+    },
+    {
+      "package": "pawflow.wavespeed-provider",
+      "version": "1.0.0",
+      "description": "Official WaveSpeedAI media service providers extracted from PawFlow core.",
+      "category": "Media providers",
+      "artifact": "pawflow.wavespeed-provider-1.0.0.pfp",
+      "sha256": "sha256:884aa409739782705b4526f8cfc5aadffcea3daa536337ce1f402f759dffe9fd",
+      "package_size": 95006,
+      "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
+      "tags": [
+        "wavespeed",
+        "image",
+        "video",
+        "audio",
+        "3d"
+      ],
+      "objects": [
+        "service_provider:image",
+        "service_provider:video",
+        "service_provider:audio",
+        "service_provider:voice-clone",
+        "service_provider:3d",
+        "service_provider:upscale",
+        "service_provider:try-on",
+        "service_provider:lipsync",
+        "service_provider:trainer"
+      ]
+    },
+    {
+      "package": "pawflow.kling-provider",
+      "version": "1.0.0",
+      "description": "Official Kling video service provider extracted from PawFlow core.",
+      "category": "Media providers",
+      "artifact": "pawflow.kling-provider-1.0.0.pfp",
+      "sha256": "sha256:8c549002a22ea14b811731777d9f560da01c2ed9218d01b84fa07e29187c8e8f",
+      "package_size": 7256,
+      "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
+      "tags": [
+        "kling",
+        "video"
+      ],
+      "objects": [
+        "service_provider:video"
+      ]
     }
   ]
 }

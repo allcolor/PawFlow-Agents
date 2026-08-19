@@ -1,0 +1,58 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.kling-provider",
+  "version": "1.0.0",
+  "description": "Official Kling video service provider extracted from PawFlow core.",
+  "category": "Media providers",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ="
+  },
+  "origin": {
+    "source": "pawflow"
+  },
+  "objects": [
+    {
+      "id": "service_provider:video",
+      "type": "service_provider",
+      "name": "Kling AI Video Generation",
+      "service_type": "klingVideoGeneration",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "Kling AI Video Generation",
+      "category": "video",
+      "parameters": {
+        "api_key": {
+          "description": "Kling API key (Bearer token)",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "model": {
+          "default": "kling-v2.6-std",
+          "description": "Model: kling-v2.6-pro, kling-v2.6-std, kling-v2.5-turbo",
+          "required": false,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 5,
+          "description": "Seconds between status polls",
+          "required": false,
+          "type": "integer"
+        },
+        "timeout": {
+          "default": 300,
+          "description": "Max wait time for video generation (seconds)",
+          "required": false,
+          "type": "integer"
+        }
+      },
+      "operations": {
+        "generate": {}
+      },
+      "provides": [
+        "media.video_generation"
+      ]
+    }
+  ]
+}

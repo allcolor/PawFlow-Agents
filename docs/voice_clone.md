@@ -77,7 +77,8 @@ owner-scoped FileStore reference once, stores the registered sample, and sends
 its bytes directly as the daemon's multipart `voice_wav` field on each cache
 miss. No public reference URL or provider-side voice resource is required.
 
-`services/wavespeed_voice_clone_service.py` — every `speak` call
+`packages/pawflow.wavespeed-provider.pfpdir/content/runtime/services/wavespeed_voice_clone_service.py`
+— every `clone_speak` call
 submits a WaveSpeedAI prediction using the configured voice-clone
 model (for example Qwen3 TTS, OmniVoice, or MiniMax voice clone),
 the reference audio URL, and the target text. The rendered audio URL

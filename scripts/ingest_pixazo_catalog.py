@@ -2,8 +2,8 @@
 
 Parses docs/pixazo.md (extracted from pixazo.ai via the Docker
 browser relay, Cloudflare-bypass) and emits catalog entries for
-every API ID it finds — ready to merge into
-data/repository/configs/pixazo_catalog.json.
+every API ID it finds — ready to merge into the bundled Pixazo provider
+package catalog.
 
 What it does NOT do:
 - It does NOT override existing catalog entries. Manually curated
@@ -24,7 +24,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOC = ROOT / "docs" / "pixazo.md"
-CATALOG = ROOT / "data" / "repository" / "configs" / "pixazo_catalog.json"
+CATALOG = (
+    ROOT / "packages" / "pawflow.pixazo-provider.pfpdir"
+    / "content" / "runtime" / "repository" / "configs" / "pixazo_catalog.json"
+)
 
 
 # ── Model-id inference from endpoint path ─────────────────────────────

@@ -320,25 +320,6 @@ class _ServiceRegistryIOMixin:
         Uses the same canonical scope merge as resolve_all so service pickers
         and typed lookups cannot diverge.
         """
-        if service_type == "packageRuntime":
-            result = []
-            seen = set()
-            for scope, sid in self._scope_chain(user_id=user_id, conv_id=conv_id):
-                self._ensure_loaded(scope, sid)
-                rsid = self._resolve_scope_id(scope, sid)
-                with self._data_lock:
-                    defs = list(self._definitions.get(rsid, {}).values())
-                for sdef in defs:
-                    if sdef.service_type != service_type:
-                        continue
-                    if enabled_only and not sdef.enabled:
-                        continue
-                    seen_key = _package_runtime_dedupe_key(sdef)
-                    if seen_key in seen:
-                        continue
-                    result.append(sdef)
-                    seen.add(seen_key)
-            return result
         result: Dict[str, ServiceDef] = {}
         for scope, sid in reversed(list(
                 self._scope_chain(user_id=user_id, conv_id=conv_id))):
@@ -353,6 +334,29 @@ class _ServiceRegistryIOMixin:
                     from core.identifier import identifier_key
                     result[identifier_key(svc_id)] = sdef
         return list(result.values())
+
+    def resolve_package_services(self, *, user_id: str = "", conv_id: str = "",
+                                 enabled_only: bool = True) -> List[ServiceDef]:
+        """Return scoped service definitions backed by a PFP runtime."""
+        result = []
+        seen = set()
+        for scope, sid in self._scope_chain(user_id=user_id, conv_id=conv_id):
+            self._ensure_loaded(scope, sid)
+            rsid = self._resolve_scope_id(scope, sid)
+            with self._data_lock:
+                defs = list(self._definitions.get(rsid, {}).values())
+            for sdef in defs:
+                runtime = (sdef.config or {}).get("package_runtime")
+                if not isinstance(runtime, dict) or not runtime.get("object_id"):
+                    continue
+                if enabled_only and not sdef.enabled:
+                    continue
+                seen_key = _package_runtime_dedupe_key(sdef)
+                if seen_key in seen:
+                    continue
+                result.append(sdef)
+                seen.add(seen_key)
+        return result
 
     def resolve_all(self, *, user_id: str = "", conv_id: str = "",
                     enabled_only: bool = False) -> Dict[str, ServiceDef]:

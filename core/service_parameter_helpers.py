@@ -423,47 +423,6 @@ def _secret_values(user_id: str, conversation_id: str, store: Any) -> List[Dict[
     return values
 
 
-def _catalog_json_models(filename: str, category: str = "") -> List[Dict[str, Any]]:
-    root = Path(__file__).resolve().parents[1]
-    for path in [root / "services" / filename, root / "config" / filename]:
-        if not path.exists():
-            continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logging.getLogger(__name__).debug("Could not load model catalog %s", path, exc_info=exc)
-            continue
-        models = data.get("models") or {}
-        out = []
-        for mid, meta in sorted(models.items()):
-            if category and str(meta.get("category") or "") != category:
-                continue
-            label = str(meta.get("label") or mid)
-            desc = str(meta.get("description") or meta.get("category") or "Catalog model.")
-            out.append({"value": mid, "label": label, "description": desc[:240]})
-        return out
-    return []
-
-
-def _category_for_service(service_type: str) -> str:
-    for prefix in ("pixazo", "wavespeed"):
-        if not service_type.startswith(prefix):
-            continue
-        rest = service_type[len(prefix):]
-        return {
-            "ImageGeneration": "image",
-            "VideoGeneration": "video",
-            "AudioGeneration": "audio",
-            "3DGeneration": "3d",
-            "TryOn": "try_on",
-            "Lipsync": "lipsync",
-            "Upscale": "upscale",
-            "Trainer": "trainer",
-            "VoiceClone": "voice_clone",
-        }.get(rest, "")
-    return ""
-
-
 def _fetch_json(url: str, headers: Dict[str, str], timeout: int = 8) -> Dict[str, Any]:
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - curated provider model endpoints.
@@ -530,10 +489,6 @@ def _fallback_models(service_type: str, parameter: str, config: Dict[str, Any]) 
         if parameter == "embedding_model":
             return _values(EMBEDDING_MODELS.get(family) or EMBEDDING_MODELS.get(str(config.get("provider") or "openai"), []))
         return _values(LLM_MODELS.get(family) or LLM_MODELS.get(str(config.get("provider") or "openai"), []))
-    if service_type.startswith("pixazo"):
-        return _catalog_json_models("pixazo_catalog.json", _category_for_service(service_type))
-    if service_type.startswith("wavespeed"):
-        return _catalog_json_models("wavespeed_catalog.json", _category_for_service(service_type))
     if parameter in {"stt_model"}:
         return _values(STATIC_MODELS.get(service_type, STATIC_MODELS.get("voicebox", [])))
     return _values(STATIC_MODELS.get(service_type, []))

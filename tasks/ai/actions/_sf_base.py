@@ -112,7 +112,6 @@ _SERVICE_CATEGORY_BY_TYPE = {
     "httpAuthValidator": "security",
     "sslContext": "security",
     "privateGateway": "security",
-    "packageRuntime": "system",
 }
 
 _DISABLED_DIRECT_SERVICE_INSTALL_TYPES = {"filesystem"}

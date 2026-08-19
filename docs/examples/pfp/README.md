@@ -6,7 +6,7 @@ They intentionally use `ed25519:REPLACE_WITH_PUBLIC_KEY`; replace it with the pu
 Examples:
 
 - `tool_echo.pfpdir`: installs a Python subprocess tool named `echo`.
-- `service_provider_image.pfpdir`: installs a `packageRuntime` service provider with a `generate` operation.
+- `service_provider_image.pfpdir`: installs a named service type backed by a PFP runtime with a `generate` operation.
 - `flow_task_uppercase.pfpdir`: installs a flow processor type named `exampleUppercase`.
 - `flow_bundle_uppercase.pfpdir`: installs both `exampleUppercase` and a runnable flow using it.
 - `inter_pfp_base_tool.pfpdir`: installs `examples.text-core/tool:normalize_text`.

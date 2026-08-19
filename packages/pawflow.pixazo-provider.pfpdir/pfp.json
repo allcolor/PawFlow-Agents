@@ -1,0 +1,737 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.pixazo-provider",
+  "version": "1.0.0",
+  "description": "Official Pixazo media service providers extracted from PawFlow core.",
+  "category": "Media providers",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ="
+  },
+  "origin": {
+    "source": "pawflow"
+  },
+  "objects": [
+    {
+      "id": "service_provider:image",
+      "type": "service_provider",
+      "name": "Pixazo Image Generation",
+      "service_type": "pixazoImageGeneration",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "Pixazo Image Generation",
+      "category": "image",
+      "parameters": {
+        "api_key": {
+          "description": "Pixazo API key (Ocp-Apim-Subscription-Key)",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_clearance": {
+          "default": "",
+          "description": "Cloudflare clearance cookie (cf_clearance value). Required when Pixazo's polling endpoint blocks your IP — extract from a browser session (F12 → Application → Cookies → gateway.pixazo.ai) and paste here. Bound to the User-Agent below + your IP, ~30 min TTL. Leave empty to skip — POSTs still work, only polling fails on flagged IPs.",
+          "required": false,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_user_agent": {
+          "default": "",
+          "description": "Exact browser User-Agent the cf_clearance cookie was minted for (copy from the same browser request headers). Mandatory when cf_clearance is set.",
+          "required": false,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 5,
+          "description": "Max retries on 5xx errors (cold start).",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "auraflow",
+          "description": "Pixazo image model id (see pixazo_catalog.json, category=image).",
+          "options": [
+            "auraflow",
+            "auraflow-v0-3-512",
+            "bria",
+            "dalle",
+            "firered-image-edit",
+            "flux-1-schnell",
+            "flux-2-klein-4b",
+            "flux-2-pro-image-to-image-866",
+            "flux-2-pro-image-to-image-trainer-831",
+            "flux-2-pro-text-to-image-799",
+            "flux-2-pro-text-to-image-trainer-712",
+            "flux-dev",
+            "flux-fill-dev",
+            "flux-pro",
+            "gpt-image",
+            "gpt-image-1-5-api-923",
+            "grok",
+            "grok-imagine-api-641",
+            "hunyuan",
+            "hunyuan-image",
+            "hunyuan-image-3-0-instruct",
+            "ideogram",
+            "ideogram-turbo",
+            "inpainting",
+            "kling",
+            "longcat-image",
+            "longcat-image-498",
+            "minimax",
+            "nano-banana",
+            "nano-banana-2",
+            "nano-banana-async",
+            "nano-banana-pro",
+            "nano-banana-pro-770",
+            "nano-banana-pro-async",
+            "p-image",
+            "p-image-upscale",
+            "pixelforge",
+            "pixelforge-image",
+            "pixelforge-relighting-api",
+            "qwen-image",
+            "qwen-image-edit-plus",
+            "qwen-image-edit-plus-trainer",
+            "qwen-image-layered",
+            "qwen-image-max",
+            "qwen-image-max-edit",
+            "recraft",
+            "recraft-v3",
+            "recraft-v4",
+            "reve-image",
+            "sd3",
+            "sd3-5",
+            "sdxl",
+            "seedream",
+            "seedream-5-0-lite-image",
+            "seedream-5-0-lite-text-to-image",
+            "stable-diffusion",
+            "studio-ghibli",
+            "wan",
+            "wan-image-2-5",
+            "wan-t2i",
+            "z-image",
+            "z-image-base",
+            "z-image-turbo-834"
+          ],
+          "required": false,
+          "type": "select"
+        },
+        "poll_interval": {
+          "default": 5,
+          "description": "Polling interval in seconds (for async models).",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that providers can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use Pixazo's X-Webhook-URL callback instead of polling for async models. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "generate": {},
+        "edit_image": {},
+        "describe_image": {},
+        "remix_image": {}
+      },
+      "provides": [
+        "media.image_generation"
+      ]
+    },
+    {
+      "id": "service_provider:video",
+      "type": "service_provider",
+      "name": "Pixazo Video Generation",
+      "service_type": "pixazoVideoGeneration",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "Pixazo Video Generation",
+      "category": "video",
+      "parameters": {
+        "api_key": {
+          "description": "Pixazo API key (Ocp-Apim-Subscription-Key)",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_clearance": {
+          "default": "",
+          "description": "Cloudflare clearance cookie (cf_clearance value). Required when Pixazo's polling endpoint blocks your IP — extract from a browser session (F12 → Application → Cookies → gateway.pixazo.ai) and paste here. Bound to the User-Agent below + your IP, ~30 min TTL. Leave empty to skip — POSTs still work, only polling fails on flagged IPs.",
+          "required": false,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_user_agent": {
+          "default": "",
+          "description": "Exact browser User-Agent the cf_clearance cookie was minted for (copy from the same browser request headers). Mandatory when cf_clearance is set.",
+          "required": false,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 5,
+          "description": "Max retries on 5xx errors (cold start).",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "ai-model-api",
+          "description": "Pixazo video model id (see pixazo_catalog.json, category=video).",
+          "options": [
+            "ai-model-api",
+            "baidu-genflare-2-0-api",
+            "byteplus",
+            "decart-lucy-edit-video-fast-142",
+            "grok-imagine-video",
+            "hailuo",
+            "kandinsky-5-0-pro-953",
+            "kling-3-0-image-to-video-standard",
+            "kling-3-0-text-to-video-standard",
+            "kling-ai-avatar-v2-pro-789",
+            "kling-ai-video",
+            "kling-image",
+            "kling-image-o3-i2i",
+            "kling-image-t2i",
+            "kling-o1-edit-video-video-to-video-634",
+            "kling-o1-first-frame-last-frame-to-video-857",
+            "kling-o1-image-208",
+            "kling-o1-reference-image-to-video-382",
+            "kling-o1-reference-video-to-video-315",
+            "kling-video",
+            "kling-video-v2-6-standard-motion-control",
+            "lightricks",
+            "ltx-2-19b-api-513",
+            "ltx-2-video-api-581",
+            "luma-dream-machine",
+            "luma-dream-machine-ray-2-flash-image-to-video",
+            "minimax-hailuo-ai",
+            "mochi-v1-clone",
+            "p-video",
+            "pika",
+            "pixazo-wan-image-to-video-1763709522",
+            "pixverse-i2v",
+            "runway",
+            "runway-gen-4-5",
+            "seedance",
+            "seedance-2-0",
+            "seedance-2-0-fast",
+            "topaz-upscale-video-753",
+            "veed-video-background-remover-541",
+            "veo",
+            "veo31f",
+            "vidu",
+            "vidu-q2-reference-to-video-pro-api-454",
+            "wan-2-6-image-to-video-477",
+            "wan-2-6-image-to-video-flash-api-353",
+            "wan-2-6-text-to-video-569",
+            "wan-2-7-api",
+            "wan-2-7-pro-api",
+            "wan-2-7-video-api",
+            "wan-i2v",
+            "wan-video",
+            "wan-video-2-5",
+            "wan2.2-s2v"
+          ],
+          "required": false,
+          "type": "select"
+        },
+        "poll_interval": {
+          "default": 5,
+          "description": "Polling interval in seconds (for async models).",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that providers can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use Pixazo's X-Webhook-URL callback instead of polling for async models. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "generate": {},
+        "image_to_video": {},
+        "frame_to_video": {},
+        "speech_to_video": {},
+        "reference_to_video": {},
+        "video_edit": {}
+      },
+      "provides": [
+        "media.video_generation",
+        "media.lipsync"
+      ]
+    },
+    {
+      "id": "service_provider:audio",
+      "type": "service_provider",
+      "name": "Pixazo Audio Generation",
+      "service_type": "pixazoAudioGeneration",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "Pixazo Audio Generation",
+      "category": "audio",
+      "parameters": {
+        "api_key": {
+          "description": "Pixazo API key (Ocp-Apim-Subscription-Key)",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_clearance": {
+          "default": "",
+          "description": "Cloudflare clearance cookie (cf_clearance value). Required when Pixazo's polling endpoint blocks your IP — extract from a browser session (F12 → Application → Cookies → gateway.pixazo.ai) and paste here. Bound to the User-Agent below + your IP, ~30 min TTL. Leave empty to skip — POSTs still work, only polling fails on flagged IPs.",
+          "required": false,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_user_agent": {
+          "default": "",
+          "description": "Exact browser User-Agent the cf_clearance cookie was minted for (copy from the same browser request headers). Mandatory when cf_clearance is set.",
+          "required": false,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 5,
+          "description": "Max retries on 5xx errors (cold start).",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "ace-step",
+          "description": "Pixazo audio model id (see pixazo_catalog.json, category=audio).",
+          "options": [
+            "ace-step",
+            "ace-step-xl",
+            "chatterbox-text-to-speech",
+            "eleven-v3-alpha-954",
+            "elevenlabs-music",
+            "elevenlabs-music-api-368",
+            "elevenlabs-v3",
+            "lyria",
+            "lyria-2",
+            "lyria-3-pro",
+            "minimax-hailuo-ai-music",
+            "minimax-music",
+            "tracks",
+            "vibevoice",
+            "vibevoice-realtime-0-5b-135",
+            "voice-clone"
+          ],
+          "required": false,
+          "type": "select"
+        },
+        "poll_interval": {
+          "default": 5,
+          "description": "Polling interval in seconds (for async models).",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that providers can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use Pixazo's X-Webhook-URL callback instead of polling for async models. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "generate": {},
+        "text_to_speech": {},
+        "speak": {}
+      },
+      "provides": [
+        "media.audio_generation",
+        "media.tts"
+      ]
+    },
+    {
+      "id": "service_provider:3d",
+      "type": "service_provider",
+      "name": "Pixazo 3D Generation",
+      "service_type": "pixazo3DGeneration",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "Pixazo 3D Generation",
+      "category": "3d",
+      "parameters": {
+        "api_key": {
+          "description": "Pixazo API key (Ocp-Apim-Subscription-Key)",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_clearance": {
+          "default": "",
+          "description": "Cloudflare clearance cookie (cf_clearance value). Required when Pixazo's polling endpoint blocks your IP — extract from a browser session (F12 → Application → Cookies → gateway.pixazo.ai) and paste here. Bound to the User-Agent below + your IP, ~30 min TTL. Leave empty to skip — POSTs still work, only polling fails on flagged IPs.",
+          "required": false,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_user_agent": {
+          "default": "",
+          "description": "Exact browser User-Agent the cf_clearance cookie was minted for (copy from the same browser request headers). Mandatory when cf_clearance is set.",
+          "required": false,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 5,
+          "description": "Max retries on 5xx errors (cold start).",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "hunyuan3d-3-0",
+          "description": "Pixazo 3d model id (see pixazo_catalog.json, category=3d).",
+          "options": [
+            "hunyuan3d-3-0",
+            "hunyuan3d-3-0-api-294",
+            "hyper3d-rodin",
+            "hyper3d-rodin-259",
+            "trellis-2-image-to-3d",
+            "trellis-3d",
+            "tripo3d",
+            "tripo3d-v2-5-413"
+          ],
+          "required": false,
+          "type": "select"
+        },
+        "poll_interval": {
+          "default": 5,
+          "description": "Polling interval in seconds (for async models).",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that providers can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use Pixazo's X-Webhook-URL callback instead of polling for async models. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "generate_3d": {}
+      },
+      "provides": [
+        "media.3d_generation"
+      ]
+    },
+    {
+      "id": "service_provider:upscale",
+      "type": "service_provider",
+      "name": "Pixazo Upscale",
+      "service_type": "pixazoUpscale",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "Pixazo Upscale",
+      "category": "upscale",
+      "parameters": {
+        "api_key": {
+          "description": "Pixazo API key (Ocp-Apim-Subscription-Key)",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_clearance": {
+          "default": "",
+          "description": "Cloudflare clearance cookie (cf_clearance value). Required when Pixazo's polling endpoint blocks your IP — extract from a browser session (F12 → Application → Cookies → gateway.pixazo.ai) and paste here. Bound to the User-Agent below + your IP, ~30 min TTL. Leave empty to skip — POSTs still work, only polling fails on flagged IPs.",
+          "required": false,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_user_agent": {
+          "default": "",
+          "description": "Exact browser User-Agent the cf_clearance cookie was minted for (copy from the same browser request headers). Mandatory when cf_clearance is set.",
+          "required": false,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 5,
+          "description": "Max retries on 5xx errors (cold start).",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "bria-rmbg",
+          "description": "Pixazo upscale model id (see pixazo_catalog.json, category=upscale).",
+          "options": [
+            "bria-rmbg",
+            "bria-rmbg-2-0-682",
+            "crystal-upscaler",
+            "seedvr-upscale",
+            "seedvr-upscale-image",
+            "seedvr-upscale-video",
+            "upscaler"
+          ],
+          "required": false,
+          "type": "select"
+        },
+        "poll_interval": {
+          "default": 5,
+          "description": "Polling interval in seconds (for async models).",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that providers can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use Pixazo's X-Webhook-URL callback instead of polling for async models. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "upscale": {},
+        "upscale_video": {},
+        "remove_background": {}
+      },
+      "provides": [
+        "media.image_upscale",
+        "media.video_upscale",
+        "media.background_removal"
+      ]
+    },
+    {
+      "id": "service_provider:try-on",
+      "type": "service_provider",
+      "name": "Pixazo Try-On",
+      "service_type": "pixazoTryOn",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "Pixazo Try-On",
+      "category": "try-on",
+      "parameters": {
+        "api_key": {
+          "description": "Pixazo API key (Ocp-Apim-Subscription-Key)",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_clearance": {
+          "default": "",
+          "description": "Cloudflare clearance cookie (cf_clearance value). Required when Pixazo's polling endpoint blocks your IP — extract from a browser session (F12 → Application → Cookies → gateway.pixazo.ai) and paste here. Bound to the User-Agent below + your IP, ~30 min TTL. Leave empty to skip — POSTs still work, only polling fails on flagged IPs.",
+          "required": false,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_user_agent": {
+          "default": "",
+          "description": "Exact browser User-Agent the cf_clearance cookie was minted for (copy from the same browser request headers). Mandatory when cf_clearance is set.",
+          "required": false,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 5,
+          "description": "Max retries on 5xx errors (cold start).",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "fashn-virtual-try-on",
+          "description": "Pixazo try_on model id (see pixazo_catalog.json, category=try_on).",
+          "options": [
+            "fashn-virtual-try-on",
+            "glass-virtual-try-on",
+            "idm-vton",
+            "idm-vton-api",
+            "kling-ai-vton"
+          ],
+          "required": false,
+          "type": "select"
+        },
+        "poll_interval": {
+          "default": 5,
+          "description": "Polling interval in seconds (for async models).",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that providers can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use Pixazo's X-Webhook-URL callback instead of polling for async models. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "try_on": {}
+      },
+      "provides": [
+        "media.try_on"
+      ]
+    },
+    {
+      "id": "service_provider:lipsync",
+      "type": "service_provider",
+      "name": "Pixazo Lipsync",
+      "service_type": "pixazoLipsync",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "Pixazo Lipsync",
+      "category": "lipsync",
+      "parameters": {
+        "api_key": {
+          "description": "Pixazo API key (Ocp-Apim-Subscription-Key)",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_clearance": {
+          "default": "",
+          "description": "Cloudflare clearance cookie (cf_clearance value). Required when Pixazo's polling endpoint blocks your IP — extract from a browser session (F12 → Application → Cookies → gateway.pixazo.ai) and paste here. Bound to the User-Agent below + your IP, ~30 min TTL. Leave empty to skip — POSTs still work, only polling fails on flagged IPs.",
+          "required": false,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_user_agent": {
+          "default": "",
+          "description": "Exact browser User-Agent the cf_clearance cookie was minted for (copy from the same browser request headers). Mandatory when cf_clearance is set.",
+          "required": false,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 5,
+          "description": "Max retries on 5xx errors (cold start).",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "bytedance-omnihuman-v1-5-290",
+          "description": "Pixazo lipsync model id (see pixazo_catalog.json, category=lipsync).",
+          "options": [
+            "bytedance-omnihuman-v1-5-290",
+            "omnihuman"
+          ],
+          "required": false,
+          "type": "select"
+        },
+        "poll_interval": {
+          "default": 5,
+          "description": "Polling interval in seconds (for async models).",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that providers can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use Pixazo's X-Webhook-URL callback instead of polling for async models. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "lipsync": {}
+      },
+      "provides": [
+        "media.lipsync"
+      ]
+    },
+    {
+      "id": "service_provider:trainer",
+      "type": "service_provider",
+      "name": "Pixazo Trainer",
+      "service_type": "pixazoTrainer",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "Pixazo Trainer",
+      "category": "trainer",
+      "parameters": {
+        "api_key": {
+          "description": "Pixazo API key (Ocp-Apim-Subscription-Key)",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_clearance": {
+          "default": "",
+          "description": "Cloudflare clearance cookie (cf_clearance value). Required when Pixazo's polling endpoint blocks your IP — extract from a browser session (F12 → Application → Cookies → gateway.pixazo.ai) and paste here. Bound to the User-Agent below + your IP, ~30 min TTL. Leave empty to skip — POSTs still work, only polling fails on flagged IPs.",
+          "required": false,
+          "sensitive": true,
+          "type": "string"
+        },
+        "cf_user_agent": {
+          "default": "",
+          "description": "Exact browser User-Agent the cf_clearance cookie was minted for (copy from the same browser request headers). Mandatory when cf_clearance is set.",
+          "required": false,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 5,
+          "description": "Max retries on 5xx errors (cold start).",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "",
+          "description": "Pixazo trainer model id (see pixazo_catalog.json, category=trainer).",
+          "options": [],
+          "required": false,
+          "type": "select"
+        },
+        "poll_interval": {
+          "default": 5,
+          "description": "Polling interval in seconds (for async models).",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that providers can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use Pixazo's X-Webhook-URL callback instead of polling for async models. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "train": {}
+      },
+      "provides": [
+        "media.image_training"
+      ]
+    }
+  ]
+}

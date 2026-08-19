@@ -1,0 +1,2 @@
+class BaseTTSService:
+    pass

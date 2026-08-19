@@ -16,7 +16,7 @@ from core.pfp_package._pp_mod1 import (  # noqa: F401
 from core.pfp_package._pp_mod2 import (  # noqa: F401
     _install_scope_dir, _load_resource_data, _manifest_object_hash, _record_depends_on_package, _version_change_kind)
 from core.pfp_package._pp_mod3 import (  # noqa: F401
-    _allowed_package, _dependency_package, _dependent_record_roots, _install_record_path, _installed_package_records, _missing_agent_assigned_skills, _package_content_dir, _remove_package_content_path, _version_satisfies, list_installed_ui_extensions, load_installed_package_tasks, resolve_installed_flow_task_runtime)
+    _allowed_package, _dependency_package, _dependent_record_roots, _install_record_path, _installed_package_records, _missing_agent_assigned_skills, _package_content_dir, _remove_package_content_path, _version_satisfies, list_installed_ui_extensions, load_installed_package_services, load_installed_package_tasks, resolve_installed_flow_task_runtime, resolve_installed_service_provider)
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +309,17 @@ def _record_is_locally_modified(record: Dict[str, Any], user_id: str,
         installed_from = current.get("installed_from") or {}
         return (runtime.get("object_id") != record.get("object_id")
                 or installed_from.get("hash") != record.get("hash"))
+    if kind == "service_provider":
+        try:
+            current = resolve_installed_service_provider(
+                str(record.get("service_type") or ""), user_id=user_id,
+                conversation_id=conversation_id, scope=scope)
+        except Exception:
+            return False
+        runtime = current.get("package_runtime") or {}
+        installed_from = current.get("installed_from") or {}
+        return (runtime.get("object_id") != record.get("object_id")
+                or installed_from.get("hash") != record.get("hash"))
     return False
 
 
@@ -467,6 +478,78 @@ def _remove_package_content_store(record: Dict[str, Any], user_id: str,
     _remove_package_content_path(content_dir, user_id, conversation_id, scope)
 
 
+def _refresh_package_service_instances(
+        scope: str, user_id: str, conversation_id: str,
+        records: List[Dict[str, Any]]) -> None:
+    """Rematerialize instances after a PFP provider install or update."""
+    from core import ServiceFactory
+    from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
+
+    providers = [
+        item for item in records
+        if item.get("kind") == "service_provider" and item.get("service_type")
+    ]
+    if not providers:
+        return
+    registry = ServiceRegistry.get_instance()
+    scopes = [(SCOPE_CONV, conversation_id)] if scope == "conversation" else [
+        (SCOPE_USER, user_id),
+    ]
+    if scope == "user":
+        from core.conversation_store import ConversationStore
+        scopes.extend(
+            (SCOPE_CONV, str(item.get("conversation_id") or ""))
+            for item in ConversationStore.instance().list_conversations(user_id)
+            if item.get("conversation_id")
+        )
+
+    seen_scopes = set()
+    for registry_scope, scope_id in scopes:
+        scope_key = (registry_scope, scope_id)
+        if not scope_id or scope_key in seen_scopes:
+            continue
+        seen_scopes.add(scope_key)
+        definitions = registry.get_all(registry_scope, scope_id)
+        for provider in providers:
+            service_type = str(provider.get("service_type") or "")
+            try:
+                installed = resolve_installed_service_provider(
+                    service_type, user_id=user_id,
+                    conversation_id=(scope_id if registry_scope == SCOPE_CONV else ""),
+                    scope=("conversation" if registry_scope == SCOPE_CONV else "user"))
+                service_class = ServiceFactory.get(service_type)
+            except Exception:
+                continue
+            target_runtime = dict(installed.get("package_runtime") or {})
+            target_key = (
+                str(target_runtime.get("package") or ""),
+                str(target_runtime.get("object_id") or ""),
+            )
+            for service_id, definition in definitions.items():
+                if definition.service_type != service_type:
+                    continue
+                config = dict(definition.config or {})
+                current_runtime = config.get("package_runtime") or {}
+                current_key = (
+                    str(current_runtime.get("package") or ""),
+                    str(current_runtime.get("object_id") or ""),
+                )
+                if any(current_key) and current_key != target_key:
+                    continue
+                for key in (
+                        "package_runtime", "runtime_installed_from", "operations",
+                        "_package_service_provider", "package_runtime_context"):
+                    config.pop(key, None)
+                materialized = service_class.materialize_config(
+                    config,
+                    user_id=user_id,
+                    conversation_id=(scope_id if registry_scope == SCOPE_CONV else ""),
+                    scope=registry_scope,
+                )
+                registry.update_config(
+                    registry_scope, scope_id, service_id, materialized)
+
+
 def _refresh_runtime(scope: str, user_id: str, conversation_id: str,
                      records: List[Dict[str, Any]]) -> None:
     if not records:
@@ -483,6 +566,13 @@ def _refresh_runtime(scope: str, user_id: str, conversation_id: str,
         ServiceRegistry.get_instance().reload_scope(reg_scope, scope_id)
     except Exception as exc:
         logger.debug("PFP service refresh failed: %s", exc)
+    try:
+        load_installed_package_services(
+            user_id=user_id, conversation_id=conversation_id, scope=scope)
+        _refresh_package_service_instances(
+            scope, user_id, conversation_id, records)
+    except Exception as exc:
+        logger.debug("PFP service provider refresh failed: %s", exc)
     try:
         load_installed_package_tasks(
             user_id=user_id, conversation_id=conversation_id, scope=scope)
@@ -525,10 +615,17 @@ def _existing_status(obj_type: str, name: str, user_id: str,
             scope_id = conversation_id if scope == "conversation" else user_id
             return "conflict" if ServiceRegistry.get_instance().get_definition(reg_scope, scope_id, name) else "new"
         if obj_type == "service_provider":
-            from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
-            reg_scope = SCOPE_CONV if scope == "conversation" else SCOPE_USER
-            scope_id = conversation_id if scope == "conversation" else user_id
-            return "conflict" if ServiceRegistry.get_instance().get_definition(reg_scope, scope_id, name) else "new"
+            from core import ServiceFactory
+            current = ServiceFactory._services.get(name)
+            if current is not None and not getattr(current, "PACKAGE_RUNTIME", None):
+                return "conflict"
+            try:
+                resolve_installed_service_provider(
+                    name, user_id=user_id,
+                    conversation_id=conversation_id, scope=scope)
+                return "conflict"
+            except Exception:
+                return "new"
     except Exception:
         return "unknown"
     return "new"

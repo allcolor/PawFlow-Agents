@@ -24,7 +24,6 @@ The chat service installer receives service type metadata grouped by category an
 | `cacheService` | Local cache service. |
 | `distributedMapCache` | Distributed key/value cache. |
 | `fileTracking` | Tracks processed files for list/watch flows. |
-| `packageRuntime` | Runtime proxy for PFP `service_provider` objects executed through the relay package runner. |
 
 ### LLM Aggregator
 

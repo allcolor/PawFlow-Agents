@@ -121,9 +121,17 @@ def _write_package_dir(root, keypair, version="1.0.0", skill_body="Use the packa
             "id": "service_provider:image",
             "type": "service_provider",
             "name": "wavespeed-image-provider",
-            "service_id": "wavespeed-image-provider",
+            "service_type": "wavespeedImage",
             "path": "content/service-providers/image/provider.py",
             "description": "Image provider from package",
+            "category": "image",
+            "parameters": {
+                "model": {
+                    "type": "string",
+                    "required": False,
+                    "default": "wavespeed-v1",
+                },
+            },
             "provides": ["media.image_generation"],
             "operations": {"generate": {}},
             "allowed_tools": [{"name": "read"}],
@@ -170,7 +178,7 @@ def _reset_repo(tmp_path, monkeypatch):
     from core.repository import ScopedRepository
     from core.resource_store import ResourceStore
     from core.service_registry import ServiceRegistry
-    from core import TaskFactory
+    from core import ServiceFactory, TaskFactory
     from tasks.ai.actions import agent_resource
 
     monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
@@ -178,6 +186,9 @@ def _reset_repo(tmp_path, monkeypatch):
     ScopedRepository.reset()
     ResourceStore.reset()
     ServiceRegistry.reset()
+    for service_type, service_class in list(ServiceFactory._services.items()):
+        if getattr(service_class, "PACKAGE_RUNTIME", None):
+            ServiceFactory._services.pop(service_type, None)
     TaskFactory._tasks.pop("packageResizeImage", None)
     agent_resource._FLOW_TEMPLATES_CACHE.clear()
     agent_resource._FLOW_TEMPLATES_REFRESHING.clear()
@@ -200,6 +211,25 @@ def _reset_repo(tmp_path, monkeypatch):
         "_resolve_review_llm",
         lambda user_id, conversation_id: (_ReviewLLM(), None, "review_llm"),
     )
+
+
+def _register_test_package_service_type(
+        service_type, object_id, *, provides=None, operations=None,
+        package="community.media"):
+    from services.package_runtime_service import register_package_service_proxy
+
+    return register_package_service_proxy({
+        "service_type": service_type,
+        "name": service_type,
+        "operations": operations or {"generate": {}},
+        "package_runtime": {
+            "package": package,
+            "version": "1.0.0",
+            "object_id": object_id,
+            "provides": provides or [],
+        },
+        "installed_from": {"hash": "sha256:test"},
+    })
 
 
 def test_pfp_build_inspect_and_selective_install(tmp_path, monkeypatch):
@@ -365,7 +395,7 @@ def test_pfp_inspect_exposes_capability_summary_for_preinstall_review(tmp_path, 
     assert "secrets: api_key->PROVIDER_API_KEY" in display
 
 
-def test_pfp_inspect_service_provider_conflict_uses_service_id(tmp_path, monkeypatch):
+def test_pfp_inspect_service_provider_conflict_uses_service_type(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(tmp_path, keypair, include_service_provider=True)
@@ -374,16 +404,16 @@ def test_pfp_inspect_service_provider_conflict_uses_service_id(tmp_path, monkeyp
     for obj in manifest["objects"]:
         if obj.get("id") == "service_provider:image":
             obj["name"] = "display-name"
-            obj["service_id"] = "runtime-service-id"
+            obj["service_type"] = "runtimeImageType"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
 
-    from core.service_registry import ServiceRegistry, SCOPE_USER
-    import services.package_runtime_service  # noqa: F401
-    ServiceRegistry.get_instance().install(
-        SCOPE_USER, "alice", "runtime-service-id", "packageRuntime",
-        config={"package_runtime": {"package": "other", "object_id": "service_provider:x"}, "installed_from": {}},
-    )
+    from core import Service, ServiceFactory
+
+    class NativeImageService(Service):
+        TYPE = "runtimeImageType"
+
+    monkeypatch.setitem(ServiceFactory._services, NativeImageService.TYPE, NativeImageService)
 
     plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
     row = next(item for item in plan["objects"] if item["id"] == "service_provider:image")
@@ -1108,23 +1138,16 @@ def test_pfp_package_runtime_service_exposes_declared_media_operations(tmp_path)
     assert not hasattr(svc, "try_on")
 
 
-def test_pfp_media_resolver_discovers_package_runtime_provider(tmp_path, monkeypatch):
+def test_pfp_media_resolver_discovers_named_package_provider(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core.service_registry import ServiceRegistry, SCOPE_CONV
     from tasks.ai.agent_utils import AgentUtilsMixin
 
     reg = ServiceRegistry.get_instance()
-    reg.install(SCOPE_CONV, "conv1", "pfp-image", "packageRuntime", config={
-        "package_runtime": {
-            "package": "community.media",
-            "version": "1.0.0",
-            "object_id": "service_provider:image",
-            "provides": ["media.image_generation"],
-        },
-        "installed_from": {"hash": "sha256:test"},
-        "operations": {"generate": {}},
-    })
+    _register_test_package_service_type(
+        "testImageProvider", "service_provider:image",
+        provides=["media.image_generation"])
+    reg.install(SCOPE_CONV, "conv1", "pfp-image", "testImageProvider")
 
     class _Agent(AgentUtilsMixin):
         pass
@@ -1133,34 +1156,28 @@ def test_pfp_media_resolver_discovers_package_runtime_provider(tmp_path, monkeyp
 
     assert error is None
     assert svc is not None
-    assert svc.TYPE == "packageRuntime"
+    assert svc.TYPE == "testImageProvider"
     assert svc.config["package_runtime"]["object_id"] == "service_provider:image"
 
 
 def test_tool_relay_media_resolver_discovers_pfp_capability_provider(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core.service_registry import ServiceRegistry, SCOPE_USER
     from services.tool_relay_service import ToolRelayService
 
+    _register_test_package_service_type(
+        "test3DProvider", "service_provider:threed",
+        provides=["media.3d_generation"],
+        operations={"generate_3d": {}})
     ServiceRegistry.get_instance().install(
-        SCOPE_USER, "alice", "pfp-3d", "packageRuntime", config={
-            "package_runtime": {
-                "package": "community.media",
-                "version": "1.0.0",
-                "object_id": "service_provider:threed",
-                "provides": ["media.3d_generation"],
-            },
-            "installed_from": {"hash": "sha256:test"},
-            "operations": {"generate_3d": {}},
-        })
+        SCOPE_USER, "alice", "pfp-3d", "test3DProvider")
 
     svc, error = ToolRelayService._make_media_resolver(
         "alice", "conv1", "3d")()
 
     assert error is None
     assert svc is not None
-    assert svc.TYPE == "packageRuntime"
+    assert svc.TYPE == "test3DProvider"
     assert hasattr(svc, "generate_3d")
 
 
@@ -1268,7 +1285,7 @@ def test_pfp_speak_handler_persists_audio_path_artifact(tmp_path, monkeypatch):
     })
 
     class _PfpVoiceService:
-        TYPE = "packageRuntime"
+        TYPE = "packageVoice"
         VERSION = "1.0.0"
         config = {
             "package_runtime": {
@@ -1305,7 +1322,7 @@ def test_pfp_voice_provider_identity_includes_package_runtime():
     from core.handlers.capabilities import _provider_identity, _provider_version
 
     class _PfpVoiceService:
-        TYPE = "packageRuntime"
+        TYPE = "packageVoice"
         VERSION = "1.0.0"
         config = {
             "package_runtime": {
@@ -1347,7 +1364,7 @@ def test_pfp_voice_id_result_is_normalized_for_speak_and_delete(tmp_path, monkey
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Response())
 
     class _PfpVoiceService:
-        TYPE = "packageRuntime"
+        TYPE = "packageVoice"
         VERSION = "1.0.0"
         config = {
             "package_runtime": {
@@ -1503,7 +1520,8 @@ def test_pfp_uninstall_removes_installed_flow(tmp_path, monkeypatch):
     assert after is None
 
 
-def test_pfp_uninstall_keeps_modified_service_without_force(tmp_path, monkeypatch):
+def test_pfp_uninstall_blocks_service_provider_used_by_explicit_instances(
+        tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     import services.package_runtime_service  # noqa: F401
     from core.service_registry import ServiceRegistry, SCOPE_USER
@@ -1520,18 +1538,35 @@ def test_pfp_uninstall_keeps_modified_service_without_force(tmp_path, monkeypatc
         include=["service_provider:image"], force=True)
 
     reg = ServiceRegistry.get_instance()
-    sdef = reg.get_definition(SCOPE_USER, "alice", "wavespeed-image-provider")
-    sdef.config["installed_from"]["hash"] = "sha256:local-change"
+    reg.install(
+        SCOPE_USER, "alice", "wavespeed-primary", "wavespeedImage",
+        config={"model": "fast"})
+    from core.conversation_store import ConversationStore
+    ConversationStore.instance().save("conv1", [], user_id="alice")
+    from core.service_registry import SCOPE_CONV
+    reg.install(
+        SCOPE_CONV, "conv1", "wavespeed-conversation", "wavespeedImage",
+        config={"model": "quality"})
 
     result = pfp_package.uninstall_pfp(
         "community.servicepkg", user_id="alice", force=False)
-    still_installed = reg.get_definition(
-        SCOPE_USER, "alice", "wavespeed-image-provider")
 
     assert result["ok"] is False
     assert result["removed"] == []
-    assert result["kept"][0]["kind"] == "service"
-    assert still_installed is not None
+    assert result["kept"][0]["kind"] == "service_provider"
+    assert "wavespeed-primary" in result["kept"][0]["reason"]
+    assert "wavespeed-conversation" in result["kept"][0]["reason"]
+    assert reg.get_definition(SCOPE_USER, "alice", "wavespeed-primary") is not None
+    assert reg.get_definition(SCOPE_CONV, "conv1", "wavespeed-conversation") is not None
+
+    reg.uninstall(SCOPE_USER, "alice", "wavespeed-primary")
+    reg.uninstall(SCOPE_CONV, "conv1", "wavespeed-conversation")
+    removed = pfp_package.uninstall_pfp(
+        "community.servicepkg", user_id="alice", force=False)
+
+    assert removed["ok"] is True
+    from core import ServiceFactory
+    assert "wavespeedImage" not in ServiceFactory.list_types()
 
 
 def test_admin_start_uses_scoped_flow_fqn_without_flow_path(tmp_path, monkeypatch):
@@ -1732,23 +1767,16 @@ def test_service_flow_discovers_and_deploys_conversation_scoped_pfp_flow(tmp_pat
 
 def test_media_list_action_includes_conversation_scoped_pfp_provider(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core import FlowFile
     from core.service_registry import ServiceRegistry, SCOPE_CONV
     from tasks.ai.agent_utils import AgentUtilsMixin
     from tasks.ai.actions.media import _handle_media
 
+    _register_test_package_service_type(
+        "testListImageProvider", "service_provider:image",
+        provides=["media.image_generation"])
     ServiceRegistry.get_instance().install(
-        SCOPE_CONV, "conv1", "pfp-image", "packageRuntime", config={
-            "package_runtime": {
-                "package": "community.media",
-                "version": "1.0.0",
-                "object_id": "service_provider:image",
-                "provides": ["media.image_generation"],
-            },
-            "installed_from": {"hash": "sha256:test"},
-            "operations": {"generate": {}},
-        })
+        SCOPE_CONV, "conv1", "pfp-image", "testListImageProvider")
 
     class _Agent(AgentUtilsMixin):
         pass
@@ -1954,6 +1982,34 @@ def test_pfp_flow_task_uninstall_keeps_proxy_used_by_other_user(tmp_path, monkey
     assert proxy.PACKAGE_RUNTIME["package"] == "community.two"
 
 
+def test_pfp_service_provider_uninstall_keeps_proxy_used_by_other_user(
+        tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_service_provider=True)
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+
+    for user_id in ("alice", "bob"):
+        installed = pfp_package.install_pfp(
+            built["path"], user_id=user_id,
+            include=["service_provider:image"], force=True)
+        assert installed["ok"] is True
+
+    removed = pfp_package.uninstall_pfp(
+        "community.wavespeed", user_id="alice")
+
+    assert removed["ok"] is True
+    from core import ServiceFactory
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+    assert "wavespeedImage" in ServiceFactory.list_types()
+    bob_instance = ServiceRegistry.get_instance().install(
+        SCOPE_USER, "bob", "bob-image", "wavespeedImage",
+        config={"model": "quality"})
+    assert bob_instance.config["package_runtime"]["package"] == "community.wavespeed"
+
+
 def test_pfp_flow_task_update_ignores_other_user_global_proxy(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     from core import TaskFactory
@@ -1997,7 +2053,6 @@ def test_pfp_flow_task_update_ignores_other_user_global_proxy(tmp_path, monkeypa
 
 def test_tool_relay_speech_to_video_resolves_lipsync_pfp_provider(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core import ServiceFactory
     from core.service_registry import ServiceRegistry, SCOPE_USER
     from services.base_video_generation import BaseVideoGenerationService
@@ -2023,19 +2078,12 @@ def test_tool_relay_speech_to_video_resolves_lipsync_pfp_provider(tmp_path, monk
     registry.install(
         SCOPE_USER, "alice", "native-video", "fakeVideoWithoutSpeechToVideo",
         config={})
+    _register_test_package_service_type(
+        "testSpeechToVideoProvider", "service_provider:s2v",
+        package="community.s2v", provides=["media.lipsync"],
+        operations={"speech_to_video": {}})
     registry.install(
-        SCOPE_USER, "alice", "pfp-s2v", "packageRuntime", config={
-            "package_runtime": {
-                "package": "community.s2v",
-                "version": "1.0.0",
-                "object_id": "service_provider:s2v",
-                "entrypoint": "content/service-providers/s2v/provider.py",
-                "content_dir": str(tmp_path),
-                "provides": ["media.lipsync"],
-            },
-            "installed_from": {"hash": "sha256:test"},
-            "operations": {"speech_to_video": {}},
-        })
+        SCOPE_USER, "alice", "pfp-s2v", "testSpeechToVideoProvider")
 
     service, error = ToolRelayService._make_media_resolver(
         "alice", "conv1", "speech_to_video")()
@@ -2508,8 +2556,8 @@ def test_pfp_runtime_host_package_service_ref_requires_matching_runtime(tmp_path
         def resolve(self, service_id, *, user_id="", conv_id=""):
             return self.service if service_id == "image-service" else None
 
-        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
-            return [self.definition] if service_type == "packageRuntime" else []
+        def resolve_package_services(self, *, user_id="", conv_id="", enabled_only=True):
+            return [self.definition]
 
         def get_live_instance(self, scope, scope_id, service_id):
             return self.service if service_id == "image-service" else None
@@ -2588,6 +2636,58 @@ def test_package_runtime_service_requires_declared_operations(tmp_path, monkeypa
         raise AssertionError("PFP service provider without operations must reject invocation")
 
 
+def test_package_runtime_service_passes_instance_config_and_callback_context(
+        tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import pfp_runtime
+    from services.package_runtime_service import PackageRuntimeService
+
+    entrypoint = tmp_path / "provider.py"
+    entrypoint.write_text("pass\n", encoding="utf-8")
+    captured = {}
+
+    def _invoke(_self, request):
+        captured.update(request)
+        return {
+            "format": "pawflow.package.runtime.result.v1",
+            "ok": True,
+            "result": {"ok": True},
+        }
+
+    monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
+    service = PackageRuntimeService({
+        "api_key": "secret-value",
+        "model": "provider-model",
+        "package_runtime": {
+            "package": "community.configured",
+            "version": "1.0.0",
+            "object_id": "service_provider:configured",
+            "entrypoint": "provider.py",
+            "content_dir": str(tmp_path),
+            "runner": "python",
+            "dev": True,
+        },
+        "runtime_installed_from": {"dev": True},
+        "operations": {"generate": {}},
+    })
+    service.set_runtime_context(
+        user_id="alice", conversation_id="conv1", agent_name="agentA")
+    service.set_callback_base_url("https://webchat.example.org/")
+
+    assert service.invoke("generate", {"prompt": "cat"}) == {"ok": True}
+    assert captured["context"] == {
+        "user_id": "alice",
+        "conversation_id": "conv1",
+        "scope": "conversation",
+        "agent_name": "agentA",
+        "callback_base_url": "https://webchat.example.org",
+        "service_config": {
+            "api_key": "secret-value",
+            "model": "provider-model",
+        },
+    }
+
+
 def test_pfp_runtime_host_package_service_ref_resolves_installed_service_provider(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
@@ -2600,7 +2700,10 @@ def test_pfp_runtime_host_package_service_ref_resolves_installed_service_provide
         include=["service_provider:image"], force=True)
 
     from core import pfp_runtime
-    from core.service_registry import ServiceRegistry
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+
+    ServiceRegistry.get_instance().install(
+        SCOPE_USER, "alice", "media-image", "wavespeedImage")
 
     calls = []
 
@@ -2641,7 +2744,8 @@ def test_pfp_runtime_host_package_service_ref_resolves_installed_service_provide
     assert calls[0]["operation"] == "generate"
 
 
-def test_pfp_installs_service_provider_as_package_runtime_proxy(tmp_path, monkeypatch):
+def test_pfp_installs_named_service_type_with_multiple_instances_and_rehydration(
+        tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(tmp_path, keypair, include_service_provider=True)
@@ -2656,32 +2760,174 @@ def test_pfp_installs_service_provider_as_package_runtime_proxy(tmp_path, monkey
         built["path"], user_id="alice", include=["service_provider:image"], force=True)
     assert result["ok"] is True
 
+    from core import ServiceFactory
     from core.service_registry import ServiceRegistry, SCOPE_USER
-    sdef = ServiceRegistry.get_instance().get_definition(
-        SCOPE_USER, "alice", "wavespeed-image-provider")
-    assert sdef is not None
-    assert sdef.service_type == "packageRuntime"
-    assert sdef.config["package_runtime"]["object_id"] == "service_provider:image"
-    assert sdef.config["package_runtime"]["allowed_tools"] == [{"name": "read"}]
-    assert sdef.config["package_runtime_context"] == {
+
+    service_cls = ServiceFactory.get("wavespeedImage")
+    assert service_cls.NAME == "wavespeed-image-provider"
+    assert service_cls.CATEGORY == "image"
+    assert service_cls({}).get_parameter_schema()["model"]["default"] == "wavespeed-v1"
+
+    reg = ServiceRegistry.get_instance()
+    assert reg.get_definition(SCOPE_USER, "alice", "wavespeed-image-provider") is None
+    first = reg.install(
+        SCOPE_USER, "alice", "wavespeed-primary", "wavespeedImage",
+        config={"model": "fast"})
+    second = reg.install(
+        SCOPE_USER, "alice", "wavespeed-quality", "wavespeedImage",
+        config={"model": "quality"})
+
+    assert first.service_type == second.service_type == "wavespeedImage"
+    assert first.config["model"] == "fast"
+    assert second.config["model"] == "quality"
+    assert first.config["package_runtime"]["object_id"] == "service_provider:image"
+    assert first.config["package_runtime"]["allowed_tools"] == [{"name": "read"}]
+    assert first.config["package_runtime_context"] == {
         "user_id": "alice",
         "conversation_id": "",
         "scope": "user",
     }
-    content_dir = Path(sdef.config["package_runtime"]["content_dir"])
-    assert (content_dir / sdef.config["package_runtime"]["entrypoint"]).exists()
+    content_dir = Path(first.config["package_runtime"]["content_dir"])
+    assert (content_dir / first.config["package_runtime"]["entrypoint"]).exists()
+    assert reg.get_live_instance(SCOPE_USER, "alice", "wavespeed-primary").is_connected()
+    assert reg.get_live_instance(SCOPE_USER, "alice", "wavespeed-quality").is_connected()
 
-    live = ServiceRegistry.get_instance().get_live_instance(
-        SCOPE_USER, "alice", "wavespeed-image-provider")
-    assert live is not None
-    assert live.is_connected() is True
-    from core import ServiceError
-    try:
-        live.invoke("generate", {})
-    except ServiceError as exc:
-        assert "PFP runtime requires user_id and conversation_id" in str(exc)
-    else:
-        raise AssertionError("package runtime proxy should fail closed")
+    ServiceFactory._services.pop("wavespeedImage")
+    ServiceRegistry.reset()
+    rehydrated = ServiceRegistry.get_instance().get_live_instance(
+        SCOPE_USER, "alice", "wavespeed-primary")
+    assert rehydrated is not None
+    assert rehydrated.TYPE == "wavespeedImage"
+    assert rehydrated.config["model"] == "fast"
+
+
+def test_pfp_service_provider_update_rematerializes_existing_instance(
+        tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    v1_dir = _write_package_dir(
+        tmp_path / "v1", keypair, version="1.0.0",
+        include_service_provider=True)
+    v1 = pfp_package.build_pfp(
+        str(v1_dir), private_key=keypair["private_key"])
+    pfp_package.install_pfp(
+        v1["path"], user_id="alice",
+        include=["service_provider:image"], force=True)
+
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+    registry = ServiceRegistry.get_instance()
+    definition = registry.install(
+        SCOPE_USER, "alice", "wavespeed-primary", "wavespeedImage",
+        config={"model": "fast"})
+    old_content_dir = definition.config["package_runtime"]["content_dir"]
+
+    v2_dir = _write_package_dir(
+        tmp_path / "v2", keypair, version="2.0.0",
+        include_service_provider=True)
+    v2 = pfp_package.build_pfp(
+        str(v2_dir), private_key=keypair["private_key"])
+    updated = pfp_package.update_pfp(v2["path"], user_id="alice", force=True)
+
+    assert updated["ok"] is True
+    migrated = registry.get_definition(
+        SCOPE_USER, "alice", "wavespeed-primary")
+    assert migrated.config["model"] == "fast"
+    assert migrated.config["package_runtime"]["version"] == "2.0.0"
+    assert migrated.config["package_runtime"]["content_dir"] != old_content_dir
+    assert migrated.config["_package_service_provider"]["version"] == "2.0.0"
+    assert registry.get_live_instance(
+        SCOPE_USER, "alice", "wavespeed-primary").is_connected()
+
+
+def test_pfp_service_provider_migrates_persisted_core_type_instance(
+        tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    from core import Service, ServiceFactory
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+
+    class _LegacyWaveSpeedImage(Service):
+        TYPE = "wavespeedImage"
+
+        def connect(self):
+            pass
+
+        def disconnect(self):
+            pass
+
+        def is_connected(self):
+            return True
+
+    ServiceFactory.register(_LegacyWaveSpeedImage)
+    registry = ServiceRegistry.get_instance()
+    registry.install(
+        SCOPE_USER, "alice", "existing-image", "wavespeedImage",
+        config={"model": "legacy-choice"}, enabled=False)
+    ServiceFactory._services.pop("wavespeedImage")
+
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(
+        tmp_path, keypair, include_service_provider=True)
+    built = pfp_package.build_pfp(
+        str(pkgdir), private_key=keypair["private_key"])
+    installed = pfp_package.install_pfp(
+        built["path"], user_id="alice",
+        include=["service_provider:image"], force=True)
+
+    assert installed["ok"] is True
+    migrated = registry.get_definition(
+        SCOPE_USER, "alice", "existing-image")
+    assert migrated.service_type == "wavespeedImage"
+    assert migrated.config["model"] == "legacy-choice"
+    assert migrated.config["package_runtime"]["object_id"] == "service_provider:image"
+    assert migrated.config["_package_service_provider"]["service_type"] == "wavespeedImage"
+    assert migrated.enabled is False
+
+
+def test_pfp_service_type_ui_is_scoped_to_package_owner(tmp_path, monkeypatch):
+    _reset_repo(tmp_path, monkeypatch)
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair, include_service_provider=True)
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    installed = pfp_package.install_pfp(
+        built["path"], user_id="alice",
+        include=["service_provider:image"], force=True)
+    assert installed["ok"] is True
+
+    from core import FlowFile
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+    from tasks.ai.actions.service_flow import _handle_service_flow
+
+    def _call(user_id, action, body=None):
+        payload = {"action": action, **(body or {})}
+        flowfile = FlowFile(content=json.dumps(payload).encode("utf-8"))
+        result = _handle_service_flow(
+            None, action, payload, None, user_id, flowfile)
+        return json.loads(result[0].get_content().decode("utf-8")), result[0]
+
+    alice_types, _ = _call("alice", "list_service_types")
+    bob_types, _ = _call("bob", "list_service_types")
+    assert "wavespeedImage" in {
+        item["type"] for item in alice_types["service_types"]}
+    assert "wavespeedImage" not in {
+        item["type"] for item in bob_types["service_types"]}
+
+    alice_schema, _ = _call(
+        "alice", "get_service_schema", {"service_type": "wavespeedImage"})
+    bob_schema, bob_schema_flowfile = _call(
+        "bob", "get_service_schema", {"service_type": "wavespeedImage"})
+    assert alice_schema["parameters"]["model"]["default"] == "wavespeed-v1"
+    assert "not installed for this scope" in bob_schema["error"]
+    assert bob_schema_flowfile.get_attribute("http.response.status") == "404"
+
+    bob_install, _ = _call("bob", "service_install", {
+        "service_type": "wavespeedImage",
+        "service_name": "foreign-provider",
+        "scope": "user",
+        "config": {"model": "fast"},
+    })
+    assert "not installed for this scope" in bob_install["error"]
+    assert ServiceRegistry.get_instance().get_definition(
+        SCOPE_USER, "bob", "foreign-provider") is None
 
 
 def test_pfp_service_provider_executes_declared_python_runner(tmp_path, monkeypatch):
@@ -2712,6 +2958,8 @@ def test_pfp_service_provider_executes_declared_python_runner(tmp_path, monkeypa
 
     from core.service_registry import ServiceRegistry, SCOPE_USER
 
+    ServiceRegistry.get_instance().install(
+        SCOPE_USER, "alice", "wavespeed-image-provider", "wavespeedImage")
     live = ServiceRegistry.get_instance().get_live_instance(
         SCOPE_USER, "alice", "wavespeed-image-provider")
     live.set_runtime_context(
@@ -2769,6 +3017,8 @@ def test_pfp_service_provider_exposes_lifecycle_status_and_operations(tmp_path, 
 
     from core import ServiceError
     from core.service_registry import ServiceRegistry, SCOPE_USER
+    ServiceRegistry.get_instance().install(
+        SCOPE_USER, "alice", "wavespeed-image-provider", "wavespeedImage")
     live = ServiceRegistry.get_instance().get_live_instance(
         SCOPE_USER, "alice", "wavespeed-image-provider")
     from core import pfp_runtime
@@ -2821,10 +3071,12 @@ def test_pfp_dev_load_service_provider_uses_source_dir_and_file_artifacts(tmp_pa
     loaded = pfp_package.dev_load_pfp(
         str(pkgdir), user_id="alice", conversation_id="conv1",
         include=["service_provider:image"])
-    assert loaded["ok"] is True
+    assert loaded["ok"] is True, loaded
     assert loaded["dev"] is True
 
     from core.service_registry import ServiceRegistry, SCOPE_CONV
+    ServiceRegistry.get_instance().install(
+        SCOPE_CONV, "conv1", "wavespeed-image-provider", "wavespeedImage")
     live = ServiceRegistry.get_instance().get_live_instance(
         SCOPE_CONV, "conv1", "wavespeed-image-provider")
     live.set_runtime_context(user_id="alice", conversation_id="conv1")
@@ -2871,6 +3123,8 @@ def test_pfp_dev_load_service_provider_uses_source_dir_and_file_artifacts(tmp_pa
     finally:
         Path(second["image_path"]).unlink(missing_ok=True)
 
+    ServiceRegistry.get_instance().uninstall(
+        SCOPE_CONV, "conv1", "wavespeed-image-provider")
     unloaded = pfp_package.dev_unload_pfp(
         "community.wavespeed", user_id="alice", conversation_id="conv1")
     assert unloaded["ok"] is True
@@ -3293,7 +3547,10 @@ def test_pfp_package_installs_and_runs_flow_with_packaged_resources(tmp_path, mo
 
     monkeypatch.setattr(pfp_runtime.RelayPackageRuntimeBridge, "invoke", _invoke)
 
-    service = ServiceRegistry.get_instance().get_live_instance(
+    service_registry = ServiceRegistry.get_instance()
+    service_registry.install(
+        SCOPE_USER, "alice", "wavespeed-image-provider", "wavespeedImage")
+    service = service_registry.get_live_instance(
         SCOPE_USER, "alice", "wavespeed-image-provider")
     assert service is not None
     assert service.status()["object_id"] == "service_provider:image"
@@ -3624,7 +3881,7 @@ def test_tool_relay_media_resolver_orders_pfp_and_native_by_scope(tmp_path, monk
             return {"image_url": "native.png"}
 
     class PfpConversationImage:
-        TYPE = "packageRuntime"
+        TYPE = "scopedPfpImage"
 
         def get_operations(self):
             return {"generate": {}}
@@ -3642,7 +3899,7 @@ def test_tool_relay_media_resolver_orders_pfp_and_native_by_scope(tmp_path, monk
         })()
 
     native_def = _definition("native-user", "nativeUserImageForScopeOrder", "user")
-    pfp_def = _definition("pfp-conv", "packageRuntime", "conv", {
+    pfp_def = _definition("pfp-conv", "scopedPfpImage", "conv", {
         "package_runtime": {"provides": ["media.image_generation"]},
         "operations": {"generate": {}},
     })
@@ -3651,9 +3908,10 @@ def test_tool_relay_media_resolver_orders_pfp_and_native_by_scope(tmp_path, monk
         def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
             if service_type == "nativeUserImageForScopeOrder":
                 return [native_def]
-            if service_type == "packageRuntime":
-                return [pfp_def]
             return []
+
+        def resolve_package_services(self, *, user_id="", conv_id="", enabled_only=True):
+            return [pfp_def]
 
         def resolve(self, service_id, *, user_id="", conv_id=""):
             if service_id == "native-user":
@@ -3710,31 +3968,19 @@ def test_tool_relay_wires_media_handlers_to_operation_specific_resolvers(tmp_pat
 
 def test_tool_relay_pfp_resolver_requires_exact_operation(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core.service_registry import ServiceRegistry, SCOPE_USER
     from services.tool_relay_service import ToolRelayService
 
     registry = ServiceRegistry.get_instance()
-    registry.install(SCOPE_USER, "alice", "pfp-bg", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.media",
-            "version": "1.0.0",
-            "object_id": "service_provider:bg",
-            "provides": ["media.background_removal"],
-        },
-        "installed_from": {},
-        "operations": {"remove_background": {}},
-    })
-    registry.install(SCOPE_USER, "alice", "pfp-upscale", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.media",
-            "version": "1.0.0",
-            "object_id": "service_provider:upscale",
-            "provides": ["media.image_upscale"],
-        },
-        "installed_from": {},
-        "operations": {"upscale": {}},
-    })
+    _register_test_package_service_type(
+        "testBackgroundRemoval", "service_provider:bg", package="pkg.media",
+        provides=["media.background_removal"],
+        operations={"remove_background": {}})
+    _register_test_package_service_type(
+        "testImageUpscale", "service_provider:upscale", package="pkg.media",
+        provides=["media.image_upscale"], operations={"upscale": {}})
+    registry.install(SCOPE_USER, "alice", "pfp-bg", "testBackgroundRemoval")
+    registry.install(SCOPE_USER, "alice", "pfp-upscale", "testImageUpscale")
 
     service, error = ToolRelayService._make_media_resolver(
         "alice", "", "upscale", ("upscale",))()
@@ -3776,31 +4022,18 @@ def test_video_handler_passes_call_mode_to_auto_resolver(tmp_path, monkeypatch):
 
 def test_tool_relay_video_resolver_uses_call_mode_operation(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core.service_registry import ServiceRegistry, SCOPE_USER
     from services.tool_relay_service import ToolRelayService
 
     registry = ServiceRegistry.get_instance()
-    registry.install(SCOPE_USER, "alice", "pfp-i2v", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.i2v",
-            "version": "1.0.0",
-            "object_id": "service_provider:image-video",
-            "provides": ["media.video_generation"],
-        },
-        "installed_from": {},
-        "operations": {"image_to_video": {}},
-    })
-    registry.install(SCOPE_USER, "alice", "pfp-t2v", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.t2v",
-            "version": "1.0.0",
-            "object_id": "service_provider:text-video",
-            "provides": ["media.video_generation"],
-        },
-        "installed_from": {},
-        "operations": {"generate": {}},
-    })
+    _register_test_package_service_type(
+        "testImageToVideo", "service_provider:image-video", package="pkg.i2v",
+        provides=["media.video_generation"], operations={"image_to_video": {}})
+    _register_test_package_service_type(
+        "testTextToVideo", "service_provider:text-video", package="pkg.t2v",
+        provides=["media.video_generation"], operations={"generate": {}})
+    registry.install(SCOPE_USER, "alice", "pfp-i2v", "testImageToVideo")
+    registry.install(SCOPE_USER, "alice", "pfp-t2v", "testTextToVideo")
 
     service, error = ToolRelayService._make_media_resolver(
         "alice", "", "video")(("generate",))
@@ -3818,7 +4051,7 @@ def test_agent_video_resolver_uses_call_mode_operation(tmp_path, monkeypatch):
     def _definition(service_id, operations):
         return type("_Def", (), {
             "service_id": service_id,
-            "service_type": "packageRuntime",
+            "service_type": "testVideoProvider",
             "scope": "user",
             "config": {
                 "package_runtime": {"provides": ["media.video_generation"]},
@@ -3838,13 +4071,14 @@ def test_agent_video_resolver_uses_call_mode_operation(tmp_path, monkeypatch):
             return {"video_url": "generated.mp4"}
 
     class _Registry:
-        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
-            if service_type == "packageRuntime":
-                return [
-                    _definition("pfp-i2v", {"image_to_video": {}}),
-                    _definition("pfp-t2v", {"generate": {}}),
-                ]
+        def resolve_by_type(self, service_type, *, user_id="", conv_id=""):
             return []
+
+        def resolve_package_services(self, *, user_id="", conv_id="", enabled_only=True):
+            return [
+                _definition("pfp-i2v", {"image_to_video": {}}),
+                _definition("pfp-t2v", {"generate": {}}),
+            ]
 
         def resolve(self, service_id, *, user_id="", conv_id=""):
             return {
@@ -3863,31 +4097,18 @@ def test_agent_video_resolver_uses_call_mode_operation(tmp_path, monkeypatch):
 
 def test_tool_relay_pfp_resolver_uses_exact_definition_when_service_ids_shadow(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
     from services.tool_relay_service import ToolRelayService
 
     registry = ServiceRegistry.get_instance()
-    registry.install(SCOPE_CONV, "conv1", "image", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.edit",
-            "version": "1.0.0",
-            "object_id": "service_provider:image",
-            "provides": ["media.image_generation"],
-        },
-        "installed_from": {},
-        "operations": {"edit_image": {}},
-    })
-    registry.install(SCOPE_USER, "alice", "image", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.generate",
-            "version": "1.0.0",
-            "object_id": "service_provider:image",
-            "provides": ["media.image_generation"],
-        },
-        "installed_from": {},
-        "operations": {"generate": {}},
-    })
+    _register_test_package_service_type(
+        "testEditImage", "service_provider:image", package="pkg.edit",
+        provides=["media.image_generation"], operations={"edit_image": {}})
+    _register_test_package_service_type(
+        "testGenerateImage", "service_provider:image", package="pkg.generate",
+        provides=["media.image_generation"], operations={"generate": {}})
+    registry.install(SCOPE_CONV, "conv1", "image", "testEditImage")
+    registry.install(SCOPE_USER, "alice", "image", "testGenerateImage")
 
     service, error = ToolRelayService._make_media_resolver(
         "alice", "conv1", "image", ("generate",))()
@@ -3899,31 +4120,18 @@ def test_tool_relay_pfp_resolver_uses_exact_definition_when_service_ids_shadow(t
 
 def test_agent_pfp_resolver_uses_exact_definition_when_service_ids_shadow(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
     from tasks.ai.agent_utils import AgentUtilsMixin
 
     registry = ServiceRegistry.get_instance()
-    registry.install(SCOPE_CONV, "conv1", "image", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.edit",
-            "version": "1.0.0",
-            "object_id": "service_provider:image",
-            "provides": ["media.image_generation"],
-        },
-        "installed_from": {},
-        "operations": {"edit_image": {}},
-    })
-    registry.install(SCOPE_USER, "alice", "image", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.generate",
-            "version": "1.0.0",
-            "object_id": "service_provider:image",
-            "provides": ["media.image_generation"],
-        },
-        "installed_from": {},
-        "operations": {"generate": {}},
-    })
+    _register_test_package_service_type(
+        "testAgentEditImage", "service_provider:image", package="pkg.edit",
+        provides=["media.image_generation"], operations={"edit_image": {}})
+    _register_test_package_service_type(
+        "testAgentGenerateImage", "service_provider:image", package="pkg.generate",
+        provides=["media.image_generation"], operations={"generate": {}})
+    registry.install(SCOPE_CONV, "conv1", "image", "testAgentEditImage")
+    registry.install(SCOPE_USER, "alice", "image", "testAgentGenerateImage")
 
     service, error = AgentUtilsMixin()._make_image_resolver(
         "alice", "conv1", "agentA", required_methods=("generate",))()
@@ -3941,7 +4149,7 @@ def test_agent_media_resolver_skips_pfp_provider_without_required_method(tmp_pat
     def _definition(service_id, operations):
         return type("_Def", (), {
             "service_id": service_id,
-            "service_type": "packageRuntime",
+            "service_type": "testImageProvider",
             "scope": "user",
             "config": {
                 "package_runtime": {"provides": ["media.image_generation"]},
@@ -3964,13 +4172,14 @@ def test_agent_media_resolver_skips_pfp_provider_without_required_method(tmp_pat
             return {"image_url": "generated.png"}
 
     class _Registry:
-        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
-            if service_type == "packageRuntime":
-                return [
-                    _definition("bad-pfp-image", {"edit_image": {}}),
-                    _definition("good-pfp-image", {"generate": {}}),
-                ]
+        def resolve_by_type(self, service_type, *, user_id="", conv_id=""):
             return []
+
+        def resolve_package_services(self, *, user_id="", conv_id="", enabled_only=True):
+            return [
+                _definition("bad-pfp-image", {"edit_image": {}}),
+                _definition("good-pfp-image", {"generate": {}}),
+            ]
 
         def resolve(self, service_id, *, user_id="", conv_id=""):
             return {
@@ -3994,7 +4203,7 @@ def test_agent_media_resolver_accepts_pfp_native_model_info_method(tmp_path, mon
 
     definition = type("_Def", (), {
         "service_id": "pfp-image-info",
-        "service_type": "packageRuntime",
+        "service_type": "testImageInfoProvider",
         "scope": "user",
         "config": {
             "package_runtime": {"provides": ["media.image_generation"]},
@@ -4010,10 +4219,11 @@ def test_agent_media_resolver_accepts_pfp_native_model_info_method(tmp_path, mon
             return {"provider": "pfp"}
 
     class _Registry:
-        def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
-            if service_type == "packageRuntime":
-                return [definition]
+        def resolve_by_type(self, service_type, *, user_id="", conv_id=""):
             return []
+
+        def resolve_package_services(self, *, user_id="", conv_id="", enabled_only=True):
+            return [definition]
 
         def resolve(self, service_id, *, user_id="", conv_id=""):
             if service_id == "pfp-image-info":
@@ -4067,12 +4277,13 @@ def test_agent_media_resolver_orders_pfp_and_native_by_scope(tmp_path, monkeypat
         def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
             if service_type == "nativeAgentImageForScopeOrder":
                 return [_definition("native-user", service_type, "user")]
-            if service_type == "packageRuntime":
-                return [_definition("pfp-conv", service_type, "conv", {
-                    "package_runtime": {"provides": ["media.image_generation"]},
-                    "operations": {"generate": {}},
-                })]
             return []
+
+        def resolve_package_services(self, *, user_id="", conv_id="", enabled_only=True):
+            return [_definition("pfp-conv", "testScopedImageProvider", "conv", {
+                "package_runtime": {"provides": ["media.image_generation"]},
+                "operations": {"generate": {}},
+            })]
 
         def resolve(self, service_id, *, user_id="", conv_id=""):
             if service_id == "native-user":
@@ -4132,12 +4343,13 @@ def test_agent_speech_to_video_resolver_orders_lipsync_pfp_by_scope(tmp_path, mo
         def resolve_by_type(self, service_type, *, user_id="", conv_id="", enabled_only=True):
             if service_type == "nativeUserSpeechVideoForScopeOrder":
                 return [_definition("native-user", service_type, "user")]
-            if service_type == "packageRuntime":
-                return [_definition("pfp-conv", service_type, "conv", {
-                    "package_runtime": {"provides": ["media.lipsync"]},
-                    "operations": {"speech_to_video": {}},
-                })]
             return []
+
+        def resolve_package_services(self, *, user_id="", conv_id="", enabled_only=True):
+            return [_definition("pfp-conv", "testScopedLipsync", "conv", {
+                "package_runtime": {"provides": ["media.lipsync"]},
+                "operations": {"speech_to_video": {}},
+            })]
 
         def resolve(self, service_id, *, user_id="", conv_id=""):
             if service_id == "native-user":
@@ -4161,31 +4373,18 @@ def test_agent_speech_to_video_resolver_orders_lipsync_pfp_by_scope(tmp_path, mo
 
 def test_pfp_package_qualified_service_ignores_same_id_other_package_shadow(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core import pfp_runtime
     from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
 
     registry = ServiceRegistry.get_instance()
-    registry.install(SCOPE_CONV, "conv1", "image", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.other",
-            "version": "1.0.0",
-            "object_id": "service_provider:image",
-            "provides": ["media.image_generation"],
-        },
-        "installed_from": {},
-        "operations": {"generate": {}},
-    })
-    registry.install(SCOPE_USER, "alice", "image", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.target",
-            "version": "1.0.0",
-            "object_id": "service_provider:image",
-            "provides": ["media.image_generation"],
-        },
-        "installed_from": {},
-        "operations": {"generate": {}},
-    })
+    _register_test_package_service_type(
+        "testOtherQualifiedImage", "service_provider:image", package="pkg.other",
+        provides=["media.image_generation"])
+    _register_test_package_service_type(
+        "testTargetQualifiedImage", "service_provider:image", package="pkg.target",
+        provides=["media.image_generation"])
+    registry.install(SCOPE_CONV, "conv1", "image", "testOtherQualifiedImage")
+    registry.install(SCOPE_USER, "alice", "image", "testTargetQualifiedImage")
 
     service = pfp_runtime._resolve_package_service(
         registry,
@@ -4226,20 +4425,13 @@ def test_resource_store_list_all_conversation_overrides_user_tool(tmp_path, monk
 
 def test_service_registry_task_subconversation_inherits_parent_services(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
-    import services.package_runtime_service  # noqa: F401
     from core.service_registry import ServiceRegistry, SCOPE_CONV
 
     registry = ServiceRegistry.get_instance()
-    registry.install(SCOPE_CONV, "conv1", "pfp-image", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.parent",
-            "version": "1.0.0",
-            "object_id": "service_provider:image",
-            "provides": ["media.image_generation"],
-        },
-        "installed_from": {},
-        "operations": {"generate": {}},
-    })
+    _register_test_package_service_type(
+        "testParentImage", "service_provider:image", package="pkg.parent",
+        provides=["media.image_generation"])
+    registry.install(SCOPE_CONV, "conv1", "pfp-image", "testParentImage")
 
     service = registry.resolve(
         "pfp-image", user_id="alice", conv_id="conv1::task::t_123")
@@ -4271,22 +4463,16 @@ def test_task_verify_subconversation_inherits_parent_services_and_relay(tmp_path
     _reset_repo(tmp_path, monkeypatch)
     import time
     import uuid
-    import services.package_runtime_service  # noqa: F401
     from core import relay_bindings
     from core.conversation_store import ConversationStore
     from core.service_registry import ServiceRegistry, SCOPE_CONV
 
     registry = ServiceRegistry.get_instance()
-    registry.install(SCOPE_CONV, "conv1", "pfp-image", "packageRuntime", config={
-        "package_runtime": {
-            "package": "pkg.parent",
-            "version": "1.0.0",
-            "object_id": "service_provider:image",
-            "provides": ["media.image_generation"],
-        },
-        "installed_from": {},
-        "operations": {"generate": {}},
-    })
+    _register_test_package_service_type(
+        "testVerifyParentImage", "service_provider:image", package="pkg.parent",
+        provides=["media.image_generation"])
+    registry.install(
+        SCOPE_CONV, "conv1", "pfp-image", "testVerifyParentImage")
     ConversationStore.instance().save("conv1", [{
         "role": "user",
         "content": "hello",
@@ -4367,13 +4553,14 @@ def test_package_capability_broker_prefers_exact_subconversation_install(tmp_pat
         tmp_path / "child", keypair, package_id="pkg.provider",
         version="2.0.0", include_service_provider=True)
 
-    for pkgdir, service_id in ((parent_dir, "parent-provider"), (child_dir, "child-provider")):
+    for pkgdir, service_type in (
+            (parent_dir, "parentProvider"), (child_dir, "childProvider")):
         manifest_path = pkgdir / "pfp.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         for obj in manifest["objects"]:
             if obj.get("id") == "service_provider:image":
-                obj["name"] = service_id
-                obj["service_id"] = service_id
+                obj["name"] = service_type
+                obj["service_type"] = service_type
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     parent_built = pfp_package.build_pfp(str(parent_dir), private_key=keypair["private_key"])
@@ -4713,6 +4900,9 @@ def test_pfp_runtime_resources_reload_after_registry_reset(tmp_path, monkeypatch
     from core.service_registry import ServiceRegistry, SCOPE_USER
     from core.tool_loader import load_tools_into_registry
     from core.tool_registry import ToolRegistry
+
+    ServiceRegistry.get_instance().install(
+        SCOPE_USER, "alice", "wavespeed-image-provider", "wavespeedImage")
 
     ResourceStore.reset()
     ServiceRegistry.reset()

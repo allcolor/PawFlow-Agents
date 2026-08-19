@@ -4,7 +4,7 @@ The WaveSpeed docs are rendered server-side by Nextra. The docs landing
 page contains the complete model-library sidebar, including every
 ``/docs/docs-api/...`` model page. This script reads that sidebar,
 downloads each model page, writes a human reference file, and builds the
-machine catalog consumed by the WaveSpeed services.
+machine catalog consumed by the bundled WaveSpeed provider PFP.
 
 Run:
     python scripts/extract_wavespeed_catalog.py --write
@@ -30,7 +30,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 ROOT = Path(__file__).resolve().parent.parent
 DOC_URL = "https://wavespeed.ai/docs"
 DOC_OUT = ROOT / "docs" / "wavespeed.md"
-CATALOG_OUT = ROOT / "data" / "repository" / "configs" / "wavespeed_catalog.json"
+CATALOG_OUT = (
+    ROOT / "packages" / "pawflow.wavespeed-provider.pfpdir"
+    / "content" / "runtime" / "repository" / "configs" / "wavespeed_catalog.json"
+)
 BASE_API = "https://api.wavespeed.ai/api/v3"
 
 UA = "PawFlow-WaveSpeed-Docs/1.0 (+https://github.com/allcolor/PawFlow-Agents)"

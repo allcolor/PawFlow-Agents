@@ -25,6 +25,35 @@ from tasks.ai.actions._sf_base import (
 logger = logging.getLogger(__name__)
 
 
+def _load_package_service_types(user_id: str, conversation_id: str = "") -> set[str]:
+    from core import pfp_package
+    visible = {
+        str(item.get("service_type") or "")
+        for item in pfp_package.load_installed_package_services(
+            user_id=user_id, scope="user").get("loaded", [])
+        if item.get("service_type")
+    }
+    if conversation_id:
+        visible.update(
+            str(item.get("service_type") or "")
+            for item in pfp_package.load_installed_package_services(
+            user_id=user_id, conversation_id=conversation_id,
+            scope="conversation").get("loaded", [])
+            if item.get("service_type")
+        )
+    return visible
+
+
+def _visible_service_class(service_type: str, visible_package_types: set[str]):
+    from core import ServiceFactory
+    service_class = ServiceFactory.get(service_type)
+    if (getattr(service_class, "PACKAGE_RUNTIME", None)
+            and service_type not in visible_package_types):
+        raise ValueError(
+            f"PFP service type is not installed for this scope: {service_type}")
+    return service_class
+
+
 def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
     """service_flow cluster _sf_k1. Returns result or _UNHANDLED."""
     (_find_relay_svc, _audio_lookup_token, _get_server_relay_container_ip,
@@ -221,12 +250,18 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
 
     if action == "list_service_types":
         from core import ServiceFactory
+        conv_id = (body.get("conversation_id", "")
+                   or flowfile.get_attribute("http.conversation_id") or "")
+        visible_package_types = _load_package_service_types(user_id, conv_id)
         types = []
         for stype in ServiceFactory.list_types():
             if stype in _DISABLED_DIRECT_SERVICE_INSTALL_TYPES:
                 continue
             try:
                 cls = ServiceFactory.get(stype)
+                if (getattr(cls, "PACKAGE_RUNTIME", None)
+                        and stype not in visible_package_types):
+                    continue
                 types.append({
                     "type": stype,
                     "name": getattr(cls, "NAME", stype),
@@ -258,7 +293,10 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
             return [flowfile]
         try:
             from core import ServiceFactory
-            cls = ServiceFactory.get(svc_type)
+            conv_id = (body.get("conversation_id", "")
+                       or flowfile.get_attribute("http.conversation_id") or "")
+            visible_package_types = _load_package_service_types(user_id, conv_id)
+            cls = _visible_service_class(svc_type, visible_package_types)
             instance = object.__new__(cls)
             instance.config = {}
             schema = instance.get_parameter_schema()
@@ -462,14 +500,16 @@ def _handle_sf_k1(self, action, body, store, user_id, flowfile, _helpers):
                     user_id=owner_user_id,
                     kind=str(config.get("server_kind") or "workspace"),
                 ))
-            from core import ServiceFactory
+            target_conversation_id = scope_id if scope == "conv" else ""
+            visible_package_types = _load_package_service_types(
+                owner_user_id, target_conversation_id)
             from core.service_install import (
                 ServiceInstallReporter,
                 read_install_state,
                 service_install_session,
                 update_install_state,
             )
-            svc_cls = ServiceFactory.get(svc_type)
+            svc_cls = _visible_service_class(svc_type, visible_package_types)
             _validate_required_service_config(svc_cls, config)
             prepare_result = None
             reporter = ServiceInstallReporter(

@@ -43,6 +43,21 @@ PACKAGE_SPECS = (
         "category": "Media & AI",
         "tags": ["comfyui", "self-hosted", "skill", "image", "video", "audio"],
     },
+    {
+        "source": ROOT / "packages" / "pawflow.pixazo-provider.pfpdir",
+        "category": "Media providers",
+        "tags": ["pixazo", "image", "video", "audio", "3d"],
+    },
+    {
+        "source": ROOT / "packages" / "pawflow.wavespeed-provider.pfpdir",
+        "category": "Media providers",
+        "tags": ["wavespeed", "image", "video", "audio", "3d"],
+    },
+    {
+        "source": ROOT / "packages" / "pawflow.kling-provider.pfpdir",
+        "category": "Media providers",
+        "tags": ["kling", "video"],
+    },
 )
 
 

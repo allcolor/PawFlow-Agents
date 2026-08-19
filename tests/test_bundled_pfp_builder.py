@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -48,6 +49,17 @@ def test_official_key_creation_stores_only_the_private_half(
 def test_bundled_avatar_catalog_build_is_signed_and_reproducible(
         tmp_path, monkeypatch):
     builder = _load_builder()
+    sources = tmp_path / "sources"
+    package_specs = []
+    for spec in builder.PACKAGE_SPECS:
+        source = sources / spec["source"].name
+        shutil.copytree(spec["source"], source)
+        manifest_path = source / "pfp.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.setdefault("developer", {})["public_key"] = ""
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        package_specs.append({**spec, "source": source})
+    builder.PACKAGE_SPECS = tuple(package_specs)
     bundled = tmp_path / "bundled"
     bundled.mkdir()
     index_path = bundled / "index.json"
@@ -85,6 +97,9 @@ def test_bundled_avatar_catalog_build_is_signed_and_reproducible(
         "pawflow.avatar-helper",
         "pawflow.avatar-pack.starter",
         "pawflow.comfyui-operator",
+        "pawflow.pixazo-provider",
+        "pawflow.wavespeed-provider",
+        "pawflow.kling-provider",
     ]
     for row in first["packages"][1:]:
         assert row["developer_key"] == keypair["public_key"]

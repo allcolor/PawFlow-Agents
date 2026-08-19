@@ -37,7 +37,6 @@ def test_service_category_maps_legacy_service_type():
     assert _service_category("openaiCompatibleImageGeneration", _LegacyService) == "image"
     assert _service_category("openaiCompatibleVideoGeneration", _LegacyService) == "video"
     assert _service_category("ccInteractiveEvents", _LegacyService) == "ai"
-    assert _service_category("packageRuntime", _LegacyService) == "system"
 
 
 def test_service_category_normalizes_catalog_aliases():

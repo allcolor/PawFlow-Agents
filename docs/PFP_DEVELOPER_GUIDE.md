@@ -27,7 +27,7 @@ generate_image(prompt="a cyberpunk cat", image_service="my-image-provider", widt
 
 `dev-load` defaults to conversation scope when a conversation id is available. It records the package as `dev: true`, registers the selected runtime objects, and points their `content_dir` directly at the `.pfpdir` source tree. The relay Python runner reads the entrypoint from that source tree on every invocation, so code edits are picked up without rebuilding.
 
-Re-run `dev-load --replace` when you change manifest-level data: `service_id`, `operations`, `provides`, `secrets`, `allowed_tools`, `allowed_services`, `requires`, object ids, or paths.
+Re-run `dev-load --replace` when you change manifest-level data: `service_type`, `operations`, `provides`, `secrets`, `allowed_tools`, `allowed_services`, `requires`, object ids, or paths.
 
 ## Manifest Example
 
@@ -46,7 +46,7 @@ Re-run `dev-load --replace` when you change manifest-level data: `service_id`, `
       "id": "service_provider:image",
       "type": "service_provider",
       "name": "my-image-provider",
-      "service_id": "my-image-provider",
+      "service_type": "myImageProvider",
       "path": "content/service-providers/image/provider.py",
       "runner": "python",
       "provides": ["media.image_generation"],
@@ -71,7 +71,7 @@ Rules:
 
 - `package` is the durable package id used by install, update, and unload.
 - Object ids must stay stable, for example `service_provider:image`.
-- `service_id` is the service name users pass to media tools, for example `image_service="my-image-provider"`.
+- `service_type` is the durable type registered in `ServiceFactory`, for example `myImageProvider`. Installing the PFP makes that type available in the normal service creator for the package's user or conversation scope; it does not create an instance. Users may create multiple normal service instances of the type, each with its own `service_id` and configuration, and pass an instance id to media tools, for example `image_service="my-image-primary"`.
 - `operations` must declare every callable service-provider operation; an empty or missing map is not a wildcard. Automatic media resolution selects providers by the exact operation required by the current tool call, for example text-to-video requires `generate` while image-to-video requires `image_to_video` or `reference_to_video`.
 - `runner` must be explicit for executable objects. Use `python`; the entrypoint runs in the selected relay, so it can use relay-local filesystem paths and relay-local binaries directly. Tool and service-provider calls use the agent-specific default relay when present, otherwise the conversation default relay; task, task-verification, and delegate sub-conversations inherit the parent conversation relay bindings, conversation-scoped package services, conversation-scoped package tools, tool/MCP filters, and installed package dependency records unless the exact sub-conversation defines its own values. Flow tasks use their required per-task `relay` parameter. A flow can define multiple relay parameters and point different imported tasks at different relays, for example `relay: "${relay_extract}"` on one task and `relay: "${relay_publish}"` on another. For protected server-side execution, pass the provisioned `srv_min_*` server execution relay id through a normal flow parameter. Calls back into PawFlow tools/services are brokered through `pfp.call_tool(...)` and `pfp.call_service(...)` and require matching grants. Package-qualified calls such as `pfp.call_tool("other.pkg/tool:shared")` resolve by package, optional version or version constraint, and object id even when another scope has a tool with the same name; they still obey the conversation and per-agent tool availability filters.
 - PFP flows deployed from the agent flow actions may use either their repository FQN or their flow `id`. PawFlow stores the canonical `fqn`, repository scope, owner, conversation id, and agent name on the deployed instance, then reuses those fields for later `start_flow` calls and restart restore so package flow tasks receive the same runtime context.
@@ -182,6 +182,8 @@ pfp.result(pfp.artifact(
 ```
 
 The artifact path must be relative to `pfp.context["output_dir"]`. PawFlow rejects absolute paths, `..`, missing files, and paths that escape the output directory. The runtime records artifact size and SHA-256, then hands a file path to the media handler. FileStore destinations copy the generated file in chunks instead of carrying it as JSON/base64.
+
+For `service_provider` entrypoints, `pfp.context["service_config"]` is the structured configuration of the selected service instance (for example its model, timeout, and resolved secret values); it is not flattened into the argument payload. When PawFlow has a public callback root, `pfp.context["callback_base_url"]` contains that URL without a trailing slash so out-of-process providers can construct webhook endpoints with the same behavior as core services.
 
 Use the same artifact pattern for other media kinds:
 

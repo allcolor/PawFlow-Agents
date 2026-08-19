@@ -1,0 +1,572 @@
+{
+  "format": "pawflow.package.v1",
+  "package": "pawflow.wavespeed-provider",
+  "version": "1.0.0",
+  "description": "Official WaveSpeedAI media service providers extracted from PawFlow core.",
+  "category": "Media providers",
+  "developer": {
+    "email": "quentin.anciaux@allcolor.org",
+    "public_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ="
+  },
+  "origin": {
+    "source": "pawflow"
+  },
+  "objects": [
+    {
+      "id": "service_provider:image",
+      "type": "service_provider",
+      "name": "WaveSpeedAI Image Generation",
+      "service_type": "wavespeedImageGeneration",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "WaveSpeedAI Image Generation",
+      "category": "image",
+      "parameters": {
+        "api_key": {
+          "description": "WaveSpeedAI API key.",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Submit/poll retry count for transient 5xx responses.",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "wavespeed-ai/flux-dev",
+          "description": "WaveSpeed model id (see wavespeed_catalog.json, category=image).",
+          "required": true,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 3,
+          "description": "Seconds between prediction status checks.",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that WaveSpeedAI can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "HTTP timeout in seconds.",
+          "required": false,
+          "type": "integer"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use WaveSpeedAI's webhook query parameter instead of polling. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "generate": {},
+        "edit_image": {}
+      },
+      "provides": [
+        "media.image_generation"
+      ]
+    },
+    {
+      "id": "service_provider:video",
+      "type": "service_provider",
+      "name": "WaveSpeedAI Video Generation",
+      "service_type": "wavespeedVideoGeneration",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "WaveSpeedAI Video Generation",
+      "category": "video",
+      "parameters": {
+        "api_key": {
+          "description": "WaveSpeedAI API key.",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Submit/poll retry count for transient 5xx responses.",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "wavespeed-ai/wan-2.2/t2v-480p",
+          "description": "WaveSpeed model id (see wavespeed_catalog.json, category=video).",
+          "required": true,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 3,
+          "description": "Seconds between prediction status checks.",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that WaveSpeedAI can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "HTTP timeout in seconds.",
+          "required": false,
+          "type": "integer"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use WaveSpeedAI's webhook query parameter instead of polling. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "generate": {},
+        "image_to_video": {},
+        "frame_to_video": {},
+        "speech_to_video": {},
+        "reference_to_video": {},
+        "video_edit": {}
+      },
+      "provides": [
+        "media.video_generation",
+        "media.lipsync"
+      ]
+    },
+    {
+      "id": "service_provider:audio",
+      "type": "service_provider",
+      "name": "WaveSpeedAI Audio Generation",
+      "service_type": "wavespeedAudioGeneration",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "WaveSpeedAI Audio Generation",
+      "category": "audio",
+      "parameters": {
+        "api_key": {
+          "description": "WaveSpeedAI API key.",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Submit/poll retry count for transient 5xx responses.",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "wavespeed-ai/qwen3-tts/text-to-speech",
+          "description": "WaveSpeed model id (see wavespeed_catalog.json, category=audio).",
+          "required": true,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 3,
+          "description": "Seconds between prediction status checks.",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that WaveSpeedAI can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "HTTP timeout in seconds.",
+          "required": false,
+          "type": "integer"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use WaveSpeedAI's webhook query parameter instead of polling. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "generate": {},
+        "text_to_speech": {},
+        "speak": {}
+      },
+      "provides": [
+        "media.audio_generation",
+        "media.tts"
+      ]
+    },
+    {
+      "id": "service_provider:voice-clone",
+      "type": "service_provider",
+      "name": "WaveSpeedAI Voice Clone",
+      "service_type": "wavespeedVoiceClone",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "WaveSpeedAI Voice Clone",
+      "category": "voice-clone",
+      "parameters": {
+        "api_key": {
+          "description": "WaveSpeedAI API key.",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Submit/poll retry count for transient 5xx responses.",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "wavespeed-ai/qwen3-tts/voice-clone",
+          "description": "WaveSpeed model id (see wavespeed_catalog.json, category=voice_clone).",
+          "required": true,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 3,
+          "description": "Seconds between prediction status checks.",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that WaveSpeedAI can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "HTTP timeout in seconds.",
+          "required": false,
+          "type": "integer"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use WaveSpeedAI's webhook query parameter instead of polling. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "clone_speak": {}
+      },
+      "provides": [
+        "media.voice_clone",
+        "media.tts",
+        "media.audio_generation"
+      ]
+    },
+    {
+      "id": "service_provider:3d",
+      "type": "service_provider",
+      "name": "WaveSpeedAI 3D Generation",
+      "service_type": "wavespeed3DGeneration",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "WaveSpeedAI 3D Generation",
+      "category": "3d",
+      "parameters": {
+        "api_key": {
+          "description": "WaveSpeedAI API key.",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Submit/poll retry count for transient 5xx responses.",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "wavespeed-ai/hunyuan3d-v3/text-to-3d",
+          "description": "WaveSpeed model id (see wavespeed_catalog.json, category=3d).",
+          "required": true,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 3,
+          "description": "Seconds between prediction status checks.",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that WaveSpeedAI can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "HTTP timeout in seconds.",
+          "required": false,
+          "type": "integer"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use WaveSpeedAI's webhook query parameter instead of polling. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "generate_3d": {}
+      },
+      "provides": [
+        "media.3d_generation"
+      ]
+    },
+    {
+      "id": "service_provider:upscale",
+      "type": "service_provider",
+      "name": "WaveSpeedAI Upscale",
+      "service_type": "wavespeedUpscale",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "WaveSpeedAI Upscale",
+      "category": "upscale",
+      "parameters": {
+        "api_key": {
+          "description": "WaveSpeedAI API key.",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Submit/poll retry count for transient 5xx responses.",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "wavespeed-ai/image-upscaler",
+          "description": "WaveSpeed model id (see wavespeed_catalog.json, category=upscale).",
+          "required": true,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 3,
+          "description": "Seconds between prediction status checks.",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that WaveSpeedAI can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "HTTP timeout in seconds.",
+          "required": false,
+          "type": "integer"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use WaveSpeedAI's webhook query parameter instead of polling. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "upscale": {},
+        "upscale_video": {},
+        "remove_background": {}
+      },
+      "provides": [
+        "media.image_upscale",
+        "media.video_upscale",
+        "media.background_removal"
+      ]
+    },
+    {
+      "id": "service_provider:try-on",
+      "type": "service_provider",
+      "name": "WaveSpeedAI Try-On",
+      "service_type": "wavespeedTryOn",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "WaveSpeedAI Try-On",
+      "category": "try-on",
+      "parameters": {
+        "api_key": {
+          "description": "WaveSpeedAI API key.",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Submit/poll retry count for transient 5xx responses.",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "wavespeed-ai/ai-virtual-outfit-tryon",
+          "description": "WaveSpeed model id (see wavespeed_catalog.json, category=try_on).",
+          "required": true,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 3,
+          "description": "Seconds between prediction status checks.",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that WaveSpeedAI can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "HTTP timeout in seconds.",
+          "required": false,
+          "type": "integer"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use WaveSpeedAI's webhook query parameter instead of polling. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "try_on": {}
+      },
+      "provides": [
+        "media.try_on"
+      ]
+    },
+    {
+      "id": "service_provider:lipsync",
+      "type": "service_provider",
+      "name": "WaveSpeedAI Lipsync",
+      "service_type": "wavespeedLipsync",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "WaveSpeedAI Lipsync",
+      "category": "lipsync",
+      "parameters": {
+        "api_key": {
+          "description": "WaveSpeedAI API key.",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Submit/poll retry count for transient 5xx responses.",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "wavespeed-ai/ltx-2.3/lipsync",
+          "description": "WaveSpeed model id (see wavespeed_catalog.json, category=lipsync).",
+          "required": true,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 3,
+          "description": "Seconds between prediction status checks.",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that WaveSpeedAI can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "HTTP timeout in seconds.",
+          "required": false,
+          "type": "integer"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use WaveSpeedAI's webhook query parameter instead of polling. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "lipsync": {}
+      },
+      "provides": [
+        "media.lipsync"
+      ]
+    },
+    {
+      "id": "service_provider:trainer",
+      "type": "service_provider",
+      "name": "WaveSpeedAI Trainer",
+      "service_type": "wavespeedTrainer",
+      "path": "content/runtime/provider.py",
+      "runner": "python",
+      "description": "WaveSpeedAI Trainer",
+      "category": "trainer",
+      "parameters": {
+        "api_key": {
+          "description": "WaveSpeedAI API key.",
+          "required": true,
+          "sensitive": true,
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Submit/poll retry count for transient 5xx responses.",
+          "required": false,
+          "type": "integer"
+        },
+        "model": {
+          "default": "wavespeed-ai/flux-dev-lora-trainer",
+          "description": "WaveSpeed model id (see wavespeed_catalog.json, category=trainer).",
+          "required": true,
+          "type": "string"
+        },
+        "poll_interval": {
+          "default": 3,
+          "description": "Seconds between prediction status checks.",
+          "required": false,
+          "type": "integer"
+        },
+        "public_callback_base_url": {
+          "default": "",
+          "description": "Public HTTPS base URL that WaveSpeedAI can POST callbacks to, e.g. https://webchat.example.org. Falls back to the agent runtime file_base_url when omitted.",
+          "required": false,
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "HTTP timeout in seconds.",
+          "required": false,
+          "type": "integer"
+        },
+        "use_webhook": {
+          "default": false,
+          "description": "Use WaveSpeedAI's webhook query parameter instead of polling. Requires PawFlow to be reachable from the internet through public_callback_base_url or the agent file_base_url.",
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "operations": {
+        "train": {}
+      },
+      "provides": [
+        "media.image_training"
+      ]
+    }
+  ]
+}

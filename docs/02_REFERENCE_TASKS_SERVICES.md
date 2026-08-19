@@ -542,12 +542,16 @@ Service schemas may expose parameter fill helpers through `fill_helper`
 metadata. The chat resource editor renders those helpers beside eligible
 fields and calls `get_service_parameter_helper` to fetch suggestions. Helpers
 cover LLM providers, OpenAI-compatible media services, voice/audio services,
-Pixazo and WaveSpeed catalogs, OAuth/Auth Gateway templates, rclone backends,
+OAuth/Auth Gateway templates, rclone backends,
 HTTP callback URLs, and certificate/path fields. Live provider model lookup is
 attempted only when required context such as `api_key` is already filled;
 otherwise the UI shows bundled fallback values and an explicit warning. Secret
 helpers list secret names only and fill `${secret_name}` references, never raw
 secret values.
+
+Provider-specific model choices shipped by a PFP, including the bundled Pixazo
+and WaveSpeed providers, live in that package's service schema. PawFlow renders
+those options without retaining a second provider catalog in core.
 
 ### 12.0.1. Pocket TTS Local (`pocketTTS`)
 

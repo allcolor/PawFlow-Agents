@@ -318,15 +318,16 @@ def _collect_source_files(root: Path) -> Dict[str, bytes]:
 def _existing_status_name(obj_type: str, obj: Dict[str, Any], package: Dict[str, Any],
                           path: str, name: str) -> str:
     if obj_type == "service_provider":
-        service_id = str(obj.get("service_id") or "").strip()
-        if service_id:
-            return service_id
+        service_type = str(obj.get("service_type") or obj.get("type_name") or "").strip()
+        if service_type:
+            return service_type
         if path and path.endswith(".json"):
             try:
                 metadata = _load_json_bytes(package["files"][_safe_relpath(path)])
-                service_id = str(metadata.get("service_id") or "").strip()
-                if service_id:
-                    return service_id
+                service_type = str(
+                    metadata.get("service_type") or metadata.get("type_name") or "").strip()
+                if service_type:
+                    return service_type
             except Exception:
                 logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
     return name
@@ -591,6 +592,43 @@ def _validate_service_template_object(obj: Dict[str, Any],
     return ""
 
 
+def _validate_service_provider_object(obj: Dict[str, Any],
+                                      package: Dict[str, Any]) -> str:
+    """Validate the named service type exported by a runtime provider."""
+    path = str(obj.get("path") or "").strip()
+    rel = _safe_relpath(path) if path else ""
+    metadata: Dict[str, Any] = {}
+    if rel.endswith(".json") and rel in (package.get("files") or {}):
+        try:
+            metadata = _load_json_bytes(package["files"][rel])
+        except Exception as exc:
+            return str(exc)
+    if "service_id" in obj or "service_id" in metadata:
+        return ("service_provider.service_id is not supported; declare service_type "
+                "and install instances with service_definition")
+    service_type = str(
+        obj.get("service_type") or obj.get("type_name")
+        or metadata.get("service_type") or metadata.get("type_name") or "").strip()
+    if not service_type or not _RESOURCE_NAME_RE.match(service_type):
+        return "service_provider service_type is required and must be a valid type name"
+    parameters = obj.get("parameters", metadata.get("parameters", {}))
+    if not isinstance(parameters, dict):
+        return "service_provider parameters must be an object"
+    if parameters.get("type") == "object" and not isinstance(parameters.get("properties", {}), dict):
+        return "service_provider parameters.properties must be an object"
+    operations = obj.get("operations", metadata.get("operations", {}))
+    if isinstance(operations, list):
+        if not operations or any(not str(item or "").strip() for item in operations):
+            return "service_provider operations must contain operation names"
+    elif not isinstance(operations, dict) or not operations:
+        return "service_provider operations must be a non-empty object or list"
+    for field in ("rules", "actions"):
+        value = obj.get(field, metadata.get(field, []))
+        if not isinstance(value, list):
+            return f"service_provider {field} must be a list"
+    return ""
+
+
 def _mcp_server_risk(obj: Dict[str, Any], package: Dict[str, Any]) -> str:
     """stdio mcp_server objects run an arbitrary command on the relay host
     once enabled, the same risk profile as a package tool/service_provider.
@@ -660,6 +698,33 @@ def _find_replacement_flow_task_record(task_type: str,
             obj_package = str((obj.get("installed_from") or {}).get("package") or "")
             if (str(obj.get("object_id") or "") == removed_object_id
                     and obj_package == removed_package):
+                continue
+            return obj
+    return None
+
+
+def _find_replacement_service_provider_record(
+        service_type: str, removed: Dict[str, Any], *, user_id: str,
+        conversation_id: str, scope: str) -> Optional[Dict[str, Any]]:
+    removed_object_id = str(removed.get("object_id") or "")
+    for path, candidate_scope, candidate_user_id, candidate_conversation_id in (
+            _iter_install_record_paths()):
+        try:
+            record = _read_json_file(path)
+        except Exception:
+            logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+            continue
+        for obj in record.get("objects") or []:
+            if (obj.get("kind") != "service_provider"
+                    or obj.get("service_type") != service_type):
+                continue
+            removing_exact_record = (
+                candidate_scope == scope
+                and candidate_user_id == user_id
+                and candidate_conversation_id == conversation_id
+                and str(obj.get("object_id") or "") == removed_object_id
+            )
+            if removing_exact_record:
                 continue
             return obj
     return None

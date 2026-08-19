@@ -143,7 +143,7 @@ def _invocation_envelope(kind: str, prepared: Dict[str, Any],
         "payload": payload,
     }
 
-def _runtime_context(context: Dict[str, Any]) -> Dict[str, str]:
+def _runtime_context(context: Dict[str, Any]) -> Dict[str, Any]:
     scope = str(context.get("scope") or "").strip()
     if scope in {"conv", "conversation"}:
         scope = "conversation"
@@ -154,9 +154,16 @@ def _runtime_context(context: Dict[str, Any]) -> Dict[str, str]:
         "conversation_id": str(context.get("conversation_id") or ""),
         "scope": scope,
     }
-    for key in ("agent_name", "output_dir", "max_artifact_bytes", "relay_id"):
+    for key in (
+            "agent_name", "output_dir", "max_artifact_bytes", "relay_id",
+            "callback_base_url"):
         if context.get(key) is not None:
             result[key] = str(context.get(key) or "")
+    service_config = context.get("service_config")
+    if service_config is not None:
+        if not isinstance(service_config, dict):
+            raise PackageRuntimeError("PFP service_config must be an object")
+        result["service_config"] = dict(service_config)
     return result
 
 def _list_value(value: Any) -> list:
@@ -227,10 +234,10 @@ def _require_runtime_target(runtime_target: Any, target: Dict[str, str]) -> None
 
 def _resolve_package_service(service_registry: Any, target: Dict[str, str], *,
                              user_id: str, conversation_id: str) -> Any:
-    resolver = getattr(service_registry, "resolve_by_type", None)
+    resolver = getattr(service_registry, "resolve_package_services", None)
     if not callable(resolver):
         return None
-    for definition in resolver("packageRuntime", user_id=user_id, conv_id=conversation_id):
+    for definition in resolver(user_id=user_id, conv_id=conversation_id):
         runtime = _runtime_metadata(definition)
         if not runtime:
             runtime = _runtime_metadata(getattr(definition, "config", {}))

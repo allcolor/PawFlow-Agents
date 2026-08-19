@@ -15,6 +15,7 @@ import http.client
 import json
 import logging
 import os
+from pathlib import Path
 import ssl
 import time
 import urllib.parse
@@ -33,8 +34,10 @@ _CATALOG_CACHE: Optional[Dict[str, Any]] = None
 
 
 def _catalog_path() -> str:
-    import core.paths as _p
-    return str(_p.REPOSITORY_DIR / "configs" / "wavespeed_catalog.json")
+    return str(
+        Path(__file__).resolve().parents[1]
+        / "repository" / "configs" / "wavespeed_catalog.json"
+    )
 
 
 def _load_catalog() -> Dict[str, Any]:

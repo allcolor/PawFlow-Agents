@@ -19,33 +19,53 @@ class PackageRuntimeService(Service):
     proxy owns lifecycle state and delegates operations to the package runtime.
     """
 
-    TYPE = "packageRuntime"
+    TYPE = ""
     VERSION = "1.0.0"
-    NAME = "PFP Package Runtime Service"
-    DESCRIPTION = "Runtime proxy for installed PawFlow Package service providers"
+    NAME = "PFP Service Provider"
+    DESCRIPTION = "Internal runtime base for PawFlow Package service providers"
+    CATEGORY = "other"
+    PARAMETERS: Dict[str, Any] = {}
+    OPERATIONS: Dict[str, Any] = {}
+    PACKAGE_RUNTIME: Dict[str, Any] = {}
+    INSTALLED_FROM: Dict[str, Any] = {}
+    PROVIDER_METADATA: Dict[str, Any] = {}
+
+    @classmethod
+    def materialize_config(cls, config: Dict[str, Any], *, user_id: str = "",
+                           conversation_id: str = "", scope: str = "user") -> Dict[str, Any]:
+        """Persist the provider descriptor required to recreate this proxy."""
+        merged = dict(config or {})
+        merged.setdefault("package_runtime", dict(cls.PACKAGE_RUNTIME))
+        merged.setdefault("runtime_installed_from", dict(cls.INSTALLED_FROM))
+        merged.setdefault("operations", dict(cls.OPERATIONS))
+        merged.setdefault("_package_service_provider", dict(cls.PROVIDER_METADATA))
+        if (user_id or conversation_id or "package_runtime_context" not in merged):
+            merged["package_runtime_context"] = {
+                "user_id": user_id,
+                "conversation_id": conversation_id if scope in {"conv", "conversation"} else "",
+                "scope": "conversation" if scope in {"conv", "conversation"} else "user",
+            }
+        return merged
 
     def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
+        merged = self.materialize_config(config or {})
+        super().__init__(merged)
         self._connected = False
         self._last_error = ""
         self._connected_at = 0.0
         self._runtime_context: Dict[str, Any] = {}
 
     def get_parameter_schema(self) -> Dict[str, Any]:
-        return {
-            "package_runtime": {"type": "object", "required": True},
-            "installed_from": {"type": "object", "required": True},
-            "operations": {"type": "object", "required": False},
-        }
+        return dict(self.PARAMETERS)
 
     def validate(self) -> List[str]:
         errors = super().validate()
         runtime = self.config.get("package_runtime")
         if not isinstance(runtime, dict) or not runtime.get("package") or not runtime.get("object_id"):
             errors.append("package_runtime.package and package_runtime.object_id are required")
-        installed_from = self.config.get("installed_from")
+        installed_from = self.config.get("runtime_installed_from")
         if not isinstance(installed_from, dict):
-            errors.append("installed_from must be an object")
+            errors.append("runtime_installed_from must be an object")
         return errors
 
     def connect(self):
@@ -80,7 +100,7 @@ class PackageRuntimeService(Service):
         }
 
     def get_operations(self) -> Dict[str, Any]:
-        operations = self.config.get("operations") or {}
+        operations = self.config.get("operations") or self.OPERATIONS or {}
         if isinstance(operations, dict):
             return operations
         if isinstance(operations, list):
@@ -119,6 +139,9 @@ class PackageRuntimeService(Service):
             "agent_name": agent_name,
         }
 
+    def set_callback_base_url(self, base_url: str) -> None:
+        self._runtime_context["callback_base_url"] = str(base_url or "").rstrip("/")
+
     def generate(self, **kwargs) -> Dict[str, Any]:
         return self._invoke_media_operation("generate", kwargs)
 
@@ -138,7 +161,7 @@ class PackageRuntimeService(Service):
         try:
             return pfp_runtime.invoke_service(
                 self.config.get("package_runtime") or {},
-                self.config.get("installed_from") or {},
+                self.config.get("runtime_installed_from") or {},
                 operation,
                 arguments or {},
                 self._merged_runtime_context(),
@@ -160,6 +183,14 @@ class PackageRuntimeService(Service):
     def _merged_runtime_context(self) -> Dict[str, Any]:
         context = dict(self.config.get("package_runtime_context") or {})
         context.update({k: v for k, v in self._runtime_context.items() if v})
+        internal = {
+            "package_runtime", "runtime_installed_from", "installed_from",
+            "operations", "package_capabilities", "package_runtime_context",
+        }
+        context["service_config"] = {
+            key: value for key, value in self.config.items()
+            if key not in internal and not str(key).startswith("_")
+        }
         return context
 
     def _normalize_media_result(self, result: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
@@ -223,4 +254,95 @@ def _sha256_file(path: Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
-ServiceFactory.register(PackageRuntimeService)
+def register_package_service_proxy(metadata: Dict[str, Any]) -> type:
+    """Register one named PFP service type in ``ServiceFactory``."""
+    service_type = str(metadata.get("service_type") or "").strip()
+    if not service_type:
+        raise ValueError("service_type is required")
+    runtime = dict(metadata.get("package_runtime") or {})
+    installed_from = dict(metadata.get("installed_from") or {})
+    if not runtime.get("package") or not runtime.get("object_id"):
+        raise ValueError("package_runtime.package and package_runtime.object_id are required")
+    parameters = metadata.get("parameters") or {}
+    if (isinstance(parameters, dict)
+            and parameters.get("type") == "object"
+            and isinstance(parameters.get("properties"), dict)):
+        parameters = parameters["properties"]
+    if not isinstance(parameters, dict):
+        raise ValueError("service provider parameters must be an object")
+    operations = metadata.get("operations") or {}
+    if isinstance(operations, list):
+        operations = {str(name): {} for name in operations if str(name or "")}
+    if not isinstance(operations, dict) or not operations:
+        raise ValueError("service provider operations must be a non-empty object")
+
+    existing = ServiceFactory._services.get(service_type)
+    if existing is not None:
+        existing_runtime = dict(getattr(existing, "PACKAGE_RUNTIME", {}) or {})
+        same_provider = (
+            issubclass(existing, PackageRuntimeService)
+            and existing_runtime.get("package") == runtime.get("package")
+            and existing_runtime.get("object_id") == runtime.get("object_id")
+        )
+        if not same_provider:
+            raise ValueError(f"Service type '{service_type}' is already registered")
+
+    provider_metadata = {
+        "package": str(runtime.get("package") or ""),
+        "object_id": str(runtime.get("object_id") or ""),
+        "service_type": service_type,
+        "version": str(metadata.get("version") or runtime.get("version") or "1.0.0"),
+        "name": str(metadata.get("name") or service_type),
+        "description": str(metadata.get("description") or ""),
+        "category": str(metadata.get("category") or "other"),
+        "parameters": dict(parameters),
+        "rules": list(metadata.get("rules") or []),
+        "actions": list(metadata.get("actions") or []),
+        "operations": dict(operations),
+        "package_runtime": runtime,
+        "installed_from": installed_from,
+    }
+
+    class PackageServiceProxy(PackageRuntimeService):
+        TYPE = service_type
+        VERSION = provider_metadata["version"]
+        NAME = provider_metadata["name"]
+        DESCRIPTION = provider_metadata["description"]
+        CATEGORY = provider_metadata["category"]
+        PARAMETERS = dict(parameters)
+        OPERATIONS = dict(operations)
+        PACKAGE_RUNTIME = runtime
+        INSTALLED_FROM = installed_from
+        PROVIDER_METADATA = provider_metadata
+
+        def get_parameter_rules(self) -> List[Dict[str, Any]]:
+            return list(self.PROVIDER_METADATA.get("rules") or [])
+
+        def get_service_actions(self) -> List[Dict[str, Any]]:
+            return list(self.PROVIDER_METADATA.get("actions") or [])
+
+    PackageServiceProxy.__name__ = _class_name_for(service_type)
+    ServiceFactory.register(PackageServiceProxy)
+    return PackageServiceProxy
+
+
+def unregister_package_service_proxy(service_type: str,
+                                     package_runtime: Dict[str, Any]) -> bool:
+    """Remove a PFP type only when it still belongs to the expected provider."""
+    current = ServiceFactory._services.get(str(service_type or ""))
+    if current is None or not issubclass(current, PackageRuntimeService):
+        return False
+    runtime = dict(getattr(current, "PACKAGE_RUNTIME", {}) or {})
+    expected = dict(package_runtime or {})
+    if (runtime.get("package") != expected.get("package")
+            or runtime.get("object_id") != expected.get("object_id")):
+        return False
+    ServiceFactory._services.pop(service_type, None)
+    return True
+
+
+def _class_name_for(service_type: str) -> str:
+    clean = "".join(ch if ch.isalnum() else "_" for ch in service_type).strip("_")
+    parts = [part for part in clean.split("_") if part]
+    name = "".join(part[:1].upper() + part[1:] for part in parts) or "Package"
+    return f"{name}PackageServiceProxy"

@@ -12,11 +12,82 @@ import core.paths as _paths
 from core.pfp_package._pp_base import (  # noqa: F401
     PfpError, _PACKAGE_ID_RE, _RUNTIME_OBJECT_TYPES, _UI_API_VERSION, _WEBAPP_API_VERSION)
 from core.pfp_package._pp_mod1 import (  # noqa: F401
-    _agent_assigned_skill_names, _looks_like_package_ref, _normalize_scope, _read_json_file, _register_flow_task_proxy, _safe_component, _safe_relpath, _skill_bundled_files, _split_package_object_ref, _ui_extension_asset_list, _validate_version_ref, _version_tuple, _web_app_asset_list)
+    _agent_assigned_skill_names, _looks_like_package_ref, _normalize_scope, _read_json_file, _register_flow_task_proxy, _register_service_provider_proxy, _safe_component, _safe_relpath, _skill_bundled_files, _split_package_object_ref, _ui_extension_asset_list, _validate_version_ref, _version_tuple, _web_app_asset_list)
 from core.pfp_package._pp_mod2 import (  # noqa: F401
-    _find_replacement_flow_task_record, _install_scope_dir, _load_public_key, _load_resource_data, _normalize_secret_requirements, _package_content_root, _package_flow_task_types, _package_skill_names, _parse_package_version, _signature_payload, _uninstall_flow, _version_part_satisfies)
+    _find_replacement_flow_task_record, _find_replacement_service_provider_record, _install_scope_dir, _load_public_key, _load_resource_data, _normalize_secret_requirements, _package_content_root, _package_flow_task_types, _package_skill_names, _parse_package_version, _signature_payload, _uninstall_flow, _version_part_satisfies)
 
 logger = logging.getLogger(__name__)
+
+
+def load_installed_package_services(*, user_id: str,
+                                    conversation_id: str = "",
+                                    scope: str = "user") -> Dict[str, Any]:
+    """Reload installed PFP service type proxies into ``ServiceFactory``."""
+    if not user_id:
+        raise PfpError("user_id is required")
+    scope = _normalize_scope(scope, conversation_id)
+    root = _install_scope_dir(user_id, conversation_id, scope)
+    loaded = []
+    errors = []
+    if not root.exists():
+        return {"ok": True, "scope": scope, "loaded": loaded, "errors": errors}
+    for path in sorted(root.glob("*.json")):
+        try:
+            record = _read_json_file(path)
+        except Exception as exc:
+            errors.append({"path": str(path), "error": str(exc)})
+            continue
+        for obj in record.get("objects") or []:
+            if obj.get("kind") != "service_provider":
+                continue
+            try:
+                _register_service_provider_proxy(obj)
+                loaded.append({
+                    "package": record.get("package", ""),
+                    "object_id": obj.get("object_id", ""),
+                    "service_type": obj.get("service_type", ""),
+                })
+            except Exception as exc:
+                errors.append({
+                    "package": record.get("package", ""),
+                    "object_id": obj.get("object_id", ""),
+                    "error": str(exc),
+                })
+    return {"ok": not errors, "scope": scope, "loaded": loaded, "errors": errors}
+
+
+def resolve_installed_service_provider(service_type: str, *, user_id: str,
+                                       conversation_id: str = "",
+                                       scope: str = "conversation") -> Dict[str, Any]:
+    """Resolve one installed PFP service type through conversation > user."""
+    service_type = str(service_type or "").strip()
+    if not service_type:
+        raise PfpError("service_type is required")
+    if not user_id:
+        raise PfpError("user_id is required")
+    scopes = []
+    if scope in {"conversation", "conv"}:
+        if not conversation_id:
+            raise PfpError(
+                "conversation_id is required for conversation-scoped PFP service providers")
+        scopes.append(("conversation", conversation_id))
+    scopes.append(("user", ""))
+    for candidate_scope, scope_id in scopes:
+        root = _install_scope_dir(user_id, scope_id, candidate_scope)
+        matches = []
+        if root.exists():
+            for path in sorted(root.glob("*.json")):
+                record = _read_json_file(path)
+                for obj in record.get("objects") or []:
+                    if (obj.get("kind") == "service_provider"
+                            and obj.get("service_type") == service_type):
+                        matches.append(obj)
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise PfpError(
+                f"PFP service type is ambiguous in {candidate_scope} scope: {service_type}")
+    raise PfpError(f"PFP service provider is not installed for this scope: {service_type}")
 
 
 def load_installed_package_tasks(*, user_id: str, conversation_id: str = "",
@@ -462,6 +533,55 @@ def _review_object_for_install(row: Dict[str, Any], package: Dict[str, Any],
         )
 
 
+def _service_provider_instance_dependents(
+        record: Dict[str, Any], user_id: str, conversation_id: str,
+        scope: str) -> List[Dict[str, str]]:
+    """Return persisted service instances backed by this exact provider."""
+    from core.service_registry import ServiceRegistry, SCOPE_CONV, SCOPE_USER
+
+    expected = dict(record.get("package_runtime") or {})
+    package_id = str(expected.get("package") or "")
+    object_id = str(expected.get("object_id") or record.get("object_id") or "")
+    service_type = str(record.get("service_type") or "")
+    scopes = [(SCOPE_CONV, conversation_id)] if scope == "conversation" else [
+        (SCOPE_USER, user_id),
+    ]
+    if scope == "user":
+        try:
+            from core.conversation_store import ConversationStore
+            scopes.extend(
+                (SCOPE_CONV, str(item.get("conversation_id") or ""))
+                for item in ConversationStore.instance().list_conversations(user_id)
+                if item.get("conversation_id")
+            )
+        except Exception:
+            logger.debug("PFP service dependent conversation scan failed", exc_info=True)
+
+    dependents = []
+    seen_scopes = set()
+    registry = ServiceRegistry.get_instance()
+    for registry_scope, scope_id in scopes:
+        scope_key = (registry_scope, scope_id)
+        if not scope_id or scope_key in seen_scopes:
+            continue
+        seen_scopes.add(scope_key)
+        for service_id, definition in registry.get_all(registry_scope, scope_id).items():
+            if definition.service_type != service_type:
+                continue
+            config = definition.config or {}
+            runtime = config.get("package_runtime") or {}
+            if (str(runtime.get("package") or "") != package_id
+                    or str(runtime.get("object_id") or "") != object_id):
+                continue
+            dependents.append({
+                "scope": "conversation" if registry_scope == SCOPE_CONV else "user",
+                "scope_id": scope_id,
+                "service_id": service_id,
+                "service_type": service_type,
+            })
+    return dependents
+
+
 def _uninstall_object(record: Dict[str, Any], user_id: str, conversation_id: str,
                       scope: str, force: bool) -> bool:
     kind = record.get("kind")
@@ -521,6 +641,29 @@ def _uninstall_object(record: Dict[str, Any], user_id: str, conversation_id: str
                 return False
         reg.uninstall(reg_scope, scope_id, record["service_id"])
         return True
+    if kind == "service_provider":
+        from services.package_runtime_service import (
+            register_package_service_proxy,
+            unregister_package_service_proxy,
+        )
+        service_type = str(record.get("service_type") or "")
+        dependents = _service_provider_instance_dependents(
+            record, user_id, conversation_id, scope)
+        if dependents and not force:
+            refs = ", ".join(
+                f"{item['scope']}:{item['scope_id']}:{item['service_id']}"
+                for item in dependents)
+            raise PfpError(
+                f"Service type '{service_type}' is still used by service instance(s): {refs}")
+        replacement = _find_replacement_service_provider_record(
+            service_type, record, user_id=user_id,
+            conversation_id=conversation_id, scope=scope)
+        if replacement:
+            register_package_service_proxy(replacement)
+        else:
+            unregister_package_service_proxy(
+                service_type, record.get("package_runtime") or {})
+        return bool(service_type)
     if kind == "flow_task":
         from core import TaskFactory
         task_type = str(record.get("task_type") or "")

@@ -39,6 +39,31 @@ from core._service_registry_io import _ServiceRegistryIOMixin
 logger = logging.getLogger(__name__)
 
 
+def _resolve_service_class(service_type: str, config: Optional[Dict[str, Any]] = None) -> type:
+    """Resolve a native type or rehydrate a persisted PFP provider proxy."""
+    try:
+        return ServiceFactory.get(service_type)
+    except Exception as original:
+        metadata = (config or {}).get("_package_service_provider")
+        if not isinstance(metadata, dict):
+            raise original
+        from services.package_runtime_service import register_package_service_proxy
+        register_package_service_proxy(metadata)
+        return ServiceFactory.get(service_type)
+
+
+def _package_service_owner(scope: str, scope_id: str) -> str:
+    if scope == SCOPE_USER:
+        return scope_id
+    if scope == SCOPE_CONV and scope_id:
+        try:
+            from core.conversation_store import ConversationStore
+            return str(ConversationStore.instance().resolve_owner(scope_id) or "")
+        except Exception:
+            logger.debug("PFP service owner resolution failed", exc_info=True)
+    return ""
+
+
 class ServiceRegistry(_ServiceRegistryIOMixin):
     """Thread-safe singleton managing service definitions and live instances
     across global, user, and conversation scopes."""
@@ -91,6 +116,11 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
                 self._loaded.add(sid)
                 just_loaded = True
         if just_loaded:
+            from core.provider_pfp_migration import migrate_scope
+            migrate_scope(
+                scope, sid,
+                list(self._definitions.get(sid, {}).values()),
+            )
             self._connect_managed_relays(sid)
 
     def _connect_managed_relays(self, scope_id: str) -> None:
@@ -257,15 +287,23 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
         if service_id.lower() in _RESERVED:
             raise ValueError(f"Service name '{service_id}' is reserved (builtin FileStore alias)")
 
+        _new_config = dict(config or {})
         try:
-            service_class = ServiceFactory.get(service_type)
+            service_class = _resolve_service_class(service_type, _new_config)
         except Exception:
             raise ValueError(f"Unknown service type: {service_type}")
+        materialize = getattr(service_class, "materialize_config", None)
+        if callable(materialize) and getattr(service_class, "PACKAGE_RUNTIME", None):
+            _new_config = materialize(
+                _new_config,
+                user_id=_package_service_owner(scope, sid),
+                conversation_id=sid if scope == SCOPE_CONV else "",
+                scope=scope,
+            )
 
         # Idempotent short-circuit: same definition already live → no-op.
         # Compare the load-bearing fields (type + config + enabled); we
         # ignore description and timestamps (not connection-relevant).
-        _new_config = config or {}
         validator = (getattr(service_class, "validate_config", None)
                      if "validate_config" in service_class.__dict__ else None)
         if callable(validator):
@@ -346,7 +384,8 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
 
         # Check with merged config (existing + new values)
         merged = {**svc_def.config, **config}
-        service_class = ServiceFactory.get(svc_def.service_type)
+        service_class = _resolve_service_class(
+            svc_def.service_type, svc_def.config)
         validator = (getattr(service_class, "validate_config", None)
                      if "validate_config" in service_class.__dict__ else None)
         if callable(validator):
@@ -664,7 +703,8 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
             _register_all_services()
             logger.debug("[startup-timing] service %s register services: %.1fms",
                         service_id, (time.monotonic() - _t0) * 1000)
-            svc_class = ServiceFactory.get(svc_def.service_type)
+            svc_class = _resolve_service_class(
+                svc_def.service_type, svc_def.config)
             from core.expression import LazyResolveDict
             lazy_config = LazyResolveDict(svc_def.config)
             lazy_config["_service_id"] = service_id

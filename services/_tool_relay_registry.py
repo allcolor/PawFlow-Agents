@@ -474,9 +474,8 @@ class _ToolRelayRegistryMixin:
                 "voice": {"media.voice_clone"},
             }.get(media_type, set())
             if pfp_capabilities:
-                for sdef in _sreg.resolve_by_type(
-                        "packageRuntime", user_id=user_id,
-                        conv_id=conversation_id):
+                for sdef in _sreg.resolve_package_services(
+                        user_id=user_id, conv_id=conversation_id):
                     runtime = (sdef.config or {}).get("package_runtime") or {}
                     provides = set(runtime.get("provides") or [])
                     if provides.intersection(pfp_capabilities):

@@ -128,8 +128,8 @@ class _AgentMediaMixin:
                         vtype, user_id=user_id, conv_id=conversation_id):
                     results.append(sdef)
             if pfp_capabilities:
-                for sdef in reg.resolve_by_type(
-                        "packageRuntime", user_id=user_id, conv_id=conversation_id):
+                for sdef in reg.resolve_package_services(
+                        user_id=user_id, conv_id=conversation_id):
                     runtime = (sdef.config or {}).get("package_runtime") or {}
                     provides = set(runtime.get("provides") or [])
                     if provides.intersection(pfp_capabilities):
@@ -378,9 +378,8 @@ class _AgentMediaMixin:
             try:
                 from core.service_registry import ServiceRegistry
                 reg = ServiceRegistry.get_instance()
-                for sdef in reg.resolve_by_type(
-                        "packageRuntime", user_id=user_id,
-                        conv_id=conversation_id):
+                for sdef in reg.resolve_package_services(
+                        user_id=user_id, conv_id=conversation_id):
                     runtime = (sdef.config or {}).get("package_runtime") or {}
                     provides = set(runtime.get("provides") or [])
                     operations = (sdef.config or {}).get("operations") or {}

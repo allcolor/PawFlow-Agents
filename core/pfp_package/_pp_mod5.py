@@ -12,9 +12,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.pfp_package._pp_base import (  # noqa: F401
     FORMAT_VERSION, LOCK_FILE, MANIFEST_FILE, PfpError, SIGNATURE_FILE, _INSTALLABLE_TYPES, _RESERVED_SKILL_WORDS, _RESOURCE_NAME_RE, _RESOURCE_TYPES, _SKILL_NAME_RE)
 from core.pfp_package._pp_mod1 import (  # noqa: F401
-    _canonical_json, _file_sha256, _files_size, _format_dependency, _install_default_relay_id, _load_json_bytes, _make_lock, _name_from_id, _normalize_scope, _provenance, _public_key_text, _read_json_file, _register_flow_task_proxy, _safe_relpath, _validate_package_id, _validate_runtime_object, _verify_lock, _write_flow, _write_json_file, _write_resource, _write_service)
+    _canonical_json, _file_sha256, _files_size, _format_dependency, _install_default_relay_id, _load_json_bytes, _make_lock, _name_from_id, _normalize_scope, _provenance, _public_key_text, _read_json_file, _register_flow_task_proxy, _register_service_provider_proxy, _safe_relpath, _validate_package_id, _validate_runtime_object, _verify_lock, _write_flow, _write_json_file, _write_resource, _write_service)
 from core.pfp_package._pp_mod2 import (  # noqa: F401
-    _collect_source_files, _existing_status_name, _load_private_key, _load_resource_data, _manifest_object_hash, _mcp_server_risk, _object_capabilities, _read_pfp_zip, _signature_payload, _validate_mcp_server_object, _validate_service_template_object, _validate_web_app_object)
+    _collect_source_files, _existing_status_name, _load_private_key, _load_resource_data, _manifest_object_hash, _mcp_server_risk, _object_capabilities, _read_pfp_zip, _signature_payload, _validate_mcp_server_object, _validate_service_provider_object, _validate_service_template_object, _validate_web_app_object)
 from core.pfp_package._pp_mod3 import (  # noqa: F401
     _declared_secret_requirements, _inject_package_flow_task_relays, _install_record_path, _missing_agent_assigned_skills, _ui_extension_manifest, _uninstall_object, _verify_signature, _web_app_manifest)
 from core.pfp_package._pp_ui_validation import _validate_ui_extension_object
@@ -150,7 +150,9 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         status, reason = "blocked", "object id must be type:name"
     elif obj_type not in _INSTALLABLE_TYPES:
         status, reason, installable = "blocked", f"unsupported object type: {obj_type}", False
-    elif not name or not _RESOURCE_NAME_RE.match(name):
+    elif (not name or (
+            obj_type != "service_provider"
+            and not _RESOURCE_NAME_RE.match(name))):
         status, reason, installable = "blocked", "invalid object name", False
     elif obj_type == "skill" and (not _SKILL_NAME_RE.match(name) or "--" in name
                                    or any(word in name for word in _RESERVED_SKILL_WORDS)):
@@ -173,6 +175,10 @@ def _object_plan(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
         _template_err = _validate_service_template_object(obj, package)
         if _template_err:
             status, reason, installable = "blocked", _template_err, False
+    elif obj_type == "service_provider":
+        _provider_err = _validate_service_provider_object(obj, package)
+        if _provider_err:
+            status, reason, installable = "blocked", _provider_err, False
     elif obj_type == "repository_type":
         try:
             from core.pfp_extension_contracts import repository_type_descriptor
@@ -365,10 +371,13 @@ def _load_service_provider_proxy_data(obj: Dict[str, Any], package: Dict[str, An
     metadata: Dict[str, Any] = {}
     if rel.endswith(".json"):
         metadata = _load_json_bytes(package["files"][rel])
-    service_id = str(obj.get("service_id") or metadata.get("service_id") or name)
+    service_type = str(
+        obj.get("service_type") or obj.get("type_name")
+        or metadata.get("service_type") or metadata.get("type_name") or "").strip()
     operations = obj.get("operations", metadata.get("operations", {}))
-    if not isinstance(operations, (dict, list)):
-        operations = {}
+    parameters = obj.get("parameters", metadata.get("parameters", {}))
+    rules = obj.get("rules", metadata.get("rules", []))
+    actions = obj.get("actions", metadata.get("actions", []))
     package_runtime = {
         "package": manifest["package"],
         "version": manifest["version"],
@@ -388,20 +397,16 @@ def _load_service_provider_proxy_data(obj: Dict[str, Any], package: Dict[str, An
         "review": obj.get("_review", {}),
     }
     return {
-        "service_id": service_id,
-        "service_type": "packageRuntime",
+        "service_type": service_type,
+        "name": str(obj.get("display_name") or metadata.get("name") or name),
+        "version": str(obj.get("version") or metadata.get("version") or manifest["version"]),
         "description": str(obj.get("description") or metadata.get("description") or ""),
-        "enabled": bool(obj.get("enabled", metadata.get("enabled", True))),
-        "config": {
-            "package_runtime": package_runtime,
-            "installed_from": provenance,
-            "operations": operations,
-            "package_capabilities": {
-                "dependencies": package_runtime["dependencies"],
-                "allowed_tools": package_runtime["allowed_tools"],
-                "allowed_services": package_runtime["allowed_services"],
-            },
-        },
+        "category": str(obj.get("category") or metadata.get("category") or "other"),
+        "parameters": parameters,
+        "rules": rules,
+        "actions": actions,
+        "operations": operations,
+        "package_runtime": package_runtime,
         "installed_from": provenance,
     }
 
@@ -823,14 +828,23 @@ def _install_object(obj: Dict[str, Any], package: Dict[str, Any], user_id: str,
     if obj_type == "service_provider":
         data = _load_service_provider_proxy_data(
             obj, package, rel, provenance, name, secret_bindings)
-        _write_service(data, user_id, conversation_id, scope, replace)
+        _register_service_provider_proxy(data)
         return {
-            "kind": "service",
+            "kind": "service_provider",
             "object_id": obj_id,
-            "service_id": data.get("service_id") or name,
+            "service_type": data["service_type"],
+            "name": data["name"],
+            "version": data["version"],
+            "description": data["description"],
+            "category": data["category"],
+            "parameters": data["parameters"],
+            "rules": data["rules"],
+            "actions": data["actions"],
+            "operations": data["operations"],
             "hash": provenance["hash"],
             "dependencies": dependencies,
-            "package_runtime": data["config"]["package_runtime"],
+            "installed_from": provenance,
+            "package_runtime": data["package_runtime"],
         }
     if obj_type in {"flow_task", "task_provider"}:
         data = _load_flow_task_proxy_data(

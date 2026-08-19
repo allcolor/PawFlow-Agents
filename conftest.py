@@ -18,6 +18,7 @@ removes the offending entry when the current interpreter isn't Linux.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 
 def _strip_pylib_on_non_linux() -> None:
@@ -40,6 +41,24 @@ def _strip_pylib_on_non_linux() -> None:
 
 
 _strip_pylib_on_non_linux()
+
+
+def _expose_bundled_provider_sources_to_tests() -> None:
+    """Let provider unit tests exercise the extracted PFP sources."""
+    import services
+
+    root = Path(__file__).resolve().parent
+    for package in (
+        "pawflow.pixazo-provider.pfpdir",
+        "pawflow.wavespeed-provider.pfpdir",
+        "pawflow.kling-provider.pfpdir",
+    ):
+        source = str(root / "packages" / package / "content" / "runtime" / "services")
+        if source not in services.__path__:
+            services.__path__.append(source)
+
+
+_expose_bundled_provider_sources_to_tests()
 
 
 # Keep the LiveSessionRegistry singleton clean between tests: any test

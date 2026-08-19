@@ -23,6 +23,15 @@ var _convTtsServicesConversationId = null;
 var _convTtsRefreshInFlight = false;
 var _convTtsRefreshConversationId = null;
 var _convTtsRefreshAgain = false;
+var _convTtsRefreshStartedAt = 0;
+var _convTtsEmptyRetries = 0;
+var _convTtsEmptyRetryTimer = 0;
+// Same hardening as conversation_stt.js: a lost listing response must not
+// brick the speaker button for the tab's lifetime, and an empty list right
+// after a server restart is retried before being believed.
+var CONV_TTS_REFRESH_STALE_MS = 20000;
+var CONV_TTS_EMPTY_RETRY_MS = 15000;
+var CONV_TTS_EMPTY_RETRY_MAX = 3;
 var _convTtsStartAfterRefresh = false;
 var _convTtsAfterRefresh = null;
 var _convTtsAfterServiceSelect = null;
@@ -106,12 +115,14 @@ function refreshConversationTTSServices(startAfterRefresh) {
   if (typeof startAfterRefresh === 'function') _convTtsAfterRefresh = startAfterRefresh;
   else if (startAfterRefresh) _convTtsStartAfterRefresh = true;
   const requestConversationId = _convTtsCurrentConversationId();
-  if (_convTtsRefreshInFlight) {
+  if (_convTtsRefreshInFlight
+      && Date.now() - _convTtsRefreshStartedAt < CONV_TTS_REFRESH_STALE_MS) {
     if (_convTtsRefreshConversationId !== requestConversationId) _convTtsRefreshAgain = true;
     return;
   }
   if (typeof action$ !== 'function') { _convTtsUpdateButton(); return; }
   _convTtsRefreshInFlight = true;
+  _convTtsRefreshStartedAt = Date.now();
   _convTtsRefreshConversationId = requestConversationId;
   action$('list_tts_services', {
     conversation_id: requestConversationId,
@@ -120,6 +131,7 @@ function refreshConversationTTSServices(startAfterRefresh) {
     _convTtsRefreshConversationId = null;
     const services = Array.isArray(data) ? data : ((data && data.services) || []);
     _convTtsSetServices(services, requestConversationId);
+    _convTtsScheduleEmptyRetry(services.length);
     if (_convTtsRefreshAgain || requestConversationId !== _convTtsCurrentConversationId()) {
       _convTtsRefreshAgain = false;
       refreshConversationTTSServices();
@@ -133,7 +145,26 @@ function refreshConversationTTSServices(startAfterRefresh) {
       _convTtsStartAfterRefresh = false;
       _convTtsStartFromAvailableServices();
     }
+  }, _err => {
+    _convTtsRefreshInFlight = false;
+    _convTtsRefreshConversationId = null;
+    _convTtsSetServices([], requestConversationId);
+    _convTtsScheduleEmptyRetry(0);
   });
+}
+
+function _convTtsScheduleEmptyRetry(serviceCount) {
+  if (serviceCount > 0) {
+    _convTtsEmptyRetries = 0;
+    if (_convTtsEmptyRetryTimer) { clearTimeout(_convTtsEmptyRetryTimer); _convTtsEmptyRetryTimer = 0; }
+    return;
+  }
+  if (_convTtsEmptyRetryTimer || _convTtsEmptyRetries >= CONV_TTS_EMPTY_RETRY_MAX) return;
+  _convTtsEmptyRetries++;
+  _convTtsEmptyRetryTimer = setTimeout(() => {
+    _convTtsEmptyRetryTimer = 0;
+    if (!document.hidden && !_convTtsServices.length) refreshConversationTTSServices();
+  }, CONV_TTS_EMPTY_RETRY_MS);
 }
 
 function _convTtsStartFromAvailableServices() {

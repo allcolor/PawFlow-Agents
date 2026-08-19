@@ -116,12 +116,40 @@ class ServiceRegistry(_ServiceRegistryIOMixin):
                 self._loaded.add(sid)
                 just_loaded = True
         if just_loaded:
-            from core.provider_pfp_migration import migrate_scope
-            migrate_scope(
-                scope, sid,
-                list(self._definitions.get(sid, {}).values()),
-            )
+            self._migrate_scope_async(scope, sid)
             self._connect_managed_relays(sid)
+
+    def _migrate_scope_async(self, scope: str, sid: str) -> None:
+        """Run the provider-PFP migration off the caller's critical path.
+
+        The migration installs bundled provider packages, and installing runs
+        the static+LLM package review per object: minutes of work at cold
+        start. Whoever first touches a scope after a restart must not carry
+        that — it was the webchat's `list_stt_services` once, hiding the mic
+        for 13 minutes. Definitions are already loaded and usable; only a
+        legacy provider service connecting before the migration lands fails
+        (cleanly, retried on next use), which matches its pre-migration state.
+        """
+        with self._data_lock:
+            definitions = list(self._definitions.get(sid, {}).values())
+
+        def _run() -> None:
+            try:
+                from core.provider_pfp_migration import migrate_scope
+                migrated = migrate_scope(scope, sid, definitions)
+                if migrated:
+                    logger.info("Provider PFP migration for %s:%s installed %s",
+                                scope, sid[:8] if len(sid) > 8 else sid,
+                                ", ".join(migrated))
+            except Exception:
+                logger.error("Provider PFP migration failed for %s:%s",
+                             scope, sid[:8] if len(sid) > 8 else sid,
+                             exc_info=True)
+
+        threading.Thread(
+            target=_run, daemon=True,
+            name=f"pfp-migrate-{sid[:8] if len(sid) > 8 else sid}",
+        ).start()
 
     def _connect_managed_relays(self, scope_id: str) -> None:
         with self._data_lock:

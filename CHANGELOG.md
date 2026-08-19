@@ -15,6 +15,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   avatars facing the desks — one avatar per distinct author in shared
   conversations — with speech bubbles for their messages.
 
+### Fixed
+
+- Webchat mic (STT) no longer disappears for minutes after a deploy restart.
+  Root cause chain: the first request to touch a service scope after the
+  restart carried the b216 provider-PFP migration synchronously, and the
+  migration's package install re-ran the static+LLM review per object even
+  though `force=True` discards the verdict — the webchat's `list_stt_services`
+  paid ~13.5 minutes for it and the mic button stayed hidden the whole time.
+  Three fixes: `ServiceRegistry._ensure_loaded` now runs the provider-PFP
+  migration on a background thread instead of the caller's critical path;
+  installing a byte-identical official bundled artifact (package/version,
+  SHA-256, and developer key all matching the CI-verified bundled catalog)
+  skips the static+LLM review and stamps `reviewer: bundled-catalog`
+  provenance; and the webchat STT/TTS/realtime-voice service refreshes no
+  longer brick on a lost request (a stale in-flight refresh is overridden
+  after 20 s, an error resets the in-flight flag, and an empty service list
+  right after load is retried up to 3 times).
+- PFP Depot rows whose exact package id and version are already installed in
+  the visible scope now show an Installed label instead of an install button.
+
 ### Changed
 
 - Openspace 3D view: the most recent speech/thought bubble per participant no

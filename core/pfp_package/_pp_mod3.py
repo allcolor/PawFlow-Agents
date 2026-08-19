@@ -436,12 +436,64 @@ def list_installed_web_apps(*, user_id: str, conversation_id: str = "",
     return out
 
 
+def _bundled_catalog_trust(package: Dict[str, Any]) -> bool:
+    """True when the package is byte-identical to an official bundled artifact.
+
+    The bundled index ships version-controlled inside the release image and
+    CI rebuilds official packages byte-for-byte, so an artifact whose sha256
+    and developer key both match its index row is exactly the content that
+    was already reviewed before release. Signature verification alone is not
+    enough — it only proves integrity against the self-declared developer
+    key, not that the content is the official one.
+    """
+    if not package.get("verified"):
+        return False
+    manifest = package.get("manifest") or {}
+    name = str(manifest.get("package") or "")
+    if not name:
+        return False
+    try:
+        from core.pfp_registry import _bundled_row_for_ref
+        row = _bundled_row_for_ref(name)
+    except Exception:
+        return False
+    if not row:
+        return False
+    if str(row.get("version") or "") != str(manifest.get("version") or ""):
+        return False
+    if str(row.get("sha256") or "") != str(package.get("sha256") or ""):
+        return False
+    declared_key = str(
+        (manifest.get("developer") or {}).get("public_key") or "")
+    return bool(declared_key) and declared_key == str(
+        row.get("developer_key") or "")
+
+
 def _review_object_for_install(row: Dict[str, Any], package: Dict[str, Any],
                                force: bool, user_id: str,
                                conversation_id: str,
                                operation: str) -> None:
     obj = row["object"]
     obj_type = str(obj.get("type") or "")
+    if _bundled_catalog_trust(package):
+        # Byte-identical official bundled artifact: its content is already
+        # version-controlled and CI-verified, so the static+LLM review adds
+        # nothing but minutes of LLM latency (the provider migration paid
+        # 13 minutes for it on the first post-deploy scope load).
+        from core.package_review import review_hash, review_metadata
+        review = {
+            "risk": "low",
+            "allowed": True,
+            "requires_human_review": False,
+            "findings": [],
+            "reviewer": "bundled-catalog",
+        }
+        obj["_review"] = review_metadata(
+            review,
+            subject_hash=review_hash(
+                obj, package.get("lock", {}).get("files", {})),
+        )
+        return
     if obj_type == "skill":
         rel = _safe_relpath(str(obj.get("path") or ""))
         data = _load_resource_data(package, rel, "skill", row.get("name", ""))

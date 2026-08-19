@@ -287,6 +287,25 @@ def test_live_conversation_tts_button_and_sse_hooks_are_wired():
     assert "['agent_delegate', 'tool', 'tool_call', 'tool_result', 'system', 'user'].includes(src.type)" in CONVERSATION_TTS_JS
 
 
+def test_media_button_refreshes_recover_from_lost_or_empty_responses():
+    """A lost listing response or a transiently-empty list right after a
+    server restart must not hide the mic/speaker/voice buttons for the
+    tab's lifetime: stale in-flight refreshes are overridden and empty
+    lists are retried a bounded number of times."""
+    stt = Path("tasks/io/chat_ui/conversation_stt.js").read_text(encoding="utf-8")
+    tts = Path("tasks/io/chat_ui/conversation_tts.js").read_text(encoding="utf-8")
+    voice = Path("tasks/io/chat_ui/conversation_voice.js").read_text(encoding="utf-8")
+    assert "CONV_STT_REFRESH_STALE_MS" in stt
+    assert "function _convSttScheduleEmptyRetry" in stt
+    assert "CONV_STT_EMPTY_RETRY_MAX" in stt
+    assert "CONV_TTS_REFRESH_STALE_MS" in tts
+    assert "function _convTtsScheduleEmptyRetry" in tts
+    # The TTS refresh must reset its in-flight flag on error too.
+    assert "_convTtsSetServices([], requestConversationId)" in tts
+    assert "function _voiceScheduleEmptyRetry" in voice
+    assert "VOICE_EMPTY_RETRY_MAX" in voice
+
+
 def test_files_panel_batch_actions_and_attachment_upload_ttl_are_owned_locally():
     assert "var _convFilesSelected = new Set();" in FILES_PANEL_JS
     assert "function deleteSelectedFiles()" in FILES_PANEL_JS

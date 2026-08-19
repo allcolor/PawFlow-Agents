@@ -123,8 +123,34 @@ function refreshRealtimeVoiceServices(done) {
       }
     }
     _voiceUpdateButton();
+    _voiceScheduleEmptyRetry(_voiceServices.length);
     if (done) done();
-  }, () => { _voiceServices = []; _voiceLinkedService = ''; _voiceUpdateButton(); if (done) done(); });
+  }, () => {
+    _voiceServices = []; _voiceLinkedService = ''; _voiceUpdateButton();
+    _voiceScheduleEmptyRetry(0);
+    if (done) done();
+  });
+}
+
+// Same hardening as conversation_stt.js: an empty service list right after
+// a server restart is usually transient (services still connecting) —
+// retry a few times so the voice button reappears without a page reload.
+var _voiceEmptyRetries = 0;
+var _voiceEmptyRetryTimer = 0;
+var VOICE_EMPTY_RETRY_MS = 15000;
+var VOICE_EMPTY_RETRY_MAX = 3;
+function _voiceScheduleEmptyRetry(serviceCount) {
+  if (serviceCount > 0) {
+    _voiceEmptyRetries = 0;
+    if (_voiceEmptyRetryTimer) { clearTimeout(_voiceEmptyRetryTimer); _voiceEmptyRetryTimer = 0; }
+    return;
+  }
+  if (_voiceEmptyRetryTimer || _voiceEmptyRetries >= VOICE_EMPTY_RETRY_MAX) return;
+  _voiceEmptyRetries++;
+  _voiceEmptyRetryTimer = setTimeout(() => {
+    _voiceEmptyRetryTimer = 0;
+    if (!document.hidden && !_voiceServices.length) refreshRealtimeVoiceServices();
+  }, VOICE_EMPTY_RETRY_MS);
 }
 
 // ── voice-mode overlay ───────────────────────────────────────────────

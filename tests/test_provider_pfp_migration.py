@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -227,3 +228,84 @@ def test_provider_pfp_migration_installs_verified_bundle_and_preserves_definitio
     assert migrated.config["package_runtime"]["object_id"] == "service_provider:image"
     assert migrated.config["_package_service_provider"]["package"] == (
         "pawflow.pixazo-provider")
+
+
+def test_ensure_loaded_migrates_off_the_caller_thread(tmp_path, monkeypatch):
+    """The first scope load must not carry the migration synchronously.
+
+    The migration installs provider packages; installing runs the package
+    review. Carried synchronously, the first caller after a restart (once
+    the webchat's list_stt_services) blocks for its full duration.
+    """
+    import core.service_registry as sr
+    from core.service_registry import ServiceRegistry, SCOPE_USER
+
+    monkeypatch.setattr(sr, "_user_services_dir", lambda: tmp_path / "users")
+    monkeypatch.setattr(sr, "_global_services_dir", lambda: tmp_path / "global")
+    ServiceRegistry.reset()
+    seen = {}
+    done = threading.Event()
+
+    def _migrate(scope, sid, definitions):
+        seen["thread"] = threading.current_thread().name
+        seen["scope"] = (scope, sid)
+        done.set()
+        return []
+
+    monkeypatch.setattr(migration, "migrate_scope", _migrate)
+    registry = ServiceRegistry.get_instance()
+    registry._ensure_loaded(SCOPE_USER, "alice")
+    assert done.wait(5), "migration was never started"
+    assert seen["scope"] == ("user", "alice")
+    assert seen["thread"].startswith("pfp-migrate-")
+    assert seen["thread"] != threading.main_thread().name
+
+
+def test_bundled_catalog_trust_requires_exact_index_match(monkeypatch):
+    from core.pfp_package import _pp_mod3
+
+    row = {"version": "1.0.0", "sha256": "sha256:" + "a" * 64,
+           "developer_key": "ed25519:KEY"}
+    monkeypatch.setattr(
+        "core.pfp_registry._bundled_row_for_ref",
+        lambda ref: dict(row) if ref == "pawflow.pixazo-provider" else {})
+    package = {
+        "verified": True,
+        "sha256": "sha256:" + "a" * 64,
+        "manifest": {
+            "package": "pawflow.pixazo-provider",
+            "version": "1.0.0",
+            "developer": {"public_key": "ed25519:KEY"},
+        },
+    }
+    assert _pp_mod3._bundled_catalog_trust(package) is True
+    assert _pp_mod3._bundled_catalog_trust(
+        {**package, "verified": False}) is False
+    assert _pp_mod3._bundled_catalog_trust(
+        {**package, "sha256": "sha256:" + "b" * 64}) is False
+    tampered = {**package, "manifest": {
+        **package["manifest"], "developer": {"public_key": "ed25519:OTHER"}}}
+    assert _pp_mod3._bundled_catalog_trust(tampered) is False
+    unknown = {**package, "manifest": {
+        **package["manifest"], "package": "acme.other"}}
+    assert _pp_mod3._bundled_catalog_trust(unknown) is False
+
+
+def test_bundled_trusted_install_skips_the_llm_review(monkeypatch):
+    from core.pfp_package import _pp_mod3
+
+    monkeypatch.setattr(_pp_mod3, "_bundled_catalog_trust", lambda package: True)
+    monkeypatch.setattr(
+        "core.package_review.review_package_object",
+        lambda *args, **kwargs: pytest.fail(
+            "bundled-trusted install must not re-review"))
+    monkeypatch.setattr(
+        "core.package_review.review_skill_content",
+        lambda *args, **kwargs: pytest.fail(
+            "bundled-trusted install must not re-review"))
+    obj = {"type": "service_provider", "path": "runtime/provider.py"}
+    _pp_mod3._review_object_for_install(
+        {"object": obj, "name": "image"}, {"lock": {"files": {}}},
+        False, "alice", "", operation="pfp_install")
+    assert obj["_review"]["reviewer"] == "bundled-catalog"
+    assert obj["_review"]["allowed"] is True

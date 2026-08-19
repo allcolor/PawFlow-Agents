@@ -8,6 +8,17 @@ var _convSttServicesConversationId = null;
 var _convSttRefreshInFlight = false;
 var _convSttRefreshConversationId = null;
 var _convSttRefreshAgain = false;
+var _convSttRefreshStartedAt = 0;
+var _convSttEmptyRetries = 0;
+var _convSttEmptyRetryTimer = 0;
+// A refresh whose response never arrives (server restarting, SSE drop)
+// must not brick the mic for the tab's lifetime: past this age a new
+// refresh may run over the stale in-flight one.
+var CONV_STT_REFRESH_STALE_MS = 20000;
+// An empty list right after a server restart is usually transient
+// (services still connecting): retry a few times before believing it.
+var CONV_STT_EMPTY_RETRY_MS = 15000;
+var CONV_STT_EMPTY_RETRY_MAX = 3;
 var _convSttStartAfterRefresh = false;
 var _convSttAfterRefresh = null;
 var _convSttMediaRecorder = null;
@@ -95,12 +106,14 @@ function refreshConversationSTTServices(startAfterRefresh) {
   if (typeof startAfterRefresh === 'function') _convSttAfterRefresh = startAfterRefresh;
   else if (startAfterRefresh) _convSttStartAfterRefresh = true;
   const requestConversationId = _convSttCurrentConversationId();
-  if (_convSttRefreshInFlight) {
+  if (_convSttRefreshInFlight
+      && Date.now() - _convSttRefreshStartedAt < CONV_STT_REFRESH_STALE_MS) {
     if (_convSttRefreshConversationId !== requestConversationId) _convSttRefreshAgain = true;
     return;
   }
   if (typeof action$ !== 'function') { _convSttUpdateButton(); return; }
   _convSttRefreshInFlight = true;
+  _convSttRefreshStartedAt = Date.now();
   _convSttRefreshConversationId = requestConversationId;
   action$('list_stt_services', {
     conversation_id: requestConversationId,
@@ -109,6 +122,7 @@ function refreshConversationSTTServices(startAfterRefresh) {
     _convSttRefreshConversationId = null;
     const services = Array.isArray(data) ? data : ((data && data.services) || []);
     _convSttSetServices(services, requestConversationId);
+    _convSttScheduleEmptyRetry(services.length);
     if (_convSttRefreshAgain || requestConversationId !== _convSttCurrentConversationId()) {
       _convSttRefreshAgain = false;
       refreshConversationSTTServices();
@@ -127,7 +141,22 @@ function refreshConversationSTTServices(startAfterRefresh) {
     _convSttRefreshInFlight = false;
     _convSttRefreshConversationId = null;
     _convSttSetServices([], requestConversationId);
+    _convSttScheduleEmptyRetry(0);
   });
+}
+
+function _convSttScheduleEmptyRetry(serviceCount) {
+  if (serviceCount > 0) {
+    _convSttEmptyRetries = 0;
+    if (_convSttEmptyRetryTimer) { clearTimeout(_convSttEmptyRetryTimer); _convSttEmptyRetryTimer = 0; }
+    return;
+  }
+  if (_convSttEmptyRetryTimer || _convSttEmptyRetries >= CONV_STT_EMPTY_RETRY_MAX) return;
+  _convSttEmptyRetries++;
+  _convSttEmptyRetryTimer = setTimeout(() => {
+    _convSttEmptyRetryTimer = 0;
+    if (!document.hidden && !_convSttServices.length) refreshConversationSTTServices();
+  }, CONV_STT_EMPTY_RETRY_MS);
 }
 
 function _convSttSelectService(serviceId) {

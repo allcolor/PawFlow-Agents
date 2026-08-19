@@ -1138,6 +1138,13 @@ function openspaceShowFlow(instanceId, name) {
       e.stopPropagation();
       openspaceCloseFlow();
     });
+    // Some environments swallow the click after a pointer capture;
+    // pointerdown is the earliest reliable signal.
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openspaceCloseFlow();
+    });
     wrap.appendChild(btn);
   }
   _osFlowPoll();
@@ -1245,6 +1252,27 @@ function _osFlowApply(nodes, edges) {
       new T.MeshLambertMaterial({ color: 0x151b38 }));
     stage.position.set(w / 2 - 3, 0.03, 0);
     f.group.add(stage);
+    // In-scene close control: a raycast click on it always works, even
+    // if some overlay is eating the DOM button's events.
+    const closeCanvas = document.createElement('canvas');
+    closeCanvas.width = closeCanvas.height = 64;
+    const cctx = closeCanvas.getContext('2d');
+    cctx.fillStyle = '#e94560';
+    cctx.beginPath();
+    cctx.arc(32, 32, 30, 0, Math.PI * 2);
+    cctx.fill();
+    cctx.strokeStyle = '#fff';
+    cctx.lineWidth = 8;
+    cctx.beginPath();
+    cctx.moveTo(20, 20); cctx.lineTo(44, 44);
+    cctx.moveTo(44, 20); cctx.lineTo(20, 44);
+    cctx.stroke();
+    const closeSprite = new T.Sprite(new T.SpriteMaterial({
+      map: new T.CanvasTexture(closeCanvas), transparent: true }));
+    closeSprite.scale.set(1.3, 1.3, 1);
+    closeSprite.position.set(-2.6, 3.6, 0);
+    closeSprite.userData.osvFlowClose = true;
+    f.group.add(closeSprite);
     Object.keys(pos).forEach((id) => {
       const mesh = new T.Mesh(
         new T.BoxGeometry(2.0, 1.1, 1.4),
@@ -2361,6 +2389,7 @@ function _osPointerUp(e) {
   const hits = _osRaycaster.intersectObjects(_osScene.children, true);
   for (const hit of hits) {
     const ud = hit.object && hit.object.userData;
+    if (ud && ud.osvFlowClose) { openspaceCloseFlow(); return; }
     if (ud && ud.osvDoor) { openspaceOpenConvDialog(); return; }
     if (ud && ud.osvResSection) {
       openspaceOpenResSectionDialog(ud.osvResSection, ud.osvResTitle);

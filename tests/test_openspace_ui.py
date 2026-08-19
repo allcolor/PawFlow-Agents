@@ -374,11 +374,14 @@ def test_door_opens_conversation_picker_and_rooms_are_seeded():
 
 def test_flow_stage_close_is_robust():
     src = _text("tasks/io/chat_ui/openspace.js")
-    # Escape is a close path no projected panel can occlude.
+    # Three independent close paths: Escape, the hardened DOM button,
+    # and a raycast ✕ sprite inside the stage itself (immune to any
+    # DOM overlay eating pointer events).
     assert "'Escape'" in src
+    assert "osvFlowClose" in src
     template = _text("tasks/io/chat_ui/template.html")
     seg = template.split(".osv-flow-close")[1][:400]
-    assert "z-index: 6" in seg
+    assert "z-index: 9999" in seg
     assert "pointer-events: auto" in seg
 
 

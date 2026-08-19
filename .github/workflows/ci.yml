@@ -38,13 +38,17 @@ jobs:
         # to archive.ubuntu.com before giving up.
         timeout-minutes: 8
         run: |
-          APT_OPTS='-o Acquire::http::Timeout=30 -o Acquire::Retries=3'
-          if ! sudo timeout 240 apt-get update $APT_OPTS; then
-            echo "apt update hung/failed — switching to archive.ubuntu.com"
-            sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
-              /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-            sudo timeout 240 apt-get update $APT_OPTS
+          # GitHub-hosted Ubuntu runners ship the whole toolchain — touch
+          # apt only if it is somehow missing, so mirror outages cannot
+          # stall the matrix at all in the normal case.
+          if command -v gcc >/dev/null && command -v g++ >/dev/null && command -v make >/dev/null; then
+            echo "toolchain preinstalled — skipping apt"
+            exit 0
           fi
+          APT_OPTS='-o Acquire::http::Timeout=30 -o Acquire::Retries=2'
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo timeout 240 apt-get update $APT_OPTS
           sudo apt-get install -y --no-install-recommends $APT_OPTS build-essential
 
       - name: Cache pip packages

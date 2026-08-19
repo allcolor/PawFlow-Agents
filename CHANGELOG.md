@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Webchat: Openspace 3D view — a third `chat.view_mode` selectable from the
+  View options menu. Low-poly isometric office rendered with a vendored,
+  lazily-imported three.js (r170): one desk per agent, live speech/thought
+  bubbles, tool-call screen glow, delegation walk animations, selected-agent
+  halo, and a per-agent activity dialog (stacked expandable blocks) on PC
+  click. Classic rendering keeps running underneath so switching modes is
+  instant.
+
 ## [1.0.0-beta.213] — 2026-08-19
 
 ### Fixed

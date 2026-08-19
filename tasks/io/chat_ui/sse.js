@@ -79,6 +79,8 @@ function connectSSE(cid, onReady, opts) {
   _sseWireB();
   // realtime.* listeners for LiveKit live sessions (conversation_livekit.js)
   if (typeof _lkWireSSE === 'function') _lkWireSSE();
+  // openspace 3D view mirrors agent activity from the same socket (openspace.js)
+  if (typeof openspaceWireSSE === 'function') openspaceWireSSE(eventSource);
   // usage.updated listener for the conversation cost gauge (usage_cost.js)
   if (typeof _usageWireSSE === 'function') _usageWireSSE();
   let sseHadError = false;  // track any error on this EventSource

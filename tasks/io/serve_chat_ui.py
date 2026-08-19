@@ -44,6 +44,9 @@ _JS_MODULES = [
     # #messages scroll listeners).
     "messages.js", "messages_render.js", "messages_tools.js", "messages_markdown.js",
     "turn_view.js",
+    # openspace.js (3D view) reads selectedAgent/activeInteractions at
+    # runtime only; three.js itself is a lazy dynamic import.
+    "openspace.js",
     "active_agents.js", "task_tabs.js", "usage_cost.js", "usage_dashboard.js", "typing.js", "notifications.js",
     # sse.js was split (<=800 lines each); load order matters: sse_state.js
     # (globals + per-connection state + shared helpers) before the wire

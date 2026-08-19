@@ -222,24 +222,34 @@ const VIEW_TOGGLES = {
 
 function updateViewModeItems(mode) {
   const simplified = mode === 'simplified';
+  const openspace = mode === 'openspace';
+  const classic = !simplified && !openspace;
   const classicItem = document.getElementById('viewItemClassic');
   const simpleItem = document.getElementById('viewItemSimplified');
+  const openspaceItem = document.getElementById('viewItemOpenspace');
   const classicOptions = document.getElementById('viewClassicOptions');
   if (classicItem) {
-    classicItem.classList.toggle('active', !simplified);
-    classicItem.setAttribute('aria-checked', simplified ? 'false' : 'true');
+    classicItem.classList.toggle('active', classic);
+    classicItem.setAttribute('aria-checked', classic ? 'true' : 'false');
   }
   if (simpleItem) {
     simpleItem.classList.toggle('active', simplified);
     simpleItem.setAttribute('aria-checked', simplified ? 'true' : 'false');
   }
-  if (classicOptions) classicOptions.style.display = simplified ? 'none' : '';
+  if (openspaceItem) {
+    openspaceItem.classList.toggle('active', openspace);
+    openspaceItem.setAttribute('aria-checked', openspace ? 'true' : 'false');
+  }
+  if (classicOptions) classicOptions.style.display = classic ? '' : 'none';
 }
 
 function onViewModeSelect(mode) {
-  if (!conversationId || !['classic', 'simplified'].includes(mode)) return;
+  if (!conversationId || !['classic', 'simplified', 'openspace'].includes(mode)) return;
+  const currentOpenspace = typeof openspaceIsActive === 'function' && openspaceIsActive();
   if (typeof turnViewIsSimplified === 'function'
+      && !currentOpenspace && mode !== 'openspace'
       && turnViewIsSimplified() === (mode === 'simplified')) { closeViewMenu(); return; }
+  if (currentOpenspace && mode === 'openspace') { closeViewMenu(); return; }
   const menu = document.getElementById('viewMenu');
   if (menu) menu.classList.add('disabled');
   action$('set_param', {
@@ -248,7 +258,12 @@ function onViewModeSelect(mode) {
   }).subscribe({
     next: data => {
       if (data && data.error) { addMsg('error', data.error); return; }
-      if (typeof turnViewSetMode === 'function') turnViewSetMode(mode);
+      if (typeof turnViewSetMode === 'function') {
+        turnViewSetMode(mode === 'openspace' ? 'classic' : mode);
+      }
+      if (typeof openspaceSetActive === 'function') {
+        openspaceSetActive(mode === 'openspace');
+      }
       updateViewModeItems(mode); closeViewMenu(); resumeConv(conversationId, true);
     },
     error: e => addMsg('error', e.message),
@@ -592,8 +607,17 @@ function _renderHistory(data) {
     }
     return;
   }
-  const viewMode = data.view_mode === 'simplified' ? 'simplified' : 'classic';
-  if (typeof turnViewSetMode === 'function') turnViewSetMode(viewMode);
+  const viewMode = ['simplified', 'openspace'].includes(data.view_mode)
+    ? data.view_mode : 'classic';
+  // Openspace renders on top of the classic DOM: the classic renderers
+  // keep producing every durable node underneath, so switching back is
+  // instant and the 3D layer never owns conversation state.
+  if (typeof turnViewSetMode === 'function') {
+    turnViewSetMode(viewMode === 'openspace' ? 'classic' : viewMode);
+  }
+  if (typeof openspaceSetActive === 'function') {
+    openspaceSetActive(viewMode === 'openspace');
+  }
   updateViewModeItems(viewMode);
   const groupTechnicalMessages = !!data.group_technical_messages;
   const groupTaskMessages = data.group_task_messages === undefined ? true : !!data.group_task_messages;

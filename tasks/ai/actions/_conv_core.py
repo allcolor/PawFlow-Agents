@@ -193,7 +193,8 @@ def _handle_conv_core(self, action, body, store, user_id, flowfile):
             except Exception:
                 raw = "simplified"
             mode = str(raw).strip().lower()
-            return mode if mode in ("classic", "simplified") else "simplified"
+            allowed = ("classic", "simplified", "openspace")
+            return mode if mode in allowed else "simplified"
 
         group_technical_messages = _resolve_chat_flag("group_technical_messages")
         group_task_messages = _resolve_chat_flag("group_task_messages")

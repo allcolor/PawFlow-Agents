@@ -37,6 +37,7 @@ The project source code is licensed separately under the repository license. Thi
 ## Vendored Frontend Libraries
 
 - `tasks/io/chat_ui/vendor/livekit-client.umd.min.js` — [livekit-client](https://github.com/livekit/client-sdk-js) 2.20.1, Apache-2.0. Served to browsers at `/api/realtime/livekit/sdk.js` for realtime LiveKit sessions. Update by downloading the pinned UMD build from npm/jsdelivr and recording the new version here.
+- `tasks/io/chat_ui/three.module.min.js` — [three.js](https://github.com/mrdoob/three.js) r170 (npm `three@0.170.0`), MIT. Served to browsers at `/chat/js/three.module.min.js` and lazily imported by the webchat Openspace 3D view (`openspace.js`). Stored flat (not under `vendor/`) because the `/chat/js/{path}` route matches a single path segment. Update by downloading the pinned ESM build from jsdelivr and recording the new version here.
 
 ## Bundled Command-Line Tools
 

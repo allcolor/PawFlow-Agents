@@ -78,6 +78,7 @@
         <h2>Install a published PawFlow conversation as a local MCP server</h2>
         <p><strong>Objective:</strong> bind one Claude Code, Codex, Agy/Gemini, OpenCode, JCode, Pi, Hermes, or generic MCP client instance to exactly one PawFlow conversation and agent, while allowing other agents in that conversation to have independent MCP publications.</p>
         <figure class="media-frame"><video controls preload="metadata" poster="assets/media/video/chatgpt-mcp-live-workspace-poster.webp"><source src="assets/media/video/chatgpt-mcp-live-workspace.mp4" type="video/mp4"></video><figcaption>ChatGPT inspects the current MyWorkspace commits through a read-only PawFlow MCP session.</figcaption></figure>
+        <figure class="media-frame"><img src="assets/media/diagrams/published-mcp-read-only.webp" alt="Read-only published MCP architecture from external clients through PawFlow policy gates to conversation context and relay-backed workspace reads"><figcaption>Read-only publications remove write tools during discovery and reject write calls again before execution.</figcaption></figure>
         <div class="wizard-grid">
           <div><strong>Windows</strong><span>Download the ZIP, extract it, then run <code>install.cmd</code> or <code>powershell -ExecutionPolicy Bypass -File .\install.ps1</code>.</span></div>
           <div><strong>Linux and macOS</strong><span>Extract either archive, enter its directory, then run <code>./install.sh</code>.</span></div>

@@ -652,6 +652,10 @@ body.openspace-active .scroll-nav { display: none; }
 .osv-canvas:active { cursor: grabbing; }
 .osv-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 .osv-overlay > div { position: absolute; top: 0; left: 0; will-change: transform; }
+/* Projected panels depth-sort via z-index (≤ ~2500); avatar chrome —
+   labels, bubbles, status, batteries — must always stay readable above
+   them, not vanish behind the wall screen. */
+.osv-overlay > .osv-label, .osv-overlay > .osv-bubble, .osv-overlay > .osv-status, .osv-overlay > .osv-batt { z-index: 4000; }
 .osv-label { color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; text-shadow: 0 1px 2px rgba(0,0,0,0.5); white-space: nowrap; }
 .osv-bubble { max-width: 300px; padding: 8px 12px; border-radius: 12px; font-size: 12px; line-height: 1.35; box-shadow: 0 4px 14px rgba(0,0,0,0.35); word-break: break-word; white-space: pre-wrap; pointer-events: auto; }
 .osv-bubble-body { max-height: 150px; overflow-y: auto; }
@@ -673,6 +677,35 @@ body.openspace-active .scroll-nav { display: none; }
 .osv-board { position: absolute; top: 0; left: 0; width: 500px; height: 300px; transform-origin: 0 0; overflow: hidden; background: #26332c; border: 10px solid #5d3d21; box-sizing: border-box; border-radius: 4px; color: #e8f5e9; font-family: 'Comic Sans MS', 'Segoe Print', cursive, sans-serif; padding: 12px 18px; display: none; }
 .osv-board-title { font-size: 22px; text-decoration: underline; margin-bottom: 10px; }
 .osv-board-list { font-size: 17px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+/* The roster board doubles as a control panel: the overlay default is
+   pointer-events none, so the projected board must opt back in. */
+.osv-board { pointer-events: auto; }
+.osv-board-row { display: flex; align-items: center; gap: 6px; }
+.osv-board-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.osv-board-btn { flex: none; background: rgba(255,255,255,0.12); color: #e8f5e9; border: 1px solid rgba(255,255,255,0.35); border-radius: 4px; font-size: 13px; line-height: 1; padding: 2px 7px; cursor: pointer; }
+.osv-board-btn:hover { background: rgba(255,255,255,0.25); }
+.osv-board-btn-stop { color: #ffa8a8; }
+.osv-flow-close { position: absolute; top: 10px; right: 10px; z-index: 6; pointer-events: auto; background: rgba(20,24,50,0.9); color: #e0e0e0; border: 1px solid rgba(255,255,255,0.25); border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+.osv-flow-close:hover { background: rgba(35,42,80,0.95); }
+.osv-flow-hint { color: #9aa3c0; font-size: 12px; margin: 4px 0 10px; }
+.osv-flow-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.osv-flow-view-btn { background: #2b3a67; color: #dfe7ff; border: none; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.osv-flow-view-btn:hover { background: #35498a; }
+/* Sub-menu dialog body: live clone of one sidebar section. */
+.osv-resdialog-body { overflow-y: auto; max-height: 65vh; font-size: 12px; }
+.osv-bubble-close { position: absolute; top: 2px; right: 7px; cursor: pointer; font-size: 14px; line-height: 1; color: rgba(20,24,50,0.5); pointer-events: auto; }
+.osv-bubble-close:hover { color: rgba(20,24,50,0.9); }
+/* Conversation title in the frame above the wall screen. */
+.osv-convtitle { position: absolute; top: 0; left: 0; width: 600px; height: 70px; transform-origin: 0 0; display: none; overflow: hidden; color: #e6ecff; font-size: 34px; font-weight: 700; text-align: center; line-height: 70px; white-space: nowrap; text-overflow: ellipsis; text-shadow: 0 2px 6px rgba(0,0,0,0.6); }
+.osv-conv-current { outline: 1px solid var(--pf-accent, #4da3ff); }
+/* Touch camera controls: ▲▼ height, ◀▶ orbit, ＋－ zoom, ⌂ reset.
+   Hidden on pointer-fine devices — the mouse already has all of it. */
+.osv-mobile-ctl { position: absolute; right: 10px; bottom: 10px; z-index: 6; display: none; grid-template-columns: repeat(4, 40px); gap: 6px; pointer-events: auto; }
+.osv-mobile-ctl button { width: 40px; height: 40px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.25); background: rgba(20,24,50,0.85); color: #dfe7ff; font-size: 17px; line-height: 1; cursor: pointer; }
+.osv-mobile-ctl button:active { background: rgba(60,80,160,0.9); }
+/* On touch devices the mouse help is noise and collides with the
+   D-pad; hide it there. */
+@media (pointer: coarse) { .osv-mobile-ctl { display: grid; } .osv-help { display: none; } }
 .osv-help { position: absolute; left: 10px; bottom: 10px; z-index: 3; background: rgba(10,14,30,0.75); color: #cfd6ff; font-size: 11px; padding: 6px 10px; border-radius: 8px; pointer-events: none; line-height: 1.5; max-width: 60%; }
 .osv-error { position: absolute; top: 40%; left: 0; right: 0; text-align: center; color: #e94560; font-size: 14px; }
 .osv-dialog { max-width: 640px; width: calc(100vw - 40px); max-height: 80vh; display: flex; flex-direction: column; }

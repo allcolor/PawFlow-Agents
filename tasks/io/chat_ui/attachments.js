@@ -409,7 +409,7 @@ async function send() {
   // Intercept slash commands
   if (text.startsWith('/')) {
     const handled = await handleSlashCommand(text);
-    if (handled) { input.value = ''; input.style.height = 'auto'; input.focus(); return; }
+    if (handled) { input.value = ''; input.style.height = ''; input.focus(); return; }
   }
 
 
@@ -431,7 +431,10 @@ async function send() {
   sending = true;
   document.getElementById('status').textContent = t('sending');
   input.value = '';
-  input.style.height = 'auto';
+  // Empty composer goes back to its stylesheet size — clearing the
+  // inline height beats 'auto', which mobile keyboards can re-measure
+  // against a stale scrollHeight and leave the box tall after a send.
+  input.style.height = '';
 
   // Generate msg_id client-side so dedup works across SSE + replay
   const userMsgId = (crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16))).replace(/-/g, '').slice(0, 12);
@@ -760,10 +763,16 @@ function handleKey(e) {
     input.setSelectionRange(input.value.length, input.value.length);
     return;
   }
+  // Android IMEs compose text (keyCode 229 / isComposing): forcing a
+  // height reflow on every keystroke mid-composition makes the composed
+  // text blink and can drop the IME buffer — the "prompt erases itself"
+  // mobile bug. Resize only outside composition.
+  if (e.isComposing || e.keyCode === 229) return;
   setTimeout(() => {
     const token = _skillAutocompleteToken(input);
     if (_skillAutocomplete.open && token) _renderSkillAutocomplete(input, token.query);
     else if (_skillAutocomplete.open) _hideSkillAutocomplete();
+    if (!input.value) { input.style.height = ''; return; }
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 120) + 'px';
   }, 0);

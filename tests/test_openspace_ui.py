@@ -288,3 +288,151 @@ def test_bubbles_are_fully_readable_and_anchored():
     # Bubble tails are centered so they point at the avatar underneath.
     assert ".osv-thought::before { content: ''; position: absolute; left: 50%;" in template
     assert ".osv-speech::after" in template
+
+
+def test_resource_posters_open_their_panels():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    # One raycast-targeted poster per resources-menu entry; clicking one
+    # opens the matching regular panel, never a re-implementation.
+    assert "OSV_POSTERS" in src
+    assert "osvPoster" in src
+    for opener in ("openspaceOpenFlowsDialog", "cmdShowMemories", "cmdShowKg",
+                   "cmdShowDiary", "cmdShowProjectGraph", "cmdShowProjectWiki",
+                   "cmdShowScratchpad"):
+        assert opener in src
+
+
+def test_flows_dialog_projects_a_live_3d_flow():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    # Same data source as the sidebar Flows section: list_resources sees
+    # every scope (conversation/user/global), unlike list_conv_flows.
+    assert "action$('list_resources'" in src
+    assert "action$('list_conv_flows'" not in src
+    assert "flow_runtime_graph" in src
+    # Live current: dots run along active links, backpressure turns them
+    # red; geometry is built once and polls only recolor.
+    assert "function _osTickFlow" in src
+    assert "backpressured" in src
+    # Closing the stage stops polling and restores the camera framing.
+    assert "clearInterval(f.timer)" in src
+    assert "prevPan" in src
+    template = _text("tasks/io/chat_ui/template.html")
+    assert ".osv-flow-close" in template
+
+
+def test_roster_board_has_per_agent_stop_controls():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    assert "interruptSingle" in src
+    assert "stopSingle" in src
+    template = _text("tasks/io/chat_ui/template.html")
+    # The projected board must opt back into clicks (overlay default is
+    # pointer-events: none).
+    assert ".osv-board { pointer-events: auto; }" in template
+    assert ".osv-board-btn" in template
+
+
+def test_openspace_v4_i18n_keys_exist_in_all_locales():
+    for locale in ("en", "fr", "es"):
+        data = json.loads(_text(f"tasks/io/chat_ui/i18n/{locale}.json"))
+        for key in ("osvFlowPick", "osvFlowView", "osvFlowClose"):
+            assert key in data, f"{key} missing in {locale}"
+
+
+def test_resources_poster_pops_boards_that_open_submenu_dialogs():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    # Resources poster → one labeled board per sidebar sub-section →
+    # clicking a board opens that sub-menu as a live interactive dialog.
+    assert "function openspaceToggleResourceBoards" in src
+    assert "function openspaceOpenResSectionDialog" in src
+    assert "osvResSection" in src
+    assert 'res-section-' in src
+    # The dialog body is a neutralized clone of the sidebar section: no
+    # duplicate ids, no collapse toggle, inline handlers intact.
+    assert "cloneNode(true)" in src
+    assert 'removeAttribute(\'id\')' in src.replace('"', "'")
+    assert "_toggleSection" in src
+    # The wall of permanently projected clones is gone.
+    assert "_osSyncResScreens" not in src
+    template = _text("tasks/io/chat_ui/template.html")
+    assert ".osv-resdialog-body" in template
+    assert ".osv-resscreen" not in template
+
+
+def test_door_opens_conversation_picker_and_rooms_are_seeded():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    assert "osvDoor" in src
+    assert "function openspaceOpenConvDialog" in src
+    assert "resumeConv" in src
+    # Same conversation → same room palette, derived from the id alone.
+    assert "function _osApplyRoomStyle" in src
+    assert "_osHashSeed(cid)" in src
+    # Conversation title framed above the wall screen.
+    assert "_osTitleCorners" in src
+    template = _text("tasks/io/chat_ui/template.html")
+    assert ".osv-convtitle" in template
+
+
+def test_flow_stage_close_is_robust():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    # Escape is a close path no projected panel can occlude.
+    assert "'Escape'" in src
+    template = _text("tasks/io/chat_ui/template.html")
+    seg = template.split(".osv-flow-close")[1][:400]
+    assert "z-index: 6" in seg
+    assert "pointer-events: auto" in seg
+
+
+def test_projected_panels_cull_backfaces_and_depth_sort():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    # A quad seen from behind or edge-on must hide, not smear a mirror
+    # image across the scene; nearer panels stack above farther ones.
+    assert "ux * wy - uy * wx" in src
+    assert "zIndex" in src
+
+
+def test_flash_guests_retire_and_delegates_walk_and_return():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    assert "function _osRetireAgent" in src
+    assert "_osFreeSeats" in src
+    # In-conv delegation: walk to the desk, hand over, walk home.
+    assert "src.awayAt !== dst.key" in src
+    # Cross-conversation work (a2a) is a trip to the door.
+    assert "function _osDoorTrip" in src
+    assert "/a2a/i" in src
+
+
+def test_mobile_touch_controls_and_calm_resize():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    # Pinch zoom + two-finger pan on the canvas, D-pad buttons on coarse
+    # pointers, and keyboard-driven resize storms must not blink.
+    assert "function _osPinchState" in src
+    assert "_osResizeTimer" in src
+    template = _text("tasks/io/chat_ui/template.html")
+    assert ".osv-mobile-ctl" in template
+    assert "pointer: coarse" in template
+
+
+def test_composer_returns_to_default_size_when_empty():
+    src = _text("tasks/io/chat_ui/attachments.js")
+    # After a send (or with an empty value) the inline height is cleared
+    # so the composer falls back to its stylesheet size on mobile too.
+    assert "input.style.height = ''" in src
+    assert "if (!input.value) { input.style.height = ''; return; }" in src
+    # IME composition (Android keyCode 229) must not trigger the height
+    # reflow that blinked and dropped the composed text.
+    assert "e.isComposing || e.keyCode === 229" in src
+
+
+def test_bubbles_flush_before_reset_and_are_dismissable():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    # Turn-end resets flush the pending 250ms coalesce first, so a
+    # thought never freezes one tick short (mid-sentence).
+    assert "function _osFlushBubbles" in src
+    for marker in ("on('done'", "on('turn_complete'", "on('sub_agent_done'"):
+        assert marker in src
+    assert src.count("_osFlushBubbles(rec)") >= 4
+    # Every bubble carries a ✕ so it can be dismissed when it spoils the
+    # view; the next message shows it again.
+    assert "osv-bubble-close" in src
+    template = _text("tasks/io/chat_ui/template.html")
+    assert ".osv-bubble-close" in template

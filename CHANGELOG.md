@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Openspace V4: clickable resource posters on the right wall (one per
+  resources-menu entry, each opening the matching panel), a flows chooser
+  whose picked flow is projected on a live 3D stage (task blocks colored by
+  state, links carrying an animated current that follows queue size and turns
+  red under backpressure, polled from `flow_runtime_graph`), per-agent
+  ⏸ interrupt / ■ stop controls on the active-agents blackboard, and a
+  Resources poster that pops one labeled board per sidebar sub-section —
+  clicking a board opens that sub-menu as a live interactive dialog (cloned
+  sidebar DOM, every left-menu action works from the scene).
+- Openspace V5: office door opening a conversation picker (each conversation
+  is a room with a palette seeded from its id), conversation title framed
+  above the wall screen, ephemeral desks for flash-delegate guests, walk-and-
+  return delegation trips (desk for in-conv delegates, door for `a2a`),
+  backface culling + depth sorting for projected panels, robust flow-stage
+  close (✕/Escape), and mobile support: pinch zoom, two-finger pan, camera
+  D-pad on touch devices, debounced WebGL resize (no more keyboard blink),
+  and a composer that returns to its default size after a send.
+
 ## [1.0.0-beta.218] — 2026-08-19
 
 ### Added

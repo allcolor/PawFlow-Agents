@@ -88,6 +88,30 @@ let _osBoardEl = null, _osBoardListEl = null, _osBoardCorners = null;
 let _osBoardAt = 0, _osBoardText = '';
 let _osBattAt = 0;
 let _osResizeObs = null;
+// V4: resource posters on the right wall (click one → its panel) and a
+// projected 3D stage showing one deployed flow live (blocks + links +
+// moving current fed by flow_runtime_graph).
+let _osFlow = null;          // {id, name, group, nodes, edges, timer, prevPan}
+let _osFlowPollBusy = false;
+const OSV_FLOW_POLL_MS = 2500;
+const OSV_FLOW_RANK_DX = 4.2;
+const OSV_FLOW_ROW_DZ = 3.0;
+// Refresh cadence for the sub-menu dialog mirror (see the Resource
+// sub-menu boards section).
+const OSV_RES_SYNC_MS = 2000;
+// V5: office door (conversation picker + a2a trips), per-conversation
+// room palette, conversation title frame, mobile touch controls.
+let _osDoorPos = null;
+let _osTitleEl = null, _osTitleCorners = null, _osTitleText = '';
+let _osRoomMats = null;            // recolored by _osApplyRoomStyle
+let _osResizeTimer = 0, _osLastW = 0, _osLastH = 0;
+const _osTouches = new Map();      // pointerId → {x,y} (pinch/two-finger)
+let _osPinchPrev = null;
+const _osFreeSeats = [];           // desk slots retired guests gave back
+const OSV_TITLE_W = 600, OSV_TITLE_H = 70;
+// Camera follows the viewer's avatar unless the user pans manually;
+// walking (floor click) or the ⌂ reset re-engages the follow.
+let _osFollow = true;
 
 function openspaceIsActive() { return _osActive; }
 
@@ -117,6 +141,9 @@ function openspaceSetActive(on) {
   wrap.style.display = on ? '' : 'none';
   _osProjectMessages(on);
   if (on) {
+    // The resource screens mirror #resourcesContent; make sure it is
+    // populated even if the sidebar Resources section was never opened.
+    if (typeof loadResources === 'function') loadResources();
     _osEnsureThree().then(() => {
       if (!_osActive) return;
       _osBuildScene(wrap);
@@ -130,6 +157,7 @@ function openspaceSetActive(on) {
       wrap.appendChild(err);
     });
   } else {
+    openspaceCloseFlow();
     _osStopLoop();
   }
 }
@@ -189,6 +217,7 @@ function _osBuildScene(wrap) {
   floor.rotation.x = -Math.PI / 2;
   floor.name = 'floor';
   _osScene.add(floor);
+  _osRoomMats = { floor: floor.material };
   const grid = new T.GridHelper(120, 60, 0x2c3560, 0x232b52);
   grid.position.y = 0.01;
   _osScene.add(grid);
@@ -196,13 +225,21 @@ function _osBuildScene(wrap) {
   _osRaycaster = new T.Raycaster();
   _osBuildBigScreen();
   _osBuildDecor();
+  _osBuildPosters();
+  _osBuildDoor();
   _osCanvas.addEventListener('pointerdown', _osPointerDown);
   _osCanvas.addEventListener('pointermove', _osPointerMove);
   _osCanvas.addEventListener('pointerup', _osPointerUp);
+  _osCanvas.addEventListener('pointercancel', _osPointerUp);
   _osCanvas.addEventListener('wheel', _osWheel, { passive: false });
   _osCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('resize', _osResize);
   document.addEventListener('visibilitychange', _osVisibility);
+  // Escape always closes the flow stage (the ✕ button plus a keyboard
+  // path that cannot be occluded by any projected panel).
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') openspaceCloseFlow();
+  });
   // The wrap can resize without a window resize (sidebars, panels). A
   // stale canvas size stretches the WebGL image while overlay math uses
   // fresh dimensions — every projected element drifts off its mesh.
@@ -216,7 +253,43 @@ function _osBuildScene(wrap) {
     help.textContent = t('osvHelp');
     wrap.appendChild(help);
   }
+  if (!wrap.querySelector('.osv-mobile-ctl')) {
+    // Touch controls: pinch/two-finger pan work on the canvas itself;
+    // these buttons cover zoom and "I'm lost" on small screens.
+    const ctl = document.createElement('div');
+    ctl.className = 'osv-mobile-ctl';
+    // Rotation belongs to the finger (one-finger drag orbits). Buttons:
+    // ▲▼ raise/lower the camera, ◀▶ strafe left/right (same math as
+    // the two-finger drag) — ⌂ re-engages the follow.
+    const pan = (dx, dy) => {
+      _osFollow = false;
+      const k = _osCamDist * 0.0016;
+      const a = _osCamAngle;
+      _osCamPan.x += (-Math.sin(a) * dx + Math.cos(a) * dy) * k;
+      _osCamPan.z += (Math.cos(a) * dx + Math.sin(a) * dy) * k;
+      _osCamPan.x = Math.max(-40, Math.min(40, _osCamPan.x));
+      _osCamPan.z = Math.max(-40, Math.min(40, _osCamPan.z));
+    };
+    [['\u25B2', () => { _osCamHeight = Math.min(40, _osCamHeight + 3); }],
+     ['\u25BC', () => { _osCamHeight = Math.max(6, _osCamHeight - 3); }],
+     ['\u25C0', () => pan(60, 0)],
+     ['\u25B6', () => pan(-60, 0)],
+     ['\u2795', () => { _osCamDist = Math.max(10, _osCamDist - 5); }],
+     ['\u2796', () => { _osCamDist = Math.min(60, _osCamDist + 5); }],
+     ['\u2302', () => {
+       _osCamAngle = Math.PI / 4; _osCamDist = 26; _osCamHeight = 18;
+       _osCamPan.x = 0; _osCamPan.y = 0; _osCamPan.z = 0;
+       _osFollow = true;
+     }]].forEach(([txt, fn]) => {
+      const b = document.createElement('button');
+      b.textContent = txt;
+      b.onclick = () => { fn(); _osUpdateCamera(); };
+      ctl.appendChild(b);
+    });
+    wrap.appendChild(ctl);
+  }
   _osResize();
+  _osApplyRoomStyle();
 }
 
 function _osUpdateCamera() {
@@ -235,9 +308,21 @@ function _osResize() {
   const wrap = document.getElementById('openspaceWrap');
   if (!wrap || !_osRenderer || !_osCamera) return;
   const w = wrap.clientWidth || 1, h = wrap.clientHeight || 1;
-  _osRenderer.setSize(w, h);
-  _osCamera.aspect = w / h;
-  _osCamera.updateProjectionMatrix();
+  if (w === _osLastW && h === _osLastH) return;
+  const apply = () => {
+    _osResizeTimer = 0;
+    const w2 = wrap.clientWidth || 1, h2 = wrap.clientHeight || 1;
+    _osLastW = w2; _osLastH = h2;
+    _osRenderer.setSize(w2, h2);
+    _osCamera.aspect = w2 / h2;
+    _osCamera.updateProjectionMatrix();
+  };
+  // First sizing is immediate; later ones are debounced because mobile
+  // keyboards animate the viewport and fire a resize per keystroke —
+  // resizing the WebGL buffer each time blinks the whole scene.
+  if (!_osLastW) { apply(); return; }
+  if (_osResizeTimer) clearTimeout(_osResizeTimer);
+  _osResizeTimer = setTimeout(apply, 150);
 }
 
 function _osVisibility() {
@@ -271,11 +356,13 @@ function _osBuildDecor() {
   rug.rotation.x = -Math.PI / 2;
   rug.position.set(cx, 0.02, -4.5);
   _osScene.add(rug);
+  if (_osRoomMats) _osRoomMats.rug = rug.material;
   const couch = new T.Group();
   const seat = new T.Mesh(new T.BoxGeometry(4.2, 0.55, 1.4), mat(0x5f3dc4));
   seat.position.y = 0.45;
   const back = new T.Mesh(new T.BoxGeometry(4.2, 0.9, 0.35), mat(0x6741d9));
   back.position.set(0, 0.95, 0.55);
+  if (_osRoomMats) { _osRoomMats.couch = seat.material; _osRoomMats.couchBack = back.material; }
   const armL = new T.Mesh(new T.BoxGeometry(0.35, 0.8, 1.4), mat(0x6741d9));
   armL.position.set(-2.1, 0.65, 0);
   const armR = armL.clone();
@@ -314,6 +401,24 @@ function _osBuildBigScreen() {
     new T.MeshLambertMaterial({ color: 0x1b2140 }));
   pole.position.set(cx, 1.15, sz - 0.18);
   _osScene.add(bezel, pole);
+  // Title frame above the screen: a bezel plus a projected DOM strip
+  // showing the conversation title (same quad transform as the screen).
+  const titleBezel = new T.Mesh(
+    new T.BoxGeometry(sw + 0.7, 1.5, 0.25),
+    new T.MeshLambertMaterial({ color: 0x222a4d }));
+  titleBezel.position.set(cx, sy + sh / 2 + 1.0, sz - 0.2);
+  _osScene.add(titleBezel);
+  _osTitleCorners = [
+    { x: cx - sw / 2, y: sy + sh / 2 + 1.6, z: sz },
+    { x: cx + sw / 2, y: sy + sh / 2 + 1.6, z: sz },
+    { x: cx - sw / 2, y: sy + sh / 2 + 0.45, z: sz },
+    { x: cx + sw / 2, y: sy + sh / 2 + 0.45, z: sz },
+  ];
+  if (!_osTitleEl && _osOverlay) {
+    _osTitleEl = document.createElement('div');
+    _osTitleEl.className = 'osv-convtitle';
+    _osOverlay.appendChild(_osTitleEl);
+  }
   _osScreenCorners = [
     { x: cx - sw / 2, y: sy + sh / 2, z: sz },
     { x: cx + sw / 2, y: sy + sh / 2, z: sz },
@@ -432,6 +537,7 @@ const _osScreenVec = { v: null };
 function _osProjectScreen() {
   _osProjectPanel(_osScreenEl, _osScreenCorners, OSV_SCREEN_W, OSV_SCREEN_H);
   _osProjectPanel(_osBoardEl, _osBoardCorners, OSV_BOARD_W, OSV_BOARD_H);
+  _osProjectPanel(_osTitleEl, _osTitleCorners, OSV_TITLE_W, OSV_TITLE_H);
 }
 
 function _osProjectPanel(el, corners, w, h) {
@@ -441,17 +547,28 @@ function _osProjectPanel(el, corners, w, h) {
   const v = _osScreenVec.v;
   const ow = _osOverlay.clientWidth, oh = _osOverlay.clientHeight;
   const pts = [];
+  let zsum = 0;
   for (const c of corners) {
     v.set(c.x, c.y, c.z).project(_osCamera);
     if (v.z > 1) { el.style.display = 'none'; return; }
+    zsum += v.z;
     pts.push({ x: (v.x * 0.5 + 0.5) * ow, y: (-v.y * 0.5 + 0.5) * oh });
   }
+  // Backface/edge-on culling: painting a quad seen from behind smears a
+  // mirrored image across the scene, and an edge-on quad is a stretched
+  // unreadable sliver — hide both instead of drawing garbage.
+  const ux = pts[1].x - pts[0].x, uy = pts[1].y - pts[0].y;
+  const wx = pts[2].x - pts[0].x, wy = pts[2].y - pts[0].y;
+  if (ux * wy - uy * wx < 600) { el.style.display = 'none'; return; }
   const transform = _osQuadTransform(w, h, pts);
   if (!transform) { el.style.display = 'none'; return; }
   // The stylesheet default is display:none, so clearing the inline style
   // would hide the panel — it must be set explicitly.
   el.style.display = 'block';
   el.style.transform = transform;
+  // DOM has no depth buffer: stack projected panels by camera distance
+  // so a nearer screen always paints over a farther one.
+  el.style.zIndex = String(Math.max(1, Math.round((1 - zsum / 4) * 2500)));
 }
 
 // Battery above each agent's head: context USED, mirroring the header
@@ -474,11 +591,14 @@ function _osRefreshBatteries(now) {
   });
 }
 
-// Chalk roster: one line per active agent (name — current tool/status,
-// plus its battery). Rewritten only when the text actually changes.
+// Chalk roster: one row per active agent (name — current tool/status,
+// battery) plus per-agent controls: ⏸ interrupt and ■ stop reuse the
+// active-agents tracker actions, so the board is also a control panel.
+// The DOM is rebuilt only when the row model actually changes.
 function _osUpdateBoard(now) {
   if (!_osBoardListEl || now - _osBoardAt < 1000) return;
   _osBoardAt = now;
+  _osRefreshTitle();
   const rows = [];
   if (typeof activeInteractions !== 'undefined') {
     Object.values(activeInteractions || {}).forEach((it) => {
@@ -486,22 +606,719 @@ function _osUpdateBoard(now) {
     });
   }
   const usage = (typeof window !== 'undefined' && window._contextUsage) || {};
-  const lines = rows.map((it) => {
+  const icons = { thinking: '\u{1F4AD}', talking: '\u{1F4AC}',
+                  tool: '\u2699\uFE0F', waiting: '\u2753' };
+  const model = rows.map((it) => {
     const entry = usage[_osKey(it.name)] || {};
     const pct = entry.pct || it.contextPct || 0;
-    const batt = pct ? '  \u{1F50B}' + Math.round(pct * 100) + '%' : '';
     // Prefer the avatar's live state over the (staler) tracker status.
     const desk = _osAgents.get(_osKey(it.name));
-    const icons = { thinking: '\u{1F4AD}', talking: '\u{1F4AC}',
-                    tool: '\u2699\uFE0F', waiting: '\u2753' };
     const doing = desk && icons[desk.state]
       ? icons[desk.state] + (desk.state === 'tool' && it.lastTool
         ? ' ' + it.lastTool : '')
       : (it.lastTool || it.status || '');
-    return '\u2022 ' + it.name + (doing ? ' \u2014 ' + doing : '') + batt;
+    return { name: it.name, taskId: it.taskId || '', doing: doing,
+             batt: pct ? '\u{1F50B}' + Math.round(pct * 100) + '%' : '' };
   });
-  const text = lines.length ? lines.join('\n') : t('osvBoardIdle');
-  if (text !== _osBoardText) { _osBoardText = text; _osBoardListEl.textContent = text; }
+  const sig = JSON.stringify(model);
+  if (sig === _osBoardText) return;
+  _osBoardText = sig;
+  _osBoardListEl.textContent = '';
+  if (!model.length) { _osBoardListEl.textContent = t('osvBoardIdle'); return; }
+  model.forEach((m) => {
+    const row = document.createElement('div');
+    row.className = 'osv-board-row';
+    const label = document.createElement('span');
+    label.className = 'osv-board-row-label';
+    label.textContent = '\u2022 ' + m.name
+      + (m.doing ? ' \u2014 ' + m.doing : '') + (m.batt ? '  ' + m.batt : '');
+    const pause = document.createElement('button');
+    pause.className = 'osv-board-btn';
+    pause.textContent = '\u23F8';
+    pause.title = t('stopTitle');
+    pause.onclick = () => {
+      if (typeof interruptSingle === 'function') interruptSingle(m.name, m.taskId);
+    };
+    const stop = document.createElement('button');
+    stop.className = 'osv-board-btn osv-board-btn-stop';
+    stop.textContent = '\u25A0';
+    stop.title = t('stop');
+    stop.onclick = () => {
+      if (typeof stopSingle === 'function') stopSingle(m.name, m.taskId);
+    };
+    row.append(label, pause, stop);
+    _osBoardListEl.appendChild(row);
+  });
+}
+
+// ── Resource posters ─────────────────────────────────────────────
+// One poster per resources-menu entry, hung on the right wall. The
+// scene is only a door: clicking a poster opens the matching regular
+// panel/dialog, never a re-implementation of it.
+const OSV_POSTERS = [
+  ['flows', '\u{1F9E9}', 'flows',
+   () => openspaceOpenFlowsDialog()],
+  ['resources', '\u{1F9F0}', 'resources',
+   () => openspaceToggleResourceBoards()],
+  ['memories', '\u{1F9E0}', 'memories',
+   () => { if (typeof cmdShowMemories === 'function') cmdShowMemories(); }],
+  ['kg', '\u{1F578}\uFE0F', 'knowledgeGraph',
+   () => { if (typeof cmdShowKg === 'function') cmdShowKg(); }],
+  ['diary', '\u{1F4D4}', 'diary',
+   () => { if (typeof cmdShowDiary === 'function') cmdShowDiary(); }],
+  ['projectGraph', '\u{1F5FA}\uFE0F', 'projectGraph',
+   () => { if (typeof cmdShowProjectGraph === 'function') cmdShowProjectGraph(); }],
+  ['wiki', '\u{1F4DA}', 'projectWiki',
+   () => { if (typeof cmdShowProjectWiki === 'function') cmdShowProjectWiki(); }],
+  ['scratchpad', '\u{1F4DD}', 'scratchpad',
+   () => { if (typeof cmdShowScratchpad === 'function') cmdShowScratchpad(); }],
+];
+
+function _osPosterTexture(icon, label) {
+  const T = _osThree;
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 170;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#1d2447';
+  ctx.fillRect(0, 0, 256, 170);
+  ctx.strokeStyle = '#4da3ff';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(5, 5, 246, 160);
+  ctx.textAlign = 'center';
+  ctx.font = '64px serif';
+  ctx.fillText(icon, 128, 82);
+  ctx.fillStyle = '#e6ecff';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillText(String(label).slice(0, 18), 128, 146);
+  return new T.CanvasTexture(canvas);
+}
+
+function _osBuildPosters() {
+  const T = _osThree;
+  const x = (OSV_GRID_COLS - 1) * OSV_DESK_SPACING + 6.5;
+  OSV_POSTERS.forEach((p, i) => {
+    const z = -5 + i * 2.1;
+    const mesh = new T.Mesh(
+      new T.PlaneGeometry(2.1, 1.4),
+      new T.MeshBasicMaterial({ map: _osPosterTexture(p[1], t(p[2])) }));
+    mesh.position.set(x, 2.5, z);
+    mesh.rotation.y = -Math.PI / 2;   // face the desks (-x)
+    mesh.userData.osvPoster = p[0];
+    const post = new T.Mesh(
+      new T.BoxGeometry(0.12, 2.0, 0.12),
+      new T.MeshLambertMaterial({ color: 0x3b3f54 }));
+    post.position.set(x + 0.12, 1.0, z);
+    _osScene.add(mesh, post);
+  });
+}
+
+function _osOpenPoster(key) {
+  const p = OSV_POSTERS.find((e) => e[0] === key);
+  if (p) p[3]();
+}
+
+// ── Door, conversation rooms, title ─────────────────────────────
+// The office door: clicking it opens the conversation picker, and a2a
+// (cross-conversation) trips walk to it. Each conversation is a
+// different "room": a palette derived deterministically from the
+// conversation id (same conversation → same colors, always).
+function _osBuildDoor() {
+  const T = _osThree;
+  const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
+  const g = new T.Group();
+  const frame = new T.Mesh(
+    new T.BoxGeometry(2.4, 3.4, 0.25),
+    new T.MeshLambertMaterial({ color: 0x5d3d21 }));
+  frame.position.y = 1.7;
+  const panel = new T.Mesh(
+    new T.BoxGeometry(1.9, 3.0, 0.18),
+    new T.MeshLambertMaterial({ color: 0x8a5a33 }));
+  panel.position.set(0, 1.5, 0.12);
+  const knob = new T.Mesh(
+    new T.SphereGeometry(0.09, 10, 8),
+    new T.MeshLambertMaterial({ color: 0xffd43b }));
+  knob.position.set(0.7, 1.5, 0.26);
+  g.add(frame, panel, knob);
+  g.position.set(cx - 10.5, 0, -9);
+  g.traverse((o) => { o.userData.osvDoor = true; });
+  _osScene.add(g);
+  _osDoorPos = { x: cx - 10.5, z: -9 };
+}
+
+function _osHashSeed(s) {
+  let h = 0;
+  for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+function _osApplyRoomStyle() {
+  if (!_osScene || !_osRoomMats) return;
+  const cid = (typeof conversationId !== 'undefined' && conversationId) || 'default';
+  const hue = (_osHashSeed(cid) % 360) / 360;
+  _osScene.background.setHSL(hue, 0.42, 0.11);
+  if (_osScene.fog) _osScene.fog.color.copy(_osScene.background);
+  _osRoomMats.floor.color.setHSL(hue, 0.35, 0.17);
+  if (_osRoomMats.rug) _osRoomMats.rug.color.setHSL((hue + 0.08) % 1, 0.42, 0.26);
+  if (_osRoomMats.couch) _osRoomMats.couch.color.setHSL((hue + 0.55) % 1, 0.5, 0.5);
+  if (_osRoomMats.couchBack) _osRoomMats.couchBack.color.setHSL((hue + 0.55) % 1, 0.55, 0.55);
+}
+
+// Conversation title in the frame above the wall screen (1s cadence,
+// written only on change).
+let _osTitleFetchFor = '';
+function _osRefreshTitle() {
+  if (!_osTitleEl) return;
+  const cid = (typeof conversationId !== 'undefined' && conversationId) || '';
+  const all = ((typeof window !== 'undefined' && window._ownConvs) || [])
+    .concat((typeof window !== 'undefined' && window._sharedConvs) || []);
+  const c = all.find((x) => x && x.conversation_id === cid);
+  if (!c && cid && cid !== _osTitleFetchFor && typeof action$ === 'function') {
+    // The sidebar cache starts empty when its Conversations section was
+    // never opened (typical on mobile): fetch once per conversation so
+    // the frame shows the real title, not "New conversation".
+    _osTitleFetchFor = cid;
+    action$('list_conversations', {}).subscribe((d) => {
+      if (d && d.conversations) window._ownConvs = d.conversations;
+    });
+  }
+  const title = c ? (c.title || c.preview || t('newConversation'))
+    : (cid ? '' : t('newConversation'));
+  if (!title) return;   // keep the current text until the fetch lands
+  if (title !== _osTitleText) { _osTitleText = title; _osTitleEl.textContent = title; }
+}
+
+function openspaceOpenConvDialog() {
+  const prior = document.getElementById('osvConvDialog');
+  if (prior) prior.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'exec-overlay';
+  overlay.id = 'osvConvDialog';
+  const dialog = document.createElement('div');
+  dialog.className = 'exec-dialog cog-dialog osv-dialog';
+  const head = document.createElement('div');
+  head.className = 'cog-head';
+  const title = document.createElement('h3');
+  title.textContent = t('conversations');
+  head.appendChild(title);
+  const close = document.createElement('button');
+  close.className = 'cog-close';
+  close.innerHTML = '&times;';
+  close.onclick = () => overlay.remove();
+  const list = document.createElement('div');
+  list.className = 'osv-log';
+  dialog.append(close, head, list);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  const addRow = (c, isShared) => {
+    if (!c || !c.conversation_id) return;
+    const row = document.createElement('div');
+    row.className = 'osv-block osv-flow-row'
+      + (c.conversation_id === conversationId ? ' osv-conv-current' : '');
+    const name = document.createElement('span');
+    const date = c.updated_at
+      ? new Date(c.updated_at * 1000).toLocaleDateString() : '';
+    name.textContent = (isShared ? '\u{1F465} ' : '')
+      + (c.title || c.preview || t('newConversation'))
+      + (date ? ' \u00B7 ' + date : '');
+    row.append(name);
+    row.style.cursor = 'pointer';
+    row.onclick = () => {
+      overlay.remove();
+      if (c.conversation_id !== conversationId
+          && typeof resumeConv === 'function') resumeConv(c.conversation_id);
+    };
+    list.appendChild(row);
+  };
+  // Always fetch live: the sidebar cache (window._ownConvs) is empty
+  // until the user opens the Conversations section, which on mobile may
+  // never happen — rendering from it showed "no conversations" wrongly.
+  if (typeof action$ !== 'function') return;
+  action$('list_conversations', {}).subscribe((data) => {
+    ((data && data.conversations) || []).forEach((c) => addRow(c, false));
+    ((typeof window !== 'undefined' && window._sharedConvs) || [])
+      .forEach((c) => addRow(c, true));
+    if (!list.childElementCount) {
+      const empty = document.createElement('div');
+      empty.className = 'osv-log-empty';
+      empty.textContent = t('noConversationsHint');
+      list.appendChild(empty);
+    }
+  });
+}
+
+// A trip to the door: the agent walks over, says what it sends out
+// (a2a / cross-conversation delegation), and walks back home.
+// Smoothly keep the camera target glued to the viewer's avatar (the
+// flow stage owns the pan while it is open).
+function _osFollowUser() {
+  if (!_osFollow || _osFlow || !_osCamera) return;
+  const key = 'user:' + _osKey(
+    (typeof window !== 'undefined' && window._userId) || 'user');
+  const me = _osAgents.get(key);
+  if (!me || !me.avatar) return;
+  const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
+  const rows = Math.max(1, Math.ceil(Math.max(_osSeatCount, 1) / OSV_GRID_COLS));
+  const cz = ((rows - 1) * OSV_DESK_SPACING) / 2;
+  const tx = me.avatar.position.x - cx, tz = me.avatar.position.z - cz;
+  const dx = tx - _osCamPan.x, dz = tz - _osCamPan.z;
+  if (Math.abs(dx) + Math.abs(dz) < 0.01) return;
+  _osCamPan.x += dx * 0.06;
+  _osCamPan.z += dz * 0.06;
+  _osUpdateCamera();
+}
+
+function _osDoorTrip(rec, label) {
+  if (!rec || !rec.avatar || !_osDoorPos || rec.kind === 'user' || rec.awayAt) return;
+  rec.awayAt = 'door';
+  _osWalkTo(rec, { x: _osDoorPos.x + 1.4, z: _osDoorPos.z + 1.8 }, () => {
+    if (label) _osShowBubble(rec, 'speech', label);
+    setTimeout(() => {
+      if (_osAgents.get(rec.key) !== rec || rec.awayAt !== 'door') return;
+      rec.awayAt = null;
+      _osWalkTo(rec, { x: rec.homeSeat.x, z: rec.homeSeat.z + 1.35 });
+    }, 1100);
+  });
+}
+
+// Flash-delegate guests are temporary: their desk appears with the
+// delegation and is dismantled once the sub-agent finishes (the seat
+// slot goes back into the pool for the next guest).
+function _osRetireAgent(rec) {
+  if (!rec || rec.kind === 'user') return;
+  _osAgents.delete(rec.key);
+  if (typeof rec.seatIndex === 'number') _osFreeSeats.push(rec.seatIndex);
+  [rec.labelEl, rec.speechEl, rec.thoughtEl, rec.statusEl, rec.battEl]
+    .forEach((el) => { if (el) el.remove(); });
+  (rec.tools || []).slice().forEach((entry) => _osRemoveTool(rec, entry));
+  const seen = new Set();
+  [rec.group, rec.avatar].forEach((obj) => {
+    if (!obj || seen.has(obj) || !_osScene) return;
+    seen.add(obj);
+    _osScene.remove(obj);
+    obj.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material && o.material.dispose) o.material.dispose();
+    });
+  });
+}
+
+// ── Resource sub-menu boards ─────────────────────────────────
+// Clicking the Resources poster pops one labeled board per sub-section
+// (Agents, Tasks, Flows, Services, Packages, Variables, Secrets, the
+// repositories…). The sidebar renderer stays the single source of
+// truth: clicking a board opens a DIALOG cloning that section's live
+// DOM, refreshed while open. Inline onclick handlers survive, so +/↻/context-menu actions work from the scene.
+let _osResBoards = [];
+let _osResDialogTimer = 0;
+
+function _osResSections() {
+  const content = document.getElementById('resourcesContent');
+  if (!content) return [];
+  const out = [];
+  content.querySelectorAll('[id^="res-section-"]').forEach((body) => {
+    const header = body.previousElementSibling;
+    if (!header) return;
+    const title = (header.textContent || '')
+      .replace(/[\u25B6\u25BC\u21BB+]/g, ' ').replace(/\s+/g, ' ').trim();
+    out.push({ rtype: body.id.slice('res-section-'.length),
+               title: title, header: header, body: body });
+  });
+  return out;
+}
+
+function openspaceToggleResourceBoards() {
+  if (_osResBoards.length) { _osClearResourceBoards(); return; }
+  if (typeof loadResources === 'function') loadResources();
+  _osBuildResourceBoards();
+  // The sidebar data may still be loading on first use: rebuild once
+  // shortly after so every sub-section gets its screen.
+  setTimeout(() => {
+    if (!_osResBoards.length) return;
+    _osClearResourceBoards();
+    _osBuildResourceBoards();
+  }, 1500);
+}
+
+function _osResBoardTexture(title, count) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#243b64';
+  ctx.fillRect(0, 0, 256, 128);
+  ctx.strokeStyle = '#74c0fc';
+  ctx.lineWidth = 5;
+  ctx.strokeRect(4, 4, 248, 120);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#e6ecff';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillText(String(title).slice(0, 16), 128, 58);
+  ctx.fillStyle = '#9fc2ff';
+  ctx.font = '20px sans-serif';
+  ctx.fillText(String(count), 128, 98);
+  return new _osThree.CanvasTexture(canvas);
+}
+
+function _osBuildResourceBoards() {
+  const T = _osThree;
+  if (!T || !_osScene) return;
+  const x = (OSV_GRID_COLS - 1) * OSV_DESK_SPACING + 6.5;
+  _osResSections().forEach((s, i) => {
+    const count = s.body.querySelectorAll('div').length;
+    const mesh = new T.Mesh(
+      new T.PlaneGeometry(2.1, 1.1),
+      new T.MeshBasicMaterial({ map: _osResBoardTexture(s.title, count) }));
+    mesh.position.set(x, 4.2 + Math.floor(i / 8) * 1.4, -5 + (i % 8) * 2.1);
+    mesh.rotation.y = -Math.PI / 2;
+    mesh.userData.osvResSection = s.rtype;
+    mesh.userData.osvResTitle = s.title;
+    _osScene.add(mesh);
+    _osResBoards.push(mesh);
+  });
+}
+
+function _osClearResourceBoards() {
+  _osResBoards.forEach((m) => {
+    if (_osScene) _osScene.remove(m);
+    if (m.geometry) m.geometry.dispose();
+    if (m.material) {
+      if (m.material.map) m.material.map.dispose();
+      m.material.dispose();
+    }
+  });
+  _osResBoards = [];
+}
+
+function openspaceOpenResSectionDialog(rtype, title) {
+  const prior = document.getElementById('osvResDialog');
+  if (prior) prior.remove();
+  if (_osResDialogTimer) { clearInterval(_osResDialogTimer); _osResDialogTimer = 0; }
+  const overlay = document.createElement('div');
+  overlay.className = 'exec-overlay';
+  overlay.id = 'osvResDialog';
+  const dialog = document.createElement('div');
+  dialog.className = 'exec-dialog cog-dialog osv-dialog';
+  const head = document.createElement('div');
+  head.className = 'cog-head';
+  const h3 = document.createElement('h3');
+  h3.textContent = title || rtype;
+  head.appendChild(h3);
+  const close = document.createElement('button');
+  close.className = 'cog-close';
+  close.innerHTML = '&times;';
+  close.onclick = () => {
+    if (_osResDialogTimer) { clearInterval(_osResDialogTimer); _osResDialogTimer = 0; }
+    overlay.remove();
+  };
+  const bodyWrap = document.createElement('div');
+  bodyWrap.className = 'osv-resdialog-body';
+  dialog.append(close, head, bodyWrap);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  let sig = '';
+  const fill = () => {
+    if (!document.body.contains(overlay)) {
+      if (_osResDialogTimer) { clearInterval(_osResDialogTimer); _osResDialogTimer = 0; }
+      return;
+    }
+    const s = _osResSections().find((x) => x.rtype === rtype);
+    if (!s) return;
+    const cur = s.header.outerHTML + s.body.innerHTML;
+    if (cur === sig) return;
+    sig = cur;
+    bodyWrap.textContent = '';
+    const h = s.header.cloneNode(true);
+    const b = s.body.cloneNode(true);
+    b.style.display = 'block';
+    b.style.maxHeight = 'none';
+    [h, b].forEach((root) => {
+      if (root.id) root.removeAttribute('id');
+      root.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+      root.querySelectorAll('[onclick*="_toggleSection"]')
+        .forEach((n) => n.removeAttribute('onclick'));
+    });
+    bodyWrap.append(h, b);
+  };
+  fill();
+  // Live: actions (create, delete, move…) re-render the sidebar; the
+  // dialog mirrors it on the same cadence.
+  _osResDialogTimer = setInterval(fill, OSV_RES_SYNC_MS);
+}
+
+// ── Flows dialog + projected 3D workflow stage ──────────────────
+function openspaceOpenFlowsDialog() {
+  const prior = document.getElementById('osvFlowsDialog');
+  if (prior) prior.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'exec-overlay';
+  overlay.id = 'osvFlowsDialog';
+  const dialog = document.createElement('div');
+  dialog.className = 'exec-dialog cog-dialog osv-dialog';
+  const head = document.createElement('div');
+  head.className = 'cog-head';
+  const title = document.createElement('h3');
+  title.textContent = t('flows');
+  head.appendChild(title);
+  const close = document.createElement('button');
+  close.className = 'cog-close';
+  close.innerHTML = '&times;';
+  close.onclick = () => overlay.remove();
+  const hint = document.createElement('div');
+  hint.className = 'osv-flow-hint';
+  hint.textContent = t('osvFlowPick');
+  const list = document.createElement('div');
+  list.className = 'osv-log';
+  dialog.append(close, head, hint, list);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  if (typeof action$ !== 'function') return;
+  // Same source as the sidebar Flows section: list_resources returns ALL
+  // deployed instances visible to the user (conversation/user/global
+  // scopes), where list_conv_flows only returns owner-scoped ones.
+  action$('list_resources', {}).subscribe((data) => {
+    const flows = (data && data.flows) || [];
+    if (!flows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'osv-log-empty';
+      empty.textContent = t('noDeployedFlows');
+      list.appendChild(empty);
+      return;
+    }
+    flows.forEach((f) => {
+      const id = f.instance_id || f.id;
+      const label = f.flow_name || f.name || id;
+      const scope = f.scope ? String(f.scope).charAt(0).toUpperCase() : '';
+      const row = document.createElement('div');
+      row.className = 'osv-block osv-flow-row';
+      const name = document.createElement('span');
+      name.textContent = (f.status === 'running' ? '\u25B6 ' : '\u23F9 ')
+        + (scope ? '[' + scope + '] ' : '') + label + ' [' + (f.status || '?') + ']';
+      const btn = document.createElement('button');
+      btn.className = 'osv-flow-view-btn';
+      btn.textContent = '\u{1F3AC} ' + t('osvFlowView');
+      btn.onclick = () => { overlay.remove(); openspaceShowFlow(id, label); };
+      row.append(name, btn);
+      list.appendChild(row);
+    });
+  });
+}
+
+// The stage sits past the poster wall so it never overlaps the desks;
+// opening a flow pans the camera there (orbit/zoom stay free), closing
+// restores the exact previous framing.
+function _osFlowZone() {
+  return { x: (OSV_GRID_COLS - 1) * OSV_DESK_SPACING + 16, z: 0 };
+}
+
+function openspaceShowFlow(instanceId, name) {
+  openspaceCloseFlow();
+  const T = _osThree;
+  if (!T || !_osScene) return;
+  const zone = _osFlowZone();
+  const group = new T.Group();
+  group.position.set(zone.x, 0, zone.z);
+  _osScene.add(group);
+  _osFlow = { id: instanceId, name: name, group: group,
+              nodes: new Map(), edges: [], timer: 0,
+              prevPan: { x: _osCamPan.x, y: _osCamPan.y, z: _osCamPan.z } };
+  const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
+  const rows = Math.max(1, Math.ceil(Math.max(_osSeatCount, 1) / OSV_GRID_COLS));
+  const cz = ((rows - 1) * OSV_DESK_SPACING) / 2;
+  _osCamPan.x = zone.x - cx + 4;
+  _osCamPan.z = zone.z - cz;
+  _osCamPan.y = 1.5;
+  _osUpdateCamera();
+  const wrap = document.getElementById('openspaceWrap');
+  if (wrap && !wrap.querySelector('.osv-flow-close')) {
+    const btn = document.createElement('button');
+    btn.className = 'osv-flow-close';
+    btn.textContent = '\u2715 ' + String(name || instanceId);
+    btn.title = t('osvFlowClose');
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openspaceCloseFlow();
+    });
+    wrap.appendChild(btn);
+  }
+  _osFlowPoll();
+  _osFlow.timer = setInterval(_osFlowPoll, OSV_FLOW_POLL_MS);
+}
+
+function openspaceCloseFlow() {
+  if (!_osFlow) return;
+  const f = _osFlow;
+  _osFlow = null;
+  if (f.timer) clearInterval(f.timer);
+  if (_osScene && f.group) {
+    _osScene.remove(f.group);
+    f.group.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (o.material.map) o.material.map.dispose();
+        o.material.dispose();
+      }
+    });
+  }
+  const btn = document.querySelector('#openspaceWrap .osv-flow-close');
+  if (btn) btn.remove();
+  _osCamPan.x = f.prevPan.x; _osCamPan.y = f.prevPan.y; _osCamPan.z = f.prevPan.z;
+  _osUpdateCamera();
+}
+
+function _osFlowPoll() {
+  if (!_osFlow || _osFlowPollBusy || typeof action$ !== 'function') return;
+  _osFlowPollBusy = true;
+  const id = _osFlow.id;
+  action$('flow_runtime_graph', { instance_id: id }).subscribe({
+    next: (d) => {
+      _osFlowPollBusy = false;
+      if (!_osFlow || _osFlow.id !== id || !d || d.error) return;
+      _osFlowApply(d.nodes || {}, d.edges || []);
+    },
+    error: () => { _osFlowPollBusy = false; },
+  });
+}
+
+// Longest-path ranking left→right; a bounded relaxation so cycles
+// simply stop moving once ranks saturate instead of looping forever.
+function _osFlowLayout(nodes, edges) {
+  const ids = Object.keys(nodes).sort();
+  const rank = {};
+  ids.forEach((id) => { rank[id] = 0; });
+  for (let pass = 0; pass < ids.length; pass++) {
+    let moved = false;
+    edges.forEach((e) => {
+      if (!(e.source in rank) || !(e.target in rank)) return;
+      if (rank[e.target] < rank[e.source] + 1 && rank[e.target] < ids.length) {
+        rank[e.target] = rank[e.source] + 1; moved = true;
+      }
+    });
+    if (!moved) break;
+  }
+  const lanes = {};
+  const pos = {};
+  ids.forEach((id) => {
+    const r = rank[id];
+    lanes[r] = (lanes[r] || 0) + 1;
+    pos[id] = { x: r * OSV_FLOW_RANK_DX, z: (lanes[r] - 1) * OSV_FLOW_ROW_DZ };
+  });
+  ids.forEach((id) => {
+    pos[id].z -= ((lanes[rank[id]] - 1) * OSV_FLOW_ROW_DZ) / 2;
+  });
+  return pos;
+}
+
+function _osFlowNodeColor(st) {
+  if (!st) return 0x555b77;
+  if ((st.error_count || 0) > 0 || st.error) return 0xe94560;
+  return st.state === 'running' ? 0x2f9e44 : 0x555b77;
+}
+
+function _osFlowLabel(text) {
+  const T = _osThree;
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#e6ecff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText(String(text).slice(0, 22), 128, 28);
+  const sprite = new T.Sprite(new T.SpriteMaterial({
+    map: new T.CanvasTexture(canvas), transparent: true }));
+  sprite.scale.set(3.4, 0.85, 1);
+  return sprite;
+}
+
+// First response builds blocks/links once; every poll only refreshes
+// colors and current so the stage never flickers.
+function _osFlowApply(nodes, edges) {
+  const T = _osThree;
+  const f = _osFlow;
+  if (!f) return;
+  if (!f.nodes.size) {
+    const pos = _osFlowLayout(nodes, edges);
+    const spans = Object.values(pos);
+    const w = spans.reduce((m, p) => Math.max(m, p.x), 0) + 6;
+    const d = spans.reduce((m, p) => Math.max(m, Math.abs(p.z)), 0) * 2 + 8;
+    const stage = new T.Mesh(
+      new T.BoxGeometry(w, 0.06, d),
+      new T.MeshLambertMaterial({ color: 0x151b38 }));
+    stage.position.set(w / 2 - 3, 0.03, 0);
+    f.group.add(stage);
+    Object.keys(pos).forEach((id) => {
+      const mesh = new T.Mesh(
+        new T.BoxGeometry(2.0, 1.1, 1.4),
+        new T.MeshLambertMaterial({ color: 0x555b77 }));
+      mesh.position.set(pos[id].x, 0.8, pos[id].z);
+      const label = _osFlowLabel(id);
+      label.position.set(pos[id].x, 1.95, pos[id].z);
+      f.group.add(mesh, label);
+      f.nodes.set(id, { mesh: mesh, label: label, pos: pos[id], inFlight: false });
+    });
+    edges.forEach((e) => {
+      const a = f.nodes.get(e.source), b = f.nodes.get(e.target);
+      if (!a || !b) return;
+      const line = new T.Line(
+        new T.BufferGeometry().setFromPoints([
+          new T.Vector3(a.pos.x, 0.8, a.pos.z),
+          new T.Vector3(b.pos.x, 0.8, b.pos.z)]),
+        new T.LineBasicMaterial({ color: 0x4da3ff }));
+      f.group.add(line);
+      const particles = [];
+      for (let i = 0; i < 3; i++) {
+        const dot = new T.Mesh(
+          new T.SphereGeometry(0.09, 8, 6),
+          new T.MeshBasicMaterial({ color: 0x74c0fc }));
+        dot.visible = false;
+        f.group.add(dot);
+        particles.push({ mesh: dot, phase: i / 3 });
+      }
+      f.edges.push({
+        key: e.source + '>' + e.target + '>' + (e.relationship || ''),
+        src: a, dst: b, line: line, particles: particles,
+        queue: 0, backpressured: false, active: false });
+    });
+  }
+  f.nodes.forEach((n, id) => {
+    const st = nodes[id];
+    n.mesh.material.color.setHex(_osFlowNodeColor(st));
+    n.inFlight = !!(st && st.in_flight);
+  });
+  edges.forEach((e) => {
+    const key = e.source + '>' + e.target + '>' + (e.relationship || '');
+    const rec = f.edges.find((x) => x.key === key);
+    if (!rec) return;
+    rec.queue = e.queue_size || 0;
+    rec.backpressured = !!e.backpressured;
+    const src = nodes[e.source] || {};
+    rec.active = rec.queue > 0 || !!src.in_flight || src.state === 'running';
+    rec.line.material.color.setHex(rec.backpressured ? 0xe94560 : 0x4da3ff);
+  });
+}
+
+// Moving current: dots run along every active link; the queue size sets
+// how many dots show, backpressure turns the whole link red.
+function _osTickFlow(ts) {
+  const f = _osFlow;
+  if (!f) return;
+  f.nodes.forEach((n) => {
+    n.mesh.position.y = n.inFlight
+      ? 0.8 + Math.abs(Math.sin(ts / 140)) * 0.15 : 0.8;
+  });
+  f.edges.forEach((e) => {
+    const show = e.active
+      ? Math.min(e.particles.length, 1 + Math.min(2, e.queue)) : 0;
+    e.particles.forEach((p, i) => {
+      if (i >= show) { p.mesh.visible = false; return; }
+      p.mesh.visible = true;
+      p.mesh.material.color.setHex(e.backpressured ? 0xe94560 : 0x74c0fc);
+      const u = ((ts / 1400) + p.phase) % 1;
+      p.mesh.position.set(
+        e.src.pos.x + (e.dst.pos.x - e.src.pos.x) * u,
+        0.95 + Math.sin(u * Math.PI) * 0.25,
+        e.src.pos.z + (e.dst.pos.z - e.src.pos.z) * u);
+    });
+  });
 }
 
 // ── Agents & desks ───────────────────────────────────────────────
@@ -516,6 +1333,9 @@ function _osEnsureAgent(name, opts) {
   if (!key) return null;
   let rec = _osAgents.get(key);
   if (rec) return rec;
+  // Guests hand their slot back on retirement; reuse those first so
+  // repeated flash delegations do not march desks toward the horizon.
+  const seatIndex = _osFreeSeats.length ? _osFreeSeats.shift() : _osSeatCount++;
   rec = {
     key: key,
     name: name,
@@ -523,7 +1343,8 @@ function _osEnsureAgent(name, opts) {
     guest: !!(opts && opts.guest),
     state: 'idle',
     stateSince: Date.now(),
-    seat: _osSeatPosition(_osSeatCount),
+    seat: _osSeatPosition(seatIndex),
+    seatIndex: seatIndex,
     color: _osAgentColor(name),
     log: [],
     tools: [],
@@ -535,7 +1356,6 @@ function _osEnsureAgent(name, opts) {
     homeSeat: null, awayAt: null,
   };
   rec.homeSeat = rec.seat;
-  _osSeatCount++;
   _osAgents.set(key, rec);
   if (_osScene && _osThree) _osBuildDesk(rec);
   _osUpdateCamera();
@@ -726,6 +1546,15 @@ function _osBuildOverlayEls(rec, labelText, extraLabelClass) {
   const status = document.createElement('div');
   status.className = 'osv-status';
   status.style.display = 'none';
+  // Any bubble can spoil the view: a ✕ dismisses it. It comes back by
+  // itself with the next message/thought (_osShowBubble re-shows).
+  [speech, thought].forEach((el) => {
+    const x = document.createElement('span');
+    x.className = 'osv-bubble-close';
+    x.textContent = '\u00D7';
+    x.onclick = (ev) => { ev.stopPropagation(); el.style.display = 'none'; };
+    el.appendChild(x);
+  });
   const batt = document.createElement('div');
   batt.className = 'osv-batt';
   batt.style.display = 'none';
@@ -892,6 +1721,20 @@ function _osStreamBubble(rec, kind, chunk) {
   }, OSV_BUBBLE_COALESCE_MS);
 }
 
+// Flush a coalesced stream still waiting for its 250ms timer. Resets
+// (done, turn_complete, final message) must call this first — clearing
+// the buffer with a flush pending froze the bubble one tick short, so
+// thoughts ended mid-sentence.
+function _osFlushBubbles(rec) {
+  if (!rec) return;
+  if (rec.speechFlushTimer) {
+    clearTimeout(rec.speechFlushTimer);
+    rec.speechFlushTimer = 0;
+  }
+  if (rec.speechText) _osShowBubble(rec, 'speech', rec.speechText);
+  if (rec.thoughtText) _osShowBubble(rec, 'thought', rec.thoughtText);
+}
+
 function _osExpireBubbles(now) {
   _osAgents.forEach((rec) => {
     // The last bubble never disappears: the scene always shows each
@@ -946,6 +1789,8 @@ function openspaceSeedHistory(messages, cid) {
   if (cid && cid !== _osSeedConvId) {
     _osSeedConvId = cid;
     openspaceResetTransient();
+    // New conversation → new room palette (deterministic per id).
+    _osApplyRoomStyle();
   }
   (messages || []).forEach((m) => {
     if (!m) return;
@@ -1126,12 +1971,20 @@ function _osDelegateStart(sourceName, delegateName) {
   const dst = _osEnsureAgent(delegateName, { guest: true });
   if (!src || !dst) return;
   _osLog(src, 'delegate', t('osvDelegatesTo') + ' ' + dst.name, '');
-  if (!src.avatar || !dst.seat) return;
-  src.awayAt = dst.key;
-  // Stand next to the delegate's desk, slightly to the side.
-  _osWalkTo(src, { x: dst.seat.x - 1.8, z: dst.seat.z + 1.35 });
   _osShowBubble(src, 'speech', t('osvDelegatesTo') + ' ' + dst.name);
   _osSetState(dst, 'thinking');
+  if (!src.avatar || !dst.seat) return;
+  src.awayAt = dst.key;
+  // Walk to the delegate's desk, hand the task over, then walk home —
+  // the delegating agent does not camp at the desk while the delegate
+  // works.
+  _osWalkTo(src, { x: dst.seat.x - 1.8, z: dst.seat.z + 1.35 }, () => {
+    setTimeout(() => {
+      if (_osAgents.get(src.key) !== src || src.awayAt !== dst.key) return;
+      src.awayAt = null;
+      _osWalkTo(src, { x: src.homeSeat.x, z: src.homeSeat.z + 1.35 });
+    }, 900);
+  });
 }
 
 function _osDelegateDone(sourceName) {
@@ -1187,6 +2040,13 @@ function openspaceWireSSE(es) {
       // inline between the accumulated thinking passages.
       _osStreamBubble(rec, 'thought',
         '\n' + _osToolEmoji(d.tool) + ' ' + (d.tool || 'tool') + '\n');
+      // Cross-conversation work goes through the door: a2a calls send
+      // the agent over to it before coming back to their desk.
+      if (/a2a/i.test(d.tool || '')) {
+        const a = d.arguments || {};
+        const target = a.agent || a.agent_name || a.target || '';
+        _osDoorTrip(rec, t('osvDelegatesTo') + ' ' + (target || 'a2a'));
+      }
     }
   });
   on('tool_result', (d) => {
@@ -1207,6 +2067,7 @@ function openspaceWireSSE(es) {
       if (d.msg_id) _osSeededIds.add(d.msg_id);
       _osLog(rec, 'message', t('osvSaid'), d.content);
       if (_osActive) {
+        _osFlushBubbles(rec);
         _osShowBubble(rec, 'speech', d.content);
         rec.speechText = '';
         rec.thoughtText = '';   // the answer closes the accumulated thought
@@ -1240,6 +2101,7 @@ function openspaceWireSSE(es) {
   on('done', (d) => {
     const rec = _osAgents.get(_osKey(_osEventAgent(d)));
     if (rec) {
+      _osFlushBubbles(rec);
       rec.thoughtText = '';   // turn over → next turn accumulates fresh
       _osSetState(rec, 'idle');
       _osDelegateDone(rec.name);
@@ -1247,7 +2109,7 @@ function openspaceWireSSE(es) {
   });
   on('turn_complete', (d) => {
     const rec = _osAgents.get(_osKey(_osEventAgent(d)));
-    if (rec) { rec.thoughtText = ''; _osSetState(rec, 'idle'); }
+    if (rec) { _osFlushBubbles(rec); rec.thoughtText = ''; _osSetState(rec, 'idle'); }
   });
   on('sub_agent_start', (d) => {
     if (d.source_agent && d.agent_name) _osDelegateStart(d.source_agent, d.agent_name);
@@ -1281,8 +2143,17 @@ function openspaceWireSSE(es) {
     const rec = _osAgents.get(_osKey(d.agent_name));
     if (rec) {
       _osLog(rec, 'message', t('osvDone'), d.content || '');
+      _osFlushBubbles(rec);
       rec.thoughtText = '';
       _osSetState(rec, 'idle');
+      // Flash/out-of-roster guests pack up once their run ends; the
+      // bubble gets its linger first, then the desk is dismantled.
+      if (rec.guest) {
+        setTimeout(() => {
+          const cur = _osAgents.get(rec.key);
+          if (cur === rec && cur.guest && cur.state === 'idle') _osRetireAgent(cur);
+        }, OSV_BUBBLE_LINGER_MS + 800);
+      }
     }
     if (d.source_agent) _osDelegateDone(d.source_agent);
   });
@@ -1326,6 +2197,7 @@ function _osTick(ts) {
     return true;
   });
   finished.forEach((tw) => { if (tw.onDone) tw.onDone(); });
+  _osFollowUser();
   // Per-agent idle animation + halo + overlay projection.
   const selKey = _osKey(typeof selectedAgent !== 'undefined' ? selectedAgent : '');
   const tweening = new Set(_osTweens.map((tw) => tw.rec));
@@ -1356,6 +2228,7 @@ function _osTick(ts) {
     _osProject(rec);
   });
   _osTickTools(ts);
+  _osTickFlow(ts);
   _osExpireBubbles(now);
   _osRefreshBatteries(now);
   _osUpdateBoard(now);
@@ -1404,13 +2277,47 @@ function _osProject(rec) {
 
 // ── Pointer: orbit drag, wheel zoom, click → PC dialog ──────────
 function _osPointerDown(e) {
+  _osTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (_osTouches.size === 2) {
+    // Second finger: switch to pinch (zoom) + two-finger pan; the
+    // single-finger orbit drag in progress is cancelled.
+    _osDrag = null;
+    _osPinchPrev = _osPinchState();
+    return;
+  }
+  if (_osTouches.size > 2) return;
   _osDrag = { x: e.clientX, y: e.clientY, moved: false,
               lift: e.ctrlKey,
               pan: !e.ctrlKey && (e.button === 2 || e.shiftKey) };
   try { _osCanvas.setPointerCapture(e.pointerId); } catch (_) {}
 }
 
+function _osPinchState() {
+  const pts = Array.from(_osTouches.values());
+  const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+  return { dist: Math.max(1, Math.hypot(dx, dy)),
+           cx: (pts[0].x + pts[1].x) / 2, cy: (pts[0].y + pts[1].y) / 2 };
+}
+
 function _osPointerMove(e) {
+  if (_osTouches.has(e.pointerId)) {
+    _osTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (_osTouches.size === 2 && _osPinchPrev) {
+      const s = _osPinchState();
+      _osFollow = false;
+      _osCamDist = Math.max(10, Math.min(60, _osCamDist * _osPinchPrev.dist / s.dist));
+      const k = _osCamDist * 0.0016;
+      const a = _osCamAngle;
+      const dx = s.cx - _osPinchPrev.cx, dy = s.cy - _osPinchPrev.cy;
+      _osCamPan.x += (-Math.sin(a) * dx + Math.cos(a) * dy) * k;
+      _osCamPan.z += (Math.cos(a) * dx + Math.sin(a) * dy) * k;
+      _osCamPan.x = Math.max(-40, Math.min(40, _osCamPan.x));
+      _osCamPan.z = Math.max(-40, Math.min(40, _osCamPan.z));
+      _osPinchPrev = s;
+      _osUpdateCamera();
+      return;
+    }
+  }
   if (!_osDrag) return;
   const dx = e.clientX - _osDrag.x, dy = e.clientY - _osDrag.y;
   if (Math.abs(dx) + Math.abs(dy) > 4) _osDrag.moved = true;
@@ -1420,6 +2327,7 @@ function _osPointerMove(e) {
       _osCamPan.y = Math.max(0, Math.min(18, _osCamPan.y - dy * 0.04));
     } else if (_osDrag.pan) {
       // Drag the world: translate the camera target on the floor plane.
+      _osFollow = false;
       const k = _osCamDist * 0.0016;
       const a = _osCamAngle;
       _osCamPan.x += (-Math.sin(a) * dx + Math.cos(a) * dy) * k;
@@ -1436,6 +2344,8 @@ function _osPointerMove(e) {
 }
 
 function _osPointerUp(e) {
+  _osTouches.delete(e.pointerId);
+  if (_osTouches.size < 2) _osPinchPrev = null;
   const wasDrag = _osDrag && _osDrag.moved;
   _osDrag = null;
   if (wasDrag || e.button !== 0 || !_osRaycaster || !_osCamera) return;
@@ -1447,8 +2357,14 @@ function _osPointerUp(e) {
   _osRaycaster.setFromCamera(ndc, _osCamera);
   const hits = _osRaycaster.intersectObjects(_osScene.children, true);
   for (const hit of hits) {
-    const key = hit.object && hit.object.userData && hit.object.userData.osvAgent;
-    if (key) { openspaceOpenAgentDialog(key); return; }
+    const ud = hit.object && hit.object.userData;
+    if (ud && ud.osvDoor) { openspaceOpenConvDialog(); return; }
+    if (ud && ud.osvResSection) {
+      openspaceOpenResSectionDialog(ud.osvResSection, ud.osvResTitle);
+      return;
+    }
+    if (ud && ud.osvPoster) { _osOpenPoster(ud.osvPoster); return; }
+    if (ud && ud.osvAgent) { openspaceOpenAgentDialog(ud.osvAgent); return; }
   }
   // No agent under the cursor: clicking the floor walks YOUR avatar
   // there, and the spot becomes its new home (delivery trips return to
@@ -1464,6 +2380,7 @@ function _osPointerUp(e) {
   const gz = Math.max(-35, Math.min(50, ground.point.z));
   me.homeSeat = { x: gx, z: gz };
   _osWalkTo(me, { x: gx, z: gz });
+  _osFollow = true;
 }
 
 function _osWheel(e) {

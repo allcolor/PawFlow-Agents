@@ -37,10 +37,12 @@ def test_worker_refreshes_graph_and_wiki_for_same_relay(monkeypatch):
     graph_for_relay.assert_called_once_with("alice", "relay-a")
     wiki_for_relay.assert_called_once_with("alice", "relay-a")
     graph.build_from_relay.assert_called_once_with(service, "src", local=True)
+    # The graph honors the job surface; the wiki is pinned to the relay
+    # container — local=true would index the server/host runtime tree.
     wiki.scan_from_relay.assert_called_once_with(
-        service, "src", local=True,
+        service, "src", local=False,
         initial_paths=["core/main.py", "core/leaf.py"])
-    wiki.auto_update.assert_called_once_with(service, client, local=True)
+    wiki.auto_update.assert_called_once_with(service, client, local=False)
     resolve_service.assert_called_once_with("alice", "conv-a")
     summarizer.resolve_llm_service.assert_called_once_with("alice", "conv-a")
 

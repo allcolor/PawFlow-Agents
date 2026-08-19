@@ -88,7 +88,7 @@ def test_first_scan_only_queues_high_signal_sources(wiki):
 def test_scan_executes_in_memory_without_relay_helper_file(wiki):
     relay = _Relay([{"README.md": _source("overview")}])
 
-    wiki.scan_from_relay(relay, local=True)
+    wiki.scan_from_relay(relay)
 
     assert relay.writes == []
     assert relay.deletes == []
@@ -97,7 +97,7 @@ def test_scan_executes_in_memory_without_relay_helper_file(wiki):
     assert command.startswith("python3 -c ")
     assert ".pawflow_wiki_scan_" not in command
     assert env["PAWFLOW_WIKI_ROOT"] == "."
-    assert local is True
+    assert local is False
 
 
 def test_changed_source_makes_page_stale_until_replaced(wiki):
@@ -328,3 +328,27 @@ def test_relay_is_the_project_identity(tmp_path, monkeypatch):
 
     assert first is same
     assert first.path != other.path
+
+
+def test_scan_refuses_the_local_surface(wiki):
+    # local=true executes on the server/host, whose tree is the deployed
+    # runtime — one such scan poisons the manifest with phantom sources
+    # that the next relay scan reports as removed.
+    relay = _Relay([{"README.md": _source("overview")}])
+    with pytest.raises(ValueError, match="local"):
+        wiki.scan_from_relay(relay, local=True)
+    assert relay.exec_calls == []
+
+
+def test_auto_update_refuses_the_local_surface(wiki):
+    with pytest.raises(ValueError, match="local"):
+        wiki.auto_update(_Relay([]), _Client({}), local=True)
+
+
+def test_maintenance_wiki_scan_is_pinned_to_the_relay_surface():
+    from pathlib import Path
+    source = Path("core/project_maintenance.py").read_text(encoding="utf-8")
+    wiki_part = source[source.index("ProjectWiki.for_relay"):]
+    assert "scan_from_relay(" in wiki_part
+    assert "job.service, job.root, local=False" in wiki_part
+    assert "job.service, llm_client, local=False" in wiki_part

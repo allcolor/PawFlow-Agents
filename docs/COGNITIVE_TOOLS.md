@@ -340,6 +340,13 @@ background worker as the Project Graph. The worker scans source hashes, selects
 one bounded batch of changed high-signal files, and makes one ephemeral LLM call.
 The source scanner is encoded into the relay command and executed in memory; it
 does not create a helper file in the project or on the server-local root.
+Wiki scans and updates run **only** on the relay container surface:
+`local=true` is rejected with a `ValueError`, because the server/host working
+tree is the deployed runtime (`app/data/runtime/...`), not the project — one
+local scan would poison the manifest with thousands of phantom sources that the
+next relay scan reports as removed, leading the maintainer LLM to write bogus
+"removals" pages. The maintenance worker and the panel refresh action pin
+`local=False` regardless of the surface used for the graph build.
 The first scan seeds root configuration, architecture documentation, and central
 graph files instead of enqueueing an entire large repository. Later additions,
 changes, and removals become pending automatically.

@@ -292,8 +292,10 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
             elif subaction == "refresh":
                 if service is None:
                     raise ValueError(f"Relay '{relay_id}' is not connected")
+                # Wiki scans are relay-container only (see ProjectWiki
+                # .scan_from_relay); the panel's local flag must not leak in.
                 result = wiki.scan_from_relay(
-                    service, str(body.get("path") or "."), local=local)
+                    service, str(body.get("path") or "."), local=False)
             else:
                 raise ValueError(f"Unknown project wiki UI action: {subaction}")
             flowfile.set_content(json.dumps(

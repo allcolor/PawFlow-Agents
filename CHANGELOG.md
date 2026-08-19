@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Project wiki: scans and auto-updates are now pinned to the relay container
+  surface — `local=true` is rejected (`ValueError`) in `scan_from_relay` and
+  `auto_update`, and the maintenance worker plus the panel refresh action pass
+  `local=False` explicitly. A scan on the server/host surface indexed the
+  deployed runtime tree (`app/data/runtime/...`), and the next relay scan
+  reported ~10k phantom "removed" sources, causing the wiki maintainer to
+  generate bogus "X removals" pages.
+
 ## [1.0.0-beta.214] — 2026-08-19
 
 ### Added

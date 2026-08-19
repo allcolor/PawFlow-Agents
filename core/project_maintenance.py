@@ -160,13 +160,15 @@ class ProjectMaintenanceScheduler:
             logger.warning("Automatic project graph refresh failed relay=%s: %s",
                            job.relay_id, graph_result.get("reason", ""))
         wiki = ProjectWiki.for_relay(job.user_id, job.relay_id)
+        # The wiki always scans the relay container, whatever surface the
+        # graph build used: local=true would index the server/host tree.
         wiki_result = wiki.scan_from_relay(
-            job.service, job.root, local=job.local,
+            job.service, job.root, local=False,
             initial_paths=self._graph_seed_paths(graph))
         llm_client = self._resolve_wiki_client(
             job.user_id, job.conversation_id)
         update_result = wiki.auto_update(
-            job.service, llm_client, local=job.local)
+            job.service, llm_client, local=False)
         logger.info(
             "Project maintenance relay=%s graph=%s wiki=%s update=%s",
             job.relay_id, graph_result.get("status"),

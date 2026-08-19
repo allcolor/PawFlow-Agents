@@ -391,6 +391,15 @@ class ProjectWiki:
         """Hash project sources on the relay and update the dirty manifest."""
         if not service:
             raise ValueError("relay service is required")
+        if local:
+            # The wiki indexes the relay project tree only. local=true runs
+            # on the server/host surface, whose working tree is the deployed
+            # runtime (app/data/runtime/...), not the project: one such scan
+            # poisons the manifest with thousands of phantom sources that
+            # the next relay scan reports as "removed", and the maintainer
+            # LLM then writes bogus "X removals" pages.
+            raise ValueError("project wiki scans are forbidden on the local "
+                             "surface (local=true); scan the relay container")
         root = str(root or ".")
         encoded_script = base64.b64encode(
             _SCAN_SCRIPT.encode("utf-8")).decode("ascii")
@@ -731,6 +740,11 @@ class ProjectWiki:
     def auto_update(self, service, llm_client, local: bool = False,
                     batch_files: int = _DEFAULT_BATCH_FILES) -> Dict[str, Any]:
         """Use one bounded ephemeral LLM call to process pending source changes."""
+        if local:
+            # Same invariant as scan_from_relay: sources are read back on
+            # the surface they were hashed on — the relay container.
+            raise ValueError("project wiki updates are forbidden on the "
+                             "local surface (local=true)")
         if llm_client is None:
             return {"status": "pending", "reason": "no LLM client"}
         with self._lock:

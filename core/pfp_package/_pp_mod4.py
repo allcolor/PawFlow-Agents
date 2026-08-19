@@ -512,13 +512,23 @@ def _refresh_package_service_instances(
         definitions = registry.get_all(registry_scope, scope_id)
         for provider in providers:
             service_type = str(provider.get("service_type") or "")
+            installed = None
             try:
                 installed = resolve_installed_service_provider(
                     service_type, user_id=user_id,
                     conversation_id=(scope_id if registry_scope == SCOPE_CONV else ""),
                     scope=("conversation" if registry_scope == SCOPE_CONV else "user"))
-                service_class = ServiceFactory.get(service_type)
-            except Exception:
+            except PfpError as exc:
+                logger.debug(
+                    "PFP service instance refresh skipped for %s: %s",
+                    service_type, exc)
+            if installed is None:
+                continue
+            service_class = ServiceFactory._services.get(service_type)
+            if service_class is None:
+                logger.debug(
+                    "PFP service instance refresh skipped for unregistered type: %s",
+                    service_type)
                 continue
             target_runtime = dict(installed.get("package_runtime") or {})
             target_key = (

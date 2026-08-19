@@ -49,7 +49,7 @@ class _RelayDockerMixin:
                         "Failed to stop WSL host bridge", exc_info=True)
 
     def _start_windows_host_bridge(
-            self, project_root, host_helper_port, subprocess_module):
+            self, project_root, listen_port, target_port, subprocess_module):
         """Start a tracked bridge directly in WSL and wait for its listener."""
         self._stop_windows_host_bridge()
         translated_root = translate_path(to_host_path(project_root))
@@ -74,8 +74,8 @@ class _RelayDockerMixin:
         bridge_cmd = [
             "wsl", "env", f"PYTHONPATH={translated_root}",
             "python3", "-u", "-m", "pawflow_relay.host_bridge",
-            "--listen-port", str(host_helper_port),
-            "--target-port", str(host_helper_port),
+            "--listen-port", str(listen_port),
+            "--target-port", str(target_port),
             "--exit-on-stdin-eof",
         ]
         ready = threading.Event()
@@ -325,13 +325,16 @@ class _RelayDockerMixin:
             # a WSL process, where both the NAT gateway and mirrored loopback
             # are visible. The Docker worker reaches its listener through the
             # WSL host gateway.
+            host_helper_endpoint_port = host_helper_port
             if os.name == "nt":
                 if not _translated_pkg:
                     raise RuntimeError(
                         "Relay package mount is required for the Windows "
                         "host-helper bridge")
+                host_bridge_port = find_free_port()
                 self._start_windows_host_bridge(
-                    _project_root, host_helper_port, _sp)
+                    _project_root, host_bridge_port, host_helper_port, _sp)
+                host_helper_endpoint_port = host_bridge_port
 
             docker_run_cmd = docker_cmd() + [
                 "run", "--rm",
@@ -371,7 +374,7 @@ class _RelayDockerMixin:
                 "-e", "GIT_CONFIG_VALUE_2=false",
                 "-e", "GIT_CONFIG_KEY_3=core.untrackedCache",
                 "-e", "GIT_CONFIG_VALUE_3=false",
-                "-e", f"PAWFLOW_HOST_HELPER=host.docker.internal:{host_helper_port}",
+                "-e", f"PAWFLOW_HOST_HELPER=host.docker.internal:{host_helper_endpoint_port}",
                 "-e", f"PAWFLOW_SESSION_TOKEN={self.session_token}",
                 *_desktop_publish_args,
                 "-e", f"PAWFLOW_HOST_WORKDIR={self.directory.replace(chr(92), '/')}",

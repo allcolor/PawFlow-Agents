@@ -50,7 +50,19 @@ class _RelayHostHelperMixin:
                     conn, _addr = srv.accept()
                 except socket.timeout:
                     continue
-                except Exception:
+                except (ConnectionAbortedError, ConnectionResetError) as exc:
+                    if self._stop_event.is_set():
+                        break
+                    self._log(
+                        f"[Relay] Host helper transient accept failure: {exc}; "
+                        "continuing")
+                    continue
+                except OSError as exc:
+                    if self._stop_event.is_set():
+                        break
+                    self._host_helper_error = exc
+                    self._log(
+                        f"[Relay] Host helper accept failed: {exc}; stopping")
                     break
                 # Handle each connection in its own thread (terminal sessions are persistent)
                 threading.Thread(

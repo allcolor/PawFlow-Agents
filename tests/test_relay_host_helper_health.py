@@ -78,6 +78,45 @@ def test_host_helper_bind_failure_is_reported(monkeypatch):
     assert any("failed to listen" in line for line in helper.logs)
 
 
+def test_host_helper_survives_transient_accept_reset(monkeypatch):
+    helper = _HostHelper()
+
+    class _TransientResetSocket:
+        def __init__(self):
+            self.accept_calls = 0
+
+        def setsockopt(self, *args):
+            pass
+
+        def bind(self, address):
+            pass
+
+        def listen(self, backlog):
+            pass
+
+        def settimeout(self, timeout):
+            pass
+
+        def accept(self):
+            self.accept_calls += 1
+            if self.accept_calls == 1:
+                raise ConnectionResetError("peer reset before accept")
+            helper._stop_event.set()
+            raise socket.timeout()
+
+        def close(self):
+            pass
+
+    server = _TransientResetSocket()
+    monkeypatch.setattr(socket, "socket", lambda *args, **kwargs: server)
+
+    helper._run_host_helper(48123)
+
+    assert server.accept_calls == 2
+    assert helper._host_helper_error is None
+    assert any("transient accept failure" in line for line in helper.logs)
+
+
 def test_windows_launcher_uses_tracked_wsl_bridge():
     start_source = inspect.getsource(
         RelayThread._start_windows_host_bridge)
@@ -150,10 +189,16 @@ def test_windows_bridge_token_is_forwarded_outside_command_line():
     relay._log = lambda _message: None
 
     relay._start_windows_host_bridge(
-        "/workspace", 48123, subprocess_module)
+        "/workspace", 48124, 48123, subprocess_module)
     relay._stop_windows_host_bridge()
 
     assert "secret-capability" not in " ".join(captured["command"])
+    listen_index = captured["command"].index("--listen-port")
+    target_index = captured["command"].index("--target-port")
+    assert captured["command"][listen_index + 1] == "48124"
+    assert captured["command"][target_index + 1] == "48123"
+    assert captured["command"][listen_index + 1] != (
+        captured["command"][target_index + 1])
     assert captured["environment"]["PAWFLOW_HOST_HELPER_TOKEN"] == (
         "secret-capability")
     # Bare WSLENV entries are shared in BOTH directions. '/w' means "only

@@ -32,7 +32,9 @@ class ProjectWikiHandler(BaseFsHandler):
             "- refresh: rescan relay sources and update hashes.\n"
             "- upsert: create/replace a generated page with current source citations.\n"
             "- acknowledge: clear processed sources; refuses sources still cited "
-            "by stale pages."
+            "by stale pages. Entries may be glob patterns (e.g. 'app/*') that "
+            "expand against the pending set — the recovery path for a manifest "
+            "poisoned with phantom paths."
         )
 
     @property

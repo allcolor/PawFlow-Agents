@@ -347,6 +347,10 @@ local scan would poison the manifest with thousands of phantom sources that the
 next relay scan reports as removed, leading the maintainer LLM to write bogus
 "removals" pages. The maintenance worker and the panel refresh action pin
 `local=False` regardless of the surface used for the graph build.
+If a manifest was poisoned before this guard existed, `acknowledge` accepts
+glob patterns (`app/*`, `usr/*`) that expand against the pending set, so the
+phantom backlog can be cleared with a handful of patterns instead of an
+exhaustive path list.
 The first scan seeds root configuration, architecture documentation, and central
 graph files instead of enqueueing an entire large repository. Later additions,
 changes, and removals become pending automatically.

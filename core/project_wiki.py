@@ -574,6 +574,20 @@ class ProjectWiki:
         with self._lock:
             requested = {str(path or "").strip().replace("\\", "/")
                          for path in paths or [] if str(path or "").strip()}
+            # Glob entries expand against the pending set so a poisoned
+            # manifest (thousands of phantom paths from a foreign tree)
+            # can be cleared with a handful of patterns instead of an
+            # impractical exhaustive list. fnmatch '*' crosses '/', so
+            # 'app/*' covers the whole subtree.
+            patterns = {p for p in requested if any(ch in p for ch in "*?[")}
+            if patterns:
+                import fnmatch
+                requested -= patterns
+                pending = self._manifest.get("dirty_sources", {}) or {}
+                for pattern in patterns:
+                    requested.update(
+                        path for path in pending
+                        if fnmatch.fnmatchcase(path, pattern))
             stale = self.stale_pages()
             blocked = sorted({
                 path

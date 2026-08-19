@@ -345,6 +345,29 @@ def test_auto_update_refuses_the_local_surface(wiki):
         wiki.auto_update(_Relay([]), _Client({}), local=True)
 
 
+def test_acknowledge_expands_glob_patterns_against_pending(wiki):
+    # Recovery path for a poisoned manifest: thousands of phantom
+    # sources are cleared with a prefix pattern, without touching the
+    # legitimate pending entries.
+    wiki.scan_from_relay(_Relay([{"README.md": _source("overview")}]))
+    wiki.scan_from_relay(_Relay([{
+        "README.md": _source("overview"),
+        "app/data/runtime/theme.json": _source("phantom-a"),
+        "usr/lib/python3/os.py": _source("phantom-b"),
+        "core/real.py": _source("legit"),
+    }]))
+    before = wiki.status()["dirty_sources"]
+    assert before >= 3
+
+    result = wiki.acknowledge(["app/*", "usr/*"])
+
+    assert "app/data/runtime/theme.json" in result["cleared"]
+    assert "usr/lib/python3/os.py" in result["cleared"]
+    remaining = wiki._manifest["dirty_sources"]
+    assert "core/real.py" in remaining
+    assert not any(p.startswith(("app/", "usr/")) for p in remaining)
+
+
 def test_maintenance_wiki_scan_is_pinned_to_the_relay_surface():
     from pathlib import Path
     source = Path("core/project_maintenance.py").read_text(encoding="utf-8")

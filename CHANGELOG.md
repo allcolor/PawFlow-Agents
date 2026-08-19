@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.216] — 2026-08-19
+
+### Added
+
+- PFP: the Kling, Pixazo, and Wavespeed media providers now ship as signed,
+  bundled packages, with provider migration and runtime rematerialization for
+  existing service definitions.
+- Website: the published-MCP guide now includes a read-only connector diagram.
+
+### Changed
+
+- CI: GitHub-hosted runners skip `apt` entirely when the required compiler
+  toolchain is already installed, avoiding unnecessary mirror stalls.
+
+### Fixed
+
+- PFP: service-instance refresh now handles expected package-resolution and
+  unregistered-provider cases explicitly instead of swallowing every exception,
+  clearing the Bandit `B112` finding without breaking provider migration.
+- Simplified webchat: a provider fallback, background result, pagination row,
+  or other `turn_id` change no longer invents adjacent activity blocks without
+  a rendered user or system-wake boundary. A resumed execution reuses and
+  correctly finalizes the existing positional block, leaving one detail mirror
+  and one interactive last message.
+
 ## [1.0.0-beta.215] — 2026-08-19
 
 ### Changed

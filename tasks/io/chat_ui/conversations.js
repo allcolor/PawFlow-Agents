@@ -259,7 +259,7 @@ function onViewModeSelect(mode) {
     next: data => {
       if (data && data.error) { addMsg('error', data.error); return; }
       if (typeof turnViewSetMode === 'function') {
-        turnViewSetMode(mode === 'openspace' ? 'classic' : mode);
+        turnViewSetMode(mode === 'openspace' ? 'simplified' : mode);
       }
       if (typeof openspaceSetActive === 'function') {
         openspaceSetActive(mode === 'openspace');
@@ -612,11 +612,12 @@ function _renderHistory(data) {
   }
   const viewMode = ['simplified', 'openspace'].includes(data.view_mode)
     ? data.view_mode : 'classic';
-  // Openspace renders on top of the classic DOM: the classic renderers
-  // keep producing every durable node underneath, so switching back is
-  // instant and the 3D layer never owns conversation state.
+  // Openspace renders on top of the simplified DOM: the simplified
+  // renderers keep producing every durable node underneath (projected
+  // onto the 3D wall screen), so switching back is instant and the 3D
+  // layer never owns conversation state.
   if (typeof turnViewSetMode === 'function') {
-    turnViewSetMode(viewMode === 'openspace' ? 'classic' : viewMode);
+    turnViewSetMode(viewMode === 'openspace' ? 'simplified' : viewMode);
   }
   if (typeof openspaceSetActive === 'function') {
     openspaceSetActive(viewMode === 'openspace');

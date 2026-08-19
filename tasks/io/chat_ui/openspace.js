@@ -20,8 +20,9 @@
 // appearance. Deterministic within a session; stable enough visually.
 const OSV_GRID_COLS = 3;
 const OSV_DESK_SPACING = 7;
-// Bubble text is a cue, not the record — the PC dialog holds the log.
-const OSV_BUBBLE_MAX_CHARS = 200;
+// Bubbles show the WHOLE message/thought (scrollable body); the cap is a
+// runaway guard, not a display truncation.
+const OSV_BUBBLE_MAX_CHARS = 8000;
 const OSV_BUBBLE_COALESCE_MS = 250;
 const OSV_BUBBLE_LINGER_MS = 6000;
 // Per-agent activity log for the PC dialog (bounded ring).
@@ -58,6 +59,9 @@ let _osClock = 0;
 let _osRaycaster = null;
 let _osTweens = [];           // {obj, from:{x,z}, to:{x,z}, start, dur, onDone}
 let _osCamAngle = Math.PI / 4, _osCamDist = 26, _osCamHeight = 18;
+// right-drag / shift-drag pans on the floor plane; Ctrl+drag lifts the
+// look-at target above the plane (y).
+const _osCamPan = { x: 0, y: 0, z: 0 };
 let _osDrag = null;
 // agentKey → record. Never removed while active: an agent that spoke
 // once keeps its desk for the whole session (flash agents keep a
@@ -71,6 +75,19 @@ let _osUserCount = 0;
 // which msg_ids are already reflected (seeded or received live).
 let _osSeedConvId = null;
 const _osSeededIds = new Set();
+// Projection wall: the live simplified transcript is reparented into a
+// DOM element that is perspective-mapped onto a big screen in the scene.
+const OSV_SCREEN_W = 960, OSV_SCREEN_H = 540;
+let _osScreenEl = null;
+let _osScreenCorners = null;
+let _osScreenHome = null;   // where #messages goes back on deactivation
+// Blackboard: chalk roster of the active agents, projected like the wall
+// screen. Batteries above heads mirror window._contextUsage.
+const OSV_BOARD_W = 500, OSV_BOARD_H = 300;
+let _osBoardEl = null, _osBoardListEl = null, _osBoardCorners = null;
+let _osBoardAt = 0, _osBoardText = '';
+let _osBattAt = 0;
+let _osResizeObs = null;
 
 function openspaceIsActive() { return _osActive; }
 
@@ -98,6 +115,7 @@ function openspaceSetActive(on) {
   const wrap = document.getElementById('openspaceWrap');
   if (!wrap) { _osActive = false; return; }
   wrap.style.display = on ? '' : 'none';
+  _osProjectMessages(on);
   if (on) {
     _osEnsureThree().then(() => {
       if (!_osActive) return;
@@ -176,12 +194,28 @@ function _osBuildScene(wrap) {
   _osScene.add(grid);
 
   _osRaycaster = new T.Raycaster();
+  _osBuildBigScreen();
+  _osBuildDecor();
   _osCanvas.addEventListener('pointerdown', _osPointerDown);
   _osCanvas.addEventListener('pointermove', _osPointerMove);
   _osCanvas.addEventListener('pointerup', _osPointerUp);
   _osCanvas.addEventListener('wheel', _osWheel, { passive: false });
+  _osCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('resize', _osResize);
   document.addEventListener('visibilitychange', _osVisibility);
+  // The wrap can resize without a window resize (sidebars, panels). A
+  // stale canvas size stretches the WebGL image while overlay math uses
+  // fresh dimensions — every projected element drifts off its mesh.
+  if (typeof ResizeObserver === 'function') {
+    _osResizeObs = new ResizeObserver(() => _osResize());
+    _osResizeObs.observe(wrap);
+  }
+  if (!wrap.querySelector('.osv-help')) {
+    const help = document.createElement('div');
+    help.className = 'osv-help';
+    help.textContent = t('osvHelp');
+    wrap.appendChild(help);
+  }
   _osResize();
 }
 
@@ -191,10 +225,10 @@ function _osUpdateCamera() {
   const rows = Math.max(1, Math.ceil(Math.max(_osSeatCount, 1) / OSV_GRID_COLS));
   const cz = ((rows - 1) * OSV_DESK_SPACING) / 2;
   _osCamera.position.set(
-    cx + Math.cos(_osCamAngle) * _osCamDist,
-    _osCamHeight,
-    cz + Math.sin(_osCamAngle) * _osCamDist);
-  _osCamera.lookAt(cx, 0, cz);
+    cx + _osCamPan.x + Math.cos(_osCamAngle) * _osCamDist,
+    _osCamHeight + _osCamPan.y,
+    cz + _osCamPan.z + Math.sin(_osCamAngle) * _osCamDist);
+  _osCamera.lookAt(cx + _osCamPan.x, _osCamPan.y, cz + _osCamPan.z);
 }
 
 function _osResize() {
@@ -209,6 +243,265 @@ function _osResize() {
 function _osVisibility() {
   if (document.hidden) _osStopLoop();
   else if (_osActive) _osStartLoop();
+}
+
+// ── Decor ────────────────────────────────────────────────────────
+// Low-poly office props: plants, a rug under the visitor row, a couch
+// facing the wall screen, and a water cooler. Pure cosmetics — nothing
+// here is raycast-targeted or stateful.
+function _osBuildDecor() {
+  const T = _osThree;
+  const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
+  const mat = (c) => new T.MeshLambertMaterial({ color: c });
+  const plant = (x, z) => {
+    const g = new T.Group();
+    const pot = new T.Mesh(new T.CylinderGeometry(0.35, 0.28, 0.5, 10), mat(0xb5651d));
+    pot.position.y = 0.25;
+    const leaves = new T.Mesh(new T.ConeGeometry(0.55, 1.1, 8), mat(0x2f9e44));
+    leaves.position.y = 1.1;
+    const crown = new T.Mesh(new T.ConeGeometry(0.42, 0.9, 8), mat(0x37b24d));
+    crown.position.y = 1.6;
+    g.add(pot, leaves, crown);
+    g.position.set(x, 0, z);
+    _osScene.add(g);
+  };
+  plant(cx - 8.5, -6.5); plant(cx + 8.5, -6.5);
+  plant(cx - 8.5, 4); plant(cx + 8.5, 4);
+  const rug = new T.Mesh(new T.CircleGeometry(4.4, 24), mat(0x27305c));
+  rug.rotation.x = -Math.PI / 2;
+  rug.position.set(cx, 0.02, -4.5);
+  _osScene.add(rug);
+  const couch = new T.Group();
+  const seat = new T.Mesh(new T.BoxGeometry(4.2, 0.55, 1.4), mat(0x5f3dc4));
+  seat.position.y = 0.45;
+  const back = new T.Mesh(new T.BoxGeometry(4.2, 0.9, 0.35), mat(0x6741d9));
+  back.position.set(0, 0.95, 0.55);
+  const armL = new T.Mesh(new T.BoxGeometry(0.35, 0.8, 1.4), mat(0x6741d9));
+  armL.position.set(-2.1, 0.65, 0);
+  const armR = armL.clone();
+  armR.position.x = 2.1;
+  couch.add(seat, back, armL, armR);
+  couch.position.set(cx + 7.5, 0, -5.5);
+  _osScene.add(couch);
+  const cooler = new T.Group();
+  const body = new T.Mesh(new T.BoxGeometry(0.6, 1.2, 0.6), mat(0xdee2e6));
+  body.position.y = 0.6;
+  const bottle = new T.Mesh(
+    new T.CylinderGeometry(0.24, 0.24, 0.5, 10),
+    new T.MeshLambertMaterial({ color: 0x74c0fc, transparent: true, opacity: 0.85 }));
+  bottle.position.y = 1.45;
+  cooler.add(body, bottle);
+  cooler.position.set(cx - 7.5, 0, -5.5);
+  _osScene.add(cooler);
+}
+
+// ── Projection wall ──────────────────────────────────────────────
+// A cinema screen behind the visitor row, facing the desks. The WebGL
+// mesh is only the bezel and pole; the picture itself is the real
+// simplified-view DOM, reparented (not copied) so it stays live and
+// scrollable, and mapped onto the wall quad every frame.
+function _osBuildBigScreen() {
+  const T = _osThree;
+  const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
+  const sw = 13, sh = sw * OSV_SCREEN_H / OSV_SCREEN_W;
+  const sy = 2.3 + sh / 2, sz = -9;
+  const bezel = new T.Mesh(
+    new T.BoxGeometry(sw + 0.7, sh + 0.7, 0.3),
+    new T.MeshLambertMaterial({ color: 0x222a4d }));
+  bezel.position.set(cx, sy, sz - 0.18);
+  const pole = new T.Mesh(
+    new T.BoxGeometry(0.4, 2.3, 0.4),
+    new T.MeshLambertMaterial({ color: 0x1b2140 }));
+  pole.position.set(cx, 1.15, sz - 0.18);
+  _osScene.add(bezel, pole);
+  _osScreenCorners = [
+    { x: cx - sw / 2, y: sy + sh / 2, z: sz },
+    { x: cx + sw / 2, y: sy + sh / 2, z: sz },
+    { x: cx - sw / 2, y: sy - sh / 2, z: sz },
+    { x: cx + sw / 2, y: sy - sh / 2, z: sz },
+  ];
+
+  // Blackboard on the left side of the office, facing the desks (+x).
+  // Viewer's left is +z, so the top-left corner has the larger z.
+  const bw = 6, bh = bw * OSV_BOARD_H / OSV_BOARD_W;
+  const bx = -6.5, by = 2.4, bcz = 2;
+  const frame = new T.Mesh(
+    new T.BoxGeometry(0.25, bh + 0.5, bw + 0.5),
+    new T.MeshLambertMaterial({ color: 0x5d3d21 }));
+  frame.position.set(bx - 0.15, by, bcz);
+  _osScene.add(frame);
+  [-1, 1].forEach((s) => {
+    const post = new T.Mesh(
+      new T.BoxGeometry(0.18, by + bh / 2 + 0.3, 0.18),
+      new T.MeshLambertMaterial({ color: 0x4a3118 }));
+    post.position.set(bx - 0.15, (by + bh / 2 + 0.3) / 2, bcz + s * (bw / 2 + 0.1));
+    _osScene.add(post);
+  });
+  _osBoardCorners = [
+    { x: bx, y: by + bh / 2, z: bcz + bw / 2 },
+    { x: bx, y: by + bh / 2, z: bcz - bw / 2 },
+    { x: bx, y: by - bh / 2, z: bcz + bw / 2 },
+    { x: bx, y: by - bh / 2, z: bcz - bw / 2 },
+  ];
+  if (!_osBoardEl && _osOverlay) {
+    _osBoardEl = document.createElement('div');
+    _osBoardEl.className = 'osv-board';
+    const title = document.createElement('div');
+    title.className = 'osv-board-title';
+    title.textContent = t('osvBoardTitle');
+    _osBoardListEl = document.createElement('div');
+    _osBoardListEl.className = 'osv-board-list';
+    _osBoardEl.append(title, _osBoardListEl);
+    _osOverlay.appendChild(_osBoardEl);
+  }
+}
+
+// Reparent the real #messages element onto the screen (and back). A
+// live move, never a copy: expanding blocks, scrolling and streaming
+// all keep working because it is the same DOM the renderers write to.
+function _osProjectMessages(on) {
+  const messages = document.getElementById('messages');
+  if (!messages) return;
+  if (on) {
+    if (!_osScreenEl) {
+      const overlay = document.getElementById('openspaceOverlay');
+      if (!overlay) return;
+      _osScreenEl = document.createElement('div');
+      _osScreenEl.className = 'osv-bigscreen';
+      overlay.appendChild(_osScreenEl);
+    }
+    if (!_osScreenHome) {
+      _osScreenHome = { parent: messages.parentNode, next: messages.nextSibling };
+    }
+    messages.classList.add('osv-projected');
+    _osScreenEl.appendChild(messages);
+    messages.scrollTop = messages.scrollHeight;
+  } else if (_osScreenHome) {
+    messages.classList.remove('osv-projected');
+    _osScreenHome.parent.insertBefore(messages, _osScreenHome.next);
+    _osScreenHome = null;
+    if (_osScreenEl) _osScreenEl.style.display = 'none';
+  }
+}
+
+// Projective mapping (homography) from the element's pixel rect to the
+// projected wall quad — adjugate method, no matrix library needed.
+function _osAdj(m) {
+  return [
+    m[4] * m[8] - m[5] * m[7], m[2] * m[7] - m[1] * m[8], m[1] * m[5] - m[2] * m[4],
+    m[5] * m[6] - m[3] * m[8], m[0] * m[8] - m[2] * m[6], m[2] * m[3] - m[0] * m[5],
+    m[3] * m[7] - m[4] * m[6], m[1] * m[6] - m[0] * m[7], m[0] * m[4] - m[1] * m[3]];
+}
+
+function _osMulMM(a, b) {
+  const c = [];
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) {
+      c[i * 3 + j] = a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j]
+        + a[i * 3 + 2] * b[6 + j];
+    }
+  }
+  return c;
+}
+
+function _osBasisToPoints(p1, p2, p3, p4) {
+  const m = [p1.x, p2.x, p3.x, p1.y, p2.y, p3.y, 1, 1, 1];
+  const a = _osAdj(m);
+  const v = [
+    a[0] * p4.x + a[1] * p4.y + a[2],
+    a[3] * p4.x + a[4] * p4.y + a[5],
+    a[6] * p4.x + a[7] * p4.y + a[8]];
+  return _osMulMM(m, [v[0], 0, 0, 0, v[1], 0, 0, 0, v[2]]);
+}
+
+function _osQuadTransform(w, h, pts) {
+  const src = _osBasisToPoints(
+    { x: 0, y: 0 }, { x: w, y: 0 }, { x: 0, y: h }, { x: w, y: h });
+  const dst = _osBasisToPoints(pts[0], pts[1], pts[2], pts[3]);
+  const t = _osMulMM(dst, _osAdj(src));
+  if (!t.every(isFinite) || Math.abs(t[8]) < 1e-12) return null;
+  for (let i = 0; i < 9; i++) t[i] /= t[8];
+  return 'matrix3d(' + [
+    t[0], t[3], 0, t[6],
+    t[1], t[4], 0, t[7],
+    0, 0, 1, 0,
+    t[2], t[5], 0, t[8]].join(',') + ')';
+}
+
+const _osScreenVec = { v: null };
+function _osProjectScreen() {
+  _osProjectPanel(_osScreenEl, _osScreenCorners, OSV_SCREEN_W, OSV_SCREEN_H);
+  _osProjectPanel(_osBoardEl, _osBoardCorners, OSV_BOARD_W, OSV_BOARD_H);
+}
+
+function _osProjectPanel(el, corners, w, h) {
+  if (!el || !corners || !_osCamera || !_osOverlay) return;
+  const T = _osThree;
+  if (!_osScreenVec.v) _osScreenVec.v = new T.Vector3();
+  const v = _osScreenVec.v;
+  const ow = _osOverlay.clientWidth, oh = _osOverlay.clientHeight;
+  const pts = [];
+  for (const c of corners) {
+    v.set(c.x, c.y, c.z).project(_osCamera);
+    if (v.z > 1) { el.style.display = 'none'; return; }
+    pts.push({ x: (v.x * 0.5 + 0.5) * ow, y: (-v.y * 0.5 + 0.5) * oh });
+  }
+  const transform = _osQuadTransform(w, h, pts);
+  if (!transform) { el.style.display = 'none'; return; }
+  // The stylesheet default is display:none, so clearing the inline style
+  // would hide the panel — it must be set explicitly.
+  el.style.display = 'block';
+  el.style.transform = transform;
+}
+
+// Battery above each agent's head: context USED, mirroring the header
+// gauge exactly (same source, same percentage, same colors) so the two
+// never disagree. Hidden until the first reading exists.
+function _osRefreshBatteries(now) {
+  if (now - _osBattAt < 1000) return;
+  _osBattAt = now;
+  const usage = (typeof window !== 'undefined' && window._contextUsage) || null;
+  if (!usage) return;
+  _osAgents.forEach((rec) => {
+    if (rec.kind === 'user' || !rec.battEl) return;
+    const entry = usage[_osKey(rec.name)];
+    if (!entry || !entry.max) { rec.battEl.style.display = 'none'; return; }
+    const pct = Math.max(0, Math.min(1, entry.pct || 0));
+    rec.battEl.style.display = 'block';
+    rec.battFill.style.width = (pct * 100).toFixed(0) + '%';
+    rec.battFill.style.background = pct >= 0.80 ? '#f0ad4e' : '#4ecdc4';
+    rec.battEl.title = Math.round(pct * 100) + '%';
+  });
+}
+
+// Chalk roster: one line per active agent (name — current tool/status,
+// plus its battery). Rewritten only when the text actually changes.
+function _osUpdateBoard(now) {
+  if (!_osBoardListEl || now - _osBoardAt < 1000) return;
+  _osBoardAt = now;
+  const rows = [];
+  if (typeof activeInteractions !== 'undefined') {
+    Object.values(activeInteractions || {}).forEach((it) => {
+      if (it && it.name) rows.push(it);
+    });
+  }
+  const usage = (typeof window !== 'undefined' && window._contextUsage) || {};
+  const lines = rows.map((it) => {
+    const entry = usage[_osKey(it.name)] || {};
+    const pct = entry.pct || it.contextPct || 0;
+    const batt = pct ? '  \u{1F50B}' + Math.round(pct * 100) + '%' : '';
+    // Prefer the avatar's live state over the (staler) tracker status.
+    const desk = _osAgents.get(_osKey(it.name));
+    const icons = { thinking: '\u{1F4AD}', talking: '\u{1F4AC}',
+                    tool: '\u2699\uFE0F', waiting: '\u2753' };
+    const doing = desk && icons[desk.state]
+      ? icons[desk.state] + (desk.state === 'tool' && it.lastTool
+        ? ' ' + it.lastTool : '')
+      : (it.lastTool || it.status || '');
+    return '\u2022 ' + it.name + (doing ? ' \u2014 ' + doing : '') + batt;
+  });
+  const text = lines.length ? lines.join('\n') : t('osvBoardIdle');
+  if (text !== _osBoardText) { _osBoardText = text; _osBoardListEl.textContent = text; }
 }
 
 // ── Agents & desks ───────────────────────────────────────────────
@@ -318,19 +611,11 @@ function _osBuildDesk(rec) {
   g.add(pc);
   rec.screenMat = screenMat;
 
-  // Avatar: capsule tinted per agent, seated in front of the desk.
-  const avatar = new T.Group();
-  const bodyColor = new T.Color(rec.color);
-  const body = new T.Mesh(
-    new T.CapsuleGeometry(0.42, 0.7, 4, 12),
-    new T.MeshLambertMaterial({ color: bodyColor }));
-  body.position.y = 1.0;
-  const head = new T.Mesh(
-    new T.SphereGeometry(0.32, 16, 12),
-    new T.MeshLambertMaterial({ color: 0xf2d0b0 }));
-  head.position.y = 1.95;
-  avatar.add(body, head);
+  // Avatar: chibi mascot; front features live on local +z, π turns it toward
+  // its desk and PC.
+  const avatar = _osBuildChibi(rec);
   avatar.position.set(rec.seat.x, 0, rec.seat.z + 1.35);
+  avatar.rotation.y = Math.PI;
   avatar.traverse((o) => { o.userData.osvAgent = rec.key; });
   _osScene.add(avatar);
   rec.avatar = avatar;
@@ -352,6 +637,72 @@ function _osBuildDesk(rec) {
   _osRestoreBubbles(rec);
 }
 
+// Cute low-poly mascot: round body, big eyes, smile, blush, stubby arms
+// and feet, plus a per-agent silhouette (round ears, horns, antennae, or
+// smooth) derived from the name hash. Front features sit on local +z.
+function _osBuildChibi(rec) {
+  const T = _osThree;
+  const g = new T.Group();
+  const mat = (c) => new T.MeshLambertMaterial({ color: c });
+  const bodyMat = mat(new T.Color(rec.color));
+  const body = new T.Mesh(new T.SphereGeometry(0.62, 20, 16), bodyMat);
+  body.scale.set(1, 1.12, 0.92);
+  body.position.y = 0.95;
+  const belly = new T.Mesh(new T.SphereGeometry(0.34, 14, 10), mat(0xf6f3ee));
+  belly.scale.set(1, 1.15, 0.55);
+  belly.position.set(0, 0.78, 0.34);
+  g.add(body, belly);
+  [-1, 1].forEach((s) => {
+    const eye = new T.Mesh(new T.SphereGeometry(0.13, 10, 8), mat(0xffffff));
+    eye.position.set(0.21 * s, 1.22, 0.5);
+    const pupil = new T.Mesh(new T.SphereGeometry(0.065, 8, 6), mat(0x101018));
+    pupil.position.set(0.21 * s, 1.22, 0.6);
+    const blush = new T.Mesh(new T.SphereGeometry(0.06, 8, 6), mat(0xffa8a8));
+    blush.scale.set(1, 0.7, 0.4);
+    blush.position.set(0.36 * s, 1.02, 0.46);
+    const arm = new T.Mesh(new T.SphereGeometry(0.14, 8, 6), bodyMat);
+    arm.scale.set(0.8, 1.5, 0.8);
+    arm.position.set(0.62 * s, 0.85, 0.1);
+    const foot = new T.Mesh(new T.SphereGeometry(0.15, 8, 6), bodyMat);
+    foot.scale.set(1, 0.55, 1.25);
+    foot.position.set(0.26 * s, 0.09, 0.22);
+    g.add(eye, pupil, blush, arm, foot);
+  });
+  const smile = new T.Mesh(
+    new T.TorusGeometry(0.11, 0.025, 6, 12, Math.PI), mat(0x101018));
+  smile.position.set(0, 1.02, 0.55);
+  smile.rotation.z = Math.PI;   // arc opens upward → a smile
+  g.add(smile);
+  let hash = 0;
+  for (const ch of rec.key) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  const style = hash % 4;
+  if (style === 0) {
+    [-1, 1].forEach((s) => {
+      const ear = new T.Mesh(new T.SphereGeometry(0.16, 10, 8), bodyMat);
+      ear.position.set(0.42 * s, 1.62, 0);
+      g.add(ear);
+    });
+  } else if (style === 1) {
+    [-1, 1].forEach((s) => {
+      const horn = new T.Mesh(new T.ConeGeometry(0.09, 0.3, 8), mat(0x3b3f54));
+      horn.position.set(0.32 * s, 1.7, 0);
+      horn.rotation.z = -0.5 * s;
+      g.add(horn);
+    });
+  } else if (style === 2) {
+    [-1, 1].forEach((s) => {
+      const stem = new T.Mesh(
+        new T.CylinderGeometry(0.025, 0.025, 0.42, 6), mat(0x3b3f54));
+      stem.position.set(0.18 * s, 1.8, 0);
+      stem.rotation.z = -0.35 * s;
+      const tip = new T.Mesh(new T.SphereGeometry(0.07, 8, 6), mat(0xffd43b));
+      tip.position.set(0.25 * s, 2.0, 0);
+      g.add(stem, tip);
+    });
+  }
+  return g;
+}
+
 // DOM overlay elements (real text beats font atlases: i18n, wrapping,
 // theme CSS all come for free).
 function _osBuildOverlayEls(rec, labelText, extraLabelClass) {
@@ -363,15 +714,29 @@ function _osBuildOverlayEls(rec, labelText, extraLabelClass) {
   const speech = document.createElement('div');
   speech.className = 'osv-bubble osv-speech';
   speech.style.display = 'none';
+  const speechBody = document.createElement('div');
+  speechBody.className = 'osv-bubble-body';
+  speech.appendChild(speechBody);
   const thought = document.createElement('div');
   thought.className = 'osv-bubble osv-thought';
   thought.style.display = 'none';
+  const thoughtBody = document.createElement('div');
+  thoughtBody.className = 'osv-bubble-body';
+  thought.appendChild(thoughtBody);
   const status = document.createElement('div');
   status.className = 'osv-status';
   status.style.display = 'none';
-  _osOverlay.append(label, speech, thought, status);
+  const batt = document.createElement('div');
+  batt.className = 'osv-batt';
+  batt.style.display = 'none';
+  const battFill = document.createElement('div');
+  battFill.className = 'osv-batt-fill';
+  batt.appendChild(battFill);
+  _osOverlay.append(label, speech, thought, status, batt);
   rec.labelEl = label; rec.speechEl = speech;
   rec.thoughtEl = thought; rec.statusEl = status;
+  rec.speechBodyEl = speechBody; rec.thoughtBodyEl = thoughtBody;
+  rec.battEl = batt; rec.battFill = battFill;
 }
 
 // Standing human avatar: slimmer capsule, no desk, facing the office.
@@ -419,6 +784,8 @@ function _osSetState(rec, state, detail) {
     const text = icon ? (icon + (detail ? ' ' + detail : '')) : '';
     rec.statusEl.textContent = text;
     rec.statusEl.style.display = text ? '' : 'none';
+    rec.statusEl.classList.toggle('osv-status-busy',
+      state === 'thinking' || state === 'talking' || state === 'tool');
   }
   _osRefreshScreen(rec);
 }
@@ -431,39 +798,65 @@ function _osRefreshScreen(rec) {
 }
 
 // ── Bubbles ──────────────────────────────────────────────────────
-function _osTrim(text) {
-  const s = String(text || '').replace(/\s+/g, ' ').trim();
+// Stored multimodal messages carry content as an array of blocks
+// ({type:'text', text} plus images/files); bubbles only ever show the
+// text parts — String(array) would render "[object Object]".
+function _osText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((b) => {
+      if (typeof b === 'string') return b;
+      if (b && typeof b.text === 'string') return b.text;
+      return '';
+    }).join(' ');
+  }
+  return content == null ? '' : String(content);
+}
+
+function _osFull(text) {
+  // Newlines are kept (pre-wrap body): the bubble is meant to be READ,
+  // not glanced at. Only a runaway tail-cap applies.
+  const s = _osText(text).replace(/^\s+|\s+$/g, '');
   return s.length > OSV_BUBBLE_MAX_CHARS
-    ? s.slice(0, OSV_BUBBLE_MAX_CHARS - 1) + '\u2026' : s;
+    ? '\u2026' + s.slice(-(OSV_BUBBLE_MAX_CHARS - 1)) : s;
+}
+
+// Write a bubble's scrollable body and keep it pinned to the newest text.
+function _osSetBubbleText(rec, kind, text) {
+  const el = kind === 'thought' ? rec.thoughtEl : rec.speechEl;
+  const body = kind === 'thought' ? rec.thoughtBodyEl : rec.speechBodyEl;
+  if (!el || !body) return;
+  body.textContent = text;
+  el.style.display = '';
+  body.scrollTop = body.scrollHeight;
 }
 
 function _osShowBubble(rec, kind, text) {
   const el = kind === 'thought' ? rec.thoughtEl : rec.speechEl;
-  const trimmed = _osTrim(text);
-  if (!trimmed) return;
+  const full = _osFull(text);
+  if (!full) return;
   const stamp = Date.now();
   if (kind === 'thought') {
     rec.thoughtAt = stamp;
-    rec.lastThought = { text: trimmed, at: stamp };
+    rec.lastThought = { text: full, at: stamp };
   } else {
     rec.speechAt = stamp;
-    rec.lastSpeech = { text: trimmed, at: stamp };
+    rec.lastSpeech = { text: full, at: stamp };
   }
   if (!el) return;
-  el.textContent = trimmed;
   el.classList.remove('osv-stale');
-  el.style.display = '';
+  _osSetBubbleText(rec, kind, full);
 }
 
 // Remember a bubble without touching the DOM (history seeding). Newest
 // wins; timestamps arrive in seconds from stored messages.
 function _osRememberBubble(rec, kind, text, ts) {
-  const trimmed = _osTrim(text);
-  if (!trimmed) return;
+  const full = _osFull(text);
+  if (!full) return;
   const at = ts ? (ts > 1e12 ? ts : ts * 1000) : Date.now();
   const slot = kind === 'thought' ? 'lastThought' : 'lastSpeech';
   if (rec[slot] && rec[slot].at > at) return;
-  rec[slot] = { text: trimmed, at: at };
+  rec[slot] = { text: full, at: at };
 }
 
 // Re-show the most recent remembered bubble (speech or thought) as a
@@ -476,9 +869,8 @@ function _osRestoreBubbles(rec) {
   const data = kind === 'speech' ? s : th;
   const el = kind === 'speech' ? rec.speechEl : rec.thoughtEl;
   if (!el || el.style.display !== 'none') return;
-  el.textContent = _osTrim(data.text);
   el.classList.add('osv-stale');
-  el.style.display = '';
+  _osSetBubbleText(rec, kind, _osFull(data.text));
   if (kind === 'speech') rec.speechAt = data.at; else rec.thoughtAt = data.at;
 }
 
@@ -488,15 +880,15 @@ function _osRestoreBubbles(rec) {
 function _osStreamBubble(rec, kind, chunk) {
   const prop = kind === 'thought' ? 'thoughtText' : 'speechText';
   rec[prop] = (rec[prop] || '') + String(chunk || '');
-  // Keep only the tail: the bubble shows what is being said *now*.
+  // Accumulate the whole turn; only a runaway tail-cap applies.
   if (rec[prop].length > OSV_BUBBLE_MAX_CHARS * 2) {
     rec[prop] = rec[prop].slice(-OSV_BUBBLE_MAX_CHARS);
   }
   if (rec.speechFlushTimer) return;
   rec.speechFlushTimer = setTimeout(() => {
     rec.speechFlushTimer = 0;
-    if (rec.speechText) _osShowBubble(rec, 'speech', rec.speechText.slice(-OSV_BUBBLE_MAX_CHARS));
-    if (rec.thoughtText) _osShowBubble(rec, 'thought', rec.thoughtText.slice(-OSV_BUBBLE_MAX_CHARS));
+    if (rec.speechText) _osShowBubble(rec, 'speech', rec.speechText);
+    if (rec.thoughtText) _osShowBubble(rec, 'thought', rec.thoughtText);
   }, OSV_BUBBLE_COALESCE_MS);
 }
 
@@ -508,19 +900,24 @@ function _osExpireBubbles(now) {
     const speechShown = rec.speechEl && rec.speechEl.style.display !== 'none';
     const thoughtShown = rec.thoughtEl && rec.thoughtEl.style.display !== 'none';
     if (speechShown && now - rec.speechAt > OSV_BUBBLE_LINGER_MS) {
-      rec.speechText = '';
+      // One-time reset at expiry: it must never run again once stale, or
+      // it would keep wiping the buffer of the NEXT incoming stream every
+      // frame (the bug that froze bubbles after their first turn).
+      if (!rec.speechEl.classList.contains('osv-stale')) {
+        rec.speechText = '';
+        rec.speechEl.classList.add('osv-stale');
+      }
       if (thoughtShown && rec.thoughtAt > rec.speechAt) {
         rec.speechEl.style.display = 'none';
-      } else {
-        rec.speechEl.classList.add('osv-stale');
       }
     }
     if (thoughtShown && now - rec.thoughtAt > OSV_BUBBLE_LINGER_MS) {
-      rec.thoughtText = '';
+      if (!rec.thoughtEl.classList.contains('osv-stale')) {
+        rec.thoughtText = '';
+        rec.thoughtEl.classList.add('osv-stale');
+      }
       if (speechShown && rec.speechAt >= rec.thoughtAt) {
         rec.thoughtEl.style.display = 'none';
-      } else {
-        rec.thoughtEl.classList.add('osv-stale');
       }
     }
     // Agents whose turn ended drift back to idle without an explicit
@@ -536,8 +933,8 @@ function _osExpireBubbles(now) {
 // ── Activity log (feeds the PC dialog) ───────────────────────────
 function _osLog(rec, kind, title, body) {
   if (!rec) return;
-  rec.log.push({ ts: Date.now(), kind: kind, title: String(title || ''),
-                 body: String(body || '') });
+  rec.log.push({ ts: Date.now(), kind: kind, title: _osText(title),
+                 body: _osText(body) });
   if (rec.log.length > OSV_LOG_MAX) rec.log.splice(0, rec.log.length - OSV_LOG_MAX);
 }
 
@@ -573,7 +970,7 @@ function openspaceSeedHistory(messages, cid) {
       if (!name) return;
       const rec = _osEnsureAgent(name);
       if (!rec) return;
-      const content = String(m.content || '').replace(/^\[[^\]]+\]:\s*/, '');
+      const content = _osText(m.content).replace(/^\[[^\]]+\]:\s*/, '');
       if (content) {
         _osLog(rec, 'message', t('osvSaid'), content);
         _osRememberBubble(rec, 'speech', content, m.timestamp);
@@ -596,6 +993,32 @@ function openspaceResetTransient() {
     if (rec.speechEl) rec.speechEl.style.display = 'none';
     if (rec.thoughtEl) rec.thoughtEl.style.display = 'none';
     (rec.tools || []).slice().forEach((entry) => _osRemoveTool(rec, entry));
+  });
+}
+
+// Local echo from the composer. The sender's own message never comes
+// back on the SSE stream, so send() reports it here directly; with
+// attachments the avatar walks over and drops folders on the target
+// agent's desk before returning to its spot.
+function openspaceUserMessage(text, attachments, targetAgent, msgId) {
+  const author = (typeof window !== 'undefined' && window._userId) || 'user';
+  const rec = _osEnsureUser(author);
+  if (!rec) return;
+  if (msgId) _osSeededIds.add(msgId);
+  if (text) {
+    _osLog(rec, 'message', t('osvSaid'), text);
+    _osShowBubble(rec, 'speech', text);
+  }
+  const names = (attachments || [])
+    .map((a) => String((a && a.filename) || '').trim()).filter(Boolean);
+  if (!names.length) return;
+  names.forEach((name) => _osLog(rec, 'message', '\u{1F4C1} ' + name, ''));
+  const dst = targetAgent ? _osEnsureAgent(targetAgent) : null;
+  if (!dst || !_osActive || !rec.avatar) return;
+  const home = { x: rec.homeSeat.x, z: rec.homeSeat.z };
+  _osWalkTo(rec, { x: dst.seat.x + 1.9, z: dst.seat.z + 1.3 }, () => {
+    names.forEach((name) => _osDropTool(dst, name, '\u{1F4C1}'));
+    _osWalkTo(rec, home);
   });
 }
 
@@ -624,11 +1047,11 @@ function _osToolSprite(emoji) {
   return sprite;
 }
 
-function _osDropTool(rec, toolName) {
+function _osDropTool(rec, toolName, emoji) {
   if (!rec || !_osScene || !_osThree || rec.kind === 'user') return;
   rec.tools = rec.tools || [];
   while (rec.tools.length >= OSV_TOOL_MAX) _osRemoveTool(rec, rec.tools[0]);
-  const sprite = _osToolSprite(_osToolEmoji(toolName));
+  const sprite = _osToolSprite(emoji || _osToolEmoji(toolName));
   const slot = rec.tools.length;
   const restY = 1.45;
   sprite.position.set(
@@ -735,19 +1158,21 @@ function openspaceWireSSE(es) {
   });
   on('thinking', (d) => {
     const rec = _osEnsureAgent(_osEventAgent(d));
-    if (rec) _osSetState(rec, 'thinking');
+    if (!rec) return;
+    _osSetState(rec, 'thinking');
   });
   on('thinking_delta', (d) => {
     const rec = _osEnsureAgent(_osEventAgent(d));
     if (!rec) return;
     if (rec.state !== 'thinking') _osSetState(rec, 'thinking');
-    if (_osActive) _osStreamBubble(rec, 'thought', d.content || '');
+    // Thinking events carry the text in `text` (see renderThinkingContent).
+    if (_osActive) _osStreamBubble(rec, 'thought', d.text || d.content || '');
   });
   on('thinking_content', (d) => {
     const rec = _osEnsureAgent(_osEventAgent(d));
     if (!rec) return;
-    _osLog(rec, 'thought', t('osvThought'), d.content || '');
-    if (_osActive) _osShowBubble(rec, 'thought', d.content || '');
+    _osLog(rec, 'thought', t('osvThought'), d.text || d.content || '');
+    if (_osActive) _osShowBubble(rec, 'thought', d.text || d.content || '');
   });
   on('tool_call', (d) => {
     const rec = _osEnsureAgent(_osEventAgent(d));
@@ -756,7 +1181,13 @@ function openspaceWireSSE(es) {
     try { args = JSON.stringify(d.arguments || {}); } catch (_) { args = ''; }
     _osLog(rec, 'tool', d.tool || 'tool', args);
     _osSetState(rec, 'tool', d.tool || '');
-    if (_osActive) _osDropTool(rec, d.tool || 'tool');
+    if (_osActive) {
+      _osDropTool(rec, d.tool || 'tool');
+      // The falling prop says "working"; the thought stream logs on what,
+      // inline between the accumulated thinking passages.
+      _osStreamBubble(rec, 'thought',
+        '\n' + _osToolEmoji(d.tool) + ' ' + (d.tool || 'tool') + '\n');
+    }
   });
   on('tool_result', (d) => {
     const rec = _osAgents.get(_osKey(_osEventAgent(d)));
@@ -768,12 +1199,18 @@ function openspaceWireSSE(es) {
   });
   on('new_message', (d) => {
     if (!d || !d.content) return;
+    // Already shown: locally echoed by openspaceUserMessage or seeded.
+    if (d.msg_id && _osSeededIds.has(d.msg_id)) return;
     if (d.role === 'assistant') {
       const rec = _osEnsureAgent(_osEventAgent(d));
       if (!rec) return;
       if (d.msg_id) _osSeededIds.add(d.msg_id);
       _osLog(rec, 'message', t('osvSaid'), d.content);
-      if (_osActive) { _osShowBubble(rec, 'speech', d.content); rec.speechText = ''; }
+      if (_osActive) {
+        _osShowBubble(rec, 'speech', d.content);
+        rec.speechText = '';
+        rec.thoughtText = '';   // the answer closes the accumulated thought
+      }
     } else if (d.role === 'user') {
       const src = d.source || {};
       const author = (src.type === 'user' && src.name) ? src.name
@@ -802,11 +1239,15 @@ function openspaceWireSSE(es) {
   });
   on('done', (d) => {
     const rec = _osAgents.get(_osKey(_osEventAgent(d)));
-    if (rec) { _osSetState(rec, 'idle'); _osDelegateDone(rec.name); }
+    if (rec) {
+      rec.thoughtText = '';   // turn over → next turn accumulates fresh
+      _osSetState(rec, 'idle');
+      _osDelegateDone(rec.name);
+    }
   });
   on('turn_complete', (d) => {
     const rec = _osAgents.get(_osKey(_osEventAgent(d)));
-    if (rec) _osSetState(rec, 'idle');
+    if (rec) { rec.thoughtText = ''; _osSetState(rec, 'idle'); }
   });
   on('sub_agent_start', (d) => {
     if (d.source_agent && d.agent_name) _osDelegateStart(d.source_agent, d.agent_name);
@@ -820,19 +1261,27 @@ function openspaceWireSSE(es) {
   });
   on('sub_agent_thinking', (d) => {
     const rec = _osEnsureAgent(d.agent_name, { guest: true });
-    if (rec) _osSetState(rec, 'thinking');
+    if (!rec) return;
+    if (rec.state !== 'thinking') _osSetState(rec, 'thinking');
+    // Delegate thinking arrives in `thinking` (see sse_handlers_a.js).
+    if (_osActive) _osStreamBubble(rec, 'thought', d.thinking || '');
   });
   on('sub_agent_tool', (d) => {
     const rec = _osEnsureAgent(d.agent_name, { guest: true });
     if (!rec) return;
     _osLog(rec, 'tool', d.tool || 'tool', '');
     _osSetState(rec, 'tool', d.tool || '');
-    if (_osActive) _osDropTool(rec, d.tool || 'tool');
+    if (_osActive) {
+      _osDropTool(rec, d.tool || 'tool');
+      _osStreamBubble(rec, 'thought',
+        '\n' + _osToolEmoji(d.tool) + ' ' + (d.tool || 'tool') + '\n');
+    }
   });
   on('sub_agent_done', (d) => {
     const rec = _osAgents.get(_osKey(d.agent_name));
     if (rec) {
       _osLog(rec, 'message', t('osvDone'), d.content || '');
+      rec.thoughtText = '';
       _osSetState(rec, 'idle');
     }
     if (d.source_agent) _osDelegateDone(d.source_agent);
@@ -859,7 +1308,11 @@ function _osStopLoop() {
 
 function _osTick(ts) {
   const now = Date.now();
-  // Tweens (walking).
+  // Tweens (walking). Finished tweens are removed BEFORE their onDone
+  // runs: onDone often chains a new walk (delegate return, attachment
+  // drop-off), and reassigning _osTweens after the callbacks would
+  // silently discard what they pushed.
+  const finished = [];
   _osTweens = _osTweens.filter((tw) => {
     const p = Math.min(1, (ts - tw.start) / tw.dur);
     const ease = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
@@ -869,9 +1322,10 @@ function _osTick(ts) {
       av.position.z = tw.from.z + (tw.to.z - tw.from.z) * ease;
       av.position.y = Math.abs(Math.sin(p * Math.PI * 6)) * 0.12;
     }
-    if (p >= 1) { if (av) av.position.y = 0; if (tw.onDone) tw.onDone(); return false; }
+    if (p >= 1) { if (av) av.position.y = 0; finished.push(tw); return false; }
     return true;
   });
+  finished.forEach((tw) => { if (tw.onDone) tw.onDone(); });
   // Per-agent idle animation + halo + overlay projection.
   const selKey = _osKey(typeof selectedAgent !== 'undefined' ? selectedAgent : '');
   const tweening = new Set(_osTweens.map((tw) => tw.rec));
@@ -881,18 +1335,31 @@ function _osTick(ts) {
       rec.halo.visible = rec.key === selKey;
       if (rec.halo.visible) rec.halo.rotation.z = ts / 900;
     }
-    if (rec.state === 'thinking') {
-      rec.avatar.rotation.y = Math.sin(ts / 700) * 0.15;
-    } else if (rec.avatar.rotation.y !== 0) rec.avatar.rotation.y = 0;
-    // Working bob: a busy agent visibly types away at the desk.
+    // The capsule avatar is rotationally symmetric: spinning it
+    // (rotation.y) shows nothing. Lean (rotation.z) and bounce
+    // (position.y) are the visible axes, and each state gets its own
+    // rhythm so a glance says who is doing what.
+    const sway = { thinking: [350, 0.18], talking: [220, 0.1],
+                   tool: [90, 0.06] }[rec.state];
+    rec.avatar.rotation.z = sway ? Math.sin(ts / sway[0]) * sway[1] : 0;
     if (!tweening.has(rec)) {
-      rec.avatar.position.y = rec.state === 'tool'
-        ? Math.abs(Math.sin(ts / 170)) * 0.07 : 0;
+      const bounce = { tool: [130, 0.22], talking: [200, 0.12],
+                       thinking: [480, 0.08] }[rec.state];
+      rec.avatar.position.y = bounce
+        ? Math.abs(Math.sin(ts / bounce[0])) * bounce[1] : 0;
+    }
+    // The PC screen flickers while its agent works.
+    if (rec.screenMat) {
+      rec.screenMat.emissiveIntensity = sway
+        ? 0.75 + Math.sin(ts / 160) * 0.35 : 1;
     }
     _osProject(rec);
   });
   _osTickTools(ts);
   _osExpireBubbles(now);
+  _osRefreshBatteries(now);
+  _osUpdateBoard(now);
+  _osProjectScreen();
 }
 
 // Project the avatar's head to screen space and pin the DOM elements.
@@ -902,7 +1369,10 @@ function _osProject(rec) {
   const T = _osThree;
   if (!_osProjVec.v) _osProjVec.v = new T.Vector3();
   const v = _osProjVec.v;
-  v.set(rec.avatar.position.x, 2.6, rec.avatar.position.z);
+  // Anchor just above the head: chibi mascots top out around 2.0, the
+  // standing visitor at about 2.3.
+  v.set(rec.avatar.position.x, rec.kind === 'user' ? 2.5 : 2.2,
+        rec.avatar.position.z);
   v.project(_osCamera);
   const w = _osOverlay.clientWidth, h = _osOverlay.clientHeight;
   const x = (v.x * 0.5 + 0.5) * w;
@@ -914,13 +1384,17 @@ function _osProject(rec) {
   }
   if (rec.speechEl && rec.speechEl.style.display !== 'none') {
     rec.speechEl.style.transform =
-      'translate(' + (x + off) + 'px,' + (y - 14) + 'px) translate(-50%, -100%)';
+      'translate(' + (x + off) + 'px,' + (y - 34) + 'px) translate(-50%, -100%)';
   }
   if (rec.thoughtEl && rec.thoughtEl.style.display !== 'none') {
     const lift = rec.speechEl && rec.speechEl.style.display !== 'none'
-      ? rec.speechEl.offsetHeight + 22 : 14;
+      ? rec.speechEl.offsetHeight + 42 : 34;
     rec.thoughtEl.style.transform =
       'translate(' + (x + off) + 'px,' + (y - lift) + 'px) translate(-50%, -100%)';
+  }
+  if (rec.battEl && rec.battEl.style.display !== 'none') {
+    rec.battEl.style.transform =
+      'translate(' + (x + off) + 'px,' + (y - 12) + 'px) translate(-50%, -100%)';
   }
   if (rec.statusEl && rec.statusEl.style.display !== 'none') {
     rec.statusEl.style.transform =
@@ -930,7 +1404,9 @@ function _osProject(rec) {
 
 // ── Pointer: orbit drag, wheel zoom, click → PC dialog ──────────
 function _osPointerDown(e) {
-  _osDrag = { x: e.clientX, y: e.clientY, moved: false };
+  _osDrag = { x: e.clientX, y: e.clientY, moved: false,
+              lift: e.ctrlKey,
+              pan: !e.ctrlKey && (e.button === 2 || e.shiftKey) };
   try { _osCanvas.setPointerCapture(e.pointerId); } catch (_) {}
 }
 
@@ -939,8 +1415,21 @@ function _osPointerMove(e) {
   const dx = e.clientX - _osDrag.x, dy = e.clientY - _osDrag.y;
   if (Math.abs(dx) + Math.abs(dy) > 4) _osDrag.moved = true;
   if (_osDrag.moved) {
-    _osCamAngle += dx * 0.008;
-    _osCamHeight = Math.max(6, Math.min(40, _osCamHeight + dy * 0.05));
+    if (_osDrag.lift) {
+      // Vertical drag raises/lowers the camera target above the floor.
+      _osCamPan.y = Math.max(0, Math.min(18, _osCamPan.y - dy * 0.04));
+    } else if (_osDrag.pan) {
+      // Drag the world: translate the camera target on the floor plane.
+      const k = _osCamDist * 0.0016;
+      const a = _osCamAngle;
+      _osCamPan.x += (-Math.sin(a) * dx + Math.cos(a) * dy) * k;
+      _osCamPan.z += (Math.cos(a) * dx + Math.sin(a) * dy) * k;
+      _osCamPan.x = Math.max(-40, Math.min(40, _osCamPan.x));
+      _osCamPan.z = Math.max(-40, Math.min(40, _osCamPan.z));
+    } else {
+      _osCamAngle += dx * 0.008;
+      _osCamHeight = Math.max(6, Math.min(40, _osCamHeight + dy * 0.05));
+    }
     _osDrag.x = e.clientX; _osDrag.y = e.clientY;
     _osUpdateCamera();
   }
@@ -949,7 +1438,7 @@ function _osPointerMove(e) {
 function _osPointerUp(e) {
   const wasDrag = _osDrag && _osDrag.moved;
   _osDrag = null;
-  if (wasDrag || !_osRaycaster || !_osCamera) return;
+  if (wasDrag || e.button !== 0 || !_osRaycaster || !_osCamera) return;
   const bounds = _osCanvas.getBoundingClientRect();
   const T = _osThree;
   const ndc = new T.Vector2(
@@ -961,6 +1450,20 @@ function _osPointerUp(e) {
     const key = hit.object && hit.object.userData && hit.object.userData.osvAgent;
     if (key) { openspaceOpenAgentDialog(key); return; }
   }
+  // No agent under the cursor: clicking the floor walks YOUR avatar
+  // there, and the spot becomes its new home (delivery trips return to
+  // it).
+  const floor = _osScene.getObjectByName('floor');
+  if (!floor) return;
+  const ground = _osRaycaster.intersectObject(floor, false)[0];
+  if (!ground) return;
+  const me = _osEnsureUser(
+    (typeof window !== 'undefined' && window._userId) || 'user');
+  if (!me || !me.avatar) return;
+  const gx = Math.max(-35, Math.min(50, ground.point.x));
+  const gz = Math.max(-35, Math.min(50, ground.point.z));
+  me.homeSeat = { x: gx, z: gz };
+  _osWalkTo(me, { x: gx, z: gz });
 }
 
 function _osWheel(e) {

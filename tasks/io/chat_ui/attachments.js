@@ -446,6 +446,11 @@ async function send() {
   if (attachmentsForDisplay.length > 0) {
     msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text || '') + renderUserAttachments(attachmentsForDisplay);
   }
+  // Openspace mirrors the composer directly: the sender's own message
+  // never comes back on the SSE stream.
+  if (typeof openspaceUserMessage === 'function') {
+    openspaceUserMessage(text || '', attachmentsForDisplay, targetAgent, userMsgId);
+  }
   scrollBottom(true);  // Force scroll when user sends
   // Finalize all active streaming elements so the user message
   // appears BELOW them (not interleaved above ongoing text)

@@ -6,6 +6,69 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Openspace 3D view: the sender's own message now appears immediately in the
+  scene (the composer mirrors it directly — the SSE stream never echoes it
+  back), and sending attachments makes the user's avatar walk to the target
+  agent's desk, drop one folder prop per file, and walk back.
+- Openspace 3D view: each tool call now also shows the tool's name in the
+  agent's thought bubble alongside the falling desk prop.
+- Openspace 3D view: a cinema wall screen behind the visitor row now
+  projects the live simplified view. The real transcript DOM is reparented
+  onto the screen and perspective-mapped to the wall each frame (projective
+  `matrix3d`, same camera as the bubbles), so it keeps streaming and stays
+  scrollable; openspace now runs simplified rendering underneath instead of
+  classic.
+- Openspace 3D view: office decor (plants, rug, couch facing the wall
+  screen, water cooler), click-to-walk for the viewer's own avatar (the
+  spot becomes its new home), and camera panning via right-drag or
+  shift-drag alongside the existing orbit and zoom.
+- Openspace 3D view: agents are now chibi mascots (round body, big eyes,
+  smile, blush; per-agent ears/horns/antennae from the name hash), each
+  carries a battery gauge above its head mirroring the header context
+  gauge (% used, same colors and source), and a blackboard on the
+  left of the office lists the active agents with their current tool and
+  battery, chalk-styled and perspective-projected like the wall screen.
+
+### Fixed
+
+- Windows Relay Desktop: the WSL host bridge died at startup with
+  "PAWFLOW_HOST_HELPER_TOKEN is required" — the token was forwarded with a
+  `WSLENV` `/w` suffix, which shares a variable only when invoking Windows
+  FROM WSL, the opposite of this launch. Bare entries (shared both ways)
+  fix the direction; the `--exit-on-stdin-eof` watcher now reads the raw
+  stdin fd, removing the "Fatal Python error: _enter_buffered_busy" crash
+  at interpreter shutdown.
+- Openspace 3D view: bubbles now show the WHOLE message/thought in a
+  scrollable body (no more 200-char cut), thinking accumulates across the
+  turn with tool names logged inline and resets when the turn ends, bubble
+  tails are centered so they point at the avatar, the anchor height matches
+  the chibi mascots, and Ctrl+drag raises/lowers the camera target above
+  the floor plane (help hint updated).
+
+- Openspace 3D view: working agents now visibly move. The previous "sway"
+  rotated a rotationally-symmetric capsule around its vertical axis
+  (invisible) and the tool bob was 0.07 units; states now animate with
+  lean + bounce rhythms, the PC screen flickers while busy, and the status
+  chip pulses. Thought bubbles gained a cloud tail so they read as thoughts.
+- Openspace 3D view: thinking never reached the thought bubbles — the SSE
+  payload carries the text in `text` (and `thinking` for delegates), while
+  openspace read `content`. Agent and sub-agent thinking now stream into
+  the thought bubble.
+- Openspace 3D view: after a reload, a user message sent with attachments
+  showed "[object Object]" in its bubble — stored multimodal content is an
+  array of blocks; bubbles and activity logs now extract the text parts.
+- Openspace 3D view: bubbles froze after their first turn — once a bubble
+  expired, the per-frame expiry sweep kept wiping the stream buffer, so
+  the next turn's thinking/speech never accumulated past the 250ms flush.
+  The reset now happens exactly once (guarded by the stale class), and a
+  new turn starts with a clean thought bubble. A ResizeObserver keeps the
+  canvas in sync when the wrap resizes without a window resize (stretched
+  canvas = projected panels drifting off their meshes), a controls hint
+  sits bottom-left of the scene, and the blackboard shows each agent's
+  live avatar state instead of the staler tracker status.
+
 ## [1.0.0-beta.217] — 2026-08-19
 
 ### Added

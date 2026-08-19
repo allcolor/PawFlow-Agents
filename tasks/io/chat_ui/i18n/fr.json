@@ -1486,6 +1486,7 @@
   "capabilities": "Capacités",
   "force": "Forcer",
   "inspect": "Inspecter",
+  "installed": "Installé",
   "noObjects": "Aucun objet.",
   "noPfpPackagesInstalled": "Aucun package installé.",
   "noPfpRegistries": "Aucune registry configurée.",

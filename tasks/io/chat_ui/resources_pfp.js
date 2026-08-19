@@ -268,18 +268,31 @@ function _pfpDepotCategory(row) {
 function _pfpDepotRowHtml(row) {
       const sourceKey = row.source === 'uploaded' ? 'pfpDepotUploaded' : 'pfpDepotBundled';
       const objects = (row.objects || []).map(obj => typeof obj === 'string' ? obj : (obj.id || obj.type || '')).filter(Boolean);
+      const installed = _isPfpDepotVersionInstalled(row);
+      const installControl = installed
+        ? '<span class="pfp-depot-installed" title="' + _pfpAttr(t('installed')) + '" style="color:var(--pf-success);font-size:10px;padding:3px 6px;">' + escapeHtml(t('installed')) + '</span>'
+        : '<button class="pfp-depot-install" data-ref="' + _pfpAttr(row.ref || '') + '" title="' + _pfpAttr(t('pfpInstallPackage')) + '" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:3px 6px;border-radius:3px;cursor:pointer;font-size:10px;">' + escapeHtml(t('install')) + '</button>';
       return '<div class="pfp-depot-row" style="border:1px solid var(--pf-border);border-radius:4px;padding:6px;margin-bottom:5px;">'
         + '<div style="display:flex;align-items:center;gap:5px;">'
         + '<div style="flex:1;min-width:0;">'
         + '<div style="color:var(--pf-text);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + _pfpAttr((row.package || '') + '@' + (row.version || '')) + '">' + escapeHtml(row.package || '') + '</div>'
         + '<div style="color:var(--pf-muted);font-size:9px;">v' + escapeHtml(row.version || '') + ' · ' + escapeHtml(t(sourceKey)) + ' · ' + escapeHtml(_formatFileSize(row.package_size || 0)) + '</div>'
         + '</div>'
-        + '<button class="pfp-depot-install" data-ref="' + _pfpAttr(row.ref || '') + '" title="' + _pfpAttr(t('pfpInstallPackage')) + '" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:3px 6px;border-radius:3px;cursor:pointer;font-size:10px;">' + escapeHtml(t('install')) + '</button>'
+        + installControl
         + (row.deletable ? '<button class="pfp-depot-delete" data-depot-id="' + _pfpAttr(row.depot_id || '') + '" data-package="' + _pfpAttr(row.package || '') + '" title="' + _pfpAttr(t('delete')) + '" style="background:none;color:var(--pf-danger);border:1px solid var(--pf-border);padding:3px 6px;border-radius:3px;cursor:pointer;font-size:10px;">&times;</button>' : '')
         + '</div>'
         + (row.description ? '<div style="color:var(--pf-muted);font-size:10px;margin-top:4px;">' + escapeHtml(row.description) + '</div>' : '')
         + (objects.length ? '<div style="color:var(--pf-muted);font-size:9px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + _pfpAttr(objects.join(', ')) + '">' + escapeHtml(objects.join(', ')) + '</div>' : '')
         + '</div>';
+}
+
+function _isPfpDepotVersionInstalled(row) {
+  const packageId = String((row && row.package) || '');
+  const version = String((row && row.version) || '');
+  const installed = (_lastResourcesData && _lastResourcesData.pfp_packages) || [];
+  return !!packageId && !!version && installed.some(pkg => (
+    String(pkg.package || '') === packageId && String(pkg.version || '') === version
+  ));
 }
 
 function _uploadPfpToDepot() {

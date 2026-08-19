@@ -1486,6 +1486,7 @@
   "capabilities": "Capacidades",
   "force": "Forzar",
   "inspect": "Inspeccionar",
+  "installed": "Instalado",
   "noObjects": "No hay objetos.",
   "noPfpPackagesInstalled": "No hay paquetes instalados.",
   "noPfpRegistries": "No hay registros configurados.",

@@ -468,32 +468,42 @@ test('activity after a finished turn keeps a block', () => {
   assert(user.isConnected, 'the user row is untouched');
 });
 
-test('a scheduled wakeup opens a working block after the completed turn', () => {
+test('a provider retry after stop reuses the positional block', () => {
   const e = env('simplified');
   startTurn(e, 'user-turn');
-  const answer = e.row('answer-1');
+  const progress = e.row('progress-1');
+  progress.dataset.rawText = 'working before fallback';
   e.ctx.turnViewIngest('assistant', {
-    turn_id: 'user-turn', msg_id: 'answer-1',
-  }, answer);
-  e.ctx.turnViewFinalize({ turn_id: 'user-turn', final_msg_id: 'answer-1' });
-  const completed = e.block();
+    turn_id: 'provider-turn-a', msg_id: 'progress-1',
+  }, progress);
+  const block = e.block();
   const blockStatus = block => block.querySelector('.simple-turn-status')
     .className.replace('simple-turn-status ', '');
-  eq(blockStatus(completed), 'completed');
+  e.ctx.turnViewFail('user-turn', 'stopped');
+  eq(blockStatus(block), 'stopped');
 
-  // schedule_continuation resumes autonomously: there is no new user row, but
-  // the poller gives the resumed execution its own turn identity.
-  const resumed = e.row('wake-msg');
+  // The fallback provider uses another runtime id, but no USER/SWM row was
+  // rendered between the executions. It therefore owns the same block.
+  const answer = e.row('answer-1');
+  answer.dataset.rawText = 'the durable answer';
   e.ctx.turnViewIngest('assistant', {
-    turn_id: 'wakeup-turn', msg_id: 'wake-msg',
-  }, resumed);
+    turn_id: 'provider-turn-b', msg_id: 'answer-1',
+  }, answer);
+  e.ctx.turnViewFinalize({
+    turn_id: 'provider-turn-b', final_msg_id: 'answer-1',
+  });
 
   const blocks = e.messages.querySelectorAll('.simple-turn-block');
-  eq(blocks.length, 2, 'the wakeup does not reuse the terminal block');
-  eq(blockStatus(blocks[0]), 'completed', 'the original turn stays completed');
-  eq(blockStatus(blocks[1]), 'working', 'the resumed turn is visibly working');
-  eq(blocks[1].dataset.turnId, 'wakeup-turn');
-  eq(blocks[1].nextSibling, resumed, 'the resumed output belongs to the new block');
+  eq(blocks.length, 1, 'a runtime id never invents an adjacent block');
+  eq(blocks[0], block, 'the original positional block is reused');
+  eq(blockStatus(block), 'completed');
+  eq(topLevelIds(e).join(','), 'user-turn,BLOCK,answer-1');
+  eq(block.querySelectorAll('.simple-turn-last-detail').length, 1,
+     'the durable answer has one detail mirror, not one per runtime id');
+  const answerRenders = Array.from(e.messages.querySelectorAll('.msg'))
+    .filter(el => el.dataset.rawText === 'the durable answer');
+  eq(answerRenders.length, 2,
+     'the answer renders once in the one block and once as the interactive LM');
 });
 
 // ── Reload: the whole turn must rebuild from classifier rows ────────────
@@ -782,12 +792,10 @@ test('an orphan live turn does not leave older orphan blocks working', () => {
 // tests/test_webchat_durable_state_behavior.py, which skips wherever headless
 // Chromium cannot render. This is the copy that always runs.
 
-// Real transcripts stamp every row with its turn identity, and wakeup turns
-// have NO user row at all. Opening the page-top orphan without the row's own
-// turn id gave it a synthetic one, so the next row of the SAME turn read as
-// an identity change and opened another block: a page of wakeup turns grew a
-// stack of empty untitled "Agent activity" blocks (observed after load-more).
-test('a load-more page of stamped wakeup turns builds one titled block per turn', () => {
+// Real transcripts stamp every row with a runtime identity. A page can contain
+// several such ids without containing a USER or SYSTEM WAKE MESSAGE boundary.
+// Those ids must never grow a stack of adjacent blocks after load-more.
+test('a load-more page of stamped rows stays in one block until a user boundary', () => {
   const e = env('simplified');
   startTurn(e, 'u9');
   const live = e.row('a9');
@@ -805,13 +813,18 @@ test('a load-more page of stamped wakeup turns builds one titled block per turn'
   ]);
   e.ctx.turnViewReconcile();
 
-  eq(topLevelIds(e).join(','), 'BLOCK,a0,BLOCK,a1,u9,BLOCK,a9',
-     'one block per stamped turn, each followed by its answer');
+  eq(topLevelIds(e).join(','), 'BLOCK,a1,u9,BLOCK,a9',
+     'runtime ids do not split the page-top positional block');
   const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
-  eq(blocks.length, 3, 'no synthetic extra block per page top or per turn');
+  eq(blocks.length, 2, 'one historical block and one block after the real user boundary');
   eq(blocks[0].querySelector('.simple-turn-title').textContent, 'claude',
      'the block carries the agent identity from the rows');
-  eq(blocks[1].querySelector('.simple-turn-title').textContent, 'claude');
+  assert(blocks[0].querySelector('[data-msgid="a0"]'),
+         'the earlier stamped answer becomes detail in the same block');
+  const finalRenders = Array.from(e.messages.querySelectorAll('.msg'))
+    .filter(el => el.dataset.rawText === 'fin T2');
+  eq(finalRenders.length, 2,
+     'the historical LM renders once in detail and once outside, never per id');
 });
 
 // A page bringing back the OLDER HALF of a turn whose block is already on
@@ -914,9 +927,9 @@ test('a top-level row between two blocks blocks the adjacent merge', () => {
   eq(e.messages.querySelectorAll('.simple-turn-block').length, 2);
 });
 
-// Same page shape, but the window starts on a narration text instead of a
-// tool row — the first row itself opens the fragment.
-test('a fragment page starting on the schedule message preserves that boundary', () => {
+// Same page shape, but the window starts on narration rather than a tool row.
+// Narration is activity, not a boundary; it joins the already visible block.
+test('a fragment page starting on narration preserves one positional block', () => {
   const e = env('simplified');
   const a9 = e.row('a9');
   a9.dataset.messageRole = 'assistant';
@@ -933,17 +946,17 @@ test('a fragment page starting on the schedule message preserves that boundary',
   ]);
   e.ctx.turnViewReconcile();
 
-  eq(topLevelIds(e).join(','), 'm1,BLOCK,a9',
-     'the schedule message bounds one complete block and one last message');
+  eq(topLevelIds(e).join(','), 'BLOCK,a9',
+     'narration does not masquerade as a schedule boundary');
   eq(e.messages.querySelectorAll('.simple-turn-block').length, 1);
   const block = e.messages.querySelector('.simple-turn-block');
-  for (const id of ['c1', 'm2', 'c2', 'm3']) {
+  for (const id of ['m1', 'c1', 'm2', 'c2', 'm3']) {
     assert(block.querySelector('[data-msgid="' + id + '"]'),
            id + ' stays inside the single detail block');
   }
 });
 
-test('successive load-more pages keep only the earliest schedule boundary', () => {
+test('successive load-more pages never invent a boundary from narration', () => {
   const e = env('simplified');
   const a9 = e.row('a9');
   a9.dataset.messageRole = 'assistant';
@@ -957,8 +970,8 @@ test('successive load-more pages keep only the earliest schedule boundary', () =
     { type: 'tool_call', msg_id: 'c2', turn_id: 'T' },
   ]);
   e.ctx.turnViewReconcile();
-  eq(topLevelIds(e).join(','), 'm2,BLOCK,a9',
-     'the oldest loaded message temporarily bounds the partial turn');
+  eq(topLevelIds(e).join(','), 'BLOCK,a9',
+     'the oldest loaded narration joins the partial turn');
   eq(e.messages.querySelector('.simple-turn-block').dataset.turnId, 'T',
      'the first page keeps the real turn state');
 
@@ -968,11 +981,11 @@ test('successive load-more pages keep only the earliest schedule boundary', () =
   ]);
   e.ctx.turnViewReconcile();
 
-  eq(topLevelIds(e).join(','), 'm1,BLOCK,a9',
-     'the newly discovered schedule start replaces the page-local boundary');
+  eq(topLevelIds(e).join(','), 'BLOCK,a9',
+     'another narration page still cannot create a boundary');
   eq(e.messages.querySelectorAll('.simple-turn-block').length, 1);
   const block = e.messages.querySelector('.simple-turn-block');
-  for (const id of ['c1', 'm2', 'c2']) {
+  for (const id of ['m1', 'c1', 'm2', 'c2']) {
     assert(block.querySelector('[data-msgid="' + id + '"]'),
            id + ' stays inside the one detail block');
   }
@@ -2229,7 +2242,7 @@ test('a page bringing back the live turn\'s older half stays closed', () => {
   assert(working[0] === blocks[blocks.length - 1], 'the active block is the last one');
 });
 
-test('a turn-identity change is a boundary even with no user row', () => {
+test('a turn-identity change is not a boundary without a user or SWM row', () => {
   const e = env('simplified');
   // Turn u1 (user-triggered), then turn w1 (bg result / scheduled wakeup:
   // no user row, the rows just change identity).
@@ -2248,13 +2261,21 @@ test('a turn-identity change is a boundary even with no user row', () => {
   }
   e.ctx.turnViewSetRuntimeTurns([]);
   e.ctx.turnViewReconcile();
-  // Two turns, two blocks. The wakeup's first assistant message is the
-  // boundary and stays top level, like a user row:
-  // u1 > BLOCK > a2, then w2 > BLOCK > w3.
-  eq(topLevelIds(e).join(','), 'u1,BLOCK,a2,w2,BLOCK,w3');
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,w3',
+     'the id change cannot manufacture a second adjacent block');
+  const blocks = e.messages.querySelectorAll('.simple-turn-block');
+  eq(blocks.length, 1, 'without a rendered boundary the sequence is one block');
+  for (const id of ['a1', 'a2', 'w2']) {
+    assert(blocks[0].querySelector('[data-msgid="' + id + '"]'),
+           id + ' stays in the one positional block');
+  }
+  const answerRenders = Array.from(e.messages.querySelectorAll('.msg'))
+    .filter(el => el.dataset.rawText === 'wakeup answer');
+  eq(answerRenders.length, 2,
+     'the LM appears once in block detail and once as the interactive original');
 });
 
-test('a background-tool result opens the next block and is filed inside it', () => {
+test('a background-tool result stays in the open positional block', () => {
   const e = env('simplified');
   // Turn u1, then a turn triggered by a background-tool result: the result
   // row is NOT a boundary — it belongs inside the block, like a tool call.
@@ -2272,12 +2293,14 @@ test('a background-tool result opens the next block and is filed inside it', () 
   }
   e.ctx.turnViewSetRuntimeTurns([]);
   e.ctx.turnViewReconcile();
-  // At most [last message][boundary] between blocks — here no boundary row:
-  // u1 > BLOCK > a2, then BLOCK (holding bg1) > w3.
-  eq(topLevelIds(e).join(','), 'u1,BLOCK,a2,BLOCK,w3');
+  eq(topLevelIds(e).join(','), 'u1,BLOCK,w3',
+     'a background result and new id do not create an adjacent block');
   const blocks = Array.from(e.messages.querySelectorAll('.simple-turn-block'));
-  assert(blocks[1].querySelector('[data-msgid="bg1"]'),
-    'the bg result row lives inside the second block');
+  eq(blocks.length, 1, 'the complete sequence has one block');
+  assert(blocks[0].querySelector('[data-msgid="a2"]'),
+    'the prior answer becomes detail in the same block');
+  assert(blocks[0].querySelector('[data-msgid="bg1"]'),
+    'the bg result row lives inside that block');
 });
 
 if (failures.length) {

@@ -37,7 +37,7 @@ const simplifiedTurns = new Map();
 const _turnRuntime = new Map();
 // ── THE RULE: turn boundaries are POSITIONAL, never correlated ─────────────
 //
-//     USER > BLOCK > the block's last message
+//     USER | SYSTEM WAKE MESSAGE > BLOCK > the block's last message
 //
 // A user message opens a turn, the next user message closes it, and everything
 // rendered in between belongs to the open turn's block whatever id it carries.
@@ -158,6 +158,9 @@ function _turnCreateState(turnId, userEl, data, anchorBeforeEl) {
     // only thing that closed it was a reconstruction. Together they decide if
     // a guessed ending may stand -- see turnViewFinalize.
     liveFed: false, closedByGuess: false,
+    // Runtime/provider ids that explicitly resumed this already-terminal
+    // positional block. They may end it later, but never become boundaries.
+    resumedTurnIds: new Set(),
     elementsByMsgId: new Map(), toolElementsByCallId: new Map(),
     artifactElementsByFileId: new Map(), artifactFileIdByCallId: new Map(),
     transient: { cues: [], coalesceTimer: null, pendingText: '', pendingKind: '',
@@ -434,16 +437,19 @@ function turnViewIngest(kind, data, element) {
   // RULE at the top of this file.
   let state = _turnCurrentState(true);
   const incomingTurnId = _turnId(data);
-  // A scheduled continuation is a new autonomous turn: it has no user row to
-  // create the positional boundary, but the poller gives it a fresh turn id.
-  // Once the open block is terminal, that new identity is boundary evidence,
-  // not routing: start an orphan block where the new row actually arrived.
-  // While a block is working, THE RULE above still wins and ids never select a
-  // different state (including concurrent or delayed events).
+  // A provider retry/fallback can mint a fresh turn id after the previous
+  // execution was stopped. That id is not a visible boundary: without a USER
+  // or SYSTEM WAKE MESSAGE row, opening another state would render two adjacent
+  // blocks and mirror the same durable answer in both. Reopen the positional
+  // block instead; ids name events, they never split the DOM.
   if (state && state.status !== 'working' && incomingTurnId
       && incomingTurnId !== state.turnId) {
-    _turnOpen = null;
-    state = _turnOpenOrphanTurn(element, data);
+    state.resumedTurnIds.add(incomingTurnId);
+    state.closedByGuess = false;
+    state.liveFed = true;
+    _turnUpdateStatus(state, 'working');
+    _turnStartRain(state);
+    _turnSyncIdle(state);
   }
   // A system notice -- compact finished, git pruned -- is not a turn. With a
   // turn open it is filed into that block; with none it must NOT open a
@@ -1204,6 +1210,7 @@ function turnViewFinalize(data) {
   const incomingTurnId = _turnId(data || {});
   if (state.status === 'working' && incomingTurnId
       && state.turnId && incomingTurnId !== state.turnId
+      && !state.resumedTurnIds.has(incomingTurnId)
       && _turnLiveSuccessorExists(incomingTurnId)) return false;
   const finalId = String((data && (data.final_msg_id || data.msg_id)) || '');
   // A derived marker is a reconstruction, and a reconstruction may not end a
@@ -1263,6 +1270,7 @@ function turnViewFail(turnId, status, message) {
   // animation -- over an agent still working.
   if (state.status === 'working' && turnId
       && state.turnId && turnId !== state.turnId
+      && !state.resumedTurnIds.has(turnId)
       && _turnLiveSuccessorExists(turnId)) return false;
   _turnRetireRuntime(state);
   _turnStopTransient(state); _turnUpdateStatus(state, ['stopped', 'cancelled', 'error'].includes(status) ? status : 'error');
@@ -1319,43 +1327,10 @@ function _turnIsUserRow(el) {
     && !(el.dataset && el.dataset.systemInjected);
 }
 
-// A scheduled wakeup has no user row: its first assistant message IS the
-// boundary, and like a user row it stays top level with the turn's block
-// building under it. It is recognized by turn identity: an assistant row
-// WITH text that names a turn other than the one currently being filed.
-// Rows without text (technical assistants, tool rows — including a
-// background-tool result relabeled tool_result) are NOT boundaries: they
-// open the new turn's block and are filed inside it.
-function _turnIsWakeupBoundary(el, state) {
-  if (_turnRowRole(el) !== 'assistant') return false;
-  if (!String((el.dataset && el.dataset.rawText) || '').trim()) return false;
-  const rowTurn = (el.dataset && el.dataset.turnId) || '';
-  if (!rowTurn) return false;
-  if (state && state.turnId) {
-    return rowTurn !== state.turnId && rowTurn !== state.fragOf;
-  }
-  if (_turnOpen && _turnOpen.userEl && _turnOpen.turnId === rowTurn
-      && _turnOpen.userEl.parentNode === el.parentNode) {
-    // A boundary already encountered ABOVE this row owns it. A boundary left
-    // from the previous reconciliation but sitting BELOW this newly prepended
-    // row does not: the older row becomes the schedule boundary instead.
-    for (let node = _turnOpen.userEl; node; node = node.nextSibling) {
-      if (node === el) return false;
-    }
-  }
-  // The loaded window can begin on the scheduled turn's first assistant
-  // message while a newer page has already built the rest of that same turn
-  // farther down. It is still the turn boundary, not a page-local "last"
-  // message: keep it top-level so the later fragment merge yields
-  // SCHEDULE > BLOCK > LAST.
-  const existing = simplifiedTurns.get(rowTurn);
-  return !!(existing && existing.blockEl && existing.blockEl.isConnected);
-}
-
 // ── The display rule, enforced on the DOM ──────────────────────────────────
 // Top level is this, repeated, and nothing else:
 //
-//     USER > BLOCK > the block's last message
+//     USER | SYSTEM WAKE MESSAGE > BLOCK > the block's last message
 //
 // The event path already builds it as rows arrive. This pass is what makes it
 // true *whatever happened* -- a reload, a page of older history, a row created
@@ -1425,6 +1400,7 @@ function _turnMergeAnswerlessInto(prev, next) {
   for (const [id, fid] of prev.artifactFileIdByCallId) {
     if (!next.artifactFileIdByCallId.has(id)) next.artifactFileIdByCallId.set(id, fid);
   }
+  for (const id of prev.resumedTurnIds) next.resumedTurnIds.add(id);
   // The merged block keeps whichever identity exists: an orphan opened from
   // an id-less tool row is untitled, and the block it folds into may carry
   // the turn's real agent -- or the other way around.
@@ -1475,9 +1451,9 @@ function _turnMergeFragmentInto(prev, next) {
   for (const [id, fid] of prev.artifactFileIdByCallId) {
     if (!next.artifactFileIdByCallId.has(id)) next.artifactFileIdByCallId.set(id, fid);
   }
-  // The older fragment may reveal the real boundary after a newer page used
-  // its first assistant row as a temporary schedule boundary. The earliest
-  // boundary wins; an actual user row always outranks an assistant surrogate.
+  for (const id of prev.resumedTurnIds) next.resumedTurnIds.add(id);
+  // An older fragment may reveal the real user boundary after a newer page
+  // had to open an unanchored block. Preserve that explicit boundary.
   if (prev.userEl && (!next.userEl || !_turnIsUserRow(next.userEl)
       || _turnIsUserRow(prev.userEl))) {
     next.userEl = prev.userEl;
@@ -1555,7 +1531,7 @@ function turnViewReconcile() {
       }
       continue;
     }
-    if (_turnIsUserRow(el) || _turnIsWakeupBoundary(el, state)) {
+    if (_turnIsUserRow(el)) {
       // A user boundary seen in the final chronological DOM closes the turn
       // before it. This also settles a historical page that ended mid-turn,
       // without touching the newest live turn (nothing follows that one).
@@ -1603,29 +1579,8 @@ function turnViewReconcile() {
       continue;
     }
     if (state && el === state.finalEl) continue;
-    // A row that names a DIFFERENT turn than the one being filed is a
-    // boundary: the transcript stamps every row with its turn identity, and
-    // an identity change is how a turn with no user row above it begins -- a
-    // background-tool result triggering a new turn, a scheduled wakeup's
-    // first assistant message. Filing it into the previous block merged two
-    // turns into one and left the page misgrouped (user > asst > asst >
-    // block > asst). Close the previous turn and open this one's own block.
-    const rowTurnId = (el.dataset && el.dataset.turnId) || '';
-    if (state && rowTurnId && state.turnId && rowTurnId !== state.turnId
-        && rowTurnId !== state.fragOf
-        && _turnRowRole(el) !== 'system'
-        && _turnHasPromotableAnswer(state)) {
-      if (state.status === 'working' && !_turnRuntime.has(state.turnId)) {
-        _turnStopTransient(state);
-        _turnUpdateStatus(state, 'completed');
-      }
-      state = _turnOpenOrphanTurn(el, _turnRowSeedData(el, rowTurnId));
-      if (!state) continue;
-      touched.add(state);
-      stateSeparated = false;
-      open = _turnOpen;
-      if (el.parentNode !== container) continue;  // the block took its place
-    }
+    // turn_id is metadata, never a DOM boundary. Only a rendered USER or
+    // SYSTEM WAKE MESSAGE row may end the current positional block.
     if (!state) {
       // A system notice never opens a block: with no turn open it stays top
       // level (see turnViewIngest -- the /compact notice case).

@@ -436,3 +436,15 @@ def test_bubbles_flush_before_reset_and_are_dismissable():
     assert "osv-bubble-close" in src
     template = _text("tasks/io/chat_ui/template.html")
     assert ".osv-bubble-close" in template
+
+
+def test_conversation_switch_empties_the_room():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    # Rooms are per-conversation: switching retires every desk/avatar of
+    # the previous conversation and resets the seat allocator; the seed
+    # then repopulates with the new participants.
+    reset = src.split("function openspaceResetTransient")[1].split("\n}")[0]
+    assert "_osRetireAgent(rec)" in reset
+    assert "_osSeatCount = 0" in reset
+    assert "_osUserCount = 0" in reset
+    assert "_osFreeSeats.length = 0" in reset

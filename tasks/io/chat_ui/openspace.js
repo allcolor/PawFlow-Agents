@@ -884,7 +884,7 @@ function _osDoorTrip(rec, label) {
 // delegation and is dismantled once the sub-agent finishes (the seat
 // slot goes back into the pool for the next guest).
 function _osRetireAgent(rec) {
-  if (!rec || rec.kind === 'user') return;
+  if (!rec) return;
   _osAgents.delete(rec.key);
   if (typeof rec.seatIndex === 'number') _osFreeSeats.push(rec.seatIndex);
   [rec.labelEl, rec.speechEl, rec.thoughtEl, rec.statusEl, rec.battEl]
@@ -1827,18 +1827,21 @@ function openspaceSeedHistory(messages, cid) {
   _osAgents.forEach((rec) => { _osRestoreBubbles(rec); });
 }
 
-// Conversation switch: desks survive (stable layout) but bubbles, logs
-// and desk props belong to the previous transcript — clear them.
+// Conversation switch = room switch: every avatar, desk and overlay in
+// the scene belongs to the previous conversation, so the office is
+// emptied and the seed repopulates it with the new participants. Only
+// the viewer's own avatar is recreated immediately.
 function openspaceResetTransient() {
   _osSeededIds.clear();
-  _osAgents.forEach((rec) => {
-    rec.log = [];
-    rec.lastSpeech = null; rec.lastThought = null;
-    rec.speechText = ''; rec.thoughtText = '';
-    if (rec.speechEl) rec.speechEl.style.display = 'none';
-    if (rec.thoughtEl) rec.thoughtEl.style.display = 'none';
-    (rec.tools || []).slice().forEach((entry) => _osRemoveTool(rec, entry));
-  });
+  Array.from(_osAgents.values()).forEach((rec) => _osRetireAgent(rec));
+  _osAgents.clear();
+  _osSeatCount = 0;
+  _osUserCount = 0;
+  _osFreeSeats.length = 0;
+  _osUpdateCamera();
+  if (_osScene && _osThree) {
+    _osEnsureUser((typeof window !== 'undefined' && window._userId) || 'user');
+  }
 }
 
 // Local echo from the composer. The sender's own message never comes

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.220] — 2026-08-19
+
 ### Added
 
 - AG-UI protocol server (https://github.com/ag-ui-protocol/ag-ui): published

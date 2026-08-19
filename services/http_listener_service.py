@@ -164,6 +164,10 @@ class HTTPListenerService(BaseService):
                 and not HTTPListenerService.all_instances()):
             from services.a2a_server_endpoint import register_a2a_routes
             register_a2a_routes(self)
+            # Publications serve both protocols: A2A and AG-UI share the
+            # same store, keys, and per-client contexts.
+            from services.agui_server_endpoint import register_agui_routes
+            register_agui_routes(self)
         self._server: Optional[_HTTPServerWithRegistry] = None
         self._server_thread: Optional[threading.Thread] = None
         self._ref_count = 0

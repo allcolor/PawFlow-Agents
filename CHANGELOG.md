@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- AG-UI protocol server (https://github.com/ag-ui-protocol/ag-ui): published
+  agents are now reachable by any AG-UI client (CopilotKit et al.) at
+  `POST /agui/{publication_id}` — one `RunAgentInput` in, a streaming SSE
+  run out (`RUN_STARTED`, `TEXT_MESSAGE_*`, `THINKING_*`, `TOOL_CALL_*` +
+  `TOOL_CALL_RESULT`, `RUN_FINISHED`/`RUN_ERROR`). Reuses the existing A2A
+  publications, Bearer keys and per-client contexts (the AG-UI `threadId` is
+  an isolated per-thread conversation with durable server-side history), so
+  one publish action serves both protocols. See `docs/agui_integration.md`.
+
 - Openspace 3D view: the floor ring around each agent is now a status
   carousel — brains (🧠) orbit and zoom in/out while the agent thinks, tools
   (🔧🛠️⚙️) spin around it while a tool runs, and Zzz (💤) drift around an

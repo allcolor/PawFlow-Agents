@@ -114,6 +114,9 @@ def _handle_agentres_k7(self, action, body, store, user_id, flowfile):
             )
             from services.a2a_server_endpoint import ensure_a2a_routes
             ensure_a2a_routes()
+            # The same publication is reachable through AG-UI as well.
+            from services.agui_server_endpoint import ensure_agui_routes
+            ensure_agui_routes()
         except (ValueError, PermissionError) as exc:
             return _reply(flowfile, {"error": str(exc)}, 400)
         return _reply(flowfile, {"publication": publication})

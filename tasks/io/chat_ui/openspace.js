@@ -665,7 +665,9 @@ function openspaceOpenAgentDialog(key) {
   const overlay = document.createElement('div');
   overlay.className = 'exec-overlay';
   overlay.id = 'osvAgentDialog';
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  // No background-click dismissal: modal overlays close only through
+  // their explicit close control (repo-wide convention, see
+  // test_chat_ui_resources_static.py).
 
   const dialog = document.createElement('div');
   dialog.className = 'exec-dialog cog-dialog osv-dialog';

@@ -457,3 +457,28 @@ def test_conversation_switch_empties_the_room():
     assert "_osSeatCount = 0" in reset
     assert "_osUserCount = 0" in reset
     assert "_osFreeSeats.length = 0" in reset
+
+
+def test_state_orbiters_circle_the_agent_ring():
+    src = _text("tasks/io/chat_ui/openspace.js")
+    # The floor ring doubles as a status carousel: brains orbit while
+    # thinking, tools while one runs, Zzz while idle.
+    assert "OSV_ORBIT_EMOJI" in src
+    assert "\\u{1F9E0}" in src   # brain (thinking)
+    assert "\\u{1F4A4}" in src   # Zzz (idle)
+    assert "function _osTickOrbits" in src
+    assert "_osTickOrbits(ts)" in src   # wired into the render loop
+    # Kind is derived from the live state every frame, so a state change
+    # swaps the carousel without any extra bookkeeping.
+    assert "_osEnsureOrbit(rec, OSV_ORBIT_EMOJI[rec.state] ? rec.state : '')" in src
+    # Thinking brains zoom in/out; tools spin on themselves.
+    tick = src.split("function _osTickOrbits")[1].split("\nfunction ")[0]
+    assert "sp.scale.set(z, z, 1)" in tick
+    assert "sp.material.rotation" in tick
+    # Sprite textures are disposed on swap (same discipline as tool props).
+    clear = src.split("function _osClearOrbit")[1].split("\nfunction ")[0]
+    assert "map.dispose()" in clear
+    # Retiring a desk clears its orbiters too — the avatar traverse does
+    # not reach sprite texture maps.
+    retire = src.split("function _osRetireAgent")[1].split("\nfunction ")[0]
+    assert "_osClearOrbit(rec)" in retire

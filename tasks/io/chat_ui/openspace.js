@@ -890,6 +890,7 @@ function _osRetireAgent(rec) {
   [rec.labelEl, rec.speechEl, rec.thoughtEl, rec.statusEl, rec.battEl]
     .forEach((el) => { if (el) el.remove(); });
   (rec.tools || []).slice().forEach((entry) => _osRemoveTool(rec, entry));
+  _osClearOrbit(rec);   // sprite textures are not reached by the traverse below
   const seen = new Set();
   [rec.group, rec.avatar].forEach((obj) => {
     if (!obj || seen.has(obj) || !_osScene) return;
@@ -2061,6 +2062,78 @@ function _osTickTools(ts) {
   });
 }
 
+// ── State orbiters ───────────────────────────────────────────────
+// The floor ring around each agent doubles as a status carousel:
+// brains orbit (pulsing in/out) while the agent thinks, tools spin
+// around it while one runs, and Zzz drift around an idle agent.
+// Talking/waiting keep the ring empty — the bubbles and the ❓ status
+// already carry those.
+const OSV_ORBIT_EMOJI = {
+  thinking: ['\u{1F9E0}', '\u{1F9E0}', '\u{1F9E0}'],
+  tool: ['\u{1F527}', '\u{1F6E0}\uFE0F', '\u2699\uFE0F'],
+  idle: ['\u{1F4A4}', '\u{1F4A4}', '\u{1F4A4}'],
+};
+const OSV_ORBIT_RADIUS = 1.05;   // rides the halo ring (0.9–1.15)
+const OSV_ORBIT_PERIOD_MS = { thinking: 2600, tool: 1800, idle: 5200 };
+
+function _osClearOrbit(rec) {
+  if (!rec || !rec.orbit) return;
+  const group = rec.orbit.group;
+  rec.orbit = null;
+  if (!group) return;
+  if (group.parent) group.parent.remove(group);
+  group.children.slice().forEach((sp) => {
+    if (sp.material) {
+      if (sp.material.map) sp.material.map.dispose();
+      sp.material.dispose();
+    }
+  });
+}
+
+function _osEnsureOrbit(rec, kind) {
+  if (rec.orbit && rec.orbit.kind === kind) return;
+  _osClearOrbit(rec);
+  if (!kind || !rec.avatar || !_osThree) return;
+  const T = _osThree;
+  const group = new T.Group();
+  const sprites = OSV_ORBIT_EMOJI[kind].map((emoji) => {
+    const sp = _osToolSprite(emoji);
+    sp.scale.set(0.55, 0.55, 1);
+    group.add(sp);
+    return sp;
+  });
+  rec.avatar.add(group);
+  rec.orbit = { kind: kind, group: group, sprites: sprites };
+}
+
+function _osTickOrbits(ts) {
+  _osAgents.forEach((rec) => {
+    if (rec.kind === 'user') return;
+    _osEnsureOrbit(rec, OSV_ORBIT_EMOJI[rec.state] ? rec.state : '');
+    if (!rec.orbit) return;
+    const kind = rec.orbit.kind;
+    const n = rec.orbit.sprites.length;
+    const angle = (ts / OSV_ORBIT_PERIOD_MS[kind]) * Math.PI * 2;
+    rec.orbit.sprites.forEach((sp, i) => {
+      const a = angle + (i / n) * Math.PI * 2;
+      sp.position.set(Math.cos(a) * OSV_ORBIT_RADIUS, 0.55,
+                      Math.sin(a) * OSV_ORBIT_RADIUS);
+      if (kind === 'thinking') {
+        // Brains zoom in and out as they circle.
+        const z = 0.4 + 0.3 * (1 + Math.sin(ts / 320 + i * 2.1)) / 2;
+        sp.scale.set(z, z, 1);
+      } else if (kind === 'tool') {
+        // Tools spin on themselves while revolving.
+        sp.material.rotation = ts / 350 + i;
+      } else {
+        // Zzz float gently up and down, slightly tilted.
+        sp.position.y = 0.7 + 0.2 * Math.sin(ts / 900 + i * 2);
+        sp.material.rotation = 0.25 * Math.sin(ts / 800 + i);
+      }
+    });
+  });
+}
+
 // ── Delegation walk ──────────────────────────────────────────────
 function _osWalkTo(rec, target, onDone) {
   if (!rec.avatar || !target) { if (onDone) onDone(); return; }
@@ -2335,6 +2408,7 @@ function _osTick(ts) {
     _osProject(rec);
   });
   _osTickTools(ts);
+  _osTickOrbits(ts);
   _osTickFlow(ts);
   _osExpireBubbles(now);
   _osRefreshBatteries(now);

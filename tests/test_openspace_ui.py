@@ -316,6 +316,12 @@ def test_flows_dialog_projects_a_live_3d_flow():
     # Closing the stage stops polling and restores the camera framing.
     assert "clearInterval(f.timer)" in src
     assert "prevPan" in src
+    # Process groups / subflows drill down (click a blue block), with a
+    # 3D up-arrow to pop one level; the poll follows the stack's top.
+    assert "function _osFlowDrill" in src
+    assert "function _osFlowUp" in src
+    assert "subflow_ref" in src
+    assert "osvFlowUp" in src
     template = _text("tasks/io/chat_ui/template.html")
     assert ".osv-flow-close" in template
 

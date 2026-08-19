@@ -24,7 +24,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   backface culling + depth sorting for projected panels, robust flow-stage
   close (✕/Escape), and mobile support: pinch zoom, two-finger pan, camera
   D-pad on touch devices, debounced WebGL resize (no more keyboard blink),
-  and a composer that returns to its default size after a send.
+  and a composer that returns to its default size after a send. The flow
+  stage drills into process groups/subflows (blue blocks; green 3D up-arrow
+  pops a level, red 3D ✕ closes), a conversation switch empties the room
+  (per-conversation desks), and the stage close has three independent paths
+  (in-scene ✕, DOM button, Escape).
 
 ## [1.0.0-beta.218] — 2026-08-19
 

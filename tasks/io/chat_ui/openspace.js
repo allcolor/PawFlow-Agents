@@ -1119,7 +1119,10 @@ function openspaceShowFlow(instanceId, name) {
   _osScene.add(group);
   _osFlow = { id: instanceId, name: name, group: group,
               nodes: new Map(), edges: [], timer: 0,
-              prevPan: { x: _osCamPan.x, y: _osCamPan.y, z: _osCamPan.z } };
+              prevPan: { x: _osCamPan.x, y: _osCamPan.y, z: _osCamPan.z },
+              // Drill-down stack: level 0 is the instance; entering a
+              // process group / subflow pushes its flow_ref.
+              stack: [{ name: name }], lastNodes: {} };
   const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
   const rows = Math.max(1, Math.ceil(Math.max(_osSeatCount, 1) / OSV_GRID_COLS));
   const cz = ((rows - 1) * OSV_DESK_SPACING) / 2;
@@ -1176,14 +1179,59 @@ function _osFlowPoll() {
   if (!_osFlow || _osFlowPollBusy || typeof action$ !== 'function') return;
   _osFlowPollBusy = true;
   const id = _osFlow.id;
-  action$('flow_runtime_graph', { instance_id: id }).subscribe({
+  const level = _osFlow.stack[_osFlow.stack.length - 1];
+  const body = level && level.flow_ref
+    ? { flow_ref: level.flow_ref } : { instance_id: id };
+  const depth = _osFlow.stack.length;
+  action$('flow_runtime_graph', body).subscribe({
     next: (d) => {
       _osFlowPollBusy = false;
-      if (!_osFlow || _osFlow.id !== id || !d || d.error) return;
+      if (!_osFlow || _osFlow.id !== id || _osFlow.stack.length !== depth
+          || !d || d.error) return;
       _osFlowApply(d.nodes || {}, d.edges || []);
     },
     error: () => { _osFlowPollBusy = false; },
   });
+}
+
+// Clear the stage geometry (level change) and refetch immediately.
+function _osFlowRebuild() {
+  const f = _osFlow;
+  if (!f) return;
+  f.group.children.slice().forEach((o) => {
+    f.group.remove(o);
+    o.traverse((c) => {
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) {
+        if (c.material.map) c.material.map.dispose();
+        c.material.dispose();
+      }
+    });
+  });
+  f.nodes.clear();
+  f.edges = [];
+  f.lastNodes = {};
+  _osFlowPollBusy = false;
+  _osFlowPoll();
+}
+
+// Enter a process group / subflow block; the poll switches to its
+// static flow_ref graph.
+function _osFlowDrill(id) {
+  const f = _osFlow;
+  if (!f) return;
+  const st = f.lastNodes[id];
+  const ref = st && st.subflow_ref;
+  if (!ref || !Object.keys(ref).length) return;
+  f.stack.push({ flow_ref: ref, name: (st.group_name || id) });
+  _osFlowRebuild();
+}
+
+function _osFlowUp() {
+  const f = _osFlow;
+  if (!f || f.stack.length < 2) return;
+  f.stack.pop();
+  _osFlowRebuild();
 }
 
 // Longest-path ranking left→right; a bounded relaxation so cycles
@@ -1218,6 +1266,8 @@ function _osFlowLayout(nodes, edges) {
 function _osFlowNodeColor(st) {
   if (!st) return 0x555b77;
   if ((st.error_count || 0) > 0 || st.error) return 0xe94560;
+  // Process groups / subflows are doors: blue says "click to enter".
+  if (st.subflow_ref && Object.keys(st.subflow_ref).length) return 0x4dabf7;
   return st.state === 'running' ? 0x2f9e44 : 0x555b77;
 }
 
@@ -1242,6 +1292,7 @@ function _osFlowApply(nodes, edges) {
   const T = _osThree;
   const f = _osFlow;
   if (!f) return;
+  f.lastNodes = nodes;
   if (!f.nodes.size) {
     const pos = _osFlowLayout(nodes, edges);
     const spans = Object.values(pos);
@@ -1273,13 +1324,38 @@ function _osFlowApply(nodes, edges) {
     closeSprite.position.set(-2.6, 3.6, 0);
     closeSprite.userData.osvFlowClose = true;
     f.group.add(closeSprite);
+    if (f.stack.length > 1) {
+      // 3D up-arrow: one level back out of the subflow.
+      const upCanvas = document.createElement('canvas');
+      upCanvas.width = upCanvas.height = 64;
+      const uctx = upCanvas.getContext('2d');
+      uctx.fillStyle = '#2f9e44';
+      uctx.beginPath();
+      uctx.arc(32, 32, 30, 0, Math.PI * 2);
+      uctx.fill();
+      uctx.fillStyle = '#fff';
+      uctx.beginPath();
+      uctx.moveTo(32, 12); uctx.lineTo(50, 34); uctx.lineTo(38, 34);
+      uctx.lineTo(38, 52); uctx.lineTo(26, 52); uctx.lineTo(26, 34);
+      uctx.lineTo(14, 34);
+      uctx.closePath();
+      uctx.fill();
+      const upSprite = new T.Sprite(new T.SpriteMaterial({
+        map: new T.CanvasTexture(upCanvas), transparent: true }));
+      upSprite.scale.set(1.3, 1.3, 1);
+      upSprite.position.set(-2.6, 2.1, 0);
+      upSprite.userData.osvFlowUp = true;
+      f.group.add(upSprite);
+    }
     Object.keys(pos).forEach((id) => {
       const mesh = new T.Mesh(
         new T.BoxGeometry(2.0, 1.1, 1.4),
         new T.MeshLambertMaterial({ color: 0x555b77 }));
       mesh.position.set(pos[id].x, 0.8, pos[id].z);
+      mesh.userData.osvFlowNode = id;
       const label = _osFlowLabel(id);
       label.position.set(pos[id].x, 1.95, pos[id].z);
+      label.userData.osvFlowNode = id;
       f.group.add(mesh, label);
       f.nodes.set(id, { mesh: mesh, label: label, pos: pos[id], inFlight: false });
     });
@@ -2390,6 +2466,11 @@ function _osPointerUp(e) {
   for (const hit of hits) {
     const ud = hit.object && hit.object.userData;
     if (ud && ud.osvFlowClose) { openspaceCloseFlow(); return; }
+    if (ud && ud.osvFlowUp) { _osFlowUp(); return; }
+    if (ud && typeof ud.osvFlowNode === 'string') {
+      _osFlowDrill(ud.osvFlowNode);
+      return;
+    }
     if (ud && ud.osvDoor) { openspaceOpenConvDialog(); return; }
     if (ud && ud.osvResSection) {
       openspaceOpenResSectionDialog(ud.osvResSection, ud.osvResTitle);

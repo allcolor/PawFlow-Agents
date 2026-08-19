@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.219] — 2026-08-19
+
 ### Added
 
 - Openspace V4: clickable resource posters on the right wall (one per

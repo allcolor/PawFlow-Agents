@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.218] — 2026-08-19
+
 ### Added
 
 - Openspace 3D view: the sender's own message now appears immediately in the

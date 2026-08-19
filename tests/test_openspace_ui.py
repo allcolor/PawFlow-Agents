@@ -108,3 +108,43 @@ def test_render_loop_pauses_when_hidden():
     assert "document.hidden" in openspace
     # Pixel ratio is capped for mobile GPUs.
     assert "Math.min(window.devicePixelRatio || 1, 2)" in openspace
+
+
+def test_last_bubble_is_persistent_and_seeded_from_history():
+    openspace = _text("tasks/io/chat_ui/openspace.js")
+    # Expiry demotes the newest bubble to a dimmed style, never hides it.
+    assert "classList.add('osv-stale')" in openspace
+    assert "function _osRestoreBubbles" in openspace
+    # Full history renders seed the scene (deduped by msg_id, reset on
+    # conversation switch) so the last message/thought shows at load.
+    assert "function openspaceSeedHistory" in openspace
+    assert "function openspaceResetTransient" in openspace
+    assert "_osSeededIds" in openspace
+    conversations = _text("tasks/io/chat_ui/conversations.js")
+    assert "openspaceSeedHistory(data.messages || [], conversationId)" in conversations
+    template = _text("tasks/io/chat_ui/template.html")
+    assert ".osv-stale" in template
+
+
+def test_users_get_visitor_avatars_with_bubbles():
+    openspace = _text("tasks/io/chat_ui/openspace.js")
+    assert "function _osEnsureUser" in openspace
+    assert "function _osBuildVisitor" in openspace
+    # Shared conversations: one avatar per distinct human author.
+    assert "src.type === 'user' && src.name" in openspace
+    assert "'user:' + _osKey" in openspace
+    template = _text("tasks/io/chat_ui/template.html")
+    assert "osv-label-user" in template
+
+
+def test_tool_calls_drop_props_that_fade_on_result():
+    openspace = _text("tasks/io/chat_ui/openspace.js")
+    assert "function _osDropTool" in openspace
+    assert "function _osFadeTool" in openspace
+    # Sprite props are bounded per desk and fully disposed.
+    assert "OSV_TOOL_MAX" in openspace
+    assert "material.map.dispose()" in openspace
+    # tool_call drops, tool_result fades, idle sweeps leftovers.
+    assert "_osDropTool(rec, d.tool || 'tool')" in openspace
+    assert "_osFadeTool(rec, d.tool || '')" in openspace
+    assert "state === 'idle' && rec.tools" in openspace

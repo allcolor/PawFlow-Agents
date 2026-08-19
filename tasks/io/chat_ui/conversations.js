@@ -574,6 +574,9 @@ function reconcileMissedMessages() {
         if (typeof turnViewReconcile === 'function') turnViewReconcile();
         scrollBottom();
       }
+      if (typeof openspaceSeedHistory === 'function') {
+        openspaceSeedHistory(data.messages || [], cid);
+      }
       _updateLoadMoreBanner();
     });
 }
@@ -658,6 +661,9 @@ function _renderHistory(data) {
   if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
   if (typeof turnViewReconcile === 'function') turnViewReconcile();
   if (typeof turnViewHydrateRuntimeTurns === 'function') turnViewHydrateRuntimeTurns();
+  if (typeof openspaceSeedHistory === 'function') {
+    openspaceSeedHistory(data.messages || [], conversationId);
+  }
   _adoptHistoryPage(data);
   _updateLoadMoreBanner();
   if (!data.active_agent) {

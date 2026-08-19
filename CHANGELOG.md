@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Openspace 3D view: every `tool_call` now drops a tool-specific emoji prop
+  onto the working agent's desk (fading away on its `tool_result` or when the
+  agent goes idle), and busy agents visibly bob while a tool runs.
+- Openspace 3D view: human participants now appear as standing visitor
+  avatars facing the desks — one avatar per distinct author in shared
+  conversations — with speech bubbles for their messages.
+
+### Changed
+
+- Openspace 3D view: the most recent speech/thought bubble per participant no
+  longer disappears — after the linger delay it only dims — and a full history
+  render seeds avatars, activity logs, and each participant's last bubble from
+  the transcript (deduplicated by `msg_id`, reset on conversation switch).
+
 ## [1.0.0-beta.216] — 2026-08-19
 
 ### Added

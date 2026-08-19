@@ -30,6 +30,23 @@ const OSV_LOG_BLOCK_PREVIEW = 160;
 // Walk animation duration for a delegation trip (ms).
 const OSV_WALK_MS = 1100;
 const OSV_IDLE_AFTER_MS = 1500;
+// Tool-drop animation: each tool_call drops a tool object onto the desk;
+// it fades away once its result arrives (or the agent goes idle).
+const OSV_TOOL_DROP_MS = 650;
+const OSV_TOOL_FADE_MS = 900;
+const OSV_TOOL_MAX = 4;
+const OSV_TOOL_EMOJI = [
+  [/read|cat|history/i, '\u{1F4D6}'],
+  [/write|edit|patch|apply/i, '\u270F\uFE0F'],
+  [/bash|shell|exec|terminal|cmd|run/i, '\u{1F4BB}'],
+  [/grep|search|find|glob|query/i, '\u{1F50D}'],
+  [/web|http|fetch|browser|url|screen/i, '\u{1F310}'],
+  [/git/i, '\u{1F33F}'],
+  [/test/i, '\u{1F9EA}'],
+  [/image|photo|vision|generate/i, '\u{1F5BC}\uFE0F'],
+  [/memory|remember|recall|kg_|diary/i, '\u{1F9E0}'],
+  [/delegate|agent|a2a/i, '\u{1F91D}'],
+];
 
 let _osActive = false;
 let _osThree = null;          // three.js module namespace (lazy import)
@@ -47,6 +64,13 @@ let _osDrag = null;
 // "guest" flag so V2 can retire them).
 const _osAgents = new Map();
 let _osSeatCount = 0;
+// Users stand in a visitor row facing the desks (shared conversations can
+// have several humans; each gets their own avatar keyed by author name).
+let _osUserCount = 0;
+// History seeding state: which conversation the records belong to, and
+// which msg_ids are already reflected (seeded or received live).
+let _osSeedConvId = null;
+const _osSeededIds = new Set();
 
 function openspaceIsActive() { return _osActive; }
 
@@ -111,7 +135,10 @@ function _osSeedAgents() {
       if (it && it.name) _osEnsureAgent(it.name);
     });
   }
-  _osAgents.forEach((rec) => { if (rec.log.length) _osRefreshScreen(rec); });
+  _osAgents.forEach((rec) => {
+    if (rec.log.length) _osRefreshScreen(rec);
+    _osRestoreBubbles(rec);
+  });
 }
 
 // ── Scene ────────────────────────────────────────────────────────
@@ -199,12 +226,15 @@ function _osEnsureAgent(name, opts) {
   rec = {
     key: key,
     name: name,
+    kind: 'agent',
     guest: !!(opts && opts.guest),
     state: 'idle',
     stateSince: Date.now(),
     seat: _osSeatPosition(_osSeatCount),
     color: _osAgentColor(name),
     log: [],
+    tools: [],
+    lastSpeech: null, lastThought: null,
     group: null, avatar: null, screenMat: null,
     labelEl: null, speechEl: null, thoughtEl: null, statusEl: null,
     speechText: '', speechAt: 0, speechFlushTimer: 0,
@@ -219,8 +249,43 @@ function _osEnsureAgent(name, opts) {
   return rec;
 }
 
+// A human participant. No desk, no PC: a standing visitor in front of the
+// office, one per distinct author (shared conversations have several).
+function _osEnsureUser(name) {
+  const clean = String(name || '').trim() || 'user';
+  const key = 'user:' + _osKey(clean);
+  let rec = _osAgents.get(key);
+  if (rec) return rec;
+  const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
+  rec = {
+    key: key,
+    name: clean,
+    kind: 'user',
+    guest: false,
+    state: 'idle',
+    stateSince: Date.now(),
+    seat: { x: cx + (_osUserCount % 2 === 0 ? 1 : -1)
+            * Math.ceil(_osUserCount / 2) * 3.5, z: -4.5 },
+    color: _osAgentColor(clean),
+    log: [],
+    tools: [],
+    lastSpeech: null, lastThought: null,
+    group: null, avatar: null, screenMat: null,
+    labelEl: null, speechEl: null, thoughtEl: null, statusEl: null,
+    speechText: '', speechAt: 0, speechFlushTimer: 0,
+    thoughtText: '', thoughtAt: 0,
+    homeSeat: null, awayAt: null,
+  };
+  rec.homeSeat = rec.seat;
+  _osUserCount++;
+  _osAgents.set(key, rec);
+  if (_osScene && _osThree) _osBuildDesk(rec);
+  return rec;
+}
+
 function _osBuildDesk(rec) {
   const T = _osThree;
+  if (rec.kind === 'user') { _osBuildVisitor(rec); return; }
   const g = new T.Group();
   g.position.set(rec.seat.x, 0, rec.seat.z);
 
@@ -283,26 +348,52 @@ function _osBuildDesk(rec) {
   _osScene.add(g);
   rec.group = g;
 
-  // DOM overlay elements (real text beats font atlases: i18n, wrapping,
-  // theme CSS all come for free).
-  if (_osOverlay) {
-    const label = document.createElement('div');
-    label.className = 'osv-label';
-    label.textContent = rec.name;
-    label.style.background = rec.color;
-    const speech = document.createElement('div');
-    speech.className = 'osv-bubble osv-speech';
-    speech.style.display = 'none';
-    const thought = document.createElement('div');
-    thought.className = 'osv-bubble osv-thought';
-    thought.style.display = 'none';
-    const status = document.createElement('div');
-    status.className = 'osv-status';
-    status.style.display = 'none';
-    _osOverlay.append(label, speech, thought, status);
-    rec.labelEl = label; rec.speechEl = speech;
-    rec.thoughtEl = thought; rec.statusEl = status;
-  }
+  _osBuildOverlayEls(rec, rec.name, '');
+  _osRestoreBubbles(rec);
+}
+
+// DOM overlay elements (real text beats font atlases: i18n, wrapping,
+// theme CSS all come for free).
+function _osBuildOverlayEls(rec, labelText, extraLabelClass) {
+  if (!_osOverlay) return;
+  const label = document.createElement('div');
+  label.className = 'osv-label' + (extraLabelClass ? ' ' + extraLabelClass : '');
+  label.textContent = labelText;
+  label.style.background = rec.color;
+  const speech = document.createElement('div');
+  speech.className = 'osv-bubble osv-speech';
+  speech.style.display = 'none';
+  const thought = document.createElement('div');
+  thought.className = 'osv-bubble osv-thought';
+  thought.style.display = 'none';
+  const status = document.createElement('div');
+  status.className = 'osv-status';
+  status.style.display = 'none';
+  _osOverlay.append(label, speech, thought, status);
+  rec.labelEl = label; rec.speechEl = speech;
+  rec.thoughtEl = thought; rec.statusEl = status;
+}
+
+// Standing human avatar: slimmer capsule, no desk, facing the office.
+function _osBuildVisitor(rec) {
+  const T = _osThree;
+  const avatar = new T.Group();
+  const body = new T.Mesh(
+    new T.CapsuleGeometry(0.36, 0.85, 4, 12),
+    new T.MeshLambertMaterial({ color: new T.Color(rec.color) }));
+  body.position.y = 1.05;
+  const head = new T.Mesh(
+    new T.SphereGeometry(0.3, 16, 12),
+    new T.MeshLambertMaterial({ color: 0xf2d0b0 }));
+  head.position.y = 2.0;
+  avatar.add(body, head);
+  avatar.position.set(rec.seat.x, 0, rec.seat.z);
+  avatar.traverse((o) => { o.userData.osvAgent = rec.key; });
+  _osScene.add(avatar);
+  rec.avatar = avatar;
+  rec.group = avatar;  // marks the record as built (users have no desk)
+  _osBuildOverlayEls(rec, '\u{1F464} ' + rec.name, 'osv-label-user');
+  _osRestoreBubbles(rec);
 }
 
 // ── State machine ────────────────────────────────────────────────
@@ -311,6 +402,16 @@ function _osSetState(rec, state, detail) {
   if (!rec) return;
   rec.state = state;
   rec.stateSince = Date.now();
+  // Whatever is still on the desk when the agent stops working never got
+  // a result event; sweep it away instead of leaving orphaned props.
+  if (state === 'idle' && rec.tools && rec.tools.length) {
+    rec.tools.forEach((entry) => {
+      if (entry.phase !== 'fade') {
+        entry.phase = 'fade';
+        entry.fadeStart = performance.now();
+      }
+    });
+  }
   if (rec.statusEl) {
     const icons = { thinking: '\u{1F4AD}', talking: '\u{1F4AC}',
                     tool: '\u2699\uFE0F', waiting: '\u2753', idle: '' };
@@ -338,13 +439,47 @@ function _osTrim(text) {
 
 function _osShowBubble(rec, kind, text) {
   const el = kind === 'thought' ? rec.thoughtEl : rec.speechEl;
-  if (!el) return;
   const trimmed = _osTrim(text);
   if (!trimmed) return;
-  el.textContent = trimmed;
-  el.style.display = '';
   const stamp = Date.now();
-  if (kind === 'thought') { rec.thoughtAt = stamp; } else { rec.speechAt = stamp; }
+  if (kind === 'thought') {
+    rec.thoughtAt = stamp;
+    rec.lastThought = { text: trimmed, at: stamp };
+  } else {
+    rec.speechAt = stamp;
+    rec.lastSpeech = { text: trimmed, at: stamp };
+  }
+  if (!el) return;
+  el.textContent = trimmed;
+  el.classList.remove('osv-stale');
+  el.style.display = '';
+}
+
+// Remember a bubble without touching the DOM (history seeding). Newest
+// wins; timestamps arrive in seconds from stored messages.
+function _osRememberBubble(rec, kind, text, ts) {
+  const trimmed = _osTrim(text);
+  if (!trimmed) return;
+  const at = ts ? (ts > 1e12 ? ts : ts * 1000) : Date.now();
+  const slot = kind === 'thought' ? 'lastThought' : 'lastSpeech';
+  if (rec[slot] && rec[slot].at > at) return;
+  rec[slot] = { text: trimmed, at: at };
+}
+
+// Re-show the most recent remembered bubble (speech or thought) as a
+// dimmed "stale" bubble. Never clobbers a live bubble.
+function _osRestoreBubbles(rec) {
+  const s = rec.lastSpeech, th = rec.lastThought;
+  const kind = (s && th) ? (s.at >= th.at ? 'speech' : 'thought')
+    : (s ? 'speech' : (th ? 'thought' : ''));
+  if (!kind) return;
+  const data = kind === 'speech' ? s : th;
+  const el = kind === 'speech' ? rec.speechEl : rec.thoughtEl;
+  if (!el || el.style.display !== 'none') return;
+  el.textContent = _osTrim(data.text);
+  el.classList.add('osv-stale');
+  el.style.display = '';
+  if (kind === 'speech') rec.speechAt = data.at; else rec.thoughtAt = data.at;
 }
 
 // Token streams arrive character by character; coalesce before touching
@@ -367,15 +502,26 @@ function _osStreamBubble(rec, kind, chunk) {
 
 function _osExpireBubbles(now) {
   _osAgents.forEach((rec) => {
-    if (rec.speechEl && rec.speechEl.style.display !== 'none'
-        && now - rec.speechAt > OSV_BUBBLE_LINGER_MS) {
-      rec.speechEl.style.display = 'none';
+    // The last bubble never disappears: the scene always shows each
+    // participant's most recent message or thought. Linger only dims it
+    // (osv-stale) and hides the OLDER of the two kinds when both show.
+    const speechShown = rec.speechEl && rec.speechEl.style.display !== 'none';
+    const thoughtShown = rec.thoughtEl && rec.thoughtEl.style.display !== 'none';
+    if (speechShown && now - rec.speechAt > OSV_BUBBLE_LINGER_MS) {
       rec.speechText = '';
+      if (thoughtShown && rec.thoughtAt > rec.speechAt) {
+        rec.speechEl.style.display = 'none';
+      } else {
+        rec.speechEl.classList.add('osv-stale');
+      }
     }
-    if (rec.thoughtEl && rec.thoughtEl.style.display !== 'none'
-        && now - rec.thoughtAt > OSV_BUBBLE_LINGER_MS) {
-      rec.thoughtEl.style.display = 'none';
+    if (thoughtShown && now - rec.thoughtAt > OSV_BUBBLE_LINGER_MS) {
       rec.thoughtText = '';
+      if (speechShown && rec.speechAt >= rec.thoughtAt) {
+        rec.thoughtEl.style.display = 'none';
+      } else {
+        rec.thoughtEl.classList.add('osv-stale');
+      }
     }
     // Agents whose turn ended drift back to idle without an explicit
     // done event for them (delegates, providers that only emit done for
@@ -393,6 +539,151 @@ function _osLog(rec, kind, title, body) {
   rec.log.push({ ts: Date.now(), kind: kind, title: String(title || ''),
                  body: String(body || '') });
   if (rec.log.length > OSV_LOG_MAX) rec.log.splice(0, rec.log.length - OSV_LOG_MAX);
+}
+
+// ── History seeding ──────────────────────────────────────────────
+// Called by _renderHistory after a full load: the openspace shows the
+// last message/thought per participant even before any live event, and
+// user avatars exist for every author already in the transcript.
+function openspaceSeedHistory(messages, cid) {
+  if (cid && cid !== _osSeedConvId) {
+    _osSeedConvId = cid;
+    openspaceResetTransient();
+  }
+  (messages || []).forEach((m) => {
+    if (!m) return;
+    const msgId = m.msg_id || '';
+    if (msgId) {
+      if (_osSeededIds.has(msgId)) return;
+      _osSeededIds.add(msgId);
+    }
+    const role = m.type || m.role;
+    const src = m.source || {};
+    if (role === 'user') {
+      const author = (src.type === 'user' && src.name) ? src.name
+        : ((typeof window !== 'undefined' && window._userId) || 'user');
+      const rec = _osEnsureUser(author);
+      if (rec && m.content) {
+        _osLog(rec, 'message', t('osvSaid'), m.content);
+        _osRememberBubble(rec, 'speech', m.content, m.timestamp);
+      }
+    } else if (role === 'assistant') {
+      const name = src.name
+        || (typeof selectedAgent !== 'undefined' && selectedAgent) || '';
+      if (!name) return;
+      const rec = _osEnsureAgent(name);
+      if (!rec) return;
+      const content = String(m.content || '').replace(/^\[[^\]]+\]:\s*/, '');
+      if (content) {
+        _osLog(rec, 'message', t('osvSaid'), content);
+        _osRememberBubble(rec, 'speech', content, m.timestamp);
+      } else if (m.thinking) {
+        _osRememberBubble(rec, 'thought', m.thinking, m.timestamp);
+      }
+    }
+  });
+  _osAgents.forEach((rec) => { _osRestoreBubbles(rec); });
+}
+
+// Conversation switch: desks survive (stable layout) but bubbles, logs
+// and desk props belong to the previous transcript — clear them.
+function openspaceResetTransient() {
+  _osSeededIds.clear();
+  _osAgents.forEach((rec) => {
+    rec.log = [];
+    rec.lastSpeech = null; rec.lastThought = null;
+    rec.speechText = ''; rec.thoughtText = '';
+    if (rec.speechEl) rec.speechEl.style.display = 'none';
+    if (rec.thoughtEl) rec.thoughtEl.style.display = 'none';
+    (rec.tools || []).slice().forEach((entry) => _osRemoveTool(rec, entry));
+  });
+}
+
+// ── Tool drops ───────────────────────────────────────────────────
+// Every tool_call drops a tool onto the desk: instantly readable "the
+// agent is working on something", and the emoji says roughly what.
+function _osToolEmoji(name) {
+  const s = String(name || '');
+  for (const pair of OSV_TOOL_EMOJI) { if (pair[0].test(s)) return pair[1]; }
+  return '\u{1F527}';
+}
+
+function _osToolSprite(emoji) {
+  const T = _osThree;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.font = '52px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, 32, 36);
+  const texture = new T.CanvasTexture(canvas);
+  const sprite = new T.Sprite(
+    new T.SpriteMaterial({ map: texture, transparent: true }));
+  sprite.scale.set(0.9, 0.9, 1);
+  return sprite;
+}
+
+function _osDropTool(rec, toolName) {
+  if (!rec || !_osScene || !_osThree || rec.kind === 'user') return;
+  rec.tools = rec.tools || [];
+  while (rec.tools.length >= OSV_TOOL_MAX) _osRemoveTool(rec, rec.tools[0]);
+  const sprite = _osToolSprite(_osToolEmoji(toolName));
+  const slot = rec.tools.length;
+  const restY = 1.45;
+  sprite.position.set(
+    rec.seat.x + (slot - (OSV_TOOL_MAX - 1) / 2) * 0.7,
+    restY + 3, rec.seat.z + 0.45);
+  _osScene.add(sprite);
+  rec.tools.push({ name: String(toolName || ''), sprite: sprite,
+                   phase: 'drop', start: performance.now(),
+                   restY: restY, fadeStart: 0 });
+}
+
+function _osFadeTool(rec, toolName) {
+  if (!rec || !rec.tools || !rec.tools.length) return;
+  const name = String(toolName || '');
+  let entry = name
+    ? rec.tools.find((e) => e.phase !== 'fade' && e.name === name) : null;
+  if (!entry) entry = rec.tools.find((e) => e.phase !== 'fade');
+  if (!entry) return;
+  entry.phase = 'fade';
+  entry.fadeStart = performance.now();
+}
+
+function _osRemoveTool(rec, entry) {
+  const i = rec.tools.indexOf(entry);
+  if (i >= 0) rec.tools.splice(i, 1);
+  if (entry.sprite) {
+    if (_osScene) _osScene.remove(entry.sprite);
+    if (entry.sprite.material) {
+      if (entry.sprite.material.map) entry.sprite.material.map.dispose();
+      entry.sprite.material.dispose();
+    }
+  }
+}
+
+function _osTickTools(ts) {
+  _osAgents.forEach((rec) => {
+    if (!rec.tools || !rec.tools.length) return;
+    rec.tools.slice().forEach((entry) => {
+      const sp = entry.sprite;
+      if (!sp) { _osRemoveTool(rec, entry); return; }
+      if (entry.phase === 'drop') {
+        const p = Math.min(1, (ts - entry.start) / OSV_TOOL_DROP_MS);
+        const fall = p < 0.7 ? (p / 0.7) * (p / 0.7) : 1;
+        const hop = p > 0.7
+          ? Math.sin((p - 0.7) / 0.3 * Math.PI) * 0.25 * (1 - p) : 0;
+        sp.position.y = entry.restY + (1 - fall) * 3 + hop;
+        if (p >= 1) { sp.position.y = entry.restY; entry.phase = 'rest'; }
+      } else if (entry.phase === 'fade') {
+        const q = Math.min(1, (ts - entry.fadeStart) / OSV_TOOL_FADE_MS);
+        sp.material.opacity = 1 - q;
+        sp.position.y = entry.restY + q * 0.4;
+        if (q >= 1) _osRemoveTool(rec, entry);
+      }
+    });
+  });
 }
 
 // ── Delegation walk ──────────────────────────────────────────────
@@ -465,12 +756,14 @@ function openspaceWireSSE(es) {
     try { args = JSON.stringify(d.arguments || {}); } catch (_) { args = ''; }
     _osLog(rec, 'tool', d.tool || 'tool', args);
     _osSetState(rec, 'tool', d.tool || '');
+    if (_osActive) _osDropTool(rec, d.tool || 'tool');
   });
   on('tool_result', (d) => {
     const rec = _osAgents.get(_osKey(_osEventAgent(d)));
     if (!rec) return;
     const body = typeof d.result === 'string' ? d.result : '';
     _osLog(rec, 'tool_result', (d.tool || 'tool') + ' \u2713', body);
+    _osFadeTool(rec, d.tool || '');
     _osSetState(rec, 'thinking');
   });
   on('new_message', (d) => {
@@ -478,11 +771,23 @@ function openspaceWireSSE(es) {
     if (d.role === 'assistant') {
       const rec = _osEnsureAgent(_osEventAgent(d));
       if (!rec) return;
+      if (d.msg_id) _osSeededIds.add(d.msg_id);
       _osLog(rec, 'message', t('osvSaid'), d.content);
       if (_osActive) { _osShowBubble(rec, 'speech', d.content); rec.speechText = ''; }
     } else if (d.role === 'user') {
-      // The user speaking resets everyone's stale bubbles sooner.
-      _osAgents.forEach((rec) => { rec.speechAt -= OSV_BUBBLE_LINGER_MS / 2; });
+      const src = d.source || {};
+      const author = (src.type === 'user' && src.name) ? src.name
+        : ((typeof window !== 'undefined' && window._userId) || 'user');
+      const rec = _osEnsureUser(author);
+      if (rec) {
+        if (d.msg_id) _osSeededIds.add(d.msg_id);
+        _osLog(rec, 'message', t('osvSaid'), d.content);
+        if (_osActive) _osShowBubble(rec, 'speech', d.content);
+      }
+      // The user speaking demotes everyone else's bubbles sooner.
+      _osAgents.forEach((r) => {
+        if (r !== rec) r.speechAt -= OSV_BUBBLE_LINGER_MS / 2;
+      });
     }
   });
   on('ask_user', (d) => {
@@ -522,6 +827,7 @@ function openspaceWireSSE(es) {
     if (!rec) return;
     _osLog(rec, 'tool', d.tool || 'tool', '');
     _osSetState(rec, 'tool', d.tool || '');
+    if (_osActive) _osDropTool(rec, d.tool || 'tool');
   });
   on('sub_agent_done', (d) => {
     const rec = _osAgents.get(_osKey(d.agent_name));
@@ -568,6 +874,7 @@ function _osTick(ts) {
   });
   // Per-agent idle animation + halo + overlay projection.
   const selKey = _osKey(typeof selectedAgent !== 'undefined' ? selectedAgent : '');
+  const tweening = new Set(_osTweens.map((tw) => tw.rec));
   _osAgents.forEach((rec) => {
     if (!rec.avatar) { if (_osScene && _osThree && !rec.group) _osBuildDesk(rec); return; }
     if (rec.halo) {
@@ -577,8 +884,14 @@ function _osTick(ts) {
     if (rec.state === 'thinking') {
       rec.avatar.rotation.y = Math.sin(ts / 700) * 0.15;
     } else if (rec.avatar.rotation.y !== 0) rec.avatar.rotation.y = 0;
+    // Working bob: a busy agent visibly types away at the desk.
+    if (!tweening.has(rec)) {
+      rec.avatar.position.y = rec.state === 'tool'
+        ? Math.abs(Math.sin(ts / 170)) * 0.07 : 0;
+    }
     _osProject(rec);
   });
+  _osTickTools(ts);
   _osExpireBubbles(now);
 }
 

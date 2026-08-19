@@ -16,6 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   click. Classic rendering keeps running underneath so switching modes is
   instant.
 
+### Changed
+
+- Ruff and Bandit versions are now pinned for reproducible lint results, and
+  the release gate is documented separately from the tracked full-tree
+  remediation plan.
+
 ## [1.0.0-beta.213] — 2026-08-19
 
 ### Fixed

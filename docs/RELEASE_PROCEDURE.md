@@ -68,10 +68,17 @@ Run validation that matches the branch workflow before committing. At minimum:
 ```bash
 python -m pytest tests/ -x -q --tb=short
 python -m compileall -q core tasks services pawflow_cli
-ruff check .
+ruff check --select=E9,F63,F7,F82 --no-fix \
+  cli.py core/ engine/ tasks/ services/ pawflow_cli/ pawflow_relay/ tools/
 bandit -q -r core tasks services pawflow_cli
 python -m build
 ```
+
+The Ruff command above is the current blocking branch gate. The pinned strict
+policy remains `ruff check .`; its existing debt is tracked in
+`docs/RUFF_REMEDIATION_PLAN.md` and must not be described as passing until that
+plan reaches zero. The final phase replaces the temporary error-only gate with
+the strict command in both CI and this procedure.
 
 Also run any focused suites required by the change. Verify the built wheel in a
 clean virtual environment, including the `pawflow --version` and

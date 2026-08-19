@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.215] — 2026-08-19
+
+### Changed
+
+- Project wiki: `acknowledge` accepts glob patterns (`app/*`) that expand
+  against the pending source set — the recovery path for a manifest poisoned
+  by a pre-guard local-surface scan.
+- CI: the apt step is bounded (timeouts, retries) and falls back to
+  `archive.ubuntu.com` when the Azure mirror hangs, instead of stalling the
+  whole test matrix.
+
 ### Fixed
 
 - Project wiki: scans and auto-updates are now pinned to the relay container

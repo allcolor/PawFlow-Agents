@@ -64,7 +64,12 @@ class _RelayDockerMixin:
             entry for entry in bridge_env.get("WSLENV", "").split(":")
             if entry and entry.split("/", 1)[0] not in forwarded_names
         ]
-        wslenv_entries.extend(f"{name}/w" for name in sorted(forwarded_names))
+        # No flag suffix: a bare WSLENV entry is shared in BOTH directions.
+        # '/w' means "only when invoking Win32 from WSL" — the exact opposite
+        # of this launch (Windows invoking WSL), so with '/w' the token never
+        # reached the bridge and it died on "PAWFLOW_HOST_HELPER_TOKEN is
+        # required".
+        wslenv_entries.extend(sorted(forwarded_names))
         bridge_env["WSLENV"] = ":".join(wslenv_entries)
         bridge_cmd = [
             "wsl", "env", f"PYTHONPATH={translated_root}",

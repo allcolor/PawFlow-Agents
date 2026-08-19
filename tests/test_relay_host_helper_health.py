@@ -156,8 +156,27 @@ def test_windows_bridge_token_is_forwarded_outside_command_line():
     assert "secret-capability" not in " ".join(captured["command"])
     assert captured["environment"]["PAWFLOW_HOST_HELPER_TOKEN"] == (
         "secret-capability")
-    assert "PAWFLOW_HOST_HELPER_TOKEN/w" in (
-        captured["environment"]["WSLENV"].split(":"))
+    # Bare WSLENV entries are shared in BOTH directions. '/w' means "only
+    # when invoking Win32 from WSL" — the opposite of this launch — so a
+    # '/w' suffix means the token never reaches the WSL bridge and it dies
+    # on "PAWFLOW_HOST_HELPER_TOKEN is required".
+    wslenv = captured["environment"]["WSLENV"].split(":")
+    assert "PAWFLOW_HOST_HELPER_TOKEN" in wslenv
+    assert "PAWFLOW_WINDOWS_HOST_IP" in wslenv
+    assert not any(entry.endswith("/w") for entry in wslenv
+                   if entry.startswith("PAWFLOW_"))
+
+
+def test_bridge_stdin_watch_uses_raw_fd_reads():
+    # sys.stdin.buffer.read in a daemon thread holds the BufferedReader
+    # lock at interpreter shutdown → "Fatal Python error:
+    # _enter_buffered_busy". The watcher must read the raw fd instead.
+    import inspect
+
+    from pawflow_relay import host_bridge
+    source = inspect.getsource(host_bridge.main)
+    assert "os.read(0" in source
+    assert "sys.stdin.buffer.read" not in source
 
 
 def test_wsl_bridge_forwards_authenticated_helper_ping():

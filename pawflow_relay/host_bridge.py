@@ -143,8 +143,13 @@ def main(argv=None):
     if args.exit_on_stdin_eof:
         def _stop_on_stdin_eof():
             try:
-                while sys.stdin.buffer.read(1):
+                # Raw fd read: sys.stdin.buffer holds the BufferedReader lock,
+                # and a daemon thread blocked in it makes interpreter shutdown
+                # die with "Fatal Python error: _enter_buffered_busy".
+                while os.read(0, 4096):
                     pass
+            except OSError:
+                pass
             finally:
                 stop_event.set()
 

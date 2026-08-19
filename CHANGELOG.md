@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Relay Desktop on Windows now starts its Docker-to-host helper bridge as a
+  tracked WSL process instead of relying on Docker Desktop host networking,
+  waits for the bridge before registering the relay, keeps capability tokens
+  out of process arguments, and shuts the bridge down with its parent.
+
 ## [1.0.0-beta.212] — 2026-08-18
 
 ### Fixed

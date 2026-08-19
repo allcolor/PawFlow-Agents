@@ -63,6 +63,7 @@ class RelayThread(_RelayDockerMixin, _RelayHostHelperMixin):
         self._stop_event = threading.Event()
         self._registered = False
         self._docker_container = None
+        self._host_bridge_proc = None
         self._on_token_refresh = on_token_refresh
         # Lazily-opened log file handle for [Relay] lines when log_file
         # was configured. Writing to a file keeps pawflow_cli's UI clean
@@ -242,6 +243,7 @@ class RelayThread(_RelayDockerMixin, _RelayHostHelperMixin):
 
     def _kill_docker(self):
         """Kill this relay's Docker containers (current + orphans)."""
+        self._stop_windows_host_bridge()
         if self._docker_container:
             import subprocess as _sp  # nosec B404
             try:

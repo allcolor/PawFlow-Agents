@@ -1,25 +1,113 @@
 """RelayThread docker relay run loop."""
 
 import logging
-
 import os
 import secrets
+import subprocess  # nosec B404 - fixed argv only; no shell execution.
 import threading
 import time
 
+from pawflow_relay._thread_base import (
+    _make_relay_container_name,
+    _relay_apparmor_security_opts,
+    _relay_runtime_root,
+)
 from pawflow_relay.utils import (
-    docker_cmd, translate_path, to_host_path, get_host_ip,
+    docker_cmd,
     find_free_port,
+    get_host_ip,
+    to_host_path,
+    translate_path,
 )
 
 # Split out of pawflow_relay/thread.py for the <=800-line rule; composed back
 # into RelayThread (invariant 2: MRO/shared state). Whole pkg is vendored via copytree.
 
-from pawflow_relay._thread_base import _make_relay_container_name, _relay_apparmor_security_opts, _relay_runtime_root  # noqa: F401,E402
-
 
 class _RelayDockerMixin:
     """docker relay run loop."""
+
+    def _stop_windows_host_bridge(self):
+        """Stop the tracked WSL bridge process, if one is running."""
+        proc = getattr(self, "_host_bridge_proc", None)
+        if proc is None:
+            return
+        self._host_bridge_proc = None
+        try:
+            if proc.stdin is not None:
+                proc.stdin.close()
+            proc.wait(timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    proc.kill()
+                except OSError:
+                    logging.getLogger(__name__).debug(
+                        "Failed to stop WSL host bridge", exc_info=True)
+
+    def _start_windows_host_bridge(
+            self, project_root, host_helper_port, subprocess_module):
+        """Start a tracked bridge directly in WSL and wait for its listener."""
+        self._stop_windows_host_bridge()
+        translated_root = translate_path(to_host_path(project_root))
+        bridge_env = os.environ.copy()
+        bridge_env["PAWFLOW_HOST_HELPER_TOKEN"] = self._host_helper_token
+        bridge_env["PAWFLOW_WINDOWS_HOST_IP"] = get_host_ip()
+        forwarded_names = {
+            "PAWFLOW_HOST_HELPER_TOKEN",
+            "PAWFLOW_WINDOWS_HOST_IP",
+        }
+        wslenv_entries = [
+            entry for entry in bridge_env.get("WSLENV", "").split(":")
+            if entry and entry.split("/", 1)[0] not in forwarded_names
+        ]
+        wslenv_entries.extend(f"{name}/w" for name in sorted(forwarded_names))
+        bridge_env["WSLENV"] = ":".join(wslenv_entries)
+        bridge_cmd = [
+            "wsl", "env", f"PYTHONPATH={translated_root}",
+            "python3", "-u", "-m", "pawflow_relay.host_bridge",
+            "--listen-port", str(host_helper_port),
+            "--target-port", str(host_helper_port),
+            "--exit-on-stdin-eof",
+        ]
+        ready = threading.Event()
+        recent_output = []
+        bridge_proc = subprocess_module.Popen(  # nosec B603
+            bridge_cmd, stdin=subprocess_module.PIPE,
+            stdout=subprocess_module.PIPE, stderr=subprocess_module.STDOUT,
+            env=bridge_env)
+        self._host_bridge_proc = bridge_proc
+
+        def _read_bridge_logs():
+            try:
+                for line in bridge_proc.stdout:
+                    message = line.decode(
+                        "utf-8", errors="replace").rstrip()
+                    if not message:
+                        continue
+                    recent_output.append(message)
+                    del recent_output[:-10]
+                    self._log(message)
+                    if "[HostBridge] listening" in message:
+                        ready.set()
+            except (AttributeError, OSError, ValueError):
+                logging.getLogger(__name__).debug(
+                    "WSL host bridge log reader failed", exc_info=True)
+
+        threading.Thread(
+            target=_read_bridge_logs, daemon=True,
+            name="host-bridge-log-reader").start()
+        if ready.wait(timeout=10):
+            return
+        return_code = bridge_proc.poll()
+        details = " | ".join(recent_output) or "no bridge output"
+        self._stop_windows_host_bridge()
+        raise RuntimeError(
+            "WSL host-helper bridge did not become ready "
+            f"(exit={return_code}): {details}")
 
     def _run_docker_relay(self, tools_dir):
         """Run the relay inside a Docker container with auto-restart."""
@@ -228,33 +316,17 @@ class _RelayDockerMixin:
                 _relay_permission_args.append("--allow-service-tunnels")
 
             # A Docker daemon reached through WSL cannot reliably route back
-            # to Windows through a LAN/VPN address. Run a tiny host-network
-            # bridge in WSL; the main worker reaches it through host-gateway,
-            # and it selects an authenticated Windows route at runtime.
+            # to Windows through a LAN/VPN address. Run the tracked bridge as
+            # a WSL process, where both the NAT gateway and mirrored loopback
+            # are visible. The Docker worker reaches its listener through the
+            # WSL host gateway.
             if os.name == "nt":
                 if not _translated_pkg:
                     raise RuntimeError(
                         "Relay package mount is required for the Windows "
                         "host-helper bridge")
-                self._host_bridge_container = _make_relay_container_name(
-                    self.relay_id, "hostbridge")
-                _bridge_cmd = docker_cmd() + [
-                    "run", "-d", "--rm",
-                    "--name", self._host_bridge_container,
-                    "--network", "host",
-                    "--env-file", _env_file_container,
-                    "-v", f"{_translated_pkg}:/opt/pawflow/pawflow_relay:ro",
-                    self.docker_image,
-                    "python3", "-u", "-m", "pawflow_relay.host_bridge",
-                    "--listen-port", str(host_helper_port),
-                    "--target-port", str(host_helper_port),
-                ]
-                _bridge_result = _sp.run(  # nosec B603
-                    _bridge_cmd, capture_output=True, text=True, timeout=30)
-                if _bridge_result.returncode != 0:
-                    raise RuntimeError(
-                        "Windows host-helper bridge failed to start: "
-                        f"{_bridge_result.stderr.strip()[:500]}")
+                self._start_windows_host_bridge(
+                    _project_root, host_helper_port, _sp)
 
             docker_run_cmd = docker_cmd() + [
                 "run", "--rm",

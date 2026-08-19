@@ -137,12 +137,26 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--listen-port", required=True, type=int)
     parser.add_argument("--target-port", required=True, type=int)
+    parser.add_argument("--exit-on-stdin-eof", action="store_true")
     args = parser.parse_args(argv)
+    stop_event = threading.Event()
+    if args.exit_on_stdin_eof:
+        def _stop_on_stdin_eof():
+            try:
+                while sys.stdin.buffer.read(1):
+                    pass
+            finally:
+                stop_event.set()
+
+        threading.Thread(
+            target=_stop_on_stdin_eof, daemon=True,
+            name="host-bridge-parent-watch").start()
     serve(
         args.listen_port,
         args.target_port,
         os.environ.get("PAWFLOW_HOST_HELPER_TOKEN", ""),
         os.environ.get("PAWFLOW_WINDOWS_HOST_IP", ""),
+        stop_event=stop_event,
     )
     return 0
 

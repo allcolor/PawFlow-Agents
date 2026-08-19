@@ -1,6 +1,7 @@
 import inspect
 import socket
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -77,11 +78,86 @@ def test_host_helper_bind_failure_is_reported(monkeypatch):
     assert any("failed to listen" in line for line in helper.logs)
 
 
-def test_windows_launcher_preserves_docker_desktop_host_alias():
-    source = inspect.getsource(RelayThread._run_docker_relay)
-    assert '"--network", "host"' in source
-    assert '"pawflow_relay.host_bridge"' in source
-    assert "PAWFLOW_HOST_HELPER=host.docker.internal:" in source
+def test_windows_launcher_uses_tracked_wsl_bridge():
+    start_source = inspect.getsource(
+        RelayThread._start_windows_host_bridge)
+    run_source = inspect.getsource(RelayThread._run_docker_relay)
+
+    assert '"wsl", "env"' in start_source
+    assert '"PYTHONPATH=' in start_source
+    assert '"PAWFLOW_HOST_HELPER_TOKEN"' in start_source
+    assert '"--exit-on-stdin-eof"' in start_source
+    assert '"--network", "host"' not in run_source
+    assert "PAWFLOW_HOST_HELPER=host.docker.internal:" in run_source
+
+
+def test_windows_bridge_stop_closes_stdin_before_termination():
+    events = []
+
+    class _Stdin:
+        def close(self):
+            events.append("stdin-close")
+
+    class _Process:
+        stdin = _Stdin()
+
+        def wait(self, timeout):
+            events.append(("wait", timeout))
+
+        def terminate(self):
+            events.append("terminate")
+
+        def kill(self):
+            events.append("kill")
+
+    relay = object.__new__(RelayThread)
+    relay._host_bridge_proc = _Process()
+
+    relay._stop_windows_host_bridge()
+
+    assert events == ["stdin-close", ("wait", 3)]
+    assert relay._host_bridge_proc is None
+
+
+def test_windows_bridge_token_is_forwarded_outside_command_line():
+    captured = {}
+
+    class _Stdin:
+        def close(self):
+            pass
+
+    class _Process:
+        def __init__(self):
+            self.stdin = _Stdin()
+            self.stdout = [b"[HostBridge] listening on 48123\n"]
+
+        def wait(self, timeout):
+            pass
+
+        def poll(self):
+            return None
+
+    def _popen(command, **kwargs):
+        captured["command"] = command
+        captured["environment"] = kwargs["env"]
+        return _Process()
+
+    subprocess_module = SimpleNamespace(
+        PIPE=object(), STDOUT=object(), Popen=_popen)
+    relay = object.__new__(RelayThread)
+    relay._host_bridge_proc = None
+    relay._host_helper_token = "secret-capability"
+    relay._log = lambda _message: None
+
+    relay._start_windows_host_bridge(
+        "/workspace", 48123, subprocess_module)
+    relay._stop_windows_host_bridge()
+
+    assert "secret-capability" not in " ".join(captured["command"])
+    assert captured["environment"]["PAWFLOW_HOST_HELPER_TOKEN"] == (
+        "secret-capability")
+    assert "PAWFLOW_HOST_HELPER_TOKEN/w" in (
+        captured["environment"]["WSLENV"].split(":"))
 
 
 def test_wsl_bridge_forwards_authenticated_helper_ping():

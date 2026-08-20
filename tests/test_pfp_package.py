@@ -821,7 +821,7 @@ def test_pfp_runtime_task_stages_spilled_flowfile_without_materializing(tmp_path
     assert relay.calls[-1][2]["done"] is True
 
 
-def test_pfp_flow_task_is_visible_to_admin_flow_builder(tmp_path, monkeypatch):
+def test_pfp_flow_task_is_visible_to_flow_editor(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
     pkgdir = _write_package_dir(tmp_path, keypair, include_flow_task=True)
@@ -829,21 +829,17 @@ def test_pfp_flow_task_is_visible_to_admin_flow_builder(tmp_path, monkeypatch):
     pfp_package.install_pfp(
         built["path"], user_id="alice", include=["flow_task:resize-image"], force=True)
 
-    from tasks.io.admin_editor_actions import (
-        _admin_get_task_schema,
-        _admin_list_task_types,
-        _admin_validate_flow,
-    )
+    from core.flow_authoring import FlowAuthoringService
+    from core.flow_definition_validator import FlowDefinitionValidator
 
-    catalog = _admin_list_task_types({}, None, None, None, None)
+    catalog = FlowAuthoringService.task_catalog()
     entry = next(item for item in catalog if item["type"] == "packageResizeImage")
     assert entry["name"] == "packageResizeImage"
     assert entry["description"] == "Resize an image from a package task"
     assert entry["icon"] == "package"
     assert entry["category"] == "Plugins"
 
-    schema = _admin_get_task_schema(
-        {"task_type": "packageResizeImage"}, None, None, None, None)
+    schema = FlowAuthoringService.task_schema("packageResizeImage")
     assert schema == {
         "type": "packageResizeImage",
         "schema": {
@@ -856,13 +852,22 @@ def test_pfp_flow_task_is_visible_to_admin_flow_builder(tmp_path, monkeypatch):
         },
     }
 
-    validation = _admin_validate_flow({"flow": {
+    validation = FlowDefinitionValidator.validate({
+        "name": "resize",
         "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64, "relay": "relay1"}}},
         "relations": [],
         "entries": ["resize"],
         "exits": ["resize"],
-    }}, None, None, None, None)
-    assert validation == {"errors": [], "warnings": []}
+    })
+    assert validation == {"ok": True, "errors": 0, "warnings": 0, "problems": []}
+
+    missing = FlowDefinitionValidator.validate({
+        "name": "resize",
+        "tasks": {"resize": {"type": "packageResizeImage", "parameters": {"width": 64}}},
+    })
+    assert [(p["code"], p["entity_id"], p["field"]) for p in missing["problems"]] == [
+        ("missing_required_parameter", "resize", "relay"),
+    ]
 
 
 def test_pfp_runtime_task_result_rebuilds_flowfiles(tmp_path, monkeypatch):
@@ -1567,45 +1572,6 @@ def test_pfp_uninstall_blocks_service_provider_used_by_explicit_instances(
     assert removed["ok"] is True
     from core import ServiceFactory
     assert "wavespeedImage" not in ServiceFactory.list_types()
-
-
-def test_admin_start_uses_scoped_flow_fqn_without_flow_path(tmp_path, monkeypatch):
-    _reset_repo(tmp_path, monkeypatch)
-    from core.deployment_registry import DeployedInstance, DeploymentRegistry
-    from core.executor_registry import ExecutorRegistry
-    from core.repository import ScopedRepository
-    from engine.continuous_executor import ContinuousFlowExecutor
-    from tasks.io.admin_actions import _admin_start_flow
-
-    DeploymentRegistry.reset()
-    ExecutorRegistry._instance = None
-    ScopedRepository.instance().create_flow(
-        "community.pkg.admin:1.0.0", "user", {
-            "id": "admin-flow",
-            "name": "Admin Flow",
-            "tasks": {},
-            "relations": [],
-        }, user_id="alice")
-    monkeypatch.setattr(ContinuousFlowExecutor, "start", lambda self: None)
-    dep = DeploymentRegistry.get_instance()
-    dep._instances["admin-inst"] = DeployedInstance(
-        instance_id="admin-inst",
-        flow_id="admin-flow",
-        flow_name="Admin Flow",
-        flow_fqn="community.pkg.admin:1.0.0",
-        flow_scope="user",
-        flow_path=str(tmp_path / "missing.json"),
-        owner="alice",
-        status="stopped",
-    )
-
-    result = _admin_start_flow(
-        {"instance_id": "admin-inst"}, ExecutorRegistry.get_instance(), dep, None, None)
-    executor = ExecutorRegistry.get_instance().get("admin-inst")
-
-    assert result == {"status": "running"}
-    assert executor is not None
-    assert executor._flow.id == "admin-flow"
 
 
 def test_files_fs_start_uses_scoped_flow_fqn_without_flow_path(tmp_path, monkeypatch):

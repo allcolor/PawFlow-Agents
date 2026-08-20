@@ -169,6 +169,13 @@ CONVERSATION_INDEX_DIR = RUNTIME_DIR / "conversation_index"
 # Spill (FlowFile large content)
 SPILL_DIR = RUNTIME_DIR / "spill"
 
+
+def flow_editor_drafts_dir() -> Path:
+    """Flow Editor drafts (core/flow_authoring.py): per-user working copies
+    that never pollute repository versions. Resolved at call time so tests
+    that monkeypatch RUNTIME_DIR are honoured."""
+    return RUNTIME_DIR / "flow_editor_drafts"
+
 # Runtime data files
 # Legacy pre-ledger aggregate file — only read once by UsageLedger's
 # one-shot migration, then renamed to .json.migrated.

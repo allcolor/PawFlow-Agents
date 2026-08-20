@@ -8,6 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Flow Editor — authoring foundation** (`core/flow_authoring.py`,
+  `core/flow_definition_validator.py`, `tasks/ai/actions/flow_editor.py`):
+  one `FlowAuthoringService` shared by the Web UI, agent tools and the
+  CLI in front of `ScopedRepository`. Published versions are immutable —
+  editing goes through drafts stored in `data/runtime/flow_editor_drafts/`
+  (private per user, monotonic `revision`), saving is optimistically
+  locked (`base_revision` mismatch → HTTP 409 `draft_changed_elsewhere`,
+  never last-writer-wins), and publishing creates a NEW version
+  (`publish_flow_version` / `create_flow`). The JSON definition is the
+  source of truth: a load → save round-trip preserves every field,
+  including unknown/future ones. `FlowDefinitionValidator` is the single
+  static validator (structured `severity/code/entity_type/entity_id/field`
+  problems, never resolves `${...}` or opens connections); publish adds a
+  full parse. Structured diff (`+`/`~`/`-` tasks, relations keyed by
+  `connection_id`, parameters, services, groups, entries/exits; layout
+  and name/description flagged without runtime impact). Actions:
+  `flow_editor_get/versions/new/fork/create_draft/load_draft/list_drafts/
+  save_draft/discard_draft/validate/diff/publish/task_catalog/task_schema
+  (schema for the CURRENT parameters)/service_catalog/service_schema`.
+  See `docs/flow_editor.md`.
+
 - **Flow Runtime Console**: the Flow Runtime Viewer becomes a NiFi-style
   operations console on running instances. Engine: stable
   `connection_id` per queue, `Connection.pause/resume` (paused queues
@@ -61,6 +82,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   to create its first entry), and deleting a directory now confirms with
   an explicit "AND EVERYTHING inside it" warning (relay deletes are
   recursive).
+
+### Removed
+
+- **Legacy admin editor scaffold and `adminAction` task**:
+  `tasks/io/admin_editor_actions.py` (`admin_list_task_types`,
+  `admin_get_task_schema`, `admin_list_service_types`,
+  `admin_get_service_schema`, `admin_save_flow_json` — a second, file-based
+  persistence/versioning system next to `ScopedRepository` —,
+  `admin_validate_flow`, `admin_auto_layout`) and the whole
+  `tasks/io/admin_actions.py` (`AdminActionTask`, task type `adminAction`,
+  `POST /admin/api` with `admin_*_flow` / template handlers). An audit found
+  no flow, route, UI code or documentation consuming them; the modern
+  paths are `deploy_flow` / `start_flow` / `stop_flow` /
+  `get_flow_instance`, `flow_runtime_*` and the new `flow_editor_*`
+  actions. A custom beta flow that declared `"type": "adminAction"` will
+  fail to parse and must be migrated to those actions.
 
 ## [1.0.0-beta.221] — 2026-08-20
 

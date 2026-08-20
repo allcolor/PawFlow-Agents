@@ -71,8 +71,9 @@ Underlying primitives: `ScopedRepository.list` / `list_available`
 (`core/service_registry.py:540`, lazy per-scope load).
 
 ### Precedent already cross-user
-`_admin_list_flows` (`tasks/io/admin_actions.py:106`) already enumerates **all**
-deployed flow instances and exposes `inst.owner` (line 118) — the
+`DeploymentRegistry.get_all()` already enumerates **all** deployed flow
+instances and exposes `inst.owner` (the legacy `adminAction` task that used
+to surface this was removed with the Flow Editor cleanup) — the
 DeploymentRegistry/ExecutorRegistry carry owner+conv
 (`core/executor_registry.py:83,110-111,369`). This validates the owner-labelled
 view-all pattern; the *repository/template/service-definition* side is what
@@ -256,8 +257,9 @@ Validation rules inside `effective_owner`:
   admin-only **user picker** (and conv picker for conv scope) that sets
   `target_user_id` / `target_conversation_id`. Default selection = self, so the
   default request is identical to today.
-- Populate the picker from an admin users listing (reuse / expose via
-  `tasks/io/admin_actions.py`; `admin_list_*` actions already exist there).
+- Populate the picker from an admin users listing exposed through the
+  modern action dispatch (`tasks/ai/actions/admin_settings.py`); the legacy
+  `adminAction` task no longer exists.
 - i18n keys in `tasks/io/chat_ui/i18n.js` + locale files (EN/FR/ES).
 - Toggle/picker hidden entirely when the session is not admin.
 

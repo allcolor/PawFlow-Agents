@@ -549,6 +549,7 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 | [Multi-Client Conversations](docs/multi_client_conversations.md) | Shared runtime across web, CLI, VS Code, API, channels |
 | [Durable Confirmations](docs/confirmations.md) | Agent/flow confirmation requests (yes/no, single/multi choice) answered whenever; durable flow wait/notify |
 | [Flow Runtime Console](docs/flow_runtime_console.md) | NiFi-style ops on running flows: task control, queue pause/inspect/empty, FlowFile download |
+| [Flow Editor](docs/flow_editor.md) | Authoring layer: drafts with optimistic locking, static validation, diff, immutable versions |
 | [A2A Integration](docs/a2a_integration.md) | Publish agents as A2A 1.0 endpoints, keys, contexts, remote targets |
 | [AG-UI Integration](docs/agui_integration.md) | AG-UI protocol server: streaming runs, frontend tools, shared state, interrupts |
 | [Desktop/VNC](docs/desktop_vnc.md) | noVNC desktop, screen tool, audio notes |

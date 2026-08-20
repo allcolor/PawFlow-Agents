@@ -39,11 +39,10 @@ code duplication.
 
 ---
 
-## IO Tasks (53)
+## IO Tasks (52)
 
 | Type | Description |
 |------|-------------|
-| `adminAction` | Handle PawFlow admin API requests |
 | `agentSSEStream` | Stream agent events to the client via SSE |
 | `assignTaskToAgent` | Assign a recurring task to an agent in a linked conversation |
 | `cancelAgentTask` | Cancel a recurring task assigned to an agent |

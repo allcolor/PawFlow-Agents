@@ -127,6 +127,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Openspace now creates a desk for every agent attached to the conversation,
+  including idle or rate-limited agents that have emitted no live interaction;
+  the room synchronizes from the canonical `list_resources` roster regardless
+  of whether that snapshot arrives before or after the 3D view opens.
 - Chat UI: thinking text is no longer truncated (nor duplicated) in the
   detail block, the turn view, and the openspace thought bubble. The
   streamed preview is truncated by design (the emitter never flushes its

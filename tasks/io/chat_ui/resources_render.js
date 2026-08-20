@@ -59,6 +59,9 @@ function _renderResourcesFromSSE(data) {
   if (typeof updateAdminSettingsButton === 'function') updateAdminSettingsButton();
   if (data.tools) { window._cachedTools = data.tools; return; }  // tool schemas response
   _lastResourcesData = data;
+  if (typeof openspaceSyncAgents === 'function') {
+    openspaceSyncAgents(data.agents);
+  }
   _renderResourcesData(data);
 }
 async function _renderResourcesData(data) {

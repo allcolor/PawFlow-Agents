@@ -128,6 +128,18 @@ def test_last_bubble_is_persistent_and_seeded_from_history():
     assert ".osv-stale" in template
 
 
+def test_all_conversation_agents_get_desks_even_when_inactive():
+    openspace = _text("tasks/io/chat_ui/openspace.js")
+    resources = _text("tasks/io/chat_ui/resources_render.js")
+    # selectedAgent and activeInteractions are insufficient: an attached
+    # agent may be idle or rate-limited and therefore emit no live event.
+    assert "function openspaceSyncAgents(agents)" in openspace
+    assert "openspaceSyncAgents(_lastResourcesData.agents)" in openspace
+    # list_resources can finish after the 3D scene opens; its fresh roster
+    # must therefore synchronize the room as well.
+    assert "openspaceSyncAgents(data.agents)" in resources
+
+
 def test_users_get_visitor_avatars_with_bubbles():
     openspace = _text("tasks/io/chat_ui/openspace.js")
     assert "function _osEnsureUser" in openspace

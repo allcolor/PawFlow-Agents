@@ -178,9 +178,24 @@ function _osEnsureThree() {
   return _osThreeLoading;
 }
 
-// Desks for agents already known before the view opened: the selected
-// agent plus everything the active-agents tracker has seen.
+// Ensure every configured conversation member has a desk, including idle,
+// rate-limited or otherwise inactive agents that emitted no live event.
+// list_resources may complete before or after the 3D view opens, so this
+// function is deliberately safe to call from both paths.
+function openspaceSyncAgents(agents) {
+  (Array.isArray(agents) ? agents : []).forEach((agent) => {
+    const name = typeof agent === 'string' ? agent : (agent && agent.name);
+    if (name) _osEnsureAgent(name);
+  });
+}
+
+// Desks for agents already known before the view opened: all configured
+// conversation members, the selected agent, and everything the live
+// active-agents tracker has seen.
 function _osSeedAgents() {
+  if (typeof _lastResourcesData !== 'undefined' && _lastResourcesData) {
+    openspaceSyncAgents(_lastResourcesData.agents);
+  }
   if (typeof selectedAgent !== 'undefined' && selectedAgent) _osEnsureAgent(selectedAgent);
   if (typeof activeInteractions !== 'undefined') {
     Object.values(activeInteractions || {}).forEach((it) => {

@@ -317,7 +317,8 @@ def handle_content_download(req) -> None:
             try:
                 stream.close()
             except Exception:
-                pass
+                logger.debug("Could not close FlowFile content stream",
+                             exc_info=True)
 
     req.complete_stream(200, {
         "Content-Type": mime,

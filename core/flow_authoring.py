@@ -536,10 +536,7 @@ class FlowAuthoringService:
         from core.task_categories import TASK_CATEGORIES
         rows = []
         for task_type in TaskFactory.list_types():
-            try:
-                cls = TaskFactory.get(task_type)
-            except Exception:
-                continue
+            cls = TaskFactory.get(task_type)
             rows.append({
                 "type": getattr(cls, "TYPE", task_type),
                 "name": getattr(cls, "NAME", task_type),

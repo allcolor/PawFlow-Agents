@@ -127,6 +127,9 @@ The README also advertises:
 - Relay-scoped AST/tree-sitter project graph and sourced project wiki.
 - Multiple LLM providers and an OpenAI-compatible endpoint.
 - Permission modes and tool-access control per configuration.
+- External interoperability: published MCP endpoints, A2A 1.0 server/client,
+  and an AG-UI protocol server on the same publications (streaming runs,
+  frontend tools, shared state, interrupts) for CopilotKit-style frontends.
 
 ### Pipelines
 
@@ -150,7 +153,7 @@ The README also advertises:
 
 ### User interfaces
 
-- Web chat with SSE, files, context, slash commands, `/desktop`, and conversation management.
+- Web chat with SSE, files, context, slash commands, `/desktop`, and conversation management; three conversation views (simplified turn view, classic transcript, and the Openspace live 3D office with per-agent desks, bubbles, status orbiters, and projected panels).
 - PawCode CLI for terminal use.
 - VS Code extension.
 - Conversations shared across web, CLI, VS Code, API/channels, and flows.

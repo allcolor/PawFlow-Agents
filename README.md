@@ -68,7 +68,9 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - **Native CLI engines, not API reimplementations**: subscription providers run the real interactive Codex, Claude Code, Antigravity, and Gemini CLI engines per conversation — native harness and reasoning preserved — with native Codex plugins (`codex_plugins`) and Claude Code plugin marketplaces (`claude_plugins`/`claude_marketplaces`) declarable per LLM service.
 - **External agent interoperability**: publish several agents from one
   conversation as independent authenticated MCP endpoints, publish one or more
-  A2A endpoints, call remote A2A agents, or attach Claude Code, Codex,
+  A2A endpoints, serve the same publications to AG-UI clients (CopilotKit and
+  friends) with streaming runs, frontend tools, shared state, and
+  interrupts, call remote A2A agents, or attach Claude Code, Codex,
   Agy/Gemini, OpenCode, JCode, Pi, or Hermes as a first-class external MCP
   agent.
 - **Delegated vision**: pair a strong text-only reasoning model with a separate vision-enabled LLM so uploads, screenshots, and desktop views become detailed descriptions with UI coordinates before the reasoning turn. Images sent to a text-only model are never silently dropped: any model — including free-tier ones — gets vision, and clicks stay accurate because coordinates come from the vision model, verified locally by the pre-click screen guard.
@@ -80,7 +82,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 
 - Agentic coding sessions against a linked workspace, with persistent context and auditable tool output.
 - Multi-agent operations where planners, coders, reviewers, researchers, and verifiers work in the same conversation.
-- MCP and A2A gateways that expose an existing PawFlow conversation to external clients or connect remote agents to the same durable runtime.
+- MCP, A2A, and AG-UI gateways that expose an existing PawFlow conversation to external clients, embed a published agent into a CopilotKit/AG-UI frontend, or connect remote agents to the same durable runtime.
 - Browser and desktop automation for workflows that do not have clean APIs.
 - Vision-guided desktop agents built from a text-only reasoning model and an independently selected vision model.
 - Realtime voice conversations with your agents — speech-to-speech sessions (OpenAI Realtime or Gemini Live) with live captions, barge-in, tool use, and Telegram voice-note replies, persisted as normal conversation history.
@@ -413,6 +415,19 @@ remote A2A agent with the built-in `a2a` tool. Resources → A2A provides guided
 publication, one-time keys, isolated/shared context policy, Agent Card copying,
 and named local or remote targets. See [A2A Integration](docs/a2a_integration.md).
 
+### AG-UI (agents in your own apps)
+
+Every A2A publication is also an [AG-UI](https://github.com/ag-ui-protocol/ag-ui)
+server at `POST /agui/{publication_id}` — same Bearer keys, one publish action,
+two protocols. Any AG-UI client (CopilotKit and the wider ecosystem) gets
+streaming runs (`RUN_STARTED`, `TEXT_MESSAGE_*`, `THINKING_*`, `TOOL_CALL_*`),
+and on isolated publications the full interactive protocol: client-declared
+**frontend tools** the agent can call (tool-based generative UI /
+human-in-the-loop), a **shared state** document synchronized live
+(`STATE_SNAPSHOT`/`STATE_DELTA`), and **interrupts** the client answers via
+`resume`. Each AG-UI `threadId` is a durable server-side conversation. See
+[AG-UI Integration](docs/agui_integration.md).
+
 ## Pipeline Engine
 
 100+ tasks across 5 categories for data processing workflows:
@@ -466,7 +481,7 @@ Expressions resolve through a cascade: secrets → flow parameters → conversat
 ## Web Chat
 
 - Real-time streaming via SSE
-- Two conversation views: **Simplified** (the default) shows each turn as your message, one live activity block, and the turn's last message below it; **Classic** keeps the flat transcript. Switch per conversation from the View menu.
+- Three conversation views: **Simplified** (the default) shows each turn as your message, one live activity block, and the turn's last message below it; **Classic** keeps the flat transcript; **Openspace** renders the conversation as a live 3D office (three.js, lazily loaded) — each agent sits at a desk with speech/thought bubbles mirroring the stream, status orbiters (🧠 thinking, 🔧 tool runs, 💤 idle), per-agent battery gauges, a wall screen projecting the live transcript, resource posters opening the cognitive panels, and a 3D stage projecting deployed flows with animated dataflow. Switch per conversation from the View menu.
 - New conversations start in **auto** permission mode; change it per conversation from the permission selector, or with `/permission default|approve_edits|read_only|auto` (see [Security Model](docs/security_model.md#permission-modes)).
 - Shared conversations across web, PawCode CLI, VS Code, the Android app, API clients, and channel flows
 - File explorer with relay filesystem access
@@ -531,6 +546,8 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 | [VS Code Extension](docs/vscode.md) | Editor client and resource panel |
 | [Android App](docs/ANDROID_APP.md) | Native server profiles, OAuth2 login, parallel webchat tabs, and APK build |
 | [Multi-Client Conversations](docs/multi_client_conversations.md) | Shared runtime across web, CLI, VS Code, API, channels |
+| [A2A Integration](docs/a2a_integration.md) | Publish agents as A2A 1.0 endpoints, keys, contexts, remote targets |
+| [AG-UI Integration](docs/agui_integration.md) | AG-UI protocol server: streaming runs, frontend tools, shared state, interrupts |
 | [Desktop/VNC](docs/desktop_vnc.md) | noVNC desktop, screen tool, audio notes |
 | [Media Tools](docs/media_tools.md) | Image/video/audio/3D/voice tools, realtime voice conversation |
 | [Tool Catalog](docs/tool_catalog.md) | Agent-facing tools |

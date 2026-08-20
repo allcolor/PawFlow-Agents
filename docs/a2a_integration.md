@@ -21,6 +21,12 @@ PawFlow should support three A2A target modes:
 
 The implementation should keep A2A separate from MCP. MCP exposes tools and resources. A2A exposes stateful agents and task lifecycles. PawFlow should support both because they cover different interoperability surfaces.
 
+Every A2A publication is additionally served over the AG-UI protocol at
+`POST /agui/{publication_id}` (same Bearer keys, one publish action): AG-UI
+brings the published agent into user-facing applications with streaming SSE
+runs, frontend tools, shared state, and interrupts. See
+[AG-UI Integration](agui_integration.md).
+
 ## Implemented V1
 
 PawFlow currently implements the A2A 1.0 HTTP+JSON core:

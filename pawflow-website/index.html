@@ -213,7 +213,7 @@
         <article class="feature"><span>05</span><h3>VS Code/code-server</h3><p>Open a browser editor attached to the relay workspace for hands-on review while agents continue in the same conversation.</p></article>
         <article class="feature"><span>06</span><h3>Provider sessions</h3><p>Watch tmux-backed CLI providers and relay diagnostics when a provider, login, or long-running tool needs direct inspection.</p></article>
         <article class="feature"><span>07</span><h3>Encryption at rest</h3><p>Opt-in, per-conversation passphrase encryption of message content and tool I/O (and conv-scoped relay workspaces via CryFS). Keys stay in RAM only, so a stopped server leaves ciphertext on disk. Off by default, transparent when unused.</p></article>
-        <article class="feature"><span>08</span><h3>Live turn view</h3><p>New conversations open in the simplified view: your message, one live activity block that shows what the agent is doing while it works — thinking, tool calls, artifacts, and the seconds elapsed — then the turn's last message below it. Switch any conversation back to the classic transcript from the View menu.</p></article>
+        <article class="feature"><span>08</span><h3>Live turn view &amp; 3D openspace</h3><p>New conversations open in the simplified view: your message, one live activity block that shows what the agent is doing while it works — thinking, tool calls, artifacts, and the seconds elapsed — then the turn's last message below it. The View menu also offers the classic transcript and <strong>Openspace</strong>: a live 3D office where agents sit at desks with speech and thought bubbles, status orbiters, battery gauges, a projected wall transcript, and a 3D stage for deployed flows. <a class="inline-link" href="howtos.html#chat-views">Choose how a conversation reads.</a></p></article>
         <article class="feature"><span>09</span><h3>Update from the browser</h3><p>Admin &rarr; Update server pulls a new release and recreates the server from a throw-away updater container. The page waits for a different server process to answer before reloading, so a failed update says so instead of looking finished.</p></article>
       </div>
     </section>
@@ -229,6 +229,7 @@
             <div><strong>Controlled access</strong><span>Expose read-only tools without granting edits or shell execution.</span></div>
           </div>
           <a class="inline-link" href="howtos.html#published-mcp-client">Install the published MCP client</a>
+          <p class="lead">The same publish action also serves agent-to-agent clients over <strong>A2A 1.0</strong> and user-facing apps over <strong>AG-UI</strong> (CopilotKit and friends): streaming runs, frontend tools your app executes, a shared state document synchronized live, and interrupts your UI answers. <a class="inline-link" href="howtos.html#agui-embed">Embed an agent in your app with AG-UI.</a></p>
         </div>
         <figure class="visual-card" data-reveal>
           <video controls preload="metadata" poster="assets/media/video/chatgpt-mcp-live-workspace-poster.webp"><source src="assets/media/video/chatgpt-mcp-live-workspace.mp4" type="video/mp4"></video>

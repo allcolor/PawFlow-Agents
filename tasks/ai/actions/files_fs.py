@@ -225,6 +225,9 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                             "error_count": st.get("error_count", 0),
                             "error": (st.get("error_message") or st.get("error", ""))[:80],
                             "in_flight": st.get("in_flight", False),
+                            # Console: runtime controls exist only on a
+                            # RUNNING instance — the UI gates on this flag.
+                            "controllable": True,
                         }
                     for gid, group in getattr(executor._flow, "groups", {}).items():
                         if gid not in nodes:
@@ -241,6 +244,15 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                             "queue_size": qs.get("queue_size", 0),
                             "max_queue": qs.get("max_queue_size", 10000),
                             "backpressured": qs.get("backpressured", False),
+                            # Flow Runtime Console: stable queue identity +
+                            # the full queue state for the Queue Inspector.
+                            "connection_id": qs.get("connection_id", ""),
+                            "queue_bytes": qs.get("queue_bytes", 0),
+                            "max_queue_bytes": qs.get("max_queue_bytes", 0),
+                            "paused": qs.get("paused", False),
+                            "flowfiles_in": qs.get("flowfiles_in", 0),
+                            "flowfiles_out": qs.get("flowfiles_out", 0),
+                            "ttl": qs.get("ttl_seconds", 0),
                         })
                     raw = _executor_flow_metadata(executor)
                     if inst:

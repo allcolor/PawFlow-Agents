@@ -69,7 +69,10 @@ class _ContinuousExecRunMixin:
 
                 # Check if there's input available
                 incoming = self._connections.get_incoming(task_id)
-                has_input = any(not c.is_empty() for c in incoming)
+                # Paused queues are invisible to scheduling: a paused queue
+                # full of FlowFiles must not spawn workers (they would race
+                # dequeue(), get None, and burn the pool for nothing).
+                has_input = any(c.has_processable() for c in incoming)
 
                 # Root tasks (no incoming connections):
                 # - Self-triggering tasks (has_pending_input) get scheduled
@@ -93,11 +96,12 @@ class _ContinuousExecRunMixin:
                 # race to dequeue, 1 wins, 999 no-op and return).
                 slots = max_inst - current
                 if incoming:
-                    _pending = sum(c.queue_size() for c in incoming)
+                    _pending = sum(c.queue_size() for c in incoming
+                                   if not c.is_paused())
                     slots = min(slots, _pending)
                 for _ in range(slots):
                     # Re-check input availability for each slot
-                    if incoming and not any(not c.is_empty() for c in incoming):
+                    if incoming and not any(c.has_processable() for c in incoming):
                         break
                     with self._lock:
                         self._in_flight[task_id] = self._in_flight.get(task_id, 0) + 1
@@ -182,8 +186,11 @@ class _ContinuousExecRunMixin:
 
             # Queue-aware scheduling: if task implements select_processable,
             # let it choose which FlowFile to process (skip saturated services)
+            # Queue-aware tasks see only non-paused connections: peek/remove
+            # on a paused queue would silently bypass the pause.
+            _consumable = [c for c in (incoming or []) if not c.is_paused()]
             if incoming and hasattr(task, 'select_processable'):
-                result = task.select_processable(incoming)
+                result = task.select_processable(_consumable)
                 if result is not None:
                     _sel_ff, source_conn = result
                     # Atomically remove the selected FlowFile (peek_all doesn't dequeue)
@@ -193,7 +200,7 @@ class _ContinuousExecRunMixin:
                     # else: another thread got it first, skip
                 # else: nothing processable right now
             elif incoming:
-                for conn in incoming:
+                for conn in _consumable:
                     ff = conn.dequeue()  # atomic, thread-safe
                     if ff is not None:
                         source_conn = conn

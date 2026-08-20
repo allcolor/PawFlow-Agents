@@ -1626,9 +1626,14 @@ function _osFlowApply(nodes, edges) {
     if (!rec) return;
     rec.queue = e.queue_size || 0;
     rec.backpressured = !!e.backpressured;
+    // A paused queue shows NO current on the 3D stage either: the link
+    // greys out and its dots stop (mirrors the Flow Runtime Console).
+    rec.paused = !!e.paused;
     const src = nodes[e.source] || {};
-    rec.active = rec.queue > 0 || !!src.in_flight || src.state === 'running';
-    rec.line.material.color.setHex(rec.backpressured ? 0xe94560 : 0x4da3ff);
+    rec.active = !rec.paused
+      && (rec.queue > 0 || !!src.in_flight || src.state === 'running');
+    rec.line.material.color.setHex(
+      rec.paused ? 0x8a93b8 : (rec.backpressured ? 0xe94560 : 0x4da3ff));
   });
 }
 

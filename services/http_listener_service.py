@@ -168,6 +168,19 @@ class HTTPListenerService(BaseService):
             # same store, keys, and per-client contexts.
             from services.agui_server_endpoint import register_agui_routes
             register_agui_routes(self)
+        # Flow Runtime Console: streaming FlowFile content download
+        # (session-authenticated; ownership re-checked in the handler).
+        # Lazy like the MCP/A2A routes: only when deployed flows exist —
+        # deploy_flow ensures it for instances created later.
+        try:
+            from core.deployment_registry import DeploymentRegistry
+            if DeploymentRegistry.get_instance().get_all():
+                from tasks.ai.actions.flow_runtime import (
+                    register_flow_runtime_routes)
+                register_flow_runtime_routes(self)
+        except Exception:
+            logger.debug("flow runtime route registration failed",
+                         exc_info=True)
         self._server: Optional[_HTTPServerWithRegistry] = None
         self._server_thread: Optional[threading.Thread] = None
         self._ref_count = 0

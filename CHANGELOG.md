@@ -8,6 +8,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Flow Runtime Console**: the Flow Runtime Viewer becomes a NiFi-style
+  operations console on running instances. Engine: stable
+  `connection_id` per queue, `Connection.pause/resume` (paused queues
+  keep accepting upstream but block downstream — and the scheduler is
+  pause-aware end to end, including queue-aware tasks), FlowFile access
+  by `process_id`. API (`tasks/ai/actions/flow_runtime.py`): task
+  start/stop/restart/disable, task details with RAW parameters
+  (`${secret}` references never resolved), server-paginated queue
+  listing, pause/resume/clear (clear = FlowFiles only, no implicit task
+  reset, immediate checkpoint), FlowFile inspection (consumed items
+  answer `no_longer_queued`), drop by process_id, and a dedicated
+  streaming download route (`/api/flow-runtime/.../content`, never
+  JSON/base64). Manual operations are recorded in provenance. UI: edges
+  read as queues (`relationship · N · size`, ⏸ dashed grey when paused,
+  no animated current), right-click task menu + read-only configuration
+  drawer, edge click → Queue Inspector drawer (pause/resume, confirmed
+  Empty queue, pagination, attributes/content preview, download, drop).
+  The openspace 3D stage mirrors paused/backpressured links. See
+  `docs/flow_runtime_console.md`.
+
 - **Durable confirmations**: agents (`request_confirmation` tool) and flows
   (`requestConfirmation` task) can ask the user yes/no, single-choice, or
   multi-choice questions that survive reloads and restarts. The user answers

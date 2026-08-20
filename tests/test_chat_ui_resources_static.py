@@ -300,7 +300,7 @@ def test_flow_graph_renders_runtime_port_links():
     assert "isRuntimePort: !!(n?.runtime_link || n?.runtime_port)" in flow_graph
     assert "portDirection: n?.port_direction || 'input'" in flow_graph
     assert "edges.filter(e => !e?.data?.runtimeLink)" in flow_graph
-    assert "data: { runtimeLink: !!e?.runtime_link, runtimePort: !!e?.runtime_port }" in flow_graph
+    assert "data: { runtimeLink: !!e?.runtime_link, runtimePort: !!e?.runtime_port," in flow_graph
     assert "strokeDasharray: '6 4'" in flow_graph
 
 

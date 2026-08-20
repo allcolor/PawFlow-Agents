@@ -52,6 +52,13 @@ def _handle_sf_k5(self, action, body, store, user_id, flowfile, _helpers):
 
 
     if action == "deploy_flow":
+        # The Flow Runtime Console download route is lazy (like MCP/A2A):
+        # the first deployment installs it on the live listeners.
+        try:
+            from tasks.ai.actions.flow_runtime import ensure_flow_runtime_routes
+            ensure_flow_runtime_routes()
+        except Exception:
+            logger.debug("flow runtime route ensure failed", exc_info=True)
         template_id = body.get("template_id", "")
         conv_id = body.get("conversation_id", "")
         requested_scope = body.get("scope", "")

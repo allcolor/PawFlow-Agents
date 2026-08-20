@@ -32,6 +32,11 @@ class Connection:
         self.source_id = source_id
         self.target_id = target_id
         self.relationship = relationship
+        # Stable identity: (source, relationship, target) is unique in a
+        # flow — A --success--> B and A --failure--> B are different queues,
+        # so runtime operations must never address a queue by (source,
+        # target) alone.
+        self.connection_id = f"conn_{source_id}__{relationship}__{target_id}"
         self.max_queue_size = max_queue_size
         self.max_queue_bytes = max_queue_bytes
         self.flowfile_ttl_seconds = flowfile_ttl_seconds
@@ -45,6 +50,10 @@ class Connection:
         self._lock = threading.RLock()
         self._flowfiles_in: int = 0
         self._flowfiles_out: int = 0
+        # A paused queue keeps ACCEPTING upstream FlowFiles but no longer
+        # lets the downstream consume (it may therefore reach backpressure —
+        # that is the point: pause, inspect, resume).
+        self._paused = False
         # Track enqueue timestamps for TTL
         self._enqueue_times: Dict[str, float] = {}
 
@@ -64,8 +73,10 @@ class Connection:
             return True
 
     def dequeue(self) -> Optional[FlowFile]:
-        """Get next FlowFile from the queue."""
+        """Get next FlowFile from the queue (None while paused)."""
         with self._lock:
+            if self._paused:
+                return None
             ff = self._queue.get()
             if ff:
                 self._total_bytes -= ff.size()
@@ -175,6 +186,45 @@ class Connection:
                     return True
             return False
 
+    def pause(self):
+        """Stop downstream consumption; upstream enqueues keep landing."""
+        with self._lock:
+            self._paused = True
+
+    def resume(self):
+        with self._lock:
+            self._paused = False
+
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def has_processable(self) -> bool:
+        """True when the downstream may consume: non-empty AND not paused.
+
+        The scheduler MUST use this (not is_empty) for has_input/pending
+        decisions — a paused queue full of FlowFiles must not spawn
+        workers, and queue-aware tasks must not bypass the pause.
+        """
+        return not self._paused and not self._queue.is_empty()
+
+    def get_flowfile(self, process_id: str) -> Optional[FlowFile]:
+        """Find a queued FlowFile by its process_id (None if consumed)."""
+        with self._lock:
+            for ff in self._queue.peek_all(limit=self._queue.size()):
+                if ff.process_id == process_id:
+                    return ff
+        return None
+
+    def remove_by_process_id(self, process_id: str) -> bool:
+        """Remove a queued FlowFile by process_id.
+
+        The ONLY safe removal for UI callers: an index shifts whenever the
+        downstream consumes, a process_id never names the wrong FlowFile.
+        """
+        with self._lock:
+            ff = self.get_flowfile(process_id)
+            return self.remove(ff) if ff is not None else False
+
     def clear(self):
         """Drop all queued FlowFiles."""
         with self._lock:
@@ -186,6 +236,7 @@ class Connection:
         """Get connection statistics."""
         with self._lock:
             return {
+                "connection_id": self.connection_id,
                 "source": self.source_id,
                 "target": self.target_id,
                 "relationship": self.relationship,
@@ -194,6 +245,7 @@ class Connection:
                 "max_queue_size": self.max_queue_size,
                 "max_queue_bytes": self.max_queue_bytes,
                 "backpressured": self.is_backpressured(),
+                "paused": self._paused,
                 "flowfiles_in": self._flowfiles_in,
                 "flowfiles_out": self._flowfiles_out,
                 "ttl_seconds": self.flowfile_ttl_seconds,
@@ -236,6 +288,13 @@ class ConnectionManager:
             if conn.is_backpressured():
                 return True
         return False
+
+    def get_by_id(self, connection_id: str) -> Optional[Connection]:
+        """Find a connection by its stable connection_id."""
+        for conn in self._connections:
+            if conn.connection_id == connection_id:
+                return conn
+        return None
 
     def get_connection(self, source_id: str, target_id: str) -> Optional[Connection]:
         """Find a specific connection by source and target."""

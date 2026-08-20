@@ -29,6 +29,27 @@
   .graph-context-menu { position: fixed; z-index: 1000; background: #141414; border: 1px solid #333; border-radius: 6px; padding: 4px 0; min-width: 150px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
   .graph-context-menu button { width: 100%; background: transparent; border: 0; color: #e0e0e0; padding: 7px 12px; text-align: left; cursor: pointer; font-size: 12px; }
   .graph-context-menu button:hover { background: #2a2a4a; }
+  /* Flow Runtime Console drawers: task configuration + queue inspector. */
+  .rt-drawer { position: fixed; top: 40px; right: 0; bottom: 0; width: 360px; z-index: 900; background: #101018; border-left: 1px solid #333; padding: 10px 14px; overflow-y: auto; font-size: 12px; color: #d5dae8; }
+  .rt-drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; }
+  .rt-x { background: none; border: 0; color: #aab; cursor: pointer; font-size: 15px; }
+  .rt-kv { width: 100%; border-collapse: collapse; margin: 6px 0; }
+  .rt-kv td { padding: 3px 6px; border-bottom: 1px solid #1e2233; vertical-align: top; word-break: break-word; }
+  .rt-kv td:first-child { color: #8a93b8; white-space: nowrap; width: 34%; }
+  .rt-section { margin: 10px 0 2px; color: #8a93b8; text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em; }
+  .rt-actions { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+  .rt-actions button { background: #1c2136; border: 1px solid #333; color: #dfe6ff; border-radius: 5px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+  .rt-actions button:hover { background: #2a2f4d; }
+  .rt-actions .rt-danger { border-color: #7d2b3a; color: #ff9ab0; }
+  .rt-list { width: 100%; border-collapse: collapse; }
+  .rt-list td { padding: 4px 6px; border-bottom: 1px solid #1e2233; font-family: monospace; font-size: 11px; }
+  .rt-list-head td { color: #8a93b8; font-family: inherit; }
+  .rt-row { cursor: pointer; }
+  .rt-row:hover { background: #1a1f33; }
+  .rt-content { background: #0a0d18; border: 1px solid #222; border-radius: 5px; padding: 8px; max-height: 45vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11px; }
+  .rt-notice { color: #ffc107; margin: 6px 0; }
+  .rt-err { color: #e94560; margin: 6px 0; }
+  .rt-page { color: #8a93b8; font-size: 11px; }
 
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
   @keyframes edgeFlow { to { stroke-dashoffset: -20; } }
@@ -720,6 +741,21 @@ function getAuthHeaders() {
   return h;
 }
 
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+async function apiCall(body) {
+  const resp = await fetch(API_BASE + '/api/ui', {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ ...body, _inline_response: true }),
+  });
+  return resp.json();
+}
+
 // ── Dagre layout ──
 function layoutGraph(nodes, edges) {
   const g = new dagre.graphlib.Graph();
@@ -844,12 +880,16 @@ function toRFEdges(apiEdges, validNodeIds) {
     if (!source || !target || !validNodeIds.has(source) || !validNodeIds.has(target)) return null;
     const queueSize = e?.queue_size || 0;
     const maxQueue = e?.max_queue || 10000;
-    const animated = queueSize > 0;
-    const color = queueColor(queueSize, maxQueue);
+    const paused = !!e?.paused;
+    // A paused queue shows NO animated current: nothing flows out of it.
+    const animated = queueSize > 0 && !paused;
+    const color = paused ? '#8a93b8' : queueColor(queueSize, maxQueue);
     const isRuntimeEdge = !!(e?.runtime_link || e?.runtime_port);
+    // Queues read as queues: relationship + count + bytes, always.
     let label = isRuntimeEdge ? 'request/response' : (e?.relationship || 'success');
-    if (queueSize > 0) label += ` (${queueSize}/${maxQueue})`;
-    if (e?.backpressured) label = '\uD83D\uDD34 ' + label;
+    if (!isRuntimeEdge) label += ` \u00B7 ${queueSize} \u00B7 ${fmtBytes(e?.queue_bytes || 0)}`;
+    if (paused) label = '\u23F8 ' + label;
+    if (e?.backpressured) label = '\uD83D\uDD34 ' + label + ` (${queueSize}/${maxQueue})`;
     return {
       id: `e-${i}-${source}-${target}`,
       source, target,
@@ -858,14 +898,178 @@ function toRFEdges(apiEdges, validNodeIds) {
       type: 'smoothstep',
       style: isRuntimeEdge
         ? { stroke: '#b088ff', strokeWidth: 2, strokeDasharray: '6 4' }
-        : { stroke: color, strokeWidth: animated ? 2.5 : 1.5 },
+        : { stroke: color, strokeWidth: animated ? 2.5 : 1.5,
+            strokeDasharray: paused ? '4 4' : undefined },
       markerStart: isRuntimeEdge ? { type: MarkerType.ArrowClosed, color: '#b088ff' } : undefined,
       markerEnd: isRuntimeEdge ? { type: MarkerType.ArrowClosed, color: '#b088ff' } : undefined,
-      data: { runtimeLink: !!e?.runtime_link, runtimePort: !!e?.runtime_port },
-      labelStyle: { fill: '#888', fontSize: 9 },
+      data: { runtimeLink: !!e?.runtime_link, runtimePort: !!e?.runtime_port,
+              connectionId: e?.connection_id || '', paused,
+              queueSize, queueBytes: e?.queue_bytes || 0,
+              maxQueue, maxQueueBytes: e?.max_queue_bytes || 0,
+              backpressured: !!e?.backpressured, ttl: e?.ttl || 0,
+              relationship: e?.relationship || 'success' },
+      labelStyle: { fill: paused ? '#aab' : '#888', fontSize: 9 },
       labelBgStyle: { fill: '#0a0a0a', fillOpacity: 0.85 },
     };
   }).filter(Boolean);
+}
+
+// ── Task Configuration drawer (read-only) ──
+function TaskDrawer({ instanceId, taskId, onClose }) {
+  const [details, setDetails] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    apiCall({ action: 'flow_runtime_task_details', instance_id: instanceId, task_id: taskId })
+      .then(d => d.error ? setErr(d.error) : setDetails(d))
+      .catch(e => setErr(String(e.message || e)));
+  }, [instanceId, taskId]);
+  const st = details?.state || {};
+  const rows = Object.entries(details?.config || {});
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: taskId }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '\u2715' }),
+    ] }),
+    err && jsx('div', { className: 'rt-err', children: err }),
+    details && jsxs(Fragment, { children: [
+      jsxs('table', { className: 'rt-kv', children: [jsxs('tbody', { children: [
+        jsxs('tr', { children: [jsx('td', { children: 'Type' }), jsx('td', { children: details.type })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'State' }), jsx('td', { children: st.state || '?' })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'In flight' }), jsx('td', { children: String(st.in_flight ?? 0) })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'Input' }), jsx('td', { children: String(st.flowfiles_in ?? st.in ?? 0) })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'Output' }), jsx('td', { children: String(st.flowfiles_out ?? st.out ?? 0) })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'Errors' }), jsx('td', { children: String(st.error_count ?? 0) })] }),
+      ] })] }),
+      jsx('div', { className: 'rt-section', children: 'Parameters' }),
+      jsx('table', { className: 'rt-kv', children: jsx('tbody', { children:
+        rows.length ? rows.map(([k, v]) => jsxs('tr', { children: [
+          jsx('td', { children: k }),
+          // Raw values only: ${secret} references stay references.
+          jsx('td', { children: typeof v === 'string' ? v : JSON.stringify(v) }),
+        ] }, k)) : jsx('tr', { children: jsx('td', { colSpan: 2, children: '(none)' }) })
+      }) }),
+    ] }),
+  ] });
+}
+
+// ── Queue Inspector drawer ──
+function QueueDrawer({ instanceId, edgeData, source, target, onClose }) {
+  const [stats, setStats] = useState(null);
+  const [items, setItems] = useState([]);
+  const [offset, setOffset] = useState(0);
+  const [item, setItem] = useState(null);       // opened FlowFile
+  const [notice, setNotice] = useState('');
+  const LIMIT = 50;
+  const cid = edgeData.connectionId;
+
+  const load = useCallback((off) => {
+    apiCall({ action: 'flow_runtime_queue_list', instance_id: instanceId,
+              connection_id: cid, offset: off, limit: LIMIT })
+      .then(d => {
+        if (d.error) { setNotice(d.error); return; }
+        setStats(d.stats); setItems(d.flowfiles || []); setOffset(off);
+      })
+      .catch(e => setNotice(String(e.message || e)));
+  }, [instanceId, cid]);
+  useEffect(() => { load(0); }, [load]);
+
+  const control = (operation) => {
+    if (operation === 'clear') {
+      const n = stats?.queue_size || 0;
+      const size = fmtBytes(stats?.queue_bytes || 0);
+      if (!window.confirm(`Empty ${n} FlowFiles (${size})?\n\nThis operation cannot be undone.`)) return;
+    }
+    apiCall({ action: 'flow_runtime_queue_control', instance_id: instanceId,
+              connection_id: cid, operation })
+      .then(() => { setItem(null); load(0); });
+  };
+  const openItem = (pid) => {
+    apiCall({ action: 'flow_runtime_queue_item', instance_id: instanceId,
+              connection_id: cid, process_id: pid })
+      .then(d => {
+        // Queues are dynamic: consumed-between-list-and-click is normal.
+        if (d.no_longer_queued) { setNotice('FlowFile is no longer queued.'); load(offset); return; }
+        if (d.error) { setNotice(d.error); return; }
+        setNotice(''); setItem(d);
+      });
+  };
+  const dropItem = (pid) => {
+    if (!window.confirm('Drop this FlowFile?\n\nThis operation cannot be undone.')) return;
+    apiCall({ action: 'flow_runtime_flowfile_drop', instance_id: instanceId,
+              connection_id: cid, process_id: pid })
+      .then(() => { setItem(null); load(offset); });
+  };
+  const dlUrl = (pid) => `${API_BASE}/api/flow-runtime/${encodeURIComponent(instanceId)}`
+    + `/queues/${encodeURIComponent(cid)}/flowfiles/${encodeURIComponent(pid)}/content`;
+
+  const paused = !!stats?.paused;
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsxs('strong', { children: [source, ' \u2192 ', target] }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '\u2715' }),
+    ] }),
+    stats && jsxs(Fragment, { children: [
+      jsxs('table', { className: 'rt-kv', children: [jsxs('tbody', { children: [
+        jsxs('tr', { children: [jsx('td', { children: 'Relationship' }), jsx('td', { children: stats.relationship })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'State' }), jsx('td', { children: paused ? 'PAUSED' : (stats.backpressured ? 'BACKPRESSURE' : 'flowing') })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'FlowFiles' }), jsx('td', { children: String(stats.queue_size) })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'Size' }), jsx('td', { children: fmtBytes(stats.queue_bytes) })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'Max' }), jsxs('td', { children: [String(stats.max_queue_size), ' \u00B7 ', fmtBytes(stats.max_queue_bytes)] })] }),
+        jsxs('tr', { children: [jsx('td', { children: 'TTL' }), jsx('td', { children: stats.ttl_seconds ? stats.ttl_seconds + 's' : 'disabled' })] }),
+      ] })] }),
+      jsxs('div', { className: 'rt-actions', children: [
+        jsx('button', { onClick: () => control(paused ? 'resume' : 'pause'),
+                        children: paused ? '\u25B6 Resume' : '\u23F8 Pause' }),
+        jsx('button', { className: 'rt-danger', onClick: () => control('clear'),
+                        children: '\uD83D\uDDD1 Empty queue' }),
+        jsx('button', { onClick: () => load(offset), children: '\u21BB' }),
+      ] }),
+    ] }),
+    notice && jsx('div', { className: 'rt-notice', children: notice }),
+    item ? jsxs('div', { className: 'rt-item', children: [
+      jsxs('div', { className: 'rt-actions', children: [
+        jsx('button', { onClick: () => setItem(null), children: '\u2190 Queue' }),
+        jsx('a', { href: dlUrl(item.flowfile.process_id), target: '_blank', rel: 'noreferrer',
+                   children: jsx('button', { children: '\u2B07 Download' }) }),
+        jsx('button', { className: 'rt-danger',
+                        onClick: () => dropItem(item.flowfile.process_id),
+                        children: '\uD83D\uDDD1 Drop' }),
+      ] }),
+      jsx('div', { className: 'rt-section', children: 'Attributes' }),
+      jsx('table', { className: 'rt-kv', children: jsx('tbody', { children:
+        Object.entries(item.attributes || {}).map(([k, v]) => jsxs('tr', {
+          children: [jsx('td', { children: k }), jsx('td', { children: String(v) })],
+        }, k)) }) }),
+      jsx('div', { className: 'rt-section', children: 'Content' }),
+      item.content?.available
+        ? jsx('pre', { className: 'rt-content', children: item.content.text })
+        : jsxs('div', { className: 'rt-notice', children: [
+            fmtBytes(item.content?.size || 0), ' \u00B7 ',
+            item.content?.mime_type || 'unknown type',
+            jsx('br', {}), 'Preview unavailable (', item.content?.reason || '?', ')',
+          ] }),
+    ] })
+    : jsxs(Fragment, { children: [
+      jsx('table', { className: 'rt-list', children: jsxs('tbody', { children: [
+        jsxs('tr', { className: 'rt-list-head', children: [
+          jsx('td', { children: 'UUID' }), jsx('td', { children: 'Size' }),
+          jsx('td', { children: 'Attrs' }),
+        ] }),
+        ...items.map(f => jsxs('tr', { className: 'rt-row',
+          onClick: () => openItem(f.process_id),
+          children: [
+            jsx('td', { children: f.process_id.slice(0, 8) + '\u2026' }),
+            jsx('td', { children: fmtBytes(f.size) }),
+            jsx('td', { children: String(f.attr_count) }),
+          ] }, f.process_id)),
+      ] }) }),
+      jsxs('div', { className: 'rt-actions', children: [
+        offset > 0 && jsx('button', { onClick: () => load(Math.max(0, offset - LIMIT)), children: '\u2190 Prev' }),
+        (stats && offset + LIMIT < stats.queue_size) && jsx('button', { onClick: () => load(offset + LIMIT), children: 'Next \u2192' }),
+        jsxs('span', { className: 'rt-page', children: [String(offset + 1), '\u2013', String(offset + items.length)] }),
+      ] }),
+    ] }),
+  ] });
 }
 
 // ── Main App ──
@@ -889,12 +1093,36 @@ function App() {
     setGraphStack(prev => [...prev, next]);
   }, [setNodes, setEdges]);
 
+  // Runtime operations exist only on the root graph of a RUNNING deployed
+  // instance — templates and flow_ref drill-downs stay read-only.
+  const [drawer, setDrawer] = useState(null);
+  const rootGraph = graphStack[0] || {};
+  const canOperate = graphStack.length === 1 && !!rootGraph.instance_id && isRunning;
+
   const onNodeContextMenu = useCallback((event, node) => {
     const ref = node?.data?.subflowRef;
-    if (!ref || !ref.path) return;
+    const runtimeTask = canOperate && !node?.data?.isRuntimePort;
+    if (!runtimeTask && !(ref && ref.path)) return;
     event.preventDefault();
-    setContextMenu({ x: event.clientX, y: event.clientY, ref });
-  }, []);
+    setContextMenu({ x: event.clientX, y: event.clientY, ref,
+                     nodeId: runtimeTask ? node.id : '',
+                     nodeState: node?.data?.state || '' });
+  }, [canOperate]);
+
+  const taskControl = useCallback((taskId, operation) => {
+    setContextMenu(null);
+    apiCall({ action: 'flow_runtime_task_control',
+              instance_id: rootGraph.instance_id, task_id: taskId,
+              operation })
+      .then(d => { if (d.error) setError(d.error); else fetchDataRef.current?.(); });
+  }, [rootGraph.instance_id]);
+
+  const onEdgeClick = useCallback((event, edge) => {
+    if (!canOperate || !edge?.data?.connectionId) return;
+    setDrawer({ kind: 'queue', edgeData: edge.data,
+                source: edge.source, target: edge.target });
+  }, [canOperate]);
+  const fetchDataRef = useRef(null);
 
   const fetchData = useCallback(async (graphOverride) => {
     let stage = 'prepare request';
@@ -954,6 +1182,8 @@ function App() {
     }
   }, [setNodes, setEdges, graphStack, openSubflow]);
 
+  fetchDataRef.current = fetchData;
+
   const goBack = useCallback(() => {
     setGraphStack(prev => {
       if (prev.length <= 1) return prev;
@@ -1007,6 +1237,7 @@ function App() {
         const ref = node?.data?.subflowRef;
         if (ref && ref.path) openSubflow(ref);
       },
+      onEdgeClick,
       panOnDrag: true,
       zoomOnScroll: true,
       zoomOnPinch: true,
@@ -1024,14 +1255,44 @@ function App() {
         jsx(Controls, { showInteractive: false }),
       ] }),
     }),
-    contextMenu && jsx('div', {
+    contextMenu && jsxs('div', {
       className: 'graph-context-menu',
       style: { left: contextMenu.x, top: contextMenu.y },
       onClick: ev => ev.stopPropagation(),
-      children: jsx('button', {
-        onClick: () => openSubflow(contextMenu.ref),
-        children: 'Open subflow',
-      }),
+      children: [
+        contextMenu.nodeId && jsx('button', {
+          onClick: () => taskControl(contextMenu.nodeId, 'start'),
+          children: '\u25B6 Start',
+        }),
+        contextMenu.nodeId && jsx('button', {
+          onClick: () => taskControl(contextMenu.nodeId, 'stop'),
+          children: '\u25A0 Stop',
+        }),
+        contextMenu.nodeId && contextMenu.nodeState === 'error' && jsx('button', {
+          onClick: () => taskControl(contextMenu.nodeId, 'restart'),
+          children: '\u21BB Restart',
+        }),
+        contextMenu.nodeId && jsx('button', {
+          onClick: () => {
+            setDrawer({ kind: 'task', taskId: contextMenu.nodeId });
+            setContextMenu(null);
+          },
+          children: '\u2699 Configuration',
+        }),
+        contextMenu.ref && contextMenu.ref.path && jsx('button', {
+          onClick: () => openSubflow(contextMenu.ref),
+          children: 'Open subflow',
+        }),
+      ],
+    }),
+    drawer && drawer.kind === 'task' && jsx(TaskDrawer, {
+      instanceId: rootGraph.instance_id, taskId: drawer.taskId,
+      onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'queue' && jsx(QueueDrawer, {
+      instanceId: rootGraph.instance_id, edgeData: drawer.edgeData,
+      source: drawer.source, target: drawer.target,
+      onClose: () => setDrawer(null),
     }),
   ] });
 }

@@ -123,6 +123,10 @@ def disabled_names(conversation_id: str, agent_name: str = "",
 
 def is_tool_enabled(conversation_id: str, name: str, agent_name: str = "",
                     origin: str = "builtin", origin_scope: str = "") -> bool:
+    if origin == "agui":
+        # AG-UI handlers are visible ONLY inside their own conversation:
+        # client-declared frontend tools must never surface elsewhere.
+        return origin_scope == f"agui:{conversation_id}"
     filters = get_filters(conversation_id)
     return is_tool_enabled_from_filters(
         filters, name, agent_name, origin, origin_scope)
@@ -134,6 +138,10 @@ def is_tool_enabled_from_filters(filters: Dict[str, Any], name: str,
                                  origin_scope: str = "") -> bool:
     """Return tool availability using an already-loaded filter document."""
     if not name:
+        return False
+    if origin == "agui":
+        # AG-UI handlers need the active conversation id to be judged; this
+        # entry point has none, so default-deny (see is_tool_enabled).
         return False
     filters = filters if isinstance(filters, dict) else _default_filters()
     if agent_name:

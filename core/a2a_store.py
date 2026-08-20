@@ -328,6 +328,49 @@ class A2AStore:
             "created_at": now, "last_seen_at": now,
         }
 
+    def ensure_named_context(self, publication: Dict[str, Any], key_id: str,
+                             name: str) -> Dict[str, Any]:
+        """Get or create the context a client names itself (AG-UI threadId).
+
+        A2A contexts are server-issued and an unknown requested id is a
+        refusal (`resolve_context`); AG-UI thread ids are CLIENT-chosen, so
+        the context must exist on first use. The stored ``context_id`` is a
+        digest of (publication, key, name): deterministic per thread and
+        collision-free across publications and keys even when two clients
+        pick the same thread id.
+        """
+        if not name:
+            raise ValueError("A named context requires a non-empty name")
+        digest = hashlib.sha256(
+            f"{publication['publication_id']}|{key_id}|{name}".encode("utf-8")
+        ).hexdigest()[:24]
+        context_id = "agui_" + digest
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM a2a_contexts WHERE context_id=? AND "
+                "publication_id=? AND key_id=?",
+                (context_id, publication["publication_id"], key_id),
+            ).fetchone()
+            if row:
+                connection.execute(
+                    "UPDATE a2a_contexts SET last_seen_at=? WHERE context_id=?",
+                    (now, context_id))
+                return dict(row)
+            internal = publication["conversation_id"]
+            if publication["context_policy"] == "isolated":
+                internal = f"{internal}::a2a::{digest}"
+            connection.execute(
+                "INSERT INTO a2a_contexts VALUES (?, ?, ?, ?, ?, ?)",
+                (context_id, publication["publication_id"], key_id,
+                 internal, now, now))
+        return {
+            "context_id": context_id,
+            "publication_id": publication["publication_id"],
+            "key_id": key_id, "internal_conversation_id": internal,
+            "created_at": now, "last_seen_at": now,
+        }
+
     def create_task(self, publication_id: str, context_id: str, key_id: str,
                     internal_conversation_id: str, turn_id: str,
                     request: Dict[str, Any]) -> Dict[str, Any]:

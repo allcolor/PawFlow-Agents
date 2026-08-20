@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- AG-UI: full interactive protocol on isolated publications. Frontend tools
+  (`RunAgentInput.tools`) are now REAL callable tools — a call streams as
+  `TOOL_CALL_*`, executes in the client, and the client's `role:"tool"`
+  result message feeds the next run (tool-based generative UI /
+  human-in-the-loop). Shared state: `RunAgentInput.state` seeds the thread,
+  every run opens with `STATE_SNAPSHOT`, and the new `agui_state` tool
+  streams `STATE_SNAPSHOT`/`STATE_DELTA` (RFC 6902) live. Interrupts: the
+  new `agui_interrupt` tool finishes the run with an interrupt outcome and
+  `RunAgentInput.resume` answers it. Inline base64 multimodal parts become
+  attachments (vision/documents); `forwardedProps` reaches the agent; the
+  `GET` descriptor advertises `capabilities`. AG-UI handlers are visible
+  only inside their own conversation (`core/agui_tools.py`,
+  `origin == "agui"` gate in `core/tool_mcp_filters.py`).
+
+### Fixed
+
+- AG-UI: the first run of any new `threadId` no longer fails with "Unknown
+  A2A context for this client" — client-chosen thread ids now get-or-create
+  their per-key context (`A2AStore.ensure_named_context`, digest-keyed so
+  equal thread ids from different keys/publications never collide).
+
 ## [1.0.0-beta.220] — 2026-08-19
 
 ### Added

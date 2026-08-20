@@ -36,6 +36,7 @@ def handle_describe(req) -> None:
     publication, key = _publication(req)
     if not publication or not key:
         return
+    isolated = publication.get("context_policy", "isolated") == "isolated"
     _json_response(req, 200, {
         "protocol": "ag-ui",
         "name": publication.get("label") or publication["agent_name"],
@@ -44,6 +45,15 @@ def handle_describe(req) -> None:
         "agent": publication["agent_name"],
         "transport": "http-sse",
         "contextPolicy": publication.get("context_policy", "isolated"),
+        # Interactive protocol features require an isolated context: on a
+        # shared publication the conversation belongs to the owner and must
+        # not grow client-declared tools or state.
+        "capabilities": {
+            "frontendTools": isolated,
+            "sharedState": isolated,
+            "interrupts": isolated,
+            "multimodal": ["text", "inline-data", "url-reference"],
+        },
     })
 
 

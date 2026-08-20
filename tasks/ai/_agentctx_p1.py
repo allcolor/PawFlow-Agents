@@ -320,6 +320,13 @@ class _PACPhase1Mixin:
                     break
             load_tools_into_registry(
                 st.registry, st._user_id_for_svc, st._parent_cid)
+            # AG-UI conversations get the client's frontend tools plus the
+            # shared-state/interrupt handlers (no-op everywhere else).
+            try:
+                from core.agui_tools import register_agui_conversation_tools
+                register_agui_conversation_tools(st.registry, st.conversation_id)
+            except Exception:
+                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
         st._context_agent = st._early_agent
 
         # NOTE: conv_agents `max_depth` is the SUB-AGENT recursion depth only

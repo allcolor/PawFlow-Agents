@@ -6,34 +6,52 @@ POSTs one RunAgentInput and reads back an SSE stream of camelCase JSON
 events (RUN_STARTED, TEXT_MESSAGE_*, TOOL_CALL_*, RUN_FINISHED, ...).
 
 PawFlow exposes agents through the existing A2A publications — same Bearer
-keys, same per-client context resolution (the AG-UI ``threadId`` is the A2A
-context id) — so one "publish agent" action serves both protocols. This
-module maps one RunAgentInput to one PawFlow agent turn and translates the
-turn's live conversation-bus events into the AG-UI event stream.
+keys, same per-client context resolution (the AG-UI ``threadId`` maps to a
+deterministic per-key A2A context) — so one "publish agent" action serves
+both protocols. This module maps one RunAgentInput to one PawFlow agent
+turn and translates the turn's live conversation-bus events into the AG-UI
+event stream.
 
-Frontend-declared tools (RunAgentInput.tools) are surfaced to the agent as
-context text; PawFlow executes its own server-side tools and streams them
-as TOOL_CALL_* / TOOL_CALL_RESULT events. A structured frontend-tool
-round-trip (run finishing on a client tool call) is not implemented yet.
+On isolated publications the full interactive protocol is supported:
+
+- **Frontend tools** (``RunAgentInput.tools``) are declared to the agent as
+  real callable tools (see ``core.agui_tools``); a call streams as
+  ``TOOL_CALL_*`` events, executes in the client, and the client sends the
+  result back as a ``role:"tool"`` message in the next run.
+- **Shared state**: ``RunAgentInput.state`` seeds the thread state, a
+  ``STATE_SNAPSHOT`` opens every run, and the agent's ``agui_state`` tool
+  streams ``STATE_SNAPSHOT`` / ``STATE_DELTA`` (RFC 6902) live.
+- **Interrupts**: the agent's ``agui_interrupt`` tool pauses the run —
+  ``RUN_FINISHED`` carries an interrupt outcome and the client answers in
+  the next run's ``resume`` array.
+
+Shared (non-isolated) publications keep the plain chat behavior: frontend
+tools and context are surfaced as text only, state and interrupts are off —
+the underlying conversation belongs to the owner and must not grow
+client-declared tools.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import queue
 import threading
 import time
 import uuid
-from typing import Any, Dict, Iterator, List, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
 _MAX_TEXT_CHARS = 200_000
+_MAX_PROPS_CHARS = 8_000
 # SSE comment ping while the turn is silent (long tool runs), so proxies
 # and clients keep the connection open. Comments are invisible to SSE
 # parsers, so the AG-UI client never sees them as events.
 _KEEPALIVE_SECONDS = 15.0
+
+_UNSET = object()
 
 
 def sse_frame(event: Dict[str, Any]) -> bytes:
@@ -53,8 +71,17 @@ def agui_event(event_type: str, **fields: Any) -> Dict[str, Any]:
     return event
 
 
-def _content_text(content: Any) -> str:
-    """Flatten an AG-UI user message content (str or multimodal parts)."""
+def _attachment_filename(kind: str, mime: str, index: int) -> str:
+    extension = mimetypes.guess_extension(mime or "") or ".bin"
+    return f"agui_{kind or 'file'}_{index}{extension}"
+
+
+def _flatten_user_content(content: Any, attachments: List[Dict[str, Any]]) -> str:
+    """Flatten an AG-UI user message content (str or multimodal parts).
+
+    Inline base64 parts (``source.type == "data"``) become PawFlow
+    attachments; URL parts stay a text label (the agent can fetch them).
+    """
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -65,25 +92,38 @@ def _content_text(content: Any) -> str:
             kind = str(part.get("type") or "")
             if kind == "text":
                 chunks.append(str(part.get("text") or ""))
-            else:
-                source = part.get("source") or {}
-                url = ""
-                if isinstance(source, dict) and source.get("type") == "url":
-                    url = str(source.get("value") or "")
-                label = f"[AG-UI {kind} attachment"
-                label += f": {url}]" if url else " (inline payload not supported)]"
-                chunks.append(label)
+                continue
+            source = part.get("source") or {}
+            if not isinstance(source, dict):
+                source = {}
+            if source.get("type") == "data" and source.get("value"):
+                mime = str(source.get("mime_type")
+                           or source.get("mimeType") or "application/octet-stream")
+                attachments.append({
+                    "filename": _attachment_filename(kind, mime,
+                                                     len(attachments) + 1),
+                    "mime_type": mime,
+                    "data": str(source.get("value")),
+                })
+                continue
+            url = ""
+            if source.get("type") == "url":
+                url = str(source.get("value") or "")
+            label = f"[AG-UI {kind} attachment"
+            label += f": {url}]" if url else " (no payload)]"
+            chunks.append(label)
         return "\n".join(chunk for chunk in chunks if chunk)
     return "" if content is None else str(content)
 
 
-def extract_run(run_input: Dict[str, Any]) -> Tuple[str, str, str]:
-    """Validate a RunAgentInput and return ``(thread_id, run_id, prompt)``.
+def parse_run_input(run_input: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate a RunAgentInput and split it into its PawFlow ingredients.
 
     AG-UI clients send the full message history on every run; PawFlow keeps
-    its own durable context per thread, so only the LAST user message is
-    forwarded as the new prompt. ``context`` entries and frontend ``tools``
-    declarations are appended as text so the agent knows about them.
+    its own durable context per thread, so only the TRAILING segment after
+    the last assistant message is new input: user text (and inline
+    attachments) plus frontend-tool results. ``resume`` entries answer
+    interrupts raised by a previous run.
     """
     if not isinstance(run_input, dict):
         raise ValueError("RunAgentInput must be a JSON object")
@@ -95,54 +135,148 @@ def extract_run(run_input: Dict[str, Any]) -> Tuple[str, str, str]:
     messages = run_input.get("messages")
     if not isinstance(messages, list) or not messages:
         raise ValueError("messages must be a non-empty array")
-    last_user = next(
-        (m for m in reversed(messages)
-         if isinstance(m, dict) and str(m.get("role") or "") == "user"),
-        None)
-    if last_user is None:
-        raise ValueError("RunAgentInput carries no user message")
-    text = _content_text(last_user.get("content")).strip()
-    if not text:
-        raise ValueError("The user message has no textual content")
-    parts: List[str] = [text]
-    context = run_input.get("context")
-    if isinstance(context, list) and context:
-        lines = []
-        for entry in context:
-            if isinstance(entry, dict) and (entry.get("value") or ""):
-                description = str(entry.get("description") or "context")
-                lines.append(f"- {description}: {entry.get('value')}")
-        if lines:
-            parts.append("[AG-UI context]\n" + "\n".join(lines))
-    tools = run_input.get("tools")
-    if isinstance(tools, list) and tools:
-        names = []
-        for tool in tools:
-            if isinstance(tool, dict) and (tool.get("name") or ""):
-                names.append(f"- {tool.get('name')}: {tool.get('description') or ''}")
-        if names:
+
+    trailing: List[Dict[str, Any]] = []
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "")
+        if role == "assistant":
+            break
+        if role in ("user", "tool"):
+            trailing.append(message)
+    trailing.reverse()
+
+    attachments: List[Dict[str, Any]] = []
+    user_texts: List[str] = []
+    tool_results: List[Dict[str, str]] = []
+    for message in trailing:
+        if str(message.get("role")) == "user":
+            text = _flatten_user_content(message.get("content"),
+                                         attachments).strip()
+            if text:
+                user_texts.append(text)
+        else:
+            tool_results.append({
+                "tool_call_id": str(message.get("toolCallId") or ""),
+                "content": str(message.get("content") or ""),
+                "error": str(message.get("error") or ""),
+            })
+
+    resume: List[Dict[str, Any]] = []
+    for entry in run_input.get("resume") or []:
+        if not isinstance(entry, dict):
+            continue
+        interrupt_id = str(entry.get("interruptId") or "").strip()
+        if not interrupt_id:
+            continue
+        resume.append({
+            "interrupt_id": interrupt_id,
+            "status": str(entry.get("status") or "resolved"),
+            "payload": entry.get("payload"),
+        })
+
+    if not user_texts and not tool_results and not resume and not attachments:
+        raise ValueError("RunAgentInput carries no new user input "
+                         "(no trailing user/tool message and no resume entry)")
+
+    context_lines: List[str] = []
+    for entry in run_input.get("context") or []:
+        if isinstance(entry, dict) and (entry.get("value") or ""):
+            description = str(entry.get("description") or "context")
+            context_lines.append(f"- {description}: {entry.get('value')}")
+
+    tools: List[Dict[str, Any]] = []
+    for tool in run_input.get("tools") or []:
+        if isinstance(tool, dict) and str(tool.get("name") or "").strip():
+            tools.append({
+                "name": str(tool.get("name")).strip(),
+                "description": str(tool.get("description") or ""),
+                "parameters": tool.get("parameters")
+                if isinstance(tool.get("parameters"), dict) else None,
+            })
+
+    forwarded_props = run_input.get("forwardedProps")
+    state = run_input["state"] if run_input.get("state") is not None else _UNSET
+
+    return {
+        "thread_id": thread_id,
+        "run_id": run_id,
+        "user_texts": user_texts,
+        "tool_results": tool_results,
+        "attachments": attachments,
+        "resume": resume,
+        "context_lines": context_lines,
+        "tools": tools,
+        "forwarded_props": forwarded_props,
+        "state": state,
+    }
+
+
+def _assemble_prompt(spec: Dict[str, Any], resume_texts: List[str],
+                     frontend_tools_live: bool) -> str:
+    """Build the PawFlow turn prompt from the parsed run ingredients."""
+    parts: List[str] = []
+    parts.extend(resume_texts)
+    for result in spec["tool_results"]:
+        header = (f"[AG-UI frontend tool result for call "
+                  f"{result['tool_call_id'] or '?'}]")
+        body = result["content"]
+        if result["error"]:
+            body = f"ERROR: {result['error']}\n{body}".strip()
+        parts.append(f"{header}\n{body}")
+    parts.extend(spec["user_texts"])
+    if spec["context_lines"]:
+        parts.append("[AG-UI context]\n" + "\n".join(spec["context_lines"]))
+    props = spec.get("forwarded_props")
+    if props is not None:
+        try:
+            props_json = json.dumps(props, ensure_ascii=False)
+        except (TypeError, ValueError):
+            props_json = str(props)
+        if props_json and props_json not in ("{}", "null", "[]"):
+            if len(props_json) > _MAX_PROPS_CHARS:
+                props_json = props_json[:_MAX_PROPS_CHARS] + "… (truncated)"
+            parts.append("[AG-UI forwardedProps]\n" + props_json)
+    if spec["tools"]:
+        names = [f"- {t['name']}: {t['description']}" for t in spec["tools"]]
+        if frontend_tools_live:
             parts.append(
-                "[AG-UI frontend tools declared by the client (informational; "
-                "you cannot call them directly)]\n" + "\n".join(names))
-    prompt = "\n\n".join(parts)
+                "[AG-UI frontend tools declared by the client — available "
+                "as real tools; each call executes in the client "
+                "application and its result arrives in a later message]\n"
+                + "\n".join(names))
+        else:
+            parts.append(
+                "[AG-UI frontend tools declared by the client "
+                "(informational; you cannot call them directly)]\n"
+                + "\n".join(names))
+    prompt = "\n\n".join(part for part in parts if part)
     if len(prompt) > _MAX_TEXT_CHARS:
         raise ValueError(f"AG-UI prompt exceeds {_MAX_TEXT_CHARS} characters")
-    return thread_id, run_id, prompt
+    return prompt
 
 
 class _TurnTranslator:
     """Translate PawFlow conversation-bus events into AG-UI events.
 
     Stateful over one run: it opens/closes TEXT_MESSAGE and THINKING
-    blocks so the stream always pairs START/END, and dedupes the final
+    blocks so the stream always pairs START/END, dedupes the final
     persisted ``new_message`` against the text already streamed as
-    ``token`` deltas (both carry the same ``msg_id``).
+    ``token`` deltas (both carry the same ``msg_id``), suppresses the
+    server-side placeholder result of frontend tool calls (the real result
+    is produced by the client), and collects interrupts raised during the
+    run for the RUN_FINISHED outcome.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, frontend_tool_names: Optional[Set[str]] = None) -> None:
         self._text_msg_id = ""
         self._thinking_open = False
         self._streamed_ids: set = set()
+        self._frontend_names: Set[str] = frontend_tool_names or set()
+        self._frontend_call_ids: Set[str] = set()
+        self.interrupts: List[Dict[str, Any]] = []
+        self.frontend_calls = 0
 
     def close_open_blocks(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -196,6 +330,9 @@ class _TurnTranslator:
             out.extend(self.close_open_blocks())
             tc_id = str(data.get("tc_id") or "") or ("tc_" + uuid.uuid4().hex[:12])
             name = str(data.get("tool") or "tool")
+            if name in self._frontend_names:
+                self._frontend_call_ids.add(tc_id)
+                self.frontend_calls += 1
             arguments = data.get("arguments")
             try:
                 args_json = json.dumps(arguments or {}, ensure_ascii=False)
@@ -210,7 +347,9 @@ class _TurnTranslator:
             return out
         if event_type == "tool_result":
             tc_id = str(data.get("tc_id") or "")
-            if not tc_id:
+            if not tc_id or tc_id in self._frontend_call_ids:
+                # A frontend tool's server-side result is a placeholder; the
+                # client produces the real one, so no TOOL_CALL_RESULT here.
                 return out
             out.append(agui_event(
                 "TOOL_CALL_RESULT",
@@ -218,6 +357,21 @@ class _TurnTranslator:
                 toolCallId=tc_id,
                 content=str(data.get("result") or ""),
                 role="tool"))
+            return out
+        if event_type == "agui_state_snapshot":
+            out.extend(self.close_open_blocks())
+            out.append(agui_event("STATE_SNAPSHOT", snapshot=data.get("state")))
+            return out
+        if event_type == "agui_state_delta":
+            delta = data.get("delta")
+            if isinstance(delta, list) and delta:
+                out.extend(self.close_open_blocks())
+                out.append(agui_event("STATE_DELTA", delta=delta))
+            return out
+        if event_type == "agui_interrupt":
+            interrupt = data.get("interrupt")
+            if isinstance(interrupt, dict) and interrupt.get("id"):
+                self.interrupts.append(interrupt)
             return out
         if event_type == "new_message":
             if str(data.get("role") or "") != "assistant":
@@ -248,6 +402,37 @@ def _ensure_isolated_conversation(publication: Dict[str, Any],
     _ensure(publication, context)
 
 
+def _prepare_agui_doc(conversation_id: str,
+                      spec: Dict[str, Any]) -> Tuple[Any, List[str]]:
+    """Sync the conversation's AG-UI document with this run's input.
+
+    Stores the declared frontend tools, seeds/replaces the shared state
+    when the client sent one, and settles ``resume`` entries against the
+    pending interrupts. Returns ``(state, resume_texts)``.
+    """
+    from core.agui_tools import load_agui_doc, save_agui_doc
+    doc = load_agui_doc(conversation_id) or {}
+    doc["tools"] = spec["tools"]
+    if spec["state"] is not _UNSET:
+        doc["state"] = spec["state"]
+    pending = {i.get("id"): i for i in doc.get("interrupts") or []
+               if isinstance(i, dict)}
+    resume_texts: List[str] = []
+    for entry in spec["resume"]:
+        interrupt = pending.pop(entry["interrupt_id"], None)
+        reason = (interrupt or {}).get("reason", "unknown")
+        try:
+            payload_json = json.dumps(entry["payload"], ensure_ascii=False)
+        except (TypeError, ValueError):
+            payload_json = str(entry["payload"])
+        resume_texts.append(
+            f"[AG-UI interrupt {entry['interrupt_id']} ({reason}) "
+            f"{entry['status']}] Client payload: {payload_json}")
+    doc["interrupts"] = list(pending.values())
+    save_agui_doc(conversation_id, doc)
+    return doc.get("state"), resume_texts
+
+
 def run_agent_stream(publication: Dict[str, Any], key: Dict[str, Any],
                      run_input: Dict[str, Any]) -> Iterator[bytes]:
     """Yield the AG-UI SSE frames of one published-agent run.
@@ -262,15 +447,17 @@ def run_agent_stream(publication: Dict[str, Any], key: Dict[str, Any],
     try:
         if not publication.get("enabled"):
             raise PermissionError("This publication is disabled")
-        thread_id, run_id, prompt = extract_run(run_input)
+        spec = parse_run_input(run_input)
     except (PermissionError, ValueError) as exc:
         yield sse_frame(agui_event("RUN_ERROR", message=str(exc),
                                    code="invalid_input"))
         return
 
+    thread_id, run_id = spec["thread_id"], spec["run_id"]
     yield sse_frame(agui_event("RUN_STARTED", threadId=thread_id,
                                runId=run_id))
 
+    isolated = publication.get("context_policy") == "isolated"
     events: "queue.Queue[Tuple[str, Any, Any]]" = queue.Queue()
 
     def _live(_cid: str, event_type: str, data: Any) -> None:
@@ -278,10 +465,20 @@ def run_agent_stream(publication: Dict[str, Any], key: Dict[str, Any],
 
     try:
         store = A2AStore.instance()
-        context = store.resolve_context(publication, key["key_id"],
-                                        "agui_" + thread_id)
+        context = store.ensure_named_context(publication, key["key_id"],
+                                             "agui_" + thread_id)
         _ensure_isolated_conversation(publication, context)
         conversation_id = context["internal_conversation_id"]
+        state: Any = None
+        resume_texts: List[str] = []
+        if isolated:
+            state, resume_texts = _prepare_agui_doc(conversation_id, spec)
+        prompt = _assemble_prompt(spec, resume_texts,
+                                  frontend_tools_live=isolated)
+        if not prompt and not spec["attachments"]:
+            raise ValueError("RunAgentInput carries no new user input")
+        if isolated and state is not None:
+            yield sse_frame(agui_event("STATE_SNAPSHOT", snapshot=state))
         turn_id = "agui:" + uuid.uuid4().hex
         source = {
             "type": "a2a",
@@ -298,6 +495,7 @@ def run_agent_stream(publication: Dict[str, Any], key: Dict[str, Any],
             conversation_id=conversation_id,
             target_agent=publication["agent_name"],
             message=prompt,
+            attachments=spec["attachments"],
             msg_id=turn_id,
             channel="agui",
             source_attributes={"message_source": json.dumps(source)},
@@ -321,7 +519,9 @@ def run_agent_stream(publication: Dict[str, Any], key: Dict[str, Any],
                               name=f"agui-run-{run_id[:16]}")
     waiter.start()
 
-    translator = _TurnTranslator()
+    frontend_names = ({t["name"] for t in spec["tools"]}
+                      if isolated else set())
+    translator = _TurnTranslator(frontend_tool_names=frontend_names)
     try:
         while True:
             try:
@@ -356,10 +556,14 @@ def run_agent_stream(publication: Dict[str, Any], key: Dict[str, Any],
                 yield sse_frame(agui_event("RUN_ERROR", message=result.error,
                                            code="agent_error"))
                 return
+            outcome: Dict[str, Any] = {"type": "success"}
+            if translator.interrupts:
+                outcome = {"type": "interrupt",
+                           "interrupts": translator.interrupts}
             yield sse_frame(agui_event(
                 "RUN_FINISHED", threadId=thread_id, runId=run_id,
                 result=getattr(result, "response", "") or "",
-                outcome={"type": "success"}))
+                outcome=outcome))
             return
     except GeneratorExit:
         # Client disconnected mid-run. An isolated context is private to

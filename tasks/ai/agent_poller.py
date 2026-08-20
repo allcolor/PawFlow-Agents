@@ -70,7 +70,7 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
         from core.conv_agent_config import get_agent_config
         runtime_kind = str(get_agent_config(
             conversation_id, agent).get("runtime_kind") or "llm")
-        if runtime_kind != "external_mcp":
+        if runtime_kind not in {"external_mcp", "external_agui"}:
             return False
 
         import uuid as _uuid
@@ -93,19 +93,17 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
             user_id = ""
         ConversationWriter.for_conversation(conversation_id).enqueue_message(
             message, agent_name=agent, user_id=user_id, wait=True)
-        from services.mcp_terminal_router import (
-            route_published_terminal_prompt)
-        routed = route_published_terminal_prompt(
-            conversation_id, agent, content, message["msg_id"])
+        from services.external_agent_runtime_router import route_external_agent_prompt
+        _kind, routed = route_external_agent_prompt(
+            conversation_id, agent, content, message["msg_id"], channel="web")
         if routed is True:
             logger.info(
-                "[poller] Routed external_mcp wake to published terminal "
-                "%s/%s", conversation_id[:8], agent)
+                "[poller] Routed %s wake "
+                "%s/%s", _kind, conversation_id[:8], agent)
         else:
             logger.warning(
-                "[poller] External_mcp wake for %s/%s has no reachable "
-                "terminal; prompt persisted for the external client only",
-                conversation_id[:8], agent)
+                "[poller] %s wake for %s/%s has no reachable runtime; "
+                "prompt remains persisted", _kind, conversation_id[:8], agent)
         return True
 
 

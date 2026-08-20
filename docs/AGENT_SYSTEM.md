@@ -121,6 +121,52 @@ tool call. External MCP agents may be published through A2A only with shared
 context. Isolated A2A publication is rejected because its internal conversation
 cannot share the terminal-bound context stream safely.
 
+A conversation member can instead use `runtime_kind: "external_agui"`.
+PawFlow keeps the shared transcript as the source of truth, posts an AG-UI
+`RunAgentInput` to its `agui_url`, and translates the returned SSE lifecycle into
+the same events as a local agent. Text streaming, remote tool-call display, the
+final durable assistant message, completion correlation, WebChat, and OpenSpace
+therefore share one pipeline. Runs are serialized per conversation member and
+never fall back to a local LLM.
+
+The preferred configuration references a scoped `aguiConnection` service from
+the instance's `agui_service`; direct `agui_url` fields remain supported for
+compatibility. A connection stores the endpoint, `agui_auth_secret` (a
+SecretStore key, not a token), private/relay policy, timeout, and maximum tool
+rounds. Agent-level direct configuration accepts the equivalent
+`agui_allow_private`, `agui_timeout`, and `agui_max_tool_rounds` fields.
+Redirects are disabled and the URL passes through PawFlow's relay-aware SSRF
+validation. Inline/URL attachments are translated into current AG-UI
+`image`/`audio`/`video`/`document` parts with `mimeType` sources.
+
+The names in the instance's `tools` list are the hard AG-UI exposure allowlist.
+Only those schemas are sent to the remote agent. Calls are normalized, wrappers
+are unwrapped and checked against the same allowlist, and PawFlow's normal
+conversation/agent permission mode plus `ToolApprovalGate` runs before the
+prepared call executes. Tool calls/results are durable conversation rows and
+results are returned as `role: "tool"` messages in a bounded follow-up run.
+
+Each external member has a durable protocol document containing its stable
+thread id, shared state, activity/steps, bounded remote message snapshot, usage,
+and pending interrupts. `STATE_DELTA` uses RFC 6902; `RUN_FINISHED` interrupt
+outcomes surface through the normal user-question UI and the next user answer is
+sent in `RunAgentInput.resume`. Modern `REASONING_*`, legacy `THINKING_*`,
+activity, step, raw/custom, usage, tool and message events are mapped into the
+WebChat/OpenSpace event stream. Force-stop closes the active SSE response and
+discards queued runs. PawFlow's canonical transcript is never replaced by a
+remote `MESSAGES_SNAPSHOT`.
+
+Modern activity snapshots are retained per `messageId` with their
+`activityType` and structured `content`; `ACTIVITY_DELTA.patch` is applied as
+RFC 6902. Event metadata is kept separate for text, reasoning, tool calls, and
+the run lifecycle, while `REASONING_ENCRYPTED_VALUE` remains opaque and durable.
+Chunk events may omit identifiers after their first fragment. Tool calls that
+already have a remote `TOOL_CALL_RESULT` are display-only and are never replayed
+through PawFlow; only unresolved calls matching the instance allowlist enter the
+local approval/execution loop. A2A publication of an external runtime requires
+`context_policy: "shared"` so its scoped configuration and protocol document
+remain attached to the source conversation.
+
 ---
 
 ## 3. Agent Loop

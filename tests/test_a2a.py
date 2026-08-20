@@ -298,12 +298,13 @@ def test_delegate_resolves_named_local_target(monkeypatch):
     assert '"target": "legal"' in result
 
 
-def test_external_mcp_a2a_rejects_isolated_context(monkeypatch):
+@pytest.mark.parametrize("runtime_kind", ["external_mcp", "external_agui"])
+def test_external_agent_a2a_rejects_isolated_context(monkeypatch, runtime_kind):
     from core import a2a_runtime
 
     monkeypatch.setattr(
         "core.conv_agent_config.get_agent_config",
-        lambda *_args: {"runtime_kind": "external_mcp"})
+        lambda *_args: {"runtime_kind": runtime_kind})
     with pytest.raises(ValueError, match="require shared context"):
         a2a_runtime.send_message({
             "enabled": True,

@@ -9,7 +9,11 @@ function _osEnsureAgent(name, opts) {
   const key = _osKey(name);
   if (!key) return null;
   let rec = _osAgents.get(key);
-  if (rec) return rec;
+  if (rec) {
+    if (opts && opts.runtimeKind) rec.runtimeKind = opts.runtimeKind;
+    if (rec.labelEl) rec.labelEl.textContent = rec.name + (rec.runtimeKind === 'external_agui' ? ' · AG-UI' : '');
+    return rec;
+  }
   // Guests hand their slot back on retirement; reuse those first so
   // repeated flash delegations do not march desks toward the horizon.
   const seatIndex = _osFreeSeats.length ? _osFreeSeats.shift() : _osSeatCount++;
@@ -18,6 +22,7 @@ function _osEnsureAgent(name, opts) {
     name: name,
     kind: 'agent',
     guest: !!(opts && opts.guest),
+    runtimeKind: (opts && opts.runtimeKind) || 'llm',
     state: 'idle',
     stateSince: Date.now(),
     seat: _osSeatPosition(seatIndex),
@@ -135,7 +140,7 @@ function _osBuildDesk(rec) {
   _osScene.add(_osShadow(g));
   rec.group = g;
 
-  _osBuildOverlayEls(rec, rec.name, '');
+  _osBuildOverlayEls(rec, rec.name + (rec.runtimeKind === 'external_agui' ? ' · AG-UI' : ''), '');
   _osRestoreBubbles(rec);
 }
 

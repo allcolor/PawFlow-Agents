@@ -263,6 +263,41 @@ function openspaceWireSSE(es) {
     rec._tbStart = -1; rec._tbEnd = -1;
     _osShowBubble(rec, 'thought', rec.thoughtText);
   });
+  on('agui_activity', (d) => {
+    const rec = _osEnsureAgent(_osEventAgent(d));
+    if (!rec) return;
+    const activity = d.activity || {};
+    const content = activity && typeof activity.content === 'object' ? activity.content : {};
+    const label = typeof activity === 'string' ? activity
+      : (content.message || content.label || content.name || activity.activityType
+        || activity.message || activity.label || activity.name || d.event_type || 'AG-UI');
+    _osLog(rec, 'activity', 'AG-UI', String(label));
+    _osSetState(rec, 'tool', String(label));
+  });
+  on('agui_step', (d) => {
+    const rec = _osEnsureAgent(_osEventAgent(d));
+    if (!rec) return;
+    const step = d.step || {};
+    const label = step.name || step.stepName || step.message || d.event_type || 'step';
+    _osLog(rec, 'step', 'AG-UI step', String(label));
+    _osSetState(rec, /FINISHED|END|COMPLETED/.test(d.event_type || '') ? 'thinking' : 'tool', String(label));
+  });
+  on('agui_state_snapshot', (d) => {
+    const rec = _osEnsureAgent(_osEventAgent(d));
+    if (rec) _osLog(rec, 'state', 'AG-UI state', JSON.stringify(d.state || {}));
+  });
+  on('agui_state_delta', (d) => {
+    const rec = _osEnsureAgent(_osEventAgent(d));
+    if (rec) _osLog(rec, 'state', 'AG-UI state Δ', JSON.stringify(d.delta || []));
+  });
+  on('agui_usage', (d) => {
+    const rec = _osEnsureAgent(_osEventAgent(d));
+    if (rec) _osLog(rec, 'usage', 'AG-UI usage', JSON.stringify(d.usage || {}));
+  });
+  on('agui_custom', (d) => {
+    const rec = _osEnsureAgent(_osEventAgent(d));
+    if (rec) _osLog(rec, 'custom', 'AG-UI event', JSON.stringify(d.event || {}));
+  });
   on('tool_call', (d) => {
     const rec = _osEnsureAgent(_osEventAgent(d));
     if (!rec) return;

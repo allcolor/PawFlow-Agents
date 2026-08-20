@@ -377,17 +377,17 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
         # delegate delivery path before this wake (skip_pre_persist=1). Route
         # both shapes; persistence ownership must not decide runtime routing.
         if _stamped_user is not None and not _already_active:
-            from services.mcp_terminal_router import (
-                route_published_terminal_prompt)
-            _external_routed = route_published_terminal_prompt(
+            from services.external_agent_runtime_router import (
+                route_external_agent_prompt)
+            _external_kind, _external_routed = route_external_agent_prompt(
                 conversation_id, _target, _user_text,
                 str(_stamped_user.get("msg_id") or ""),
                 channel=_channel, attachments=_attachments_body)
             if _external_routed is True:
                 logger.info(
-                    "[agent:%s] routed webchat prompt to published MCP terminal "
-                    "agent=%s msg_id=%s", conversation_id[:8], _target,
-                    _stamped_user.get("msg_id", ""))
+                    "[agent:%s] routed webchat prompt to %s runtime "
+                    "agent=%s msg_id=%s", conversation_id[:8], _external_kind,
+                    _target, _stamped_user.get("msg_id", ""))
                 ack = json.dumps({
                     "status": "accepted",
                     "conversation_id": conversation_id,
@@ -396,7 +396,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                     # AgentRuntimeAPI/A2A callers may now correlate the eventual
                     # send_agent_message response with this request msg_id.
                     "wait_for_done": True,
-                    "external_terminal": True,
+                    "external_terminal": _external_kind == "external_mcp",
+                    "external_runtime": _external_kind,
                 })
                 flowfile.set_content(ack.encode("utf-8"))
                 flowfile.set_attribute("agent.conversation_id", conversation_id)
@@ -408,10 +409,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 complete_published_terminal_target(
                     conversation_id, _target,
                     str(_stamped_user.get("msg_id") or ""), "",
-                    error="Published MCP terminal is unavailable")
+                    error=("Published MCP terminal is unavailable"
+                           if _external_kind == "external_mcp"
+                           else "External AG-UI agent is unavailable"))
                 flowfile.set_content(json.dumps({
-                    "error": "Published MCP terminal is unavailable",
-                    "code": "external_mcp_terminal_unavailable",
+                    "error": ("Published MCP terminal is unavailable"
+                              if _external_kind == "external_mcp"
+                              else "External AG-UI agent is unavailable"),
+                    "code": _external_kind + "_unavailable",
                     "conversation_id": conversation_id,
                 }).encode("utf-8"))
                 flowfile.set_attribute("http.response.status", "503")

@@ -98,11 +98,12 @@ def _handle_agentres_k7(self, action, body, store, user_id, flowfile):
             runtime_kind = str(
                 (get_agent_config(conversation_id, canonical) or {}).get(
                     "runtime_kind") or "llm")
-            if runtime_kind == "external_mcp" and context_policy != "shared":
+            if (runtime_kind in {"external_mcp", "external_agui"}
+                    and context_policy != "shared"):
                 return _reply(flowfile, {
                     "error": (
-                        "external_mcp agents require A2A context_policy='shared' "
-                        "because their published terminal is bound to the parent "
+                        f"{runtime_kind} agents require A2A context_policy='shared' "
+                        "because their external runtime is bound to the parent "
                         "conversation"),
                 }, 400)
             publication = a2a_store.configure_publication(

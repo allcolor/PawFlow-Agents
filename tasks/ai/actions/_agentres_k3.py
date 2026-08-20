@@ -101,6 +101,7 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                 "scope": a.get("_scope", ""),
                 "active": active.get("agent") == aname,
                 "llm_service": acfg.get("llm_service", ""),
+                "runtime_kind": acfg.get("runtime_kind", "llm"),
                 "assigned_skills": assigned_names,
             }
             for skill_name in assigned_names:

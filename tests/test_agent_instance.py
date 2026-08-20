@@ -79,6 +79,37 @@ class TestAddAgentToConv:
         assert cfg["llm_service"] == ""
         assert _stored["conv_agents"]["External"]["runtime_kind"] == "external_mcp"
 
+    def test_external_agui_requires_endpoint_not_llm(self):
+        mock_store, _stored = self._make_store_mock()
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=mock_store):
+            cfg = add_agent_to_conv(
+                "conv1", "Remote", llm_service="", definition="external",
+                runtime_kind="external_agui",
+                agui_url="https://agent.example/agui",
+                agui_auth_secret="remote_agent_token")
+        assert cfg["runtime_kind"] == "external_agui"
+        assert cfg["agui_url"] == "https://agent.example/agui"
+        assert cfg["agui_auth_secret"] == "remote_agent_token"
+        assert _stored["conv_agents"]["Remote"]["llm_service"] == ""
+
+    def test_external_agui_rejects_missing_endpoint(self):
+        with pytest.raises(ValueError, match="agui_url or agui_service is required"):
+            add_agent_to_conv(
+                "conv1", "Remote", llm_service="", definition="external",
+                runtime_kind="external_agui")
+
+    def test_external_agui_accepts_scoped_connection_service(self):
+        mock_store, _stored = self._make_store_mock()
+        with patch("core.conversation_store.ConversationStore.instance",
+                   return_value=mock_store):
+            cfg = add_agent_to_conv(
+                "conv1", "Remote", llm_service="", definition="external",
+                runtime_kind="external_agui", agui_service="remote_agui")
+        assert cfg["agui_service"] == "remote_agui"
+        assert cfg["agui_url"] == ""
+        assert _stored["conv_agents"]["Remote"]["agui_service"] == "remote_agui"
+
 
 class TestGetAgentConfig:
     def test_returns_full_config(self):

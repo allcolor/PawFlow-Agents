@@ -122,11 +122,15 @@ async function _renderResourcesData(data) {
           + '</div>';
         // Show LLM service + assigned skills as small tags
         var aLlm = a.llm_service || '';
+        var aRuntime = a.runtime_kind || 'llm';
         var aSkills = a.assigned_skills || [];
-        if (aLlm || aSkills.length) {
+        if (aLlm || aSkills.length || aRuntime !== 'llm') {
           liveHtml += '<div style="margin-left:24px;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:3px;">';
           if (aLlm) {
             liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb, var(--pf-accent-2) 16%, var(--pf-panel));color:var(--pf-accent-2);">' + escapeHtml(aLlm) + '</span>';
+          }
+          if (aRuntime === 'external_agui') {
+            liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb, #4ecdc4 18%, var(--pf-panel));color:#4ecdc4;">AG-UI</span>';
           }
           aSkills.forEach(function(sk) {
             liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb, var(--pf-accent) 16%, var(--pf-panel));color:var(--pf-accent);">' + escapeHtml(sk) + '</span>';

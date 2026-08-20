@@ -127,9 +127,9 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        if runtime_kind not in {"llm", "external_mcp"}:
+        if runtime_kind not in {"llm", "external_mcp", "external_agui"}:
             flowfile.set_content(json.dumps({
-                "error": "runtime_kind must be 'llm' or 'external_mcp'",
+                "error": "runtime_kind must be 'llm', 'external_mcp', or 'external_agui'",
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
@@ -159,7 +159,17 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
                      else agent.get("assigned_skills", [])),
              flash_delegate_llm_service=body.get(
                  "flash_delegate_llm_service", "").strip(),
-             runtime_kind=runtime_kind)
+             runtime_kind=runtime_kind,
+             agui_url=str(body.get("agui_url") or "").strip(),
+             agui_service=str(body.get("agui_service") or "").strip(),
+             agui_auth_secret=str(body.get("agui_auth_secret") or "").strip(),
+             agui_allow_private=bool(body.get("agui_allow_private")),
+             agui_timeout=max(1, int(body.get("agui_timeout") or 300)),
+             agui_max_tool_rounds=max(
+                 0, min(32, int(
+                     body.get("agui_max_tool_rounds")
+                     if body.get("agui_max_tool_rounds") not in (None, "")
+                     else 8))))
         active = store.get_extra(conv_id, "active_resources") or {}
         if not active.get("agent"):
             active["agent"] = instance_name
@@ -220,9 +230,9 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
             cfg.get("runtime_kind")
             or configs[aname].get("runtime_kind")
             or "llm")
-        if runtime_kind not in {"llm", "external_mcp"}:
+        if runtime_kind not in {"llm", "external_mcp", "external_agui"}:
             flowfile.set_content(json.dumps({
-                "error": "runtime_kind must be 'llm' or 'external_mcp'",
+                "error": "runtime_kind must be 'llm', 'external_mcp', or 'external_agui'",
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
@@ -236,7 +246,18 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         # assign/unassign actions so notifications and locking stay consistent.
         _allowed = {"llm_service", "model", "tools", "max_depth", "params",
                     "realtime_voice_service", "flash_delegate_llm_service",
-                    "runtime_kind"}
+                    "runtime_kind", "agui_url", "agui_service", "agui_auth_secret",
+                    "agui_allow_private", "agui_timeout"}
+        _allowed.add("agui_max_tool_rounds")
+        effective_url = cfg.get("agui_url", configs[aname].get("agui_url", ""))
+        effective_service = cfg.get(
+            "agui_service", configs[aname].get("agui_service", ""))
+        if (runtime_kind == "external_agui" and not str(effective_url).strip()
+                and not str(effective_service).strip()):
+            flowfile.set_content(json.dumps({
+                "error": "agui_url or agui_service is required"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         merged = dict(configs[aname])
         for k, v in cfg.items():
             if k in _allowed:

@@ -177,6 +177,54 @@ function _sseWireA() {
     if (typeof turnViewIngest === 'function') turnViewIngest('thinking_delta', data, el);
   });
 
+  eventSource.addEventListener('agui_activity', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data || '{}');
+    const activity = data.activity || {};
+    const content = activity && typeof activity.content === 'object' ? activity.content : {};
+    const label = typeof activity === 'string' ? activity
+      : (content.message || content.label || content.name || activity.activityType
+        || activity.message || activity.label || activity.name
+        || data.event_type || 'AG-UI activity');
+    document.getElementById('status').textContent = label;
+  });
+
+  eventSource.addEventListener('agui_step', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data || '{}');
+    const step = data.step || {};
+    const text = step.name || step.stepName || step.message || data.event_type || 'AG-UI step';
+    if (typeof turnViewIngest === 'function') turnViewIngest('thinking_delta', {
+      text: text, agent_name: data.agent_name || '', source: data.source || {},
+    });
+  });
+
+  ['agui_state_snapshot', 'agui_state_delta', 'agui_usage'].forEach((eventName) => {
+    eventSource.addEventListener(eventName, (e) => {
+      lastSSEActivity = Date.now();
+      let detail = {};
+      try { detail = JSON.parse(e.data || '{}'); } catch (_) {}
+      window.dispatchEvent(new CustomEvent('pawflow:' + eventName.replaceAll('_', '-'), { detail: detail }));
+    });
+  });
+  eventSource.addEventListener('agui_custom', (e) => {
+    lastSSEActivity = Date.now();
+    let data = {};
+    try { data = JSON.parse(e.data || '{}'); } catch (_) { return; }
+    // Generative-UI seam: applications can render a registered component and
+    // prevent the safe JSON fallback by cancelling this DOM event.
+    const custom = new CustomEvent('pawflow:agui-custom', {
+      detail: data, cancelable: true,
+    });
+    if (!window.dispatchEvent(custom)) return;
+    let body = '';
+    try { body = JSON.stringify(data.event || {}, null, 2); } catch (_) { body = String(data.event || ''); }
+    if (body.length > 4000) body = body.slice(0, 4000) + '\n…';
+    addMsg('system', 'AG-UI custom event\n' + body, {
+      source: { type: 'external_agui_agent', name: data.agent_name || '' },
+    });
+  });
+
   eventSource.addEventListener('thinking_content', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

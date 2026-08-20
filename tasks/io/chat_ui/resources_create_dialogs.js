@@ -136,8 +136,10 @@ async function showAddAgentToConvDialog(presetDefinition) {
   try {
     var data = await rxjs.firstValueFrom(action$('list_repo_agents', {}));
     var svcData = await rxjs.firstValueFrom(listServices$('llm'));
+    var aguiSvcData = await rxjs.firstValueFrom(listServices$('aguiConnection'));
     var definitions = data.agents || [];
     var llmServices = (svcData.services || []).filter(function(s) { return s.enabled; });
+    var aguiServices = (aguiSvcData.services || []).filter(function(s) { return s.enabled; });
     var selectedDef = null;
     panel.innerHTML = '';
 
@@ -200,10 +202,21 @@ async function showAddAgentToConvDialog(presetDefinition) {
       // Instance name
       html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('instanceNameRequired')) + '</label>'
         + '<input id="_addInstName" value="' + escapeHtml(selectedDef) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
+      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Runtime</label>'
+        + '<select id="_addRuntime" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
+        + '<option value="llm">PawFlow LLM</option><option value="external_agui">External AG-UI</option>'
+        + '</select></div>';
       // LLM Service
-      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
+      html += '<div id="_addLlmWrap" style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
         + '<select id="_addLlm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
         + svcOpts + '</select></div>';
+      html += '<div id="_addAguiWrap" style="display:none;padding:8px;margin-bottom:8px;border:1px solid var(--pf-border);border-radius:4px;">'
+        + '<label style="color:var(--pf-muted);font-size:11px;">AG-UI connection</label><select id="_addAguiService" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;"><option value="">Direct endpoint</option>'
+        + aguiServices.map(function(s) { return '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + '</option>'; }).join('') + '</select>'
+        + '<label style="color:var(--pf-muted);font-size:11px;">Direct AG-UI endpoint</label><input id="_addAguiUrl" placeholder="https://agent.example/agui" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+        + '<label style="color:var(--pf-muted);font-size:11px;">Bearer secret name</label><input id="_addAguiSecret" placeholder="optional SecretStore key" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+        + '<label style="color:var(--pf-muted);font-size:11px;">Maximum tool rounds</label><input id="_addAguiRounds" type="number" min="0" max="32" value="8" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+        + '<label style="color:var(--pf-muted);font-size:11px;"><input id="_addAguiPrivate" type="checkbox"> Allow private/relay endpoint</label></div>';
       // Params from schema — skip 'name' (always synced from instance_name)
       var visibleParamKeys = paramKeys.filter(function(k) { return k !== 'name'; });
       if (visibleParamKeys.length) {
@@ -220,6 +233,12 @@ async function showAddAgentToConvDialog(presetDefinition) {
       }
       html += '</div>';
       formArea.innerHTML = html;
+      var runtimeEl = document.getElementById('_addRuntime');
+      runtimeEl.onchange = function() {
+        var agui = runtimeEl.value === 'external_agui';
+        document.getElementById('_addLlmWrap').style.display = agui ? 'none' : '';
+        document.getElementById('_addAguiWrap').style.display = agui ? '' : 'none';
+      };
     }
 
     defSelect.onchange = function() {
@@ -250,8 +269,12 @@ async function showAddAgentToConvDialog(presetDefinition) {
       if (!selectedDef) { alert(t('selectDefinitionFirst')); return; }
       var instName = (document.getElementById('_addInstName') || {}).value || '';
       var llm = (document.getElementById('_addLlm') || {}).value || '';
+      var runtime = (document.getElementById('_addRuntime') || {}).value || 'llm';
       if (!instName.trim()) { alert(t('instanceNameRequiredMessage')); return; }
-      if (!llm) { alert(t('llmServiceRequiredMessage')); return; }
+      if (runtime === 'llm' && !llm) { alert(t('llmServiceRequiredMessage')); return; }
+      var aguiUrl = ((document.getElementById('_addAguiUrl') || {}).value || '').trim();
+      var aguiService = ((document.getElementById('_addAguiService') || {}).value || '').trim();
+      if (runtime === 'external_agui' && !aguiUrl && !aguiService) { alert('AG-UI connection or endpoint is required'); return; }
       var params = { name: instName.trim() };
       formArea.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
@@ -262,6 +285,12 @@ async function showAddAgentToConvDialog(presetDefinition) {
         definition: selectedDef,
         params: params,
         llm_service: llm,
+        runtime_kind: runtime,
+        agui_url: aguiUrl,
+        agui_service: aguiService,
+        agui_auth_secret: ((document.getElementById('_addAguiSecret') || {}).value || '').trim(),
+        agui_allow_private: !!((document.getElementById('_addAguiPrivate') || {}).checked),
+        agui_max_tool_rounds: (function(v) { v = parseInt(v); return isNaN(v) ? 8 : v; })((document.getElementById('_addAguiRounds') || {}).value),
         conversation_id: conversationId,
       });
       loadResources();

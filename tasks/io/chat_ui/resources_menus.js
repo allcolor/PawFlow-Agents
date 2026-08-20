@@ -516,10 +516,12 @@ function _showAgentConvConfigDialog(agentName) {
   Promise.all([
     rxjs.firstValueFrom(action$('get_agent_conv_config', { name: agentName, conversation_id: conversationId })),
     rxjs.firstValueFrom(listServices$('llm')),
+    rxjs.firstValueFrom(listServices$('aguiConnection')),
     rxjs.firstValueFrom(action$('list_realtime_services', { conversation_id: conversationId }, { silent: true })).catch(function() { return {}; }),
   ]).then(function(results) {
     var data = results[0], svcData = results[1];
-    var rtServices = (results[2] && results[2].services) || [];
+    var aguiServices = (results[2] && results[2].services || []).filter(function(s) { return s.enabled; });
+    var rtServices = (results[3] && results[3].services) || [];
     if (data.error) { addMsg('error', data.error); return; }
     var cfg = data.config || {};
     var paramsSchema = data.parameters_schema || {};
@@ -537,6 +539,9 @@ function _showAgentConvConfigDialog(agentName) {
             + escapeHtml(s.service_id) + ' (' + escapeHtml(s.provider || '') + ')</option>';
         }).join('');
     var toolsStr = Array.isArray(cfg.tools) ? cfg.tools.join(', ') : (cfg.tools || '');
+    var aguiServiceOpts = '<option value="">Direct endpoint</option>'
+      + aguiServices.map(function(s) { return '<option value="' + escapeHtml(s.service_id) + '"' + (s.service_id === cfg.agui_service ? ' selected' : '') + '>' + escapeHtml(s.service_id) + '</option>'; }).join('');
+    var runtimeKind = cfg.runtime_kind || 'llm';
     var overlay = document.createElement('div');
     overlay.id = 'agentConvConfigOverlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
@@ -567,9 +572,20 @@ function _showAgentConvConfigDialog(agentName) {
       html += '</div>';
     }
     // Runtime config
-    html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
+    html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Runtime</label>'
+      + '<select id="acc-runtime" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
+      + '<option value="llm"' + (runtimeKind === 'llm' ? ' selected' : '') + '>PawFlow LLM</option>'
+      + '<option value="external_mcp"' + (runtimeKind === 'external_mcp' ? ' selected' : '') + '>External MCP</option>'
+      + '<option value="external_agui"' + (runtimeKind === 'external_agui' ? ' selected' : '') + '>External AG-UI</option></select></div>'
+      + '<div id="acc-llm-wrap" style="margin-bottom:8px;' + (runtimeKind === 'external_agui' ? 'display:none;' : '') + '"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
       + '<select id="acc-llm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
-      + serviceOpts + '</select></div>'
+      + '<option value=""></option>' + serviceOpts + '</select></div>'
+      + '<div id="acc-agui-wrap" style="margin-bottom:8px;padding:8px;border:1px solid var(--pf-border);border-radius:4px;' + (runtimeKind === 'external_agui' ? '' : 'display:none;') + '">'
+      + '<label style="color:var(--pf-muted);font-size:11px;">AG-UI connection</label><select id="acc-agui-service" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">' + aguiServiceOpts + '</select>'
+      + '<label style="color:var(--pf-muted);font-size:11px;">AG-UI endpoint</label><input id="acc-agui-url" value="' + escapeHtml(cfg.agui_url || '') + '" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+      + '<label style="color:var(--pf-muted);font-size:11px;">Bearer secret name</label><input id="acc-agui-secret" value="' + escapeHtml(cfg.agui_auth_secret || '') + '" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+      + '<label style="color:var(--pf-muted);font-size:11px;">Maximum tool rounds</label><input id="acc-agui-rounds" type="number" min="0" max="32" value="' + (cfg.agui_max_tool_rounds == null ? 8 : cfg.agui_max_tool_rounds) + '" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+      + '<label style="color:var(--pf-muted);font-size:11px;"><input id="acc-agui-private" type="checkbox"' + (cfg.agui_allow_private ? ' checked' : '') + '> Allow private/relay endpoint</label></div>'
       + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('flashDelegateLlmService')) + '</label>'
       + '<select id="acc-flash-llm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
       + flashServiceOpts + '</select></div>'
@@ -601,8 +617,14 @@ function _showAgentConvConfigDialog(agentName) {
     panel.innerHTML = html;
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
+    document.getElementById('acc-runtime').onchange = function() {
+      var agui = this.value === 'external_agui';
+      document.getElementById('acc-llm-wrap').style.display = agui ? 'none' : '';
+      document.getElementById('acc-agui-wrap').style.display = agui ? '' : 'none';
+    };
     document.getElementById('acc-save').onclick = function() {
       var llm = document.getElementById('acc-llm').value;
+      var runtime = document.getElementById('acc-runtime').value;
       var flashLlm = document.getElementById('acc-flash-llm').value;
       var model = document.getElementById('acc-model').value;
       var tools = document.getElementById('acc-tools').value
@@ -615,6 +637,12 @@ function _showAgentConvConfigDialog(agentName) {
         params[inp.dataset.param] = inp.value;
       });
       var newCfg = { llm_service: llm, flash_delegate_llm_service: flashLlm,
+                     runtime_kind: runtime,
+                     agui_service: document.getElementById('acc-agui-service').value,
+                     agui_url: document.getElementById('acc-agui-url').value.trim(),
+                     agui_auth_secret: document.getElementById('acc-agui-secret').value.trim(),
+                     agui_allow_private: document.getElementById('acc-agui-private').checked,
+                     agui_max_tool_rounds: (function(v) { v = parseInt(v); return isNaN(v) ? 8 : v; })(document.getElementById('acc-agui-rounds').value),
                      model: model, tools: tools,
                      max_depth: depth, params: params };
       if (rtSel) newCfg.realtime_voice_service = rtSel.value;

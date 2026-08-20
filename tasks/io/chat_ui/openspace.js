@@ -238,7 +238,7 @@ function _osUsesSoftwareWebGL() {
 function openspaceSyncAgents(agents) {
   (Array.isArray(agents) ? agents : []).forEach((agent) => {
     const name = typeof agent === 'string' ? agent : (agent && agent.name);
-    if (name) _osEnsureAgent(name);
+    if (name) _osEnsureAgent(name, { runtimeKind: agent && agent.runtime_kind });
   });
 }
 

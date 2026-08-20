@@ -30,9 +30,14 @@ CONV_AGENTS_KEY = "conv_agents"
 AGENT_CONFIG_DEFAULTS = {
     "definition": "",
     "params": {},
-    # "llm" runs through PawFlow's agent loop. "external_mcp" is operated by
-    # a published MCP client and must never start a PawFlow LLM turn.
+    # External runtimes must never start a PawFlow LLM turn.
     "runtime_kind": "llm",
+    "agui_url": "",
+    "agui_service": "",
+    "agui_auth_secret": "",  # nosec B105 - empty means no authentication
+    "agui_allow_private": False,
+    "agui_timeout": 300,
+    "agui_max_tool_rounds": 8,
     "llm_service": "",
     # Optional LLM-capable service used only by flash_delegate. This lets
     # externally-operated agents keep their non-LLM runtime service while
@@ -148,30 +153,47 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
                       max_depth: int = 1000,
                       skills: Optional[List[str]] = None,
                       flash_delegate_llm_service: str = "",
-                      runtime_kind: str = "llm") -> Dict[str, Any]:
+                      runtime_kind: str = "llm",
+                      agui_url: str = "", agui_service: str = "",
+                      agui_auth_secret: str = "",  # nosec B107 - optional secret
+                      agui_allow_private: bool = False,
+                      agui_timeout: int = 300,
+                      agui_max_tool_rounds: int = 8) -> Dict[str, Any]:
     """Add an agent instance to a conversation.
 
     instance_name: the key in conv_agents (chosen by user, unique per conv).
     definition: the repository .md template name (required).
     params: dict of values injected into the definition prompt as ${agent.key}.
-    llm_service is required for llm agents. external_mcp agents are operated by
-    their published client and do not require a PawFlow LLM service.
+    llm_service is required for llm agents. External agents do not require one.
     flash_delegate_llm_service optionally overrides the service used by
     flash_delegate; when empty, flash agents inherit llm_service.
     """
     runtime_kind = str(runtime_kind or "llm").strip()
-    if runtime_kind not in {"llm", "external_mcp"}:
-        raise ValueError("runtime_kind must be 'llm' or 'external_mcp'")
+    if runtime_kind not in {"llm", "external_mcp", "external_agui"}:
+        raise ValueError(
+            "runtime_kind must be 'llm', 'external_mcp', or 'external_agui'")
     if runtime_kind == "llm" and not llm_service:
         raise ValueError(
             f"llm_service is required when adding agent '{instance_name}' to conversation")
     if not definition:
         raise ValueError(
             f"definition is required when adding agent '{instance_name}' to conversation")
+    if (runtime_kind == "external_agui" and not str(agui_url or "").strip()
+            and not str(agui_service or "").strip()):
+        raise ValueError(
+            "agui_url or agui_service is required for an external_agui agent")
     config = {
         "definition": definition,
         "params": params or {},
         "runtime_kind": runtime_kind,
+        "agui_url": str(agui_url or "").strip(),
+        "agui_service": str(agui_service or "").strip(),
+        "agui_auth_secret": str(agui_auth_secret or "").strip(),
+        "agui_allow_private": bool(agui_allow_private),
+        "agui_timeout": max(1, int(agui_timeout or 300)),
+        "agui_max_tool_rounds": max(
+            0, min(32, int(8 if agui_max_tool_rounds in (None, "")
+                           else agui_max_tool_rounds))),
         "llm_service": llm_service,
         "flash_delegate_llm_service": flash_delegate_llm_service,
         "model": model,

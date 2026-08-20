@@ -288,6 +288,12 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             ToolRelayService.cancel_agent(conv_id, agent_name)
         except Exception:
             logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
+        try:
+            from core.agui_client_runtime import cancel as cancel_agui_runtime
+            cancel_agui_runtime(conv_id, agent_name)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "External AG-UI cancellation failed", exc_info=True)
         _live_killed = _kill_live_cli_sessions(conv_id, agent_name, "force_stop")
         if _live_killed:
             logger.info("[agent:%s] force-stopped %d live CLI container(s)",

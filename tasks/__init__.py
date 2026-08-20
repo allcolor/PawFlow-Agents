@@ -28,6 +28,7 @@ def _register_all_services():
     import services.db_connection_pool       # noqa: F401
     import services.cache_service            # noqa: F401
     import services.http_client_service      # noqa: F401
+    import services.agui_connection_service  # noqa: F401
     import services.http_listener_service    # noqa: F401
     import services.http_auth_service        # noqa: F401
     import services.web_search_service       # noqa: F401

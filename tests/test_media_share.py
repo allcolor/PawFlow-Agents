@@ -1,5 +1,7 @@
 """Temporary public sharing of FileStore media reference inputs."""
 
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from unittest.mock import patch
 
 import pytest
@@ -207,7 +209,57 @@ def test_capability_base_wraps_execute_with_temporary_share(_store):
     assert seen["access_during"] == "gateway_key"
     # The base-class wrapper revokes the share after execute() returns.
     assert _store.get_access_level(fid) == "private"
-    assert handler._share is None
+    assert handler._rewrite(f"fs://filestore/{fid}/logo.png") == (
+        f"{_PUBLIC}/files/{fid}")
+
+
+def test_capability_share_scope_isolated_between_concurrent_calls(monkeypatch):
+    from core.handlers.capabilities import _CapabilityHandlerBase
+
+    entered = threading.Barrier(2)
+    created = []
+    created_lock = threading.Lock()
+
+    class _Share:
+        def __init__(self, *_args):
+            with created_lock:
+                self.label = f"share-{len(created)}"
+                created.append(self)
+            self.restored = 0
+
+        def public_url(self, _url, service=None):
+            entered.wait(timeout=2)
+            return self.label
+
+        def restore(self):
+            self.restored += 1
+
+    class _Dummy(_CapabilityHandlerBase):
+        @property
+        def name(self):
+            return "concurrent_dummy"
+
+        @property
+        def description(self):
+            return "concurrent dummy capability"
+
+        @property
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        def execute(self, arguments):
+            return self._rewrite(arguments["image_url"])
+
+    monkeypatch.setattr("core.media_share.TemporaryPublicRefs", _Share)
+    handler = _Dummy()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda _: handler.execute({"image_url": "fs://filestore/id/a.png"}),
+            range(2),
+        ))
+
+    assert set(results) == {"share-0", "share-1"}
+    assert [share.restored for share in created] == [1, 1]
 
 
 def test_is_public_base():

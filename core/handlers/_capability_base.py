@@ -7,6 +7,7 @@ through `core.storage_resolver.StorageResolver`, same pattern as
 `ImageGenerationHandler` / `VideoGenerationHandler`.
 """
 
+import contextvars
 import functools
 import logging
 import os
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 _SERVICE_ARG_NAMES = (
     "service", "image_service", "video_service", "audio_service", "voice_service")
 _INTERNAL_TTS_ARG_NAMES = ("_tts_storage_ttl", "transient", "transient_ttl", "ttl")
+_ACTIVE_SHARE = contextvars.ContextVar("pawflow_capability_share", default=None)
 
 
 def _resolve_filestore_url(url: str, base_url: str, service=None) -> str:
@@ -91,7 +93,6 @@ class _CapabilityHandlerBase(ToolHandler):
     _user_id: str = ""
     _conversation_id: str = ""
     _agent_name: str = ""
-    _share = None  # active TemporaryPublicRefs for the current execute() call
 
     def __init_subclass__(cls, **kwargs):
         """Wrap each concrete handler's execute() in a temporary-share scope.
@@ -110,12 +111,15 @@ class _CapabilityHandlerBase(ToolHandler):
         @functools.wraps(raw_execute)
         def _execute_with_share(self, arguments, _raw=raw_execute):
             from core.media_share import TemporaryPublicRefs
-            self._share = TemporaryPublicRefs(self._base_url, self._user_id)
+            share = TemporaryPublicRefs(self._base_url, self._user_id)
+            token = _ACTIVE_SHARE.set(share)
             try:
                 return _raw(self, arguments)
             finally:
-                self._share.restore()
-                self._share = None
+                try:
+                    share.restore()
+                finally:
+                    _ACTIVE_SHARE.reset(token)
 
         cls.execute = _execute_with_share
 
@@ -180,7 +184,7 @@ class _CapabilityHandlerBase(ToolHandler):
         # Inside execute() the call runs within a temporary-share scope, so
         # FileStore refs become public gateway-key URLs that are revoked when
         # the call returns. Outside that scope, fall back to the legacy form.
-        share = getattr(self, "_share", None)
+        share = _ACTIVE_SHARE.get()
         if share is not None:
             return share.public_url(url, service=service)
         return _resolve_filestore_url(url, self._base_url, service=service)

@@ -383,6 +383,82 @@ def test_describe_image_handler_can_use_pawflow_vision_llm_service(monkeypatch):
     assert messages[0].content[1]["image_url"]["url"] == "https://example.test/image.png"
 
 
+def test_describe_image_uses_injected_current_vision_llm(monkeypatch):
+    from types import SimpleNamespace
+
+    class VisionService:
+        TYPE = "llmConnection"
+        config = {"supports_vision": True}
+
+        def get_client(self):
+            return SimpleNamespace(supports_vision=True)
+
+        def complete(self, messages, **kwargs):
+            return SimpleNamespace(content="native vision result")
+
+    svc = VisionService()
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        lambda: SimpleNamespace(resolve=lambda service_id, **kwargs: svc),
+    )
+    h = DescribeImageHandler()
+    h.set_llm_service("current_llm")
+    result = h.execute({"image_url": "https://example.test/image.png"})
+    assert result == "Image description: native vision result"
+
+
+def test_describe_image_uses_current_llm_vision_fallback(monkeypatch):
+    from types import SimpleNamespace
+
+    class TextService:
+        TYPE = "llmConnection"
+        config = {"supports_vision": False, "vision_llm_service": "vision_fallback"}
+
+        def get_client(self):
+            return SimpleNamespace(supports_vision=False)
+
+    class VisionService:
+        TYPE = "llmConnection"
+        config = {"supports_vision": True}
+
+        def get_client(self):
+            return SimpleNamespace(supports_vision=True)
+
+        def complete(self, messages, **kwargs):
+            return SimpleNamespace(content="fallback vision result")
+
+    services = {"text_llm": TextService(), "vision_fallback": VisionService()}
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        lambda: SimpleNamespace(resolve=lambda service_id, **kwargs: services[service_id]),
+    )
+    h = DescribeImageHandler()
+    h.set_llm_service("text_llm")
+    result = h.execute({"image_url": "https://example.test/image.png"})
+    assert result == "Image description: fallback vision result"
+
+
+def test_describe_image_errors_without_native_or_fallback_vision(monkeypatch):
+    from types import SimpleNamespace
+
+    class TextService:
+        TYPE = "llmConnection"
+        config = {"supports_vision": False}
+
+        def get_client(self):
+            return SimpleNamespace(supports_vision=False)
+
+    monkeypatch.setattr(
+        "core.service_registry.ServiceRegistry.get_instance",
+        lambda: SimpleNamespace(resolve=lambda service_id, **kwargs: TextService()),
+    )
+    h = DescribeImageHandler()
+    h.set_llm_service("text_llm")
+    result = h.execute({"image_url": "https://example.test/image.png"})
+    assert "vision disabled" in result
+    assert "no vision_llm_service fallback" in result
+
+
 def test_remix_image_handler_schema():
     h = RemixImageHandler()
     assert h.name == "remix_image"

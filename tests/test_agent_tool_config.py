@@ -2,6 +2,7 @@ from core.handlers._fs_base import BaseFsHandler
 from core.tool_handler import ToolHandler
 from core.tool_registry import ToolRegistry
 from tasks.ai.agent_tool_config import AgentToolConfigMixin
+from core.handlers.capabilities import DescribeImageHandler
 
 
 class CapturingContextHandler(ToolHandler):
@@ -104,3 +105,20 @@ def test_configure_tool_handlers_resolves_default_relay_with_conversation_id(mon
 
     assert handler._fs_service is fake_relay
     assert ("relay-conv", "user-1", "conv-1") in calls
+
+
+def test_configure_describe_image_injects_current_agent_llm():
+    registry = ToolRegistry()
+    handler = DescribeImageHandler()
+    registry.register(handler)
+
+    ConfiguringAgent()._configure_tool_handlers(
+        registry,
+        conversation_id="conv-1",
+        user_id="user-1",
+        agent_name="assistant",
+        agent_svc="current-llm",
+    )
+
+    assert handler._llm_service == "current-llm"
+    assert handler._service_resolver is None

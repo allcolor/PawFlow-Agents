@@ -169,10 +169,12 @@ Telegram text replies longer than the Bot API message limit are split into
 multiple complete messages before sending while preserving the configured
 Telegram parse mode for each part.
 
-The `describe_image` tool accepts `llm_service` (alias `llmservice`) to describe
-an image through a PawFlow `llmConnection` with `supports_vision` enabled. When
-that parameter is omitted, the tool keeps using the active image capability
-service that implements `describe_image`.
+The `describe_image` tool follows the same vision route as image perception:
+it sends the image to the current agent `llm_service` when that connection has
+`supports_vision` enabled, otherwise to its configured `vision_llm_service`.
+If neither route is usable it returns an explicit error; image-generation
+services are never used for description. `llm_service` (alias `llmservice`)
+may override the current agent service for one call.
 
 ---
 
@@ -323,7 +325,7 @@ For a fuller agent-facing catalog, including internal/control tools, see
 | `tool.generate_3d` | Generate a 3D model from a prompt or image. |
 | `tool.upscale_image` | Upscale an image. |
 | `tool.upscale_video` | Upscale a video (SeedVR, Topaz). Requires `video_url`. |
-| `tool.describe_image` | Describe an image in natural language (Ideogram). Requires `image_url`. Returns `{description}`. |
+| `tool.describe_image` | Describe an image through the agent's native vision LLM or configured vision fallback. Requires `image_url`. |
 | `tool.remix_image` | Remix an image with a text prompt (Ideogram). Requires `prompt` + `image_url`. |
 | `tool.remove_background` | Remove background from an image (Bria RMBG 2.0). Requires `image_url`. |
 | `tool.try_on` | Virtual try-on from person and garment images. |

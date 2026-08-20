@@ -170,19 +170,29 @@ class AgentToolConfigMixin:
                 }[h.name]
                 h.set_service_resolver(_maker(
                     user_id, conversation_id, agent_name, _methods))
-            elif h.name in ("describe_image", "remix_image"):
+            elif h.name == "describe_image":
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
                 if user_id and hasattr(h, 'set_user_id'):
                     h.set_user_id(user_id)
                 if conversation_id and hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
-                _methods = {
-                    "describe_image": ("describe_image",),
-                    "remix_image": ("remix_image",),
-                }[h.name]
+                if hasattr(h, 'set_llm_service'):
+                    current_llm = str(agent_svc or "").strip()
+                    if not current_llm and conversation_id and agent_name:
+                        from core.conv_agent_config import get_agent_config
+                        current_llm = str(get_agent_config(
+                            conversation_id, agent_name).get("llm_service") or "")
+                    h.set_llm_service(current_llm)
+            elif h.name == "remix_image":
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                if user_id and hasattr(h, 'set_user_id'):
+                    h.set_user_id(user_id)
+                if conversation_id and hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
                 h.set_service_resolver(self._make_image_resolver(
-                    user_id, conversation_id, agent_name, _methods))
+                    user_id, conversation_id, agent_name, ("remix_image",)))
             elif h.name == "speech_to_video":
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)

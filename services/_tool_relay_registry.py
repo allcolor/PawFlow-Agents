@@ -328,20 +328,28 @@ class _ToolRelayRegistryMixin:
                 h.set_service_resolver(
                     self._make_media_resolver(
                         user_id, conversation_id, media_type, voice_methods))
-            elif h.name in ("describe_image", "remix_image"):
+            elif h.name == "describe_image":
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
                 if hasattr(h, 'set_user_id'):
                     h.set_user_id(user_id)
                 if hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
-                image_methods = {
-                    "describe_image": ("describe_image",),
-                    "remix_image": ("remix_image",),
-                }[h.name]
+                if hasattr(h, 'set_llm_service'):
+                    from core.conv_agent_config import get_agent_config
+                    root_id = self._root_conversation_id(conversation_id)
+                    config = get_agent_config(root_id, agent_name)
+                    h.set_llm_service(str(config.get("llm_service") or ""))
+            elif h.name == "remix_image":
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                if hasattr(h, 'set_user_id'):
+                    h.set_user_id(user_id)
+                if hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
                 h.set_service_resolver(
                     self._make_media_resolver(
-                        user_id, conversation_id, "image", image_methods))
+                        user_id, conversation_id, "image", ("remix_image",)))
             elif h.name in ("speech_to_video",):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)

@@ -188,6 +188,12 @@ class UpscaleVideoHandler(_CapabilityHandlerBase):
 
 
 class DescribeImageHandler(_CapabilityHandlerBase):
+    _llm_service: str = ""
+
+    def set_llm_service(self, service_id: str) -> None:
+        """Set the current agent LLM used by see-style vision routing."""
+        self._llm_service = str(service_id or "").strip()
+
     @property
     def name(self) -> str:
         return "describe_image"
@@ -197,8 +203,9 @@ class DescribeImageHandler(_CapabilityHandlerBase):
         return (
             "Describe the content of an image using an AI model. Returns a text description of the "
             "image content, style, and composition. Pass the source via "
-            "`image_url` (HTTP or fs://filestore/<id>/<name>). Pass `llm_service` "
-            "to use a PawFlow vision-enabled llmConnection instead of the active image service."
+            "`image_url` (HTTP or fs://filestore/<id>/<name>). It uses the "
+            "current vision-enabled LLM, or that LLM's configured "
+            "`vision_llm_service` fallback, exactly like image perception."
         )
 
     @property
@@ -208,42 +215,64 @@ class DescribeImageHandler(_CapabilityHandlerBase):
             "properties": {
                 "image_url": {"type": "string", "description": "Source image URL to describe"},
                 "prompt": {"type": "string", "description": "Optional instruction for the description."},
-                "llm_service": {"type": "string", "description": "Optional PawFlow llmConnection service id with vision enabled."},
+                "llm_service": {"type": "string", "description": "Optional LLM service override. It may use its configured vision fallback."},
                 "llmservice": {"type": "string", "description": "Alias for llm_service."},
-                "model": {"type": "string", "description": "Override the model. For image services, e.g. 'ideogram'. For llm_service, the LLM model override."},
+                "model": {"type": "string", "description": "Optional vision LLM model override."},
             },
             "required": ["image_url"],
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        llm_service = str(
-            arguments.get("llm_service") or arguments.get("llmservice") or "")
-        if llm_service.strip():
-            return self._describe_with_llm(arguments, llm_service.strip())
-        svc, err = self._get_service(arguments)
-        if not svc:
-            return f"Error: {err or 'no image service available'}"
-        image_url = self._rewrite(arguments.get("image_url", "") or "", service=svc)
-        if not image_url:
-            return "Error: `image_url` is required"
-        if not hasattr(svc, 'describe_image'):
-            return "Error: the active image service does not support describe_image"
+        service_id = str(arguments.get("llm_service")
+                         or arguments.get("llmservice")
+                         or self._llm_service or "").strip()
+        if not service_id:
+            return ("Error: describe_image has no active LLM service. Configure "
+                    "the agent's llm_service or pass `llm_service`.")
+        return self._describe_with_llm(arguments, service_id)
+
+    def _resolve_vision_route(self, service_id: str):
+        """Resolve native vision first, then the selected LLM's fallback."""
+        from core.service_registry import ServiceRegistry
+        from core.vision_describe import resolve_vision_service
+
         try:
-            kwargs = {k: v for k, v in arguments.items()
-                      if k not in ("image_url", *_SERVICE_ARG_NAMES)}
-            r = svc.describe_image(image_url=image_url, **kwargs)
-            return f"Image description: {r.get('description', '(no description)')}"
-        except Exception as e:
-            return f"Error describing image: {e}"
+            svc = ServiceRegistry.get_instance().resolve(
+                service_id, user_id=self._user_id,
+                conv_id=self._conversation_id)
+        except Exception as exc:
+            return None, f"could not resolve LLM service '{service_id}': {exc}"
+        if not svc:
+            return None, f"LLM service '{service_id}' was not found"
+        if getattr(svc, "TYPE", "") != "llmConnection":
+            return None, f"service '{service_id}' is not an llmConnection"
+        try:
+            if bool(getattr(svc.get_client(), "supports_vision", False)):
+                return svc, ""
+        except Exception as exc:
+            return None, f"could not inspect LLM service '{service_id}': {exc}"
+        config = getattr(svc, "config", {})
+        fallback_id = str(config.get("vision_llm_service") or "").strip() \
+            if isinstance(config, dict) else ""
+        if not fallback_id:
+            return None, (
+                f"LLM service '{service_id}' has vision disabled and no "
+                "vision_llm_service fallback configured")
+        fallback, err = resolve_vision_service(
+            fallback_id, user_id=self._user_id,
+            conversation_id=self._conversation_id)
+        if not fallback:
+            return None, (
+                f"LLM service '{service_id}' vision fallback '{fallback_id}' "
+                f"is unusable: {err}")
+        return fallback, ""
 
     def _describe_with_llm(self, arguments: Dict[str, Any], service_id: str) -> str:
         image_url = str(arguments.get("image_url") or "").strip()
         if not image_url:
             return "Error: `image_url` is required"
-        from core.vision_describe import describe_image_b64, resolve_vision_service
-        svc, err = resolve_vision_service(
-            service_id, user_id=self._user_id,
-            conversation_id=self._conversation_id)
+        from core.vision_describe import describe_image_b64
+        svc, err = self._resolve_vision_route(service_id)
         if not svc:
             return f"Error: {err}"
         prompt = str(arguments.get("prompt") or "Describe this image precisely.")

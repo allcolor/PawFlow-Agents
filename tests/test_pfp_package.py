@@ -3913,6 +3913,9 @@ def test_tool_relay_wires_media_handlers_to_operation_specific_resolvers(tmp_pat
     monkeypatch.setattr(
         ToolRelayService, "_make_media_resolver",
         staticmethod(_fake_resolver))
+    monkeypatch.setattr(
+        "core.conv_agent_config.get_agent_config",
+        lambda conversation_id, agent_name: {"llm_service": "current-llm"})
 
     registry = ToolRelayService({})._get_registry(
         user_id="alice", conversation_id="conv1", agent_name="agentA")
@@ -3931,6 +3934,9 @@ def test_tool_relay_wires_media_handlers_to_operation_specific_resolvers(tmp_pat
         "tts", ("speak",))
     assert handlers["get_image_model_info"]._service_resolver.pfp_test_call == (
         "image", ("get_model_info",))
+    assert handlers["describe_image"]._llm_service == "current-llm"
+    assert handlers["describe_image"]._service_resolver is None
+    assert ("image", ("describe_image",)) not in calls
 
 
 def test_tool_relay_pfp_resolver_requires_exact_operation(tmp_path, monkeypatch):

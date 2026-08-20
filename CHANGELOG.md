@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.224] — 2026-08-20
+
+### Added
+
+- **OpenSpace immersive office environment**: the 3D conversation view now
+  builds a richer multi-zone workspace with labeled rooms, architectural
+  details, furniture, screens, lighting, and localized camera-control hints.
+
+### Fixed
+
+- **OpenSpace reload and camera controls**: ordered module loading now defines
+  the environment before scene initialization, activation waits for the DOM,
+  and mobile and desktop input remain responsive after a reload or view
+  reselection.
+- **Image-description vision routing**: `describe_image` now follows the active
+  agent LLM's native vision support or configured `vision_llm_service` fallback
+  instead of selecting an image-generation service, with explicit errors when
+  neither route is usable.
+- **Concurrent capability media sharing**: temporary public FileStore references
+  are isolated per execution context, preventing overlapping tool calls from
+  replacing or revoking one another's share state.
+
 ## [1.0.0-beta.223] — 2026-08-20
 
 ### Added

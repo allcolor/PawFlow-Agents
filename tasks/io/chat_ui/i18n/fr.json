@@ -601,6 +601,7 @@
   "flowUndeployConfirm": "Retirer le flow '{id}' ?",
   "flowUndeployed": "Flow '{id}' retiré",
   "flowViewGraph": "Voir le graphe",
+  "flowEditDraft": "Éditer (brouillon)",
   "flows": "Flows",
   "flowsHeader": "Flows :",
   "flowsRepository": "Dépôt Flows",

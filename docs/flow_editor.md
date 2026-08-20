@@ -145,11 +145,32 @@ system next to `ScopedRepository`, validation belongs to
 (ReactFlow + dagre). Deployment/runtime operations use `deploy_flow`,
 `start_flow`, `stop_flow`, `get_flow_instance` and `flow_runtime_*`.
 
+## Canvas edit mode (Phase 2)
+
+`flow_graph.html?draft_id=<d_id>` (or `window.__PAWFLOW_FLOW_DRAFT_ID`; the
+repository menu entry **Edit (draft)** calls `flow_editor_create_draft` then
+opens the tab) switches the same canvas into edit mode:
+
+- `draftRef` holds the definition; `flowToReactFlow()` projects it into
+  nodes/edges (edge id = `connection_id`). Interactions patch the document
+  (`patchLayoutNode`, `removeFromDraft` — removing a task atomically drops
+  its relations, entries, exits, layout and `flow_ref` group), never the
+  reverse.
+- Positions come from `flow.layout.nodes`; dagre only places nodes without
+  a stored position and is otherwise the explicit **Auto Layout** button.
+- Undo/redo (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y) over whole-document history;
+  a drag records one entry on drop.
+- Autosave 800 ms after the last change through `flow_editor_save_draft`
+  with `base_revision`; a `409 draft_changed_elsewhere` locks the canvas
+  and offers **Reload**.
+- **Validate** opens the Problems drawer (click selects the entity);
+  **Publish** flushes the autosave, shows the diff count, asks the version
+  and publishes (a 422 report lands in the Problems drawer). Runtime
+  polling is off; subflow drill-downs stay read-only.
+
 ## Roadmap (next phases)
 
-1. canvas `edit` mode (`flowDraft` projection, drag/drop, selection,
-   undo/redo with one entry per drag, autosave, `flow.layout`);
-2. task palette + properties drawer (`schema_form.js` extracted from
+1. task palette + properties drawer (`schema_form.js` extracted from
    `resources_service_dialogs.js`), deterministic task ids, stable technical
    id + human label;
 3. relations wiring with a relationship chooser

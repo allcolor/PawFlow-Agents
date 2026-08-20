@@ -27,6 +27,7 @@ function showFlowTemplateMenu(e, templateId) {
   const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;'; menu.appendChild(s); };
   item('\u25B6 ' + t('deploy'), () => showDeployFlowDialog(templateId));
   item('\uD83D\uDCC8 ' + t('flowViewGraph'), () => _openFlowTemplateGraphTab(templateId));
+  item('\u270E ' + t('flowEditDraft'), () => _editFlowTemplate(templateId, tpl));
   sep();
   item('\uD83D\uDCE6 ' + t('flowMoveToPackage'), () => _moveFlowTemplateToPackage(templateId, tpl));
   item('\u2191 ' + t('promote'), () => _moveFlowTemplateScope(templateId, 'global'));

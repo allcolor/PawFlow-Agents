@@ -88,6 +88,32 @@ async function _openFlowTemplateGraphTab(templateId) {
     addMsg('error', t('flowGraphOpenFailed', { error: e.message || e }));
   }
 }
+// Flow Editor: open (or reuse) a draft of a repository flow in the SAME
+// canvas as the viewer, switched to edit mode by draft_id.
+function _openFlowEditorTab(draftId) {
+  const graphUrl = '/chat/js/flow_graph.html?draft_id=' + encodeURIComponent(draftId)
+    + '&v=' + encodeURIComponent(Date.now());
+  if (isPawFlowAndroidApp()) { window.open(graphUrl, '_blank'); return; }
+  fetch(graphUrl, { credentials: 'same-origin', cache: 'no-store' })
+    .then(resp => { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.text(); })
+    .then(html => {
+      const bootstrap = '<script>window.__PAWFLOW_FLOW_DRAFT_ID=' + JSON.stringify(draftId) + ';<\/script>\n';
+      addBlobHtmlTab('draft-' + draftId, html.replace('<script type="module">', bootstrap + '<script type="module">'));
+    })
+    .catch(e => addMsg('error', t('flowGraphOpenFailed', { error: e.message || e })));
+}
+
+function _editFlowTemplate(templateId, tpl) {
+  const rawScope = (tpl && (tpl.scope || tpl._scope)) || 'user';
+  const scope = String(rawScope).startsWith('conv') ? 'conversation' : String(rawScope).startsWith('global') ? 'global' : 'user';
+  const payload = { fqn: templateId, scope };
+  if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+  action$('flow_editor_create_draft', payload, { skipConversationId: scope !== 'conversation' }).subscribe({
+    next: (d) => { if (d.error) addMsg('error', d.error); else _openFlowEditorTab(d.draft.draft_id); },
+    error: (e) => addMsg('error', e.message),
+  });
+}
+
 function _showFlowStartDialog(instanceId, editOnly) {
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();

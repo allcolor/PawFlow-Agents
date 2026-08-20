@@ -275,7 +275,8 @@ def test_flow_graph_handles_missing_nodes_edges_response():
 def test_flow_graph_supports_subflow_navigation():
     flow_graph = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
 
-    assert "'flow-node', 'nodrag', 'nopan'" in flow_graph
+    # Viewer/runtime nodes stay nodrag; only editable (draft) nodes can move.
+    assert "'flow-node', data.editable ? '' : 'nodrag', 'nopan'" in flow_graph
     assert "onNodeContextMenu" in flow_graph
     assert "onNodeDoubleClick" in flow_graph
     assert "elementsSelectable: true" in flow_graph

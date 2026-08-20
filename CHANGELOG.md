@@ -28,6 +28,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   save_draft/discard_draft/validate/diff/publish/task_catalog/task_schema
   (schema for the CURRENT parameters)/service_catalog/service_schema`.
   See `docs/flow_editor.md`.
+- **Flow Editor — canvas edit mode**: the same `flow_graph.html` opened
+  with a `draft_id` (repository menu → *Edit (draft)*) edits the draft:
+  the JSON definition is the source of truth and ReactFlow a projection,
+  drag positions land in `flow.layout.nodes`, Delete removes tasks/relations
+  atomically, undo/redo (one entry per drag), debounced autosave with
+  `base_revision` (409 → locked + Reload), Auto Layout, Validate (Problems
+  drawer) and Publish (diff count → version prompt). No runtime polling
+  while editing.
 
 - **Flow Runtime Console**: the Flow Runtime Viewer becomes a NiFi-style
   operations console on running instances. Engine: stable

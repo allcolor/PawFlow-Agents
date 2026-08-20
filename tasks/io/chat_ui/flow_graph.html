@@ -726,6 +726,12 @@ const params = new URLSearchParams(window.location.search);
 const INSTANCE_ID = params.get('instance_id') || window.__PAWFLOW_FLOW_INSTANCE_ID || '';
 const TEMPLATE_ID = params.get('template_id') || window.__PAWFLOW_FLOW_TEMPLATE_ID || '';
 const CONVERSATION_ID = params.get('conversation_id') || window.__PAWFLOW_FLOW_CONVERSATION_ID || '';
+// Flow Editor: a draft_id switches the SAME canvas into edit mode
+// (view = template / flow_ref, runtime = instance, edit = draft).
+const DRAFT_ID = params.get('draft_id') || window.__PAWFLOW_FLOW_DRAFT_ID || '';
+const IS_EDIT = !!DRAFT_ID;
+const AUTOSAVE_DELAY = 800;
+const HISTORY_LIMIT = 100;
 const API_BASE = (window.location.protocol === 'blob:' || window.location.origin === 'null')
   ? window.parent.location.origin
   : window.location.origin;
@@ -812,7 +818,7 @@ function queueColor(size, max) {
 // ── Custom Node ──
 const FlowNode = memo(({ data }) => {
   const st = data.state || 'stopped';
-  const cls = ['flow-node', 'nodrag', 'nopan', st, data.isSubflow ? 'subflow' : '', data.isRuntimePort ? 'runtime-port' : '', data.in_flight ? 'in-flight' : ''].filter(Boolean).join(' ');
+  const cls = ['flow-node', data.editable ? '' : 'nodrag', 'nopan', st, data.isSubflow ? 'subflow' : '', data.isRuntimePort ? 'runtime-port' : '', data.in_flight ? 'in-flight' : ''].filter(Boolean).join(' ');
   const open = (ev) => {
     if (!data.isSubflow || !data.onOpenSubflow) return;
     ev.preventDefault();
@@ -912,6 +918,133 @@ function toRFEdges(apiEdges, validNodeIds) {
       labelBgStyle: { fill: '#0a0a0a', fillOpacity: 0.85 },
     };
   }).filter(Boolean);
+}
+
+// ── Flow Editor: the JSON definition (flowDraft) is the source of truth ──
+// ReactFlow nodes/edges are a PROJECTION of the definition; every
+// interaction patches the definition (never the reverse), so a load → save
+// round-trip keeps every field, including ones this editor knows nothing
+// about. Relations share the runtime queue identity conn_<src>__<rel>__<tgt>.
+function cloneDef(def) { return JSON.parse(JSON.stringify(def || {})); }
+
+function normalizeRelation(rel) {
+  const r = rel || {};
+  let type = r.type;
+  if (type == null && Array.isArray(r.relationships) && r.relationships.length) type = r.relationships[0];
+  return { from: String(r.from || r.source || ''), to: String(r.to || r.target || ''), type: String(type || 'success') };
+}
+
+function connectionIdOf(rel) { return `conn_${rel.from}__${rel.type}__${rel.to}`; }
+
+function flowToReactFlow(def, onOpenSubflow) {
+  const tasks = def.tasks && typeof def.tasks === 'object' ? def.tasks : {};
+  const layoutNodes = (def.layout && def.layout.nodes) || {};
+  const nodeData = (id, extra) => ({
+    label: id, taskType: '?', state: 'stopped', stats_in: 0, stats_out: 0,
+    error_count: 0, error: '', in_flight: false, pending: 0,
+    subflowRef: null, isSubflow: false, isRuntimeLink: false, isRuntimePort: false,
+    editable: true, onOpenSubflow, ...extra,
+  });
+  const nodes = Object.entries(tasks).map(([id, t]) => ({
+    id: String(id), type: 'flowNode', className: '',
+    position: layoutNodes[id] ? { x: Number(layoutNodes[id].x) || 0, y: Number(layoutNodes[id].y) || 0 } : null,
+    data: nodeData(String(id), { label: (t && t.label) || String(id), taskType: (t && t.type) || '?' }),
+  }));
+  // Subflow groups (flow_ref) are relation endpoints (the parser synthesizes
+  // an executeFlow task under the group id).
+  Object.entries(def.groups && typeof def.groups === 'object' ? def.groups : {}).forEach(([gid, g]) => {
+    if (!g || !g.flow_ref) return;
+    nodes.push({
+      id: String(gid), type: 'flowNode', className: 'nopan',
+      position: layoutNodes[gid] ? { x: Number(layoutNodes[gid].x) || 0, y: Number(layoutNodes[gid].y) || 0 } : null,
+      data: nodeData(String(gid), { label: g.name || String(gid), taskType: 'subflow',
+                                    subflowRef: g.flow_ref, isSubflow: !!g.flow_ref.path }),
+    });
+  });
+  const ids = new Set(nodes.map(n => n.id));
+  const edges = (Array.isArray(def.relations) ? def.relations : []).map(normalizeRelation)
+    .filter(r => ids.has(r.from) && ids.has(r.to))
+    .map(r => ({
+      id: connectionIdOf(r), source: r.from, target: r.to, label: r.type, type: 'smoothstep',
+      style: { stroke: '#8a93b8', strokeWidth: 1.5 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: '#8a93b8' },
+      data: { connectionId: connectionIdOf(r), relationship: r.type, editable: true },
+      labelStyle: { fill: '#aab', fontSize: 9 },
+      labelBgStyle: { fill: '#0a0a0a', fillOpacity: 0.85 },
+    }));
+  // Stored layout wins; dagre only places nodes that have no position yet
+  // (it is an explicit Auto Layout action, never imposed on open).
+  if (nodes.some(n => !n.position)) {
+    const auto = safeLayoutGraph(nodes.map(n => ({ ...n, position: n.position || { x: 0, y: 0 } })), edges);
+    const byId = Object.fromEntries(auto.map(n => [n.id, n.position]));
+    nodes.forEach(n => { if (!n.position) n.position = byId[n.id] || { x: 0, y: 0 }; });
+  }
+  return { nodes, edges };
+}
+
+function patchLayoutNode(def, id, pos) {
+  const next = cloneDef(def);
+  next.layout = next.layout && typeof next.layout === 'object' ? next.layout : {};
+  next.layout.nodes = next.layout.nodes && typeof next.layout.nodes === 'object' ? next.layout.nodes : {};
+  next.layout.nodes[id] = { x: Math.round(pos.x), y: Math.round(pos.y) };
+  return next;
+}
+
+function autoLayoutDraft(def, rfNodes, rfEdges) {
+  const laid = safeLayoutGraph(rfNodes, rfEdges);
+  let next = def;
+  laid.forEach(n => { next = patchLayoutNode(next, n.id, n.position); });
+  return next;
+}
+
+// Removing a task is ONE atomic operation on the document: relations,
+// entries, exits, layout and a flow_ref group of the same id go with it.
+function removeFromDraft(def, taskIds, connectionIds) {
+  const next = cloneDef(def);
+  const gone = new Set(taskIds || []);
+  const conns = new Set(connectionIds || []);
+  gone.forEach(id => {
+    if (next.tasks) delete next.tasks[id];
+    if (next.groups && next.groups[id] && next.groups[id].flow_ref) delete next.groups[id];
+    if (next.layout && next.layout.nodes) delete next.layout.nodes[id];
+  });
+  next.relations = (Array.isArray(next.relations) ? next.relations : []).filter(rel => {
+    const r = normalizeRelation(rel);
+    return !gone.has(r.from) && !gone.has(r.to) && !conns.has(connectionIdOf(r));
+  });
+  if (Array.isArray(next.entries)) next.entries = next.entries.filter(id => !gone.has(String(id)));
+  if (Array.isArray(next.exits)) next.exits = next.exits.filter(id => !gone.has(String(id)));
+  return next;
+}
+
+function bumpPatch(version) {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version || ''));
+  return m ? `${m[1]}.${m[2]}.${Number(m[3]) + 1}` : '1.0.0';
+}
+
+// ── Problems drawer (static validation report) ──
+function ProblemsDrawer({ report, onSelect, onClose }) {
+  const problems = (report && report.problems) || [];
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: 'Problems' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '\u2715' }),
+    ] }),
+    jsx('div', { className: 'rt-page', children: report
+      ? `${report.errors || 0} error(s), ${report.warnings || 0} warning(s)` : 'Validating\u2026' }),
+    problems.length === 0 && report && jsx('div', { className: 'rt-notice', style: { color: '#28a745' }, children: 'No problems found.' }),
+    problems.map((p, i) => jsxs('div', {
+      key: i, className: 'rt-row', style: { padding: '6px 4px', borderBottom: '1px solid #1e2233' },
+      onClick: () => onSelect(p),
+      children: [
+        jsx('span', { style: { color: p.severity === 'error' ? '#e94560' : '#ffc107', fontWeight: 600, marginRight: 6 },
+                      children: p.severity.toUpperCase() }),
+        jsx('span', { style: { color: '#dfe6ff' }, children: p.entity_id || p.entity_type }),
+        p.field && jsx('span', { style: { color: '#8a93b8' }, children: ` \u00B7 ${p.field}` }),
+        jsx('div', { style: { color: '#aab', marginTop: 2 }, children: p.message }),
+      ],
+    })),
+  ] });
 }
 
 // ── Task Configuration drawer (read-only) ──
@@ -1074,8 +1207,8 @@ function QueueDrawer({ instanceId, edgeData, source, target, onClose }) {
 
 // ── Main App ──
 function App() {
-  const [nodes, setNodes] = useNodesState([]);
-  const [edges, setEdges] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [graphStack, setGraphStack] = useState([{ instance_id: INSTANCE_ID, template_id: TEMPLATE_ID, conversation_id: CONVERSATION_ID, flow_ref: null }]);
   const [flowName, setFlowName] = useState('');
   const [isRunning, setIsRunning] = useState(false);
@@ -1184,6 +1317,163 @@ function App() {
 
   fetchDataRef.current = fetchData;
 
+  // ── Flow Editor state (edit mode only) ──
+  // draftRef holds the canonical definition; nodes/edges are derived from it.
+  const [draftMeta, setDraftMeta] = useState(null);
+  const [saveState, setSaveState] = useState('idle'); // dirty|saving|saved|conflict|error|published
+  const [selection, setSelection] = useState({ nodes: [], edges: [] });
+  const [problems, setProblems] = useState(null);
+  const [showProblems, setShowProblems] = useState(false);
+  const [published, setPublished] = useState('');
+  const draftRef = useRef(null);
+  const revisionRef = useRef(0);
+  const historyRef = useRef({ past: [], future: [] });
+  const saveTimer = useRef(null);
+  const lockedRef = useRef(false); // conflict or published: no further writes
+  const [, bump] = useState(0);
+
+  const projectDraft = useCallback((def) => {
+    const { nodes: n, edges: e } = flowToReactFlow(def, openSubflow);
+    setNodes(n);
+    setEdges(e);
+  }, [setNodes, setEdges, openSubflow]);
+
+  const loadDraft = useCallback(async () => {
+    const d = await apiCall({ action: 'flow_editor_load_draft', draft_id: DRAFT_ID });
+    if (d.error) { setError(d.error); return; }
+    draftRef.current = d.draft.definition || {};
+    revisionRef.current = d.draft.revision || 0;
+    historyRef.current = { past: [], future: [] };
+    lockedRef.current = false;
+    setDraftMeta(d.draft);
+    setFlowName(d.draft.flow || '');
+    setIsRunning(false);
+    setError('');
+    setSaveState('saved');
+    projectDraft(draftRef.current);
+  }, [projectDraft]);
+
+  const saveNow = useCallback(async () => {
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    if (lockedRef.current || !draftRef.current) return false;
+    setSaveState('saving');
+    const d = await apiCall({ action: 'flow_editor_save_draft', draft_id: DRAFT_ID,
+                              definition: draftRef.current, base_revision: revisionRef.current });
+    if (d.error === 'draft_changed_elsewhere') { lockedRef.current = true; setSaveState('conflict'); return false; }
+    if (d.error) { setSaveState('error'); setError(d.error); return false; }
+    revisionRef.current = d.revision;
+    setSaveState('saved');
+    return true;
+  }, []);
+
+  const scheduleSave = useCallback(() => {
+    if (lockedRef.current) return;
+    setSaveState('dirty');
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(saveNow, AUTOSAVE_DELAY);
+  }, [saveNow]);
+
+  // One logical operation = one history entry (a drag records on drop only).
+  const applyDraft = useCallback((nextDef) => {
+    if (!IS_EDIT || lockedRef.current || !draftRef.current) return;
+    const h = historyRef.current;
+    h.past.push(draftRef.current);
+    if (h.past.length > HISTORY_LIMIT) h.past.shift();
+    h.future = [];
+    draftRef.current = nextDef;
+    projectDraft(nextDef);
+    scheduleSave();
+    bump(x => x + 1);
+  }, [projectDraft, scheduleSave]);
+
+  const undo = useCallback(() => {
+    const h = historyRef.current;
+    if (!h.past.length || lockedRef.current) return;
+    h.future.push(draftRef.current);
+    draftRef.current = h.past.pop();
+    projectDraft(draftRef.current);
+    scheduleSave();
+    bump(x => x + 1);
+  }, [projectDraft, scheduleSave]);
+
+  const redo = useCallback(() => {
+    const h = historyRef.current;
+    if (!h.future.length || lockedRef.current) return;
+    h.past.push(draftRef.current);
+    draftRef.current = h.future.pop();
+    projectDraft(draftRef.current);
+    scheduleSave();
+    bump(x => x + 1);
+  }, [projectDraft, scheduleSave]);
+
+  const onNodeDragStop = useCallback((event, node) => {
+    if (!IS_EDIT || !node) return;
+    applyDraft(patchLayoutNode(draftRef.current, node.id, node.position));
+  }, [applyDraft]);
+
+  const onDelete = useCallback(({ nodes: delNodes, edges: delEdges }) => {
+    if (!IS_EDIT) return;
+    const taskIds = (delNodes || []).map(n => n.id);
+    const connIds = (delEdges || []).map(e => e?.data?.connectionId).filter(Boolean);
+    if (!taskIds.length && !connIds.length) return;
+    applyDraft(removeFromDraft(draftRef.current, taskIds, connIds));
+  }, [applyDraft]);
+
+  const autoLayout = useCallback(() => {
+    if (!IS_EDIT) return;
+    applyDraft(autoLayoutDraft(draftRef.current, nodes, edges));
+  }, [applyDraft, nodes, edges]);
+
+  const validateDraft = useCallback(async () => {
+    setShowProblems(true);
+    setProblems(null);
+    const d = await apiCall({ action: 'flow_editor_validate', definition: draftRef.current });
+    setProblems(d.error ? { errors: 1, warnings: 0, problems: [{ severity: 'error', code: 'request_failed', message: d.error, entity_type: 'flow', entity_id: '', field: '' }] } : d);
+  }, []);
+
+  const selectEntity = useCallback((p) => {
+    if (!p || !p.entity_id) return;
+    setNodes(prev => prev.map(n => ({ ...n, selected: n.id === p.entity_id })));
+    setEdges(prev => prev.map(e => ({ ...e, selected: e.id === p.entity_id })));
+  }, [setNodes, setEdges]);
+
+  const publishDraft = useCallback(async () => {
+    if (!IS_EDIT || lockedRef.current) return;
+    if (saveTimer.current && !(await saveNow())) return;
+    const diff = await apiCall({ action: 'flow_editor_diff', draft_id: DRAFT_ID });
+    if (diff.error) { setError(diff.error); return; }
+    const base = draftMeta?.base_version || '';
+    const suggested = base ? bumpPatch(base) : (draftRef.current.version || '1.0.0');
+    const version = window.prompt(
+      `Publish as version (${diff.count} change(s)${base ? ' vs ' + base : ''}):`, suggested);
+    if (!version) return;
+    const d = await apiCall({ action: 'flow_editor_publish', draft_id: DRAFT_ID, version });
+    if (d.error === 'validation_failed') { setProblems(d.validation); setShowProblems(true); return; }
+    if (d.error) { setError(d.error); return; }
+    lockedRef.current = true;
+    setSaveState('published');
+    setPublished(d.fqn);
+  }, [saveNow, draftMeta]);
+
+  useEffect(() => {
+    if (!IS_EDIT) return undefined;
+    const onKey = (ev) => {
+      const tag = (ev.target && ev.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (!(ev.ctrlKey || ev.metaKey)) return;
+      const k = ev.key.toLowerCase();
+      if (k === 'z' && ev.shiftKey) { ev.preventDefault(); redo(); }
+      else if (k === 'z') { ev.preventDefault(); undo(); }
+      else if (k === 'y') { ev.preventDefault(); redo(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
+
+  useEffect(() => {
+    if (IS_EDIT) loadDraft();
+  }, [loadDraft]);
+
   const goBack = useCallback(() => {
     setGraphStack(prev => {
       if (prev.length <= 1) return prev;
@@ -1204,34 +1494,76 @@ function App() {
   }, [contextMenu]);
 
   useEffect(() => {
-    if (!INSTANCE_ID && !TEMPLATE_ID) { setError('No instance_id or template_id parameter'); return; }
+    if (IS_EDIT) {
+      // A static draft: never poll. The root graph is the draft projection;
+      // a subflow drill-down is fetched once, read-only.
+      if (graphStack.length === 1) { if (draftRef.current) projectDraft(draftRef.current); return undefined; }
+      fetchData();
+      return undefined;
+    }
+    if (!INSTANCE_ID && !TEMPLATE_ID) { setError('No instance_id, template_id or draft_id parameter'); return; }
     fetchData();
     if (!TEMPLATE_ID && graphStack.length === 1) timerRef.current = setInterval(fetchData, POLL_INTERVAL);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [fetchData, graphStack.length]);
+  }, [fetchData, graphStack.length, projectDraft]);
+  // Editing happens on the root graph of a draft only; drill-downs and a
+  // locked draft (conflict / published) are read-only.
+  const editing = IS_EDIT && graphStack.length === 1 && !lockedRef.current;
 
   // Hide loading
   useEffect(() => {
     const el = document.getElementById('loading');
-    if (el && (nodes.length > 0 || error)) el.style.display = 'none';
-  }, [nodes, error]);
+    if (el && (nodes.length > 0 || error || draftMeta)) el.style.display = 'none';
+  }, [nodes, error, draftMeta]);
 
   const statusClass = isRunning ? 'running' : 'stopped';
+  const historyState = historyRef.current;
+  const saveLabel = {
+    dirty: 'Unsaved changes', saving: 'Saving\u2026',
+    saved: `Saved \u00B7 rev ${revisionRef.current}`, error: 'Save failed',
+    conflict: 'Draft changed elsewhere', published: `Published as ${published}`,
+  }[saveState] || '';
+  const editBtn = (label, onClick, opts = {}) => jsx('button', {
+    id: opts.id, className: 'rt-x', title: opts.title || label, disabled: !!opts.disabled,
+    style: { fontSize: 11, padding: '2px 6px', border: '1px solid #333', borderRadius: 4,
+             background: opts.primary ? '#2a2f4d' : '#1a1a2e', color: opts.disabled ? '#666' : '#e0e0e0' },
+    onClick, children: label,
+  });
 
   return jsxs(Fragment, { children: [
     jsxs('div', { id: 'statusBar', children: [
       graphStack.length > 1 && jsx('button', { id: 'backButton', onClick: goBack, children: '<=' }),
-      jsx('span', { className: 'dot ' + statusClass }),
+      jsx('span', { className: 'dot ' + (IS_EDIT ? 'stopped' : statusClass) }),
       jsx('span', { className: 'name', children: flowName }),
-      jsx('span', { children: isRunning ? 'Running' : 'Stopped' }),
+      IS_EDIT && graphStack.length === 1
+        ? jsxs(Fragment, { children: [
+            jsx('span', { children: `\u270E Editing draft${draftMeta?.base_version ? ' \u00B7 base ' + draftMeta.base_version : ' \u00B7 new flow'}` }),
+            jsx('span', { style: { color: saveState === 'conflict' || saveState === 'error' ? '#e94560' : saveState === 'published' ? '#28a745' : '#8a93b8' },
+                          children: saveLabel }),
+            saveState === 'conflict' && editBtn('Reload', loadDraft, { primary: true, title: 'Another tab saved this draft: reload the latest revision (your unsaved changes are discarded)' }),
+            selection.nodes.length + selection.edges.length > 0 && jsx('span', { style: { color: '#8a93b8' },
+              children: `${selection.nodes.length + selection.edges.length} selected` }),
+            editBtn('\u21B6 Undo', undo, { disabled: !historyState.past.length || lockedRef.current, title: 'Undo (Ctrl+Z)' }),
+            editBtn('\u21B7 Redo', redo, { disabled: !historyState.future.length || lockedRef.current, title: 'Redo (Ctrl+Shift+Z)' }),
+            editBtn('\u2630 Auto Layout', autoLayout, { disabled: lockedRef.current || !nodes.length }),
+            editBtn('\u2713 Validate', validateDraft),
+            editBtn('\u2B06 Publish', publishDraft, { primary: true, disabled: lockedRef.current }),
+          ] })
+        : jsx('span', { children: isRunning ? 'Running' : 'Stopped' }),
       error && jsx('span', { style: { color: '#e94560' }, children: error }),
     ] }),
     jsx(ReactFlow, {
       nodes, edges,
       nodeTypes,
-      nodesDraggable: false,
+      nodesDraggable: editing,
       nodesConnectable: false,
       elementsSelectable: true,
+      onNodesChange: editing ? onNodesChange : undefined,
+      onEdgesChange: editing ? onEdgesChange : undefined,
+      onNodeDragStop: editing ? onNodeDragStop : undefined,
+      onDelete: editing ? onDelete : undefined,
+      deleteKeyCode: editing ? ['Delete', 'Backspace'] : null,
+      onSelectionChange: editing ? setSelection : undefined,
       onNodeContextMenu,
       onNodeDoubleClick: (event, node) => {
         const ref = node?.data?.subflowRef;
@@ -1293,6 +1625,10 @@ function App() {
       instanceId: rootGraph.instance_id, edgeData: drawer.edgeData,
       source: drawer.source, target: drawer.target,
       onClose: () => setDrawer(null),
+    }),
+    IS_EDIT && showProblems && jsx(ProblemsDrawer, {
+      report: problems, onSelect: selectEntity,
+      onClose: () => setShowProblems(false),
     }),
   ] });
 }

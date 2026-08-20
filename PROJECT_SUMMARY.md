@@ -1,7 +1,7 @@
 # PawFlow Project Summary — Current State
 
 **Last updated**: 2026-08-20
-**Package version**: `1.0.0b224` (beta.224)
+**Package version**: `1.0.0b225` (beta.225)
 
 **Status**: functional beta, remaining API changes before 1.0.0 expected to be minor
 
@@ -130,6 +130,11 @@ The README also advertises:
 - External interoperability: published MCP endpoints, A2A 1.0 server/client,
   and an AG-UI protocol server on the same publications (streaming runs,
   frontend tools, shared state, interrupts) for CopilotKit-style frontends.
+- External AG-UI agents as first-class conversation participants through direct
+  endpoints or scoped `aguiConnection` services, with multimodal prompts,
+  durable protocol state, reasoning/activities/steps/usage, resumable
+  interrupts, allowlisted approved PawFlow tool round-trips, lifecycle
+  enforcement, cancellation, and WebChat/OpenSpace rendering.
 
 ### Pipelines
 

@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.225] — 2026-08-20
+
+### Added
+
+- **External AG-UI conversation participants**: an agent instance can now use
+  the full `external_agui` runtime. PawFlow posts AG-UI `RunAgentInput`, streams
+  text and reasoning into the canonical transcript, persists state, activities,
+  steps, usage, encrypted reasoning values, and interrupt outcomes, and
+  serializes runs per conversation member without falling back to a local LLM.
+- **Scoped AG-UI connections and safe tool round-trips**: reusable
+  `aguiConnection` services resolve by conversation/user/global scope and carry
+  the endpoint, SecretStore reference, relay/private-network policy, timeout,
+  and bounded tool-round setting. Remote tools are exposed through a strict
+  instance allowlist and still pass PawFlow's wrapper checks, permission modes,
+  approval gate, and durable tool-call/result pipeline.
+- **AG-UI WebChat and OpenSpace integration**: agent create/configure dialogs
+  expose direct or scoped AG-UI connections, external participants are labeled
+  in the resource and 3D views, protocol activity/state/step/usage events reach
+  both interfaces, and custom events offer a cancellable DOM renderer hook with
+  a safe JSON fallback.
+
+### Changed
+
+- **Unified external-agent routing and cancellation**: MCP and AG-UI members now
+  share the external runtime router across WebChat, channels, polling, streaming,
+  force-stop, and A2A. A2A publication of either external runtime requires
+  `context_policy: "shared"` so the scoped runtime state remains attached to the
+  source conversation.
+
+### Fixed
+
+- **AG-UI protocol lifecycle and replay hardening**: runs must start and
+  terminate correctly, chunk identifiers remain correlated across fragments,
+  metadata stays separated by event family, state/activity deltas are applied
+  durably, queued runs are completed on force-stop, `max_tool_rounds=0` truly
+  disables local execution, and remotely resolved tool calls are never replayed
+  through PawFlow.
+
 ## [1.0.0-beta.224] — 2026-08-20
 
 ### Added

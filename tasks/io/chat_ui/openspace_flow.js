@@ -60,7 +60,7 @@ function openspaceOpenFlowsDialog() {
 // opening a flow pans the camera there (orbit/zoom stay free), closing
 // restores the exact previous framing.
 function _osFlowZone() {
-  return { x: (OSV_GRID_COLS - 1) * OSV_DESK_SPACING + 16, z: 0 };
+  return { x: OSV_ROOM.maxX + 11, z: 0 };
 }
 
 function openspaceShowFlow(instanceId, name) {

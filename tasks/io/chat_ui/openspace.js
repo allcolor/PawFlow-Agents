@@ -54,6 +54,7 @@ const OSV_TOOL_EMOJI = [
 let _osActive = false;
 let _osThree = null;          // three.js module namespace (lazy import)
 let _osThreeLoading = null;   // in-flight import promise
+let _osEnvironmentLoading = null; // hotpatch-safe optional module loader
 let _osScene = null, _osCamera = null, _osRenderer = null;
 let _osRaf = 0;
 const OSV_DPR_MIN = 0.75;
@@ -63,7 +64,7 @@ let _osCanvas = null, _osOverlay = null;
 let _osClock = 0;
 let _osRaycaster = null;
 let _osTweens = [];           // {obj, from:{x,z}, to:{x,z}, start, dur, onDone}
-let _osCamAngle = Math.PI / 4, _osCamDist = 26, _osCamHeight = 18;
+let _osCamAngle = Math.PI / 4, _osCamDist = 36, _osCamHeight = 25;
 // right-drag / shift-drag pans on the floor plane; Ctrl+drag lifts the
 // look-at target above the plane (y).
 const _osCamPan = { x: 0, y: 0, z: 0 };
@@ -123,6 +124,7 @@ const OSV_TITLE_W = 600, OSV_TITLE_H = 70;
 // walking (floor click) or the ⌂ reset re-engages the follow.
 let _osFollow = true;
 let _osFocusKey = '';
+let _osSurfaceFocus = '';
 
 function openspaceIsActive() { return _osActive; }
 
@@ -142,6 +144,16 @@ function _osAgentColor(name) {
 }
 
 // ── Activation (called by the view-mode selector) ───────────────
+function _osModulesReady() {
+  // Conversation data can arrive while the ordered defer scripts are still
+  // executing. DOMContentLoaded fires only after that whole list completed,
+  // so runtime handlers from the later OpenSpace modules are then available.
+  if (document.readyState !== 'loading') return Promise.resolve();
+  return new Promise((resolve) => {
+    document.addEventListener('DOMContentLoaded', resolve, { once: true });
+  });
+}
+
 function openspaceSetActive(on) {
   on = !!on;
   if (on === _osActive) return;
@@ -155,13 +167,14 @@ function openspaceSetActive(on) {
     // The resource screens mirror #resourcesContent; make sure it is
     // populated even if the sidebar Resources section was never opened.
     if (typeof loadResources === 'function') loadResources();
-    _osEnsureThree().then(() => {
+    _osModulesReady().then(() => _osEnsureThree())
+      .then(() => _osEnsureEnvironment()).then(() => {
       if (!_osActive) return;
       _osBuildScene(wrap);
       _osSeedAgents();
       _osStartLoop();
     }).catch((e) => {
-      console.error('openspace: three.js load failed', e);
+      console.error('openspace: initialization failed', e);
       const err = document.createElement('div');
       err.className = 'osv-error';
       err.textContent = t('osvLoadError');
@@ -182,6 +195,26 @@ function _osEnsureThree() {
       .then((mod) => { _osThree = mod; return mod; });
   }
   return _osThreeLoading;
+}
+
+// Normal releases include openspace_environment.js in the ordered module
+// list. A running server hotpatch cannot refresh that Python list without a
+// restart, so load the same file once on demand when its global is absent.
+function _osEnsureEnvironment() {
+  if (typeof _osBuildEnvironment === 'function') return Promise.resolve();
+  if (_osEnvironmentLoading) return _osEnvironmentLoading;
+  _osEnvironmentLoading = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    const v = (typeof window !== 'undefined' && window.PAWFLOW_ASSET_VERSION) || Date.now();
+    script.src = '/chat/js/openspace_environment.js?v=' + encodeURIComponent(v);
+    script.onload = () => {
+      if (typeof _osBuildEnvironment === 'function') resolve();
+      else reject(new Error('openspace environment module did not initialize'));
+    };
+    script.onerror = () => reject(new Error('openspace environment module failed to load'));
+    document.head.appendChild(script);
+  });
+  return _osEnvironmentLoading;
 }
 
 function _osUsesSoftwareWebGL() {
@@ -233,10 +266,10 @@ function _osBuildScene(wrap) {
   const T = _osThree;
   if (_osRenderer) { _osResize(); return; }
   _osScene = new T.Scene();
-  _osScene.background = new T.Color(0x10142a);
-  _osScene.fog = new T.Fog(0x10142a, 40, 90);
+  _osScene.background = new T.Color(0x758a78);
+  _osScene.fog = new T.Fog(0x758a78, 58, 110);
 
-  _osCamera = new T.PerspectiveCamera(42, 1, 0.1, 200);
+  _osCamera = new T.PerspectiveCamera(36, 1, 0.03, 250);
   _osUpdateCamera();
 
   _osSoftwareRenderer = _osUsesSoftwareWebGL();
@@ -245,31 +278,36 @@ function _osBuildScene(wrap) {
   _osPixelRatio = _osDprMax;
   _osRenderer = new T.WebGLRenderer({ antialias: !_osSoftwareRenderer });
   _osRenderer.setPixelRatio(_osPixelRatio);
+  _osRenderer.shadowMap.enabled = !_osSoftwareRenderer;
+  _osRenderer.shadowMap.type = T.PCFSoftShadowMap;
+  _osRenderer.toneMapping = T.ACESFilmicToneMapping;
+  _osRenderer.toneMappingExposure = 1.08;
+  _osRenderer.outputColorSpace = T.SRGBColorSpace;
   _osCanvas = _osRenderer.domElement;
   _osCanvas.className = 'osv-canvas';
   wrap.appendChild(_osCanvas);
 
   _osOverlay = document.getElementById('openspaceOverlay');
 
-  const ambient = new T.AmbientLight(0xffffff, 0.75);
-  const sun = new T.DirectionalLight(0xffffff, 1.4);
-  sun.position.set(12, 25, 8);
-  _osScene.add(ambient, sun);
-
-  const floor = new T.Mesh(
-    new T.PlaneGeometry(120, 120),
-    new T.MeshLambertMaterial({ color: 0x1a2140 }));
-  floor.rotation.x = -Math.PI / 2;
-  floor.name = 'floor';
-  _osScene.add(floor);
-  _osRoomMats = { floor: floor.material };
-  const grid = new T.GridHelper(120, 60, 0x2c3560, 0x232b52);
-  grid.position.y = 0.01;
-  _osScene.add(grid);
+  const ambient = new T.AmbientLight(0xffffff, 0.35);
+  const sky = new T.HemisphereLight(0xdcecff, 0x66704f, 1.35);
+  const sun = new T.DirectionalLight(0xfff2d4, 2.35);
+  sun.position.set(18, 34, 22);
+  sun.castShadow = !_osSoftwareRenderer;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -34;
+  sun.shadow.camera.right = 34;
+  sun.shadow.camera.top = 34;
+  sun.shadow.camera.bottom = -34;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 90;
+  sun.shadow.bias = -0.0005;
+  _osScene.add(ambient, sky, sun);
+  _osRoomMats = {};
+  _osBuildEnvironment();
 
   _osRaycaster = new T.Raycaster();
   _osBuildBigScreen();
-  _osBuildDecor();
   _osBuildPosters();
   _osBuildDoor();
   _osBuildTv();
@@ -299,6 +337,25 @@ function _osBuildScene(wrap) {
     help.textContent = t('osvHelp');
     wrap.appendChild(help);
   }
+  if (!wrap.querySelector('.osv-camera-views')) {
+    const views = document.createElement('div');
+    views.className = 'osv-camera-views';
+    [
+      ['home', '\u2302', 'osvViewHome'],
+      ['conversation', '\u{1F4AC}', 'osvViewConversation'],
+      ['board', '\u{1F4CB}', 'osvViewBoard'],
+      ['tv', '\u{1F4FA}', 'osvViewTv'],
+      ['resources', '\u{1F9F0}', 'osvViewResources'],
+    ].forEach(([kind, icon, key]) => {
+      const button = document.createElement('button');
+      button.textContent = icon;
+      button.title = t(key);
+      button.setAttribute('aria-label', t(key));
+      button.onclick = () => _osSetCameraView(kind);
+      views.appendChild(button);
+    });
+    wrap.appendChild(views);
+  }
   if (!wrap.querySelector('.osv-mobile-ctl')) {
     // Touch controls: pinch/two-finger pan work on the canvas itself;
     // these buttons cover zoom and "I'm lost" on small screens.
@@ -317,18 +374,13 @@ function _osBuildScene(wrap) {
       _osCamPan.x = Math.max(-40, Math.min(40, _osCamPan.x));
       _osCamPan.z = Math.max(-40, Math.min(40, _osCamPan.z));
     };
-    [['\u25B2', () => { _osCamHeight = Math.min(40, _osCamHeight + 3); }],
-     ['\u25BC', () => { _osCamHeight = Math.max(6, _osCamHeight - 3); }],
+    [['\u25B2', () => { _osCamHeight = Math.min(60, _osCamHeight + 3); }],
+     ['\u25BC', () => { _osCamHeight = Math.max(0, _osCamHeight - 3); }],
      ['\u25C0', () => pan(60, 0)],
      ['\u25B6', () => pan(-60, 0)],
-     ['\u2795', () => { _osCamDist = Math.max(10, _osCamDist - 5); }],
-     ['\u2796', () => { _osCamDist = Math.min(60, _osCamDist + 5); }],
-     ['\u2302', () => {
-       _osCamAngle = Math.PI / 4; _osCamDist = 26; _osCamHeight = 18;
-       _osCamPan.x = 0; _osCamPan.y = 0; _osCamPan.z = 0;
-       _osFocusKey = '';
-       _osFollow = true;
-     }]].forEach(([txt, fn]) => {
+     ['\u2795', () => { _osCamDist = Math.max(3, _osCamDist - 5); }],
+     ['\u2796', () => { _osCamDist = Math.min(90, _osCamDist + 5); }],
+     ['\u2302', () => _osSetCameraView('home')]].forEach(([txt, fn]) => {
       const b = document.createElement('button');
       b.textContent = txt;
       b.onclick = () => { fn(); _osUpdateCamera(); };
@@ -337,7 +389,32 @@ function _osBuildScene(wrap) {
     wrap.appendChild(ctl);
   }
   _osResize();
-  _osApplyRoomStyle();
+  _osApplyRoomStyle(_osSeedConvId
+    || (typeof conversationId !== 'undefined' && conversationId));
+}
+
+function _osSetCameraView(kind) {
+  const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
+  const rows = Math.max(1, Math.ceil(Math.max(_osSeatCount, 1) / OSV_GRID_COLS));
+  const cz = ((rows - 1) * OSV_DESK_SPACING) / 2;
+  const presets = {
+    conversation: { x: 7, y: 1.8, z: -9, angle: Math.PI / 2, dist: 6.2 },
+    board: { x: -6.5, y: 2.4, z: 2, angle: 0, dist: 6.0 },
+    tv: { x: -6.3, y: 1.75, z: 8.5, angle: 0, dist: 5.0 },
+    resources: { x: OSV_RESOURCE_WALL.faceX, y: 1.5, z: 5.2,
+                 angle: Math.PI, dist: 6.0 },
+  };
+  const view = presets[kind];
+  if (!view) {
+    _osCamAngle = Math.PI / 4; _osCamDist = 36; _osCamHeight = 25;
+    _osCamPan.x = 0; _osCamPan.y = 0; _osCamPan.z = 0;
+    _osFocusKey = ''; _osSurfaceFocus = ''; _osFollow = true;
+  } else {
+    _osCamPan.x = view.x - cx; _osCamPan.y = view.y; _osCamPan.z = view.z - cz;
+    _osCamAngle = view.angle; _osCamDist = view.dist; _osCamHeight = 0.15;
+    _osFocusKey = ''; _osSurfaceFocus = kind; _osFollow = false;
+  }
+  _osUpdateCamera();
 }
 
 function _osUpdateCamera() {

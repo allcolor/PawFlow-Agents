@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OPENSPACE_MODULES = (
     "openspace.js",
+    "openspace_environment.js",
     "openspace_scene.js",
     "openspace_room.js",
     "openspace_flow.js",
@@ -34,6 +35,7 @@ def test_openspace_module_is_served_and_three_is_vendored():
     # Load order: after turn_view.js (shares the view-mode vocabulary),
     # before sse.js (whose connectSSE calls openspaceWireSSE).
     assert source.index('"turn_view.js"') < source.index('"openspace.js"')
+    assert source.index('"openspace_environment.js"') < source.index('"openspace_scene.js"')
     assert source.index('"openspace_dialogs.js"') < source.index('"sse.js"')
     three = ROOT / "tasks/io/chat_ui/three.module.min.js"
     assert three.exists()
@@ -51,6 +53,21 @@ def test_three_is_lazily_imported_not_a_load_time_module():
     assert '"three.module.min.js"' not in source
     openspace = _openspace_text()
     assert "import('/chat/js/three.module.min.js" in openspace
+
+
+def test_reload_waits_for_all_deferred_openspace_modules():
+    openspace = _openspace_text()
+    assert "function _osModulesReady()" in openspace
+    assert "document.readyState !== 'loading'" in openspace
+    assert "document.addEventListener('DOMContentLoaded', resolve, { once: true })" in openspace
+    assert "_osModulesReady().then(() => _osEnsureThree())" in openspace
+
+
+def test_environment_module_supports_restart_free_hotpatch_loading():
+    openspace = _openspace_text()
+    assert "function _osEnsureEnvironment()" in openspace
+    assert "'/chat/js/openspace_environment.js?v='" in openspace
+    assert ".then(() => _osEnsureEnvironment())" in openspace
 
 
 def test_view_menu_offers_openspace_mode():
@@ -113,7 +130,8 @@ def test_openspace_i18n_keys_exist_in_all_locales():
     keys = (
         "openspaceView", "osvActivity", "osvNoActivity", "osvLoadError",
         "osvThought", "osvSaid", "osvAsksYou", "osvDelegatesTo", "osvDone",
-        "osvBoardTitle", "osvBoardIdle", "osvHelp",
+        "osvBoardTitle", "osvBoardIdle", "osvHelp", "osvViewHome",
+        "osvViewConversation", "osvViewBoard", "osvViewTv", "osvViewResources",
     )
     for locale in ("en", "fr", "es"):
         data = json.loads(_text(f"tasks/io/chat_ui/i18n/{locale}.json"))
@@ -256,7 +274,12 @@ def test_thinking_events_reach_thought_bubbles():
 
 def test_office_has_decor_walkable_floor_and_camera_pan():
     openspace = _openspace_text()
-    assert "function _osBuildDecor" in openspace
+    assert "function _osBuildEnvironment" in openspace
+    assert "function _osWoodTexture" in openspace
+    assert "function _osBuildConferenceZone" in openspace
+    assert "function _osBuildLoungeZone" in openspace
+    assert "function _osBuildVacantDesks" in openspace
+    assert "shadowMap.enabled = !_osSoftwareRenderer" in openspace
     # Clicking the floor walks the viewer's own avatar there and moves
     # its home spot with it.
     assert "me.homeSeat = { x: gx, z: gz };" in openspace
@@ -264,6 +287,47 @@ def test_office_has_decor_walkable_floor_and_camera_pan():
     # is suppressed on the canvas.
     assert "pan: !e.ctrlKey && (e.button === 2 || e.shiftKey)" in openspace
     assert "contextmenu" in openspace
+
+
+def test_wall_fixtures_stay_on_the_room_side():
+    environment = _text("tasks/io/chat_ui/openspace_environment.js")
+    scene = _text("tasks/io/chat_ui/openspace_scene.js")
+    room = _text("tasks/io/chat_ui/openspace_room.js")
+
+    # Windows and the door are openings in segmented walls, not meshes pasted
+    # over full solid walls. Shared constants keep the door and opening aligned.
+    assert "function _osBuildWallWithOpenings" in environment
+    assert "{ at: OSV_DOOR_X - 8.0, width: 2.4" in environment
+    assert "g.position.set(OSV_DOOR_X, 0, OSV_DOOR_Z)" in room
+    # Resource panels use the accessible office face of the meeting partition;
+    # the black support posts that clipped the scene are gone.
+    assert "const OSV_RESOURCE_WALL" in environment
+    assert "const x = OSV_RESOURCE_WALL.faceX;" in scene
+    assert "new T.BoxGeometry(0.12, 2.0, 0.12)" not in scene
+    assert "const x = OSV_RESOURCE_WALL.faceX - 0.12;" in room
+    # The transcript screen and title fit below the 4.2-unit partition.
+    assert "const sw = 5.4" in scene
+    assert "const screenBottom = 0.25" in scene
+    assert "const pole = new T.Mesh" not in scene
+
+
+def test_camera_has_frontal_surface_presets_and_level_side_views():
+    source = _openspace_text()
+    template = _text("tasks/io/chat_ui/template.html")
+    assert "function _osSetCameraView(kind)" in source
+    for kind in ("conversation", "board", "tv", "resources"):
+        assert kind + ": {" in source
+    assert "_osCamHeight = Math.max(0" in source
+    assert "Math.max(3, Math.min(90" in source
+    assert "new T.PerspectiveCamera(36, 1, 0.03, 250)" in source
+    assert "osv-camera-views" in source and ".osv-camera-views" in template
+
+
+def test_room_style_is_seeded_by_the_loaded_conversation():
+    source = _openspace_text()
+    assert "function _osApplyRoomStyle(seed)" in source
+    assert "_osApplyRoomStyle(cid);" in source
+    assert "_osRoomMats.walls" in source
 
 
 def test_agents_are_chibi_mascots_with_batteries_and_a_roster_board():
@@ -552,7 +616,7 @@ def test_state_orbiters_circle_the_agent_ring():
 def test_filestore_tv_plays_conversation_files():
     source = _openspace_text()
     # A clickable TV mesh opens the FileStore picker...
-    assert "ud.osvTv) { openspaceOpenTvDialog(); return; }" in source
+    assert "ud.osvTv) { _osSetCameraView('tv'); openspaceOpenTvDialog(); return; }" in source
     assert "action$('list_conv_files', { conversation_id: conversationId })" in source
     # ...and the picked file renders by content_type on a projected panel:
     # video/image/audio elements, unsupported formats point at the Files menu.
@@ -584,7 +648,7 @@ def test_poster_wall_covers_all_side_panels():
     ]:
         assert key in source, key
         assert opener in source, opener
-    # Posters wrap into rows; the transient resource boards pop above
-    # however many rows the poster list needs (no overlap).
+    # Posters and transient boards share the compact accessible gallery grid.
     assert "OSV_POSTERS_PER_ROW" in source
-    assert "Math.ceil(OSV_POSTERS.length / OSV_POSTERS_PER_ROW)" in source
+    assert "OSV_POSTERS_PER_ROW = OSV_RESOURCE_WALL.columns" in source
+    assert "Math.floor(i / OSV_RESOURCE_WALL.columns) * 0.94" in source

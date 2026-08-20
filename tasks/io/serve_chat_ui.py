@@ -47,7 +47,7 @@ _JS_MODULES = [
     # OpenSpace is split by responsibility (all files stay <=800 lines).
     # The files share classic-script globals; order is therefore significant.
     # three.js itself remains a lazy dynamic import from the core module.
-    "openspace.js", "openspace_scene.js", "openspace_room.js",
+    "openspace.js", "openspace_environment.js", "openspace_scene.js", "openspace_room.js",
     "openspace_flow.js", "openspace_agents.js", "openspace_runtime.js",
     "openspace_dialogs.js",
     "active_agents.js", "task_tabs.js", "usage_cost.js", "usage_dashboard.js", "typing.js", "notifications.js",

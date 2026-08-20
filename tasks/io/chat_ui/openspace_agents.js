@@ -76,6 +76,7 @@ function _osEnsureUser(name) {
 function _osBuildDesk(rec) {
   const T = _osThree;
   if (rec.kind === 'user') { _osBuildVisitor(rec); return; }
+  _osClaimDeskSlot(rec.seatIndex);
   const g = new T.Group();
   g.position.set(rec.seat.x, 0, rec.seat.z);
 
@@ -107,6 +108,10 @@ function _osBuildDesk(rec) {
   pc.traverse((o) => { o.userData.osvAgent = rec.key; });
   g.add(pc);
   rec.screenMat = screenMat;
+  const chair = _osBuildChair(0x596b7f);
+  chair.position.set(0, 0, 1.35);
+  chair.rotation.y = Math.PI;
+  g.add(chair);
 
   // Avatar: chibi mascot; front features live on local +z, π turns it toward
   // its desk and PC.
@@ -127,7 +132,7 @@ function _osBuildDesk(rec) {
   avatar.add(halo);
   rec.halo = halo;
 
-  _osScene.add(g);
+  _osScene.add(_osShadow(g));
   rec.group = g;
 
   _osBuildOverlayEls(rec, rec.name, '');
@@ -474,7 +479,7 @@ function openspaceSeedHistory(messages, cid) {
     _osSeedConvId = cid;
     openspaceResetTransient();
     // New conversation → new room palette (deterministic per id).
-    _osApplyRoomStyle();
+    _osApplyRoomStyle(cid);
   }
   (messages || []).forEach((m) => {
     if (!m) return;

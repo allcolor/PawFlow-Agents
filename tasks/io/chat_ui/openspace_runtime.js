@@ -421,13 +421,13 @@ function _osAdaptPixelRatio(ts) {
 function _osAnimateRig(rec, ts, walking) {
   const rig = rec && rec.rig;
   if (!rig) return;
-  const breath = Math.sin(ts / 700 + rig.blinkOffset) * 0.025;
+  const breath = Math.sin(ts / 700 + rig.blinkOffset) * 0.055;
   rig.body.scale.set(1, 1.12 + breath, 0.92);
   rig.body.position.y = 0.95;
   rig.body.rotation.z = 0;
   rig.arms.forEach((arm) => { arm.rotation.x = 0; arm.rotation.z = 0; });
   rig.feet.forEach((foot) => { foot.position.z = 0.22; foot.rotation.x = 0; });
-  const blink = ((ts + rig.blinkOffset) % 4200) > 4080 ? 0.12 : 1;
+  const blink = ((ts + rig.blinkOffset) % 4200) > 3880 ? 0.08 : 1;
   rig.eyes.forEach((eye) => { eye.scale.y = blink; });
   rig.pupils.forEach((pupil, i) => {
     pupil.scale.y = blink;
@@ -524,20 +524,20 @@ function _osTick(ts) {
     }
     // Root lean/bounce stays readable from afar; the chibi rig adds limbs,
     // eyes and mouth at close range.
-    const sway = { thinking: [350, 0.18], talking: [220, 0.1],
-                   tool: [90, 0.06] }[rec.state];
+    const sway = { idle: [1100, 0.035], thinking: [350, 0.22],
+                   talking: [220, 0.14], tool: [90, 0.09] }[rec.state];
     const walking = tweening.has(rec);
     rec.avatar.rotation.z = !walking && sway ? Math.sin(ts / sway[0]) * sway[1] : 0;
     if (!walking) {
-      const bounce = { tool: [130, 0.22], talking: [200, 0.12],
-                       thinking: [480, 0.08] }[rec.state];
+      const bounce = { idle: [850, 0.055], tool: [130, 0.28],
+                       talking: [200, 0.17], thinking: [480, 0.11] }[rec.state];
       rec.avatar.position.y = bounce
         ? Math.abs(Math.sin(ts / bounce[0])) * bounce[1] : 0;
     }
     _osAnimateRig(rec, ts, walking);
     // The PC screen flickers while its agent works.
     if (rec.screenMat) {
-      rec.screenMat.emissiveIntensity = sway
+      rec.screenMat.emissiveIntensity = rec.state !== 'idle'
         ? 0.75 + Math.sin(ts / 160) * 0.35 : 1;
     }
     _osProject(rec);
@@ -622,7 +622,8 @@ function _osPointerMove(e) {
       const s = _osPinchState();
       _osFollow = false;
       _osFocusKey = '';
-      _osCamDist = Math.max(10, Math.min(60, _osCamDist * _osPinchPrev.dist / s.dist));
+      _osSurfaceFocus = '';
+      _osCamDist = Math.max(3, Math.min(90, _osCamDist * _osPinchPrev.dist / s.dist));
       const k = _osCamDist * 0.0016;
       const a = _osCamAngle;
       const dx = s.cx - _osPinchPrev.cx, dy = s.cy - _osPinchPrev.cy;
@@ -646,6 +647,7 @@ function _osPointerMove(e) {
       // Drag the world: translate the camera target on the floor plane.
       _osFollow = false;
       _osFocusKey = '';
+      _osSurfaceFocus = '';
       const k = _osCamDist * 0.0016;
       const a = _osCamAngle;
       _osCamPan.x += (-Math.sin(a) * dx + Math.cos(a) * dy) * k;
@@ -653,8 +655,9 @@ function _osPointerMove(e) {
       _osCamPan.x = Math.max(-40, Math.min(40, _osCamPan.x));
       _osCamPan.z = Math.max(-40, Math.min(40, _osCamPan.z));
     } else {
+      _osSurfaceFocus = '';
       _osCamAngle += dx * 0.008;
-      _osCamHeight = Math.max(6, Math.min(40, _osCamHeight + dy * 0.05));
+      _osCamHeight = Math.max(0, Math.min(60, _osCamHeight + dy * 0.05));
     }
     _osDrag.x = e.clientX; _osDrag.y = e.clientY;
     _osUpdateCamera();
@@ -683,12 +686,14 @@ function _osPointerUp(e) {
       return;
     }
     if (ud && ud.osvDoor) { openspaceOpenConvDialog(); return; }
-    if (ud && ud.osvTv) { openspaceOpenTvDialog(); return; }
+    if (ud && ud.osvTv) { _osSetCameraView('tv'); openspaceOpenTvDialog(); return; }
     if (ud && ud.osvResSection) {
       openspaceOpenResSectionDialog(ud.osvResSection, ud.osvResTitle);
       return;
     }
-    if (ud && ud.osvPoster) { _osOpenPoster(ud.osvPoster); return; }
+    if (ud && ud.osvPoster) {
+      _osSetCameraView('resources'); _osOpenPoster(ud.osvPoster); return;
+    }
     if (ud && ud.osvAgent) {
       _osFocusAgent(ud.osvAgent);
       openspaceOpenAgentDialog(ud.osvAgent);
@@ -715,6 +720,7 @@ function _osPointerUp(e) {
 
 function _osWheel(e) {
   e.preventDefault();
-  _osCamDist = Math.max(10, Math.min(60, _osCamDist + e.deltaY * 0.03));
+  _osSurfaceFocus = '';
+  _osCamDist = Math.max(3, Math.min(90, _osCamDist + e.deltaY * 0.03));
   _osUpdateCamera();
 }

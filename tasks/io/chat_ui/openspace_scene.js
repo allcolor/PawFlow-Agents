@@ -58,29 +58,28 @@ function _osBuildDecor() {
 function _osBuildBigScreen() {
   const T = _osThree;
   const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
-  const sw = 13, sh = sw * OSV_SCREEN_H / OSV_SCREEN_W;
-  const sy = 2.3 + sh / 2, sz = -9;
+  const sw = 5.4, sh = sw * OSV_SCREEN_H / OSV_SCREEN_W;
+  const screenBottom = 0.25, sy = screenBottom + sh / 2, sz = -9;
+  const titleHeight = 0.65, titleGap = 0.1;
+  const titleBottom = sy + sh / 2 + titleGap;
+  const titleTop = titleBottom + titleHeight;
   const bezel = new T.Mesh(
     new T.BoxGeometry(sw + 0.7, sh + 0.7, 0.3),
     new T.MeshLambertMaterial({ color: 0x222a4d }));
   bezel.position.set(cx, sy, sz - 0.18);
-  const pole = new T.Mesh(
-    new T.BoxGeometry(0.4, 2.3, 0.4),
-    new T.MeshLambertMaterial({ color: 0x1b2140 }));
-  pole.position.set(cx, 1.15, sz - 0.18);
-  _osScene.add(bezel, pole);
+  _osScene.add(bezel);
   // Title frame above the screen: a bezel plus a projected DOM strip
   // showing the conversation title (same quad transform as the screen).
   const titleBezel = new T.Mesh(
-    new T.BoxGeometry(sw + 0.7, 1.5, 0.25),
+    new T.BoxGeometry(sw + 0.7, titleHeight + 0.1, 0.25),
     new T.MeshLambertMaterial({ color: 0x222a4d }));
-  titleBezel.position.set(cx, sy + sh / 2 + 1.0, sz - 0.2);
+  titleBezel.position.set(cx, (titleBottom + titleTop) / 2, sz - 0.2);
   _osScene.add(titleBezel);
   _osTitleCorners = [
-    { x: cx - sw / 2, y: sy + sh / 2 + 1.6, z: sz },
-    { x: cx + sw / 2, y: sy + sh / 2 + 1.6, z: sz },
-    { x: cx - sw / 2, y: sy + sh / 2 + 0.45, z: sz },
-    { x: cx + sw / 2, y: sy + sh / 2 + 0.45, z: sz },
+    { x: cx - sw / 2, y: titleTop, z: sz },
+    { x: cx + sw / 2, y: titleTop, z: sz },
+    { x: cx - sw / 2, y: titleBottom, z: sz },
+    { x: cx + sw / 2, y: titleBottom, z: sz },
   ];
   if (!_osTitleEl && _osOverlay) {
     _osTitleEl = document.createElement('div');
@@ -362,9 +361,8 @@ const OSV_POSTERS = [
   ['tmux', '\u{1F4DF}', 'osvTmux',
    () => { if (typeof cmdAgentTmux === 'function') cmdAgentTmux(); }],
 ];
-// Posters hang in rows of 9 along the right wall; a second row opens
-// above the first when the list outgrows it.
-const OSV_POSTERS_PER_ROW = 9;
+// Compact gallery on the office face of the meeting-room partition.
+const OSV_POSTERS_PER_ROW = OSV_RESOURCE_WALL.columns;
 
 function _osPosterTexture(icon, label) {
   const T = _osThree;
@@ -387,24 +385,17 @@ function _osPosterTexture(icon, label) {
 
 function _osBuildPosters() {
   const T = _osThree;
-  const x = (OSV_GRID_COLS - 1) * OSV_DESK_SPACING + 6.5;
+  const x = OSV_RESOURCE_WALL.faceX;
   OSV_POSTERS.forEach((p, i) => {
-    const z = -5 + (i % OSV_POSTERS_PER_ROW) * 2.1;
-    const y = 2.5 + Math.floor(i / OSV_POSTERS_PER_ROW) * 1.9;
+    const z = OSV_RESOURCE_WALL.zStart + (i % OSV_POSTERS_PER_ROW) * OSV_RESOURCE_WALL.zStep;
+    const y = 0.55 + Math.floor(i / OSV_POSTERS_PER_ROW) * 0.94;
     const mesh = new T.Mesh(
-      new T.PlaneGeometry(2.1, 1.4),
+      new T.PlaneGeometry(1.32, 0.78),
       new T.MeshBasicMaterial({ map: _osPosterTexture(p[1], t(p[2])) }));
     mesh.position.set(x, y, z);
     mesh.rotation.y = -Math.PI / 2;   // face the desks (-x)
     mesh.userData.osvPoster = p[0];
     _osScene.add(mesh);
-    if (i < OSV_POSTERS_PER_ROW) {
-      const post = new T.Mesh(
-        new T.BoxGeometry(0.12, 2.0, 0.12),
-        new T.MeshLambertMaterial({ color: 0x3b3f54 }));
-      post.position.set(x + 0.12, 1.0, z);
-      _osScene.add(post);
-    }
   });
 }
 

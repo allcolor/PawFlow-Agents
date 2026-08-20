@@ -5,7 +5,6 @@
 // conversation id (same conversation → same colors, always).
 function _osBuildDoor() {
   const T = _osThree;
-  const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
   const g = new T.Group();
   const frame = new T.Mesh(
     new T.BoxGeometry(2.4, 3.4, 0.25),
@@ -20,10 +19,10 @@ function _osBuildDoor() {
     new T.MeshLambertMaterial({ color: 0xffd43b }));
   knob.position.set(0.7, 1.5, 0.26);
   g.add(frame, panel, knob);
-  g.position.set(cx - 10.5, 0, -9);
+  g.position.set(OSV_DOOR_X, 0, OSV_DOOR_Z);
   g.traverse((o) => { o.userData.osvDoor = true; });
   _osScene.add(g);
-  _osDoorPos = { x: cx - 10.5, z: -9 };
+  _osDoorPos = { x: OSV_DOOR_X, z: OSV_DOOR_Z };
 }
 
 // ── FileStore TV ─────────────────────────────────────────────────
@@ -225,14 +224,18 @@ function _osHashSeed(s) {
   return h;
 }
 
-function _osApplyRoomStyle() {
+function _osApplyRoomStyle(seed) {
   if (!_osScene || !_osRoomMats) return;
-  const cid = (typeof conversationId !== 'undefined' && conversationId) || 'default';
+  const cid = String(seed || _osSeedConvId
+    || (typeof conversationId !== 'undefined' && conversationId) || 'default');
   const hue = (_osHashSeed(cid) % 360) / 360;
-  _osScene.background.setHSL(hue, 0.42, 0.11);
+  _osScene.background.setHSL(hue, 0.30, 0.56);
   if (_osScene.fog) _osScene.fog.color.copy(_osScene.background);
-  _osRoomMats.floor.color.setHSL(hue, 0.35, 0.17);
-  if (_osRoomMats.rug) _osRoomMats.rug.color.setHSL((hue + 0.08) % 1, 0.42, 0.26);
+  if (_osRoomMats.floor) _osRoomMats.floor.color.setHSL((hue + 0.04) % 1, 0.18, 0.88);
+  (_osRoomMats.walls || []).forEach((mat) => {
+    mat.color.setHSL((hue + 0.94) % 1, 0.18, 0.88);
+  });
+  if (_osRoomMats.rug) _osRoomMats.rug.color.setHSL((hue + 0.08) % 1, 0.50, 0.28);
   if (_osRoomMats.couch) _osRoomMats.couch.color.setHSL((hue + 0.55) % 1, 0.5, 0.5);
   if (_osRoomMats.couchBack) _osRoomMats.couchBack.color.setHSL((hue + 0.55) % 1, 0.55, 0.55);
 }
@@ -386,6 +389,7 @@ function _osRetireAgent(rec) {
       if (o.material && o.material.dispose) o.material.dispose();
     });
   });
+  if (typeof rec.seatIndex === 'number') _osReleaseDeskSlot(rec.seatIndex);
 }
 
 // ── Resource sub-menu boards ─────────────────────────────────
@@ -447,16 +451,16 @@ function _osResBoardTexture(title, count) {
 function _osBuildResourceBoards() {
   const T = _osThree;
   if (!T || !_osScene) return;
-  const x = (OSV_GRID_COLS - 1) * OSV_DESK_SPACING + 6.5;
+  // Overlay the accessible meeting-partition gallery, on the office face.
+  const x = OSV_RESOURCE_WALL.faceX - 0.12;
   _osResSections().forEach((s, i) => {
     const count = s.body.querySelectorAll('div').length;
     const mesh = new T.Mesh(
-      new T.PlaneGeometry(2.1, 1.1),
+      new T.PlaneGeometry(1.32, 0.78),
       new T.MeshBasicMaterial({ map: _osResBoardTexture(s.title, count) }));
-    // Pop above the poster rows, however many the poster list needs.
-    const boardBase = 2.5
-      + Math.ceil(OSV_POSTERS.length / OSV_POSTERS_PER_ROW) * 1.9 + 0.2;
-    mesh.position.set(x, boardBase + Math.floor(i / 8) * 1.4, -5 + (i % 8) * 2.1);
+    mesh.position.set(
+      x, 0.55 + Math.floor(i / OSV_RESOURCE_WALL.columns) * 0.94,
+      OSV_RESOURCE_WALL.zStart + (i % OSV_RESOURCE_WALL.columns) * OSV_RESOURCE_WALL.zStep);
     mesh.rotation.y = -Math.PI / 2;
     mesh.userData.osvResSection = s.rtype;
     mesh.userData.osvResTitle = s.title;

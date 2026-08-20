@@ -725,6 +725,9 @@ body.openspace-active .scroll-nav { display: none; }
 .osv-mobile-ctl { position: absolute; right: 10px; bottom: 10px; z-index: 6; display: none; grid-template-columns: repeat(4, 40px); gap: 6px; pointer-events: auto; }
 .osv-mobile-ctl button { width: 40px; height: 40px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.25); background: rgba(20,24,50,0.85); color: #dfe7ff; font-size: 17px; line-height: 1; cursor: pointer; }
 .osv-mobile-ctl button:active { background: rgba(60,80,160,0.9); }
+.osv-camera-views { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 7; display: flex; gap: 6px; pointer-events: auto; }
+.osv-camera-views button { width: 38px; height: 34px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.28); background: rgba(20,24,50,0.88); color: #eef1ff; font-size: 16px; cursor: pointer; }
+.osv-camera-views button:hover, .osv-camera-views button:focus-visible { background: rgba(60,80,160,0.95); outline: 2px solid #74c0fc; }
 /* On touch devices the mouse help is noise and collides with the
    D-pad; hide it there. */
 @media (pointer: coarse) { .osv-mobile-ctl { display: grid; } .osv-help { display: none; } }

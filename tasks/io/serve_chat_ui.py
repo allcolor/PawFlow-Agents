@@ -68,6 +68,9 @@ _JS_MODULES = [
     "resources_render.js", "service_tunnels.js", "resources_mcp_publish.js", "resources_a2a.js", "resources_menus.js",
     "resources_flow_dialogs.js",
     "resources_resource_dialogs.js", "resources_create_dialogs.js",
+    # schema_form.js = the single schema-driven form renderer (services, Flow
+    # Editor properties, flow parameters); must precede its first caller.
+    "schema_form.js",
     "resources_service_dialogs.js", "resources_service_login.js",
     "resources_service_templates.js",
     "services.js", "file_viewer.js", "file_explorer.js",

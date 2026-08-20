@@ -185,7 +185,7 @@ async function _renderResourcesData(data) {
       data.flows.forEach(f => {
         const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
         const statusColor = f.status === 'running' ? 'var(--pf-success)' : f.status === 'stopped' ? 'var(--pf-muted)' : 'var(--pf-danger)';
-        const flowCtx = ` oncontextmenu="showFlowInstanceMenu(event,${_pfpJsArg(f.instance_id)},${_pfpJsArg(f.status)},${_pfpJsArg(f.scope)});return false;"`;
+        const flowCtx = ` oncontextmenu="showFlowInstanceMenu(event,${_pfpJsArg(f.instance_id)},${_pfpJsArg(f.status)},${_pfpJsArg(f.scope)},${_pfpJsArg(f.flow_fqn || '')});return false;"`;
         liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
           ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${escapeHtml(f.flow_name || f.instance_id)}</span>${_ownerBadge(f)}
         </div>`;
@@ -657,8 +657,8 @@ async function _renderResourcesData(data) {
     // ── Flows Repository (flow templates on disk under
     //    data/repository/flows/*.json) ──
     repoHtml += _repoSectionHeader(t('flowsRepository'), '_flow_repo', {
-      createOnclick: "showDeployFlowDialog()",
-      createTitle: t('deployFlowFromTemplate'),
+      createOnclick: "_showNewFlowDialog()",
+      createTitle: t('flowNew'),
     });
     { const tpls = data.flow_templates || [];
       if (tpls.length) {

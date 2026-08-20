@@ -135,10 +135,7 @@ class _ContinuousExecControlMixin:
              sorted(t.config.items()) if hasattr(t, 'config') else [])
             for tid, t in flow.tasks.items()
         )
-        rels_sig = sorted(
-            (r.source_id, r.target_id, r.relation_type)
-            for r in flow.relations
-        )
+        rels_sig = sorted(self._relation_identity(r) for r in flow.relations)
         svcs_sig = sorted(
             (sid, s.TYPE if hasattr(s, 'TYPE') else type(s).__name__,
              sorted(s.config.items()) if hasattr(s, 'config') else [])
@@ -146,25 +143,78 @@ class _ContinuousExecControlMixin:
         )
         return f"{tasks_sig}|{rels_sig}|{svcs_sig}"
 
-    def update_flow(self, new_flow: Flow) -> bool:
+    @staticmethod
+    def _relation_identity(relation):
+        """Return ``(source, target, relationship)`` for dict/model relations."""
+        if isinstance(relation, dict):
+            return (str(relation.get("from") or relation.get("source") or ""),
+                    str(relation.get("to") or relation.get("target") or ""),
+                    str(relation.get("type") or relation.get("relationship")
+                        or "success"))
+        return (str(getattr(relation, "source_id", "")),
+                str(getattr(relation, "target_id", "")),
+                str(getattr(relation, "relation_type", None)
+                    or getattr(relation, "relationship", "success")))
+
+    @classmethod
+    def _relation_connection_id(cls, relation) -> str:
+        source, target, relationship = cls._relation_identity(relation)
+        return f"conn_{source}__{relationship}__{target}"
+
+    def update_flow(self, new_flow: Flow, *,
+                    removed_queue_policy: str = "reject",
+                    in_flight_policy: str = "reject") -> bool:
         """Update the entire flow structure while preserving queued FlowFiles.
 
         Returns False without changes if the new flow is identical to current.
+
+        ``removed_queue_policy`` is ``reject`` (safe default) or ``drop``.
+        ``in_flight_policy`` is ``reject`` (safe default) or ``wait`` (up to
+        ten seconds after scheduling has stopped). No queue is ever silently
+        moved to another relationship.
 
         Strategy:
         1. Stop all tasks
         2. For connections that exist in both old and new flow: keep queues
         3. For new connections: create empty
-        4. For removed connections: drain FlowFiles to a "lost+found" list
+        4. For removed connections: reject non-empty queues unless the caller
+           explicitly chose ``drop``
         5. Update/add/remove tasks
         6. Restart
         """
+        if removed_queue_policy not in {"reject", "drop"}:
+            raise ValueError("removed_queue_policy must be reject or drop")
+        if in_flight_policy not in {"reject", "wait"}:
+            raise ValueError("in_flight_policy must be reject or wait")
+
         # Skip update if flow structure hasn't changed
         old_fp = self._flow_fingerprint(self._flow)
         new_fp = self._flow_fingerprint(new_flow)
         if old_fp == new_fp:
             logger.info("Flow unchanged, skipping update.")
             return None  # None = no change (distinct from False = error)
+
+        new_connection_ids = {
+            self._relation_connection_id(relation)
+            for relation in new_flow.relations
+        }
+        removed_nonempty = [
+            conn for conn in self._connections._connections
+            if conn.connection_id not in new_connection_ids
+            and not conn.is_empty()
+        ]
+        if removed_nonempty and removed_queue_policy == "reject":
+            logger.warning(
+                "Flow update rejected: %d removed connection(s) still contain FlowFiles",
+                len(removed_nonempty))
+            return False
+
+        with self._lock:
+            active = [task_id for task_id, count in self._in_flight.items()
+                      if count]
+        if active and in_flight_policy == "reject":
+            logger.warning("Flow update rejected: tasks in flight: %s", active)
+            return False
 
         logger.info(f"Updating flow from v{self._flow_version}...")
 
@@ -190,6 +240,18 @@ class _ContinuousExecControlMixin:
             if self._scheduler_thread:
                 self._scheduler_thread.join(timeout=10)
                 self._scheduler_thread = None
+            if in_flight_policy == "wait":
+                deadline = time.time() + 10
+                while time.time() < deadline:
+                    with self._lock:
+                        if not any(self._in_flight.values()):
+                            break
+                    time.sleep(0.05)
+                with self._lock:
+                    if any(self._in_flight.values()):
+                        logger.error("Flow update timed out waiting for in-flight tasks")
+                        self.start()
+                        return False
             # Disconnect only services that are NOT reused
             for svc_id, svc in old_services.items():
                 if svc is not new_flow.services.get(svc_id):
@@ -212,56 +274,46 @@ class _ContinuousExecControlMixin:
                         logger.warning(f"Task '{task_id}' cleanup error: {e}")
 
         try:
-            # Save current queue contents indexed by (source, target)
-            saved_queues: Dict[tuple, List[FlowFile]] = {}
-            for conn_stats in self._connections.get_all_stats():
-                key = (conn_stats["source"], conn_stats["target"])
-                saved_queues[key] = []
-
-            # Drain all connections
+            # Snapshot queue contents by the only stable runtime identity.
+            saved_queues: Dict[str, List[FlowFile]] = {}
+            paused_queues = set()
             for conn in self._connections._connections:
-                key = (conn.source_id, conn.target_id)
-                while not conn.is_empty():
-                    ff = conn.dequeue()
-                    if ff:
-                        saved_queues.setdefault(key, []).append(ff)
+                saved_queues[conn.connection_id] = conn.peek_all(
+                    limit=conn.queue_size())
+                if conn.is_paused():
+                    paused_queues.add(conn.connection_id)
 
             # Rebuild with new flow (reused services are already connected)
             self._tasks.clear()
             self._task_states.clear()
             self._task_retry_counts.clear()
             self._in_flight.clear()
+            self._max_instances.clear()
+            self._connections = type(self._connections)()
             self._flow = new_flow
+            from core.parameter_context import ParameterContext
+            self._parameter_context = ParameterContext(new_flow.parameters)
+            overrides = getattr(self, "_parameter_overrides", None) or {}
+            if overrides:
+                self._parameter_context = self._parameter_context.with_overrides(
+                    overrides)
             self._build(new_flow)
 
             # Restore queues for connections that still exist
             restored = 0
-            orphaned = 0
-            for (src, tgt), flowfiles in saved_queues.items():
-                outgoing = self._connections.get_outgoing(src)
-                target_conn = None
-                for conn in outgoing:
-                    if conn.target_id == tgt:
-                        target_conn = conn
-                        break
-
+            dropped = 0
+            for connection_id, flowfiles in saved_queues.items():
+                target_conn = self._connections.get_by_id(connection_id)
                 if target_conn:
                     for ff in flowfiles:
-                        target_conn.enqueue(ff)
+                        # Preservation wins over newly lowered backpressure;
+                        # future upstream enqueues observe the new threshold.
+                        target_conn.requeue(ff)
                         restored += 1
+                    if connection_id in paused_queues:
+                        target_conn.pause()
                 else:
-                    # Connection no longer exists — try to re-inject at target
-                    incoming = self._connections.get_incoming(tgt)
-                    if incoming:
-                        for ff in flowfiles:
-                            incoming[0].enqueue(ff)
-                            restored += 1
-                    else:
-                        orphaned += len(flowfiles)
-                        logger.warning(
-                            f"Orphaned {len(flowfiles)} FlowFiles from "
-                            f"removed connection {src} -> {tgt}"
-                        )
+                    dropped += len(flowfiles)
 
             self._flow_version += 1
             self._version_history.append({
@@ -269,12 +321,13 @@ class _ContinuousExecControlMixin:
                 "timestamp": datetime.now().isoformat(),
                 "action": "update_flow",
                 "restored_flowfiles": restored,
-                "orphaned_flowfiles": orphaned,
+                "dropped_flowfiles": dropped,
+                "orphaned_flowfiles": 0,
             })
 
             logger.info(
                 f"Flow updated to v{self._flow_version}. "
-                f"Restored {restored} FlowFiles, {orphaned} orphaned."
+                f"Restored {restored} FlowFiles, {dropped} explicitly dropped."
             )
 
             if was_running:

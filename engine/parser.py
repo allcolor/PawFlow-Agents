@@ -33,6 +33,39 @@ class FlowParser:
         return resolved
 
     @classmethod
+    def _add_task(cls, flow: Flow, task_id: str, task_config: Dict[str, Any],
+                  flow_parameters: Dict[str, Any],
+                  resolved_services: Dict[str, Dict[str, Any]]) -> None:
+        """Materialize one root or flattened-group task through one path."""
+        if task_id in flow.tasks:
+            raise FlowError(f"duplicate task id '{task_id}' across flow/groups")
+        task_type = task_config.get('type')
+        task_parameters = task_config.get('parameters', {})
+        parameter_context = dict(flow_parameters)
+        parameter_context.update(task_config.get('_group_variables', {}) or {})
+        task_parameters = cls._resolve_config(task_parameters, parameter_context)
+
+        service_ref = task_parameters.get('service', '')
+        if service_ref and service_ref in resolved_services:
+            svc_params = resolved_services[service_ref]
+            merged = dict(svc_params)
+            merged.update({k: v for k, v in task_parameters.items()
+                           if k != 'service'})
+            task_parameters = merged
+
+        task_class = TaskFactory.get(task_type)
+        task = task_class(task_parameters)
+        task._original_config = task_config.get('parameters', {})
+        raw_instances = task_config.get(
+            'max_instances', getattr(task, '_max_instances', 1))
+        if isinstance(raw_instances, str) and '${' in raw_instances:
+            raw_instances = resolve_expression(
+                raw_instances, parameters=parameter_context)
+        task._max_instances = int(raw_instances) if raw_instances else 1
+        task._group_id = str(task_config.get('_group_id') or '')
+        flow.add_task(task_id, task)
+
+    @classmethod
     def parse(cls, config: Dict[str, Any]) -> Flow:
         """
         Parse a flow from a configuration.
@@ -61,29 +94,8 @@ class FlowParser:
 
         # Parse tasks
         for task_id, task_config in config.get('tasks', {}).items():
-            task_type = task_config.get('type')
-            task_parameters = task_config.get('parameters', {})
-            # Resolve ${key} expressions at parse time (cascade: secrets → params → env)
-            task_parameters = cls._resolve_config(task_parameters, flow_parameters)
-
-            # Inject service config when a task references a service by ID
-            service_ref = task_parameters.get('service', '')
-            if service_ref and service_ref in resolved_services:
-                svc_params = resolved_services[service_ref]
-                # Service params provide defaults; task params override
-                merged = dict(svc_params)
-                merged.update({k: v for k, v in task_parameters.items() if k != 'service'})
-                task_parameters = merged
-
-            task_class = TaskFactory.get(task_type)
-            task = task_class(task_parameters)
-            # Preserve unresolved config for later override via set_parameter_context
-            task._original_config = task_config.get('parameters', {})
-            _raw_mi = task_config.get('max_instances', getattr(task, '_max_instances', 1))
-            if isinstance(_raw_mi, str) and '${' in _raw_mi:
-                _raw_mi = resolve_expression(_raw_mi, parameters=flow_parameters or {})
-            task._max_instances = int(_raw_mi) if _raw_mi else 1
-            flow.add_task(task_id, task)
+            cls._add_task(flow, task_id, task_config, flow_parameters,
+                          resolved_services)
 
         # Parse services — resolve expressions (secrets, env, flow params)
         for service_id, service_config in config.get('services', {}).items():
@@ -116,7 +128,9 @@ class FlowParser:
             service = service_class(service_parameters)
             flow.add_service(service_id, service)
 
-        # Parse groups through ProcessGroup.from_dict.
+        # Parse groups through ProcessGroup.from_dict. Inline groups flatten
+        # into the executable DAG; flow_ref groups remain executeFlow tasks.
+        inline_relations = []
         for group_id, group_config in config.get('groups', {}).items():
             if not isinstance(group_config, dict):
                 continue
@@ -185,12 +199,19 @@ class FlowParser:
                 _ef_task._original_config = dict(_ef_params)
                 _ef_task._max_instances = 1
                 flow.add_task(group_id, _ef_task)
+            else:
+                flat = pg.flatten()
+                for task_id, task_config in flat["tasks"].items():
+                    cls._add_task(flow, task_id, task_config, flow_parameters,
+                                  resolved_services)
+                inline_relations.extend(flat["relations"])
 
         # Parse relationships. Repository templates may use either the editor
         # shape (from/to/type) or the package shape
         # (source/target/relationships). Normalize before the executor builds
         # queues so both forms execute identically.
-        flow.relations = cls._normalize_relations(config.get('relations', []))
+        flow.relations = cls._normalize_relations(
+            list(config.get('relations', []) or []) + inline_relations)
 
         # Parse variables
         flow.variables = config.get('variables', {})

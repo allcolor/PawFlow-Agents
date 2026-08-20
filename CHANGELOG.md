@@ -35,7 +35,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   atomically, undo/redo (one entry per drag), debounced autosave with
   `base_revision` (409 → locked + Reload), Auto Layout, Validate (Problems
   drawer) and Publish (diff count → version prompt). No runtime polling
-  while editing.
+  while editing. A searchable, categorized processor palette now supports
+  zoom-safe drag/drop with deterministic technical ids and immediately opens
+  a schema-driven Properties drawer. Tasks keep a separate human label;
+  current parameters drive dynamic schemas, existing services are selectable,
+  and saving preserves unknown parameters through the shared
+  `schema_form.js` renderer used by service dialogs.
+  ReactFlow handles are now connectable in edit mode: drawing or clicking a
+  connection opens one relationship/queue drawer driven by the source task's
+  current `get_output_relationships()`. Create, relationship change and delete
+  are atomic undoable operations keyed by stable `connection_id`; duplicates
+  are refused. Per-connection count/byte backpressure, FlowFile TTL and
+  prioritizer settings are statically validated and now configure the actual
+  runtime `Connection`.
+  Flow-level metadata, JSON-valued parameters, embedded schema-driven services,
+  explicit entries/exits and copyable `${...}` expression assistance are now
+  editable from the same toolbar. Embedded services join user/global service
+  selectors, service schemas use their current parameters, required service
+  fields are validated statically, and Auto Layout plus the latest structured
+  Problems report remain directly accessible.
+  The repository sidebar now completes the authoring loop: New Flow creates a
+  scoped draft; template menus expose writable Edit/Diff, cross-scope Fork and
+  immutable Versions; every successful authoring action opens the same canvas,
+  whose validated Publish produces a new deployable repository version. UI
+  affordances are scope-aware while server-side ownership/admin gates remain
+  authoritative.
+  Inline Process Groups now execute as part of the normal DAG: the parser
+  recursively flattens nested groups, inherits group variables, records task
+  provenance, merges internal relations and rejects duplicate ids. Static
+  validation descends through nested tasks, relations and ports. The same
+  ReactFlow canvas can group a selection, edit group metadata and typed ports,
+  and drill into a group read-only without losing original boundary endpoints.
+  Version-pinned subflow nodes edit `flow_ref`, parameter mappings, port
+  mappings and attribute pass-through in place; parser version/port checks and
+  the existing `executeFlow` recursion guard remain authoritative.
+  A running repository-backed instance can now create a draft of its exact
+  deployed version in the same canvas, publish a new immutable version, preview
+  its live impact, then Apply it safely. Removed queues expose their queued
+  FlowFile count/bytes and require explicit `drop`; tasks in flight require
+  explicit `wait`. A preview token rejects stale consent after any candidate or
+  runtime change. Hot-swap preserves surviving queues and pause state strictly
+  by `connection_id` (so distinct relationships never merge), then persists the
+  applied FQN and layout for restart recovery.
 
 - **Flow Runtime Console**: the Flow Runtime Viewer becomes a NiFi-style
   operations console on running instances. Engine: stable

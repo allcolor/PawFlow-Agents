@@ -26,6 +26,7 @@ def test_modal_overlays_do_not_close_from_background_clicks():
 
 def test_service_parameter_fill_helper_is_wired_in_chat_ui():
     src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
+    src += Path("tasks/io/chat_ui/schema_form.js").read_text(encoding="utf-8")
     html = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
 
     assert "get_service_parameter_helper" in src

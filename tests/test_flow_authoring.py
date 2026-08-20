@@ -282,6 +282,54 @@ def test_validator_is_static_and_keeps_two_relationships_apart():
     assert FlowDefinitionValidator.validate("nope")["problems"][0]["code"] == "invalid_definition"
 
 
+def test_validator_reports_missing_embedded_service_parameters():
+    from core import ServiceFactory
+
+    service_type = next(
+        service_type for service_type in ServiceFactory.list_types()
+        if any(spec.get("required") for spec in
+               FlowAuthoringService.service_schema(service_type)["schema"].values())
+    )
+    required = next(
+        name for name, spec in FlowAuthoringService.service_schema(service_type)["schema"].items()
+        if spec.get("required")
+    )
+    report = FlowDefinitionValidator.validate({
+        "name": "embedded service validation",
+        "tasks": {},
+        "relations": [],
+        "services": {"local": {"type": service_type, "parameters": {}}},
+    })
+    problem = next(item for item in report["problems"]
+                   if item["code"] == "missing_required_service_parameter")
+    assert problem["entity_type"] == "service"
+    assert problem["entity_id"] == "local"
+    assert problem["field"] == required
+
+
+def test_validator_descends_into_inline_and_nested_process_groups():
+    report = FlowDefinitionValidator.validate({
+        "name": "Groups",
+        "tasks": {},
+        "groups": {"outer": {
+            "tasks": {"inside": {"type": "log", "parameters": {}}},
+            "relations": [{"from": "inside", "to": "missing", "type": "success"}],
+            "input_ports": ["inside"],
+            "child_groups": {"inner": {
+                "id": "inner",
+                "tasks": {"nested": {"type": "doesNotExist", "parameters": {}}},
+                "relations": [],
+            }},
+        }},
+        "relations": [],
+    })
+    by_code = {item["code"] for item in report["problems"]}
+    assert "missing_required_parameter" in by_code
+    assert "unknown_task_type" in by_code
+    assert "unknown_relation_target" in by_code
+    assert "invalid_group_port" in by_code
+
+
 # ── catalogs ──────────────────────────────────────────────────────
 
 def test_task_catalog_and_schema():
@@ -291,9 +339,42 @@ def test_task_catalog_and_schema():
     assert catalog == sorted(catalog, key=lambda r: (r["category"], r["name"].lower()))
     schema = FlowAuthoringService.task_schema("log", {"message": "${x}"})
     assert schema["type"] == "log" and isinstance(schema["schema"], dict)
+    assert schema["relationships"] == ["success"]
+    routed = FlowAuthoringService.task_schema(
+        "routeOnAttribute",
+        {"routes": {"urgent": {}, "normal": {}},
+         "default_relationship": "unmatched"},
+    )
+    assert routed["relationships"] == ["urgent", "normal", "unmatched"]
     with pytest.raises(KeyError):
         FlowAuthoringService.task_schema("doesNotExist")
     services = FlowAuthoringService.service_catalog()
     assert services and {"type", "name", "category"} <= set(services[0])
     with pytest.raises(KeyError):
         FlowAuthoringService.service_schema("doesNotExist")
+
+
+def test_relation_queue_configuration_is_validated():
+    definition = _definition()
+    relation = definition["relations"][0]
+    relation.update({
+        "max_queue_size": 20,
+        "max_queue_bytes": 4096,
+        "flowfile_ttl_seconds": 30,
+        "prioritizer": "fifo",
+        "priority_attribute": "priority",
+    })
+    assert FlowDefinitionValidator.validate(definition)["ok"] is True
+
+    for field, value in (
+        ("max_queue_size", 0),
+        ("max_queue_bytes", -1),
+        ("flowfile_ttl_seconds", -1),
+        ("prioritizer", "random"),
+    ):
+        broken = copy.deepcopy(definition)
+        broken["relations"][0][field] = value
+        report = FlowDefinitionValidator.validate(broken)
+        assert report["ok"] is False
+        assert any(p["code"] == "invalid_relation_setting"
+                   and p["field"] == field for p in report["problems"])

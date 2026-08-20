@@ -125,6 +125,7 @@ def test_remote_mount_manager_serializes_reconcile():
 
 def test_resource_sidebar_renders_rclone_filesystem_bindings():
     src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
+    src += Path("tasks/io/chat_ui/schema_form.js").read_text(encoding="utf-8")
 
     assert "_remote_fs" in src
     assert "remote_filesystems" in src

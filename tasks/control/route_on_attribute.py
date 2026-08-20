@@ -121,6 +121,13 @@ class RouteOnAttributeTask(BaseTask):
 
         return False
 
+    def get_output_relationships(self) -> List[str]:
+        relationships = [str(name) for name in self.routes if str(name)]
+        default = str(self.config.get('default_relationship', 'unmatched') or '')
+        if default:
+            relationships.append(default)
+        return list(dict.fromkeys(relationships)) or ['unmatched']
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             'routing_strategy': {

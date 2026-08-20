@@ -50,6 +50,21 @@
   .rt-notice { color: #ffc107; margin: 6px 0; }
   .rt-err { color: #e94560; margin: 6px 0; }
   .rt-page { color: #8a93b8; font-size: 11px; }
+  .fe-palette { position: fixed; top: 42px; left: 0; bottom: 0; width: 230px; z-index: 850;
+    background: #101018; border-right: 1px solid #333; padding: 10px; overflow-y: auto; }
+  .fe-palette h3 { color: #dfe6ff; font-size: 12px; margin-bottom: 8px; letter-spacing: .08em; }
+  .fe-palette input { width: 100%; background: #0a0d18; color: #dfe6ff; border: 1px solid #333;
+    border-radius: 5px; padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
+  .fe-category { color: #8a93b8; font-size: 9px; letter-spacing: .1em; margin: 10px 2px 4px; }
+  .fe-task { width: 100%; display: block; text-align: left; background: #171b2d; color: #dfe6ff;
+    border: 1px solid #292f48; border-radius: 5px; padding: 6px 7px; margin-bottom: 4px;
+    cursor: grab; font-size: 11px; }
+  .fe-task:hover { background: #222944; border-color: #4a5685; }
+  .fe-task small { display: block; color: #747f9f; font-size: 9px; margin-top: 2px; }
+  .fe-id { color: #8a93b8; font-family: monospace; font-size: 11px; margin: 3px 0 10px; }
+  .fe-label { display: block; color: #8a93b8; font-size: 10px; margin: 8px 0 3px; }
+  .fe-input { width: 100%; background: #0a0d18; color: #dfe6ff; border: 1px solid #333;
+    border-radius: 5px; padding: 6px 8px; font-size: 12px; }
 
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
   @keyframes edgeFlow { to { stroke-dashoffset: -20; } }
@@ -830,7 +845,8 @@ const FlowNode = memo(({ data }) => {
     onDoubleClick: open,
     'data-subflow-ref': data.isSubflow ? JSON.stringify(data.subflowRef || {}) : '',
     children: jsxs(Fragment, { children: [
-    jsx(Handle, { type: 'target', position: Position.Left, style: { background: data.isRuntimePort ? '#b088ff' : '#555' } }),
+    jsx(Handle, { type: 'target', position: Position.Left, isConnectable: !data.isInlineGroup,
+                  style: { background: data.isRuntimePort ? '#b088ff' : '#555' } }),
     jsx('div', { className: 'node-type', children: data.taskType }),
     jsxs('div', { className: 'node-id', children: [
       jsx('span', { className: 'state-dot ' + st }), data.label
@@ -847,7 +863,9 @@ const FlowNode = memo(({ data }) => {
       children: data.isRuntimeLink ? 'runtime request/response target' : 'runtime request/response port'
     }),
     data.error && jsx('div', { className: 'node-error', title: data.error, children: data.error }),
-    !data.isRuntimeLink && jsx(Handle, { type: 'source', position: Position.Right, style: { background: data.isRuntimePort ? '#b088ff' : '#555' } }),
+    !data.isRuntimeLink && jsx(Handle, { type: 'source', position: Position.Right,
+      isConnectable: !data.isInlineGroup,
+      style: { background: data.isRuntimePort ? '#b088ff' : '#555' } }),
   ] }) });
 });
 FlowNode.displayName = 'FlowNode';
@@ -936,6 +954,45 @@ function normalizeRelation(rel) {
 
 function connectionIdOf(rel) { return `conn_${rel.from}__${rel.type}__${rel.to}`; }
 
+function groupChildren(group) {
+  const children = group?.child_groups || {};
+  if (Array.isArray(children)) return Object.fromEntries(children.map((child, index) => [String(child?.id || child?.name || index), child]));
+  return children && typeof children === 'object' ? children : {};
+}
+
+function collectGroupTaskIds(group, target = new Set()) {
+  Object.keys(group?.tasks || {}).forEach(id => target.add(String(id)));
+  Object.values(groupChildren(group)).forEach(child => collectGroupTaskIds(child, target));
+  return target;
+}
+
+function findGroupById(groups, wanted) {
+  for (const [id, group] of Object.entries(groups || {})) {
+    if (String(id) === String(wanted) || String(group?.id || '') === String(wanted)) return group;
+    const nested = findGroupById(groupChildren(group), wanted);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function groupAsDefinition(group) {
+  return {
+    id: group?.id || '', name: group?.name || 'Process Group',
+    tasks: group?.tasks || {}, relations: group?.relations || [],
+    groups: groupChildren(group), entries: group?.input_ports || [],
+    exits: group?.output_ports || [], layout: group?.layout || {},
+  };
+}
+
+function topGroupMembership(groups) {
+  const membership = {};
+  Object.entries(groups || {}).forEach(([groupId, group]) => {
+    collectGroupTaskIds(group).forEach(taskId => { membership[taskId] = String(groupId); });
+    Object.keys(groupChildren(group)).forEach(childId => { membership[childId] = String(groupId); });
+  });
+  return membership;
+}
+
 function flowToReactFlow(def, onOpenSubflow) {
   const tasks = def.tasks && typeof def.tasks === 'object' ? def.tasks : {};
   const layoutNodes = (def.layout && def.layout.nodes) || {};
@@ -950,25 +1007,34 @@ function flowToReactFlow(def, onOpenSubflow) {
     position: layoutNodes[id] ? { x: Number(layoutNodes[id].x) || 0, y: Number(layoutNodes[id].y) || 0 } : null,
     data: nodeData(String(id), { label: (t && t.label) || String(id), taskType: (t && t.type) || '?' }),
   }));
-  // Subflow groups (flow_ref) are relation endpoints (the parser synthesizes
-  // an executeFlow task under the group id).
+  // Process groups stay collapsed in the parent projection and drill down in
+  // this same canvas. flow_ref groups are executable relation endpoints;
+  // inline groups are visual containers whose tasks flatten at runtime.
   Object.entries(def.groups && typeof def.groups === 'object' ? def.groups : {}).forEach(([gid, g]) => {
-    if (!g || !g.flow_ref) return;
+    if (!g || typeof g !== 'object') return;
+    const ref = g.flow_ref || { inline_group_id: String(gid) };
     nodes.push({
       id: String(gid), type: 'flowNode', className: 'nopan',
       position: layoutNodes[gid] ? { x: Number(layoutNodes[gid].x) || 0, y: Number(layoutNodes[gid].y) || 0 } : null,
-      data: nodeData(String(gid), { label: g.name || String(gid), taskType: 'subflow',
-                                    subflowRef: g.flow_ref, isSubflow: !!g.flow_ref.path }),
+      data: nodeData(String(gid), { label: g.name || String(gid),
+        taskType: g.flow_ref ? 'subflow' : 'processGroup', subflowRef: ref,
+        inlineGroupId: g.flow_ref ? '' : String(gid), isInlineGroup: !g.flow_ref,
+        isSubflow: true }),
     });
   });
   const ids = new Set(nodes.map(n => n.id));
+  const membership = topGroupMembership(def.groups || {});
   const edges = (Array.isArray(def.relations) ? def.relations : []).map(normalizeRelation)
-    .filter(r => ids.has(r.from) && ids.has(r.to))
-    .map(r => ({
-      id: connectionIdOf(r), source: r.from, target: r.to, label: r.type, type: 'smoothstep',
+    .map(r => ({ relation: r, source: ids.has(r.from) ? r.from : membership[r.from],
+                target: ids.has(r.to) ? r.to : membership[r.to] }))
+    .filter(item => item.source && item.target && item.source !== item.target)
+    .map(({ relation: r, source, target }) => ({
+      id: connectionIdOf(r), source, target, label: r.type, type: 'smoothstep',
       style: { stroke: '#8a93b8', strokeWidth: 1.5 },
       markerEnd: { type: MarkerType.ArrowClosed, color: '#8a93b8' },
-      data: { connectionId: connectionIdOf(r), relationship: r.type, editable: true },
+      data: { connectionId: connectionIdOf(r), relationship: r.type,
+              originalSource: r.from, originalTarget: r.to,
+              editable: source === r.from && target === r.to },
       labelStyle: { fill: '#aab', fontSize: 9 },
       labelBgStyle: { fill: '#0a0a0a', fillOpacity: 0.85 },
     }));
@@ -1003,9 +1069,15 @@ function removeFromDraft(def, taskIds, connectionIds) {
   const next = cloneDef(def);
   const gone = new Set(taskIds || []);
   const conns = new Set(connectionIds || []);
+  Array.from(gone).forEach(id => {
+    const group = next.groups && next.groups[id];
+    if (!group) return;
+    collectGroupTaskIds(group, gone);
+    Object.keys(groupChildren(group)).forEach(childId => gone.add(String(childId)));
+    delete next.groups[id];
+  });
   gone.forEach(id => {
     if (next.tasks) delete next.tasks[id];
-    if (next.groups && next.groups[id] && next.groups[id].flow_ref) delete next.groups[id];
     if (next.layout && next.layout.nodes) delete next.layout.nodes[id];
   });
   next.relations = (Array.isArray(next.relations) ? next.relations : []).filter(rel => {
@@ -1017,9 +1089,636 @@ function removeFromDraft(def, taskIds, connectionIds) {
   return next;
 }
 
+function taskIdBase(taskType) {
+  return String(taskType || 'task')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^A-Za-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '').toLowerCase() || 'task';
+}
+
+function nextTaskId(def, taskType) {
+  const tasks = def && def.tasks && typeof def.tasks === 'object' ? def.tasks : {};
+  const base = taskIdBase(taskType);
+  if (!Object.prototype.hasOwnProperty.call(tasks, base)) return base;
+  let suffix = 2;
+  while (Object.prototype.hasOwnProperty.call(tasks, base + '_' + suffix)) suffix++;
+  return base + '_' + suffix;
+}
+
+function addTaskToDraft(def, taskType, position) {
+  const next = cloneDef(def);
+  next.tasks = next.tasks && typeof next.tasks === 'object' ? next.tasks : {};
+  const id = nextTaskId(next, taskType);
+  next.tasks[id] = { type: taskType, parameters: {} };
+  return { definition: patchLayoutNode(next, id, position), taskId: id };
+}
+
+function nextGroupId(def, prefix = 'group') {
+  const groups = def?.groups || {};
+  if (!Object.prototype.hasOwnProperty.call(groups, prefix)) return prefix;
+  let suffix = 2;
+  while (Object.prototype.hasOwnProperty.call(groups, prefix + '_' + suffix)) suffix++;
+  return prefix + '_' + suffix;
+}
+
+function groupSelectionInDraft(def, taskIds) {
+  const chosen = new Set((taskIds || []).filter(id => def?.tasks?.[id]));
+  if (!chosen.size) return null;
+  const next = cloneDef(def);
+  next.groups = next.groups && typeof next.groups === 'object' ? next.groups : {};
+  const groupId = nextGroupId(next);
+  const groupTasks = {};
+  const groupLayout = { nodes: {} };
+  const positions = [];
+  chosen.forEach(id => {
+    groupTasks[id] = next.tasks[id]; delete next.tasks[id];
+    const position = next.layout?.nodes?.[id];
+    if (position) { groupLayout.nodes[id] = position; positions.push(position); delete next.layout.nodes[id]; }
+  });
+  const internal = [];
+  next.relations = (next.relations || []).filter(relation => {
+    const normalized = normalizeRelation(relation);
+    if (chosen.has(normalized.from) && chosen.has(normalized.to)) { internal.push(relation); return false; }
+    return true;
+  });
+  next.groups[groupId] = {
+    id: groupId, name: 'Process Group', description: '', color: '#4285f4',
+    collapsed: true, tasks: groupTasks, relations: internal, variables: {},
+    input_ports: [], output_ports: [], child_groups: {}, layout: groupLayout,
+  };
+  const center = positions.length ? {
+    x: positions.reduce((sum, pos) => sum + Number(pos.x || 0), 0) / positions.length,
+    y: positions.reduce((sum, pos) => sum + Number(pos.y || 0), 0) / positions.length,
+  } : { x: 0, y: 0 };
+  return { definition: patchLayoutNode(next, groupId, center), groupId };
+}
+
+function relationByConnectionId(def, connectionId) {
+  return (Array.isArray(def?.relations) ? def.relations : []).find(
+    rel => connectionIdOf(normalizeRelation(rel)) === connectionId) || null;
+}
+
+function upsertRelationInDraft(def, previousConnectionId, relation) {
+  const next = cloneDef(def);
+  next.relations = (Array.isArray(next.relations) ? next.relations : []).filter(
+    rel => connectionIdOf(normalizeRelation(rel)) !== previousConnectionId);
+  next.relations.push(relation);
+  return next;
+}
+
 function bumpPatch(version) {
   const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version || ''));
   return m ? `${m[1]}.${m[2]}.${Number(m[3]) + 1}` : '1.0.0';
+}
+
+let _schemaFormPromise = null;
+function loadSchemaForm() {
+  if (window.PawFlowSchemaForm) return Promise.resolve(window.PawFlowSchemaForm);
+  if (_schemaFormPromise) return _schemaFormPromise;
+  window._schemaFormListServices = async (serviceType) => {
+    const [external, embedded] = await Promise.all([
+      apiCall({ action: 'list_services', service_type: serviceType || '',
+                conversation_id: CONVERSATION_ID || '' }),
+      window._flowEditorEmbeddedServices
+        ? window._flowEditorEmbeddedServices(serviceType)
+        : Promise.resolve({ services: [] }),
+    ]);
+    const seen = new Set();
+    return { services: [...(embedded.services || []), ...(external.services || [])]
+      .filter(service => service?.service_id && !seen.has(service.service_id) && seen.add(service.service_id)) };
+  };
+  _schemaFormPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = API_BASE + '/chat/js/schema_form.js?v=' + encodeURIComponent(
+      window.PAWFLOW_ASSET_VERSION || Date.now());
+    script.onload = () => window.PawFlowSchemaForm
+      ? resolve(window.PawFlowSchemaForm)
+      : reject(new Error('Schema form renderer did not initialize'));
+    script.onerror = () => reject(new Error('Could not load schema form renderer'));
+    document.head.appendChild(script);
+  });
+  return _schemaFormPromise;
+}
+
+function TaskPalette({ tasks }) {
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const visible = (tasks || []).filter(task => !q
+    || String(task.name || '').toLowerCase().includes(q)
+    || String(task.type || '').toLowerCase().includes(q)
+    || String(task.description || '').toLowerCase().includes(q));
+  const categories = {};
+  visible.forEach(task => {
+    const category = task.category || 'Other';
+    (categories[category] ||= []).push(task);
+  });
+  return jsxs('aside', { className: 'fe-palette', children: [
+    jsx('h3', { children: 'PROCESSORS' }),
+    jsx('input', { value: query, placeholder: 'Search…',
+      onChange: event => setQuery(event.target.value) }),
+    Object.entries(categories).map(([category, rows]) => jsxs(Fragment, { children: [
+      jsx('div', { className: 'fe-category', children: category.toUpperCase() }),
+      rows.map(task => jsxs('button', {
+        className: 'fe-task', draggable: true, title: task.description || task.type,
+        onDragStart: event => {
+          event.dataTransfer.setData('application/pawflow-task-type', task.type);
+          event.dataTransfer.effectAllowed = 'copy';
+        },
+        children: [
+          (task.icon ? task.icon + ' ' : '') + (task.name || task.type),
+          jsx('small', { children: task.type }),
+        ],
+      }, task.type)),
+    ] }, category)),
+    !visible.length && jsx('div', { className: 'rt-page', children: 'No matching processors.' }),
+  ] });
+}
+
+function TaskPropertiesDrawer({ taskId, definition, onApply, onClose }) {
+  const task = definition?.tasks?.[taskId] || null;
+  const [schema, setSchema] = useState(null);
+  const [label, setLabel] = useState(task?.label || '');
+  const [error, setError] = useState('');
+  const formRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSchema(null); setError(''); setLabel(task?.label || '');
+    if (!task) { setError('Task no longer exists.'); return undefined; }
+    Promise.all([
+      loadSchemaForm(),
+      apiCall({ action: 'flow_editor_task_schema', task_type: task.type,
+                parameters: task.parameters || {} }),
+    ]).then(([, data]) => {
+      if (cancelled) return;
+      if (data.error) setError(data.error);
+      else setSchema(data.schema || {});
+    }).catch(exc => { if (!cancelled) setError(String(exc.message || exc)); });
+    return () => { cancelled = true; };
+  }, [taskId, task?.type]);
+
+  useEffect(() => {
+    if (!schema || !formRef.current || !window.PawFlowSchemaForm || !task) return;
+    formRef.current.innerHTML = window.PawFlowSchemaForm.renderSchemaFields(
+      schema, task.parameters || {}, { readonly: false });
+    window.PawFlowSchemaForm.populateServiceRefs(formRef.current);
+  }, [schema, taskId]);
+
+  const save = () => {
+    if (!task || !schema || !formRef.current || !window.PawFlowSchemaForm) return;
+    const values = window.PawFlowSchemaForm.collectSchemaValues(schema, formRef.current);
+    const next = cloneDef(definition);
+    const current = next.tasks[taskId] || {};
+    next.tasks[taskId] = {
+      ...current,
+      parameters: { ...(current.parameters || {}), ...values },
+    };
+    const cleanLabel = label.trim();
+    if (cleanLabel) next.tasks[taskId].label = cleanLabel;
+    else delete next.tasks[taskId].label;
+    onApply(next);
+    onClose();
+  };
+
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: 'Processor properties' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '✕' }),
+    ] }),
+    jsx('div', { className: 'rt-section', children: 'Technical ID' }),
+    jsx('div', { className: 'fe-id', children: taskId }),
+    jsx('label', { className: 'fe-label', children: 'Label' }),
+    jsx('input', { className: 'fe-input', value: label,
+                   onChange: event => setLabel(event.target.value) }),
+    jsx('div', { className: 'rt-section', children: task ? task.type : '' }),
+    error && jsx('div', { className: 'rt-err', children: error }),
+    !error && !schema && jsx('div', { className: 'rt-page', children: 'Loading schema…' }),
+    jsx('div', { ref: formRef }),
+    schema && jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: save, children: 'Save properties' }),
+      jsx('button', { onClick: onClose, children: 'Cancel' }),
+    ] }),
+  ] });
+}
+
+function RelationPropertiesDrawer({ source, target, connectionId, definition, onApply, onClose }) {
+  const current = connectionId ? relationByConnectionId(definition, connectionId) : null;
+  const normalized = normalizeRelation(current || { from: source, to: target, type: 'success' });
+  const [relationships, setRelationships] = useState([]);
+  const [relationship, setRelationship] = useState(current ? normalized.type : '');
+  const [maxQueueSize, setMaxQueueSize] = useState(String(current?.max_queue_size ?? 10000));
+  const [maxQueueBytes, setMaxQueueBytes] = useState(String(current?.max_queue_bytes ?? 104857600));
+  const [ttl, setTtl] = useState(String(current?.flowfile_ttl_seconds ?? 0));
+  const [prioritizer, setPrioritizer] = useState(current?.prioritizer || 'priority_attribute');
+  const [priorityAttribute, setPriorityAttribute] = useState(current?.priority_attribute || 'priority');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const task = definition?.tasks?.[source];
+    if (!task) {
+      const fallback = normalized.type || 'success';
+      setRelationships([fallback]); setRelationship(fallback);
+      return undefined;
+    }
+    apiCall({ action: 'flow_editor_task_schema', task_type: task.type,
+              parameters: task.parameters || {} })
+      .then(data => {
+        if (cancelled) return;
+        if (data.error) { setError(data.error); return; }
+        const options = Array.isArray(data.relationships) ? data.relationships : [];
+        if (current && normalized.type && !options.includes(normalized.type)) options.push(normalized.type);
+        setRelationships(options.length ? options : ['success']);
+        if (!relationship) setRelationship(options[0] || 'success');
+      })
+      .catch(exc => { if (!cancelled) setError(String(exc.message || exc)); });
+    return () => { cancelled = true; };
+  }, [source]);
+
+  const positiveInt = (value, label, minimum) => {
+    const number = Number(value);
+    if (!Number.isInteger(number) || number < minimum) {
+      throw new Error(`${label} must be an integer >= ${minimum}`);
+    }
+    return number;
+  };
+  const save = () => {
+    try {
+      if (!relationship) throw new Error('Choose a relationship.');
+      const relation = {
+        ...(current || {}), from: source, to: target, type: relationship,
+        max_queue_size: positiveInt(maxQueueSize, 'Max FlowFiles', 1),
+        max_queue_bytes: positiveInt(maxQueueBytes, 'Max bytes', 1),
+        flowfile_ttl_seconds: positiveInt(ttl, 'FlowFile TTL', 0),
+        prioritizer,
+        priority_attribute: priorityAttribute.trim() || 'priority',
+      };
+      delete relation.source; delete relation.target; delete relation.relationships;
+      const nextId = connectionIdOf(normalizeRelation(relation));
+      const duplicate = (definition.relations || []).some(rel => {
+        const id = connectionIdOf(normalizeRelation(rel));
+        return id === nextId && id !== connectionId;
+      });
+      if (duplicate) throw new Error('This relationship already connects these tasks.');
+      onApply(upsertRelationInDraft(definition, connectionId || '', relation));
+      onClose();
+    } catch (exc) { setError(String(exc.message || exc)); }
+  };
+  const remove = () => {
+    if (!current || !window.confirm(`Delete ${connectionId}?`)) return;
+    onApply(removeFromDraft(definition, [], [connectionId]));
+    onClose();
+  };
+  const field = (label, value, setter, options = {}) => jsxs('label', { className: 'fe-label', children: [
+    label,
+    jsx('input', { className: 'fe-input', type: options.type || 'text', value,
+                   min: options.min, onChange: event => setter(event.target.value) }),
+  ] });
+
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: current ? 'Connection properties' : 'Create connection' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '✕' }),
+    ] }),
+    jsx('div', { className: 'fe-id', children: `${source} → ${target}` }),
+    jsx('label', { className: 'fe-label', children: 'Relationship' }),
+    jsx('select', { className: 'fe-input', value: relationship,
+      onChange: event => setRelationship(event.target.value),
+      children: relationships.map(value => jsx('option', { value, children: value }, value)),
+    }),
+    jsx('div', { className: 'rt-section', children: 'Queue' }),
+    field('Max FlowFiles', maxQueueSize, setMaxQueueSize, { type: 'number', min: 1 }),
+    field('Max bytes', maxQueueBytes, setMaxQueueBytes, { type: 'number', min: 1 }),
+    field('FlowFile TTL (seconds, 0 = disabled)', ttl, setTtl, { type: 'number', min: 0 }),
+    jsx('label', { className: 'fe-label', children: 'Prioritizer' }),
+    jsx('select', { className: 'fe-input', value: prioritizer,
+      onChange: event => setPrioritizer(event.target.value),
+      children: ['fifo', 'oldest_first', 'newest_first', 'priority_attribute'].map(
+        value => jsx('option', { value, children: value }, value)),
+    }),
+    prioritizer === 'priority_attribute' && field(
+      'Priority attribute', priorityAttribute, setPriorityAttribute),
+    error && jsx('div', { className: 'rt-err', children: error }),
+    jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: save, children: current ? 'Save connection' : 'Create connection' }),
+      current && jsx('button', { className: 'rt-danger', onClick: remove, children: 'Delete connection' }),
+      jsx('button', { onClick: onClose, children: 'Cancel' }),
+    ] }),
+  ] });
+}
+
+function parseJsonValue(value, label) {
+  try { return JSON.parse(value); }
+  catch (_) { throw new Error(`${label} must be valid JSON.`); }
+}
+
+function FlowMetadataDrawer({ definition, onApply, onClose }) {
+  const fields = ['id', 'name', 'version', 'description'];
+  const [values, setValues] = useState(Object.fromEntries(fields.map(key => [key, String(definition?.[key] ?? '')])));
+  const save = () => {
+    const next = cloneDef(definition);
+    fields.forEach(key => {
+      const value = values[key].trim();
+      if (value) next[key] = value;
+      else delete next[key];
+    });
+    onApply(next); onClose();
+  };
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: 'Flow metadata' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '✕' }),
+    ] }),
+    fields.map(key => jsxs('label', { className: 'fe-label', children: [
+      key[0].toUpperCase() + key.slice(1),
+      key === 'description'
+        ? jsx('textarea', { className: 'fe-input', value: values[key], rows: 5,
+            onChange: event => setValues({ ...values, [key]: event.target.value }) })
+        : jsx('input', { className: 'fe-input', value: values[key],
+            onChange: event => setValues({ ...values, [key]: event.target.value }) }),
+    ] }, key)),
+    jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: save, children: 'Save metadata' }),
+      jsx('button', { onClick: onClose, children: 'Cancel' }),
+    ] }),
+  ] });
+}
+
+function FlowParametersDrawer({ definition, onApply, onClose }) {
+  const initial = definition?.parameters && typeof definition.parameters === 'object'
+    ? definition.parameters : {};
+  const [rows, setRows] = useState(Object.entries(initial).map(([key, value]) => ({
+    key, value: JSON.stringify(value, null, 2),
+  })));
+  const [error, setError] = useState('');
+  const save = () => {
+    try {
+      const next = cloneDef(definition);
+      next.parameters = {};
+      rows.forEach((row, index) => {
+        const key = row.key.trim();
+        if (!key) throw new Error(`Parameter #${index + 1} needs a name.`);
+        if (Object.prototype.hasOwnProperty.call(next.parameters, key)) throw new Error(`Duplicate parameter '${key}'.`);
+        next.parameters[key] = parseJsonValue(row.value, `Parameter '${key}'`);
+      });
+      onApply(next); onClose();
+    } catch (exc) { setError(String(exc.message || exc)); }
+  };
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: 'Flow parameters' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '✕' }),
+    ] }),
+    jsx('div', { className: 'rt-page', children: 'Values are JSON: strings include quotes; objects and typed definitions are preserved.' }),
+    rows.map((row, index) => jsxs('div', { style: { borderBottom: '1px solid #1e2233', paddingBottom: 8 }, children: [
+      jsx('input', { className: 'fe-input', placeholder: 'parameter_name', value: row.key,
+        onChange: event => setRows(rows.map((item, i) => i === index ? { ...item, key: event.target.value } : item)) }),
+      jsx('textarea', { className: 'fe-input', rows: 4, value: row.value,
+        onChange: event => setRows(rows.map((item, i) => i === index ? { ...item, value: event.target.value } : item)) }),
+      jsx('button', { className: 'rt-x', onClick: () => setRows(rows.filter((_, i) => i !== index)), children: 'Remove' }),
+    ] }, index)),
+    error && jsx('div', { className: 'rt-err', children: error }),
+    jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: () => setRows([...rows, { key: '', value: '""' }]), children: '+ Parameter' }),
+      jsx('button', { onClick: save, children: 'Save parameters' }),
+      jsx('button', { onClick: onClose, children: 'Cancel' }),
+    ] }),
+  ] });
+}
+
+function FlowServicesDrawer({ definition, onApply, onClose }) {
+  const services = definition?.services && typeof definition.services === 'object' ? definition.services : {};
+  const [catalog, setCatalog] = useState([]);
+  const [serviceId, setServiceId] = useState('');
+  const [serviceType, setServiceType] = useState('');
+  const [schema, setSchema] = useState(null);
+  const [error, setError] = useState('');
+  const formRef = useRef(null);
+  const current = serviceId && services[serviceId] ? services[serviceId] : null;
+  useEffect(() => {
+    Promise.all([loadSchemaForm(), apiCall({ action: 'flow_editor_service_catalog' })])
+      .then(([, data]) => data.error ? setError(data.error) : setCatalog(data.services || []))
+      .catch(exc => setError(String(exc.message || exc)));
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setSchema(null);
+    if (!serviceType) return undefined;
+    apiCall({ action: 'flow_editor_service_schema', service_type: serviceType,
+              parameters: current?.parameters || {} })
+      .then(data => { if (!cancelled) data.error ? setError(data.error) : setSchema(data.schema || {}); })
+      .catch(exc => { if (!cancelled) setError(String(exc.message || exc)); });
+    return () => { cancelled = true; };
+  }, [serviceType]);
+  useEffect(() => {
+    if (!schema || !formRef.current || !window.PawFlowSchemaForm) return;
+    formRef.current.innerHTML = window.PawFlowSchemaForm.renderSchemaFields(
+      schema, current?.parameters || {}, { readonly: false });
+    window.PawFlowSchemaForm.populateServiceRefs(formRef.current);
+  }, [schema, serviceId]);
+  const choose = (id) => { setServiceId(id); setServiceType(services[id]?.type || ''); setError(''); };
+  const add = () => { setServiceId(''); setServiceType(catalog[0]?.type || ''); setError(''); };
+  const save = () => {
+    try {
+      const id = serviceId.trim();
+      if (!id) throw new Error('Service ID is required.');
+      if (!serviceType) throw new Error('Service type is required.');
+      if (!schema || !formRef.current || !window.PawFlowSchemaForm) throw new Error('Service schema is not ready.');
+      const values = window.PawFlowSchemaForm.collectSchemaValues(schema, formRef.current);
+      const next = cloneDef(definition);
+      next.services = next.services && typeof next.services === 'object' ? next.services : {};
+      const current = next.services[id] || {};
+      next.services[id] = { ...current, type: serviceType,
+        parameters: { ...(current.parameters || {}), ...values } };
+      onApply(next); onClose();
+    } catch (exc) { setError(String(exc.message || exc)); }
+  };
+  const remove = (id) => {
+    if (!window.confirm(`Delete embedded service ${id}?`)) return;
+    const next = cloneDef(definition); delete next.services[id]; onApply(next); onClose();
+  };
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: 'Embedded services' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '✕' }),
+    ] }),
+    Object.keys(services).map(id => jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: () => choose(id), children: `${id} · ${services[id]?.type || '?'}` }),
+      jsx('button', { className: 'rt-danger', onClick: () => remove(id), children: 'Delete' }),
+    ] }, id)),
+    jsx('button', { onClick: add, children: '+ Embedded service' }),
+    jsxs('label', { className: 'fe-label', children: ['Service ID',
+      jsx('input', { className: 'fe-input', value: serviceId, disabled: !!current,
+        onChange: event => setServiceId(event.target.value) })] }),
+    jsxs('label', { className: 'fe-label', children: ['Type',
+      jsx('select', { className: 'fe-input', value: serviceType, disabled: !!current,
+        onChange: event => setServiceType(event.target.value),
+        children: [jsx('option', { value: '', children: 'Choose a service type' }),
+          ...catalog.map(item => jsx('option', { value: item.type, children: item.name || item.type }, item.type))] })] }),
+    error && jsx('div', { className: 'rt-err', children: error }),
+    serviceType && !schema && !error && jsx('div', { className: 'rt-page', children: 'Loading schema...' }),
+    jsx('div', { ref: formRef }),
+    schema && jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: save, children: 'Save service' }),
+      jsx('button', { onClick: onClose, children: 'Cancel' }),
+    ] }),
+  ] });
+}
+
+function FlowPortsDrawer({ definition, onApply, onClose }) {
+  const endpointIds = [
+    ...Object.keys(definition?.tasks || {}),
+    ...Object.entries(definition?.groups || {}).filter(([, group]) => group?.flow_ref).map(([id]) => id),
+  ];
+  const [selectedEntries, setSelectedEntries] = useState((definition?.entries || []).map(String));
+  const [selectedExits, setSelectedExits] = useState((definition?.exits || []).map(String));
+  const toggle = (values, setter, id) => setter(values.includes(id) ? values.filter(value => value !== id) : [...values, id]);
+  const save = () => {
+    const next = cloneDef(definition);
+    next.entries = selectedEntries;
+    next.exits = selectedExits;
+    onApply(next); onClose();
+  };
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: 'Entry / exit ports' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '✕' }),
+    ] }),
+    jsx('div', { className: 'rt-page', children: 'Choose the externally addressable entry and exit tasks.' }),
+    endpointIds.map(id => jsxs('div', { className: 'rt-actions', children: [
+      jsx('span', { className: 'fe-id', style: { flex: 1, margin: 0 }, children: id }),
+      jsxs('label', { children: [jsx('input', { type: 'checkbox', checked: selectedEntries.includes(id),
+        onChange: () => toggle(selectedEntries, setSelectedEntries, id) }), ' entry'] }),
+      jsxs('label', { children: [jsx('input', { type: 'checkbox', checked: selectedExits.includes(id),
+        onChange: () => toggle(selectedExits, setSelectedExits, id) }), ' exit'] }),
+    ] }, id)),
+    !endpointIds.length && jsx('div', { className: 'rt-notice', children: 'Add a processor before defining ports.' }),
+    jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: save, children: 'Save ports' }),
+      jsx('button', { onClick: onClose, children: 'Cancel' }),
+    ] }),
+  ] });
+}
+
+function ExpressionHelperDrawer({ definition, onClose }) {
+  const parameterNames = Object.keys(definition?.parameters || {});
+  const examples = [
+    ...parameterNames.map(name => '${flow.' + name + '}'),
+    '${conversation.id}', '${user.id}', '${global.name}', '${secret_name}',
+  ];
+  const copy = value => navigator.clipboard?.writeText(value);
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: 'Expression helper' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '✕' }),
+    ] }),
+    jsx('div', { className: 'rt-page', children: 'Expressions resolve at runtime. The editor and validator keep them as references.' }),
+    examples.map(value => jsxs('div', { className: 'rt-actions', children: [
+      jsx('code', { style: { flex: 1 }, children: value }),
+      jsx('button', { onClick: () => copy(value), children: 'Copy' }),
+    ] }, value)),
+    jsx('div', { className: 'rt-page', children: 'Chain operations with ${scope.key:operation("argument")}. Resolution cascades flow → conversation → user → global.' }),
+  ] });
+}
+
+function GroupPropertiesDrawer({ groupId, definition, onApply, onClose }) {
+  const group = definition?.groups?.[groupId] || null;
+  const [name, setName] = useState(group?.name || groupId);
+  const [description, setDescription] = useState(group?.description || '');
+  const [color, setColor] = useState(group?.color || '#4285f4');
+  const [inputPorts, setInputPorts] = useState((group?.input_ports || []).map(String));
+  const [outputPorts, setOutputPorts] = useState((group?.output_ports || []).map(String));
+  const tasks = group?.tasks || {};
+  const inputCandidates = Object.entries(tasks).filter(([, task]) => task?.type === 'inputPort').map(([id]) => id);
+  const outputCandidates = Object.entries(tasks).filter(([, task]) => task?.type === 'outputPort').map(([id]) => id);
+  const toggle = (values, setter, id) => setter(values.includes(id) ? values.filter(value => value !== id) : [...values, id]);
+  const save = () => {
+    if (!group) return;
+    const next = cloneDef(definition);
+    next.groups[groupId] = { ...next.groups[groupId], name: name.trim() || groupId,
+      description, color, input_ports: inputPorts, output_ports: outputPorts };
+    onApply(next); onClose();
+  };
+  const remove = () => {
+    if (!group || !window.confirm(`Delete process group ${groupId} and all its processors?`)) return;
+    onApply(removeFromDraft(definition, [groupId], [])); onClose();
+  };
+  const ports = (title, candidates, values, setter) => jsxs(Fragment, { children: [
+    jsx('div', { className: 'rt-section', children: title }),
+    candidates.length ? candidates.map(id => jsxs('label', { className: 'fe-label', children: [
+      jsx('input', { type: 'checkbox', checked: values.includes(id), onChange: () => toggle(values, setter, id) }),
+      ' ', id,
+    ] }, id)) : jsx('div', { className: 'rt-page', children: `Add a ${title === 'Input ports' ? 'inputPort' : 'outputPort'} processor inside this group first.` }),
+  ] });
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: 'Process Group' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '✕' }),
+    ] }),
+    jsx('div', { className: 'fe-id', children: groupId }),
+    jsxs('label', { className: 'fe-label', children: ['Name', jsx('input', { className: 'fe-input', value: name, onChange: event => setName(event.target.value) })] }),
+    jsxs('label', { className: 'fe-label', children: ['Description', jsx('textarea', { className: 'fe-input', rows: 4, value: description, onChange: event => setDescription(event.target.value) })] }),
+    jsxs('label', { className: 'fe-label', children: ['Color', jsx('input', { className: 'fe-input', type: 'color', value: color, onChange: event => setColor(event.target.value) })] }),
+    ports('Input ports', inputCandidates, inputPorts, setInputPorts),
+    ports('Output ports', outputCandidates, outputPorts, setOutputPorts),
+    jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: save, children: 'Save group' }),
+      jsx('button', { className: 'rt-danger', onClick: remove, children: 'Delete group' }),
+      jsx('button', { onClick: onClose, children: 'Cancel' }),
+    ] }),
+  ] });
+}
+
+function SubflowPropertiesDrawer({ groupId: existingId, definition, onApply, onClose }) {
+  const current = existingId ? definition?.groups?.[existingId] : null;
+  const [groupId, setGroupId] = useState(existingId || nextGroupId(definition, 'subflow'));
+  const [name, setName] = useState(current?.name || 'Subflow');
+  const [path, setPath] = useState(current?.flow_ref?.path || '');
+  const [version, setVersion] = useState(current?.flow_ref?.version || '');
+  const [parameterMapping, setParameterMapping] = useState(JSON.stringify(current?.parameter_mapping || {}, null, 2));
+  const [portMapping, setPortMapping] = useState(JSON.stringify(current?.port_mapping || { input: {}, output: {} }, null, 2));
+  const [passAttributes, setPassAttributes] = useState(current?.pass_attributes !== false);
+  const [error, setError] = useState('');
+  const save = () => {
+    try {
+      const id = groupId.trim();
+      if (!id) throw new Error('Subflow ID is required.');
+      if (!existingId && definition?.groups?.[id]) throw new Error(`Group '${id}' already exists.`);
+      if (!path.trim()) throw new Error('Versioned flow path is required.');
+      if (!version.trim()) throw new Error('Pinned version is required.');
+      const next = cloneDef(definition);
+      next.groups = next.groups && typeof next.groups === 'object' ? next.groups : {};
+      next.groups[id] = { ...(current || {}), id, name: name.trim() || id,
+        flow_ref: { path: path.trim(), version: version.trim() },
+        parameter_mapping: parseJsonValue(parameterMapping, 'Parameter mapping'),
+        port_mapping: parseJsonValue(portMapping, 'Port mapping'),
+        pass_attributes: passAttributes };
+      onApply(next); onClose();
+    } catch (exc) { setError(String(exc.message || exc)); }
+  };
+  const remove = () => {
+    if (!current || !window.confirm(`Delete subflow ${existingId}?`)) return;
+    onApply(removeFromDraft(definition, [existingId], [])); onClose();
+  };
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: current ? 'Subflow properties' : 'Add versioned subflow' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '✕' }),
+    ] }),
+    jsxs('label', { className: 'fe-label', children: ['Technical ID', jsx('input', { className: 'fe-input', value: groupId, disabled: !!current, onChange: event => setGroupId(event.target.value) })] }),
+    jsxs('label', { className: 'fe-label', children: ['Name', jsx('input', { className: 'fe-input', value: name, onChange: event => setName(event.target.value) })] }),
+    jsxs('label', { className: 'fe-label', children: ['Flow JSON path', jsx('input', { className: 'fe-input', value: path, onChange: event => setPath(event.target.value) })] }),
+    jsxs('label', { className: 'fe-label', children: ['Pinned version', jsx('input', { className: 'fe-input', value: version, onChange: event => setVersion(event.target.value) })] }),
+    jsxs('label', { className: 'fe-label', children: ['Parameter mapping (JSON)', jsx('textarea', { className: 'fe-input', rows: 5, value: parameterMapping, onChange: event => setParameterMapping(event.target.value) })] }),
+    jsxs('label', { className: 'fe-label', children: ['Port mapping (JSON)', jsx('textarea', { className: 'fe-input', rows: 6, value: portMapping, onChange: event => setPortMapping(event.target.value) })] }),
+    jsxs('label', { className: 'fe-label', children: [jsx('input', { type: 'checkbox', checked: passAttributes, onChange: event => setPassAttributes(event.target.checked) }), ' Pass FlowFile attributes'] }),
+    error && jsx('div', { className: 'rt-err', children: error }),
+    jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: save, children: current ? 'Save subflow' : 'Add subflow' }),
+      current && jsx('button', { className: 'rt-danger', onClick: remove, children: 'Delete subflow' }),
+      jsx('button', { onClick: onClose, children: 'Cancel' }),
+    ] }),
+  ] });
 }
 
 // ── Problems drawer (static validation report) ──
@@ -1081,6 +1780,49 @@ function TaskDrawer({ instanceId, taskId, onClose }) {
           jsx('td', { children: typeof v === 'string' ? v : JSON.stringify(v) }),
         ] }, k)) : jsx('tr', { children: jsx('td', { colSpan: 2, children: '(none)' }) })
       }) }),
+    ] }),
+  ] });
+}
+
+// ── Published-version runtime impact drawer ──
+function RuntimeImpactDrawer({ impact, applying, onApply, onClose }) {
+  const [dropRemoved, setDropRemoved] = useState(false);
+  const [waitInFlight, setWaitInFlight] = useState(false);
+  const removed = Number(impact?.removed_flowfiles || 0);
+  const inFlight = impact?.in_flight_tasks || [];
+  const ready = (!removed || dropRemoved) && (!inFlight.length || waitInFlight);
+  return jsxs('div', { className: 'rt-drawer', children: [
+    jsxs('div', { className: 'rt-drawer-head', children: [
+      jsx('strong', { children: 'Apply published version' }),
+      jsx('button', { className: 'rt-x', onClick: onClose, children: '\u2715' }),
+    ] }),
+    jsxs('table', { className: 'rt-kv', children: jsx('tbody', { children: [
+      jsxs('tr', { children: [jsx('td', { children: 'Version' }), jsx('td', { children: impact?.fqn || '' })] }),
+      jsxs('tr', { children: [jsx('td', { children: 'Changes' }), jsx('td', { children: String(impact?.count || 0) })] }),
+      jsxs('tr', { children: [jsx('td', { children: 'Removed queues' }), jsx('td', { children: String((impact?.removed_queues || []).length) })] }),
+      jsxs('tr', { children: [jsx('td', { children: 'Queued FlowFiles' }), jsx('td', { children: `${removed} \u00B7 ${fmtBytes(impact?.removed_queue_bytes || 0)}` })] }),
+      jsxs('tr', { children: [jsx('td', { children: 'Tasks in flight' }), jsx('td', { children: inFlight.join(', ') || 'none' })] }),
+    ] }) }),
+    jsx('div', { className: 'rt-section', children: 'Runtime-impacting changes' }),
+    (impact?.changes || []).filter(change => change.runtime_impact).map(change =>
+      jsxs('div', { className: 'rt-item', children: [change.op, ' ', change.kind, ' ', change.id] },
+           `${change.op}:${change.kind}:${change.id}`)),
+    removed > 0 && jsxs('label', { className: 'rt-notice', children: [
+      jsx('input', { type: 'checkbox', checked: dropRemoved,
+                     onChange: event => setDropRemoved(event.target.checked) }),
+      ` Drop ${removed} FlowFiles from removed queues (cannot be undone)`,
+    ] }),
+    inFlight.length > 0 && jsxs('label', { className: 'rt-notice', children: [
+      jsx('input', { type: 'checkbox', checked: waitInFlight,
+                     onChange: event => setWaitInFlight(event.target.checked) }),
+      ' Stop scheduling and wait for in-flight tasks before applying',
+    ] }),
+    jsxs('div', { className: 'rt-actions', children: [
+      jsx('button', { onClick: () => onApply({
+        removed_queue_policy: removed ? 'drop' : 'reject',
+        in_flight_policy: inFlight.length ? 'wait' : 'reject',
+      }), disabled: !ready || applying, children: applying ? 'Applying\u2026' : 'Apply to running flow' }),
+      jsx('button', { onClick: onClose, disabled: applying, children: 'Cancel' }),
     ] }),
   ] });
 }
@@ -1214,11 +1956,21 @@ function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
+  const [taskCatalog, setTaskCatalog] = useState([]);
+  const flowRef = useRef(null);
   const layoutDone = useRef(false);
   const timerRef = useRef(null);
   const openSubflow = useCallback((ref) => {
-    if (!ref || !ref.path) return;
-    const next = { flow_ref: ref, instance_id: '', template_id: '', conversation_id: '' };
+    if (!ref || (!ref.path && !ref.inline_group_id)) return;
+    let next;
+    if (ref.inline_group_id) {
+      const group = findGroupById(draftRef.current?.groups || {}, ref.inline_group_id);
+      if (!group) return;
+      next = { inline_group_id: ref.inline_group_id, flow_ref: null,
+               instance_id: '', template_id: '', conversation_id: '' };
+    } else {
+      next = { flow_ref: ref, instance_id: '', template_id: '', conversation_id: '' };
+    }
     layoutDone.current = false;
     setNodes([]);
     setEdges([]);
@@ -1234,13 +1986,17 @@ function App() {
 
   const onNodeContextMenu = useCallback((event, node) => {
     const ref = node?.data?.subflowRef;
+    const groupId = node?.data?.inlineGroupId || (ref?.path ? node.id : '');
+    const editorTask = IS_EDIT && graphStack.length === 1
+      && !lockedRef.current && !node?.data?.isRuntimePort && !groupId;
     const runtimeTask = canOperate && !node?.data?.isRuntimePort;
-    if (!runtimeTask && !(ref && ref.path)) return;
+    if (!editorTask && !runtimeTask && !groupId && !(ref && (ref.path || ref.inline_group_id))) return;
     event.preventDefault();
     setContextMenu({ x: event.clientX, y: event.clientY, ref,
-                     nodeId: runtimeTask ? node.id : '',
+                     nodeId: (editorTask || runtimeTask) ? node.id : '', groupId,
+                     edit: editorTask,
                      nodeState: node?.data?.state || '' });
-  }, [canOperate]);
+  }, [canOperate, graphStack.length]);
 
   const taskControl = useCallback((taskId, operation) => {
     setContextMenu(null);
@@ -1325,12 +2081,21 @@ function App() {
   const [problems, setProblems] = useState(null);
   const [showProblems, setShowProblems] = useState(false);
   const [published, setPublished] = useState('');
+  const [runtimeApplying, setRuntimeApplying] = useState(false);
   const draftRef = useRef(null);
   const revisionRef = useRef(0);
   const historyRef = useRef({ past: [], future: [] });
   const saveTimer = useRef(null);
   const lockedRef = useRef(false); // conflict or published: no further writes
   const [, bump] = useState(0);
+
+  window._flowEditorEmbeddedServices = async (serviceType) => ({
+    services: Object.entries(draftRef.current?.services || {})
+      .filter(([, service]) => !serviceType || service?.type === serviceType)
+      .map(([service_id, service]) => ({ service_id, scope: 'flow',
+        service_type: service?.type || '', type: service?.type || '',
+        provider: service?.parameters?.provider || '' })),
+  });
 
   const projectDraft = useCallback((def) => {
     const { nodes: n, edges: e } = flowToReactFlow(def, openSubflow);
@@ -1424,6 +2189,16 @@ function App() {
     applyDraft(autoLayoutDraft(draftRef.current, nodes, edges));
   }, [applyDraft, nodes, edges]);
 
+  const groupSelection = useCallback(() => {
+    if (!IS_EDIT || lockedRef.current) return;
+    const grouped = groupSelectionInDraft(
+      draftRef.current, (selection.nodes || []).map(node => node.id));
+    if (!grouped) { setError('Select at least one root processor to create a Process Group.'); return; }
+    applyDraft(grouped.definition);
+    setSelection({ nodes: [], edges: [] });
+    setDrawer({ kind: 'group', groupId: grouped.groupId });
+  }, [applyDraft, selection.nodes]);
+
   const validateDraft = useCallback(async () => {
     setShowProblems(true);
     setProblems(null);
@@ -1447,13 +2222,39 @@ function App() {
     const version = window.prompt(
       `Publish as version (${diff.count} change(s)${base ? ' vs ' + base : ''}):`, suggested);
     if (!version) return;
-    const d = await apiCall({ action: 'flow_editor_publish', draft_id: DRAFT_ID, version });
+    const d = await apiCall({ action: 'flow_editor_publish', draft_id: DRAFT_ID,
+                              version, keep_draft: !!INSTANCE_ID });
     if (d.error === 'validation_failed') { setProblems(d.validation); setShowProblems(true); return; }
     if (d.error) { setError(d.error); return; }
     lockedRef.current = true;
     setSaveState('published');
     setPublished(d.fqn);
   }, [saveNow, draftMeta]);
+
+  const previewRuntimeUpdate = useCallback(async () => {
+    if (!INSTANCE_ID || !published) return;
+    const d = await apiCall({ action: 'flow_runtime_update_preview',
+                              instance_id: INSTANCE_ID, fqn: published });
+    if (d.error) { setError(d.error); return; }
+    setDrawer({ kind: 'runtimeImpact', impact: d });
+  }, [published]);
+
+  const applyRuntimeUpdate = useCallback(async (impact, policies) => {
+    if (!INSTANCE_ID || !published || !impact?.preview_token) return;
+    setRuntimeApplying(true);
+    const d = await apiCall({ action: 'flow_runtime_update_apply',
+                              instance_id: INSTANCE_ID, fqn: published,
+                              preview_token: impact.preview_token, ...policies });
+    setRuntimeApplying(false);
+    if (d.error) {
+      setError(d.error);
+      if (d.impact) setDrawer({ kind: 'runtimeImpact', impact: d.impact });
+      return;
+    }
+    setDrawer(null);
+    setSaveState('applied');
+    setError('');
+  }, [published]);
 
   useEffect(() => {
     if (!IS_EDIT) return undefined;
@@ -1473,6 +2274,16 @@ function App() {
   useEffect(() => {
     if (IS_EDIT) loadDraft();
   }, [loadDraft]);
+
+  useEffect(() => {
+    if (!IS_EDIT) return;
+    apiCall({ action: 'flow_editor_task_catalog' })
+      .then(data => {
+        if (data.error) setError(data.error);
+        else setTaskCatalog(Array.isArray(data.tasks) ? data.tasks : []);
+      })
+      .catch(exc => setError(String(exc.message || exc)));
+  }, []);
 
   const goBack = useCallback(() => {
     setGraphStack(prev => {
@@ -1498,6 +2309,12 @@ function App() {
       // A static draft: never poll. The root graph is the draft projection;
       // a subflow drill-down is fetched once, read-only.
       if (graphStack.length === 1) { if (draftRef.current) projectDraft(draftRef.current); return undefined; }
+      const graph = graphStack[graphStack.length - 1] || {};
+      if (graph.inline_group_id) {
+        const group = findGroupById(draftRef.current?.groups || {}, graph.inline_group_id);
+        if (group) { setFlowName(group.name || graph.inline_group_id); projectDraft(groupAsDefinition(group)); }
+        return undefined;
+      }
       fetchData();
       return undefined;
     }
@@ -1509,6 +2326,25 @@ function App() {
   // Editing happens on the root graph of a draft only; drill-downs and a
   // locked draft (conflict / published) are read-only.
   const editing = IS_EDIT && graphStack.length === 1 && !lockedRef.current;
+
+  const onPaletteDrop = useCallback((event) => {
+    if (!editing || !flowRef.current) return;
+    const taskType = event.dataTransfer.getData('application/pawflow-task-type');
+    if (!taskType) return;
+    event.preventDefault();
+    const position = flowRef.current.screenToFlowPosition({
+      x: event.clientX, y: event.clientY,
+    });
+    const added = addTaskToDraft(draftRef.current, taskType, position);
+    applyDraft(added.definition);
+    setDrawer({ kind: 'editTask', taskId: added.taskId });
+  }, [editing, applyDraft]);
+
+  const onConnect = useCallback((connection) => {
+    if (!editing || !connection?.source || !connection?.target) return;
+    setDrawer({ kind: 'editRelation', source: connection.source,
+                target: connection.target, connectionId: '' });
+  }, [editing]);
 
   // Hide loading
   useEffect(() => {
@@ -1522,6 +2358,7 @@ function App() {
     dirty: 'Unsaved changes', saving: 'Saving\u2026',
     saved: `Saved \u00B7 rev ${revisionRef.current}`, error: 'Save failed',
     conflict: 'Draft changed elsewhere', published: `Published as ${published}`,
+    applied: `Applied ${published} to ${INSTANCE_ID}`,
   }[saveState] || '';
   const editBtn = (label, onClick, opts = {}) => jsx('button', {
     id: opts.id, className: 'rt-x', title: opts.title || label, disabled: !!opts.disabled,
@@ -1531,6 +2368,7 @@ function App() {
   });
 
   return jsxs(Fragment, { children: [
+    IS_EDIT && graphStack.length === 1 && jsx(TaskPalette, { tasks: taskCatalog }),
     jsxs('div', { id: 'statusBar', children: [
       graphStack.length > 1 && jsx('button', { id: 'backButton', onClick: goBack, children: '<=' }),
       jsx('span', { className: 'dot ' + (IS_EDIT ? 'stopped' : statusClass) }),
@@ -1546,8 +2384,17 @@ function App() {
             editBtn('\u21B6 Undo', undo, { disabled: !historyState.past.length || lockedRef.current, title: 'Undo (Ctrl+Z)' }),
             editBtn('\u21B7 Redo', redo, { disabled: !historyState.future.length || lockedRef.current, title: 'Redo (Ctrl+Shift+Z)' }),
             editBtn('\u2630 Auto Layout', autoLayout, { disabled: lockedRef.current || !nodes.length }),
+            editBtn('Group selection', groupSelection, { disabled: lockedRef.current || !selection.nodes.length }),
+            editBtn('Add subflow', () => { setShowProblems(false); setDrawer({ kind: 'subflow', groupId: '' }); }),
+            editBtn('Metadata', () => { setShowProblems(false); setDrawer({ kind: 'metadata' }); }),
+            editBtn('Parameters', () => { setShowProblems(false); setDrawer({ kind: 'parameters' }); }),
+            editBtn('Services', () => { setShowProblems(false); setDrawer({ kind: 'services' }); }),
+            editBtn('Ports', () => { setShowProblems(false); setDrawer({ kind: 'ports' }); }),
+            editBtn('${…}', () => { setShowProblems(false); setDrawer({ kind: 'expressions' }); }, { title: 'Expression helper' }),
             editBtn('\u2713 Validate', validateDraft),
+            editBtn('Problems', () => problems ? setShowProblems(true) : validateDraft()),
             editBtn('\u2B06 Publish', publishDraft, { primary: true, disabled: lockedRef.current }),
+            INSTANCE_ID && published && editBtn('Apply to running flow', previewRuntimeUpdate, { primary: true }),
           ] })
         : jsx('span', { children: isRunning ? 'Running' : 'Stopped' }),
       error && jsx('span', { style: { color: '#e94560' }, children: error }),
@@ -1555,8 +2402,9 @@ function App() {
     jsx(ReactFlow, {
       nodes, edges,
       nodeTypes,
+      onInit: instance => { flowRef.current = instance; },
       nodesDraggable: editing,
-      nodesConnectable: false,
+      nodesConnectable: editing,
       elementsSelectable: true,
       onNodesChange: editing ? onNodesChange : undefined,
       onEdgesChange: editing ? onEdgesChange : undefined,
@@ -1564,12 +2412,25 @@ function App() {
       onDelete: editing ? onDelete : undefined,
       deleteKeyCode: editing ? ['Delete', 'Backspace'] : null,
       onSelectionChange: editing ? setSelection : undefined,
+      onDragOver: editing ? event => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+      } : undefined,
+      onDrop: editing ? onPaletteDrop : undefined,
+      onConnect: editing ? onConnect : undefined,
       onNodeContextMenu,
       onNodeDoubleClick: (event, node) => {
         const ref = node?.data?.subflowRef;
-        if (ref && ref.path) openSubflow(ref);
+        if (ref && (ref.path || ref.inline_group_id)) openSubflow(ref);
+        else if (editing) setDrawer({ kind: 'editTask', taskId: node.id });
       },
-      onEdgeClick,
+      onEdgeClick: editing ? (event, edge) => {
+        event.preventDefault();
+        if (edge?.data?.editable === false) { setError('Open the Process Group to inspect this boundary connection.'); return; }
+        setDrawer({ kind: 'editRelation', source: edge?.data?.originalSource || edge.source,
+                    target: edge?.data?.originalTarget || edge.target,
+                    connectionId: edge?.data?.connectionId || edge.id });
+      } : onEdgeClick,
       panOnDrag: true,
       zoomOnScroll: true,
       zoomOnPinch: true,
@@ -1592,28 +2453,36 @@ function App() {
       style: { left: contextMenu.x, top: contextMenu.y },
       onClick: ev => ev.stopPropagation(),
       children: [
-        contextMenu.nodeId && jsx('button', {
+        contextMenu.nodeId && !contextMenu.edit && jsx('button', {
           onClick: () => taskControl(contextMenu.nodeId, 'start'),
           children: '\u25B6 Start',
         }),
-        contextMenu.nodeId && jsx('button', {
+        contextMenu.nodeId && !contextMenu.edit && jsx('button', {
           onClick: () => taskControl(contextMenu.nodeId, 'stop'),
           children: '\u25A0 Stop',
         }),
-        contextMenu.nodeId && contextMenu.nodeState === 'error' && jsx('button', {
+        contextMenu.nodeId && !contextMenu.edit && contextMenu.nodeState === 'error' && jsx('button', {
           onClick: () => taskControl(contextMenu.nodeId, 'restart'),
           children: '\u21BB Restart',
         }),
         contextMenu.nodeId && jsx('button', {
           onClick: () => {
-            setDrawer({ kind: 'task', taskId: contextMenu.nodeId });
+            setDrawer({ kind: contextMenu.edit ? 'editTask' : 'task',
+                        taskId: contextMenu.nodeId });
             setContextMenu(null);
           },
-          children: '\u2699 Configuration',
+          children: contextMenu.edit ? '\u2699 Properties' : '\u2699 Configuration',
         }),
-        contextMenu.ref && contextMenu.ref.path && jsx('button', {
+        contextMenu.groupId && IS_EDIT && jsx('button', {
+          onClick: () => {
+            setDrawer({ kind: contextMenu.ref?.path ? 'subflow' : 'group', groupId: contextMenu.groupId });
+            setContextMenu(null);
+          },
+          children: '\u2699 Group properties',
+        }),
+        contextMenu.ref && (contextMenu.ref.path || contextMenu.ref.inline_group_id) && jsx('button', {
           onClick: () => openSubflow(contextMenu.ref),
-          children: 'Open subflow',
+          children: contextMenu.ref.path ? 'Open subflow' : 'Open Process Group',
         }),
       ],
     }),
@@ -1624,6 +2493,43 @@ function App() {
     drawer && drawer.kind === 'queue' && jsx(QueueDrawer, {
       instanceId: rootGraph.instance_id, edgeData: drawer.edgeData,
       source: drawer.source, target: drawer.target,
+      onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'editTask' && jsx(TaskPropertiesDrawer, {
+      taskId: drawer.taskId, definition: draftRef.current,
+      onApply: applyDraft, onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'editRelation' && jsx(RelationPropertiesDrawer, {
+      source: drawer.source, target: drawer.target,
+      connectionId: drawer.connectionId, definition: draftRef.current,
+      onApply: applyDraft, onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'metadata' && jsx(FlowMetadataDrawer, {
+      definition: draftRef.current, onApply: applyDraft, onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'parameters' && jsx(FlowParametersDrawer, {
+      definition: draftRef.current, onApply: applyDraft, onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'services' && jsx(FlowServicesDrawer, {
+      definition: draftRef.current, onApply: applyDraft, onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'ports' && jsx(FlowPortsDrawer, {
+      definition: draftRef.current, onApply: applyDraft, onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'expressions' && jsx(ExpressionHelperDrawer, {
+      definition: draftRef.current, onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'group' && jsx(GroupPropertiesDrawer, {
+      groupId: drawer.groupId, definition: draftRef.current,
+      onApply: applyDraft, onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'subflow' && jsx(SubflowPropertiesDrawer, {
+      groupId: drawer.groupId, definition: draftRef.current,
+      onApply: applyDraft, onClose: () => setDrawer(null),
+    }),
+    drawer && drawer.kind === 'runtimeImpact' && jsx(RuntimeImpactDrawer, {
+      impact: drawer.impact, applying: runtimeApplying,
+      onApply: policies => applyRuntimeUpdate(drawer.impact, policies),
       onClose: () => setDrawer(null),
     }),
     IS_EDIT && showProblems && jsx(ProblemsDrawer, {

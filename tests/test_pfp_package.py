@@ -850,6 +850,7 @@ def test_pfp_flow_task_is_visible_to_flow_editor(tmp_path, monkeypatch):
                 "description": "Filesystem relay service id used to execute this package task.",
             },
         },
+        "relationships": ["success"],
     }
 
     validation = FlowDefinitionValidator.validate({

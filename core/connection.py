@@ -29,6 +29,8 @@ class Connection:
                  prioritizer: PrioritizerType = PrioritizerType.PRIORITY_ATTRIBUTE,
                  priority_attribute: str = "priority",
                  flowfile_ttl_seconds: int = 0):
+        if not isinstance(prioritizer, PrioritizerType):
+            prioritizer = PrioritizerType(str(prioritizer))
         self.source_id = source_id
         self.target_id = target_id
         self.relationship = relationship
@@ -40,6 +42,8 @@ class Connection:
         self.max_queue_size = max_queue_size
         self.max_queue_bytes = max_queue_bytes
         self.flowfile_ttl_seconds = flowfile_ttl_seconds
+        self.prioritizer = prioritizer
+        self.priority_attribute = priority_attribute
 
         self._queue = PrioritizedQueue(
             prioritizer_type=prioritizer,
@@ -249,6 +253,8 @@ class Connection:
                 "flowfiles_in": self._flowfiles_in,
                 "flowfiles_out": self._flowfiles_out,
                 "ttl_seconds": self.flowfile_ttl_seconds,
+                "prioritizer": self.prioritizer.value,
+                "priority_attribute": self.priority_attribute,
             }
 
     def __repr__(self):
@@ -326,11 +332,16 @@ class ConnectionManager:
         self._by_target.clear()
 
         for rel in flow_dict.get("relations", []):
+            prioritizer = rel.get(
+                "prioritizer", PrioritizerType.PRIORITY_ATTRIBUTE.value)
             conn = Connection(
                 source_id=rel["from"],
                 target_id=rel["to"],
                 relationship=rel.get("type", "success"),
-                max_queue_size=default_max_size,
-                max_queue_bytes=default_max_bytes,
+                max_queue_size=rel.get("max_queue_size", default_max_size),
+                max_queue_bytes=rel.get("max_queue_bytes", default_max_bytes),
+                prioritizer=PrioritizerType(prioritizer),
+                priority_attribute=rel.get("priority_attribute", "priority"),
+                flowfile_ttl_seconds=rel.get("flowfile_ttl_seconds", 0),
             )
             self.add_connection(conn)

@@ -28,6 +28,23 @@ def test_connection_has_a_stable_identity():
     assert conn.get_stats()["connection_id"] == conn.connection_id
 
 
+def test_connection_manager_builds_relation_queue_configuration():
+    manager = ConnectionManager()
+    manager.build_from_flow({"relations": [{
+        "from": "a", "to": "b", "type": "success",
+        "max_queue_size": 12, "max_queue_bytes": 3456,
+        "flowfile_ttl_seconds": 78, "prioritizer": "fifo",
+        "priority_attribute": "urgency",
+    }]})
+    conn = manager.get_by_id("conn_a__success__b")
+    assert conn is not None
+    assert conn.max_queue_size == 12
+    assert conn.max_queue_bytes == 3456
+    assert conn.flowfile_ttl_seconds == 78
+    assert conn.get_stats()["prioritizer"] == "fifo"
+    assert conn.get_stats()["priority_attribute"] == "urgency"
+
+
 def test_paused_queue_accepts_upstream_but_blocks_downstream():
     conn = Connection("a", "b")
     conn.pause()
@@ -52,6 +69,69 @@ def test_flowfiles_are_addressed_by_process_id():
     assert conn.remove_by_process_id(second.process_id) is True
     assert conn.remove_by_process_id(second.process_id) is False
     assert conn.queue_size() == 1 and conn.queue_bytes() == 1
+
+
+# ── Safe whole-flow hot-swap ─────────────────────────────────────
+
+def _hot_swap_flow(message="old", relations=None):
+    from engine.parser import FlowParser
+    return FlowParser.parse({
+        "id": "hot_swap", "name": "Hot swap", "version": "1.0.0",
+        "tasks": {
+            "a": {"type": "log", "parameters": {"message": message}},
+            "b": {"type": "log", "parameters": {"message": "b"}},
+        },
+        "relations": relations if relations is not None else [
+            {"from": "a", "to": "b", "type": "success"},
+            {"from": "a", "to": "b", "type": "failure"},
+        ],
+        "entries": ["a"], "exits": [], "parameters": {},
+        "variables": {}, "groups": {},
+    })
+
+
+def test_update_flow_preserves_each_queue_by_connection_id_and_pause_state():
+    from engine.continuous_executor import ContinuousFlowExecutor
+
+    executor = ContinuousFlowExecutor(_hot_swap_flow(), enable_checkpoints=False)
+    executor.stop()
+    success = executor.connections.get_by_id("conn_a__success__b")
+    failure = executor.connections.get_by_id("conn_a__failure__b")
+    success_ff = FlowFile(content=b"success")
+    failure_ff = FlowFile(content=b"failure")
+    success.enqueue(success_ff)
+    failure.enqueue(failure_ff)
+    failure.pause()
+
+    assert executor.update_flow(_hot_swap_flow(message="new")) is True
+    new_success = executor.connections.get_by_id("conn_a__success__b")
+    new_failure = executor.connections.get_by_id("conn_a__failure__b")
+    assert new_success.get_flowfile(success_ff.process_id) is success_ff
+    assert new_success.get_flowfile(failure_ff.process_id) is None
+    assert new_failure.get_flowfile(failure_ff.process_id) is failure_ff
+    assert new_failure.get_flowfile(success_ff.process_id) is None
+    assert new_success.is_paused() is False
+    assert new_failure.is_paused() is True
+
+
+def test_update_flow_requires_explicit_drop_for_nonempty_removed_queue():
+    from engine.continuous_executor import ContinuousFlowExecutor
+
+    executor = ContinuousFlowExecutor(_hot_swap_flow(), enable_checkpoints=False)
+    removed = executor.connections.get_by_id("conn_a__failure__b")
+    queued = FlowFile(content=b"must-not-disappear")
+    removed.enqueue(queued)
+    only_success = _hot_swap_flow(
+        message="new",
+        relations=[{"from": "a", "to": "b", "type": "success"}],
+    )
+
+    assert executor.update_flow(only_success) is False
+    assert removed.get_flowfile(queued.process_id) is queued
+    assert executor.update_flow(only_success, removed_queue_policy="drop") is True
+    assert executor.connections.get_by_id("conn_a__failure__b") is None
+    latest = executor.get_version_history()[-1]
+    assert latest["dropped_flowfiles"] == 1
 
 
 # ── Scheduler is pause-aware ─────────────────────────────────────
@@ -115,9 +195,11 @@ def runtime(monkeypatch):
         is_running = True
         connections = manager
         _provenance = None
-        _flow = None
+        _flow = type("Flow", (), {"id": "hot"})()
+        flow_version = 3
         checkpoints = []
         controls = []
+        updates = []
         def get_task(self, tid):
             return _Task() if tid == "gen" else None
         def get_all_task_states(self):
@@ -130,6 +212,8 @@ def runtime(monkeypatch):
             self.controls.append(("restart", tid)); return True
         def _save_checkpoint(self):
             self.checkpoints.append(time.time())
+        def update_flow(self, flow, **policies):
+            self.updates.append((flow, policies)); return True
 
     executor = _Executor()
     from core.executor_registry import ExecutorRegistry
@@ -137,10 +221,23 @@ def runtime(monkeypatch):
 
     class _Inst:
         owner = "u1"
+        flow_fqn = "default.hot:1.0.0"
+        flow_scope = "user"
+        conversation_id = ""
+        parameters = {}
+        service_configs = {}
+        service_overrides = {}
+        flow_id = "hot"
+        flow_name = "Hot"
+        layout = {}
 
     class _DReg:
+        updates = []
         def get(self, iid):
             return _Inst() if iid == "inst1" else None
+        def update_flow_version(self, iid, fqn, **metadata):
+            self.updates.append((iid, fqn, metadata))
+    executor.registry_updates = _DReg.updates
     monkeypatch.setattr(ExecutorRegistry, "get_instance", classmethod(
         lambda cls: type("R", (), {"get": lambda s, i: executor if i == "inst1" else None})()))
     monkeypatch.setattr(DeploymentRegistry, "get_instance",
@@ -176,6 +273,57 @@ def test_task_details_never_resolve_secrets(runtime):
     assert data["config"]["api_key"] == "${my_secret}"
     assert "_user_id" not in data["config"]
     assert data["state"]["in_flight"] == 1
+
+
+def test_runtime_flow_update_requires_preview_and_explicit_risk_policies(
+        runtime, monkeypatch):
+    from tasks.ai.actions import flow_runtime as actions
+    executor, removed = runtime
+    removed.enqueue(FlowFile(content=b"queued"))
+    candidate_flow = object()
+    common = {
+        "id": "hot", "name": "Hot", "version": "1.1.0",
+        "parameters": {}, "services": {}, "groups": {}, "layout": {},
+        "entries": ["gen"], "exits": ["save"],
+        "tasks": {
+            "gen": {"type": "log", "parameters": {"message": "gen"}},
+            "save": {"type": "log", "parameters": {"message": "save"}},
+        },
+    }
+    base = {**common, "version": "1.0.0", "relations": [
+        {"from": "gen", "to": "save", "type": "success"},
+    ]}
+    candidate = {**common, "relations": []}
+    monkeypatch.setattr(actions, "_prepare_runtime_update",
+                        lambda inst, fqn: (base, candidate, candidate_flow))
+
+    preview, _ = _call("flow_runtime_update_preview", {
+        "instance_id": "inst1", "fqn": "default.hot:1.1.0",
+    })
+    assert preview["runtime_impact"] is True
+    assert preview["removed_flowfiles"] == 1
+    assert preview["in_flight_tasks"] == ["gen"]
+    assert preview["preview_token"]
+
+    refused, refused_ff = _call("flow_runtime_update_apply", {
+        "instance_id": "inst1", "fqn": "default.hot:1.1.0",
+        "preview_token": preview["preview_token"],
+    })
+    assert refused["error"] == "removed_queues_require_explicit_drop"
+    assert refused_ff.get_attribute("http.response.status") == "409"
+
+    applied, _ = _call("flow_runtime_update_apply", {
+        "instance_id": "inst1", "fqn": "default.hot:1.1.0",
+        "preview_token": preview["preview_token"],
+        "removed_queue_policy": "drop", "in_flight_policy": "wait",
+    })
+    assert applied["ok"] is True
+    assert executor.updates == [(candidate_flow, {
+        "removed_queue_policy": "drop", "in_flight_policy": "wait",
+    })]
+    assert executor.registry_updates == [("inst1", "default.hot:1.1.0", {
+        "flow_id": "hot", "flow_name": "Hot", "layout": {},
+    })]
 
 
 def test_queue_list_paginates_server_side(runtime):
@@ -334,6 +482,28 @@ def test_viewer_has_runtime_console_surfaces():
     assert "FlowFile is no longer queued." in source
     # Runtime ops only on a RUNNING root instance (never templates).
     assert "graphStack.length === 1 && !!rootGraph.instance_id && isRunning" in source
+
+
+def test_published_runtime_update_is_previewed_and_explicit_in_the_same_canvas():
+    source = _text("tasks/io/chat_ui/flow_graph.html")
+    services = _text("tasks/io/chat_ui/services.js")
+    resources = _text("tasks/io/chat_ui/resources_render.js")
+    backend = _text("tasks/ai/actions/_agentres_k3.py")
+    assert "function RuntimeImpactDrawer" in source
+    assert "flow_runtime_update_preview" in source
+    assert "flow_runtime_update_apply" in source
+    assert "preview_token: impact.preview_token" in source
+    assert "removed_queue_policy: removed ? 'drop' : 'reject'" in source
+    assert "in_flight_policy: inFlight.length ? 'wait' : 'reject'" in source
+    assert "keep_draft: !!INSTANCE_ID" in source
+    assert "function _editRunningFlow(instanceId)" in services
+    assert "flow_runtime_create_draft" in services
+    assert "window.__PAWFLOW_FLOW_INSTANCE_ID" in services
+    assert "f.flow_fqn || ''" in resources
+    assert '"flow_fqn": getattr(inst, "flow_fqn", "") or ""' in backend
+    for lang in ("en", "fr", "es"):
+        assert "flowEditRuntime" in json.load(open(
+            f"tasks/io/chat_ui/i18n/{lang}.json", encoding="utf-8"))
 
 
 def test_openspace_stage_mirrors_pause_and_backpressure():

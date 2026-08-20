@@ -63,6 +63,57 @@ def test_process_group_with_flow_ref_synthesizes_executeFlow(tmp_path):
     assert flow.tasks["pg1"].__class__.__name__ == "ExecuteFlowTask"
 
 
+def test_inline_process_groups_are_flattened_into_the_runtime_dag():
+    flow = FlowParser.parse({
+        "id": "parent", "name": "Parent", "version": "1.0.0",
+        "parameters": {"prefix": "root"},
+        "tasks": {"start": {"type": "log", "parameters": {"message": "start"}}},
+        "groups": {"transform": {
+            "name": "Transform", "variables": {"prefix": "group"},
+            "tasks": {
+                "inside": {"type": "log", "parameters": {"message": "${prefix}"}},
+                "finish": {"type": "log", "parameters": {"message": "done"}},
+            },
+            "relations": [{"from": "inside", "to": "finish", "type": "success"}],
+        }},
+        "relations": [{"from": "start", "to": "inside", "type": "success"}],
+    })
+
+    assert set(flow.tasks) == {"start", "inside", "finish"}
+    assert flow.tasks["inside"].config["message"] == "group"
+    assert flow.tasks["inside"]._group_id == "transform"
+    assert {(rel["from"], rel["to"]) for rel in flow.relations} == {
+        ("start", "inside"), ("inside", "finish")}
+
+
+def test_nested_inline_process_groups_flatten_and_reject_duplicate_ids():
+    nested = {
+        "id": "outer", "name": "Outer",
+        "tasks": {"outer_task": {"type": "log", "parameters": {"message": "outer"}}},
+        "relations": [],
+        "child_groups": {"inner": {
+            "id": "inner", "name": "Inner",
+            "tasks": {"inner_task": {"type": "log", "parameters": {"message": "inner"}}},
+            "relations": [],
+        }},
+    }
+    flow = FlowParser.parse({
+        "name": "Nested", "tasks": {}, "groups": {"outer": nested}, "relations": [],
+    })
+    assert set(flow.tasks) == {"outer_task", "inner_task"}
+    assert flow.tasks["inner_task"]._group_id == "inner"
+
+    with pytest.raises(Exception, match="duplicate task id"):
+        FlowParser.parse({
+            "name": "Duplicate",
+            "tasks": {"same": {"type": "log", "parameters": {"message": "root"}}},
+            "groups": {"g": {"tasks": {
+                "same": {"type": "log", "parameters": {"message": "group"}}},
+                "relations": []}},
+            "relations": [],
+        })
+
+
 def test_execute_flow_recursion_guard(tmp_path):
     """A sub-flow that references itself must abort with 'recursion detected'.
 

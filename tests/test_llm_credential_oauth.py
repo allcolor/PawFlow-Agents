@@ -305,6 +305,7 @@ def test_credential_dialog_filters_provider_actions_without_parameter_rules():
     src = "".join(
         p.read_text(encoding="utf-8")
         for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
+    src += Path("tasks/io/chat_ui/schema_form.js").read_text(encoding="utf-8")
     assert "rules = rules || [];" in src
     assert "actions = actions || [];" in src
     assert "if (!rules || !rules.length) return;" not in src
@@ -314,6 +315,7 @@ def test_service_ref_ui_supports_provider_aliases():
     src = "".join(
         p.read_text(encoding="utf-8")
         for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
+    src += Path("tasks/io/chat_ui/schema_form.js").read_text(encoding="utf-8")
     assert "data-provider-aliases" in src
     assert "function _serviceRefProviderMatches" in src
     assert "s.provider === wantedProvider" not in src

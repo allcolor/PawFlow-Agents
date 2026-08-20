@@ -25,9 +25,13 @@ function showFlowTemplateMenu(e, templateId) {
     menu.appendChild(d);
   };
   const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;'; menu.appendChild(s); };
+  const canAuthor = typeof _canEditScope !== 'function' || _canEditScope(_flowEditorScope(tpl));
   item('\u25B6 ' + t('deploy'), () => showDeployFlowDialog(templateId));
   item('\uD83D\uDCC8 ' + t('flowViewGraph'), () => _openFlowTemplateGraphTab(templateId));
-  item('\u270E ' + t('flowEditDraft'), () => _editFlowTemplate(templateId, tpl));
+  if (canAuthor) item('\u270E ' + t('flowEditDraft'), () => _editFlowTemplate(templateId, tpl));
+  item('\u2442 ' + t('flowFork'), () => _showForkFlowDialog(templateId, tpl));
+  item('\uD83D\uDD52 ' + t('flowVersions'), () => _showFlowVersionsDialog(templateId, tpl));
+  if (canAuthor) item('\u00B1 ' + t('flowDiff'), () => _showFlowDiffDialog(templateId, tpl));
   sep();
   item('\uD83D\uDCE6 ' + t('flowMoveToPackage'), () => _moveFlowTemplateToPackage(templateId, tpl));
   item('\u2191 ' + t('promote'), () => _moveFlowTemplateScope(templateId, 'global'));
@@ -55,6 +59,152 @@ function _flowTemplatePayload(templateId, extra) {
 
 function _flowTemplateMutationOptions(targetScope) {
   return { skipConversationId: !(targetScope === 'conversation') };
+}
+
+function _flowEditorScope(tpl) {
+  const raw = String((tpl && (tpl.scope || tpl._scope)) || 'user');
+  return raw.startsWith('conv') ? 'conversation' : raw.startsWith('global') ? 'global' : 'user';
+}
+
+function _flowEditorFqn(templateId, tpl) {
+  if (tpl && tpl.fqn) return String(tpl.fqn);
+  const pkg = String((tpl && tpl.package) || 'default');
+  const name = String((tpl && (tpl.name || tpl.id)) || templateId || 'flow');
+  const version = String((tpl && tpl.version) || '');
+  const base = name.includes('.') ? name : pkg + '.' + name;
+  return version && !base.includes(':') ? base + ':' + version : base;
+}
+
+function _flowScopeOptions(selected) {
+  const options = [['user', t('user')], ['global', t('global')]];
+  if (typeof conversationId !== 'undefined' && conversationId) options.splice(1, 0, ['conversation', t('conversation')]);
+  return options.map(([value, label]) => '<option value="' + value + '"' + (value === selected ? ' selected' : '') + '>' + escapeHtml(label) + '</option>').join('');
+}
+
+function _flowAuthoringDialog(title, bodyHtml) {
+  document.getElementById('_flowAuthoringOverlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = '_flowAuthoringOverlay';
+  overlay.className = 'exec-overlay';
+  overlay.innerHTML = '<div class="exec-dialog" style="min-width:440px;max-width:min(720px,calc(100vw - 32px));max-height:85vh;overflow:auto;">'
+    + '<h3>' + escapeHtml(title) + '</h3>' + bodyHtml + '</div>';
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function _flowDialogField(label, id, value, textarea) {
+  const tag = textarea
+    ? '<textarea id="' + id + '" rows="4" style="width:100%;">' + escapeHtml(value || '') + '</textarea>'
+    : '<input id="' + id + '" value="' + _pfpAttr(value || '') + '" style="width:100%;">';
+  return '<label style="display:block;margin:8px 0;color:var(--pf-muted);font-size:12px;">'
+    + escapeHtml(label) + tag + '</label>';
+}
+
+function _flowDialogScope(selected) {
+  return '<label style="display:block;margin:8px 0;color:var(--pf-muted);font-size:12px;">'
+    + escapeHtml(t('scope')) + '<select id="_feScope" style="width:100%;">'
+    + _flowScopeOptions(selected) + '</select></label>';
+}
+
+function _flowDialogPayload(scope) {
+  const payload = { scope };
+  if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+  return payload;
+}
+
+function _showNewFlowDialog() {
+  const overlay = _flowAuthoringDialog(t('flowNew'),
+    _flowDialogField(t('package'), '_fePackage', 'my_flows')
+    + _flowDialogField(t('name'), '_feName', '')
+    + _flowDialogField(t('version'), '_feVersion', '1.0.0')
+    + _flowDialogField(t('description'), '_feDescription', '', true)
+    + _flowDialogScope('user')
+    + '<div class="exec-btns"><button class="exec-deny" data-cancel>' + escapeHtml(t('contextCancel')) + '</button>'
+    + '<button class="exec-approve" data-create>' + escapeHtml(t('flowNew')) + '</button></div>');
+  overlay.querySelector('[data-cancel]').onclick = () => overlay.remove();
+  overlay.querySelector('[data-create]').onclick = () => {
+    const scope = overlay.querySelector('#_feScope').value;
+    const payload = Object.assign(_flowDialogPayload(scope), {
+      package: overlay.querySelector('#_fePackage').value.trim(),
+      name: overlay.querySelector('#_feName').value.trim(),
+      version: overlay.querySelector('#_feVersion').value.trim(),
+      description: overlay.querySelector('#_feDescription').value,
+    });
+    action$('flow_editor_new', payload, { skipConversationId: scope !== 'conversation' }).subscribe({
+      next: d => { if (d.error) addMsg('error', d.error); else { overlay.remove(); _openFlowEditorTab(d.draft.draft_id); } },
+      error: e => addMsg('error', e.message),
+    });
+  };
+}
+
+function _showForkFlowDialog(templateId, tpl) {
+  const sourceFqn = _flowEditorFqn(templateId, tpl);
+  const sourceScope = _flowEditorScope(tpl);
+  const originalName = String((tpl && (tpl.name || tpl.id)) || 'flow').replace(/[^A-Za-z0-9_-]/g, '_');
+  const overlay = _flowAuthoringDialog(t('flowFork'),
+    '<div style="font-size:12px;color:var(--pf-muted);">' + escapeHtml(sourceFqn) + '</div>'
+    + _flowDialogField(t('package'), '_fePackage', (tpl && tpl.package) || 'my_flows')
+    + _flowDialogField(t('name'), '_feName', originalName + '_fork')
+    + _flowDialogField(t('version'), '_feVersion', '1.0.0')
+    + _flowDialogScope('user')
+    + '<div class="exec-btns"><button class="exec-deny" data-cancel>' + escapeHtml(t('contextCancel')) + '</button>'
+    + '<button class="exec-approve" data-fork>' + escapeHtml(t('flowFork')) + '</button></div>');
+  overlay.querySelector('[data-cancel]').onclick = () => overlay.remove();
+  overlay.querySelector('[data-fork]').onclick = () => {
+    const scope = overlay.querySelector('#_feScope').value;
+    const payload = Object.assign(_flowDialogPayload(scope), {
+      source_fqn: sourceFqn, source_scope: sourceScope,
+      package: overlay.querySelector('#_fePackage').value.trim(),
+      name: overlay.querySelector('#_feName').value.trim(),
+      version: overlay.querySelector('#_feVersion').value.trim(),
+    });
+    if (sourceScope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) {
+      payload.conversation_id = conversationId;
+    }
+    action$('flow_editor_fork', payload, {
+      skipConversationId: scope !== 'conversation' && sourceScope !== 'conversation',
+    }).subscribe({
+      next: d => { if (d.error) addMsg('error', d.error); else { overlay.remove(); _openFlowEditorTab(d.draft.draft_id); } },
+      error: e => addMsg('error', e.message),
+    });
+  };
+}
+
+function _showFlowVersionsDialog(templateId, tpl) {
+  const fqn = _flowEditorFqn(templateId, tpl);
+  const scope = _flowEditorScope(tpl);
+  const overlay = _flowAuthoringDialog(t('flowVersions'), '<div data-content>' + escapeHtml(t('loading')) + '</div>');
+  const payload = Object.assign({ fqn }, _flowDialogPayload(scope));
+  action$('flow_editor_versions', payload, { skipConversationId: scope !== 'conversation' }).subscribe(d => {
+    if (d.error) { overlay.querySelector('[data-content]').textContent = d.error; return; }
+    overlay.querySelector('[data-content]').innerHTML = (d.versions || []).map(version => {
+      const versionFqn = d.flow + ':' + version;
+      return '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
+        + '<code style="flex:1;">' + escapeHtml(version) + (version === d.latest ? ' · latest' : '') + '</code>'
+        + '<button data-view="' + _pfpAttr(versionFqn) + '">' + escapeHtml(t('flowViewGraph')) + '</button>'
+        + '<button data-edit="' + _pfpAttr(versionFqn) + '">' + escapeHtml(t('flowEditDraft')) + '</button></div>';
+    }).join('') || '<div>' + escapeHtml(t('noFlowTemplates')) + '</div>';
+    overlay.querySelectorAll('[data-view]').forEach(button => button.onclick = () => _openFlowTemplateGraphTab(button.dataset.view));
+    overlay.querySelectorAll('[data-edit]').forEach(button => button.onclick = () => _editFlowTemplate(button.dataset.edit, { scope }));
+  });
+}
+
+function _showFlowDiffDialog(templateId, tpl) {
+  const fqn = _flowEditorFqn(templateId, tpl);
+  const scope = _flowEditorScope(tpl);
+  const overlay = _flowAuthoringDialog(t('flowDiff'), '<div data-content>' + escapeHtml(t('loading')) + '</div>');
+  const payload = Object.assign({ fqn, reuse_existing: true }, _flowDialogPayload(scope));
+  action$('flow_editor_create_draft', payload, { skipConversationId: scope !== 'conversation' }).subscribe(d => {
+    if (d.error) { overlay.querySelector('[data-content]').textContent = d.error; return; }
+    action$('flow_editor_diff', { draft_id: d.draft.draft_id }).subscribe(diff => {
+      if (diff.error) { overlay.querySelector('[data-content]').textContent = diff.error; return; }
+      const rows = (diff.changes || []).map(change => '<li><code>' + escapeHtml(change.op + ' ' + change.kind + ' ' + change.id)
+        + '</code>' + (change.runtime_impact ? ' · runtime' : '') + '</li>').join('');
+      overlay.querySelector('[data-content]').innerHTML = '<div>' + escapeHtml(String(diff.count || 0)) + ' change(s)</div><ul>'
+        + rows + '</ul><div class="exec-btns"><button data-open>' + escapeHtml(t('flowEditDraft')) + '</button></div>';
+      overlay.querySelector('[data-open]').onclick = () => { overlay.remove(); _openFlowEditorTab(d.draft.draft_id); };
+    });
+  });
 }
 
 function _refreshResourcesNow() {

@@ -79,8 +79,10 @@ def _handle_flow_editor(self, action, body, store, user_id, flowfile):
         if action == "flow_editor_service_catalog":
             return _reply({"services": service.service_catalog()})
         if action == "flow_editor_service_schema":
+            params = body.get("parameters")
             return _reply(service.service_schema(
-                str(body.get("service_type", "") or "")))
+                str(body.get("service_type", "") or ""),
+                params if isinstance(params, dict) else {}))
         if action == "flow_editor_validate":
             definition = body.get("definition")
             if not isinstance(definition, dict):

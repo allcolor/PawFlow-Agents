@@ -132,6 +132,7 @@ class ContinuousFlowExecutor(_ContinuousExecRunMixin, _ContinuousExecControlMixi
 
         # Parameter context
         ctx = ParameterContext(flow.parameters)
+        self._parameter_overrides = dict(parameters or {})
         if parameters:
             ctx = ctx.with_overrides(parameters)
         self._parameter_context = ctx

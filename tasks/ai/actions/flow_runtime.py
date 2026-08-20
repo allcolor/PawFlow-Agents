@@ -18,6 +18,8 @@ Design rules (see docs/flow_runtime_console.md):
   configuration (``${...}`` references intact), not resolved values.
 """
 
+import copy
+import hashlib
 import json
 import logging
 
@@ -27,6 +29,8 @@ _ACTIONS = {
     "flow_runtime_task_control", "flow_runtime_task_details",
     "flow_runtime_queue_list", "flow_runtime_queue_control",
     "flow_runtime_queue_item", "flow_runtime_flowfile_drop",
+    "flow_runtime_create_draft", "flow_runtime_update_preview",
+    "flow_runtime_update_apply",
 }
 
 _TASK_OPS = {"start", "stop", "restart", "disable"}
@@ -91,6 +95,91 @@ def _checkpoint_now(executor) -> None:
         logger.debug("post-mutation checkpoint failed", exc_info=True)
 
 
+def _prepare_runtime_update(inst, fqn):
+    """Load one immutable candidate version and parse it for this deployment."""
+    from core.flow_authoring import (FlowAuthoringService, normalize_scope,
+                                      split_fqn)
+
+    current_fqn = str(getattr(inst, "flow_fqn", "") or "")
+    if not current_fqn:
+        raise ValueError("Runtime editing requires a repository-backed flow")
+    current_flow, _ = split_fqn(current_fqn)
+    candidate_flow, candidate_version = split_fqn(fqn)
+    if not candidate_version:
+        raise ValueError("fqn must pin an immutable version")
+    if candidate_flow != current_flow:
+        raise ValueError("Candidate version must belong to the deployed flow")
+
+    scope = normalize_scope(getattr(inst, "flow_scope", "") or "user")
+    user_id = str(getattr(inst, "owner", "") or "")
+    conv_id = str(getattr(inst, "conversation_id", "") or "")
+    service = FlowAuthoringService.instance()
+    base = service.load(current_fqn, scope, user_id=user_id, conv_id=conv_id)
+    candidate = service.load(fqn, scope, user_id=user_id, conv_id=conv_id)
+
+    prepared = copy.deepcopy(candidate)
+    prepared["parameters"] = {
+        **(prepared.get("parameters") or {}),
+        **(getattr(inst, "parameters", None) or {}),
+        "_instance_id": inst.instance_id,
+    }
+    from core.executor_registry import (_apply_service_bindings,
+                                        _merge_service_configs)
+    _merge_service_configs(prepared, getattr(inst, "service_configs", None))
+    from engine.parser import FlowParser
+    parsed = FlowParser.parse(prepared)
+    _apply_service_bindings(
+        parsed, getattr(inst, "service_overrides", None),
+        getattr(inst, "service_configs", None))
+    return base, candidate, parsed
+
+
+def _runtime_update_impact(executor, base, candidate, *, instance_id, fqn):
+    """Diff plus the live risks that must be acknowledged before Apply."""
+    from core.flow_authoring import (FlowAuthoringService,
+                                     normalize_relation,
+                                     relation_connection_id)
+
+    diff = FlowAuthoringService.diff(base, candidate)
+    candidate_connection_ids = {
+        relation_connection_id(norm["from"], norm["type"], norm["to"])
+        for relation in (candidate.get("relations") or [])
+        if isinstance(relation, dict)
+        for norm in [normalize_relation(relation)]
+    }
+    removed_queues = [
+        stats for stats in executor.connections.get_all_stats()
+        if stats.get("connection_id") not in candidate_connection_ids
+    ]
+    in_flight = sorted(
+        task_id for task_id, state in
+        (executor.get_all_task_states() or {}).items()
+        if state.get("in_flight")
+    )
+    impact = {
+        **diff,
+        "instance_id": instance_id,
+        "fqn": fqn,
+        "executor_version": int(getattr(executor, "flow_version", 0) or 0),
+        "removed_queues": removed_queues,
+        "removed_flowfiles": sum(int(row.get("queue_size", 0) or 0)
+                                   for row in removed_queues),
+        "removed_queue_bytes": sum(int(row.get("queue_bytes", 0) or 0)
+                                    for row in removed_queues),
+        "in_flight_tasks": in_flight,
+    }
+    token_body = json.dumps({
+        "instance_id": instance_id,
+        "fqn": fqn,
+        "executor_version": impact["executor_version"],
+        "candidate": candidate,
+        "removed_queues": removed_queues,
+        "in_flight_tasks": in_flight,
+    }, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    impact["preview_token"] = hashlib.sha256(token_body.encode()).hexdigest()
+    return impact
+
+
 def _flowfile_row(connection, flowfile):
     created = getattr(flowfile, "created_at", 0)
     if hasattr(created, "timestamp"):
@@ -147,6 +236,78 @@ def _handle_flow_runtime(self, action, body, store, user_id, flowfile):
     executor = _executor(instance_id)
     if executor is None:
         return _reply({"error": "Instance is not running"}, "409")
+
+    # ── Safe runtime version update ───────────────────────────────
+    if action == "flow_runtime_create_draft":
+        from core.deployment_registry import DeploymentRegistry
+        inst = DeploymentRegistry.get_instance().get(instance_id)
+        if inst is None or not getattr(inst, "flow_fqn", ""):
+            return _reply({"error": "Runtime editing requires a repository-backed flow"}, "400")
+        try:
+            from core.flow_authoring import FlowAuthoringService, normalize_scope
+            draft = FlowAuthoringService.instance().create_draft(
+                inst.flow_fqn,
+                normalize_scope(getattr(inst, "flow_scope", "") or "user"),
+                user_id,
+                conv_id=str(getattr(inst, "conversation_id", "") or ""),
+                reuse_existing=True,
+            )
+            return _reply({"draft": draft, "instance_id": instance_id})
+        except (KeyError, ValueError) as exc:
+            return _reply({"error": str(exc)}, "400")
+
+    if action in {"flow_runtime_update_preview", "flow_runtime_update_apply"}:
+        fqn = str(body.get("fqn", "") or "")
+        if not fqn:
+            return _reply({"error": "fqn is required"}, "400")
+        from core.deployment_registry import DeploymentRegistry
+        registry = DeploymentRegistry.get_instance()
+        inst = registry.get(instance_id)
+        if inst is None:
+            return _reply({"error": "Unknown instance"}, "404")
+        try:
+            base, candidate, new_flow = _prepare_runtime_update(inst, fqn)
+        except (KeyError, ValueError) as exc:
+            return _reply({"error": str(exc)}, "400")
+        from core.flow_authoring import FlowAuthoringService
+        validation = FlowAuthoringService.validate(candidate)
+        if not validation.get("ok"):
+            return _reply({"error": "validation_failed",
+                           "validation": validation}, "422")
+        impact = _runtime_update_impact(
+            executor, base, candidate, instance_id=instance_id, fqn=fqn)
+        if action == "flow_runtime_update_preview":
+            return _reply(impact)
+
+        if str(body.get("preview_token", "") or "") != impact["preview_token"]:
+            return _reply({"error": "runtime_changed_since_preview",
+                           "impact": impact}, "409")
+        removed_policy = str(body.get("removed_queue_policy", "reject") or "reject")
+        in_flight_policy = str(body.get("in_flight_policy", "reject") or "reject")
+        if impact["removed_flowfiles"] and removed_policy != "drop":
+            return _reply({"error": "removed_queues_require_explicit_drop",
+                           "impact": impact}, "409")
+        if impact["in_flight_tasks"] and in_flight_policy != "wait":
+            return _reply({"error": "in_flight_tasks_require_explicit_wait",
+                           "impact": impact}, "409")
+        try:
+            updated = executor.update_flow(
+                new_flow, removed_queue_policy=removed_policy,
+                in_flight_policy=in_flight_policy)
+        except ValueError as exc:
+            return _reply({"error": str(exc)}, "400")
+        if updated is False:
+            return _reply({"error": "runtime_changed_since_preview"}, "409")
+        registry.update_flow_version(
+            instance_id, fqn,
+            flow_id=str(candidate.get("id") or inst.flow_id),
+            flow_name=str(candidate.get("name") or inst.flow_name),
+            layout=candidate.get("layout") or {},
+        )
+        _checkpoint_now(executor)
+        _record_manual_op(executor, op="flow_update", user_id=user_id)
+        return _reply({"ok": True, "updated": updated is True,
+                       "fqn": fqn, "impact": impact})
 
     # ── Tasks ────────────────────────────────────────────────────
     if action == "flow_runtime_task_control":

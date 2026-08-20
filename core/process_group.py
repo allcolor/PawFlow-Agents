@@ -189,12 +189,25 @@ class ProcessGroup:
             group.child_groups[gid] = cls.from_dict(gdata)
         return group
 
-    def flatten(self) -> Dict[str, Any]:
-        """Flatten to a flow-compatible dict (tasks + relations), including nested groups."""
-        all_tasks = dict(self.tasks)
+    def flatten(self, inherited_variables: Optional[Dict[str, Any]] = None
+                ) -> Dict[str, Any]:
+        """Flatten inline groups while retaining group scope metadata.
+
+        Task ids remain unchanged: PawFlow requires them to be unique across
+        the whole flow. Returned task dictionaries are copies, so runtime
+        annotations never mutate the persisted authoring document.
+        """
+        variables = dict(inherited_variables or {})
+        variables.update(self.variables)
+        all_tasks = {}
+        for task_id, task in self.tasks.items():
+            item = dict(task)
+            item["_group_id"] = self.id
+            item["_group_variables"] = variables
+            all_tasks[task_id] = item
         all_relations = list(self.relations)
         for child in self.child_groups.values():
-            flat = child.flatten()
+            flat = child.flatten(variables)
             all_tasks.update(flat["tasks"])
             all_relations.extend(flat["relations"])
         return {"tasks": all_tasks, "relations": all_relations}

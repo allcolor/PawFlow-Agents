@@ -6,9 +6,9 @@ with three modes — `view` (templates / subflows), `runtime` (the
 [Flow Runtime Console](flow_runtime_console.md)) and `edit` — never three
 divergent implementations.
 
-This document covers the **authoring foundation** (Phase 0/1). The canvas
-edit mode, task palette, properties drawer, relations wiring, process
-groups, subflows and runtime editing are the following phases.
+This document covers the **authoring foundation** and the complete canvas
+editing loop through process groups, version-pinned subflows and safe runtime
+hot-swap editing.
 
 ## Principles
 
@@ -168,15 +168,174 @@ opens the tab) switches the same canvas into edit mode:
   and publishes (a 422 report lands in the Problems drawer). Runtime
   polling is off; subflow drill-downs stay read-only.
 
-## Roadmap (next phases)
+## Task palette and properties (Phase 3)
 
-1. task palette + properties drawer (`schema_form.js` extracted from
-   `resources_service_dialogs.js`), deterministic task ids, stable technical
-   id + human label;
-3. relations wiring with a relationship chooser
-   (`Task.get_output_relationships`), per-relation queue configuration;
-4. flow parameters, services, `${...}` assistance, Problems panel;
-5. repository UI (New Flow, Edit, Fork, Versions, Diff, Publish);
-6. inline process groups (runtime flatten first) and subflows;
-7. runtime editing (`update_flow()` keyed by `connection_id`, runtime impact
-   before Apply).
+Edit mode loads `flow_editor_task_catalog` into a searchable, category-grouped
+processor palette. Dropping a processor uses ReactFlow's
+`screenToFlowPosition()` so placement remains correct at every zoom/pan level,
+creates a deterministic technical id (`log`, `log_2`, …), stores the position
+in `flow.layout.nodes`, and opens the Properties drawer immediately. The
+technical id is stable; the optional human label is edited separately.
+
+The drawer requests `flow_editor_task_schema` with the task's **current**
+parameters because some schemas depend on the selected configuration. It uses
+the same `schema_form.js` renderer as service dialogs, including existing
+service selectors. Saving merges rendered values into the existing parameter
+map and preserves unknown/future parameters and every unrelated task field.
+Double-click and the edit-mode context menu open this same drawer; runtime
+Start/Stop/Restart commands never appear in edit mode.
+
+## Relation wiring (Phase 4)
+
+In edit mode, ReactFlow handles are connectable. Drawing a connection does not
+write an edge immediately: it opens one connection drawer whose relationship
+choices come from the source task's `get_output_relationships()` using its
+current parameters. Existing edges open the same drawer. Saving, changing the
+relationship or deleting the edge is one undoable document operation keyed by
+the stable runtime identity
+`conn_<source>__<relationship>__<target>`; a duplicate identity is refused.
+
+`Task.get_output_relationships()` defaults to `success`, honors legacy
+`RELATIONSHIPS` / `OUTPUTS` declarations and can be overridden for dynamic
+routes (`routeOnAttribute` derives its named routes plus the configured default
+relationship). `flow_editor_task_schema` returns both `schema` and
+`relationships` for the current configuration.
+
+A relation can carry queue settings that are validated statically and consumed
+by `ConnectionManager` at runtime:
+
+```json
+{"from": "fetch", "to": "parse", "type": "success",
+ "max_queue_size": 10000, "max_queue_bytes": 104857600,
+ "flowfile_ttl_seconds": 0, "prioritizer": "priority_attribute",
+ "priority_attribute": "priority"}
+```
+
+Supported prioritizers are `fifo`, `oldest_first`, `newest_first` and
+`priority_attribute`. Count and byte thresholds must be positive integers;
+TTL is a non-negative integer (`0` disables expiration).
+
+## Flow resources (Phase 5)
+
+The edit toolbar exposes the remaining top-level resources without introducing
+a second model:
+
+- **Metadata** edits `id`, `name`, `version` and `description` in place while
+  preserving all repository and future fields.
+- **Parameters** is a key + JSON-value editor. Both simple values and typed
+  parameter definitions round-trip exactly.
+- **Services** creates, edits and deletes `flow.services` entries. The drawer
+  uses `flow_editor_service_catalog`, requests the schema using the service's
+  current parameters, and renders it through the shared `schema_form.js`.
+  Embedded flow services are merged into processor `service_ref` selectors
+  ahead of user/global services. Unknown service fields and parameters survive
+  edits. Required embedded-service parameters are checked by the shared static
+  validator without resolving expressions or connecting the service.
+- **Ports** selects explicit `entries` and `exits` from root tasks and subflow
+  endpoints. Removing a task still removes stale entry/exit references in the
+  same atomic operation.
+- **`${…}`** lists flow parameter references and the conversation/user/global
+  scopes as copyable runtime expressions. Expressions remain raw references in
+  drafts, validation and read-only configuration views.
+
+Every drawer Save is one undoable document operation and follows the same
+debounced, revision-locked autosave path as tasks and relations. **Auto Layout**
+persists `layout.nodes`; **Validate** refreshes the structured Problems drawer,
+and **Problems** reopens its latest report. Clicking a task/relation problem
+selects the corresponding canvas entity.
+
+## Repository integration (Phase 6)
+
+The Flows Repository `+` button creates a new private draft instead of opening
+the deployment dialog. Its form selects package, technical name, initial
+version, description and target scope; successful creation opens that draft in
+the same canvas. The template context menu provides:
+
+- **Edit (draft)** for writable scopes (an existing draft is reused);
+- **Fork** to copy any readable immutable version into a newly named flow and
+  target scope;
+- **Versions** to list the immutable version family, identify `latest`, view
+  any version, or open a writable version as a draft;
+- **Diff** to show structured base-version/draft changes and jump into the
+  reused draft;
+- **Publish** in the editor toolbar, after autosave, diff summary and static +
+  parser validation; a new version is always created;
+- the existing **Deploy** action, so a published V1 immediately returns to the
+  normal parameter/service-override deployment loop.
+
+The UI normalizes `global`, `user` and `conversation` scopes and carries the
+conversation id when either a source or target needs it. Read-only scopes hide
+Edit/Diff but remain viewable, versionable and forkable. These affordances are
+only convenience: the action handler enforces authentication, private draft
+ownership, conversation scope requirements and admin-only global writes.
+
+## Process groups (Phase 7)
+
+Inline Process Groups are part of the canonical flow document, not a second
+runtime model. **Group selection** moves selected root tasks and the relations
+whose two endpoints are selected into one group without changing technical
+task ids. Group metadata, variables, typed input/output ports and deletion are
+edited as single undoable document operations. Deleting a group also removes
+its root relations, entries, exits and layout references atomically.
+
+`FlowParser` recursively flattens inline groups into the runtime DAG. Group
+variables are inherited by nested groups, each materialized task keeps its
+`group_id` provenance, internal relations join the normal connection graph,
+and duplicate task ids across root and nested scopes fail fast. The shared
+static validator walks the same nested structure, including tasks, relations,
+ports and both canonical dictionary and tolerated historical list forms of
+`child_groups`.
+
+ReactFlow remains a projection of that one document. A group appears as one
+node at its parent level; double-click opens its contents on the same canvas,
+and the breadcrumb / up control returns to the parent. Drill-down is read-only
+for topology so boundary connections cannot accidentally be rewritten from an
+aggregated edge. Their data retains `originalSource` and `originalTarget` for
+inspection and stable `connection_id` lookup.
+
+## Versioned subflows (Phase 8)
+
+A Process Group with `flow_ref` is rendered as a subflow node and is edited by
+the Subflow drawer. The reference pins both an explicit JSON `path` and
+`version`; the parser refuses a version mismatch. The drawer also round-trips
+`parameter_mapping`, input/output `port_mapping` and `pass_attributes` while
+preserving unknown fields.
+
+At runtime the parser synthesizes the existing `executeFlow` processor for the
+reference, validates mapped ports against the child definition and retains the
+existing recursion guard. Subflows and inline groups share the normal canvas,
+repository draft, validation, diff, autosave, undo/redo and publish paths.
+
+## Safe runtime editing (Phase 9)
+
+The context menu of a running, repository-backed instance exposes **Edit
+running flow** without replacing **Edit params**. It creates or reuses a private
+draft of the instance's exact deployed FQN and opens that draft in the same
+canvas with both `draft_id` and `instance_id`. Legacy file-backed deployments
+remain operational but do not expose runtime topology editing.
+
+Publishing from an instance-linked draft creates an immutable repository
+version and keeps the draft long enough to complete the application workflow.
+The canvas must call `flow_runtime_update_preview` before Apply. The preview
+contains the structured definition diff, removed queues and their current
+FlowFile count/bytes, tasks in flight, executor version and an anti-TOCTOU
+`preview_token`.
+
+Apply calls `flow_runtime_update_apply` with the exact published FQN and preview
+token. A non-empty removed queue requires the explicit `drop` policy; tasks in
+flight require the explicit `wait` policy. Any runtime/candidate change after
+preview returns HTTP 409 with a fresh impact instead of applying stale consent.
+The executor stops scheduling, waits up to ten seconds when requested, rebuilds
+the flow, and restores surviving queues and pause state strictly by
+`connection_id` — never by `(source, target)`, so two relationships between the
+same tasks cannot merge. After success the deployment registry persists the new
+FQN, flow metadata and layout before checkpoint/provenance recording, ensuring
+restart uses the applied immutable version.
+
+Runtime actions are owner-scoped (admin-only for global instances):
+
+| Action | Body | Answer |
+| ------ | ---- | ------ |
+| `flow_runtime_create_draft` | `instance_id` | `{draft, instance_id}` |
+| `flow_runtime_update_preview` | `instance_id`, published `fqn` | diff + live impact + `preview_token` |
+| `flow_runtime_update_apply` | preview fields + explicit risk policies when required | `{ok, updated, fqn, impact}` or HTTP 409 with fresh impact |

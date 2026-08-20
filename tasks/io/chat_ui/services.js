@@ -1,5 +1,5 @@
 // ── Flow instance context menu ───────────────────────────────────
-function showFlowInstanceMenu(e, instanceId, status, scope) {
+function showFlowInstanceMenu(e, instanceId, status, scope, flowFqn) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');
   if (old) old.remove();
@@ -22,6 +22,9 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
   item('\u270F ' + t('flowEditParamsMenu'), () => _showFlowStartDialog(instanceId, true));
   item('\ud83d\udcc8 ' + t('flowViewGraph'), () => _openFlowGraphTab(instanceId));
   const normScope = scope === 'conv' ? 'conversation' : (scope || 'user');
+  if (status === 'running' && flowFqn && _canEditScope(normScope)) {
+    item('\u270E ' + t('flowEditRuntime'), () => _editRunningFlow(instanceId));
+  }
   if (_canEditScope(normScope)) {
     const moveFlow = (targetScope) => {
       const payload = { instance_id: instanceId, target_scope: targetScope };
@@ -90,17 +93,30 @@ async function _openFlowTemplateGraphTab(templateId) {
 }
 // Flow Editor: open (or reuse) a draft of a repository flow in the SAME
 // canvas as the viewer, switched to edit mode by draft_id.
-function _openFlowEditorTab(draftId) {
+function _openFlowEditorTab(draftId, instanceId) {
   const graphUrl = '/chat/js/flow_graph.html?draft_id=' + encodeURIComponent(draftId)
+    + (instanceId ? '&instance_id=' + encodeURIComponent(instanceId) : '')
     + '&v=' + encodeURIComponent(Date.now());
   if (isPawFlowAndroidApp()) { window.open(graphUrl, '_blank'); return; }
   fetch(graphUrl, { credentials: 'same-origin', cache: 'no-store' })
     .then(resp => { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.text(); })
     .then(html => {
-      const bootstrap = '<script>window.__PAWFLOW_FLOW_DRAFT_ID=' + JSON.stringify(draftId) + ';<\/script>\n';
+      const bootstrap = '<script>window.__PAWFLOW_FLOW_DRAFT_ID=' + JSON.stringify(draftId)
+        + (instanceId ? ';window.__PAWFLOW_FLOW_INSTANCE_ID=' + JSON.stringify(instanceId) : '')
+        + ';<\/script>\n';
       addBlobHtmlTab('draft-' + draftId, html.replace('<script type="module">', bootstrap + '<script type="module">'));
     })
     .catch(e => addMsg('error', t('flowGraphOpenFailed', { error: e.message || e })));
+}
+
+function _editRunningFlow(instanceId) {
+  action$('flow_runtime_create_draft', { instance_id: instanceId }).subscribe({
+    next: (d) => {
+      if (d.error) addMsg('error', d.error);
+      else _openFlowEditorTab(d.draft.draft_id, instanceId);
+    },
+    error: (e) => addMsg('error', e.message),
+  });
 }
 
 function _editFlowTemplate(templateId, tpl) {

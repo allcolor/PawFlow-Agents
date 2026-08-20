@@ -120,7 +120,13 @@ def test_catalogs_and_schema_for_current_parameters():
     data, status = _call("flow_editor_task_schema",
                          {"task_type": "log", "parameters": {"message": "${s}"}})
     assert status == "200" and data["type"] == "log"
+    assert data["relationships"] == ["success"]
     data, status = _call("flow_editor_task_schema", {"task_type": "nope"})
     assert status == "404"
     data, status = _call("flow_editor_service_catalog", {})
     assert status == "200" and data["services"]
+    service_type = data["services"][0]["type"]
+    data, status = _call("flow_editor_service_schema",
+                         {"service_type": service_type,
+                          "parameters": {"provider": "configured"}})
+    assert status == "200" and data["type"] == service_type

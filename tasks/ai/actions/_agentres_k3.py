@@ -421,6 +421,7 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
                     "owner": inst.owner or "global",
                     "scope": fscope,
                     "template": inst.flow_id,
+                    "flow_fqn": getattr(inst, "flow_fqn", "") or "",
                 })
             result["flows"] = flows
         except Exception:

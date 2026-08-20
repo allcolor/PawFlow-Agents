@@ -33,6 +33,10 @@ def test_web_search_service_schema_is_fully_supported_by_chat_ui():
         Path(__file__).resolve().parents[1]
         / "tasks/io/chat_ui/resources_service_dialogs.js"
     ).read_text(encoding="utf-8")
+    ui += (
+        Path(__file__).resolve().parents[1]
+        / "tasks/io/chat_ui/schema_form.js"
+    ).read_text(encoding="utf-8")
     form_ui = (
         Path(__file__).resolve().parents[1]
         / "tasks/io/chat_ui/resources_service_login.js"

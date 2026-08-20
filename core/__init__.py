@@ -365,6 +365,18 @@ class Task:
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {}
 
+    def get_output_relationships(self) -> List[str]:
+        """Return the FlowFile relationships exposed by this task.
+
+        Configuration-dependent tasks override this method. Legacy
+        ``RELATIONSHIPS`` and ``OUTPUTS`` declarations remain supported.
+        """
+        declared = (getattr(self, 'RELATIONSHIPS', None)
+                    or getattr(self, 'OUTPUTS', None)
+                    or ['success'])
+        return list(dict.fromkeys(
+            str(value) for value in declared if str(value)))
+
     def execute(self, flowfile: 'FlowFile') -> List['FlowFile']:
         return [flowfile]
 

@@ -237,6 +237,24 @@ class DeploymentRegistry:
 
         self._save_instance(inst)
 
+    def update_flow_version(self, instance_id: str, fqn: str, *,
+                            flow_id: str = "", flow_name: str = "",
+                            layout: Optional[Dict[str, Any]] = None) -> None:
+        """Persist the immutable flow version applied to a live instance."""
+        self._ensure_loaded()
+        with self._data_lock:
+            inst = self._instances.get(instance_id)
+            if inst is None:
+                raise KeyError(instance_id)
+            inst.flow_fqn = str(fqn or "")
+            if flow_id:
+                inst.flow_id = str(flow_id)
+            if flow_name:
+                inst.flow_name = str(flow_name)
+            if layout is not None:
+                inst.layout = dict(layout)
+        self._save_instance(inst)
+
     def set_owner(self, instance_id: str, new_owner: Optional[str]) -> None:
         """Change the owner of an instance (moves file on disk)."""
         self._ensure_loaded()

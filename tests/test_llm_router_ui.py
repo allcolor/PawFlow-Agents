@@ -3,7 +3,7 @@ from pathlib import Path
 
 def test_router_candidate_editor_is_structured_and_not_raw_json():
     source = Path(
-        "tasks/io/chat_ui/resources_service_dialogs.js").read_text(
+        "tasks/io/chat_ui/schema_form.js").read_text(
             encoding="utf-8")
     assert "ptype === 'service_ref_list'" in source
     assert "data-service-ref-list" in source

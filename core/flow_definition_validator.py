@@ -87,6 +87,72 @@ def static_task_schema(task_class, parameters: Optional[Dict[str, Any]] = None
         return {}
 
 
+def static_task_relationships(
+        task_class, parameters: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    """Return output relationships for the current expression-safe config."""
+    safe = {}
+    for key, value in (parameters or {}).items():
+        safe[key] = "" if isinstance(value, str) and "${" in value else value
+    try:
+        instance = task_class(safe)
+    except Exception:
+        logger.debug("relationships via constructor failed for %s",
+                     task_class, exc_info=True)
+        try:
+            instance = task_class.__new__(task_class)
+            instance.config = safe
+        except Exception:
+            return ["success"]
+    try:
+        values = instance.get_output_relationships()
+    except Exception:
+        logger.debug("output relationships failed for %s", task_class,
+                     exc_info=True)
+        return ["success"]
+    return list(dict.fromkeys(
+        str(value) for value in (values or []) if str(value))) or ["success"]
+
+
+def static_service_schema(service_class,
+                          parameters: Optional[Dict[str, Any]] = None
+                          ) -> Dict[str, Any]:
+    """Read a service schema without resolving expressions or connecting it."""
+    safe = {}
+    for key, value in (parameters or {}).items():
+        safe[key] = "" if isinstance(value, str) and "${" in value else value
+    try:
+        return dict(service_class(safe).get_parameter_schema() or {})
+    except Exception:
+        logger.debug("service schema via constructor failed for %s",
+                     service_class, exc_info=True)
+    try:
+        instance = service_class.__new__(service_class)
+        instance.config = safe
+        return dict(instance.get_parameter_schema() or {})
+    except Exception:
+        logger.debug("service schema via __new__ failed for %s",
+                     service_class, exc_info=True)
+        return {}
+
+
+def _iter_groups(groups):
+    """Yield ``(group_id, definition)`` recursively for dict/list inputs."""
+    if isinstance(groups, dict):
+        rows = groups.items()
+    elif isinstance(groups, list):
+        rows = ((str(group.get("id") or group.get("name") or index), group)
+                for index, group in enumerate(groups)
+                if isinstance(group, dict))
+    else:
+        rows = ()
+    for group_id, group in rows:
+        if not isinstance(group, dict):
+            continue
+        yield str(group_id), group
+        yield from _iter_groups(group.get("child_groups", {}))
+
+
 def _collect_task_ids(tasks: Dict[str, Any], groups: Dict[str, Any],
                       problems: List[Dict[str, str]]) -> set:
     """All task ids, root + inline groups (recursively). V1 rule: task ids
@@ -106,17 +172,12 @@ def _collect_task_ids(tasks: Dict[str, Any], groups: Dict[str, Any],
     for task_id in tasks:
         _add(str(task_id), "root")
 
-    def _walk(group_id: str, group: Dict[str, Any]):
-        if not isinstance(group, dict) or group.get("flow_ref"):
-            return  # subflow internals belong to the referenced flow
+    for group_id, group in _iter_groups(groups):
+        if group.get("flow_ref"):
+            _add(group_id, f"subflow group {group_id}")
+            continue
         for task_id in (group.get("tasks") or {}):
             _add(str(task_id), f"group {group_id}")
-        for child in (group.get("child_groups") or []):
-            if isinstance(child, dict):
-                _walk(str(child.get("id") or child.get("name") or "?"), child)
-
-    for group_id, group in groups.items():
-        _walk(str(group_id), group)
     return set(seen)
 
 
@@ -177,16 +238,51 @@ class FlowDefinitionValidator:
         all_task_ids = _collect_task_ids(tasks, groups, problems)
         # Subflow groups are addressable as relation endpoints (the parser
         # synthesizes an executeFlow task under the group id).
-        endpoint_ids = set(all_task_ids) | {
-            str(gid) for gid, g in groups.items()
-            if isinstance(g, dict) and g.get("flow_ref")}
+        endpoint_ids = set(all_task_ids)
 
         cls._validate_services(services, service_types, problems)
         cls._validate_tasks(tasks, task_types, services, problems)
+        group_rows = list(_iter_groups(groups))
+        for group_id, group in group_rows:
+            if group.get("flow_ref"):
+                continue
+            group_tasks = group.get("tasks", {}) or {}
+            if not isinstance(group_tasks, dict):
+                problems.append(problem(
+                    ERROR, "invalid_group_tasks",
+                    f"Process group '{group_id}' tasks must be an object",
+                    entity_type="group", entity_id=group_id, field="tasks"))
+                continue
+            # A duplicate root/group id already has a precise duplicate_task_id
+            # problem; avoid stacking schema noise for the shadowed copy.
+            unique_tasks = {task_id: task for task_id, task in group_tasks.items()
+                            if task_id not in tasks}
+            cls._validate_tasks(unique_tasks, task_types, services, problems)
+            for field, expected_type in (("input_ports", "inputPort"),
+                                         ("output_ports", "outputPort")):
+                ports = group.get(field, []) or []
+                if not isinstance(ports, list):
+                    problems.append(problem(
+                        ERROR, "invalid_group_port",
+                        f"Process group '{group_id}' {field} must be a list",
+                        entity_type="group", entity_id=group_id, field=field))
+                    continue
+                for port_id in ports:
+                    task = group_tasks.get(str(port_id), {})
+                    if not isinstance(task, dict) or task.get("type") != expected_type:
+                        problems.append(problem(
+                            ERROR, "invalid_group_port",
+                            f"Process group '{group_id}' {field} entry "
+                            f"'{port_id}' is not a {expected_type} task",
+                            entity_type="group", entity_id=group_id, field=field))
 
         connected = set()
         seen_connections = set()
-        for index, rel in enumerate(relations):
+        all_relations = list(relations)
+        for _, group in group_rows:
+            if not group.get("flow_ref") and isinstance(group.get("relations", []), list):
+                all_relations.extend(group.get("relations", []))
+        for index, rel in enumerate(all_relations):
             if not isinstance(rel, dict):
                 problems.append(problem(ERROR, "invalid_relation",
                                         f"Relation #{index} must be an object",
@@ -213,6 +309,28 @@ class FlowDefinitionValidator:
             seen_connections.add(conn_id)
             connected.add(norm["from"])
             connected.add(norm["to"])
+            for field, minimum in (
+                    ("max_queue_size", 1),
+                    ("max_queue_bytes", 1),
+                    ("flowfile_ttl_seconds", 0)):
+                if field not in rel:
+                    continue
+                value = rel[field]
+                if (isinstance(value, bool) or not isinstance(value, int)
+                        or value < minimum):
+                    problems.append(problem(
+                        ERROR, "invalid_relation_setting",
+                        f"Relation setting '{field}' must be an integer >= {minimum}",
+                        entity_type="relation", entity_id=conn_id, field=field))
+            prioritizer = rel.get("prioritizer")
+            if prioritizer is not None and prioritizer not in {
+                    "fifo", "newest_first", "oldest_first",
+                    "priority_attribute"}:
+                problems.append(problem(
+                    ERROR, "invalid_relation_setting",
+                    "Relation setting 'prioritizer' is invalid",
+                    entity_type="relation", entity_id=conn_id,
+                    field="prioritizer"))
 
         for field, code in (("entries", "unknown_entry"), ("exits", "unknown_exit")):
             values = definition.get(field, []) or []
@@ -241,6 +359,7 @@ class FlowDefinitionValidator:
 
     @classmethod
     def _validate_services(cls, services, service_types, problems):
+        from core import ServiceFactory
         for service_id, service in services.items():
             sid = str(service_id)
             if not isinstance(service, dict):
@@ -259,6 +378,33 @@ class FlowDefinitionValidator:
                                         f"Service '{sid}' has unknown type '{stype}'",
                                         entity_type="service", entity_id=sid,
                                         field="type"))
+                continue
+            parameters = service.get("parameters", {})
+            if parameters is None:
+                parameters = {}
+            if not isinstance(parameters, dict):
+                problems.append(problem(
+                    ERROR, "invalid_service_parameters",
+                    f"Service '{sid}' parameters must be an object",
+                    entity_type="service", entity_id=sid,
+                    field="parameters"))
+                continue
+            try:
+                service_class = ServiceFactory.get(stype)
+            except Exception:
+                service_class = None
+            if service_class is None:
+                continue
+            schema = static_service_schema(service_class, parameters)
+            for name, spec in schema.items():
+                if not isinstance(spec, dict) or not spec.get("required"):
+                    continue
+                value = parameters.get(name, None)
+                if value is None or value == "":
+                    problems.append(problem(
+                        ERROR, "missing_required_service_parameter",
+                        f"Required service parameter '{name}' is missing",
+                        entity_type="service", entity_id=sid, field=name))
 
     @classmethod
     def _validate_tasks(cls, tasks, task_types, services, problems):
@@ -325,4 +471,5 @@ class FlowDefinitionValidator:
 
 
 __all__ = ["FlowDefinitionValidator", "problem", "relation_connection_id",
-           "normalize_relation", "static_task_schema", "ERROR", "WARNING"]
+           "normalize_relation", "static_task_schema", "static_service_schema",
+           "ERROR", "WARNING"]

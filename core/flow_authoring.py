@@ -40,6 +40,8 @@ from core.flow_definition_validator import (
     normalize_relation,
     problem,
     relation_connection_id,
+    static_service_schema,
+    static_task_relationships,
     static_task_schema,
 )
 
@@ -555,8 +557,10 @@ class FlowAuthoringService:
         if not task_type or task_type not in TaskFactory.list_types():
             raise KeyError(f"Unknown task type: {task_type}")
         cls = TaskFactory.get(task_type)
+        current = parameters or {}
         return {"type": task_type,
-                "schema": static_task_schema(cls, parameters or {})}
+                "schema": static_task_schema(cls, current),
+                "relationships": static_task_relationships(cls, current)}
 
     @staticmethod
     def service_catalog() -> List[Dict[str, Any]]:
@@ -575,19 +579,15 @@ class FlowAuthoringService:
         return rows
 
     @staticmethod
-    def service_schema(service_type: str) -> Dict[str, Any]:
+    def service_schema(service_type: str,
+                       parameters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         from core import ServiceFactory
         if not service_type or service_type not in ServiceFactory.list_types():
             raise KeyError(f"Unknown service type: {service_type}")
         cls = ServiceFactory.get(service_type)
-        schema: Dict[str, Any] = {}
-        if hasattr(cls, "get_parameter_schema"):
-            try:
-                schema = dict(cls({}).get_parameter_schema() or {})
-                from core.service_parameter_helpers import apply_service_parameter_helpers
-                schema = apply_service_parameter_helpers(service_type, schema)
-            except Exception:
-                logger.debug("service schema failed for %s", service_type, exc_info=True)
+        schema = static_service_schema(cls, parameters)
+        from core.service_parameter_helpers import apply_service_parameter_helpers
+        schema = apply_service_parameter_helpers(service_type, schema)
         return {"type": service_type, "schema": schema}
 
 

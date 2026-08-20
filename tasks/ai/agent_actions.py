@@ -27,6 +27,7 @@ from tasks.ai.actions.scheduling import _handle_scheduling
 from tasks.ai.actions.tools_exec import _handle_tools_exec
 from tasks.ai.actions.media import _handle_media
 from tasks.ai.actions.files_fs import _handle_files_fs
+from tasks.ai.actions.confirmations import _handle_confirmations
 from tasks.ai.actions.misc import _handle_misc
 from tasks.ai.actions.account_linking import _handle_account_linking
 from tasks.ai.actions.memory_prompts import _handle_memory_prompts
@@ -273,6 +274,7 @@ _ACTION_HANDLERS = [
     _handle_tools_exec,
     _handle_media,
     _handle_files_fs,
+    _handle_confirmations,
     _handle_misc,
     _handle_account_linking,
     _handle_memory_prompts,

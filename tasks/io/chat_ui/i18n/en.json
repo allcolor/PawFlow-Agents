@@ -1670,5 +1670,14 @@
   "osvTvEmpty": "No files in this conversation",
   "osvTvUnsupported": "Format not supported on the TV - open it from the Files menu",
   "deleteDirConfirm": "Delete the folder \"{name}\" AND EVERYTHING inside it? This cannot be undone.",
-  "deleteItemsDirConfirm": "Delete {label}, including folders AND EVERYTHING inside them? This cannot be undone."
+  "deleteItemsDirConfirm": "Delete {label}, including folders AND EVERYTHING inside them? This cannot be undone.",
+  "confTitle": "Confirmation",
+  "confDesc": "Pending confirmation requests",
+  "confPending": "Pending confirmations",
+  "confNonePending": "No pending confirmation.",
+  "confValidate": "Validate",
+  "confAgeNow": "now",
+  "confAnswered": "Answered: {answer}",
+  "confClosed": "Request {status}.",
+  "confRespondFailed": "Confirmation answer failed: {error}"
 }

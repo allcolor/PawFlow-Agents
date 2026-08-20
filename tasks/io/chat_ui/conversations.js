@@ -407,6 +407,7 @@ function resumeConv(cid, force) {
       //    duplicates of what we already rendered.
       if (typeof hydrateContextUsage === 'function') hydrateContextUsage();
       if (typeof hydrateUsageCost === 'function') hydrateUsageCost();
+      if (typeof hydrateConfirmations === 'function') hydrateConfirmations();
       connectSSE(cid, () => startSSEHealthTimer(), { noReplay: true });
     });
 }

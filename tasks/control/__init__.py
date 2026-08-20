@@ -13,6 +13,8 @@ from tasks.control.ports import InputPortTask, OutputPortTask
 from tasks.control.funnel import FunnelTask
 from tasks.control.control_rate import ControlRateTask
 from tasks.control.wait_notify import WaitTask, NotifyTask
+from tasks.control.durable_confirm import (
+    RequestConfirmationTask, DurableWaitTask, DurableNotifyTask)
 from tasks.control.execute_flow import ExecuteFlowTask
 
 __all__ = [
@@ -21,4 +23,5 @@ __all__ = [
     'InputPortTask', 'OutputPortTask', 'FunnelTask',
     'ControlRateTask', 'WaitTask', 'NotifyTask',
     'ExecuteFlowTask',
+    'RequestConfirmationTask', 'DurableWaitTask', 'DurableNotifyTask',
 ]

@@ -356,6 +356,11 @@ const HELP_DATA = {
     short: t('commandShort.37'),
     detail: 'Shows or hides the panel listing scheduled background tasks.',
   },
+  '/confirmations': {
+    usage: '/confirmations',
+    short: t('confPending'),
+    detail: 'Shows or hides the panel listing pending durable confirmation requests from agents and flows.',
+  },
   '/tools': {
     usage: '/tools',
     short: t('commandShort.38'),

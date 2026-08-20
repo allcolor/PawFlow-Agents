@@ -152,3 +152,117 @@ class AskUserHandler(ToolHandler):
         if options:
             options_text = " Options: " + ", ".join(f"[{o}]" for o in options)
         return f"__ASK_USER__:{question}{options_text}"
+
+
+class RequestConfirmationHandler(ToolHandler):
+    """Create a DURABLE confirmation request the user answers whenever.
+
+    Unlike ask_user (an ephemeral question in the live stream), the request
+    survives reloads and restarts, shows in the pending-confirmations panel,
+    and when the user answers — minutes or days later — the agent is WOKEN
+    with the answer and continues from where it left off.
+    """
+
+    _conversation_id: str = ""
+    _user_id: str = ""
+    _agent_name: str = ""
+
+    @property
+    def name(self) -> str:
+        return "request_confirmation"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Ask the user for a durable confirmation: yes/no (mode "
+            "'confirm'), one choice from a list (mode 'choice'), or several "
+            "(mode 'multi'). The request stays pending until the user "
+            "answers — possibly hours or days later; you will be WOKEN with "
+            "the answer, so end your turn after calling this (optionally "
+            "set wait_seconds to poll briefly for an immediate answer). "
+            "Use it for approvals and decisions that must not be lost; use "
+            "ask_user only for quick, live questions."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string",
+                            "description": "The question shown to the user"},
+                "title": {"type": "string",
+                          "description": "Short title for the pending panel"},
+                "mode": {"type": "string",
+                         "enum": ["confirm", "choice", "multi"],
+                         "description": "confirm = yes/no (default); choice "
+                                        "= pick one option; multi = pick "
+                                        "several"},
+                "options": {"type": "array", "items": {"type": "string"},
+                            "description": "Choices for choice/multi (2+)"},
+                "expires_in": {"type": "string",
+                               "description": "Optional expiry: '2h', '3d', "
+                                              "'1mo'... absent = no expiry"},
+                "wait_seconds": {"type": "integer",
+                                 "description": "Poll up to N seconds for an "
+                                                "immediate answer (default 0: "
+                                                "return at once, resume on "
+                                                "wake-up)"},
+            },
+            "required": ["message"],
+        }
+
+    def set_conversation_id(self, conv_id: str):
+        self._conversation_id = conv_id
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def set_agent_name(self, agent_name: str):
+        self._agent_name = agent_name
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        from core.confirmation_store import (
+            ConfirmationStore, parse_timeout_seconds)
+        message = str(arguments.get("message") or "").strip()
+        if not message:
+            return "Error: missing 'message' parameter"
+        if not self._conversation_id or not self._user_id:
+            return "Error: no conversation context for the confirmation"
+        try:
+            expires = parse_timeout_seconds(arguments.get("expires_in"))
+        except ValueError as exc:
+            return f"Error: invalid expires_in: {exc}"
+        store = ConfirmationStore.instance()
+        try:
+            record = store.create_confirmation(
+                conversation_id=self._conversation_id,
+                user_id=self._user_id,
+                requester_kind="agent",
+                requester=self._agent_name or "assistant",
+                message=message,
+                title=str(arguments.get("title") or ""),
+                mode=str(arguments.get("mode") or "confirm"),
+                options=arguments.get("options"),
+                expires_in_seconds=expires,
+            )
+        except ValueError as exc:
+            return f"Error: {exc}"
+        request_id = record["request_id"]
+        import json as _json
+        import time as _time
+        wait_seconds = min(int(arguments.get("wait_seconds") or 0), 120)
+        deadline = _time.time() + wait_seconds
+        while wait_seconds and _time.time() < deadline:
+            _time.sleep(1.0)
+            current = store.get_confirmation(request_id)
+            if current and current["status"] == "answered":
+                return (f"The user answered confirmation {request_id}: "
+                        + _json.dumps(current["answer"], ensure_ascii=False))
+            if current and current["status"] in ("cancelled", "expired"):
+                return f"Confirmation {request_id} was {current['status']}."
+        return (
+            f"Confirmation {request_id} created and pending. The user can "
+            "answer at any time (even days later); you will be woken with "
+            "the answer. Do not invent it — finish your turn now."
+        )

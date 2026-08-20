@@ -132,6 +132,7 @@ from core.handlers.task_management import (  # noqa: F401
 from core.handlers.user_interaction import (  # noqa: F401
     AskUserHandler,
     NotifyUserHandler,
+    RequestConfirmationHandler,
 )
 from core.handlers.web_fetch import (  # noqa: F401
     ExecuteScriptHandler,
@@ -693,6 +694,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ExitPlanModeHandler())
     registry.register(NotifyUserHandler())
     registry.register(AskUserHandler())
+    registry.register(RequestConfirmationHandler())
     registry.register(CreateToolHandler())
     registry.register(FlowManagerHandler())
     registry.register(PawFlowHelpHandler())

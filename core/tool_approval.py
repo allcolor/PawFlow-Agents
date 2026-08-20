@@ -44,7 +44,7 @@ class ToolApprovalGate:
         # History / context
         "read_history", "read_parent_context", "conversation_search",
         # User interaction (no data modification)
-        "notify_user", "ask_user",
+        "notify_user", "ask_user", "request_confirmation",
         # Meta / internal
         "get_tool_schema", "compact_result", "share_file", "create_file",
     })
@@ -92,10 +92,10 @@ class ToolApprovalGate:
         # Web search (read-only by definition)
         "web_search",
         # User interaction (no data modification)
-        "notify_user", "ask_user",
+        "notify_user", "ask_user", "request_confirmation",
     })
     ADVISOR_READ_ONLY_ALLOWED = READ_ONLY_ALLOWED - frozenset({
-        "notify_user", "ask_user",
+        "notify_user", "ask_user", "request_confirmation",
     })
 
     # ── See tool: file read is exempt, screenshot needs approval ──────

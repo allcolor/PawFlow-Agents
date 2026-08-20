@@ -128,6 +128,20 @@ function _sseWireB() {
     scrollBottom();
   });
 
+  eventSource.addEventListener('confirmation_request', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (typeof renderConfirmationBlock === 'function') renderConfirmationBlock(data);
+    if (typeof hydrateConfirmations === 'function') hydrateConfirmations();
+  });
+
+  eventSource.addEventListener('confirmation_answered', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (typeof _confMarkDone === 'function') _confMarkDone(data);
+    if (typeof hydrateConfirmations === 'function') hydrateConfirmations();
+  });
+
   eventSource.addEventListener('discard', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

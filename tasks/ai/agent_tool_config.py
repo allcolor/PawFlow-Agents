@@ -28,7 +28,7 @@ class AgentToolConfigMixin:
     ) -> None:
         """Configure tool handlers with runtime settings (base_url, API keys, TTL)."""
         from core.tool_registry import (
-            AskUserHandler, BrowserActionHandler,
+            AskUserHandler, RequestConfirmationHandler, BrowserActionHandler,
             CreateFileHandler,
             ApprovePlanHandler,
             AssignPlanHandler,
@@ -281,6 +281,13 @@ class AgentToolConfigMixin:
                     h.set_conversation_id(conversation_id)
                 if user_id:
                     h.set_user_id(user_id)
+            elif isinstance(h, RequestConfirmationHandler):
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+                if user_id:
+                    h.set_user_id(user_id)
+                if agent_name:
+                    h.set_agent_name(agent_name)
             elif isinstance(h, CreateToolHandler):
                 if user_id:
                     h.set_user_id(user_id)

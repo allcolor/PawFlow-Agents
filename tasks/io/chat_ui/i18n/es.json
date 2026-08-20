@@ -1670,5 +1670,14 @@
   "osvTvEmpty": "No hay archivos en esta conversación",
   "osvTvUnsupported": "Formato no soportado en la tele - ábrelo desde el menú Archivos",
   "deleteDirConfirm": "¿Eliminar la carpeta \"{name}\" Y TODO su contenido? Esta acción es irreversible.",
-  "deleteItemsDirConfirm": "¿Eliminar {label}, incluidas las carpetas Y TODO su contenido? Esta acción es irreversible."
+  "deleteItemsDirConfirm": "¿Eliminar {label}, incluidas las carpetas Y TODO su contenido? Esta acción es irreversible.",
+  "confTitle": "Confirmación",
+  "confDesc": "Solicitudes de confirmación pendientes",
+  "confPending": "Confirmaciones pendientes",
+  "confNonePending": "Ninguna confirmación pendiente.",
+  "confValidate": "Validar",
+  "confAgeNow": "ahora",
+  "confAnswered": "Respondido: {answer}",
+  "confClosed": "Solicitud {status}.",
+  "confRespondFailed": "Error al responder: {error}"
 }

@@ -696,6 +696,8 @@ const OSV_POSTERS = [
    () => { if (typeof cmdDesktop === 'function') cmdDesktop('/desktop', ['/desktop']); }],
   ['terminal', '\u2328\uFE0F', 'terminal',
    () => { if (typeof cmdTerminal === 'function') cmdTerminal('/terminal', ['/terminal']); }],
+  ['confirmations', '\u2705', 'confTitle',
+   () => { if (typeof toggleConfirmationsPanel === 'function') toggleConfirmationsPanel(); }],
   ['tmux', '\u{1F4DF}', 'osvTmux',
    () => { if (typeof toggleGrab === 'function') toggleGrab(); }],
 ];

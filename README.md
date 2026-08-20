@@ -492,6 +492,7 @@ Expressions resolve through a cascade: secrets → flow parameters → conversat
 - Desktop/VNC entry points plus relay-backed `screen` actions
 - Escape key: 1x = graceful interrupt, 2x = force stop
 - Multi-agent with agent switching
+- Durable confirmation requests: agents and flows ask yes/no or single/multi-choice questions the user answers whenever (inline block + pending panel with badge); the requester resumes with the answer — see [Durable Confirmations](docs/confirmations.md)
 - Admin → Update server: pull a new release and restart from the browser, without touching the command line
 
 ## Authentication
@@ -546,6 +547,7 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 | [VS Code Extension](docs/vscode.md) | Editor client and resource panel |
 | [Android App](docs/ANDROID_APP.md) | Native server profiles, OAuth2 login, parallel webchat tabs, and APK build |
 | [Multi-Client Conversations](docs/multi_client_conversations.md) | Shared runtime across web, CLI, VS Code, API, channels |
+| [Durable Confirmations](docs/confirmations.md) | Agent/flow confirmation requests (yes/no, single/multi choice) answered whenever; durable flow wait/notify |
 | [A2A Integration](docs/a2a_integration.md) | Publish agents as A2A 1.0 endpoints, keys, contexts, remote targets |
 | [AG-UI Integration](docs/agui_integration.md) | AG-UI protocol server: streaming runs, frontend tools, shared state, interrupts |
 | [Desktop/VNC](docs/desktop_vnc.md) | noVNC desktop, screen tool, audio notes |

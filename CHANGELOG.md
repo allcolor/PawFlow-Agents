@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Durable confirmations**: agents (`request_confirmation` tool) and flows
+  (`requestConfirmation` task) can ask the user yes/no, single-choice, or
+  multi-choice questions that survive reloads and restarts. The user answers
+  whenever — from the actionable inline block in the conversation
+  (re-hydrated from the store after reloads) or the pending panel (header ✅
+  button with badge, `/confirmations`, openspace poster). On answer the
+  agent is woken with the response and continues; a flow resumes through
+  the durable signal `confirmation:<request_id>`. Optional expiry
+  (`'2h'`, `'3d'`, `'1mo'`...). See `docs/confirmations.md`.
+- **Durable flow wait/notify**: `durableWait` parks a FlowFile (serialized
+  to `data/confirmations.db`) on a named signal with a configurable timeout
+  from seconds to **years** — or forever; `durableNotify` (or any code via
+  `notify_signal`) resumes it across flows AND server restarts, re-injected
+  at the wait task with `durable.wait.status`/`durable.wait.value`. A
+  notify with no waiter is remembered so a later wait passes through
+  immediately. The in-memory `waitForSignal`/`notify` pair is unchanged for
+  short synchronizations.
+
 - Openspace: a **FileStore TV** by the left wall — clicking it lists the
   conversation's FileStore files; a picked file plays/shows on the TV
   screen (projected DOM panel, native `<video>`/`<audio>` controls kept):

@@ -226,6 +226,9 @@ service that implements `describe_image`.
 | `splitContent` | Split a FlowFile by a separator |
 | `stopFlow` | Stop the current flow execution |
 | `waitForSignal` | Wait for a signal from the SignalRegistry before continuing |
+| `requestConfirmation` | Publish a durable confirmation request into a conversation (yes/no, single/multi choice) and stamp `confirmation.signal_id` |
+| `durableWait` | Park the FlowFile durably on a signal — timeout from seconds to years, or forever; resumes with `durable.wait.status`/`durable.wait.value`, surviving restarts |
+| `durableNotify` | Fire a durable signal: parked FlowFiles resume across flows and restarts; the latest value is remembered for late waiters |
 
 ---
 

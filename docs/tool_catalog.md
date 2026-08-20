@@ -371,6 +371,7 @@ someone else.
 | `EnterPlanMode` | Force plan-first behavior. |
 | `ExitPlanMode` | Exit plan mode. |
 | `ask_user` | Ask the user a blocking question. |
+| `request_confirmation` | Durable confirmation request (yes/no, single/multi choice); the user answers whenever and the agent is woken with the answer |
 | `notify_user` | Notify the user. |
 | `PushNotification` | Send a runtime-only notification event. Web clients accumulate it in their tab-local notification center; it is not persisted in the transcript or agent context. |
 | `ScheduleWakeup` | Schedule an agent wakeup. |

@@ -184,6 +184,13 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "flow_runtime_graph":
+        # Opening the viewer guarantees the streaming download route exists
+        # (covers deployments that predate the current listener).
+        try:
+            from tasks.ai.actions.flow_runtime import ensure_flow_runtime_routes
+            ensure_flow_runtime_routes()
+        except Exception:
+            logger.debug("flow runtime route ensure failed", exc_info=True)
         instance_id = body.get("instance_id", "")
         template_id = body.get("template_id", "")
         flow_ref = body.get("flow_ref") if isinstance(body.get("flow_ref"), dict) else None

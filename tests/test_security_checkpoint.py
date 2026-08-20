@@ -215,7 +215,7 @@ class TestCheckpoint:
         assert data is not None
         restored = mgr.restore_flowfiles(data)
 
-        key = ("src", "dest")
+        key = ("src", "dest", "success")
         assert key in restored
         assert len(restored[key]) == 1
         assert restored[key][0].get_content() == b"important data"
@@ -257,7 +257,7 @@ class TestCheckpoint:
 
         data = mgr.load_latest_checkpoint()
         restored = mgr.restore_flowfiles(data)
-        assert restored[("a", "b")][0].get_content() == large_content
+        assert restored[("a", "b", "success")][0].get_content() == large_content
 
     def test_clear(self, checkpoint_dir):
         mgr = CheckpointManager("test_flow", checkpoint_dir=checkpoint_dir)

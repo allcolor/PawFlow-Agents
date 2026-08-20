@@ -8,6 +8,7 @@ ContinuousFlowExecutor (one MRO, shared self state).
 
 import time
 import logging
+import threading
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -20,8 +21,16 @@ from engine._exec_types import ExecutionResult
 logger = logging.getLogger(__name__)
 
 
+class FlowUpdateError(RuntimeError):
+    """A hot-swap failed while rebuilding: the executor is stopped and must
+    be restarted explicitly. Distinct from a policy rejection (``False``)."""
+
+
 class _ContinuousExecControlMixin:
     """Task control, flow updates, checkpointing and batch run for ContinuousFlowExecutor."""
+
+    # Seconds update_flow(in_flight_policy="wait") waits for in-flight tasks.
+    _update_wait_timeout = 10.0
 
     # -- Task management --
 
@@ -161,6 +170,30 @@ class _ContinuousExecControlMixin:
         source, target, relationship = cls._relation_identity(relation)
         return f"conn_{source}__{relationship}__{target}"
 
+    def _removed_nonempty_connections(self, new_connection_ids) -> list:
+        return [conn for conn in self._connections._connections
+                if conn.connection_id not in new_connection_ids
+                and not conn.is_empty()]
+
+    def _in_flight_task_ids(self) -> List[str]:
+        with self._lock:
+            return [task_id for task_id, count in self._in_flight.items()
+                    if count]
+
+    def _resume_scheduler(self) -> None:
+        """Restart only the scheduler thread after an aborted hot-swap.
+
+        Pools, tasks and services are untouched at that point, so this must
+        not go through start(): that would leak the live pools and replay
+        the last checkpoint into queues that still hold their FlowFiles.
+        """
+        self._stop_event.clear()
+        self._schedule_wake.clear()
+        self._scheduler_thread = threading.Thread(
+            target=self._scheduler_loop, name="continuous-executor",
+            daemon=True)
+        self._scheduler_thread.start()
+
     def update_flow(self, new_flow: Flow, *,
                     removed_queue_policy: str = "reject",
                     in_flight_policy: str = "reject") -> bool:
@@ -170,8 +203,14 @@ class _ContinuousExecControlMixin:
 
         ``removed_queue_policy`` is ``reject`` (safe default) or ``drop``.
         ``in_flight_policy`` is ``reject`` (safe default) or ``wait`` (up to
-        ten seconds after scheduling has stopped). No queue is ever silently
-        moved to another relationship.
+        ``_update_wait_timeout`` seconds after scheduling has stopped). No
+        queue is ever silently moved to another relationship. Both invariants
+        are checked again once the scheduler is stopped, so nothing that
+        slipped in between the preflight and the stop is dropped or killed:
+        a violation under ``reject`` resumes the scheduler and returns False.
+
+        Raises FlowUpdateError when the rebuild itself fails; the executor is
+        then stopped and must be restarted explicitly.
 
         Strategy:
         1. Stop all tasks
@@ -198,20 +237,14 @@ class _ContinuousExecControlMixin:
             self._relation_connection_id(relation)
             for relation in new_flow.relations
         }
-        removed_nonempty = [
-            conn for conn in self._connections._connections
-            if conn.connection_id not in new_connection_ids
-            and not conn.is_empty()
-        ]
+        removed_nonempty = self._removed_nonempty_connections(new_connection_ids)
         if removed_nonempty and removed_queue_policy == "reject":
             logger.warning(
                 "Flow update rejected: %d removed connection(s) still contain FlowFiles",
                 len(removed_nonempty))
             return False
 
-        with self._lock:
-            active = [task_id for task_id, count in self._in_flight.items()
-                      if count]
+        active = self._in_flight_task_ids()
         if active and in_flight_policy == "reject":
             logger.warning("Flow update rejected: tasks in flight: %s", active)
             return False
@@ -240,18 +273,26 @@ class _ContinuousExecControlMixin:
             if self._scheduler_thread:
                 self._scheduler_thread.join(timeout=10)
                 self._scheduler_thread = None
+            # Nothing new can be scheduled now: re-check what may have
+            # slipped in between the preflight and the stop.
             if in_flight_policy == "wait":
-                deadline = time.time() + 10
-                while time.time() < deadline:
-                    with self._lock:
-                        if not any(self._in_flight.values()):
-                            break
+                deadline = time.time() + self._update_wait_timeout
+                while time.time() < deadline and self._in_flight_task_ids():
                     time.sleep(0.05)
-                with self._lock:
-                    if any(self._in_flight.values()):
-                        logger.error("Flow update timed out waiting for in-flight tasks")
-                        self.start()
-                        return False
+            still_active = self._in_flight_task_ids()
+            if still_active:
+                logger.error(
+                    "Flow update aborted: tasks still in flight after stop "
+                    "(%s policy): %s", in_flight_policy, still_active)
+                self._resume_scheduler()
+                return False
+            late_removed = self._removed_nonempty_connections(new_connection_ids)
+            if late_removed and removed_queue_policy == "reject":
+                logger.warning(
+                    "Flow update aborted: %d removed connection(s) received "
+                    "FlowFiles after the preflight", len(late_removed))
+                self._resume_scheduler()
+                return False
             # Disconnect only services that are NOT reused
             for svc_id, svc in old_services.items():
                 if svc is not new_flow.services.get(svc_id):
@@ -342,8 +383,13 @@ class _ContinuousExecControlMixin:
             return True
 
         except Exception as e:
-            logger.error(f"Flow update failed: {e}")
-            return False
+            # Tasks/queues may be half rebuilt: keep the executor stopped and
+            # say so, instead of reporting a policy rejection.
+            self._stop_event.set()
+            logger.error(f"Flow update failed during rebuild: {e}", exc_info=True)
+            raise FlowUpdateError(
+                f"Flow update failed during rebuild; executor stopped: {e}"
+            ) from e
 
     def get_version_history(self) -> List[Dict[str, Any]]:
         """Get the flow version change history."""
@@ -423,7 +469,7 @@ class _ContinuousExecControlMixin:
         total_restored = 0
         total_skipped = 0
 
-        for (src, tgt), flowfiles in restored_queues.items():
+        for (src, tgt, rel), flowfiles in restored_queues.items():
             # Skip HTTP-originated FlowFiles — the requests are long gone
             safe_flowfiles = []
             for ff in flowfiles:
@@ -436,13 +482,11 @@ class _ContinuousExecControlMixin:
             if not safe_flowfiles:
                 continue
 
-            # Find matching connection
-            outgoing = self._connections.get_outgoing(src)
-            target_conn = None
-            for conn in outgoing:
-                if conn.target_id == tgt:
-                    target_conn = conn
-                    break
+            # Match the exact queue: two relationships between the same
+            # tasks are two different connections.
+            target_conn = self._connections.get_by_id(
+                self._relation_connection_id(
+                    {"from": src, "to": tgt, "type": rel}))
 
             if target_conn and target_conn.is_empty():
                 for ff in safe_flowfiles:
@@ -452,7 +496,7 @@ class _ContinuousExecControlMixin:
                 total_skipped += len(safe_flowfiles)
                 logger.warning(
                     f"Cannot restore {len(safe_flowfiles)} FlowFiles "
-                    f"for {src}->{tgt}: connection not found or not empty"
+                    f"for {src}--{rel}-->{tgt}: connection not found or not empty"
                 )
 
         if total_restored:

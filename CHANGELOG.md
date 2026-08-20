@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Flow runtime hot-swap hardening** (`engine/_continuous_exec_control.py`,
+  `engine/checkpoint.py`, `tasks/ai/actions/flow_runtime.py`): the removed-queue
+  and in-flight preflight checks of `update_flow()` run again after the
+  scheduler is stopped, so FlowFiles enqueued or tasks started in the race
+  window are never dropped or killed under a `reject` policy; an aborted or
+  timed-out update resumes only the scheduler thread instead of calling
+  `start()` (which leaked the live worker pools and replayed the last
+  checkpoint); a failed rebuild raises `FlowUpdateError` and
+  `flow_runtime_update_apply` answers HTTP 500 `runtime_update_failed` rather
+  than a misleading 409 `runtime_changed_since_preview`; checkpoint recovery
+  restores each queue by `(source, target, relationship)` so two relationships
+  between the same tasks no longer merge after a crash.
+
 ## [1.0.0-beta.222] — 2026-08-20
 
 ### Added

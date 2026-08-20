@@ -165,11 +165,15 @@ class CheckpointManager:
         """Restore FlowFiles from a checkpoint.
 
         Returns:
-            Dict mapping (source_id, target_id) -> list of FlowFiles
+            Dict mapping (source_id, target_id, relationship) -> list of
+            FlowFiles. Two relationships between the same tasks are two
+            queues; checkpoints written without a relationship default to
+            ``success``.
         """
         result = {}
         for queue_data in checkpoint.get("queues", []):
-            key = (queue_data["source"], queue_data["target"])
+            key = (queue_data["source"], queue_data["target"],
+                   queue_data.get("relationship") or "success")
             flowfiles = []
             for ff_data in queue_data.get("flowfiles", []):
                 ff = self._deserialize_flowfile(ff_data)

@@ -134,6 +134,94 @@ def test_update_flow_requires_explicit_drop_for_nonempty_removed_queue():
     assert latest["dropped_flowfiles"] == 1
 
 
+def test_update_flow_wait_timeout_resumes_scheduler_without_start():
+    from engine.continuous_executor import ContinuousFlowExecutor
+
+    executor = ContinuousFlowExecutor(_hot_swap_flow(), enable_checkpoints=False)
+    executor._update_wait_timeout = 0.2
+    executor.start()
+    try:
+        pool = executor._pool
+        with executor._lock:
+            executor._in_flight["a"] = 1          # a task that never returns
+        assert executor.update_flow(_hot_swap_flow(message="new"),
+                                    in_flight_policy="wait") is False
+        # Aborted cleanly: same pool (no leak), scheduler back, no update.
+        assert executor._pool is pool
+        assert executor.is_running is True
+        assert executor._scheduler_thread is not None
+        assert executor._scheduler_thread.is_alive()
+        assert executor.get_version_history() == []
+    finally:
+        with executor._lock:
+            executor._in_flight.clear()
+        executor.stop()
+
+
+def test_update_flow_rechecks_removed_queues_after_scheduler_stop(monkeypatch):
+    from engine.continuous_executor import ContinuousFlowExecutor
+
+    executor = ContinuousFlowExecutor(_hot_swap_flow(), enable_checkpoints=False)
+    removed = executor.connections.get_by_id("conn_a__failure__b")
+    removed.pause()                         # nobody consumes the late arrival
+    executor.start()
+    try:
+        late = FlowFile(content=b"arrived-after-preflight")
+        real_set = executor._stop_event.set
+
+        def _enqueue_then_stop():
+            removed.enqueue(late)           # the race window, made deterministic
+            real_set()
+        monkeypatch.setattr(executor._stop_event, "set", _enqueue_then_stop)
+
+        only_success = _hot_swap_flow(
+            message="new",
+            relations=[{"from": "a", "to": "b", "type": "success"}],
+        )
+        assert executor.update_flow(only_success) is False
+        assert removed.get_flowfile(late.process_id) is late
+        assert executor.connections.get_by_id("conn_a__failure__b") is removed
+        assert executor.is_running is True
+        assert executor.get_version_history() == []
+    finally:
+        executor.stop()
+
+
+def test_update_flow_rebuild_failure_raises_and_leaves_executor_stopped(monkeypatch):
+    from engine.continuous_executor import ContinuousFlowExecutor
+    from engine._continuous_exec_control import FlowUpdateError
+
+    executor = ContinuousFlowExecutor(_hot_swap_flow(), enable_checkpoints=False)
+    executor.stop()
+
+    def _boom(flow):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(executor, "_build", _boom)
+
+    with pytest.raises(FlowUpdateError):
+        executor.update_flow(_hot_swap_flow(message="new"))
+    assert executor.is_running is False
+
+
+def test_checkpoint_recovery_restores_each_relationship_queue(tmp_path):
+    from engine.checkpoint import CheckpointManager
+    from engine.continuous_executor import ContinuousFlowExecutor
+
+    executor = ContinuousFlowExecutor(_hot_swap_flow(), enable_checkpoints=False)
+    executor._checkpoint_mgr = CheckpointManager("hot_swap", checkpoint_dir=str(tmp_path))
+    executor.connections.get_by_id("conn_a__failure__b").enqueue(
+        FlowFile(content=b"failure-only"))
+    assert executor.save_checkpoint_now()
+
+    fresh = ContinuousFlowExecutor(_hot_swap_flow(), enable_checkpoints=False)
+    fresh._checkpoint_mgr = CheckpointManager("hot_swap", checkpoint_dir=str(tmp_path))
+    fresh._recover_from_checkpoint()
+    assert fresh.connections.get_by_id("conn_a__success__b").queue_size() == 0
+    failure = fresh.connections.get_by_id("conn_a__failure__b")
+    assert failure.queue_size() == 1
+    assert failure.peek().get_content() == b"failure-only"
+
+
 # ── Scheduler is pause-aware ─────────────────────────────────────
 
 def test_scheduler_ignores_paused_queues_source_invariants():
@@ -324,6 +412,88 @@ def test_runtime_flow_update_requires_preview_and_explicit_risk_policies(
     assert executor.registry_updates == [("inst1", "default.hot:1.1.0", {
         "flow_id": "hot", "flow_name": "Hot", "layout": {},
     })]
+
+
+def test_runtime_update_rebuild_failure_is_a_500_not_a_stale_preview(
+        runtime, monkeypatch):
+    from tasks.ai.actions import flow_runtime as actions
+    from engine._continuous_exec_control import FlowUpdateError
+    executor, _ = runtime
+    definition = {
+        "id": "hot", "name": "Hot", "version": "1.1.0",
+        "parameters": {}, "services": {}, "groups": {}, "layout": {},
+        "entries": ["gen"], "exits": ["save"],
+        "tasks": {
+            "gen": {"type": "log", "parameters": {"message": "gen"}},
+            "save": {"type": "log", "parameters": {"message": "save"}},
+        },
+        "relations": [{"from": "gen", "to": "save", "type": "success"}],
+    }
+    monkeypatch.setattr(actions, "_prepare_runtime_update",
+                        lambda inst, fqn: (definition, definition, object()))
+
+    def _broken(flow, **policies):
+        raise FlowUpdateError("rebuild exploded; executor stopped")
+    monkeypatch.setattr(executor, "update_flow", _broken)
+
+    preview, _ = _call("flow_runtime_update_preview", {
+        "instance_id": "inst1", "fqn": "default.hot:1.1.0"})
+    failed, ff = _call("flow_runtime_update_apply", {
+        "instance_id": "inst1", "fqn": "default.hot:1.1.0",
+        "preview_token": preview["preview_token"],
+        "in_flight_policy": "wait"})
+    assert failed["error"] == "runtime_update_failed"
+    assert "rebuild exploded" in failed["detail"]
+    assert ff.get_attribute("http.response.status") == "500"
+    assert executor.registry_updates == []     # nothing persisted on failure
+
+
+def test_prepare_runtime_update_loads_real_versions(tmp_path, monkeypatch):
+    import core.paths as paths
+    from core.repository import ScopedRepository
+    from core.flow_authoring import FlowAuthoringService
+    from core.deployment_registry import DeployedInstance
+    from tasks.ai.actions.flow_runtime import _prepare_runtime_update
+
+    monkeypatch.setattr(paths, "REPOSITORY_DIR", tmp_path / "repository")
+    monkeypatch.setattr(paths, "RUNTIME_DIR", tmp_path / "runtime")
+    ScopedRepository.reset()
+    FlowAuthoringService.reset()
+    try:
+        definition = {
+            "id": "hot", "name": "Hot", "version": "1.0.0",
+            "parameters": {"greeting": {"type": "string", "default": "hi"}},
+            "tasks": {
+                "gen": {"type": "log", "parameters": {"message": "${greeting}"}},
+                "save": {"type": "log", "parameters": {"message": "save"}},
+            },
+            "relations": [{"from": "gen", "to": "save", "type": "success"}],
+            "entries": ["gen"], "exits": ["save"],
+        }
+        repo = ScopedRepository.instance()
+        repo.create_flow("my_flows.hot:1.0.0", "user", definition, user_id="alice")
+        repo.create_flow("my_flows.hot:1.1.0", "user",
+                         {**definition, "version": "1.1.0", "relations": []},
+                         user_id="alice")
+        inst = DeployedInstance(
+            instance_id="i1", flow_id="hot", flow_name="Hot",
+            flow_fqn="my_flows.hot:1.0.0", flow_scope="user", owner="alice",
+            parameters={"greeting": "hello"})
+
+        base, candidate, parsed = _prepare_runtime_update(inst, "my_flows.hot:1.1.0")
+        assert base["version"] == "1.0.0"
+        assert candidate["version"] == "1.1.0"
+        assert candidate["relations"] == []            # stored document, untouched
+        assert set(parsed.tasks) == {"gen", "save"}
+        assert parsed.parameters["_instance_id"] == "i1"
+        assert parsed.parameters["greeting"] == "hello"  # deployment override wins
+        with pytest.raises(ValueError):
+            _prepare_runtime_update(inst, "my_flows.hot")            # unpinned
+        with pytest.raises(ValueError):
+            _prepare_runtime_update(inst, "my_flows.other:1.1.0")    # other flow
+    finally:
+        ScopedRepository.reset()
+        FlowAuthoringService.reset()
 
 
 def test_queue_list_paginates_server_side(runtime):

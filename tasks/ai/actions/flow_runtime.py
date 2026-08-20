@@ -296,6 +296,14 @@ def _handle_flow_runtime(self, action, body, store, user_id, flowfile):
                 in_flight_policy=in_flight_policy)
         except ValueError as exc:
             return _reply({"error": str(exc)}, "400")
+        except Exception as exc:
+            # FlowUpdateError: the rebuild failed and the executor is stopped.
+            # This is not a stale preview and must not read as one.
+            logger.error("runtime update failed for %s: %s", instance_id, exc)
+            return _reply({"error": "runtime_update_failed",
+                           "detail": str(exc),
+                           "executor_running": bool(
+                               getattr(executor, "is_running", False))}, "500")
         if updated is False:
             return _reply({"error": "runtime_changed_since_preview"}, "409")
         registry.update_flow_version(

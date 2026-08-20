@@ -50,7 +50,10 @@ through JSON/base64 or server RAM.
 immediately so a crash cannot resurrect dropped FlowFiles from a stale
 checkpoint, and every manual operation (`task_start/stop/restart`,
 `queue_pause/resume/clear`, `flowfile_drop`) is recorded in the flow's
-provenance repository with the acting user.
+provenance repository with the acting user. Checkpoints key every queue by
+`(source, target, relationship)` and recovery restores it only into that exact
+`connection_id`, so `A --success--> B` and `A --failure--> B` never merge after
+a crash.
 
 ## Enriched graph (`flow_runtime_graph`)
 

@@ -328,9 +328,21 @@ preview returns HTTP 409 with a fresh impact instead of applying stale consent.
 The executor stops scheduling, waits up to ten seconds when requested, rebuilds
 the flow, and restores surviving queues and pause state strictly by
 `connection_id` — never by `(source, target)`, so two relationships between the
-same tasks cannot merge. After success the deployment registry persists the new
-FQN, flow metadata and layout before checkpoint/provenance recording, ensuring
-restart uses the applied immutable version.
+same tasks cannot merge. Crash recovery from checkpoints follows the same rule:
+each saved queue carries its relationship and is restored only into that exact
+connection. After success the deployment registry persists the new FQN, flow
+metadata and layout before checkpoint/provenance recording, ensuring restart
+uses the applied immutable version.
+
+The preflight (non-empty removed queues, tasks in flight) runs again once the
+scheduler is stopped, because FlowFiles can arrive and tasks can start between
+the first check and the stop. A violation under a `reject` policy, or a `wait`
+that times out, resumes the scheduler thread in place — the worker pools, tasks
+and services are untouched, so nothing leaks and no checkpoint is replayed —
+and the apply answers HTTP 409 so the canvas re-previews. If the rebuild itself
+fails, the executor stays stopped and raises `FlowUpdateError`; the API answers
+HTTP 500 `runtime_update_failed` with `executor_running: false` and persists
+nothing, instead of disguising the failure as a stale preview.
 
 Runtime actions are owner-scoped (admin-only for global instances):
 
@@ -338,4 +350,4 @@ Runtime actions are owner-scoped (admin-only for global instances):
 | ------ | ---- | ------ |
 | `flow_runtime_create_draft` | `instance_id` | `{draft, instance_id}` |
 | `flow_runtime_update_preview` | `instance_id`, published `fqn` | diff + live impact + `preview_token` |
-| `flow_runtime_update_apply` | preview fields + explicit risk policies when required | `{ok, updated, fqn, impact}` or HTTP 409 with fresh impact |
+| `flow_runtime_update_apply` | preview fields + explicit risk policies when required | `{ok, updated, fqn, impact}`, HTTP 409 with fresh impact, or HTTP 500 `runtime_update_failed` when the rebuild itself failed |

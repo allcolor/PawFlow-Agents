@@ -51,7 +51,7 @@ def test_sse_handlers_pass_reconcile_flag_for_durable_content():
 
 
 def test_openspace_thought_bubble_splices_durable_text():
-    source = _text("tasks/io/chat_ui/openspace.js")
+    source = _text("tasks/io/chat_ui/openspace_runtime.js")
     # The bubble tracks the current block's preview region...
     assert "rec._tbStart" in source and "rec._tbEnd" in source
     # ...and the durable thinking_content splices over it, keeping what

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **OpenSpace modularization and procedural animation**: the 3D webchat view is
+  split into seven responsibility-focused classic-script modules (all below 800
+  lines) with explicit load order. Chibi agents now retain a procedural rig and
+  animate limbs, eyes, mouth, breathing, and blinking from live agent state;
+  walking faces the destination at distance-based speed, clicking a participant
+  smoothly focuses the camera, and frame-time-driven DPR scaling includes a
+  software-WebGL fallback. The tmux wall poster now opens the selected agent's
+  live terminal viewer instead of enabling composer grab mode.
+
 ### Fixed
 
 - **Flow runtime hot-swap hardening** (`engine/_continuous_exec_control.py`,

@@ -44,9 +44,12 @@ _JS_MODULES = [
     # #messages scroll listeners).
     "messages.js", "messages_render.js", "messages_tools.js", "messages_markdown.js",
     "turn_view.js",
-    # openspace.js (3D view) reads selectedAgent/activeInteractions at
-    # runtime only; three.js itself is a lazy dynamic import.
-    "openspace.js",
+    # OpenSpace is split by responsibility (all files stay <=800 lines).
+    # The files share classic-script globals; order is therefore significant.
+    # three.js itself remains a lazy dynamic import from the core module.
+    "openspace.js", "openspace_scene.js", "openspace_room.js",
+    "openspace_flow.js", "openspace_agents.js", "openspace_runtime.js",
+    "openspace_dialogs.js",
     "active_agents.js", "task_tabs.js", "usage_cost.js", "usage_dashboard.js", "typing.js", "notifications.js",
     # sse.js was split (<=800 lines each); load order matters: sse_state.js
     # (globals + per-connection state + shared helpers) before the wire

@@ -47,7 +47,7 @@ def test_header_button_badge_panel_and_command():
 
 
 def test_openspace_poster_opens_the_panel():
-    source = _text("tasks/io/chat_ui/openspace.js")
+    source = _text("tasks/io/chat_ui/openspace_scene.js")
     assert "'confirmations'" in source
     assert "toggleConfirmationsPanel" in source
 

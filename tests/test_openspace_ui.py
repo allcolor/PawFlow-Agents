@@ -5,19 +5,36 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+OPENSPACE_MODULES = (
+    "openspace.js",
+    "openspace_scene.js",
+    "openspace_room.js",
+    "openspace_flow.js",
+    "openspace_agents.js",
+    "openspace_runtime.js",
+    "openspace_dialogs.js",
+)
 
 
 def _text(relative):
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
+def _openspace_text():
+    base = ROOT / "tasks/io/chat_ui"
+    return "\n".join((base / name).read_text(encoding="utf-8")
+                     for name in OPENSPACE_MODULES)
+
+
 def test_openspace_module_is_served_and_three_is_vendored():
     source = _text("tasks/io/serve_chat_ui.py")
-    assert '"openspace.js"' in source
+    for module in OPENSPACE_MODULES:
+        assert f'"{module}"' in source
+        assert len(_text(f"tasks/io/chat_ui/{module}").splitlines()) <= 800
     # Load order: after turn_view.js (shares the view-mode vocabulary),
     # before sse.js (whose connectSSE calls openspaceWireSSE).
     assert source.index('"turn_view.js"') < source.index('"openspace.js"')
-    assert source.index('"openspace.js"') < source.index('"sse.js"')
+    assert source.index('"openspace_dialogs.js"') < source.index('"sse.js"')
     three = ROOT / "tasks/io/chat_ui/three.module.min.js"
     assert three.exists()
     # A truncated download must fail loudly, not ship a broken 3D engine.
@@ -32,7 +49,7 @@ def test_three_is_lazily_imported_not_a_load_time_module():
     # first activation instead.
     source = _text("tasks/io/serve_chat_ui.py")
     assert '"three.module.min.js"' not in source
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     assert "import('/chat/js/three.module.min.js" in openspace
 
 
@@ -61,7 +78,7 @@ def test_view_mode_plumbing_accepts_openspace():
 def test_sse_socket_is_wired_into_openspace():
     sse = _text("tasks/io/chat_ui/sse.js")
     assert "openspaceWireSSE(eventSource)" in sse
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # The view mirrors the stream: talking, thinking, tools, delegation,
     # approval waits. Losing one of these silently degrades the scene.
     for event in (
@@ -74,7 +91,7 @@ def test_sse_socket_is_wired_into_openspace():
 
 
 def test_openspace_bubbles_are_bounded_and_coalesced():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     assert "OSV_BUBBLE_MAX_CHARS" in openspace
     assert "OSV_BUBBLE_COALESCE_MS" in openspace
     # The per-agent activity log backing the PC dialog is a bounded ring.
@@ -83,7 +100,7 @@ def test_openspace_bubbles_are_bounded_and_coalesced():
 
 
 def test_pc_click_opens_stacked_activity_dialog():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     assert "function openspaceOpenAgentDialog" in openspace
     assert "osvAgent" in openspace          # raycast hit → agent key
     # Mobile dialog conventions: pinned close cross + wrapping header.
@@ -105,15 +122,26 @@ def test_openspace_i18n_keys_exist_in_all_locales():
 
 
 def test_render_loop_pauses_when_hidden():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     assert "visibilitychange" in openspace
     assert "document.hidden" in openspace
     # Pixel ratio is capped for mobile GPUs.
     assert "Math.min(window.devicePixelRatio || 1, 2)" in openspace
 
 
+def test_render_quality_adapts_and_software_webgl_stays_at_one_dpr():
+    openspace = _openspace_text()
+    assert "function _osUsesSoftwareWebGL" in openspace
+    assert "swiftshader|llvmpipe|softpipe|software" in openspace
+    assert "antialias: !_osSoftwareRenderer" in openspace
+    assert "function _osAdaptPixelRatio" in openspace
+    assert "_osFrameMs > 24" in openspace
+    assert "_osFrameMs < 17" in openspace
+    assert "_osSoftwareRenderer ? 1" in openspace
+
+
 def test_last_bubble_is_persistent_and_seeded_from_history():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # Expiry demotes the newest bubble to a dimmed style, never hides it.
     assert "classList.add('osv-stale')" in openspace
     assert "function _osRestoreBubbles" in openspace
@@ -129,7 +157,7 @@ def test_last_bubble_is_persistent_and_seeded_from_history():
 
 
 def test_all_conversation_agents_get_desks_even_when_inactive():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     resources = _text("tasks/io/chat_ui/resources_render.js")
     # selectedAgent and activeInteractions are insufficient: an attached
     # agent may be idle or rate-limited and therefore emit no live event.
@@ -141,7 +169,7 @@ def test_all_conversation_agents_get_desks_even_when_inactive():
 
 
 def test_users_get_visitor_avatars_with_bubbles():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     assert "function _osEnsureUser" in openspace
     assert "function _osBuildVisitor" in openspace
     # Shared conversations: one avatar per distinct human author.
@@ -152,7 +180,7 @@ def test_users_get_visitor_avatars_with_bubbles():
 
 
 def test_tool_calls_drop_props_that_fade_on_result():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     assert "function _osDropTool" in openspace
     assert "function _osFadeTool" in openspace
     # Sprite props are bounded per desk and fully disposed.
@@ -170,7 +198,7 @@ def test_local_user_send_is_mirrored_with_attachment_dropoff():
     # avatar walk to the target agent's desk and drop folder props.
     attachments = _text("tasks/io/chat_ui/attachments.js")
     assert "openspaceUserMessage(text || '', attachmentsForDisplay" in attachments
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     assert "function openspaceUserMessage" in openspace
     assert "\\u{1F4C1}" in openspace  # folder prop for attachments
     assert "_osWalkTo(rec, home)" in openspace  # and walks back home
@@ -179,17 +207,17 @@ def test_local_user_send_is_mirrored_with_attachment_dropoff():
 
 
 def test_tool_calls_announce_their_name_as_a_thought():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # Both the primary tool_call and sub_agent_tool paths bubble the name.
     assert openspace.count("_osToolEmoji(d.tool) + ' ' + (d.tool || 'tool')") == 2
 
 
 def test_busy_agents_visibly_move():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # The capsule avatar is rotationally symmetric: rotation.y is invisible,
     # state animations must use lean (rotation.z) and bounce (position.y).
     assert "rotation.y = Math.sin" not in openspace
-    assert "rec.avatar.rotation.z = sway" in openspace
+    assert "rec.avatar.rotation.z = !walking && sway" in openspace
     assert "emissiveIntensity" in openspace  # PC screen flickers while busy
     template = _text("tasks/io/chat_ui/template.html")
     # Thought bubbles read as thoughts: cloud tail + pulsing status chip.
@@ -198,7 +226,7 @@ def test_busy_agents_visibly_move():
 
 
 def test_wall_screen_projects_the_live_simplified_view():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # The picture is the real #messages element, reparented (not copied)
     # and restored on deactivation.
     assert "function _osProjectMessages" in openspace
@@ -219,7 +247,7 @@ def test_wall_screen_projects_the_live_simplified_view():
 
 
 def test_thinking_events_reach_thought_bubbles():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # Thinking SSE payloads carry `text` (renderThinkingContent) and
     # delegate thinking carries `thinking` — never `content`.
     assert "d.text || d.content || ''" in openspace
@@ -227,7 +255,7 @@ def test_thinking_events_reach_thought_bubbles():
 
 
 def test_office_has_decor_walkable_floor_and_camera_pan():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     assert "function _osBuildDecor" in openspace
     # Clicking the floor walks the viewer's own avatar there and moves
     # its home spot with it.
@@ -239,9 +267,14 @@ def test_office_has_decor_walkable_floor_and_camera_pan():
 
 
 def test_agents_are_chibi_mascots_with_batteries_and_a_roster_board():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # Mascot avatars replace the plain capsule for agents.
     assert "function _osBuildChibi" in openspace
+    assert "rec.rig = { body: body, arms: arms, feet: feet, eyes: eyes" in openspace
+    assert "function _osAnimateRig" in openspace
+    assert "rig.mouth.scale.y" in openspace
+    assert "rig.eyes.forEach" in openspace
+    assert "rig.arms.forEach" in openspace
     assert "CapsuleGeometry" not in openspace.split("_osBuildVisitor")[0].split(
         "function _osBuildDesk")[1]
     # Battery above each head mirrors the shared context-usage cache.
@@ -256,7 +289,7 @@ def test_agents_are_chibi_mascots_with_batteries_and_a_roster_board():
 
 
 def test_bubble_streams_survive_expiry_and_layout_resizes():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # Expiry resets the stream buffer exactly once (guarded by the stale
     # class) — an unguarded per-frame reset wiped every stream after the
     # bubble's first turn.
@@ -276,7 +309,7 @@ def test_bubble_streams_survive_expiry_and_layout_resizes():
 
 
 def test_multimodal_content_never_renders_object_object():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # Stored messages with attachments carry content as block arrays;
     # bubbles and logs extract the text parts instead of String(array).
     assert "function _osText" in openspace
@@ -286,7 +319,7 @@ def test_multimodal_content_never_renders_object_object():
 
 
 def test_bubbles_are_fully_readable_and_anchored():
-    openspace = _text("tasks/io/chat_ui/openspace.js")
+    openspace = _openspace_text()
     # Bubbles show the whole message/thought in a scrollable body pinned
     # to the newest text; no 200-char display truncation.
     assert "function _osSetBubbleText" in openspace
@@ -303,7 +336,7 @@ def test_bubbles_are_fully_readable_and_anchored():
 
 
 def test_resource_posters_open_their_panels():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     # One raycast-targeted poster per resources-menu entry; clicking one
     # opens the matching regular panel, never a re-implementation.
     assert "OSV_POSTERS" in src
@@ -312,10 +345,14 @@ def test_resource_posters_open_their_panels():
                    "cmdShowDiary", "cmdShowProjectGraph", "cmdShowProjectWiki",
                    "cmdShowScratchpad"):
         assert opener in src
+    tmux_poster = re.search(r"\['tmux'.*?\],\n", src, re.DOTALL)
+    assert tmux_poster is not None
+    assert "cmdAgentTmux()" in tmux_poster.group()
+    assert "toggleGrab" not in tmux_poster.group()
 
 
 def test_flows_dialog_projects_a_live_3d_flow():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     # Same data source as the sidebar Flows section: list_resources sees
     # every scope (conversation/user/global), unlike list_conv_flows.
     assert "action$('list_resources'" in src
@@ -339,7 +376,7 @@ def test_flows_dialog_projects_a_live_3d_flow():
 
 
 def test_roster_board_has_per_agent_stop_controls():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     assert "interruptSingle" in src
     assert "stopSingle" in src
     template = _text("tasks/io/chat_ui/template.html")
@@ -357,7 +394,7 @@ def test_openspace_v4_i18n_keys_exist_in_all_locales():
 
 
 def test_resources_poster_pops_boards_that_open_submenu_dialogs():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     # Resources poster → one labeled board per sidebar sub-section →
     # clicking a board opens that sub-menu as a live interactive dialog.
     assert "function openspaceToggleResourceBoards" in src
@@ -377,7 +414,7 @@ def test_resources_poster_pops_boards_that_open_submenu_dialogs():
 
 
 def test_door_opens_conversation_picker_and_rooms_are_seeded():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     assert "osvDoor" in src
     assert "function openspaceOpenConvDialog" in src
     assert "resumeConv" in src
@@ -391,7 +428,7 @@ def test_door_opens_conversation_picker_and_rooms_are_seeded():
 
 
 def test_flow_stage_close_is_robust():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     # Three independent close paths: Escape, the hardened DOM button,
     # and a raycast ✕ sprite inside the stage itself (immune to any
     # DOM overlay eating pointer events).
@@ -404,7 +441,7 @@ def test_flow_stage_close_is_robust():
 
 
 def test_projected_panels_cull_backfaces_and_depth_sort():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     # A quad seen from behind or edge-on must hide, not smear a mirror
     # image across the scene; nearer panels stack above farther ones.
     assert "ux * wy - uy * wx" in src
@@ -412,7 +449,7 @@ def test_projected_panels_cull_backfaces_and_depth_sort():
 
 
 def test_flash_guests_retire_and_delegates_walk_and_return():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     assert "function _osRetireAgent" in src
     assert "_osFreeSeats" in src
     # In-conv delegation: walk to the desk, hand over, walk home.
@@ -422,8 +459,24 @@ def test_flash_guests_retire_and_delegates_walk_and_return():
     assert "/a2a/i" in src
 
 
+def test_walks_face_the_destination_and_keep_world_space_speed():
+    src = _openspace_text()
+    assert "Math.atan2(dx, dz)" in src
+    assert "distance / OSV_WALK_UNITS_PER_SEC * 1000" in src
+    assert "OSV_WALK_MIN_MS" in src
+    assert "OSV_WALK_MAX_MS" in src
+
+
+def test_clicking_a_participant_smoothly_focuses_the_camera():
+    src = _openspace_text()
+    assert "function _osFocusAgent" in src
+    assert "_osFocusAgent(ud.osvAgent)" in src
+    assert "let me = _osFocusKey ? _osAgents.get(_osFocusKey) : null" in src
+    assert "_osCamPan.x += dx * 0.06" in src
+
+
 def test_mobile_touch_controls_and_calm_resize():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     # Pinch zoom + two-finger pan on the canvas, D-pad buttons on coarse
     # pointers, and keyboard-driven resize storms must not blink.
     assert "function _osPinchState" in src
@@ -445,7 +498,7 @@ def test_composer_returns_to_default_size_when_empty():
 
 
 def test_bubbles_flush_before_reset_and_are_dismissable():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     # Turn-end resets flush the pending 250ms coalesce first, so a
     # thought never freezes one tick short (mid-sentence).
     assert "function _osFlushBubbles" in src
@@ -460,7 +513,7 @@ def test_bubbles_flush_before_reset_and_are_dismissable():
 
 
 def test_conversation_switch_empties_the_room():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     # Rooms are per-conversation: switching retires every desk/avatar of
     # the previous conversation and resets the seat allocator; the seed
     # then repopulates with the new participants.
@@ -472,7 +525,7 @@ def test_conversation_switch_empties_the_room():
 
 
 def test_state_orbiters_circle_the_agent_ring():
-    src = _text("tasks/io/chat_ui/openspace.js")
+    src = _openspace_text()
     # The floor ring doubles as a status carousel: brains orbit while
     # thinking, tools while one runs, Zzz while idle.
     assert "OSV_ORBIT_EMOJI" in src
@@ -497,7 +550,7 @@ def test_state_orbiters_circle_the_agent_ring():
 
 
 def test_filestore_tv_plays_conversation_files():
-    source = _text("tasks/io/chat_ui/openspace.js")
+    source = _openspace_text()
     # A clickable TV mesh opens the FileStore picker...
     assert "ud.osvTv) { openspaceOpenTvDialog(); return; }" in source
     assert "action$('list_conv_files', { conversation_id: conversationId })" in source
@@ -517,7 +570,7 @@ def test_filestore_tv_plays_conversation_files():
 
 
 def test_poster_wall_covers_all_side_panels():
-    source = _text("tasks/io/chat_ui/openspace.js")
+    source = _openspace_text()
     for key, opener in [
         ("'todos'", "showTodosDialog"),
         ("'cost'", "showUsageCostPanel"),
@@ -527,7 +580,7 @@ def test_poster_wall_covers_all_side_panels():
         ("'files'", "toggleFilesPanel"),
         ("'desktop'", "cmdDesktop"),
         ("'terminal'", "cmdTerminal"),
-        ("'tmux'", "toggleGrab"),
+        ("'tmux'", "cmdAgentTmux"),
     ]:
         assert key in source, key
         assert opener in source, opener

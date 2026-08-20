@@ -677,6 +677,6 @@ def test_published_runtime_update_is_previewed_and_explicit_in_the_same_canvas()
 
 
 def test_openspace_stage_mirrors_pause_and_backpressure():
-    source = _text("tasks/io/chat_ui/openspace.js")
+    source = _text("tasks/io/chat_ui/openspace_flow.js")
     assert "rec.paused = !!e.paused;" in source
     assert "rec.active = !rec.paused" in source

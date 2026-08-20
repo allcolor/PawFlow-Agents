@@ -103,6 +103,11 @@ const OSV_RES_SYNC_MS = 2000;
 // room palette, conversation title frame, mobile touch controls.
 let _osDoorPos = null;
 let _osTitleEl = null, _osTitleCorners = null, _osTitleText = '';
+// FileStore TV: a lounge television that plays the conversation's
+// FileStore files (video/image/audio) on a projected DOM panel.
+const OSV_TV_W = 640, OSV_TV_H = 400;
+let _osTvEl = null, _osTvBodyEl = null, _osTvTitleEl = null;
+let _osTvCorners = null, _osTvMedia = null;
 let _osRoomMats = null;            // recolored by _osApplyRoomStyle
 let _osResizeTimer = 0, _osLastW = 0, _osLastH = 0;
 const _osTouches = new Map();      // pointerId → {x,y} (pinch/two-finger)
@@ -158,6 +163,7 @@ function openspaceSetActive(on) {
     });
   } else {
     openspaceCloseFlow();
+    openspaceTvStop();
     _osStopLoop();
   }
 }
@@ -227,6 +233,7 @@ function _osBuildScene(wrap) {
   _osBuildDecor();
   _osBuildPosters();
   _osBuildDoor();
+  _osBuildTv();
   _osCanvas.addEventListener('pointerdown', _osPointerDown);
   _osCanvas.addEventListener('pointermove', _osPointerMove);
   _osCanvas.addEventListener('pointerup', _osPointerUp);
@@ -538,6 +545,7 @@ function _osProjectScreen() {
   _osProjectPanel(_osScreenEl, _osScreenCorners, OSV_SCREEN_W, OSV_SCREEN_H);
   _osProjectPanel(_osBoardEl, _osBoardCorners, OSV_BOARD_W, OSV_BOARD_H);
   _osProjectPanel(_osTitleEl, _osTitleCorners, OSV_TITLE_W, OSV_TITLE_H);
+  _osProjectPanel(_osTvEl, _osTvCorners, OSV_TV_W, OSV_TV_H);
 }
 
 function _osProjectPanel(el, corners, w, h) {
@@ -672,7 +680,28 @@ const OSV_POSTERS = [
    () => { if (typeof cmdShowProjectWiki === 'function') cmdShowProjectWiki(); }],
   ['scratchpad', '\u{1F4DD}', 'scratchpad',
    () => { if (typeof cmdShowScratchpad === 'function') cmdShowScratchpad(); }],
+  ['todos', '\u2705', 'osvTodos',
+   () => { if (typeof showTodosDialog === 'function') showTodosDialog(); }],
+  ['cost', '\u{1F4B0}', 'osvCost',
+   () => { if (typeof showUsageCostPanel === 'function') showUsageCostPanel(); }],
+  ['context', '\u{1F9FE}', 'context',
+   () => { if (typeof cmdShowContext === 'function') cmdShowContext(); }],
+  ['plans', '\u{1F5C2}\uFE0F', 'plans',
+   () => { if (typeof togglePlansPanel === 'function') togglePlansPanel(); }],
+  ['scheduled', '\u23F0', 'scheduledTasks',
+   () => { if (typeof toggleSchedsPanel === 'function') toggleSchedsPanel(); }],
+  ['files', '\u{1F4C1}', 'files',
+   () => { if (typeof toggleFilesPanel === 'function') toggleFilesPanel(); }],
+  ['desktop', '\u{1F5A5}\uFE0F', 'desktop',
+   () => { if (typeof cmdDesktop === 'function') cmdDesktop('/desktop', ['/desktop']); }],
+  ['terminal', '\u2328\uFE0F', 'terminal',
+   () => { if (typeof cmdTerminal === 'function') cmdTerminal('/terminal', ['/terminal']); }],
+  ['tmux', '\u{1F4DF}', 'osvTmux',
+   () => { if (typeof toggleGrab === 'function') toggleGrab(); }],
 ];
+// Posters hang in rows of 9 along the right wall; a second row opens
+// above the first when the list outgrows it.
+const OSV_POSTERS_PER_ROW = 9;
 
 function _osPosterTexture(icon, label) {
   const T = _osThree;
@@ -697,18 +726,22 @@ function _osBuildPosters() {
   const T = _osThree;
   const x = (OSV_GRID_COLS - 1) * OSV_DESK_SPACING + 6.5;
   OSV_POSTERS.forEach((p, i) => {
-    const z = -5 + i * 2.1;
+    const z = -5 + (i % OSV_POSTERS_PER_ROW) * 2.1;
+    const y = 2.5 + Math.floor(i / OSV_POSTERS_PER_ROW) * 1.9;
     const mesh = new T.Mesh(
       new T.PlaneGeometry(2.1, 1.4),
       new T.MeshBasicMaterial({ map: _osPosterTexture(p[1], t(p[2])) }));
-    mesh.position.set(x, 2.5, z);
+    mesh.position.set(x, y, z);
     mesh.rotation.y = -Math.PI / 2;   // face the desks (-x)
     mesh.userData.osvPoster = p[0];
-    const post = new T.Mesh(
-      new T.BoxGeometry(0.12, 2.0, 0.12),
-      new T.MeshLambertMaterial({ color: 0x3b3f54 }));
-    post.position.set(x + 0.12, 1.0, z);
-    _osScene.add(mesh, post);
+    _osScene.add(mesh);
+    if (i < OSV_POSTERS_PER_ROW) {
+      const post = new T.Mesh(
+        new T.BoxGeometry(0.12, 2.0, 0.12),
+        new T.MeshLambertMaterial({ color: 0x3b3f54 }));
+      post.position.set(x + 0.12, 1.0, z);
+      _osScene.add(post);
+    }
   });
 }
 
@@ -743,6 +776,199 @@ function _osBuildDoor() {
   g.traverse((o) => { o.userData.osvDoor = true; });
   _osScene.add(g);
   _osDoorPos = { x: cx - 10.5, z: -9 };
+}
+
+// ── FileStore TV ─────────────────────────────────────────────────
+// A lounge television on the left wall, past the blackboard, facing the
+// desks. Clicking it lists the conversation's FileStore files; picking
+// one plays/shows it on the TV screen — a projected DOM panel, so the
+// native <video>/<audio> controls keep working on the 3D surface.
+function _osBuildTv() {
+  const T = _osThree;
+  const tx = -6.3, ty = 1.75, tz = 8.5;   // body center
+  const sw = 3.4, sh = sw * OSV_TV_H / OSV_TV_W;
+  const g = new T.Group();
+  const body = new T.Mesh(
+    new T.BoxGeometry(0.5, sh + 0.5, sw + 0.5),
+    new T.MeshLambertMaterial({ color: 0x1b2140 }));
+  body.position.y = ty;
+  const screen = new T.Mesh(
+    new T.BoxGeometry(0.06, sh, sw),
+    new T.MeshLambertMaterial({ color: 0x0b0e1d }));
+  screen.position.set(0.26, ty, 0);
+  [-1, 1].forEach((s) => {
+    const leg = new T.Mesh(
+      new T.BoxGeometry(0.18, ty - sh / 2 - 0.25 + 0.5, 0.18),
+      new T.MeshLambertMaterial({ color: 0x14182e }));
+    leg.position.set(0, (ty - sh / 2 - 0.25 + 0.5) / 2, s * (sw / 2 - 0.2));
+    g.add(leg);
+  });
+  const antenna = new T.Mesh(
+    new T.CylinderGeometry(0.03, 0.03, 0.9, 6),
+    new T.MeshLambertMaterial({ color: 0x8a93b8 }));
+  antenna.position.set(0, ty + sh / 2 + 0.6, 0.35);
+  antenna.rotation.x = 0.5;
+  g.add(body, screen, antenna);
+  g.position.set(tx, 0, tz);
+  g.traverse((o) => { o.userData.osvTv = true; });
+  _osScene.add(g);
+  // Screen quad faces +x (toward the desks); the viewer's left is +z.
+  const px = tx + 0.30;
+  _osTvCorners = [
+    { x: px, y: ty + sh / 2, z: tz + sw / 2 },
+    { x: px, y: ty + sh / 2, z: tz - sw / 2 },
+    { x: px, y: ty - sh / 2, z: tz + sw / 2 },
+    { x: px, y: ty - sh / 2, z: tz - sw / 2 },
+  ];
+  if (!_osTvEl && _osOverlay) {
+    _osTvEl = document.createElement('div');
+    _osTvEl.className = 'osv-tv';
+    const head = document.createElement('div');
+    head.className = 'osv-tv-head';
+    _osTvTitleEl = document.createElement('span');
+    _osTvTitleEl.className = 'osv-tv-title';
+    const stop = document.createElement('button');
+    stop.className = 'osv-tv-stop';
+    stop.textContent = '\u2715';
+    stop.onclick = (e) => { e.stopPropagation(); openspaceTvStop(); };
+    head.append(_osTvTitleEl, stop);
+    _osTvBodyEl = document.createElement('div');
+    _osTvBodyEl.className = 'osv-tv-body';
+    _osTvEl.append(head, _osTvBodyEl);
+    // Clicking the idle screen opens the picker too (same as the mesh).
+    _osTvBodyEl.onclick = () => { if (!_osTvMedia) openspaceOpenTvDialog(); };
+    _osOverlay.appendChild(_osTvEl);
+  }
+  _osTvIdle();
+}
+
+function _osTvIdle() {
+  if (!_osTvBodyEl) return;
+  _osTvBodyEl.innerHTML = '';
+  const idle = document.createElement('div');
+  idle.className = 'osv-tv-note';
+  idle.textContent = '\u{1F4FA} ' + t('osvTvIdle');
+  _osTvBodyEl.appendChild(idle);
+  if (_osTvTitleEl) _osTvTitleEl.textContent = t('osvTvTitle');
+}
+
+function openspaceTvStop() {
+  if (_osTvMedia) {
+    try {
+      if (typeof _osTvMedia.pause === 'function') _osTvMedia.pause();
+      _osTvMedia.removeAttribute('src');
+      if (typeof _osTvMedia.load === 'function') _osTvMedia.load();
+    } catch (_e) { /* media teardown is best-effort */ }
+    _osTvMedia = null;
+  }
+  _osTvIdle();
+}
+
+function _osTvFileIcon(type) {
+  if (type.startsWith('video/')) return '\u{1F3AC}';
+  if (type.startsWith('image/')) return '\u{1F5BC}\uFE0F';
+  if (type.startsWith('audio/')) return '\u{1F3B5}';
+  return '\u{1F4C4}';
+}
+
+function _osTvSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+function openspaceOpenTvDialog() {
+  const prior = document.getElementById('osvTvDialog');
+  if (prior) prior.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'exec-overlay';
+  overlay.id = 'osvTvDialog';
+  const dialog = document.createElement('div');
+  dialog.className = 'exec-dialog cog-dialog osv-dialog';
+  const head = document.createElement('div');
+  head.className = 'cog-head';
+  const title = document.createElement('h3');
+  title.textContent = '\u{1F4FA} ' + t('osvTvTitle');
+  head.appendChild(title);
+  const close = document.createElement('button');
+  close.className = 'cog-close';
+  close.innerHTML = '&times;';
+  close.onclick = () => overlay.remove();
+  const list = document.createElement('div');
+  list.className = 'osv-log';
+  dialog.append(close, head, list);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  if (typeof action$ !== 'function') return;
+  action$('list_conv_files', { conversation_id: conversationId }).subscribe((data) => {
+    const files = (data && data.files) || [];
+    files.forEach((f) => {
+      if (!f || !f.file_id) return;
+      const row = document.createElement('div');
+      row.className = 'osv-block osv-flow-row';
+      const type = String(f.content_type || '').toLowerCase();
+      const name = document.createElement('span');
+      name.textContent = _osTvFileIcon(type) + ' ' + (f.filename || f.file_id)
+        + ' \u00B7 ' + _osTvSize(f.size);
+      row.appendChild(name);
+      if (f.available === false) {
+        row.classList.add('osv-tv-unavailable');
+      } else {
+        row.style.cursor = 'pointer';
+        row.onclick = () => { overlay.remove(); openspaceTvShow(f); };
+      }
+      list.appendChild(row);
+    });
+    if (!list.childElementCount) {
+      const empty = document.createElement('div');
+      empty.className = 'osv-log-empty';
+      empty.textContent = t('osvTvEmpty');
+      list.appendChild(empty);
+    }
+  });
+}
+
+function openspaceTvShow(f) {
+  if (!_osTvBodyEl || !f || !f.file_id) return;
+  openspaceTvStop();
+  _osTvBodyEl.innerHTML = '';
+  const url = '/files/' + encodeURIComponent(f.file_id) + '/'
+    + encodeURIComponent(f.filename || 'file');
+  const type = String(f.content_type || '').toLowerCase();
+  let media = null;
+  if (type.startsWith('video/')) {
+    media = document.createElement('video');
+    media.controls = true;
+    media.autoplay = true;
+    media.src = url;
+  } else if (type.startsWith('image/')) {
+    media = document.createElement('img');
+    media.src = url;
+    media.alt = f.filename || '';
+  } else if (type.startsWith('audio/')) {
+    const note = document.createElement('div');
+    note.className = 'osv-tv-note';
+    note.textContent = '\u{1F3B5} ' + (f.filename || '');
+    _osTvBodyEl.appendChild(note);
+    media = document.createElement('audio');
+    media.controls = true;
+    media.autoplay = true;
+    media.src = url;
+  } else {
+    // Unknown/unsupported format: say so ON the TV and point at the
+    // Files menu, which owns download/preview for everything else.
+    const note = document.createElement('div');
+    note.className = 'osv-tv-note';
+    note.textContent = '\u{1F4C4} ' + (f.filename || '') + '\n'
+      + t('osvTvUnsupported');
+    _osTvBodyEl.appendChild(note);
+  }
+  if (media) {
+    _osTvBodyEl.appendChild(media);
+    _osTvMedia = media;
+  }
+  if (_osTvTitleEl) _osTvTitleEl.textContent = f.filename || '';
 }
 
 function _osHashSeed(s) {
@@ -968,7 +1194,10 @@ function _osBuildResourceBoards() {
     const mesh = new T.Mesh(
       new T.PlaneGeometry(2.1, 1.1),
       new T.MeshBasicMaterial({ map: _osResBoardTexture(s.title, count) }));
-    mesh.position.set(x, 4.2 + Math.floor(i / 8) * 1.4, -5 + (i % 8) * 2.1);
+    // Pop above the poster rows, however many the poster list needs.
+    const boardBase = 2.5
+      + Math.ceil(OSV_POSTERS.length / OSV_POSTERS_PER_ROW) * 1.9 + 0.2;
+    mesh.position.set(x, boardBase + Math.floor(i / 8) * 1.4, -5 + (i % 8) * 2.1);
     mesh.rotation.y = -Math.PI / 2;
     mesh.userData.osvResSection = s.rtype;
     mesh.userData.osvResTitle = s.title;
@@ -1937,6 +2166,8 @@ function openspaceSeedHistory(messages, cid) {
 // emptied and the seed repopulates it with the new participants. Only
 // the viewer's own avatar is recreated immediately.
 function openspaceResetTransient() {
+  // FileStore files are conversation-scoped: a room switch turns the TV off.
+  openspaceTvStop();
   _osSeededIds.clear();
   Array.from(_osAgents.values()).forEach((rec) => _osRetireAgent(rec));
   _osAgents.clear();
@@ -2572,6 +2803,7 @@ function _osPointerUp(e) {
       return;
     }
     if (ud && ud.osvDoor) { openspaceOpenConvDialog(); return; }
+    if (ud && ud.osvTv) { openspaceOpenTvDialog(); return; }
     if (ud && ud.osvResSection) {
       openspaceOpenResSectionDialog(ud.osvResSection, ud.osvResTitle);
       return;

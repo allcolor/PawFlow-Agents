@@ -482,3 +482,44 @@ def test_state_orbiters_circle_the_agent_ring():
     # not reach sprite texture maps.
     retire = src.split("function _osRetireAgent")[1].split("\nfunction ")[0]
     assert "_osClearOrbit(rec)" in retire
+
+
+def test_filestore_tv_plays_conversation_files():
+    source = _text("tasks/io/chat_ui/openspace.js")
+    # A clickable TV mesh opens the FileStore picker...
+    assert "ud.osvTv) { openspaceOpenTvDialog(); return; }" in source
+    assert "action$('list_conv_files', { conversation_id: conversationId })" in source
+    # ...and the picked file renders by content_type on a projected panel:
+    # video/image/audio elements, unsupported formats point at the Files menu.
+    assert "type.startsWith('video/')" in source
+    assert "type.startsWith('image/')" in source
+    assert "type.startsWith('audio/')" in source
+    assert "t('osvTvUnsupported')" in source
+    assert "_osProjectPanel(_osTvEl, _osTvCorners, OSV_TV_W, OSV_TV_H)" in source
+    # File URLs go through the FileStore HTTP route.
+    assert "'/files/' + encodeURIComponent(f.file_id)" in source
+    # Media stops on room switch and on view deactivation (no ghost audio).
+    assert source.count("openspaceTvStop()") >= 3
+    template = _text("tasks/io/chat_ui/template.html")
+    assert ".osv-tv " in template and ".osv-tv-body" in template
+
+
+def test_poster_wall_covers_all_side_panels():
+    source = _text("tasks/io/chat_ui/openspace.js")
+    for key, opener in [
+        ("'todos'", "showTodosDialog"),
+        ("'cost'", "showUsageCostPanel"),
+        ("'context'", "cmdShowContext"),
+        ("'plans'", "togglePlansPanel"),
+        ("'scheduled'", "toggleSchedsPanel"),
+        ("'files'", "toggleFilesPanel"),
+        ("'desktop'", "cmdDesktop"),
+        ("'terminal'", "cmdTerminal"),
+        ("'tmux'", "toggleGrab"),
+    ]:
+        assert key in source, key
+        assert opener in source, opener
+    # Posters wrap into rows; the transient resource boards pop above
+    # however many rows the poster list needs (no overlap).
+    assert "OSV_POSTERS_PER_ROW" in source
+    assert "Math.ceil(OSV_POSTERS.length / OSV_POSTERS_PER_ROW)" in source

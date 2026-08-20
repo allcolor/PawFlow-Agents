@@ -1661,5 +1661,14 @@
   "noPackageResults": "No packages found.",
   "updateAvailable": "Update available",
   "updateAvailableDesc": "Open the Updates screen",
-  "openInNewTab": "Open in new tab"
+  "openInNewTab": "Open in new tab",
+  "osvTodos": "Todo",
+  "osvCost": "Cost",
+  "osvTmux": "Tmux",
+  "osvTvTitle": "FileStore TV",
+  "osvTvIdle": "Click to pick a file",
+  "osvTvEmpty": "No files in this conversation",
+  "osvTvUnsupported": "Format not supported on the TV - open it from the Files menu",
+  "deleteDirConfirm": "Delete the folder \"{name}\" AND EVERYTHING inside it? This cannot be undone.",
+  "deleteItemsDirConfirm": "Delete {label}, including folders AND EVERYTHING inside them? This cannot be undone."
 }

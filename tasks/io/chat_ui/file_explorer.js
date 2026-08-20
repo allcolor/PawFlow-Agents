@@ -4,9 +4,15 @@ let _fe={overlay:null,svc:'',path:'.',entries:[],clip:null,sel:new Set(),svcs:[]
 function openExplorer(){
   if(_fe.overlay)return;
   const o=document.createElement('div');o.className='fe-overlay';
-  o.innerHTML=`<div class="fe-panel"><div class="fe-toolbar"><select id="feSvcSel" onchange="_feSelSvc(this.value)"></select><div class="fe-bc" id="feBc"></div><input class="fe-search" placeholder="${t('searchPlaceholder')}" onkeydown="if(event.key==='Enter')_feSearch(this.value)"><button class="btn" onclick="_feRefresh()" title="${t('refresh')}">&#x21bb;</button><button class="btn" onclick="_feUpload()">&#x2B06; ${t('upload')}</button><button class="btn" onclick="closeExplorer()">&#x2715;</button></div><div class="fe-content"><table class="fe-table"><thead><tr><th></th><th onclick="_feSortBy('name')">${t('fileName')}</th><th onclick="_feSortBy('size')">${t('fileSize')}</th><th onclick="_feSortBy('modified')">${t('modified')}</th></tr></thead><tbody id="feTbody"></tbody></table></div><div class="fe-status"><span id="feCount"></span><span id="feClip" class="fe-clip"></span></div></div>`;
+  o.innerHTML=`<div class="fe-panel"><div class="fe-toolbar"><select id="feSvcSel" onchange="_feSelSvc(this.value)"></select><div class="fe-bc" id="feBc"></div><input class="fe-search" placeholder="${t('searchPlaceholder')}" onkeydown="if(event.key==='Enter')_feSearch(this.value)"><button class="btn" onclick="_feRefresh()" title="${t('refresh')}">&#x21bb;</button><button class="btn" onclick="_feNewFile()" title="${t('newFile')}">&#128196;</button><button class="btn" onclick="_feNewDir()" title="${t('newFolder')}">&#128193;+</button><button class="btn" onclick="_feUpload()">&#x2B06; ${t('upload')}</button><button class="btn" onclick="closeExplorer()">&#x2715;</button></div><div class="fe-content"><table class="fe-table"><thead><tr><th></th><th onclick="_feSortBy('name')">${t('fileName')}</th><th onclick="_feSortBy('size')">${t('fileSize')}</th><th onclick="_feSortBy('modified')">${t('modified')}</th></tr></thead><tbody id="feTbody"></tbody></table></div><div class="fe-status"><span id="feCount"></span><span id="feClip" class="fe-clip"></span></div></div>`;
 
   document.body.appendChild(o);_fe.overlay=o;
+  // Right-clicking empty space (no row) still offers create/paste — the
+  // only way to make the first folder of an empty directory.
+  o.querySelector('.fe-content').addEventListener('contextmenu',(e)=>{
+    if(e.target.closest('tr[data-name]'))return;
+    _feCtxEmpty(e);
+  });
   document.addEventListener('keydown',_feKeys);
   // Drag-and-drop upload
   const panel=o.querySelector('.fe-panel');
@@ -150,6 +156,21 @@ function _feCtx(e,name,kind){
   setTimeout(()=>document.addEventListener('click',close),0);
 }
 
+function _feCtxEmpty(e){
+  e.preventDefault();e.stopPropagation();
+  if(_fe.ctx){_fe.ctx.remove();}
+  const m=document.createElement('div');m.className='fe-ctx';
+  let items='';
+  if(_fe.clip)items+=`<div onclick="_fePaste()">&#128203; ${t('pasteHere', { n: _fe.clip.items.length })}</div><hr>`;
+  items+=`<div onclick="_feNewFile()">&#128196; ${t('newFile')}</div>`;
+  items+=`<div onclick="_feNewDir()">&#128193; ${t('newFolder')}</div>`;
+  m.innerHTML=items;
+  m.style.left=e.clientX+'px';m.style.top=e.clientY+'px';
+  document.body.appendChild(m);_fe.ctx=m;
+  const close=()=>{if(_fe.ctx){_fe.ctx.remove();_fe.ctx=null;}document.removeEventListener('click',close);};
+  setTimeout(()=>document.addEventListener('click',close),0);
+}
+
 function _fePath(name){return _fe.path==='.'?name:_fe.path+'/'+name;}
 
 function _feCopySelected(){
@@ -197,8 +218,17 @@ function _fePaste(){
   pasteNext();
 }
 
+function _feIsDir(name){
+  const entry=(_fe.entries||[]).find((x)=>x.name===name);
+  return !!entry&&entry.kind==='directory';
+}
+
 function _feDel(name){
-  if(!confirm(t('deleteFileConfirm', { name: name })))return;
+  // Deleting a directory is recursive on the relay side: the confirm
+  // must say so instead of reading like a single-file removal.
+  const msg=_feIsDir(name)?t('deleteDirConfirm',{name:name})
+    :t('deleteFileConfirm',{name:name});
+  if(!confirm(msg))return;
   action$('fs_delete',{service:_fe.svc,path:_fePath(name)}).subscribe(() => {
     _feNav(_fe.path);
   });
@@ -208,7 +238,9 @@ function _feDelSelected(){
   const names=[..._fe.sel];
   if(!names.length)return;
   const label=names.length===1?'"'+names[0]+'"':t('itemsLabel', { n: names.length });
-  if(!confirm(t('deleteItemsConfirm', { label: label })))return;
+  const msg=names.some(_feIsDir)?t('deleteItemsDirConfirm',{label:label})
+    :t('deleteItemsConfirm',{label:label});
+  if(!confirm(msg))return;
   let idx = 0;
   const delNext = () => {
     if (idx >= names.length) { _feNav(_fe.path); return; }

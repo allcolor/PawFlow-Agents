@@ -1661,5 +1661,14 @@
   "noPackageResults": "Aucun paquet trouvé.",
   "updateAvailable": "Mise à jour disponible",
   "updateAvailableDesc": "Ouvrir l'écran des mises à jour",
-  "openInNewTab": "Ouvrir dans un nouvel onglet"
+  "openInNewTab": "Ouvrir dans un nouvel onglet",
+  "osvTodos": "Todo",
+  "osvCost": "Coût",
+  "osvTmux": "Tmux",
+  "osvTvTitle": "Télé FileStore",
+  "osvTvIdle": "Cliquez pour choisir un fichier",
+  "osvTvEmpty": "Aucun fichier dans cette conversation",
+  "osvTvUnsupported": "Format non supporté sur la télé - ouvrez-le depuis le menu Fichiers",
+  "deleteDirConfirm": "Supprimer le dossier \"{name}\" ET TOUT son contenu ? Cette action est irréversible.",
+  "deleteItemsDirConfirm": "Supprimer {label}, y compris les dossiers ET TOUT leur contenu ? Cette action est irréversible."
 }

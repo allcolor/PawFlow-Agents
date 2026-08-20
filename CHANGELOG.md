@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Openspace: a **FileStore TV** by the left wall — clicking it lists the
+  conversation's FileStore files; a picked file plays/shows on the TV
+  screen (projected DOM panel, native `<video>`/`<audio>` controls kept):
+  images display, video/audio auto-play, unknown formats say so on the
+  screen and point at the Files menu. Playback stops on room switch and
+  view deactivation.
+- Openspace: the right-wall poster gallery now covers every side panel —
+  todo, cost, context editor, plans, scheduled tasks, file explorer,
+  desktop, terminal, and tmux grab join the cognitive posters; posters
+  wrap into rows of 9 and the transient resource boards pop above them.
+- File explorer: toolbar buttons and an empty-space context menu for
+  **New file / New folder** (an empty directory previously offered no way
+  to create its first entry), and deleting a directory now confirms with
+  an explicit "AND EVERYTHING inside it" warning (relay deletes are
+  recursive).
+
 ## [1.0.0-beta.221] — 2026-08-20
 
 ### Added

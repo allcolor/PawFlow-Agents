@@ -698,6 +698,17 @@ body.openspace-active .scroll-nav { display: none; }
 /* Conversation title in the frame above the wall screen. */
 .osv-convtitle { position: absolute; top: 0; left: 0; width: 600px; height: 70px; transform-origin: 0 0; display: none; overflow: hidden; color: #e6ecff; font-size: 34px; font-weight: 700; text-align: center; line-height: 70px; white-space: nowrap; text-overflow: ellipsis; text-shadow: 0 2px 6px rgba(0,0,0,0.6); }
 .osv-conv-current { outline: 1px solid var(--pf-accent, #4da3ff); }
+/* FileStore TV: projected media panel on the lounge television. */
+.osv-tv { position: absolute; top: 0; left: 0; width: 640px; height: 400px; transform-origin: 0 0; display: none; overflow: hidden; background: #05070f; border-radius: 6px; pointer-events: auto; color: #aeb8dd; }
+.osv-tv-head { display: flex; align-items: center; justify-content: space-between; height: 34px; padding: 0 10px; background: rgba(20,24,50,0.9); font-size: 14px; }
+.osv-tv-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.osv-tv-stop { background: none; border: none; color: #aeb8dd; font-size: 16px; cursor: pointer; line-height: 1; }
+.osv-tv-stop:hover { color: #fff; }
+.osv-tv-body { position: relative; width: 100%; height: calc(100% - 34px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; cursor: pointer; }
+.osv-tv-body video, .osv-tv-body img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.osv-tv-body audio { width: 90%; }
+.osv-tv-note { font-size: 20px; text-align: center; white-space: pre-wrap; padding: 0 20px; }
+.osv-tv-unavailable { opacity: 0.45; }
 /* Touch camera controls: ▲▼ height, ◀▶ orbit, ＋－ zoom, ⌂ reset.
    Hidden on pointer-fine devices — the mouse already has all of it. */
 .osv-mobile-ctl { position: absolute; right: 10px; bottom: 10px; z-index: 6; display: none; grid-template-columns: repeat(4, 40px); gap: 6px; pointer-events: auto; }

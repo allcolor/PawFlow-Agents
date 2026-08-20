@@ -24,6 +24,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Chat UI: thinking text is no longer truncated (nor duplicated) in the
+  detail block, the turn view, and the openspace thought bubble. The
+  streamed preview is truncated by design (the emitter never flushes its
+  final <250-char fragment) and the durable `thinking_content` must
+  supersede it — but any `tool_call`/`token`/message finalized the live
+  block first, so the durable text used to open a duplicate block next to
+  the truncated copy. Finalized preview blocks now stay reachable (per
+  agent, prefix-matched, purged at `done`) and the durable text reconciles
+  into them; the openspace bubble splices the durable text over the
+  tracked preview region instead of regressing at the next coalesced
+  flush.
 - AG-UI: the first run of any new `threadId` no longer fails with "Unknown
   A2A context for this client" — client-chosen thread ids now get-or-create
   their per-key context (`A2AStore.ensure_named_context`, digest-keyed so

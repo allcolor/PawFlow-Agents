@@ -2199,13 +2199,38 @@ function openspaceWireSSE(es) {
     if (!rec) return;
     if (rec.state !== 'thinking') _osSetState(rec, 'thinking');
     // Thinking events carry the text in `text` (see renderThinkingContent).
-    if (_osActive) _osStreamBubble(rec, 'thought', d.text || d.content || '');
+    if (_osActive) {
+      const chunk = String(d.text || d.content || '');
+      // Track the current block's preview region inside thoughtText so
+      // the durable thinking_content can splice over it (the preview is
+      // truncated by design: the emitter never flushes its final chunk).
+      const before = (rec.thoughtText || '').length;
+      if (!(rec._tbStart >= 0)) rec._tbStart = before;
+      _osStreamBubble(rec, 'thought', chunk);
+      if (rec.thoughtText.length !== before + chunk.length) {
+        rec._tbStart = -1;  // runaway cap shifted the text: give up splicing
+      } else {
+        rec._tbEnd = rec.thoughtText.length;
+      }
+    }
   });
   on('thinking_content', (d) => {
     const rec = _osEnsureAgent(_osEventAgent(d));
     if (!rec) return;
-    _osLog(rec, 'thought', t('osvThought'), d.text || d.content || '');
-    if (_osActive) _osShowBubble(rec, 'thought', d.text || d.content || '');
+    const full = String(d.text || d.content || '');
+    _osLog(rec, 'thought', t('osvThought'), full);
+    if (!_osActive || !full) return;
+    // Durable text supersedes this block's truncated preview: splice it
+    // over the tracked region (tool emojis appended after it survive).
+    const txt = rec.thoughtText || '';
+    let start = rec._tbStart, end = rec._tbEnd;
+    if (!(start >= 0) || start > txt.length) start = -1;
+    if (start >= 0 && (!(end >= start) || end > txt.length)) end = txt.length;
+    rec.thoughtText = start >= 0
+      ? txt.slice(0, start) + full + txt.slice(end)
+      : (txt ? txt + (txt.endsWith('\n') ? '' : '\n') + full : full);
+    rec._tbStart = -1; rec._tbEnd = -1;
+    _osShowBubble(rec, 'thought', rec.thoughtText);
   });
   on('tool_call', (d) => {
     const rec = _osEnsureAgent(_osEventAgent(d));
@@ -2251,6 +2276,7 @@ function openspaceWireSSE(es) {
         _osShowBubble(rec, 'speech', d.content);
         rec.speechText = '';
         rec.thoughtText = '';   // the answer closes the accumulated thought
+        rec._tbStart = -1; rec._tbEnd = -1;
       }
     } else if (d.role === 'user') {
       const src = d.source || {};

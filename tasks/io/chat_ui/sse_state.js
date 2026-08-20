@@ -225,6 +225,28 @@ function _finalizeTaskBlock(taskId, iteration, status, color) {
   }
 }
 
+// Preview thinking blocks that were finalized (tool_call/token/message
+// arrived) BEFORE their durable thinking_content landed. The stream preview
+// is truncated BY DESIGN (the emitter flushes ~250-char word-boundary
+// chunks and never flushes the final fragment), so the durable text MUST
+// reconcile into the existing block — recreating one leaves the truncated
+// copy on screen next to a complete duplicate.
+const _pendingThinkingPreviews = {};
+const _PENDING_THINKING_MAX = 8;
+
+function _takePendingThinkingPreview(aKey, finalText) {
+  const pending = _pendingThinkingPreviews[aKey];
+  if (!pending || !pending.length || !finalText) return null;
+  for (let i = 0; i < pending.length; i++) {
+    // The preview is an exact prefix of the durable text (contiguous
+    // word-boundary slices); anything else is a different block.
+    if (pending[i].text && finalText.startsWith(pending[i].text)) {
+      return pending.splice(i, 1)[0];
+    }
+  }
+  return null;
+}
+
 function renderThinkingContent(data, reconcileFinal) {
   const agent = data.agent_name || '';
   const aKey = agentKey(agent);
@@ -234,6 +256,19 @@ function renderThinkingContent(data, reconcileFinal) {
   const current = thinkingElements[aKey];
   if (current && msgId && current.msgId && current.msgId !== msgId) {
     finalizeThinking(agent, 'thinking-message');
+  }
+  if (reconcileFinal) {
+    const live = thinkingElements[aKey];
+    if (!live || !textDelta.startsWith(live.text)) {
+      const pend = _takePendingThinkingPreview(aKey, textDelta);
+      if (pend) {
+        pend.text = textDelta;
+        pend.content.textContent = textDelta;
+        if (msgId) pend.msgId = msgId;
+        if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+        return pend.el;
+      }
+    }
   }
   if (!thinkingElements[aKey]) {
     // Create collapsible details element
@@ -306,6 +341,8 @@ function renderThinkingContent(data, reconcileFinal) {
 // thinking_content must create a new block.
 function finalizeThinking(agentName, reason) {
   const aKey = agentKey(agentName || '');
+  // Turn over: whatever preview was not reconciled never will be.
+  if (reason === 'done') delete _pendingThinkingPreviews[aKey];
   const te = thinkingElements[aKey];
   if (!te) return;
   const elapsed = (Date.now() - te.startTime) / 1000;
@@ -318,6 +355,14 @@ function finalizeThinking(agentName, reason) {
     te.summary.textContent = t('thoughtFor', { sec: elapsed.toFixed(1) });
     te.el.setAttribute('open', '');
     if (te.el.dataset) delete te.el.dataset.live;
+    if (!te.msgId && reason !== 'done') {
+      // Preview-only block (its durable thinking_content has not landed
+      // yet): keep it reachable so the durable text reconciles into it
+      // instead of duplicating it (see _takePendingThinkingPreview).
+      const pending = _pendingThinkingPreviews[aKey] = _pendingThinkingPreviews[aKey] || [];
+      pending.push(te);
+      if (pending.length > _PENDING_THINKING_MAX) pending.shift();
+    }
     delete thinkingElements[aKey];
   }
   if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();

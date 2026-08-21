@@ -241,12 +241,17 @@ function _osBuildOverlayEls(rec, labelText, extraLabelClass) {
   status.className = 'osv-status';
   status.style.display = 'none';
   // Any bubble can spoil the view: a ✕ dismisses it. It comes back by
-  // itself with the next message/thought (_osShowBubble re-shows).
+  // itself with the next message/thought (_osShowBubble re-shows); the
+  // dismissed flag keeps the idle rule from restoring it meanwhile.
   [speech, thought].forEach((el) => {
     const x = document.createElement('span');
     x.className = 'osv-bubble-close';
     x.textContent = '\u00D7';
-    x.onclick = (ev) => { ev.stopPropagation(); el.style.display = 'none'; };
+    x.onclick = (ev) => {
+      ev.stopPropagation();
+      el.style.display = 'none';
+      if (el === speech) rec.speechDismissed = true; else rec.thoughtDismissed = true;
+    };
     el.appendChild(x);
   });
   const batt = document.createElement('div');
@@ -362,9 +367,12 @@ function _osShowBubble(rec, kind, text) {
   if (kind === 'thought') {
     rec.thoughtAt = stamp;
     rec.lastThought = { text: full, at: stamp };
+    rec.thoughtDismissed = false;
   } else {
     rec.speechAt = stamp;
     rec.lastSpeech = { text: full, at: stamp };
+    rec.speechDismissed = false;
+    rec.speechSeeded = false;
   }
   if (!el) return;
   el.classList.remove('osv-stale');
@@ -395,6 +403,9 @@ function _osRestoreBubbles(rec) {
   el.classList.add('osv-stale');
   _osSetBubbleText(rec, kind, _osFull(data.text));
   if (kind === 'speech') rec.speechAt = data.at; else rec.thoughtAt = data.at;
+  // A bubble restored from history stays up (the scene always shows the
+  // last thing each participant said); only LIVE user bubbles fade out.
+  if (kind === 'speech') rec.speechSeeded = true;
 }
 
 // Token streams arrive character by character; coalesce before touching
@@ -447,6 +458,32 @@ function _osLiveAgents() {
 function _osExpireBubbles(now) {
   const live = _osLiveAgents();
   _osAgents.forEach((rec) => {
+    if (rec.kind === 'user') {
+      // Live user messages are transient: they fade out after 10s. The
+      // bubble restored at load keeps showing until a live one replaces it.
+      const shown = rec.speechEl && rec.speechEl.style.display !== 'none';
+      if (shown && !rec.speechSeeded
+          && now - rec.speechAt > OSV_USER_BUBBLE_FADE_MS) {
+        rec.speechText = '';
+        rec.speechEl.style.display = 'none';
+      }
+      return;
+    }
+    if (rec.state === 'idle') {
+      // Zzz rule: an idle agent always shows its last MESSAGE, never its
+      // thinking — the thought bubble goes away and the last speech comes
+      // back dimmed (unless the viewer dismissed it with ✕).
+      if (rec.thoughtEl && rec.thoughtEl.style.display !== 'none') {
+        rec.thoughtText = '';
+        rec.thoughtEl.style.display = 'none';
+      }
+      if (rec.lastSpeech && !rec.speechDismissed && rec.speechEl
+          && rec.speechEl.style.display === 'none') {
+        rec.speechEl.classList.add('osv-stale');
+        _osSetBubbleText(rec, 'speech', _osFull(rec.lastSpeech.text));
+        rec.speechAt = rec.lastSpeech.at;
+      }
+    }
     // The last bubble never disappears: the scene always shows each
     // participant's most recent message or thought. Linger only dims it
     // (osv-stale) and hides the OLDER of the two kinds when both show.
@@ -473,7 +510,6 @@ function _osExpireBubbles(now) {
         rec.thoughtEl.style.display = 'none';
       }
     }
-    if (rec.kind === 'user') return;
     // An agent the tracker lists as running never drifts to Zzz because
     // its provider stayed quiet: a long tool run or an unstreamed thinking
     // pass (flash delegates only forward tool_call/tool_result/thinking_

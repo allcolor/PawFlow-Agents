@@ -649,6 +649,28 @@ def test_running_agents_never_drift_to_idle_while_tracked():
     assert "now - rec.stateSince > OSV_BUBBLE_LINGER_MS + OSV_IDLE_AFTER_MS" in untracked
 
 
+def test_user_bubbles_fade_and_idle_agents_show_their_last_message():
+    src = _openspace_text()
+    # Live user bubbles are transient (10s fade); the bubble restored from
+    # history at load stays until a live one replaces it.
+    assert "const OSV_USER_BUBBLE_FADE_MS = 10000;" in src
+    expire = src.split("function _osExpireBubbles(now)")[1].split("\nfunction ")[0]
+    assert "if (shown && !rec.speechSeeded" in expire
+    assert "now - rec.speechAt > OSV_USER_BUBBLE_FADE_MS" in expire
+    restore = src.split("function _osRestoreBubbles")[1].split("\nfunction ")[0]
+    assert "if (kind === 'speech') rec.speechSeeded = true;" in restore
+    show = src.split("function _osShowBubble")[1].split("\nfunction ")[0]
+    assert "rec.speechSeeded = false;" in show
+    # Zzz rule: an idle agent shows its last MESSAGE, never its thinking;
+    # a bubble the viewer dismissed with the close cross is not restored.
+    idle = expire.split("if (rec.state === 'idle') {")[1].split("// The last bubble never disappears")[0]
+    assert "rec.thoughtEl.style.display = 'none';" in idle
+    assert "rec.lastSpeech && !rec.speechDismissed" in idle
+    assert "_osSetBubbleText(rec, 'speech', _osFull(rec.lastSpeech.text));" in idle
+    assert "if (el === speech) rec.speechDismissed = true; else rec.thoughtDismissed = true;" in src
+    assert "rec.speechDismissed = false;" in show
+
+
 def test_filestore_tv_plays_conversation_files():
     source = _openspace_text()
     # A clickable TV mesh opens the FileStore picker...

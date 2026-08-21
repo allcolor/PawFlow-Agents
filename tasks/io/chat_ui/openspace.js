@@ -25,6 +25,7 @@ const OSV_DESK_SPACING = 7;
 const OSV_BUBBLE_MAX_CHARS = 8000;
 const OSV_BUBBLE_COALESCE_MS = 250;
 const OSV_BUBBLE_LINGER_MS = 6000;
+const OSV_USER_BUBBLE_FADE_MS = 10000;  // live user bubbles disappear after this
 // Per-agent activity log for the PC dialog (bounded ring).
 const OSV_LOG_MAX = 120;
 const OSV_LOG_BLOCK_PREVIEW = 160;

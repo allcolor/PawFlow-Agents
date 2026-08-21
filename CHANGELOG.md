@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- OpenSpace bubbles: live user messages now fade out 10 s after they appear
+  (the one restored from history at load stays until a live one replaces
+  it), and an idle (Zzz) agent always shows its last *message* — the thought
+  bubble is put away and the last speech comes back dimmed, unless the viewer
+  dismissed it with ✕.
 - Context gauges (header battery, active-agents rows, resource panel agents,
   OpenSpace batteries and roster, context editor line) now display the
   percentage **remaining** (100 − used), draining like a battery, and turn

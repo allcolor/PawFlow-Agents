@@ -204,8 +204,8 @@ def _connection_config(job: dict) -> dict:
         # A direct endpoint is public and unauthenticated: the Bearer secret
         # and private-target policy live only on an aguiConnection service,
         # whose endpoint and secret are bound together by its owner.
-        config["agui_auth_secret"] = ""
-        config["agui_allow_private"] = False
+        config.pop("agui_auth_secret", None)
+        config.pop("agui_allow_private", None)
         return config
     from core.service_registry import ServiceRegistry
     service = ServiceRegistry.get_instance().resolve(

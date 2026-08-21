@@ -401,8 +401,8 @@ def test_direct_endpoint_never_carries_secret_or_private_policy():
         "agui_auth_secret": "owner_token", "agui_allow_private": True}}
     resolved = _connection_config(job)
     assert resolved["agui_url"] == "https://example/agui"
-    assert resolved["agui_auth_secret"] == ""
-    assert resolved["agui_allow_private"] is False
+    assert "agui_auth_secret" not in resolved
+    assert "agui_allow_private" not in resolved
 
 
 def test_messages_replays_tool_calls_and_drops_orphan_tool_rows():

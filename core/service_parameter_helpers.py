@@ -424,9 +424,22 @@ def _secret_values(user_id: str, conversation_id: str, store: Any) -> List[Dict[
 
 
 def _fetch_json(url: str, headers: Dict[str, str], timeout: int = 8) -> Dict[str, Any]:
-    req = urllib.request.Request(url, headers=headers)
+    # Always identify as PawFlow: urllib's default `Python-urllib/x.y`
+    # User-Agent is rejected by Cloudflare-fronted providers (error 1010 →
+    # HTTP 403, e.g. opencode.ai), which made the live catalog silently fall
+    # back to the bundled list.
+    req = urllib.request.Request(
+        url, headers={"User-Agent": _pawflow_user_agent(), **headers})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - curated provider model endpoints.
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _pawflow_user_agent() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return "PawFlow/" + version("pawflow")
+    except PackageNotFoundError:
+        return "PawFlow/1.0"
 
 
 def _live_model_values(
@@ -480,7 +493,10 @@ def _live_model_values(
             values.append({"value": mid, "label": row.get("name") or mid if isinstance(row, dict) else mid, "description": "Live provider model."})
         return values[:200], "live", ""
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, ValueError) as exc:
-        return [], "fallback", f"Live model lookup failed ({exc.__class__.__name__}); showing bundled fallback values."
+        detail = exc.__class__.__name__
+        if isinstance(exc, urllib.error.HTTPError):
+            detail += f" {exc.code}"
+        return [], "fallback", f"Live model lookup failed ({detail}); showing bundled fallback values."
 
 
 def _fallback_models(service_type: str, parameter: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:

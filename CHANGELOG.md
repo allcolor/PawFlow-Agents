@@ -36,6 +36,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Service editor model catalog: the live `/models` lookup now sends a
+  `PawFlow/<version>` User-Agent. Cloudflare-fronted OpenAI-compatible
+  providers (e.g. `opencode.ai`) reject urllib's default `Python-urllib`
+  agent with a 403 (error 1010), which made the catalog silently show the
+  bundled fallback list; the fallback warning now includes the HTTP status.
 - OpenSpace: flash delegates (and any agent whose provider stays quiet
   for more than a few seconds — a long tool run, an unstreamed thinking
   pass) no longer drift back to Zzz while they are working. The

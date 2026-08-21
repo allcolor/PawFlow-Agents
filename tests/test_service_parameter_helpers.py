@@ -99,6 +99,63 @@ def test_openrouter_model_helper_allows_public_models_without_api_key(monkeypatc
     assert data["values"][0]["value"] == "openai/gpt-5.5"
 
 
+def test_live_model_lookup_identifies_as_pawflow(monkeypatch):
+    # Cloudflare-fronted providers (opencode.ai) answer 403 / error 1010 to
+    # urllib's default `Python-urllib/x.y` agent; the catalog then silently
+    # fell back to the bundled list. Every live lookup must carry a PawFlow
+    # User-Agent on top of the provider auth header.
+    import urllib.request
+
+    import core.service_parameter_helpers as helpers
+
+    seen = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"data": [{"id": "deepseek-v4-flash"}]}'
+
+    def fake_urlopen(req, timeout=0):
+        seen["url"] = req.full_url
+        seen["headers"] = {k.lower(): v for k, v in req.header_items()}
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    data = helpers.get_service_parameter_helper(
+        "llmConnection", "default_model",
+        {"provider": "openai", "base_url": "https://opencode.ai/zen/go/v1",
+         "api_key": "sk-test"},
+    )
+    assert seen["url"] == "https://opencode.ai/zen/go/v1/models"
+    assert seen["headers"]["user-agent"].startswith("PawFlow/")
+    assert seen["headers"]["authorization"] == "Bearer sk-test"
+    assert data["source"] == "live"
+    assert data["values"][0]["value"] == "deepseek-v4-flash"
+
+
+def test_live_model_lookup_warning_carries_http_status(monkeypatch):
+    import urllib.error
+
+    import core.service_parameter_helpers as helpers
+
+    def fake_fetch_json(url, headers, timeout=8):
+        raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(helpers, "_fetch_json", fake_fetch_json)
+    data = helpers.get_service_parameter_helper(
+        "llmConnection", "default_model",
+        {"provider": "openai", "base_url": "https://opencode.ai/zen/go/v1",
+         "api_key": "sk-test"},
+    )
+    assert data["source"] == "fallback"
+    assert "HTTPError 403" in data["warning"]
+
+
 def test_base_url_helper_suggests_ollama_cloud_endpoint():
     from core.service_parameter_helpers import get_service_parameter_helper
 

@@ -176,6 +176,17 @@ remain attached to the source conversation.
 
 ---
 
+### 2.x Policy gating
+
+A conversation (`gating_link` action, extra `gating_binding`) and/or an agent
+instance (`gating_service` in its conversation config) can be bound to a
+`gating` service that decides `allow` / `deny` / `ask` for every relevant tool
+call against the user's actual request (root message plus later corrections,
+versioned in an authorization context). The agent gate can only tighten the
+conversation gate; structural guards (read-only, explicit deny, catastrophic
+commands, protected paths, capability-widening tools) are never weakened.
+Without a binding nothing changes. See `docs/POLICY_GATING.md`.
+
 ## 3. Agent Loop
 
 The execution cycle follows this pattern:

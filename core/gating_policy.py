@@ -181,6 +181,8 @@ def classify_call(tool_name: str, arguments: Dict[str, Any], *,
     if (read_only_override or permission_mode in ("read_only", "advisor_read_only")) \
             and not ToolApprovalGate.is_read_only_allowed(name, args):
         return "hard_deny", "read-only mode"
+    if tool_permission == "confirm":
+        return "hard_confirm", "tool requires confirmation by permission settings"
     if name in HARD_CONFIRM_TOOLS:
         return "hard_confirm", "widens agent capabilities"
     action = str(args.get("action") or "")

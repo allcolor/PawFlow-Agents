@@ -340,6 +340,12 @@ def _execute_tool(job: dict, registry, call: dict) -> str:
         return (f"Error: wrapped tool '{effective_name}' is not in this "
                 "agent's allowlist.")
     name, args = effective_name, effective_args
+    # Policy gating interim rule (external AG-UI runtime not wired yet).
+    from core.tool_authorization import interim_guard
+    guard = interim_guard(job["user_id"], job["conversation_id"], job["agent_name"],
+                          name, args, runtime="external AG-UI")
+    if guard:
+        return guard
     from core.conversation_store import ConversationStore
     mode = ConversationStore.instance().get_extra(
         job["conversation_id"], "permission_mode") or "default"

@@ -90,6 +90,12 @@ class RealtimeToolBridge:
             logger.debug("[realtime] permission_mode lookup failed",
                          exc_info=True)
         from core.tool_approval import ToolApprovalGate
+        # Policy gating interim rule (voice runtime not wired to the engine yet).
+        from core.tool_authorization import interim_guard
+        _guard = interim_guard(self._user_id, self._cid, self._agent, name, args,
+                               runtime="voice")
+        if _guard:
+            return _guard
         if mode == "read_only":
             if ToolApprovalGate.is_read_only_allowed(name, args):
                 return "approved"

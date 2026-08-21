@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Policy gating (V0)**: a `gating` service (policy prompt on an API-backed
+  LLM and/or sandboxed `gating_script` resources, `llm_scope`,
+  `failure_decision`) bound to a conversation (`gating_link`) and/or an agent
+  (`gating_service`) decides allow / deny / ask for each tool call against the
+  authenticated user's mandate. User messages create or revise a versioned
+  authorization context; the central engine runs on the prepared call in the
+  main agent runtime, keeps every structural guard and the human floor for
+  capability-widening calls, audits each decision, and other runtimes fail
+  closed while a gate is bound. Docs: `docs/POLICY_GATING.md`.
+
 ### Changed
 
 - A2A panel: every publication now also shows its AG-UI URL (`/agui/...`)

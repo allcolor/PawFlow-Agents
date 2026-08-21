@@ -531,6 +531,13 @@ class _ToolRelayExecuteMixin:
                             "data": f"Error: tool '{tool_name}' is not allowed for a read-only advisor."}
                 _tool_perm = ""
 
+            # Policy gating interim rule: the relay runtime is not wired to
+            # core.tool_authorization yet (WP6); a bound gate fails closed.
+            from core.tool_authorization import interim_guard
+            _guard = interim_guard(user_id, _perm_cid, agent_name or "", tool_name,
+                                   arguments, runtime="tool relay")
+            if _guard:
+                return {"type": "result", "request_id": request_id, "data": _guard}
             # Per-tool override (only consulted outside read_only).
             if _tool_perm == "deny":
                 return {"type": "result", "request_id": request_id,

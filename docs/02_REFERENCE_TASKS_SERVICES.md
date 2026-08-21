@@ -536,6 +536,19 @@ Crosses the skill repository with `load_skill` usage statistics (`data/runtime/s
 
 ## 12. Complete Service Reference
 
+### Policy Gating Service (`gating`)
+
+Decides `allow` / `deny` / `ask` for agent tool calls against the
+authenticated user's mandate (`docs/POLICY_GATING.md`). Parameters:
+`llm_service` (API-backed `llmConnection`, required with a prompt), `prompt`
+(policy text), `scripts` (ordered `gating_script` resource names, run in the
+relay sandbox), `llm_scope` (`mutating` | `all` | `none`), `failure_decision`
+(`ask` | `deny`), `max_tokens`, `timeout_seconds`, `script_timeout_seconds`.
+Active only through a conversation binding (`gating_link` /
+`gating_unlink` / `gating_list_available`) or an agent `gating_service`
+reference. Related resource type: `gating_script` (`source` with
+`evaluate(event)`, optional `tools` filter, `fail_decision`).
+
 PawFlow provides 5 shared services, accessible in tasks via `self.get_service("service_id")`.
 
 Service schemas may expose parameter fill helpers through `fill_helper`

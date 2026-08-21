@@ -241,6 +241,14 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
         # Set agent identity for ownership tracking (ManageResourceHandler)
         if agent_name and hasattr(handler, 'set_agent_name'):
             handler.set_agent_name(agent_name)
+        # Policy gating interim rule: a bound gate fails closed here until the
+        # sub-agent runtime is wired to core.tool_authorization (WP6).
+        if conversation_id:
+            from core.tool_authorization import interim_guard
+            _guard = interim_guard(user_id, conversation_id, agent_name, tool_name,
+                                   arguments, runtime="sub-agent")
+            if _guard:
+                return _guard
         # Permission check (per-agent scoped)
         if conversation_id and not read_only:
             try:

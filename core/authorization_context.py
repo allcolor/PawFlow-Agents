@@ -353,7 +353,74 @@ class AuthorizationContextStore:
         return removed
 
 
+# ── active authority per (conversation, agent) ───────────────────────
+#
+# Tool execution runs in worker threads where the contextvar set for the turn
+# is not visible, so the ingress path also records the lineage an agent is
+# currently working under in a conversation extra. This is an explicit record
+# written when an authenticated user message arrives — never a transcript scan.
+
+ACTIVE_AUTHORITY_EXTRA = "gating_authority"
+
+
+def active_authority_ref(conversation_id: str, agent_name: str) -> Optional[AuthorizationRef]:
+    if not conversation_id or not agent_name:
+        return None
+    try:
+        from core.conversation_store import ConversationStore
+        table = ConversationStore.instance().get_extra(conversation_id, ACTIVE_AUTHORITY_EXTRA) or {}
+    except Exception:
+        return None
+    if not isinstance(table, dict):
+        return None
+    return AuthorizationRef.from_dict(table.get(agent_name) or table.get(agent_name.lower()))
+
+
+def set_active_authority_ref(conversation_id: str, agent_name: str,
+                             ref: AuthorizationRef) -> None:
+    from core.conversation_store import ConversationStore
+    store = ConversationStore.instance()
+    table = store.get_extra(conversation_id, ACTIVE_AUTHORITY_EXTRA) or {}
+    if not isinstance(table, dict):
+        table = {}
+    table[agent_name] = dict(ref.to_dict(), updated_at=time.time())
+    store.set_extra(conversation_id, ACTIVE_AUTHORITY_EXTRA, table)
+
+
+def record_user_ingress(*, user_id: str, conversation_id: str, agent_name: str,
+                        message_id: str, turn_id: str, content: Any,
+                        steering: bool) -> Optional[AuthorizationRef]:
+    """Create or revise the lineage for an authenticated user message (plan 10.1/10.2, A4).
+
+    ``steering`` is True when the addressed agent's turn is active: the message
+    revises that agent's lineage. Otherwise a new lineage starts. Returns None
+    (and touches nothing) without a user, agent or text.
+    """
+    text = str(content or "").strip()
+    if not user_id or not conversation_id or not agent_name or not text:
+        return None
+    store = AuthorizationContextStore.instance()
+    doc = None
+    if steering:
+        current = active_authority_ref(conversation_id, agent_name)
+        if current is not None:
+            try:
+                doc = store.append_user_directive(
+                    user_id, conversation_id, current.context_id,
+                    message_id=message_id, content=text)
+            except AuthorizationContextError:
+                doc = None
+    if doc is None:
+        doc = store.create(user_id=user_id, conversation_id=conversation_id,
+                           root_turn_id=turn_id, root_message_id=message_id, content=text)
+    ref = store.ref(doc)
+    set_active_authority_ref(conversation_id, agent_name, ref)
+    return ref
+
+
 __all__ = [
+    "ACTIVE_AUTHORITY_EXTRA", "active_authority_ref", "record_user_ingress",
+    "set_active_authority_ref",
     "AuthorizationContextError", "AuthorizationContextStore", "AuthorizationRef",
     "DEFAULT_ENVELOPE_CHARS", "SOURCE_METADATA_KEY", "StaleRevisionError",
     "authority_envelope", "get_current_ref", "ref_from_message_source",

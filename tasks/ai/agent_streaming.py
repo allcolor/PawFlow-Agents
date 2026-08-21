@@ -261,6 +261,25 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 _persisted_source["target_agent"] = _target or None
         except Exception:
             logger.debug("invalid internal message_source ignored", exc_info=True)
+        def _stamp_authority(msg):
+            """Record the user-mandate lineage (policy gating) on the stamped row.
+
+            A message addressed to an agent whose turn is active revises that
+            agent's lineage; otherwise a new lineage starts. Never breaks ingress.
+            """
+            try:
+                from core.authorization_context import record_user_ingress
+                _ref = record_user_ingress(
+                    user_id=_uid, conversation_id=conversation_id,
+                    agent_name=_target or "",
+                    message_id=str(msg.get("msg_id") or ""),
+                    turn_id=str(msg.get("msg_id") or ""),
+                    content=_user_text, steering=bool(_already_active))
+                if _ref is not None:
+                    msg.setdefault("source", {})["authorization"] = _ref.to_dict()
+            except Exception:
+                logger.debug("authorization ingress record failed", exc_info=True)
+
         if _user_text.strip() or _attachments_body:
             _stamped_user = stamp_message({
                 "role": "user",
@@ -270,6 +289,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 "channel": _channel,
             }, conversation_id)
             _stream_mark("stamped")
+            _stamp_authority(_stamped_user)
             if _attachments_body:
                 _stamped_user["attachments"] = _attachments_body
             try:
@@ -351,6 +371,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin, _AgentStreamin
                 }, conversation_id)
                 if _attachments_body:
                     _stamped_user["attachments"] = _attachments_body
+                _stamp_authority(_stamped_user)
             return _stamped_user
 
         def _queue_pending_user(source: str, publish: bool = True) -> bool:

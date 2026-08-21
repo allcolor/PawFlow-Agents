@@ -186,6 +186,40 @@ class AgentToolExecMixin:
                     _tool_perm = _tperms.get(_eff_name, "")
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
+                # ── Policy gate (docs/POLICY_GATING.md) ────────────────────
+                # Runs on the prepared, effective call. "legacy" means no gate
+                # is bound and the rules below apply unchanged. A gate allow
+                # replaces the generic confirmation for ordinary calls; it can
+                # never weaken a structural guard (read-only, explicit deny,
+                # catastrophic/protected/hard-confirm categories → ask).
+                if not _always_allow_plumbing:
+                    from core.tool_authorization import authorize_tool_call
+                    _policy = authorize_tool_call(
+                        tool_name=_eff_name, arguments=_eff_args, user_id=user_id,
+                        conversation_id=conversation_id, agent_name=agent_name,
+                        turn_id=str(getattr(tc, "turn_id", "") or ""),
+                        call_id=str(getattr(tc, "id", "") or ""),
+                        permission_mode=_perm_mode, tool_permission=_tool_perm,
+                        read_only_override=(permission_mode_override == "read_only"),
+                        secret_values=_secret_values)
+                    if _policy.decision == "deny":
+                        return (f"Error: Tool '{_eff_name}' was denied by the policy "
+                                f"gate: {_policy.reason}")
+                    if _policy.decision == "execute":
+                        return ""
+                    if _policy.decision == "ask":
+                        from core.tool_approval import ToolApprovalGate as _PolicyGate
+                        approval = _PolicyGate.check(
+                            _eff_name,
+                            f"[policy gate] {_policy.reason[:160]} — "
+                            f"{_eff_name}({json.dumps(_eff_args)[:200]})",
+                            event_cid or conversation_id, user_id,
+                            arguments=_eff_args, agent_name=_agent_key,
+                        )
+                        if approval != "approved":
+                            return (f"Error: Tool '{_eff_name}' was {approval} by the "
+                                    "user (policy gate asked for confirmation).")
+                        return ""
                 if _always_allow_plumbing:
                     _tool_perm = "allow"  # get_tool_schema: introspection only
                 if _tool_perm == "deny":

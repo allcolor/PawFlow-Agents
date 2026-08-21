@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.227] — 2026-08-21
+
 ### Added
 
 - **Policy gating (V0)**: a `gating` service (policy prompt on an API-backed

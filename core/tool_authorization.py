@@ -210,6 +210,42 @@ def _record(result: ToolAuthorizationResult, tool_name: str, user_id: str,
     }
 
 
+def gate_for_runtime(*, tool_name: str, arguments: Any, user_id: str, conversation_id: str,
+                     agent_name: str, runtime: str, permission_mode: str = "default",
+                     tool_permission: str = "", allow_prompt: bool = True,
+                     approval_cid: str = "", secret_values: Iterable[str] = ()) -> Optional[str]:
+    """Shared adapter for the secondary runtimes (WP6).
+
+    Returns ``None`` when no gate is bound (the runtime keeps its legacy rules),
+    ``""`` when the gate allows (execute; the generic prompt is replaced), or an
+    error string the runtime must return instead of executing. ``ask`` opens the
+    normal approval dialog, or — for UX-less callers (``allow_prompt=False``) —
+    becomes a needs-confirmation error.
+    """
+    args = arguments if isinstance(arguments, dict) else {}
+    result = authorize_tool_call(
+        tool_name=tool_name, arguments=args, user_id=user_id, conversation_id=conversation_id,
+        agent_name=agent_name, permission_mode=permission_mode, tool_permission=tool_permission,
+        secret_values=secret_values)
+    if result.decision == "legacy":
+        return None
+    if result.decision == "deny":
+        return f"Error: Tool '{tool_name}' was denied by the policy gate: {result.reason}"
+    if result.decision == "execute":
+        return ""
+    if not allow_prompt:
+        return (f"Error: Tool '{tool_name}' requires interactive confirmation "
+                f"(policy gate, {runtime} runtime): {result.reason[:160]}")
+    from core.tool_approval import ToolApprovalGate
+    approval = ToolApprovalGate.check(
+        tool_name, f"[policy gate] {result.reason[:160]} — {tool_name}",
+        approval_cid or conversation_id, user_id, arguments=args, agent_name=agent_name)
+    if approval != "approved":
+        return (f"Error: Tool '{tool_name}' was {approval} by the user "
+                "(policy gate asked for confirmation).")
+    return ""
+
+
 def interim_guard(user_id: str, conversation_id: str, agent_name: str, tool_name: str,
                   arguments: Any, *, runtime: str) -> str:
     """Fail closed on runtimes not yet wired to the engine (plan decision 19).
@@ -250,8 +286,8 @@ def record_execution_outcome(conversation_id: str, decision_id: str, outcome: st
                              "outcome": str(outcome)})
 
 
-__all__ = ["ToolAuthorizationResult", "authorize_tool_call", "list_decisions",
-           "load_authority", "record_execution_outcome"]
+__all__ = ["ToolAuthorizationResult", "authorize_tool_call", "gate_for_runtime",
+           "interim_guard", "list_decisions", "load_authority", "record_execution_outcome"]
 
 # os is used by callers patching the audit dir in tests; keep the import explicit.
 _ = os

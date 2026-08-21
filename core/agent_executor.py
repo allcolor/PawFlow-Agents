@@ -243,12 +243,15 @@ class SubAgentExecutor(_SubAgentExecutorLoopMixin):
             handler.set_agent_name(agent_name)
         # Policy gating interim rule: a bound gate fails closed here until the
         # sub-agent runtime is wired to core.tool_authorization (WP6).
-        if conversation_id:
-            from core.tool_authorization import interim_guard
-            _guard = interim_guard(user_id, conversation_id, agent_name, tool_name,
-                                   arguments, runtime="sub-agent")
-            if _guard:
-                return _guard
+        if conversation_id and not read_only:
+            from core.tool_authorization import gate_for_runtime
+            _gate = gate_for_runtime(
+                tool_name=tool_name, arguments=arguments, user_id=user_id,
+                conversation_id=conversation_id, agent_name=agent_name, runtime="sub-agent")
+            if _gate:
+                return _gate
+            if _gate == "":
+                return self._registry.execute(tc.name, tc.arguments)
         # Permission check (per-agent scoped)
         if conversation_id and not read_only:
             try:

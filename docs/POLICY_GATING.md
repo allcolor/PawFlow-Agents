@@ -80,12 +80,15 @@ log (`gating_decisions` action, last 50 redacted records). Gating services
 are created under Services like any other service; `gating_script`
 resources are managed through the generic resource actions.
 
-## Interim rule for other runtimes
+## Secondary runtimes
 
-Sub-agent executor, ToolRelay, external AG-UI and realtime voice are not yet
-wired to the engine (WP6). Until then, when a gate is bound for the
-conversation or agent, those runtimes must refuse the call with an explicit
-error rather than run it ungated (plan decision 19).
+The sub-agent executor, ToolRelay, realtime voice and the external AG-UI
+client runtime call `core.tool_authorization.gate_for_runtime` on the
+effective call: `None` keeps their legacy rules (no gate bound), `""` executes
+(the gate replaced the generic prompt), an error string is returned instead of
+executing (`deny`, or `ask` answered negatively; voice cannot prompt, so `ask`
+becomes a needs-confirmation message). `interim_guard` remains for any runtime
+added later that is not yet wired (plan decision 19).
 
 ## Limits of V0
 

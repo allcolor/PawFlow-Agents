@@ -152,6 +152,38 @@ def test_ingress_starts_new_lineage_for_new_requests_and_revises_when_steering(e
                                   message_id="m", turn_id="m", content="x", steering=False) is None
 
 
+def test_gate_for_runtime_parity_across_secondary_runtimes(env, monkeypatch):
+    monkeypatch.setattr("core.gating_bindings.resolve_gates", lambda u, c, a="": _resolved())
+    assert ta.gate_for_runtime(tool_name="bash", arguments={}, user_id="alice", conversation_id="c1",
+                               agent_name="a", runtime="tool relay") is None
+    monkeypatch.setattr("core.gating_bindings.resolve_gates", lambda u, c, a="": _resolved(conv=_gate("allow")))
+    assert ta.gate_for_runtime(tool_name="bash", arguments={"command": "ls"}, user_id="alice",
+                               conversation_id="c1", agent_name="a", runtime="voice") == ""
+    monkeypatch.setattr("core.gating_bindings.resolve_gates", lambda u, c, a="": _resolved(conv=_gate("deny", "no")))
+    assert "denied by the policy gate" in ta.gate_for_runtime(
+        tool_name="bash", arguments={}, user_id="alice", conversation_id="c1", agent_name="a", runtime="sub-agent")
+    monkeypatch.setattr("core.gating_bindings.resolve_gates", lambda u, c, a="": _resolved(conv=_gate("ask", "unsure")))
+    assert "requires interactive confirmation" in ta.gate_for_runtime(
+        tool_name="bash", arguments={}, user_id="alice", conversation_id="c1", agent_name="a",
+        runtime="voice", allow_prompt=False)
+    seen = {}
+
+    def fake_check(name, summary, cid, uid, arguments=None, agent_name="", **kw):
+        seen.update(summary=summary, cid=cid)
+        return "denied"
+    monkeypatch.setattr("core.tool_approval.ToolApprovalGate.check", fake_check)
+    out = ta.gate_for_runtime(tool_name="bash", arguments={}, user_id="alice", conversation_id="c1",
+                              agent_name="a", runtime="tool relay", approval_cid="root")
+    assert "denied by the user" in out and seen["cid"] == "root" and "[policy gate]" in seen["summary"]
+    for path, runtime in (("core/agent_executor.py", "sub-agent"), ("services/_realtime_tools.py", "voice"),
+                          ("core/agui_client_runtime.py", "external AG-UI"),
+                          ("services/_tool_relay_execute.py", "tool relay")):
+        with open(path, encoding="utf-8") as handle:
+            src = handle.read()
+        assert "gate_for_runtime(" in src and f'runtime="{runtime}"' in src, path
+        assert "interim_guard(" not in src, path
+
+
 def test_interim_guard_fails_closed_on_unmigrated_runtimes(env, monkeypatch):
     monkeypatch.setattr("core.gating_bindings.resolve_gates",
                         lambda u, c, a="": _resolved(conv=_gate("allow")))
@@ -163,13 +195,8 @@ def test_interim_guard_fails_closed_on_unmigrated_runtimes(env, monkeypatch):
     assert ta.list_decisions("c1")[-1]["runtime"] == "sub-agent"
     monkeypatch.setattr("core.gating_bindings.resolve_gates", lambda u, c, a="": _resolved())
     assert ta.interim_guard("alice", "c1", "assistant", "bash", {}, runtime="voice") == ""
-    for path, runtime in (("core/agent_executor.py", "sub-agent"),
-                          ("services/_realtime_tools.py", "voice"),
-                          ("core/agui_client_runtime.py", "external AG-UI"),
-                          ("services/_tool_relay_execute.py", "tool relay")):
-        with open(path, encoding="utf-8") as handle:
-            src = handle.read()
-        assert "interim_guard(" in src and f'runtime="{runtime}"' in src, path
+    # interim_guard stays available for runtimes added later; the four known
+    # secondary runtimes are now wired to gate_for_runtime (see the parity test).
 
 
 def test_primary_runtime_wires_engine_and_ingress_in_order():

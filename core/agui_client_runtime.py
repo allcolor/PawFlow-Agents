@@ -341,11 +341,15 @@ def _execute_tool(job: dict, registry, call: dict) -> str:
                 "agent's allowlist.")
     name, args = effective_name, effective_args
     # Policy gating interim rule (external AG-UI runtime not wired yet).
-    from core.tool_authorization import interim_guard
-    guard = interim_guard(job["user_id"], job["conversation_id"], job["agent_name"],
-                          name, args, runtime="external AG-UI")
-    if guard:
-        return guard
+    from core.tool_authorization import gate_for_runtime
+    gate = gate_for_runtime(
+        tool_name=name, arguments=args, user_id=job["user_id"],
+        conversation_id=job["conversation_id"], agent_name=job["agent_name"],
+        runtime="external AG-UI")
+    if gate:
+        return gate
+    if gate == "":
+        return str(registry.execute_prepared(prepared))
     from core.conversation_store import ConversationStore
     mode = ConversationStore.instance().get_extra(
         job["conversation_id"], "permission_mode") or "default"

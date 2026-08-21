@@ -533,11 +533,15 @@ class _ToolRelayExecuteMixin:
 
             # Policy gating interim rule: the relay runtime is not wired to
             # core.tool_authorization yet (WP6); a bound gate fails closed.
-            from core.tool_authorization import interim_guard
-            _guard = interim_guard(user_id, _perm_cid, agent_name or "", tool_name,
-                                   arguments, runtime="tool relay")
-            if _guard:
-                return {"type": "result", "request_id": request_id, "data": _guard}
+            from core.tool_authorization import gate_for_runtime
+            _gate = gate_for_runtime(
+                tool_name=tool_name, arguments=arguments, user_id=user_id,
+                conversation_id=_perm_cid, agent_name=agent_name or "", runtime="tool relay",
+                permission_mode=_perm_mode, tool_permission=_tool_perm)
+            if _gate:
+                return {"type": "result", "request_id": request_id, "data": _gate}
+            if _gate == "":
+                _tool_perm = "allow"  # gate allowed: the generic prompt is replaced
             # Per-tool override (only consulted outside read_only).
             if _tool_perm == "deny":
                 return {"type": "result", "request_id": request_id,

@@ -91,11 +91,14 @@ class RealtimeToolBridge:
                          exc_info=True)
         from core.tool_approval import ToolApprovalGate
         # Policy gating interim rule (voice runtime not wired to the engine yet).
-        from core.tool_authorization import interim_guard
-        _guard = interim_guard(self._user_id, self._cid, self._agent, name, args,
-                               runtime="voice")
-        if _guard:
-            return _guard
+        from core.tool_authorization import gate_for_runtime
+        _gate = gate_for_runtime(
+            tool_name=name, arguments=args, user_id=self._user_id, conversation_id=self._cid,
+            agent_name=self._agent, runtime="voice", permission_mode=mode, allow_prompt=False)
+        if _gate:
+            return _gate
+        if _gate == "":
+            return "approved"
         if mode == "read_only":
             if ToolApprovalGate.is_read_only_allowed(name, args):
                 return "approved"

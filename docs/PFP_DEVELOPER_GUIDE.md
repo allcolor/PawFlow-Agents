@@ -623,6 +623,9 @@ Manifest:
     ],
     "worklets": [
       {"id": "audio-processor", "path": "content/ui/audio-processor.js"}
+    ],
+    "templates": [
+      {"slot": "conversation_stage", "path": "content/ui/stage.html"}
     ]
   },
   "slots": [
@@ -639,6 +642,37 @@ Slots accepted in `ui.v1`: `action_menu`, `gear_menu`, `resources_panel`,
 `conversation_stage`, `resources_collection`, and `composer_accessory`. The
 last three hosts are hidden unless an enabled installed extension declares a
 contribution, so a base install has no empty extension UI.
+
+### Server-rendered template fragments
+
+`assets.templates` entries (`{"slot": ..., "path": ...}`) are **inert HTML
+fragments** that PawFlow renders into the page on the server, before any JS
+runs — for markup that must exist at first paint (a stage container, a
+`<template>` definition, a `<link rel="preload">`), with no flicker and no
+DOM building code. `slot` is one of the ten `ui.v1` slots above or one of
+the two page-level points `head` (before `</head>`) and `body_end` (before
+the boot scripts). Rules:
+
+- `.html`, UTF-8, at most 64 KiB each; reviewed at install like a script
+  (a fragment may carry inline `<script>`, so it is part of the consent
+  surface); duplicates refused; a fragment in a conditional slot makes its
+  host visible.
+- The text is inserted **verbatim** — it is never evaluated as a template
+  (`{{ ... }}` stays literal) and never served as a URL (`/chat/ext/...`
+  answers 404 for `.html`). DOM-slot fragments are wrapped in
+  `<div data-pf-ext="<package>" data-pf-template-slot="<slot>">`; `head`
+  fragments are bracketed by `<!-- pf-ext:<package>:head -->` comments.
+- The same gates as the boot manifest apply per request: kill switch,
+  `ui.v1` compatibility, per-conversation enablement, install scope. A
+  fragment whose digest no longer matches the signed install record, or that
+  is missing, oversize or not UTF-8, is skipped and logged once; the page
+  always renders.
+- `pfp.ui.slot()` renders next to the fragment, not over it, and
+  `window.pawflow.unregister()` removes the package's fragments with its
+  slot entries. `data-i18n` attributes inside a fragment resolve against the
+  global catalogs; package strings go through `pfp.t()` from the package's JS.
+- The boot manifest lists the fragments as `templates: [{slot, path}]`
+  (no URL).
 
 Hooks accepted in `ui.v1`: `boot`, `shutdown`, `conversation_changed`,
 `conversation_created`, `conversation_deleted`, `message_appended`,

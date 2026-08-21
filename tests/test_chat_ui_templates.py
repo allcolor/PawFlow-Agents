@@ -6,6 +6,7 @@ the former monolithic template.html so that splitting the skeleton into
 partials never drops a hook the JS modules rely on.
 """
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -160,3 +161,120 @@ def test_environment_is_strict_and_autoescaping():
     # their own lines exactly as in the monolithic page.
     assert _env.keep_trailing_newline is True
     assert '  </div>\n</div>\n</div><!-- /tab-content chat -->' in rendered_chat_html()
+
+
+# ── PFP ui.v1 template fragments (docs/CHAT_UI_TEMPLATES.md) ───────────────
+
+def _fragment_record(root, package, fragments, *, bad_digest=False):
+    """An installed-extension record (as list_installed_ui_extensions returns
+    it) whose content_dir holds the given (slot, file name, text) fragments."""
+    content = Path(root) / "pkg"
+    assets = [{"kind": "script", "path": "content/ui/extension.js",
+               "sha256": "sha256:" + "a" * 64, "size": 1}]
+    for slot, name, text in fragments:
+        path = content / "content" / "ui" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        digest = "0" * 64 if bad_digest else hashlib.sha256(path.read_bytes()).hexdigest()
+        assets.append({"kind": "template", "path": "content/ui/" + name,
+                       "sha256": "sha256:" + digest, "size": path.stat().st_size,
+                       "slot": slot})
+    return {"package": package, "version": "1.0.0", "scope": "user",
+            "content_dir": str(content), "version_compat": "ui.v1",
+            "assets": assets, "slots": [], "hooks": [], "i18n": {}}
+
+
+def test_template_fragments_render_verbatim_into_hosts_and_page_points(tmp_path):
+    from tasks.io.serve_chat_ui import _fragment_cache, _initial_extensions_block, _template_fragments
+    _fragment_cache.clear()
+    rec = _fragment_record(tmp_path, "examples.stage", [
+        ("conversation_stage", "stage.html", '<section id="stage">{{ 7*7 }}</section>'),
+        ("head", "preload.html", '<link rel="preload" href="/x.glb" as="fetch">'),
+        ("body_end", "tpl.html", '<template id="stage-tpl"><b>x</b></template>'),
+        ("sidebar_top", "top.html", '<em class="top">hi</em>'),
+    ])
+    slots = _template_fragments([rec])
+    assert set(slots) == {"conversation_stage", "head", "body_end", "sidebar_top"}
+    html = rendered_chat_html(
+        template_slots=slots,
+        extensions_block=_initial_extensions_block(user_id="alice", records=[rec]))
+    # Verbatim (never compiled as a template) and wrapped for teardown; the
+    # conditional host that received a fragment is visible, the others not.
+    assert ('<div data-pf-slot="conversation_stage_ext"><div data-pf-ext="examples.stage" '
+            'data-pf-template-slot="conversation_stage"><section id="stage">{{ 7*7 }}</section></div></div>') in html
+    assert 'data-pf-slot="composer_accessory_ext" hidden>' in html
+    assert 'data-pf-slot="resources_collection_ext" hidden>' in html
+    assert ('<div class="sidebar-settings" data-pf-slot="sidebar_top_ext" style="order:-1">'
+            '<div data-pf-ext="examples.stage" data-pf-template-slot="sidebar_top"><em class="top">hi</em></div></div>') in html
+    # head: comment-bracketed just before </head>; body_end: after the
+    # extension hosts and before the boot config script.
+    assert ('<!-- pf-ext:examples.stage:head -->\n<link rel="preload" href="/x.glb" as="fetch">\n'
+            '<!-- /pf-ext:examples.stage -->\n</head>') in html
+    assert html.index('id="pf-ext-panel-host"') < html.index('<template id="stage-tpl">') < html.index("const AGENT_PATH")
+    # The boot manifest lists the fragments without a URL.
+    manifest = json.loads(html.split("window.PAWFLOW_EXTENSIONS=")[1].split(";</script>")[0])
+    entry = manifest[0]
+    assert [asset["path"] for asset in entry["assets"]] == ["content/ui/extension.js"]
+    assert entry["templates"] == [
+        {"slot": "conversation_stage", "path": "content/ui/stage.html"},
+        {"slot": "head", "path": "content/ui/preload.html"},
+        {"slot": "body_end", "path": "content/ui/tpl.html"},
+        {"slot": "sidebar_top", "path": "content/ui/top.html"},
+    ]
+
+
+def test_template_fragments_skip_tampered_oversize_escaping_or_missing_files(tmp_path):
+    from tasks.io.serve_chat_ui import _fragment_cache, _template_fragments
+    _fragment_cache.clear()
+    tampered = _fragment_record(tmp_path / "a", "examples.a", [("tab_bar", "t.html", "<i>x</i>")], bad_digest=True)
+    assert _template_fragments([tampered]) == {}
+    oversize = _fragment_record(tmp_path / "b", "examples.b", [("tab_bar", "t.html", "x" * (64 * 1024 + 1))])
+    assert _template_fragments([oversize]) == {}
+    escaping = _fragment_record(tmp_path / "c", "examples.c", [("tab_bar", "t.html", "<i>x</i>")])
+    escaping["assets"][1]["path"] = "../../t.html"
+    assert _template_fragments([escaping]) == {}
+    missing = _fragment_record(tmp_path / "d", "examples.d", [("tab_bar", "t.html", "<i>x</i>")])
+    Path(missing["content_dir"], "content/ui/t.html").unlink()
+    assert _template_fragments([missing]) == {}
+    no_slot = _fragment_record(tmp_path / "e", "examples.e", [("", "t.html", "<i>x</i>")])
+    assert _template_fragments([no_slot]) == {}
+    # The package id is attribute-escaped in the wrapper.
+    quoted = _fragment_record(tmp_path / "f", 'x"y', [("tab_bar", "t.html", "<i>x</i>")])
+    assert _template_fragments([quoted])["tab_bar"] == [
+        '<div data-pf-ext="x&#34;y" data-pf-template-slot="tab_bar"><i>x</i></div>']
+
+
+def test_serve_chat_ui_task_renders_fragments_only_for_enabled_records(tmp_path, monkeypatch):
+    from core import FlowFile
+    from tasks.io.serve_chat_ui import ServeChatUITask, _fragment_cache
+    _fragment_cache.clear()
+    rec = _fragment_record(tmp_path, "examples.stage",
+                           [("conversation_stage", "stage.html", '<section id="stage"></section>')])
+    monkeypatch.setattr("tasks.io.serve_chat_ui._enabled_ui_extension_records",
+                        lambda user_id="", conversation_id="": [rec] if user_id == "alice" else [])
+    task = ServeChatUITask({})
+    ff = FlowFile(content=b"")
+    ff.set_attribute("http.auth.principal", "alice")
+    html = task.execute(ff)[0].get_content().decode("utf-8")
+    assert 'data-pf-template-slot="conversation_stage"><section id="stage"></section></div>' in html
+    assert '"package": "examples.stage"' in html
+    other = task.execute(FlowFile(content=b""))[0].get_content().decode("utf-8")
+    assert "data-pf-template-slot" not in other
+    assert 'data-pf-slot="conversation_stage_ext" hidden>' in other
+
+
+def test_every_template_slot_has_an_extension_point_in_the_partials():
+    from core.pfp_package import _UI_KNOWN_SLOTS, _UI_TEMPLATE_SLOTS
+    sources = {path.relative_to(TEMPLATES_DIR).as_posix(): path.read_text(encoding="utf-8")
+               for path in TEMPLATES_DIR.rglob("*.html")}
+    joined = "\n".join(sources.values())
+    for slot in _UI_TEMPLATE_SLOTS:
+        assert joined.count("{{ ext_fragments('" + slot + "')|safe }}") == 1, slot
+    for slot in _UI_KNOWN_SLOTS:
+        assert 'data-pf-slot="' + slot + '_ext"' in joined, slot
+    for slot in ("conversation_stage", "resources_collection", "composer_accessory"):
+        assert "{{ ext_hidden('" + slot + "') }}" in joined, slot
+    # No newline of their own: an empty page point must leave the page
+    # byte-identical to one with no extension installed.
+    assert "{{ ext_fragments('head')|safe }}</head>" in sources["chat.html"]
+    assert "{{ ext_fragments('body_end')|safe }}{% include \"boot/config.html\" %}" in sources["chat.html"]

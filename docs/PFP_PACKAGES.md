@@ -99,7 +99,11 @@ extension code must pass the URL explicitly to
 route verifies the installed whitelist, enablement, path containment, and full
 file hash during the initial streaming copy, and supports immutable caching
 plus single byte ranges. Runtime hook subscriptions are limited to the hooks
-declared in the signed UI-extension manifest. See the
+declared in the signed UI-extension manifest. `assets.templates` entries
+(`{"slot": "conversation_stage", "path": "content/ui/stage.html"}`) are inert
+HTML fragments (≤ 64 KiB, reviewed like scripts) that the server renders into
+the chat page slot before JS boot; they are hash-verified per request,
+never evaluated as templates and never served as URLs. See the
 [PFP Developer Guide](PFP_DEVELOPER_GUIDE.md#ui-extensions-uiv1) for allowed
 formats, limits, slots, context snapshots, events, and teardown semantics.
 

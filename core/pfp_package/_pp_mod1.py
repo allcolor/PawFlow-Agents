@@ -266,6 +266,14 @@ def _ui_extension_asset_list(obj: Dict[str, Any]) -> List[Dict[str, str]]:
         asset_id = str(item.get("id") or "").strip()
         if path:
             rows.append({"kind": "worklet", "path": path, "id": asset_id})
+    # Server-rendered template fragments: {slot, path}; never served as URLs.
+    for item in raw.get("templates") or []:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        slot = str(item.get("slot") or "").strip()
+        if path:
+            rows.append({"kind": "template", "path": path, "slot": slot})
     return rows
 
 

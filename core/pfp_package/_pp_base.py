@@ -62,6 +62,13 @@ _UI_KNOWN_SLOTS = {
     "header_actions", "tab_bar",
     "conversation_stage", "resources_collection", "composer_accessory",
 }
+# Server-side template slots (docs/CHAT_UI_TEMPLATES.md): a package may ship
+# inert HTML fragments (`assets.templates`) that the server renders into a
+# slot host before JS boot. The DOM slots above plus two page-level points.
+# Fragments are reviewed like scripts, hash-verified at render time, never
+# evaluated by Jinja and never served as URLs.
+_UI_TEMPLATE_SLOTS = _UI_KNOWN_SLOTS | {"head", "body_end"}
+_UI_TEMPLATE_MAX_BYTES = 64 * 1024
 _UI_KNOWN_HOOKS = {
     "boot", "shutdown",
     "conversation_changed", "conversation_created", "conversation_deleted",
@@ -78,9 +85,9 @@ _UI_KNOWN_HOOKS = {
 }
 # `.html` is intentionally absent: a same-origin HTML page served from
 # `/chat/ext/...` could run inline <script> blocks under the user's session
-# even though the runtime only auto-loads .js/.css. Extensions that need to
-# build markup do it through DOM APIs (createElement + textContent) from
-# their .js code.
+# even though the runtime only auto-loads .js/.css. Markup ships either
+# through DOM APIs from the package's .js code or as a server-rendered
+# `assets.templates` fragment (kind "template"), which is not a URL.
 _UI_EXECUTABLE_ASSET_EXTENSIONS = {".js", ".css"}
 _UI_INERT_ASSET_EXTENSIONS = {
     ".json", ".svg", ".png", ".jpg", ".jpeg", ".webp",

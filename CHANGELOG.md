@@ -16,6 +16,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the latest re-points `latest.json` to the highest remaining version. A
   **Discard draft** button in the canvas deletes the working copy without
   touching any version.
+- PFP `ui.v1` (additive): a `ui_extension` may declare `assets.templates`
+  (`{slot, path}`) — inert HTML fragments (`.html`, UTF-8, ≤ 64 KiB,
+  reviewed like scripts) that the server renders into the chat page before
+  JS boot, in any of the ten DOM slots or at the `head` / `body_end` page
+  points. Fragments are hash-verified against the signed install record per
+  request, never evaluated as templates, never served as URLs, wrapped in
+  `data-pf-ext` / `data-pf-template-slot`, kept across client slot renders
+  and removed on `unregister()`. The boot manifest lists them as
+  `templates`. Docs: `PFP_DEVELOPER_GUIDE.md`, `CHAT_UI_TEMPLATES.md`.
 
 ### Changed
 

@@ -1,5 +1,8 @@
 {# Chat page skeleton: document structure and includes only.
-   Regions live in the partials, see docs/CHAT_UI_TEMPLATES.md. #}
+   Regions live in the partials, see docs/CHAT_UI_TEMPLATES.md.
+   ext_fragments(slot)|safe inserts the installed PFP template fragments
+   (inert, hash-verified HTML); the DOM slot hosts do the same inside
+   their partials. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -13,7 +16,7 @@
 {% include "head/styles.html" %}
 {% include "head/vendor.html" %}
 {{ theme_block|safe }}
-</head>
+{{ ext_fragments('head')|safe }}</head>
 <body>
 {% include "sidebar/sidebar.html" %}
 {% include "dialogs/conversation_settings.html" %}
@@ -32,7 +35,7 @@
 </div><!-- /tab-content chat -->
 </div><!-- /main -->
 {% include "ext/hosts.html" %}
-{% include "boot/config.html" %}
+{{ ext_fragments('body_end')|safe }}{% include "boot/config.html" %}
 {% include "boot/scripts.html" %}
 </body>
 </html>

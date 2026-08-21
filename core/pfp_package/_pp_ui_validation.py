@@ -17,6 +17,8 @@ from core.pfp_package._pp_base import (
     _UI_INERT_ASSET_MAX_BYTES,
     _UI_KNOWN_HOOKS,
     _UI_KNOWN_SLOTS,
+    _UI_TEMPLATE_MAX_BYTES,
+    _UI_TEMPLATE_SLOTS,
 )
 from core.pfp_package._pp_mod1 import _safe_relpath, _ui_extension_asset_list
 
@@ -29,7 +31,7 @@ def _validate_ui_extension_object(
     assets = obj.get("assets")
     if not isinstance(assets, dict):
         return "ui_extension.assets must be an object with scripts/styles"
-    for key in ("scripts", "styles", "worklets"):
+    for key in ("scripts", "styles", "worklets", "templates"):
         if key in assets and not isinstance(assets[key], list):
             return f"ui_extension.assets.{key} must be an array"
     if "i18n" in assets and not isinstance(assets["i18n"], dict):
@@ -55,6 +57,14 @@ def _validate_ui_extension_object(
             return "ui_extension.assets.worklets entries require an id"
         if not str(entry.get("path") or "").strip():
             return "ui_extension.assets.worklets entries require a path"
+    for entry in assets.get("templates", []):
+        if not isinstance(entry, dict):
+            return "ui_extension.assets.templates entries must be objects"
+        slot = str(entry.get("slot") or "").strip()
+        if slot not in _UI_TEMPLATE_SLOTS:
+            return f"ui_extension.assets.templates: unknown slot {slot!r}"
+        if not str(entry.get("path") or "").strip():
+            return "ui_extension.assets.templates entries require a path"
     rows = _ui_extension_asset_list(obj)
     if not rows or not any(row["kind"] == "script" for row in rows):
         return "ui_extension must declare at least one script"
@@ -83,9 +93,16 @@ def _validate_ui_extension_object(
             return f"ui_extension style must be a .css file: {row['path']}"
         if kind == "i18n" and ext != ".json":
             return f"ui_extension i18n catalog must be a .json file: {row['path']}"
+        if kind == "template":
+            if ext != ".html":
+                return f"ui_extension template must be a .html file: {row['path']}"
+            try:
+                files[rel].decode("utf-8")
+            except UnicodeDecodeError:
+                return f"ui_extension template must be UTF-8 text: {row['path']}"
         if kind == "file" and ext not in _UI_INERT_ASSET_EXTENSIONS:
             return f"ui_extension asset extension is not allowed: {row['path']}"
-        if kind != "worklet" and ext not in _UI_ASSET_EXTENSIONS:
+        if kind not in {"worklet", "template"} and ext not in _UI_ASSET_EXTENSIONS:
             return f"ui_extension asset extension is not allowed: {row['path']}"
         if kind in {"file", "worklet"}:
             asset_id = str(row.get("id") or "")
@@ -96,8 +113,12 @@ def _validate_ui_extension_object(
                     return f"ui_extension file asset has duplicate id: {asset_id!r}"
                 seen_file_ids.add(asset_id)
         size = len(files[rel])
-        max_size = (_UI_INERT_ASSET_MAX_BYTES if kind == "file"
-                    else _UI_EXECUTABLE_ASSET_MAX_BYTES)
+        if kind == "file":
+            max_size = _UI_INERT_ASSET_MAX_BYTES
+        elif kind == "template":
+            max_size = _UI_TEMPLATE_MAX_BYTES
+        else:
+            max_size = _UI_EXECUTABLE_ASSET_MAX_BYTES
         if size > max_size:
             return (f"ui_extension asset is too large: {row['path']} "
                     f"({size} > {max_size} bytes)")

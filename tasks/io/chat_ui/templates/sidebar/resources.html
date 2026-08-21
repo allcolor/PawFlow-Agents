@@ -8,9 +8,9 @@
     </div>
     <div class="sidebar-section-body sidebar-resources-body" id="resourcesBody" aria-hidden="true">
       <div id="resourcesContent" style="font-size:12px;color:var(--pf-muted);"></div>
-      <div data-pf-slot="resources_collection_ext" hidden></div>
-      <div data-pf-slot="resources_panel_ext"></div>
+      <div data-pf-slot="resources_collection_ext"{{ ext_hidden('resources_collection') }}>{{ ext_fragments('resources_collection')|safe }}</div>
+      <div data-pf-slot="resources_panel_ext">{{ ext_fragments('resources_panel')|safe }}</div>
     </div>
   </div>
-  <div class="sidebar-settings" data-pf-slot="sidebar_bottom_ext"></div>
-  <div class="sidebar-settings" data-pf-slot="sidebar_top_ext" style="order:-1"></div>
+  <div class="sidebar-settings" data-pf-slot="sidebar_bottom_ext">{{ ext_fragments('sidebar_bottom')|safe }}</div>
+  <div class="sidebar-settings" data-pf-slot="sidebar_top_ext" style="order:-1">{{ ext_fragments('sidebar_top')|safe }}</div>

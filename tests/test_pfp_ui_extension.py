@@ -724,3 +724,81 @@ def test_ext_runtime_has_asset_loader():
 def test_ext_runtime_filters_by_version_compat():
     src = Path("tasks/io/chat_ui/ext_runtime.js").read_text(encoding="utf-8")
     assert "entry.version_compat !== UI_API_VERSION" in src
+
+
+# ── Server-rendered template fragments (assets.templates) ───────────────────────────────
+
+def _with_template(pkgdir, *, slot="conversation_stage", name="stage.html",
+                   content=b'<section id="stage"></section>'):
+    """Add one template fragment (file + manifest entry) to a written package."""
+    (pkgdir / "content" / "ui" / name).write_bytes(content)
+    manifest = json.loads((pkgdir / "pfp.json").read_text(encoding="utf-8"))
+    obj = manifest["objects"][0]
+    obj["assets"].setdefault("templates", []).append({"slot": slot, "path": "content/ui/" + name})
+    (pkgdir / "pfp.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return pkgdir
+
+
+def _inspect_row(pkgdir, keypair):
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    plan = pfp_package.inspect_pfp(built["path"], user_id="alice")
+    return next(r for r in plan["objects"] if r["type"] == "ui_extension"), built
+
+
+def test_ui_extension_accepts_template_fragment_in_any_template_slot(tmp_path, keypair):
+    pkgdir = _with_template(_write_ui_extension_pkg(tmp_path, keypair))
+    _with_template(pkgdir, slot="head", name="preload.html", content=b'<link rel="preload" href="/x" as="fetch">')
+    _with_template(pkgdir, slot="body_end", name="tpl.html", content=b"<template></template>")
+    row, _ = _inspect_row(pkgdir, keypair)
+    assert row["status"] == "new", row
+    assert row["capabilities"]["ui_extension"]["asset_count"] == 5
+    assert pfp_package._UI_TEMPLATE_SLOTS == pfp_package._UI_KNOWN_SLOTS | {"head", "body_end"}
+
+
+@pytest.mark.parametrize("slot,name,content,needle", [
+    ("made_up_slot", "s.html", b"<b></b>", "unknown slot"),
+    ("head", "s.txt", b"<b></b>", "must be a .html"),
+    ("head", "s.html", b"x" * (64 * 1024 + 1), "too large"),
+    ("head", "s.html", b"\xff\xfe<b>", "UTF-8"),
+])
+def test_ui_extension_rejects_bad_template_fragment(tmp_path, keypair, slot, name, content, needle):
+    pkgdir = _with_template(_write_ui_extension_pkg(tmp_path, keypair),
+                            slot=slot, name=name, content=content)
+    row, _ = _inspect_row(pkgdir, keypair)
+    assert row["status"] == "blocked"
+    assert needle in row["reason"], row["reason"]
+
+
+def test_ui_extension_rejects_non_object_template_entries(tmp_path, keypair):
+    pkgdir = _write_ui_extension_pkg(tmp_path, keypair,
+                                     extra_assets={"templates": ["content/ui/stage.html"]})
+    row, _ = _inspect_row(pkgdir, keypair)
+    assert row["status"] == "blocked"
+    assert "templates entries must be objects" in row["reason"]
+
+
+def test_template_fragment_install_record_boot_manifest_and_no_url(tmp_path, keypair, monkeypatch):
+    monkeypatch.setattr("core.paths.REPOSITORY_DIR", tmp_path / "repo")
+    pkgdir = _with_template(_write_ui_extension_pkg(tmp_path, keypair))
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+    result = pfp_package.install_pfp(built["path"], user_id="alice", include=["ui_extension:main"])
+    assert result["ok"] is True, json.dumps(result, indent=2)
+    rec = pfp_package.list_installed_ui_extensions(user_id="alice", scope="user")[0]
+    fragment = next(a for a in rec["assets"] if a["kind"] == "template")
+    assert fragment["slot"] == "conversation_stage"
+    assert fragment["path"] == "content/ui/stage.html"
+    assert fragment["sha256"].startswith("sha256:") and fragment["size"] > 0
+
+    from tasks.io.serve_chat_ui import _initial_extensions_block, _template_fragments
+    out = _initial_extensions_block(user_id="alice")
+    entry = json.loads(out.split("window.PAWFLOW_EXTENSIONS=")[1].split(";</script>")[0])[0]
+    assert entry["templates"] == [{"slot": "conversation_stage", "path": "content/ui/stage.html"}]
+    assert all(a["kind"] != "template" for a in entry["assets"])
+    assert "stage.html" not in json.dumps(entry["assets"])
+    slots = _template_fragments([rec])
+    assert slots["conversation_stage"] == [
+        '<div data-pf-ext="examples.ui-hello" data-pf-template-slot="conversation_stage">'
+        '<section id="stage"></section></div>']
+    # Never a URL: the asset server refuses .html even with the right digest.
+    out = _serve_asset_task(_get_asset_url(rec, "content/ui/stage.html"))
+    assert out.get_attribute("http.response.status") == "404"

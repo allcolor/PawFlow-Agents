@@ -77,6 +77,21 @@
 
   function _isString(v) { return typeof v === 'string' && v.length > 0; }
   function _isFn(v) { return typeof v === 'function'; }
+  // Server-rendered PFP template fragments (docs/CHAT_UI_TEMPLATES.md) are
+  // plain nodes in the page. Every DOM read below is capability-checked:
+  // this runtime also boots under minimal DOM shims.
+  function _hasTemplateFragment(host) {
+    if (!host || !_isFn(host.querySelector)) return false;
+    return !!host.querySelector('[data-pf-template-slot]');
+  }
+  function _removeTemplateFragments(packageId) {
+    if (!_isFn(document.querySelectorAll)) return;
+    var nodes = document.querySelectorAll(
+      '[data-pf-template-slot][data-pf-ext="' + packageId + '"]');
+    Array.prototype.slice.call(nodes).forEach(function (node) {
+      if (node.parentNode) node.parentNode.removeChild(node);
+    });
+  }
   function _slotEl(slotName) {
     return document.querySelector('[data-pf-slot="' + slotName + '_ext"]');
   }
@@ -99,7 +114,9 @@
     });
     CONDITIONAL_SLOTS.forEach(function (slotName) {
       var host = _slotEl(slotName);
-      if (host) host.hidden = !declared[slotName];
+      // A server-rendered template fragment (data-pf-template-slot) is a
+      // contribution too: the host stays visible while one is present.
+      if (host) host.hidden = !(declared[slotName] || _hasTemplateFragment(host));
     });
   }
 
@@ -127,7 +144,13 @@
   function _renderSlot(slotName) {
     var host = _slotEl(slotName);
     if (!host) return;
-    while (host.firstChild) host.removeChild(host.firstChild);
+    // Re-render only the client entries; server-rendered template fragments
+    // ([data-pf-template-slot]) stay in place.
+    Array.prototype.slice.call(host.children || []).forEach(function (child) {
+      if (!_isFn(child.hasAttribute) || child.hasAttribute('data-pf-slot-entry')) {
+        host.removeChild(child);
+      }
+    });
     var entries = _slotEntries[slotName] || [];
     entries.forEach(function (entry) {
       var node;
@@ -578,6 +601,8 @@
     if (window._pawflowSemanticRuntime) {
       window._pawflowSemanticRuntime.disablePackage(packageId);
     }
+    // Server-rendered template fragments of the package go with it.
+    _removeTemplateFragments(packageId);
     delete _packages[packageId];
     _unregisteredPackages[packageId] = true;
     _syncConditionalSlots();

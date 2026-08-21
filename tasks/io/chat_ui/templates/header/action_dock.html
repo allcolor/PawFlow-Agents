@@ -87,8 +87,8 @@
           <span class="ami-icon">&#9881;</span>
           <div><div class="ami-label">Server settings</div><div class="ami-desc">Administration and updates</div></div>
         </button>
-        <div data-pf-slot="action_menu_ext"></div>
-        <span data-pf-slot="header_actions_ext"></span>
+        <div data-pf-slot="action_menu_ext">{{ ext_fragments('action_menu')|safe }}</div>
+        <span data-pf-slot="header_actions_ext">{{ ext_fragments('header_actions')|safe }}</span>
       </div>
       <div class="action-menu" id="adminSettingsMenu">
         <div class="action-menu-item" onclick="closeAdminSettingsMenu();openAdminUsersDialog()">
@@ -111,7 +111,7 @@
           <span class="ami-icon">&#x21BB;</span>
           <div><div class="ami-label">Updates</div><div class="ami-desc">Installed versions and agent CLI image rebuild</div></div>
         </div>
-        <div data-pf-slot="gear_menu_ext"></div>
+        <div data-pf-slot="gear_menu_ext">{{ ext_fragments('gear_menu')|safe }}</div>
       </div>
   </div>
   <!-- /action dock -->

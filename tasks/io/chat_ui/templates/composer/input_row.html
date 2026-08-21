@@ -1,6 +1,6 @@
   <div class="input-row">
     <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
-    <div data-pf-slot="composer_accessory_ext" hidden></div>
+    <div data-pf-slot="composer_accessory_ext"{{ ext_hidden('composer_accessory') }}>{{ ext_fragments('composer_accessory')|safe }}</div>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"
               rows="1" onkeydown="handleKey(event)"></textarea>

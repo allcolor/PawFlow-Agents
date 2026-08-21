@@ -223,6 +223,20 @@ def test_template_has_modal_and_panel_hosts(template_src):
     assert 'id="pf-ext-panel-host"' in template_src
 
 
+def test_runtime_keeps_server_rendered_template_fragments():
+    src = (_CHAT_UI / "ext_runtime.js").read_text(encoding="utf-8")
+    # A client re-render drops only its own entries, never the server fragments.
+    assert "while (host.firstChild)" not in src
+    assert "child.hasAttribute('data-pf-slot-entry')" in src
+    # A fragment keeps a conditional host visible; teardown removes the package's fragments.
+    assert "host.hidden = !(declared[slotName] || _hasTemplateFragment(host));" in src
+    assert "'[data-pf-template-slot][data-pf-ext=\"' + packageId + '\"]'" in src
+    # Every fragment DOM read is capability-checked: the runtime also boots
+    # under a minimal DOM shim.
+    assert "if (!_isFn(document.querySelectorAll)) return;" in src
+    assert "if (!host || !_isFn(host.querySelector)) return false;" in src
+
+
 # ── Hook firing points ───────────────────────────────────────────────────────────────
 
 def _firing_in(file_path: str, hook_name: str) -> bool:

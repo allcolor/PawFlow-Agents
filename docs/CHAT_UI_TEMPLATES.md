@@ -31,6 +31,7 @@ html = render_chat_page(agent_path="/api/agent", sse_path="/api/agent/events",
   | `i18n_block` | str, `|safe` | `<script>` with `PAWFLOW_I18N_LANGUAGES` / `PAWFLOW_I18N_CATALOGS` |
   | `theme_block` | str, `|safe` | `<style id="custom-theme">` + `PAWFLOW_INITIAL_THEME_REF`, or empty |
   | `extensions_block` | str, `|safe` | `PAWFLOW_EXTENSION_CONTEXT` / `PAWFLOW_EXTENSIONS` boot manifest (the empty manifest when the caller passes none) |
+  | `template_slots` | dict | `{slot: [fragment html, ...]}` — the enabled PFP packages' server-rendered fragments (see below) |
   | `agent_path`, `sse_path`, `login_url` | str | serveChatUI task parameters, emitted with `tojson` inside `<script>` |
   | `custom_css` | str | serveChatUI `custom_css` (+ `custom_css_file`), inserted inside the main `<style>` with `|safe` after `</style` neutralisation |
 
@@ -96,6 +97,37 @@ Rules for partials:
   (`tests/test_chat_ui_templates.py` pins the id / slot / i18n-key sets).
 
 ## Tests
+
+## Extension points (PFP `ui.v1` template fragments)
+
+An installed `ui_extension` may declare `assets.templates:
+[{slot, path}]` — inert HTML fragments the server renders into the page
+before JS boot (PFP_DEVELOPER_GUIDE.md, "Server-rendered template
+fragments"). Slots: the ten DOM slots (`action_menu`, `gear_menu`,
+`resources_panel`, `sidebar_top`, `sidebar_bottom`, `header_actions`,
+`tab_bar`, `conversation_stage`, `resources_collection`,
+`composer_accessory`) plus `head` and `body_end`.
+
+- `serve_chat_ui._enabled_ui_extension_records()` is the single gate (user,
+  install records, kill switch, `ui.v1`, per-conversation toggle) for both
+  the boot manifest and the fragments; `_template_fragments()` reads each
+  fragment once per `(package, sha256)`, checks containment, size (64 KiB)
+  and digest against the signed install record, and wraps it in
+  `<div data-pf-ext="<package>" data-pf-template-slot="<slot>">` (`head`:
+  comment markers). A bad fragment is skipped and logged once.
+- Templates call two environment globals: `{{ ext_fragments('slot')|safe }}`
+  inside every slot host and at the `head` / `body_end` points of the
+  skeleton, and `{{ ext_hidden('slot') }}` on the conditional hosts
+  (`conversation_stage`, `resources_collection`, `composer_accessory`), which
+  drops the `hidden` attribute when a fragment is present. The fragment text
+  is never compiled by Jinja: `|safe` is the only thing that happens to it.
+- `ext_runtime.js` re-renders only its own `[data-pf-slot-entry]` children,
+  keeps a host visible while it holds a `[data-pf-template-slot]` node, and
+  removes a package's fragments on `unregister()`.
+- Adding a slot: add the host (or point) in the partial with the two
+  globals, the name in `core/pfp_package/_pp_base.py` (`_UI_TEMPLATE_SLOTS`,
+  plus `_UI_KNOWN_SLOTS` and `ext_runtime.js` `KNOWN_SLOTS` for a DOM slot),
+  the snapshot fixture and the developer guide. Additive changes stay `ui.v1`.
 
 Tests never read a template file: `tests/chat_ui_testing.py` exposes
 `rendered_chat_html(**context)` (the page rendered through

@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import unquote
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, pass_context
+from markupsafe import escape
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
@@ -139,6 +140,32 @@ _preload_started = False
 _preload_lock = threading.Lock()
 _i18n_block_cache: Tuple[tuple, str] = ((), "")
 _i18n_block_lock = threading.Lock()
+# Server-rendered PFP template fragments, keyed by (package, sha256): the
+# file is read and digest-checked once per installed version.
+_fragment_cache: Dict[Tuple[str, str], str] = {}
+_fragment_lock = threading.Lock()
+_fragment_warned: set = set()
+# Mirrors core.pfp_package._UI_TEMPLATE_MAX_BYTES without importing the
+# package module on every page (the install validator is the authority).
+_TEMPLATE_FRAGMENT_MAX_BYTES = 64 * 1024
+
+
+@pass_context
+def _ext_fragments(context, slot: str) -> str:
+    """HTML of the enabled packages' fragments for ``slot`` (use with |safe)."""
+    slots = context.get("template_slots") or {}
+    return "".join(slots.get(slot) or [])
+
+
+@pass_context
+def _ext_hidden(context, slot: str) -> str:
+    """`` hidden`` for a conditional host that received no fragment."""
+    slots = context.get("template_slots") or {}
+    return "" if slots.get(slot) else " hidden"
+
+
+_env.globals["ext_fragments"] = _ext_fragments
+_env.globals["ext_hidden"] = _ext_hidden
 
 
 def _stat_items(base: Path, pattern: str, prefix: str) -> list:
@@ -252,43 +279,30 @@ def _initial_i18n_block() -> str:
     return html
 
 
-def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> str:
-    """Bootstrap manifest for installed UI extensions.
+def _enabled_ui_extension_records(user_id: str = "", conversation_id: str = "") -> List[Dict[str, Any]]:
+    """Installed ``ui.v1`` extension records this page may use.
 
-    Each entry carries `package`, `version`, `slots`, `hooks`, `i18n`, and a
-    list of `assets` with public URLs already shaped as
-    `/chat/ext/<package>/<short_hash>/<file>` so the browser-side runtime
-    can `import()` them with an immutable cache key. Only `ui.v1`-compatible
-    packages are emitted here; mismatched packages are silently dropped at
-    serve time and logged once on install (where the user can still see them
-    in the install plan).
+    One gate for the boot manifest and the server-rendered fragments: a
+    session user, install records present, the global kill switch, the
+    ``ui.v1`` contract and the per-conversation toggle.
     """
-    context = {"user": user_id, "conversation": conversation_id}
-
-    def _block(entries):
-        context_json = json.dumps(context, ensure_ascii=False).replace("<", "\\u003c")
-        entries_json = json.dumps(entries, ensure_ascii=False).replace("<", "\\u003c")
-        return (
-            "<script>window.PAWFLOW_EXTENSION_CONTEXT=" + context_json
-            + ";window.PAWFLOW_EXTENSIONS=" + entries_json + ";</script>\n")
-
     if not user_id:
-        return _block([])
+        return []
     if not _has_pfp_install_records(user_id, conversation_id):
-        return _block([])
+        return []
     try:
         from core.pfp_package import list_installed_ui_extensions, _UI_API_VERSION
         from core.tool_mcp_filters import (
             _ui_extensions_globally_disabled, is_extension_enabled,
         )
         if _ui_extensions_globally_disabled():
-            return _block([])
+            return []
         scope = "conversation" if conversation_id else "user"
         records = list_installed_ui_extensions(
             user_id=user_id, conversation_id=conversation_id, scope=scope)
     except Exception:
         logger.debug("PFP UI extensions lookup failed", exc_info=True)
-        return _block([])
+        return []
     out = []
     for rec in records:
         if rec.get("version_compat") != _UI_API_VERSION:
@@ -298,11 +312,38 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
         if conversation_id and not is_extension_enabled(
                 conversation_id, str(rec.get("package") or "")):
             continue
+        out.append(rec)
+    return out
+
+
+def _initial_extensions_block(user_id: str = "", conversation_id: str = "",
+                              records: Optional[List[Dict[str, Any]]] = None) -> str:
+    """Bootstrap manifest for installed UI extensions.
+
+    Each entry carries `package`, `version`, `slots`, `hooks`, `i18n`,
+    `templates` (the server-rendered fragments, as ``{slot, path}``) and a
+    list of `assets` with public URLs already shaped as
+    `/chat/ext/<package>/<short_hash>/<file>` so the browser-side runtime
+    can `import()` them with an immutable cache key. Template fragments have
+    no URL: they are inserted into the page by :func:`_template_fragments`.
+    Only `ui.v1`-compatible packages are emitted here; mismatched packages
+    are silently dropped at serve time and logged once on install (where the
+    user can still see them in the install plan).
+    """
+    context = {"user": user_id, "conversation": conversation_id}
+    if records is None:
+        records = _enabled_ui_extension_records(user_id, conversation_id)
+    out = []
+    for rec in records:
         package = rec.get("package") or ""
         assets = []
+        templates = []
         for asset in rec.get("assets") or []:
             digest = str(asset.get("sha256") or "").replace("sha256:", "")
             if not digest:
+                continue
+            if asset.get("kind") == "template":
+                templates.append({"slot": asset.get("slot", ""), "path": asset.get("path", "")})
                 continue
             short = digest[:16]
             url = f"/chat/ext/{package}/{short}/{asset['path']}"
@@ -321,11 +362,105 @@ def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> s
             "scope": rec.get("scope", ""),
             "version_compat": rec.get("version_compat", ""),
             "assets": assets,
+            "templates": templates,
             "slots": rec.get("slots", []),
             "hooks": rec.get("hooks", []),
             "i18n": rec.get("i18n", {}),
         })
-    return _block(out)
+    context_json = json.dumps(context, ensure_ascii=False).replace("<", "\\u003c")
+    entries_json = json.dumps(out, ensure_ascii=False).replace("<", "\\u003c")
+    return (
+        "<script>window.PAWFLOW_EXTENSION_CONTEXT=" + context_json
+        + ";window.PAWFLOW_EXTENSIONS=" + entries_json + ";</script>\n")
+
+
+def _warn_fragment_once(key: Tuple[str, str], message: str) -> None:
+    with _fragment_lock:
+        if key in _fragment_warned:
+            return
+        _fragment_warned.add(key)
+    logger.warning("PFP template fragment skipped (%s/%s): %s", key[0], key[1], message)
+
+
+def _read_fragment(package: str, content_dir: str, asset: Dict[str, Any]) -> str:
+    """The fragment text, or "" when it must be skipped (never breaks the page).
+
+    Containment, size and SHA-256 are checked against the signed install
+    record, exactly like the asset server does for URL assets.
+    """
+    path = str(asset.get("path") or "")
+    expected = str(asset.get("sha256") or "").lower().replace("sha256:", "")
+    key = (package, expected or path)
+    with _fragment_lock:
+        cached = _fragment_cache.get(key)
+    if cached is not None:
+        return cached
+    if not expected:
+        _warn_fragment_once(key, "install record carries no digest")
+        return ""
+    root = Path(content_dir or "").resolve()
+    target = (root / path).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        _warn_fragment_once(key, "fragment escapes the content directory")
+        return ""
+    try:
+        if target.stat().st_size > _TEMPLATE_FRAGMENT_MAX_BYTES:
+            _warn_fragment_once(key, "fragment larger than the template limit")
+            return ""
+        data = target.read_bytes()
+    except OSError as exc:
+        _warn_fragment_once(key, f"cannot read fragment: {exc}")
+        return ""
+    if hashlib.sha256(data).hexdigest() != expected:
+        _warn_fragment_once(key, "fragment digest does not match the install record")
+        return ""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        _warn_fragment_once(key, "fragment is not UTF-8")
+        return ""
+    with _fragment_lock:
+        _fragment_cache[key] = text
+    return text
+
+
+def _template_fragments(records: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """``{slot: [wrapped fragment html, ...]}`` for the enabled packages.
+
+    The text is inserted verbatim (never compiled by Jinja). DOM slots wrap
+    it in ``<div data-pf-ext="<package>" data-pf-template-slot="<slot>">`` so
+    the runtime can find and tear it down; ``head`` fragments are bracketed
+    by comments instead (a div is not valid inside <head>).
+    """
+    slots: Dict[str, List[str]] = {}
+    for rec in records:
+        package = str(rec.get("package") or "")
+        content_dir = str(rec.get("content_dir") or "")
+        for asset in rec.get("assets") or []:
+            if asset.get("kind") != "template":
+                continue
+            slot = str(asset.get("slot") or "")
+            if not slot:
+                continue
+            text = _read_fragment(package, content_dir, asset)
+            if not text:
+                continue
+            pkg_attr = str(escape(package))
+            if slot == "head":
+                # A <div> is not valid inside <head>: bracket with comments.
+                wrapped = (f"<!-- pf-ext:{pkg_attr}:head -->\n{text}\n"
+                           f"<!-- /pf-ext:{pkg_attr} -->\n")
+            else:
+                wrapped = (f'<div data-pf-ext="{pkg_attr}" data-pf-template-slot="{escape(slot)}">'
+                           f"{text}</div>")
+                # The two page-level points sit between block elements, so
+                # they close their own line; a DOM slot host stays inline.
+                if slot == "body_end":
+                    wrapped += "\n"
+            slots.setdefault(slot, []).append(wrapped)
+    return slots
 
 
 def _compute_js_version(sig=None) -> str:
@@ -362,18 +497,21 @@ def _has_pfp_install_records(user_id: str, conversation_id: str = "") -> bool:
 def render_chat_page(*, agent_path: str = "/api/agent",
                      sse_path: str = "/api/agent/events", login_url: str = "",
                      theme_block: str = "", extensions_block: Optional[str] = None,
+                     template_slots: Optional[Dict[str, List[str]]] = None,
                      custom_css: str = "") -> str:
     """Render ``templates/chat.html`` for one request.
 
     ``theme_block``, ``extensions_block`` (the empty boot manifest when
     omitted) and the i18n block are HTML built by this module that the
-    template inserts with ``|safe``; ``custom_css`` is operator configuration
-    inserted inside the main ``<style>``; every other value is autoescaped by
-    the template (paths go through ``tojson`` in scripts).
+    template inserts with ``|safe``; ``template_slots`` holds the PFP
+    fragments per slot (``ext_fragments()`` / ``ext_hidden()`` globals);
+    ``custom_css`` is operator configuration inserted in its own ``<style>``;
+    every other value is autoescaped by the template (paths go through
+    ``tojson`` in scripts).
     """
     sig = _asset_signature()
     if extensions_block is None:
-        extensions_block = _initial_extensions_block()
+        extensions_block = _initial_extensions_block(records=[])
     return _env.get_template("chat.html").render(
         asset_version=_compute_js_version(sig),
         js_modules=[mod for mod in _JS_MODULES if (_CHAT_UI_DIR / mod).exists()],
@@ -381,6 +519,7 @@ def render_chat_page(*, agent_path: str = "/api/agent",
         i18n_block=_initial_i18n_block(),
         theme_block=theme_block or "",
         extensions_block=extensions_block,
+        template_slots=template_slots or {},
         agent_path=agent_path,
         sse_path=sse_path,
         login_url=login_url,
@@ -472,12 +611,14 @@ class ServeChatUITask(BaseTask):
             except Exception:
                 logger.debug("Ignored exception", exc_info=True)
 
+        records = _enabled_ui_extension_records(user_id, conversation_id)
         html = render_chat_page(
             agent_path=self.config.get("agent_path", "/api/agent"),
             sse_path=self.config.get("sse_path", "/api/agent/events"),
             login_url=self.config.get("login_url", ""),
             theme_block=_initial_theme_block(flowfile),
-            extensions_block=_initial_extensions_block(user_id, conversation_id),
+            extensions_block=_initial_extensions_block(user_id, conversation_id, records=records),
+            template_slots=_template_fragments(records),
             custom_css=custom_css,
         )
 

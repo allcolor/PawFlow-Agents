@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   re-pasted the prompt into the live tmux session (or tripped the cold/delta
   context guard with `DeltaContextRequired`) and left the agent shown as
   working after the CLI had already failed.
+- Flow editor: "Edit (draft)" from the repository menu sent the bare flow
+  directory id and failed with "Flow name must be qualified"; it now builds
+  the qualified `package.name:version` like the Versions/Diff dialogs.
 
 ## [1.0.0-beta.226] — 2026-08-21
 

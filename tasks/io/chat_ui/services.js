@@ -122,7 +122,11 @@ function _editRunningFlow(instanceId) {
 function _editFlowTemplate(templateId, tpl) {
   const rawScope = (tpl && (tpl.scope || tpl._scope)) || 'user';
   const scope = String(rawScope).startsWith('conv') ? 'conversation' : String(rawScope).startsWith('global') ? 'global' : 'user';
-  const payload = { fqn: templateId, scope };
+  // The repository lists flows by directory id (e.g. "ci_autofix") while the
+  // authoring service wants package.name[:version] — build it the same way the
+  // Versions/Diff dialogs do instead of sending the bare id.
+  const fqn = typeof _flowEditorFqn === 'function' ? _flowEditorFqn(templateId, tpl) : templateId;
+  const payload = { fqn, scope };
   if (scope === 'conversation' && typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
   action$('flow_editor_create_draft', payload, { skipConversationId: scope !== 'conversation' }).subscribe({
     next: (d) => { if (d.error) addMsg('error', d.error); else _openFlowEditorTab(d.draft.draft_id); },

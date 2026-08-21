@@ -39,8 +39,14 @@ def test_repository_menu_opens_a_draft_in_the_same_canvas():
     assert "function _openFlowEditorTab(draftId, instanceId)" in services
     assert "'/chat/js/flow_graph.html?draft_id='" in services
     assert "action$('flow_editor_create_draft', payload" in services
+    # Repository items carry a bare directory id; the draft must be created on
+    # the qualified package.name[:version] or the service rejects it.
+    assert "const fqn = typeof _flowEditorFqn === 'function' ? _flowEditorFqn(templateId, tpl) : templateId;" in services
+    assert "const payload = { fqn, scope };" in services
+    assert "fqn: templateId" not in services
     menu = _text("tasks/io/chat_ui/resources_flow_templates.js")
     assert "_editFlowTemplate(templateId, tpl)" in menu
+    assert "function _flowEditorFqn(templateId, tpl)" in menu
     for lang in ("en", "fr", "es"):
         assert "flowEditDraft" in json.load(open(f"tasks/io/chat_ui/i18n/{lang}.json", encoding="utf-8"))
 

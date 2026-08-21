@@ -36,6 +36,9 @@ AGENT_CONFIG_DEFAULTS = {
     "agui_service": "",
     "agui_timeout": 300,
     "agui_max_tool_rounds": 8,
+    # Optional agent-level policy gate ({"scope", "service_id"} or a bare
+    # service id); it can only tighten the conversation gate (core/gating_bindings).
+    "gating_service": "",
     "llm_service": "",
     # Optional LLM-capable service used only by flash_delegate. This lets
     # externally-operated agents keep their non-LLM runtime service while
@@ -154,7 +157,8 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
                       runtime_kind: str = "llm",
                       agui_url: str = "", agui_service: str = "",
                       agui_timeout: int = 300,
-                      agui_max_tool_rounds: int = 8) -> Dict[str, Any]:
+                      agui_max_tool_rounds: int = 8,
+                      gating_service: Any = "") -> Dict[str, Any]:
     """Add an agent instance to a conversation.
 
     instance_name: the key in conv_agents (chosen by user, unique per conv).
@@ -196,6 +200,8 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
         "tools": tools or [],
         "assigned_skills": list(skills or []),
         "max_depth": max_depth,
+        "gating_service": gating_service if isinstance(gating_service, dict)
+        else str(gating_service or "").strip(),
     }
     set_agent_config(conv_id, instance_name, config)
     try:

@@ -293,6 +293,11 @@ def _handle_agentres_k3(self, action, body, store, user_id, flowfile):
             except Exception:
                 result["summarizer"] = {"binding": {}, "available": [], "effective": None}
             try:
+                from core.gating_bindings import summary as _gating_summary
+                result["gating"] = _gating_summary(user_id, conv_id)
+            except Exception:
+                result["gating"] = {"binding": {}, "available": [], "bound": False}
+            try:
                 from core.remote_fs_bindings import summary as _remote_fs_summary
                 result["remote_filesystems"] = _remote_fs_summary(user_id, conv_id)
             except Exception:

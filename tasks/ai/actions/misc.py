@@ -650,6 +650,47 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         }, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "gating_list_available":
+        conv_id = body.get("conversation_id", "")
+        from core.gating_bindings import summary
+        flowfile.set_content(json.dumps(
+            summary(user_id, conv_id, str(body.get("agent_name") or "")),
+            ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "gating_link":
+        conv_id = body.get("conversation_id", "")
+        scope = str(body.get("scope", "") or "")
+        service_id = str(body.get("service_id", "") or "").strip()
+        if not conv_id or not scope or not service_id:
+            flowfile.set_content(json.dumps({
+                "error": "Missing conversation_id, scope, or service_id",
+            }).encode())
+            return [flowfile]
+        from core.gating_bindings import set_binding, summary, validate_binding
+        try:
+            validate_binding(scope, service_id, user_id, conv_id)
+            set_binding(conv_id, scope, service_id)
+        except ValueError as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+            return [flowfile]
+        flowfile.set_content(json.dumps({
+            "ok": True, "gating": summary(user_id, conv_id),
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "gating_unlink":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        from core.gating_bindings import clear_binding, summary
+        removed = clear_binding(conv_id)
+        flowfile.set_content(json.dumps({
+            "ok": True, "removed": removed, "gating": summary(user_id, conv_id),
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
     if action == "relay_link":
         conv_id = body.get("conversation_id", "")
         relay_id = body.get("relay_id", "").strip()

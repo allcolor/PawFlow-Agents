@@ -167,7 +167,8 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
                  0, min(32, int(
                      body.get("agui_max_tool_rounds")
                      if body.get("agui_max_tool_rounds") not in (None, "")
-                     else 8))))
+                     else 8))),
+             gating_service=body.get("gating_service") or "")
         active = store.get_extra(conv_id, "active_resources") or {}
         if not active.get("agent"):
             active["agent"] = instance_name
@@ -245,7 +246,17 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         _allowed = {"llm_service", "model", "tools", "max_depth", "params",
                     "realtime_voice_service", "flash_delegate_llm_service",
                     "runtime_kind", "agui_url", "agui_service", "agui_timeout",
-                    "agui_max_tool_rounds"}
+                    "agui_max_tool_rounds", "gating_service"}
+        if cfg.get("gating_service"):
+            from core.gating_bindings import _normalize_ref, validate_binding
+            _gref = _normalize_ref(cfg.get("gating_service"))
+            try:
+                validate_binding(_gref.get("scope") or "", _gref.get("service_id", ""),
+                                 user_id, conv_id)
+            except ValueError as exc:
+                flowfile.set_content(json.dumps({"error": str(exc)}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
         effective_url = cfg.get("agui_url", configs[aname].get("agui_url", ""))
         effective_service = cfg.get(
             "agui_service", configs[aname].get("agui_service", ""))

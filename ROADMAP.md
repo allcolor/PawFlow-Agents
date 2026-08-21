@@ -15,7 +15,10 @@ The beta release includes:
 - **90+ Built-in Tools** — Filesystem, bash, code editing, web fetch/search, desktop screen interaction, browser automation, image/video/audio/voice/3D generation, security scanning, memory, knowledge graph, plans, and resources.
 - **Shared Multi-Client Conversations** — Web chat, PawCode CLI, VS Code, API/channel clients, flows, authenticated MCP clients, and A2A agents can attach to the same conversation stream and state.
 - **Persistent Cognition and Work State** — Semantic memory, knowledge graphs, agent diaries, relay-scoped project graphs and wikis, durable todo lists, expiring scratchpads, and learned skills survive across conversations and restarts.
-- **Web Chat & Desktop Control** — SSE streaming, file explorer, context editor, 60+ slash commands, @file mentions, multi-agent switching, `/desktop`, VNC-style desktop sessions, screenshots, audio-capable remote desktop notes, voice in/out (STT/TTS), realtime speech-to-speech voice conversations, and a built-in IDE (code-server on the relay workspace via `/code`).
+- **Web Chat & Desktop Control** — SSE streaming, file explorer, context editor, 60+ slash commands, @file mentions, multi-agent switching, `/desktop`, VNC-style desktop sessions, screenshots, audio-capable remote desktop notes, voice in/out (STT/TTS), realtime speech-to-speech voice conversations, and a built-in IDE (code-server on the relay workspace via `/code`). Three conversation views: the simplified live turn view (default), the classic transcript, and **Openspace**, a live 3D office.
+- **Flow Authoring and Operations** — a manual Flow Editor (task palette, property inspector, connection wiring, process groups, version-pinned subflows, static validation, structured diff, immutable published versions) and a NiFi-style Flow Runtime Console (task control, queue inspect/empty, FlowFile download, previewed hot-swap of a running instance).
+- **Agent Interoperability** — published MCP servers, A2A 1.0 publication and delegation, an AG-UI protocol server on the same publications, and external AG-UI agents as first-class conversation participants.
+- **Policy Gating (V0)** — an optional gate service decides allow / deny / ask for each tool call against the authenticated user's versioned mandate, on top of (never instead of) the structural security controls.
 - **Authentication & Private Gateway** — 9 OAuth providers, JWT tokens, API keys, RBAC, and a private gateway that keeps the server invisible until sign-in: camouflage skins, multi-provider sign-in (Google, GitHub, X, Telegram, Microsoft, Facebook, Amazon), and `trusted_proxies` support for reverse-proxy deployments.
 - **Telegram Agent Client** — Talk to your agents from Telegram with shared conversation history, streaming updates, consolidated thinking, voice messages (STT), and identity linking.
 - **Docker Support** — Containerized deployment with relay for isolated tool execution.
@@ -30,12 +33,6 @@ The beta release includes:
 
 ### Stabilization and release hardening
 Tighten the beta runtime around the paths that now exist: relay/local execution, package runtime, import/export, streaming, auth, media artifacts, and long-running flows. Prioritize regression tests, failure diagnostics, and documentation that matches shipped behavior.
-
-### Manual flow editor
-Practical web UI for creating and editing flows without hand-writing JSON. First target is a reliable manual editor: task palette, property inspector, connection wiring, validation, and deploy/start controls. A richer full visual editor can grow from this after the core edit loop is stable.
-
-### New media service providers
-Add package-backed media providers for image, video, audio, 3D, lipsync, and upscaling services. Providers should use the PFP service-provider runtime, declared secret bindings, and file-backed artifact output instead of JSON/base64 media payloads.
 
 ### Git worktree isolation for agents
 Each sub-agent works in its own git worktree so parallel coding tasks don't collide. Changes are merged on completion. A `/batch` command to fan out N tasks across N isolated agents. See [docs/GIT_WORKTREE_ISOLATION_PLAN.md](docs/GIT_WORKTREE_ISOLATION_PLAN.md).
@@ -55,8 +52,8 @@ Ollama, Mistral, vLLM, LM Studio, Together.ai — most work via the OpenAI-compa
 ### Full AWS-native deployment (remote execution mode)
 Add a new, additive `remote` execution mode so PawFlow runs on AWS managed compute (ECS Fargate, EKS) — and, by generalization, plain EC2 and ECS-on-EC2 — without a local Docker socket, shared host filesystem, or host-gateway networking. Today PawFlow spawns sibling containers on the host Docker daemon via `docker.sock`; the new mode introduces an `ExecBackend` abstraction (Docker backend preserves current behavior bit-for-bit; a remote backend dispatches execution to a WS-reachable worker fleet over the existing relay protocol, with ECS RunTask / K8s Job orchestration for elasticity), a `RemoteProcess` Popen-compatible shim for stream/kill parity, network-shared session storage (EFS or the server-fs FUSE relay), RDS/Aurora Postgres, ECR images, and Secrets Manager/SSM. The remote backend is strictly more general, so supporting Fargate/EKS transitively covers EC2 and ECS-on-EC2. The existing Docker mode stays the default and unchanged. See [docs/AWS_REMOTE_EXEC_PLAN.md](docs/AWS_REMOTE_EXEC_PLAN.md).
 
-### Mobile clients
-The native Android app is shipped (server profiles, native login, tabbed webchat, per-release APK — see [docs/ANDROID_APP.md](docs/ANDROID_APP.md)). Remaining work: a release-signed/Play Store build, push notifications when agents respond, an iOS client, and PWA offline caching for browsers without the native app.
+### Mobile clients — iOS and PWA
+The native Android app is shipped (server profiles, native login, tabbed webchat, per-release APK — see [docs/ANDROID_APP.md](docs/ANDROID_APP.md)). Remaining work: an **iOS client**, PWA offline caching for browsers without the native app, a release-signed/Play Store build, and push notifications when agents respond.
 
 ### External webchat clients
 Telegram is shipped as a first-class agent client (shared history, streaming, voice messages, identity linking). Remaining work: bring Discord, Slack, and WhatsApp to the same level — the bot services and flow-level receiver/send tasks exist, but not the full conversation-client experience.
@@ -87,6 +84,38 @@ Spans for each task execution in the pipeline engine, exportable to Jaeger, Zipk
 
 These were shipped as part of the beta development cycle:
 
+- Manual Flow Editor: one canvas with view / runtime / edit modes, task palette
+  and schema-driven property inspector, connection wiring with queue settings,
+  process groups and version-pinned subflows, drafts with optimistic locking,
+  static validation, structured diff, and immutable published versions
+  (add or delete a version, never edit one)
+- Flow Runtime Console: task start/stop/restart, queue pause/inspect/empty,
+  FlowFile download, and previewed hot-swap of a running instance
+- Openspace: a live 3D office view of the conversation (per-agent desks, chibi
+  avatars, speech/thought bubbles, status orbiters, context batteries, wall
+  screen transcript, resource posters, FileStore TV, and a 3D stage for
+  deployed flows), alongside the simplified live turn view that is now the
+  default reading of a conversation
+- Policy gating (V0): a `gating` service (policy prompt on an API-backed LLM
+  and/or sandboxed policy scripts) bound to a conversation and/or an agent,
+  versioned user-authority contexts, a central engine in the main agent
+  runtime, fail-closed behaviour for other runtimes, and an audit trail
+- AG-UI: protocol server on isolated publications (streaming runs, frontend
+  tools, shared state, interrupts) and external AG-UI agents as first-class
+  conversation participants through direct endpoints or scoped
+  `aguiConnection` services
+- Package-backed media service providers: Kling, Pixazo, and Wavespeed ship as
+  signed `.pfp` packages on the PFP service-provider runtime, with declared
+  secret bindings and file-backed artifacts instead of base64 payloads
+- Native Android app: encrypted multi-server profiles, native built-in/OAuth2
+  login (PKCE handoff), parallel webchat tabs, system-managed downloads, and an
+  APK published with every release
+- Durable confirmations and durable flow wait/notify: agents and flows ask
+  yes/no or single/multi-choice questions answered whenever, and resume with
+  the answer
+- Opt-in encryption at rest for conversations and conv-scoped relay workspaces
+- External secret providers: pluggable provider services with scoped,
+  allowlisted secret access
 - Published conversation MCP servers: authenticated Streamable HTTP endpoints,
   isolated per-session stdio bridges and cross-platform client installers, plus
   first-class external MCP agents for Claude Code, Codex, Agy/Gemini, OpenCode,

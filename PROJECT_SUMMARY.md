@@ -127,6 +127,9 @@ The README also advertises:
 - Relay-scoped AST/tree-sitter project graph and sourced project wiki.
 - Multiple LLM providers and an OpenAI-compatible endpoint.
 - Permission modes and tool-access control per configuration.
+- Optional policy gating: a gate service decides allow / deny / ask for each
+  tool call against the authenticated user's versioned mandate, on top of the
+  structural security controls.
 - External interoperability: published MCP endpoints, A2A 1.0 server/client,
   and an AG-UI protocol server on the same publications (streaming runs,
   frontend tools, shared state, interrupts) for CopilotKit-style frontends.
@@ -144,6 +147,12 @@ The README also advertises:
 - CRON, file watcher, webhook/polling/event triggers per available modules.
 - Subflows, parameter mapping, and NiFi import.
 - Flow debugger, provenance, versioning, and cluster mode.
+- Manual Flow Editor: one canvas with view / runtime / edit modes, task
+  palette, schema-driven property inspector, connection wiring, process
+  groups, version-pinned subflows, drafts with optimistic locking, static
+  validation, structured diff, and immutable published versions.
+- Flow Runtime Console: task control, queue inspect/empty, FlowFile download,
+  and previewed hot-swap of a running instance.
 
 ### Tools and relay
 
@@ -161,6 +170,8 @@ The README also advertises:
 - Web chat with SSE, files, context, slash commands, `/desktop`, and conversation management; three conversation views (simplified turn view, classic transcript, and the Openspace live 3D office with per-agent desks, bubbles, status orbiters, and projected panels).
 - PawCode CLI for terminal use.
 - VS Code extension.
+- Native Android app with encrypted server profiles, native/OAuth2 login, and
+  parallel webchat tabs.
 - Conversations shared across web, CLI, VS Code, API/channels, and flows.
 - Static presentation site.
 
@@ -194,15 +205,20 @@ The README also advertises:
 
 Per `ROADMAP.md`, the next major directions are:
 
-- push-to-talk voice input;
+- stabilization and release hardening;
 - Git worktree isolation for parallel agents;
+- an iOS client and PWA offline caching (the native Android app is shipped);
+- MCP elicitation;
+- x402 payment policies for published endpoints and outbound calls;
+- filesystem hooks;
 - additional LLM providers: Ollama, Mistral, vLLM, LM Studio, Together.ai;
-- MCP elicitation and exposing PawFlow as an MCP server;
-- mobile PWA client;
-- full visual flow editor;
-- installation wizard;
-- headless JSON mode;
-- marketplace for agents/skills/tools/MCP/tasks/flows.
+- a full AWS-native remote execution mode;
+- first-class Discord, Slack, and WhatsApp conversation clients.
+
+The manual flow editor, package-backed media providers, the installation
+wizard, headless JSON mode, the marketplace, published MCP servers, and
+push-to-talk voice input listed here in earlier revisions have shipped; see
+the *Recently Completed* section of `ROADMAP.md`.
 
 ## Conclusion
 

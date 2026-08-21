@@ -550,6 +550,7 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 | [Durable Confirmations](docs/confirmations.md) | Agent/flow confirmation requests (yes/no, single/multi choice) answered whenever; durable flow wait/notify |
 | [Flow Runtime Console](docs/flow_runtime_console.md) | NiFi-style ops on running flows: task control, queue pause/inspect/empty, FlowFile download |
 | [Flow Editor](docs/flow_editor.md) | Authoring layer: drafts with optimistic locking, static validation, diff, immutable versions |
+| [Policy Gating](docs/POLICY_GATING.md) | Optional gate service: allow/deny/ask per tool call against the user's mandate, authorization contexts, policy scripts, audit |
 | [A2A Integration](docs/a2a_integration.md) | Publish agents as A2A 1.0 endpoints, keys, contexts, remote targets |
 | [AG-UI Integration](docs/agui_integration.md) | AG-UI protocol server: streaming runs, frontend tools, shared state, interrupts |
 | [Desktop/VNC](docs/desktop_vnc.md) | noVNC desktop, screen tool, audio notes |
@@ -567,18 +568,29 @@ pytest tests/ -v    # 7000+ tests across 360+ test files
 | [Docker](docs/docker.md) | Docker setup, relay mode |
 | [Filesystem](docs/filesystem.md) | Relay, backends, permissions |
 | [Development](docs/development.md) | Creating custom tasks/services |
+| [Chat UI Templates](docs/CHAT_UI_TEMPLATES.md) | Chat page template tree, CSS modules, and the server-side UI extension points |
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the full roadmap.
 
+Recently shipped:
+
+- **Flow authoring end to end** — the manual [Flow Editor](docs/flow_editor.md) (task palette, property inspector, connection wiring, process groups, version-pinned subflows, static validation, diff, immutable versions) and the [Flow Runtime Console](docs/flow_runtime_console.md) (task control, queue inspect/empty, FlowFile download, previewed hot-swap of a running instance)
+- **Openspace** — a live 3D office view of the conversation, next to the simplified live turn view (now the default) and the classic transcript
+- **Policy gating (V0)** — an optional gate decides allow / deny / ask for each tool call against the authenticated user's mandate, see [Policy Gating](docs/POLICY_GATING.md)
+- **AG-UI** — protocol server on published agents, plus external AG-UI agents as first-class conversation participants
+- **A2A 1.0** — public Agent Cards, authenticated publication, durable task operations, cross-conversation delegation
+- **Android app** — encrypted multi-server profiles, native/OAuth2 login, parallel webchat tabs, APK published with every release
+- **Package-backed media providers** — Kling, Pixazo, and Wavespeed ship as signed `.pfp` packages on the PFP service-provider runtime
+- **Usage & costs** — event-level ledger, per-conversation gauge, global dashboard, and cumulative budgets
+- **Durable confirmations**, **relay service tunnels**, **external secret providers**, **published MCP servers**, and opt-in **encryption at rest**
+
 Key upcoming areas:
 
 - Stabilization and release hardening
-- Manual flow editor
-- New media service providers
 - Git worktree isolation for parallel agents
-- Mobile client (PWA)
+- iOS client and PWA offline caching (the native Android app is shipped)
 - MCP elicitation
 - x402 payment policies for published endpoints and outbound calls
 - Filesystem hooks

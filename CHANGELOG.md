@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.231] — 2026-08-21
+
 ### Fixed
 
 - Active Agents: CLI-backed agents are now reported active only while their

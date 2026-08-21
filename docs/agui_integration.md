@@ -29,6 +29,13 @@ in the webchat makes it reachable at BOTH:
 - `POST /a2a/{publication_id}/message:send` (A2A 1.0, task-based)
 - `POST /agui/{publication_id}` (AG-UI, streaming SSE)
 
+In the webchat, the A2A panel (sidebar → A2A) lists both URLs for every
+publication with a copy button each, so exporting an agent to an AG-UI
+frontend is the same gesture as publishing it for A2A. The opposite direction
+— importing an external AG-UI agent as a conversation participant — is the
+`external_agui` runtime documented in `docs/AGENT_SYSTEM.md` (add an agent
+with the runtime "External AG-UI" and an `aguiConnection` service).
+
 ## Endpoints
 
 | Method | Path | Description |

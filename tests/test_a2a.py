@@ -325,9 +325,17 @@ def test_a2a_ui_is_loaded_and_translated():
     source = module.read_text(encoding="utf-8")
     assert "t('close')" in source
     assert "contextClose" not in source
+    # A publication is also an AG-UI agent: the panel must show the /agui/
+    # URL (export) and point at the external_agui runtime (import).
+    assert "function _aguiEndpoint(publicationId)" in source
+    assert "'/agui/' + encodeURIComponent(publicationId)" in source
+    assert "t('a2aCopyAguiEndpoint')" in source
+    assert "t('a2aAguiHint')" in source
     for language in ("en", "fr", "es"):
         catalog = json.loads((
             root / f"tasks/io/chat_ui/i18n/{language}.json").read_text(encoding="utf-8"))
         for key in ("a2aConfigure", "a2aPublishAgent", "a2aTargets",
-                    "a2aKeyOnce", "a2aAllowPrivate"):
+                    "a2aKeyOnce", "a2aAllowPrivate", "a2aAguiEndpoint",
+                    "a2aCopyAguiEndpoint", "a2aAguiHint"):
             assert catalog[key]
+        assert "External AG-UI" in catalog["a2aAguiHint"]

@@ -23,6 +23,12 @@ function _a2aEndpoint(publicationId) {
   return new URL('/a2a/' + encodeURIComponent(publicationId), window.location.origin).href;
 }
 
+// The same publication (id, Bearer keys, enable flag) is also served over
+// AG-UI; the panel shows both URLs so the AG-UI export is discoverable.
+function _aguiEndpoint(publicationId) {
+  return new URL('/agui/' + encodeURIComponent(publicationId), window.location.origin).href;
+}
+
 function _a2aCopyValue(value) {
   if (!value) return;
   navigator.clipboard.writeText(value).then(function() {
@@ -39,6 +45,7 @@ function _a2aPublicationRows(publications) {
   if (!publications.length) return '<div style="color:var(--pf-muted);">' + escapeHtml(t('a2aNoPublications')) + '</div>';
   return publications.map(function(pub) {
     const endpoint = _a2aEndpoint(pub.publication_id);
+    const aguiEndpoint = _aguiEndpoint(pub.publication_id);
     const cardUrl = endpoint + '/agent-card.json';
     const keys = Array.isArray(pub.keys) ? pub.keys : [];
     const keyRows = keys.length ? keys.map(function(key) {
@@ -56,6 +63,9 @@ function _a2aPublicationRows(publications) {
       + '<div style="display:flex;gap:5px;margin-top:6px;"><input readonly value="' + _pfpAttr(cardUrl) + '" style="flex:1;font-size:11px;">'
       + '<button type="button" onclick="_a2aCopyValue(' + _pfpJsArg(cardUrl) + ')">' + escapeHtml(t('a2aCopyCard')) + '</button>'
       + '<button type="button" onclick="_a2aCopyValue(' + _pfpJsArg(endpoint) + ')">' + escapeHtml(t('a2aCopyEndpoint')) + '</button></div>'
+      + '<div style="display:flex;gap:5px;margin-top:4px;align-items:center;"><span style="font-size:10px;color:var(--pf-muted);white-space:nowrap;">' + escapeHtml(t('a2aAguiEndpoint')) + '</span>'
+      + '<input readonly value="' + _pfpAttr(aguiEndpoint) + '" style="flex:1;font-size:11px;">'
+      + '<button type="button" onclick="_a2aCopyValue(' + _pfpJsArg(aguiEndpoint) + ')">' + escapeHtml(t('a2aCopyAguiEndpoint')) + '</button></div>'
       + keyRows
       + '<div style="display:flex;gap:5px;margin-top:6px;"><input id="a2aKeyLabel_' + _pfpAttr(pub.publication_id) + '" placeholder="' + _pfpAttr(t('a2aKeyLabel')) + '" style="flex:1;">'
       + '<button type="button" onclick="_a2aCreateKey(' + _pfpJsArg(pub.publication_id) + ')">' + escapeHtml(t('a2aCreateKey')) + '</button></div>'
@@ -103,7 +113,8 @@ function _a2aRender(state) {
     return '<option value="' + item.index + '">' + escapeHtml(item.label) + '</option>';
   }).join('');
   overlay.innerHTML = '<div class="exec-dialog" style="width:min(820px,94vw);max-height:90vh;overflow:auto;">'
-    + '<h3>' + escapeHtml(t('a2aTitle')) + '</h3><div style="font-size:12px;color:var(--pf-muted);margin-bottom:12px;">' + escapeHtml(t('a2aDescription')) + '</div>'
+    + '<h3>' + escapeHtml(t('a2aTitle')) + '</h3><div style="font-size:12px;color:var(--pf-muted);margin-bottom:6px;">' + escapeHtml(t('a2aDescription')) + '</div>'
+    + '<div style="font-size:11px;color:var(--pf-muted);margin-bottom:12px;">' + escapeHtml(t('a2aAguiHint')) + '</div>'
     + '<h4>' + escapeHtml(t('a2aPublishAgent')) + '</h4>'
     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
     + '<label>' + escapeHtml(t('agent')) + '<select id="a2aPubAgent"' + (edited ? ' disabled' : '') + ' style="display:block;width:100%;">' + agentOptions + '</select></label>'

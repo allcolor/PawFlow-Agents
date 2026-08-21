@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- A2A panel: every publication now also shows its AG-UI URL (`/agui/...`)
+  with a copy button, and a hint explains the two directions — export through
+  a publication, import through the "External AG-UI" agent runtime.
+
 ### Fixed
 
 - Claude Code interactive: a `StopFailure` (for example an upstream `429`

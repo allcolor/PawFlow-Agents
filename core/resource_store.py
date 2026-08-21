@@ -54,6 +54,7 @@ _TYPE_MAP = {
     "prompt": "prompts",
     "tool": "tools",
     "agent_hook": "agent_hooks",
+    "gating_script": "gating_scripts",
     "theme": "theme",
     "private_gateway_skin": "private_gateway_skin",
     "service_template": "service_templates",
@@ -71,6 +72,7 @@ _REQUIRED_FIELDS = {
     "prompt": ("prompt",),
     "tool": ("source",),
     "agent_hook": (),
+    "gating_script": ("source",),
     "theme": (),
     "private_gateway_skin": (),
     "service_template": ("service_type", "config"),
@@ -122,6 +124,13 @@ _DEFAULTS = {
         "tools": [],
         "source": "",
         "fail_policy": "open",
+    },
+    "gating_script": {
+        "description": "",
+        "source": "",
+        "tools": [],
+        # Policy scripts fail closed: a broken script asks (or denies), never allows.
+        "fail_decision": "ask",
     },
     "theme": {
         "title": "",

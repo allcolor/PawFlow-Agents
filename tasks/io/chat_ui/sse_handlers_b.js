@@ -587,6 +587,13 @@ function _sseWireB() {
     const data = JSON.parse(e.data);
     const errAgent = data.agent_name || '';
     const terminalTurnId = data.turn_id || data.request_msg_id || '';
+    // Provider failures (including CLI rate limits) can terminate outside the
+    // normal done path. Reconcile against process-backed list_active even when
+    // turn-id drift makes the optimistic error cleanup unsafe.
+    if (typeof syncActiveFromServer === 'function') {
+      setTimeout(() => syncActiveFromServer(true), 250);
+      setTimeout(() => syncActiveFromServer(true), 1500);
+    }
     if (errAgent && !isAgentTerminalCurrent(errAgent, '', terminalTurnId)) return;
     if (typeof turnViewFail === 'function') turnViewFail(data.turn_id || data.request_msg_id, 'error', data.message || '');
     // data.ts is the server's real publish_event() timestamp -- stamped at

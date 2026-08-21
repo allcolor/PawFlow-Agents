@@ -282,7 +282,7 @@ class GeminiLiveRegistry:
                     "service_id": svc,
                     "svc_pool_idx": pool_idx,
                     "container": entry.container_name,
-                    "live": True,
+                    "live": entry.is_process_alive(),
                     "active_turn": bool(entry.active_turn),
                     "idle_seconds": int(now - entry.last_used),
                     "reuse_count": entry.reuse_count,

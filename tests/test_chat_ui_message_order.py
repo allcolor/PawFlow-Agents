@@ -824,3 +824,10 @@ def test_terminal_turn_id_drift_still_forces_authoritative_active_sync():
         SSE_JS.index("// Refresh conversation list", SSE_JS.index("eventSource.addEventListener('done'"))]
     assert done.index("syncActiveFromServer(true)") < done.index(
         "if (!isAgentTerminalCurrent(doneAgent, data.task_id || '', terminalTurnId)) return")
+
+    error = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('error_event'"):
+        SSE_JS.index("eventSource.addEventListener('agent_response'",
+                     SSE_JS.index("eventSource.addEventListener('error_event'"))]
+    assert error.index("syncActiveFromServer(true)") < error.index(
+        "if (errAgent && !isAgentTerminalCurrent(errAgent, '', terminalTurnId)) return")

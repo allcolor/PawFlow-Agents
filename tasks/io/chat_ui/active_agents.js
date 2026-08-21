@@ -393,9 +393,16 @@ function updateActivePanel() {
 let _syncActiveTimer = null;
 let _syncActiveSub = null;
 let _syncActiveStartedAt = 0;
+let _activeVisibilitySyncInstalled = false;
 const _SYNC_ACTIVE_STALE_MS = 10000;
 function startActiveSync() {
   if (_syncActiveTimer) return;
+  if (!_activeVisibilitySyncInstalled && typeof document !== 'undefined') {
+    _activeVisibilitySyncInstalled = true;
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) syncActiveFromServer(true);
+    });
+  }
   _syncActiveTimer = setInterval(syncActiveFromServer, 10000);
 }
 function stopActiveSync() {
@@ -405,6 +412,7 @@ function stopActiveSync() {
   _syncActiveStartedAt = 0;
 }
 function syncActiveFromServer(force) {
+  if (typeof action$ !== 'function') return;
   if (!conversationId) return;
   if (!force && typeof document !== 'undefined' && document.hidden) return;
   const requestedConversationId = conversationId;

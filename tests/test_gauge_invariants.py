@@ -439,6 +439,14 @@ def test_list_active_does_not_surface_idle_live_only_rows():
     assert "gemini_live_list = _gem_entries" in src
 
 
+def test_active_sync_reconciles_immediately_when_tab_becomes_visible():
+    src = Path("tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
+    start = src.index("function startActiveSync()")
+    body = src[start:src.index("function stopActiveSync()", start)]
+    assert "document.addEventListener('visibilitychange'" in body
+    assert "if (!document.hidden) syncActiveFromServer(true)" in body
+
+
 def test_message_meta_context_used_comes_from_central_context_usage():
     src = agent_core_src()
     agent_source = src  # split moved _agent_source into a sibling mixin

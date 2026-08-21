@@ -274,6 +274,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         codex_interactive_live_list = []
         codex_live_list = []
         gemini_live_list = []
+        cli_runtime_agents = {}
 
         def _apply_live(row, ent, prefix):
             reuse_count = int(ent.get("reuse_count", 0) or 0)
@@ -295,11 +296,17 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                 if _ent:
                     _apply_live(row, _ent, "cc")
             cc_live_list = _cc_entries
+            cli_runtime_agents["claude-code"] = {
+                e.get("agent_name") for e in _cc_entries if e.get("live")
+            }
         except Exception:
             logger.debug("cc_live enrichment failed", exc_info=True)
         try:
             from core.claude_code_interactive_pool import InteractiveClaudeCodePool
-            _cci_entries = InteractiveClaudeCodePool.instance().list_sessions_snapshot(
+            # Active work must be backed by a real CLI runtime. Unlike the
+            # telemetry-only snapshot, list_sessions probes Docker and evicts
+            # dead containers/tmux sessions.
+            _cci_entries = InteractiveClaudeCodePool.instance().list_sessions(
                 user_id, conv_id)
             _by_agent_cci = {e["agent_name"]: e for e in _cci_entries}
             for row in active:
@@ -307,12 +314,15 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                 if _ent:
                     _apply_live(row, _ent, "cci")
             cci_live_list = _cci_entries
+            cli_runtime_agents["claude-code-interactive"] = {
+                e.get("agent_name") for e in _cci_entries
+            }
         except Exception:
             logger.debug("cci_live enrichment failed", exc_info=True)
         try:
             from core.codex_interactive_pool import CodexInteractivePool
             _codex_interactive_entries = (
-                CodexInteractivePool.instance().list_sessions_snapshot(
+                CodexInteractivePool.instance().list_sessions(
                     user_id, conv_id)
             )
             _by_agent_codex_interactive = {
@@ -323,6 +333,9 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                 if _ent:
                     _apply_live(row, _ent, "codex_interactive")
             codex_interactive_live_list = _codex_interactive_entries
+            cli_runtime_agents["codex-interactive"] = {
+                e.get("agent_name") for e in _codex_interactive_entries
+            }
         except Exception:
             logger.debug(
                 "codex_interactive_live enrichment failed", exc_info=True)
@@ -338,6 +351,10 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                 if _ent:
                     _apply_live(row, _ent, "codex")
             codex_live_list = _cdx_entries
+            _codex_agents = {
+                e.get("agent_name") for e in _cdx_entries if e.get("live")
+            }
+            cli_runtime_agents["codex-app-server"] = _codex_agents
         except Exception:
             logger.debug("codex_live enrichment failed", exc_info=True)
         try:
@@ -352,8 +369,32 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                 if _ent:
                     _apply_live(row, _ent, "gemini")
             gemini_live_list = _gem_entries
+            cli_runtime_agents["gemini"] = {
+                e.get("agent_name") for e in _gem_entries if e.get("live")
+            }
         except Exception:
             logger.debug("gemini_live enrichment failed", exc_info=True)
+        try:
+            from core.antigravity_observer_pool import AntigravityObserverPool
+            _antigravity_entries = AntigravityObserverPool.instance().list_sessions(
+                user_id, conv_id)
+            cli_runtime_agents["antigravity-interactive"] = {
+                e.get("agent_name") for e in _antigravity_entries
+            }
+        except Exception:
+            logger.debug("antigravity live enrichment failed", exc_info=True)
+
+        # A provider-backed marker can outlive its process when a CLI exits
+        # outside the normal terminal path (for example a model rate limit or
+        # a killed tmux). Such a marker is not active work. Keep API providers
+        # and not-yet-resolved preparation rows unchanged; for a known CLI,
+        # absence from its successfully queried runtime registry is decisive.
+        active = [
+            row for row in active
+            if row.get("active_llm_provider", "") not in cli_runtime_agents
+            or row.get("agent_name") in cli_runtime_agents[
+                row.get("active_llm_provider", "")]
+        ]
 
         flowfile.set_content(json.dumps({
             "conversation_id": conv_id,

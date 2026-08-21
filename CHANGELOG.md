@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.226] — 2026-08-21
+
 ### Changed
 
 - External AG-UI agents: the Bearer secret and private-endpoint policy are now
@@ -23,6 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   advertised when `agui_max_tool_rounds` is 0, the protocol document is saved
   once per run instead of per event, and the runtime dialog labels are
   localized (en/fr/es).
+- OpenSpace: clicking an agent avatar or desk now selects that agent in the
+  conversation (`cmdAgentSelect`) while keeping the camera focus and the
+  activity dialog; visitors and temporary guests outside the roster do not
+  trigger a selection.
 
 ## [1.0.0-beta.225] — 2026-08-20
 

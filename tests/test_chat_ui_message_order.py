@@ -803,3 +803,24 @@ def test_active_released_sse_hint_clears_panel_before_done():
     assert "trackAgentDone(agentName, '', terminalTurnId)" in active_released
     assert "document.getElementById('status').textContent = t('ready')" in active_released
     assert "syncActiveFromServer(true)" in active_released
+
+
+def test_terminal_turn_id_drift_still_forces_authoritative_active_sync():
+    """A mismatched local turn must not suppress cleanup from list_active.
+
+    A background browser tab pauses the periodic poll. The terminal hint
+    therefore has to schedule its forced poll before the stale-event guard
+    returns; the guard still prevents an old hint from optimistically closing
+    a newer local turn.
+    """
+    active_released = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('active_released'"):
+        SSE_JS.index("eventSource.addEventListener('done'", SSE_JS.index("eventSource.addEventListener('active_released'"))]
+    assert active_released.index("syncActiveFromServer(true)") < active_released.index(
+        "if (!isAgentTerminalCurrent(agentName, '', terminalTurnId)) return")
+
+    done = SSE_JS[
+        SSE_JS.index("eventSource.addEventListener('done'"):
+        SSE_JS.index("// Refresh conversation list", SSE_JS.index("eventSource.addEventListener('done'"))]
+    assert done.index("syncActiveFromServer(true)") < done.index(
+        "if (!isAgentTerminalCurrent(doneAgent, data.task_id || '', terminalTurnId)) return")

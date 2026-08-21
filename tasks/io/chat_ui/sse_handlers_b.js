@@ -165,6 +165,12 @@ function _sseWireB() {
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || '';
     const terminalTurnId = data.turn_id || data.request_msg_id || '';
+    // A terminal event whose turn id drifted must still trigger the
+    // authoritative poll. The guard below protects a newer local turn from
+    // optimistic cleanup; it must not also suppress server reconciliation.
+    if (typeof syncActiveFromServer === 'function') {
+      setTimeout(() => syncActiveFromServer(true), 250);
+    }
     if (!isAgentTerminalCurrent(agentName, '', terminalTurnId)) return;
     if (typeof turnViewFail === 'function') turnViewFail(data.turn_id || data.request_msg_id, 'stopped');
     if (agentName) _finalizeLiveToolCalls(agentName, '[Stopped]');
@@ -174,9 +180,6 @@ function _sseWireB() {
       document.getElementById('sendBtn').disabled = false;
       document.getElementById('status').textContent = t('ready');
       hideTyping();
-    }
-    if (typeof syncActiveFromServer === 'function') {
-      setTimeout(() => syncActiveFromServer(true), 250);
     }
   });
 
@@ -188,6 +191,12 @@ function _sseWireB() {
     }
     const doneAgent = data.agent_name || data.source?.name || '';
     const terminalTurnId = data.turn_id || data.request_msg_id || '';
+    // Keep the forced reconciliation reachable even when turn-id drift makes
+    // the local terminal guard reject this hint. list_active remains truth.
+    if (!data.continuing && typeof syncActiveFromServer === 'function') {
+      setTimeout(() => syncActiveFromServer(true), 250);
+      setTimeout(() => syncActiveFromServer(true), 1500);
+    }
     if (!isAgentTerminalCurrent(doneAgent, data.task_id || '', terminalTurnId)) return;
     // Task done: finalize task block
     if (data.task_id) {
@@ -395,10 +404,6 @@ function _sseWireB() {
         // No agent name — clean everything
         activeInteractions = {};
         updateActivePanel();
-      }
-      if (typeof syncActiveFromServer === 'function') {
-        setTimeout(() => syncActiveFromServer(true), 250);
-        setTimeout(() => syncActiveFromServer(true), 1500);
       }
       if (Object.keys(activeInteractions).length === 0 && activeTimer) {
         clearInterval(activeTimer); activeTimer = null;

@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Chat UI: terminal `active_released` and `done` events now force an
+  authoritative `list_active` reconciliation even when their turn ID no longer
+  matches the locally tracked turn, preventing OpenSpace and the typing status
+  from showing an agent as active long after the server released it; OpenSpace
+  also no longer turns a human `source.name` fallback into a phantom `user`
+  agent or assigns tool activity to that false desk.
+
 ## [1.0.0-beta.229] — 2026-08-21
 
 ### Added

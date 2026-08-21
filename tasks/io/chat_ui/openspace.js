@@ -132,7 +132,14 @@ function openspaceIsActive() { return _osActive; }
 function _osKey(name) { return String(name || '').toLowerCase(); }
 
 function _osEventAgent(data) {
-  return (data && (data.agent_name || (data.source && data.source.name)))
+  const source = (data && data.source) || {};
+  // User-authored messages can carry source.name="user" before the real
+  // identity is hydrated. That is an author label, never an agent identity:
+  // accepting it here creates a phantom agent desk and attributes subsequent
+  // tool activity to it. An explicit agent_name remains authoritative, so a
+  // genuinely configured agent named "user" still works.
+  const sourceAgent = source.type !== 'user' ? (source.name || '') : '';
+  return (data && data.agent_name) || sourceAgent
     || (typeof selectedAgent !== 'undefined' && selectedAgent) || '';
 }
 

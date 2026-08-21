@@ -142,6 +142,15 @@ def test_agent_click_selects_canonical_conversation_agent():
     assert hit < select < focus < dialog
 
 
+def test_user_message_source_never_creates_a_phantom_agent_desk():
+    openspace = _openspace_text()
+    event_agent = openspace[
+        openspace.index("function _osEventAgent(data)"):
+        openspace.index("// Deterministic pastel", openspace.index("function _osEventAgent(data)"))]
+    assert "source.type !== 'user'" in event_agent
+    assert "(data && data.agent_name) || sourceAgent" in event_agent
+
+
 def test_openspace_i18n_keys_exist_in_all_locales():
     keys = (
         "openspaceView", "osvActivity", "osvNoActivity", "osvLoadError",

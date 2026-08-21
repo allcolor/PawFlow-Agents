@@ -328,14 +328,10 @@ function openspaceOpenConvDialog() {
 // Smoothly keep the camera target glued to a clicked participant, or to
 // the viewer's avatar when no explicit focus owns the camera.
 function _osFollowUser() {
-  if (_osFlow || !_osCamera) return;
-  let me = _osFocusKey ? _osAgents.get(_osFocusKey) : null;
-  if (_osFocusKey && !me) { _osFocusKey = ''; _osFollow = true; }
-  if (!me && _osFollow) {
-    const key = 'user:' + _osKey(
-      (typeof window !== 'undefined' && window._userId) || 'user');
-    me = _osAgents.get(key);
-  }
+  if (_osFlow || !_osCamera || !_osFollow) return;
+  const key = 'user:' + _osKey(
+    (typeof window !== 'undefined' && window._userId) || 'user');
+  const me = _osAgents.get(key);
   if (!me || !me.avatar) return;
   const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
   const rows = Math.max(1, Math.ceil(Math.max(_osSeatCount, 1) / OSV_GRID_COLS));
@@ -346,13 +342,6 @@ function _osFollowUser() {
   _osCamPan.x += dx * 0.06;
   _osCamPan.z += dz * 0.06;
   _osUpdateCamera();
-}
-
-function _osFocusAgent(key) {
-  const rec = _osAgents.get(key);
-  if (!rec || !rec.avatar) return;
-  _osFocusKey = key;
-  _osFollow = false;
 }
 
 function _osDoorTrip(rec, label) {

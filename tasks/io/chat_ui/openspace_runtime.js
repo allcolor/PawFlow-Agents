@@ -451,6 +451,29 @@ function _osAdaptPixelRatio(ts) {
   if (next !== _osPixelRatio) {
     _osPixelRatio = next;
     _osRenderer.setPixelRatio(_osPixelRatio);
+    if (_osScreenOcclusionRenderer) {
+      _osScreenOcclusionRenderer.setPixelRatio(_osPixelRatio);
+    }
+  }
+}
+
+function _osRenderScreenOcclusion() {
+  const r = _osScreenOcclusionRenderer;
+  const rect = _osScreenOcclusionRect;
+  if (!r || !rect || !_osScreenOcclusionCanvas
+      || _osScreenOcclusionCanvas.style.display === 'none') return;
+  r.setScissorTest(false);
+  r.clear();
+  r.setScissor(rect.left, _osLastH - rect.bottom,
+    rect.right - rect.left, rect.bottom - rect.top);
+  r.setScissorTest(true);
+  const background = _osScene.background;
+  _osScene.background = null;
+  try {
+    r.render(_osScene, _osCamera);
+  } finally {
+    _osScene.background = background;
+    r.setScissorTest(false);
   }
 }
 
@@ -507,6 +530,7 @@ function _osStartLoop() {
     _osTick(ts);
     _osAdaptPixelRatio(ts);
     _osRenderer.render(_osScene, _osCamera);
+    _osRenderScreenOcclusion();
     _osRaf = requestAnimationFrame(step);
   };
   _osRaf = requestAnimationFrame(step);
@@ -627,7 +651,7 @@ function _osProject(rec) {
   }
 }
 
-// ── Pointer: orbit drag, wheel zoom, click → PC dialog ──────────
+// ── Pointer: orbit drag, wheel zoom, and distinct scene actions ──
 function _osPointerDown(e) {
   _osTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (_osTouches.size === 2) {
@@ -657,7 +681,6 @@ function _osPointerMove(e) {
     if (_osTouches.size === 2 && _osPinchPrev) {
       const s = _osPinchState();
       _osFollow = false;
-      _osFocusKey = '';
       _osSurfaceFocus = '';
       _osCamDist = Math.max(3, Math.min(90, _osCamDist * _osPinchPrev.dist / s.dist));
       const k = _osCamDist * 0.0016;
@@ -682,7 +705,6 @@ function _osPointerMove(e) {
     } else if (_osDrag.pan) {
       // Drag the world: translate the camera target on the floor plane.
       _osFollow = false;
-      _osFocusKey = '';
       _osSurfaceFocus = '';
       const k = _osCamDist * 0.0016;
       const a = _osCamAngle;
@@ -744,12 +766,9 @@ function _osPointerUp(e) {
     if (ud && ud.osvPoster) {
       _osSetCameraView('resources'); _osOpenPoster(ud.osvPoster); return;
     }
-    if (ud && ud.osvAgent) {
-      _osSelectAgent(ud.osvAgent);
-      _osFocusAgent(ud.osvAgent);
-      openspaceOpenAgentDialog(ud.osvAgent);
-      return;
-    }
+    if (ud && ud.osvAgentPc) { openspaceOpenAgentDialog(ud.osvAgentPc); return; }
+    if (ud && ud.osvUser) { openspaceOpenAgentDialog(ud.osvUser); return; }
+    if (ud && ud.osvAgentAvatar) { _osSelectAgent(ud.osvAgentAvatar); return; }
   }
   // No agent under the cursor: clicking the floor walks YOUR avatar
   // there, and the spot becomes its new home (delivery trips return to
@@ -765,7 +784,6 @@ function _osPointerUp(e) {
   const gz = Math.max(-35, Math.min(50, ground.point.z));
   me.homeSeat = { x: gx, z: gz };
   _osWalkTo(me, { x: gx, z: gz });
-  _osFocusKey = '';
   _osFollow = true;
 }
 

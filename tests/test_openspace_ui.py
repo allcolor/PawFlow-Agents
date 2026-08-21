@@ -1,10 +1,10 @@
 """Source invariants for the webchat Openspace 3D view."""
 
 import json
-
-from chat_ui_testing import rendered_chat_html
 import re
 from pathlib import Path
+
+from chat_ui_testing import rendered_chat_html
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENSPACE_MODULES = (
@@ -121,7 +121,15 @@ def test_openspace_bubbles_are_bounded_and_coalesced():
 def test_pc_click_opens_stacked_activity_dialog():
     openspace = _openspace_text()
     assert "function openspaceOpenAgentDialog" in openspace
-    assert "osvAgent" in openspace          # raycast hit → agent key
+    # Raycast targets have disjoint actions: a PC or human visitor opens
+    # activity, while an agent avatar only selects that configured agent.
+    assert "o.userData.osvAgentPc = rec.key" in openspace
+    assert "o.userData.osvAgentAvatar = rec.key" in openspace
+    assert "o.userData.osvUser = rec.key" in openspace
+    assert "openspaceOpenAgentDialog(ud.osvAgentPc); return;" in openspace
+    assert "openspaceOpenAgentDialog(ud.osvUser); return;" in openspace
+    assert "_osSelectAgent(ud.osvAgentAvatar); return;" in openspace
+    assert "openspaceOpenAgentDialog(ud.osvAgentAvatar)" not in openspace
     # Mobile dialog conventions: pinned close cross + wrapping header.
     assert "cog-close" in openspace
     assert "cog-head" in openspace
@@ -135,11 +143,9 @@ def test_agent_click_selects_canonical_conversation_agent():
     assert "_osKey(selectedAgent) === rec.key" in openspace
     assert "cmdAgentSelect(rec.name)" in openspace
 
-    hit = openspace.index("if (ud && ud.osvAgent)")
-    select = openspace.index("_osSelectAgent(ud.osvAgent)", hit)
-    focus = openspace.index("_osFocusAgent(ud.osvAgent)", hit)
-    dialog = openspace.index("openspaceOpenAgentDialog(ud.osvAgent)", hit)
-    assert hit < select < focus < dialog
+    assert "if (ud && ud.osvAgentAvatar) { _osSelectAgent(ud.osvAgentAvatar); return; }" in openspace
+    assert "_osFocusAgent" not in openspace
+    assert "openspaceOpenAgentDialog(ud.osvAgentAvatar)" not in openspace
 
 
 def test_user_message_source_never_creates_a_phantom_agent_desk():
@@ -287,6 +293,22 @@ def test_wall_screen_projects_the_live_simplified_view():
     assert ".osv-bigscreen" in template
     # The projected transcript stays scrollable (pointer-events on).
     assert "pointer-events: auto" in template
+
+
+def test_wall_screen_preserves_webgl_foreground_occlusion():
+    openspace = _openspace_text()
+    # The live DOM transcript has no depth buffer. A transparent WebGL pass,
+    # clipped to the screen quad and to geometry in front of its world plane,
+    # must repaint foreground objects (notably ceiling lights) over it.
+    assert "alpha: true" in openspace
+    assert "_osScreenOcclusionRenderer.clippingPlanes" in openspace
+    assert "_osSyncScreenOcclusion(screenPts)" in openspace
+    assert "_osScreenOcclusionCanvas.style.clipPath = polygon" in openspace
+    assert "_osRenderScreenOcclusion();" in openspace
+    assert "Math.min(2500" in openspace
+    template = rendered_chat_html()
+    assert ".osv-screen-occlusion" in template
+    assert "z-index: 3000" in template
 
 
 def test_thinking_events_reach_thought_bubbles():
@@ -556,11 +578,12 @@ def test_walks_face_the_destination_and_keep_world_space_speed():
     assert "OSV_WALK_MAX_MS" in src
 
 
-def test_clicking_a_participant_smoothly_focuses_the_camera():
+def test_camera_follows_user_without_participant_click_focus():
     src = _openspace_text()
-    assert "function _osFocusAgent" in src
-    assert "_osFocusAgent(ud.osvAgent)" in src
-    assert "let me = _osFocusKey ? _osAgents.get(_osFocusKey) : null" in src
+    assert "function _osFocusAgent" not in src
+    assert "_osFocusKey" not in src
+    assert "if (_osFlow || !_osCamera || !_osFollow) return;" in src
+    assert "const me = _osAgents.get(key);" in src
     assert "_osCamPan.x += dx * 0.06" in src
 
 

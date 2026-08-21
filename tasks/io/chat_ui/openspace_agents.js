@@ -110,7 +110,7 @@ function _osBuildDesk(rec) {
     new T.MeshLambertMaterial({ color: 0x333344 }));
   stand.position.set(0, 1.35, -0.45);
   pc.add(screen, stand);
-  pc.traverse((o) => { o.userData.osvAgent = rec.key; });
+  pc.traverse((o) => { o.userData.osvAgentPc = rec.key; });
   g.add(pc);
   rec.screenMat = screenMat;
   const chair = _osBuildChair(0x596b7f);
@@ -123,7 +123,7 @@ function _osBuildDesk(rec) {
   const avatar = _osBuildChibi(rec);
   avatar.position.set(rec.seat.x, 0, rec.seat.z + 1.35);
   avatar.rotation.y = Math.PI;
-  avatar.traverse((o) => { o.userData.osvAgent = rec.key; });
+  avatar.traverse((o) => { o.userData.osvAgentAvatar = rec.key; });
   _osScene.add(avatar);
   rec.avatar = avatar;
 
@@ -281,7 +281,7 @@ function _osBuildVisitor(rec) {
   head.position.y = 2.0;
   avatar.add(body, head);
   avatar.position.set(rec.seat.x, 0, rec.seat.z);
-  avatar.traverse((o) => { o.userData.osvAgent = rec.key; });
+  avatar.traverse((o) => { o.userData.osvUser = rec.key; });
   _osScene.add(avatar);
   rec.avatar = avatar;
   rec.group = avatar;  // marks the record as built (users have no desk)

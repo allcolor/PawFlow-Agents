@@ -59,7 +59,7 @@ function _osBuildBigScreen() {
   const T = _osThree;
   const cx = ((OSV_GRID_COLS - 1) * OSV_DESK_SPACING) / 2;
   const sw = 5.4, sh = sw * OSV_SCREEN_H / OSV_SCREEN_W;
-  const screenBottom = 0.25, sy = screenBottom + sh / 2, sz = -9;
+  const screenBottom = 0.25, sy = screenBottom + sh / 2, sz = OSV_SCREEN_Z;
   const titleHeight = 0.65, titleGap = 0.1;
   const titleBottom = sy + sh / 2 + titleGap;
   const titleTop = titleBottom + titleHeight;
@@ -153,6 +153,8 @@ function _osProjectMessages(on) {
     _osScreenHome.parent.insertBefore(messages, _osScreenHome.next);
     _osScreenHome = null;
     if (_osScreenEl) _osScreenEl.style.display = 'none';
+    _osScreenOcclusionRect = null;
+    if (_osScreenOcclusionCanvas) _osScreenOcclusionCanvas.style.display = 'none';
   }
 }
 
@@ -202,10 +204,36 @@ function _osQuadTransform(w, h, pts) {
 
 const _osScreenVec = { v: null };
 function _osProjectScreen() {
-  _osProjectPanel(_osScreenEl, _osScreenCorners, OSV_SCREEN_W, OSV_SCREEN_H);
+  const screenPts = _osProjectPanel(
+    _osScreenEl, _osScreenCorners, OSV_SCREEN_W, OSV_SCREEN_H);
+  _osSyncScreenOcclusion(screenPts);
   _osProjectPanel(_osBoardEl, _osBoardCorners, OSV_BOARD_W, OSV_BOARD_H);
   _osProjectPanel(_osTitleEl, _osTitleCorners, OSV_TITLE_W, OSV_TITLE_H);
   _osProjectPanel(_osTvEl, _osTvCorners, OSV_TV_W, OSV_TV_H);
+}
+
+function _osSyncScreenOcclusion(pts) {
+  if (!_osScreenOcclusionCanvas || !_osOverlay || !pts) {
+    _osScreenOcclusionRect = null;
+    if (_osScreenOcclusionCanvas) _osScreenOcclusionCanvas.style.display = 'none';
+    return;
+  }
+  const ow = _osOverlay.clientWidth, oh = _osOverlay.clientHeight;
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+  const left = Math.max(0, Math.floor(Math.min(...xs)));
+  const top = Math.max(0, Math.floor(Math.min(...ys)));
+  const right = Math.min(ow, Math.ceil(Math.max(...xs)));
+  const bottom = Math.min(oh, Math.ceil(Math.max(...ys)));
+  if (right <= left || bottom <= top) {
+    _osScreenOcclusionRect = null;
+    _osScreenOcclusionCanvas.style.display = 'none';
+    return;
+  }
+  _osScreenOcclusionRect = { left: left, top: top, right: right, bottom: bottom };
+  const polygon = 'polygon(' + pts.map((p) => p.x + 'px ' + p.y + 'px').join(',') + ')';
+  _osScreenOcclusionCanvas.style.clipPath = polygon;
+  _osScreenOcclusionCanvas.style.webkitClipPath = polygon;
+  _osScreenOcclusionCanvas.style.display = 'block';
 }
 
 function _osProjectPanel(el, corners, w, h) {
@@ -218,7 +246,7 @@ function _osProjectPanel(el, corners, w, h) {
   let zsum = 0;
   for (const c of corners) {
     v.set(c.x, c.y, c.z).project(_osCamera);
-    if (v.z > 1) { el.style.display = 'none'; return; }
+    if (v.z > 1) { el.style.display = 'none'; return null; }
     zsum += v.z;
     pts.push({ x: (v.x * 0.5 + 0.5) * ow, y: (-v.y * 0.5 + 0.5) * oh });
   }
@@ -227,16 +255,18 @@ function _osProjectPanel(el, corners, w, h) {
   // unreadable sliver — hide both instead of drawing garbage.
   const ux = pts[1].x - pts[0].x, uy = pts[1].y - pts[0].y;
   const wx = pts[2].x - pts[0].x, wy = pts[2].y - pts[0].y;
-  if (ux * wy - uy * wx < 600) { el.style.display = 'none'; return; }
+  if (ux * wy - uy * wx < 600) { el.style.display = 'none'; return null; }
   const transform = _osQuadTransform(w, h, pts);
-  if (!transform) { el.style.display = 'none'; return; }
+  if (!transform) { el.style.display = 'none'; return null; }
   // The stylesheet default is display:none, so clearing the inline style
   // would hide the panel — it must be set explicitly.
   el.style.display = 'block';
   el.style.transform = transform;
   // DOM has no depth buffer: stack projected panels by camera distance
   // so a nearer screen always paints over a farther one.
-  el.style.zIndex = String(Math.max(1, Math.round((1 - zsum / 4) * 2500)));
+  el.style.zIndex = String(Math.min(2500,
+    Math.max(1, Math.round((1 - zsum / 4) * 2500))));
+  return pts;
 }
 
 // Battery above each agent's head: context LEFT (100 − used %), mirroring

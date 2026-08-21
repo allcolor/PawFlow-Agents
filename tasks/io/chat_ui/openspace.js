@@ -57,11 +57,12 @@ let _osThree = null;          // three.js module namespace (lazy import)
 let _osThreeLoading = null;   // in-flight import promise
 let _osEnvironmentLoading = null; // hotpatch-safe optional module loader
 let _osScene = null, _osCamera = null, _osRenderer = null;
+let _osScreenOcclusionRenderer = null;
 let _osRaf = 0;
 const OSV_DPR_MIN = 0.75;
 let _osDprMax = 1, _osPixelRatio = 1, _osSoftwareRenderer = false;
 let _osFrameMs = 16.7, _osLastFrameTs = 0, _osQualityAt = 0;
-let _osCanvas = null, _osOverlay = null;
+let _osCanvas = null, _osOverlay = null, _osScreenOcclusionCanvas = null;
 let _osClock = 0;
 let _osRaycaster = null;
 let _osTweens = [];           // {obj, from:{x,z}, to:{x,z}, start, dur, onDone}
@@ -85,9 +86,12 @@ const _osSeededIds = new Set();
 // Projection wall: the live simplified transcript is reparented into a
 // DOM element that is perspective-mapped onto a big screen in the scene.
 const OSV_SCREEN_W = 960, OSV_SCREEN_H = 540;
+const OSV_SCREEN_Z = -9;
+const OSV_SCREEN_OCCLUSION_EPSILON = 0.01;
 let _osScreenEl = null;
 let _osScreenCorners = null;
 let _osScreenHome = null;   // where #messages goes back on deactivation
+let _osScreenOcclusionRect = null;
 // Blackboard: chalk roster of the active agents, projected like the wall
 // screen. Batteries above heads mirror window._contextUsage.
 const OSV_BOARD_W = 500, OSV_BOARD_H = 300;
@@ -124,7 +128,6 @@ const OSV_TITLE_W = 600, OSV_TITLE_H = 70;
 // Camera follows the viewer's avatar unless the user pans manually;
 // walking (floor click) or the ⌂ reset re-engages the follow.
 let _osFollow = true;
-let _osFocusKey = '';
 let _osSurfaceFocus = '';
 
 function openspaceIsActive() { return _osActive; }
@@ -296,6 +299,25 @@ function _osBuildScene(wrap) {
   wrap.appendChild(_osCanvas);
 
   _osOverlay = document.getElementById('openspaceOverlay');
+  if (_osOverlay) {
+    // Projected panels are DOM, so the main WebGL depth buffer cannot place
+    // foreground geometry (for example a ceiling light) in front of them.
+    // A transparent second pass restores that occlusion inside the wall-screen
+    // quad while keeping the transcript live and interactive.
+    _osScreenOcclusionRenderer = new T.WebGLRenderer({
+      antialias: !_osSoftwareRenderer, alpha: true,
+    });
+    _osScreenOcclusionRenderer.setPixelRatio(_osPixelRatio);
+    _osScreenOcclusionRenderer.setClearColor(0x000000, 0);
+    _osScreenOcclusionRenderer.toneMapping = T.ACESFilmicToneMapping;
+    _osScreenOcclusionRenderer.toneMappingExposure = 1.08;
+    _osScreenOcclusionRenderer.outputColorSpace = T.SRGBColorSpace;
+    _osScreenOcclusionRenderer.clippingPlanes = [new T.Plane(
+      new T.Vector3(0, 0, 1), -OSV_SCREEN_Z - OSV_SCREEN_OCCLUSION_EPSILON)];
+    _osScreenOcclusionCanvas = _osScreenOcclusionRenderer.domElement;
+    _osScreenOcclusionCanvas.className = 'osv-screen-occlusion';
+    _osOverlay.appendChild(_osScreenOcclusionCanvas);
+  }
 
   const ambient = new T.AmbientLight(0xffffff, 0.35);
   const sky = new T.HemisphereLight(0xdcecff, 0x66704f, 1.35);
@@ -374,7 +396,6 @@ function _osBuildScene(wrap) {
     // the two-finger drag) — ⌂ re-engages the follow.
     const pan = (dx, dy) => {
       _osFollow = false;
-      _osFocusKey = '';
       const k = _osCamDist * 0.0016;
       const a = _osCamAngle;
       _osCamPan.x += (-Math.sin(a) * dx + Math.cos(a) * dy) * k;
@@ -416,11 +437,11 @@ function _osSetCameraView(kind) {
   if (!view) {
     _osCamAngle = Math.PI / 4; _osCamDist = 36; _osCamHeight = 25;
     _osCamPan.x = 0; _osCamPan.y = 0; _osCamPan.z = 0;
-    _osFocusKey = ''; _osSurfaceFocus = ''; _osFollow = true;
+    _osSurfaceFocus = ''; _osFollow = true;
   } else {
     _osCamPan.x = view.x - cx; _osCamPan.y = view.y; _osCamPan.z = view.z - cz;
     _osCamAngle = view.angle; _osCamDist = view.dist; _osCamHeight = 0.15;
-    _osFocusKey = ''; _osSurfaceFocus = kind; _osFollow = false;
+    _osSurfaceFocus = kind; _osFollow = false;
   }
   _osUpdateCamera();
 }
@@ -447,6 +468,7 @@ function _osResize() {
     const w2 = wrap.clientWidth || 1, h2 = wrap.clientHeight || 1;
     _osLastW = w2; _osLastH = h2;
     _osRenderer.setSize(w2, h2);
+    if (_osScreenOcclusionRenderer) _osScreenOcclusionRenderer.setSize(w2, h2);
     _osCamera.aspect = w2 / h2;
     _osCamera.updateProjectionMatrix();
   };

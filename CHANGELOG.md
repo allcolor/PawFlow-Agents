@@ -28,6 +28,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   modules. Tests read the rendered page through
   `tests/chat_ui_testing.rendered_chat_html()`; the DOM contract (ids, PFP
   slot hosts, i18n keys) is pinned by `tests/fixtures/chat_ui_dom_snapshot.json`.
+  The skeleton (38 lines) only includes 16 region partials (`head/`,
+  `sidebar/`, `dialogs/`, `header/`, `chat/`, `composer/`, `ext/`, `boot/`),
+  each one region, ≤ 300 lines.
   Docs: `docs/CHAT_UI_TEMPLATES.md`, plan `docs/CHAT_UI_TEMPLATE_PLAN.md`.
 
 ### Fixed

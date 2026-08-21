@@ -1,0 +1,15 @@
+  <div class="input-row">
+    <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
+    <div data-pf-slot="composer_accessory_ext" hidden></div>
+    <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
+    <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"
+              rows="1" onkeydown="handleKey(event)"></textarea>
+    <div class="attachments-preview" id="attachPreview" aria-live="polite"></div>
+    <button id="sendBtn" onclick="send()" aria-label="Send" data-i18n-aria-label="send"
+            title="Send" data-i18n-title="send">
+      <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false" width="18" height="18">
+        <path d="M3 11l18-8-8 18-2.5-7.5z" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+    </button>
+  </div>

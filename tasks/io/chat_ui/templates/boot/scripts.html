@@ -1,0 +1,10 @@
+<!-- JS modules loaded individually for caching: <script defer> tags load in
+     parallel and execute in _JS_MODULES order once the HTML is parsed. A
+     failed module (transient 502 during an update) reloads the page once
+     instead of leaving it half-initialized. -->
+<script>window.PAWFLOW_ASSET_VERSION={{ asset_version|tojson }};window.__pawflowAssetReloadScheduled=false;window.__pawflowAssetLoadFailed=function(){if(window.__pawflowAssetReloadScheduled)return;window.__pawflowAssetReloadScheduled=true;setTimeout(function(){window.location.reload();},1500);};</script>
+{{ i18n_block|safe }}
+{{ extensions_block|safe }}
+{% for module in js_modules %}
+<script defer src="/chat/js/{{ module }}?v={{ asset_version }}" onerror="window.__pawflowAssetLoadFailed()"></script>
+{% endfor %}

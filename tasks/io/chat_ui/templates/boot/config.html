@@ -1,0 +1,7 @@
+<script>
+// Config injected by server
+const AGENT_PATH = {{ agent_path|tojson }};
+const API = window.location.origin + {{ agent_path|tojson }};
+const SSE_URL = window.location.origin + {{ sse_path|tojson }};
+const LOGIN_URL = {{ login_url|tojson }};
+</script>

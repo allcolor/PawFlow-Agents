@@ -1,0 +1,66 @@
+  <button class="composer-drawer-handle pf-grip" id="composerDrawerHandle" type="button"
+          aria-expanded="false" aria-controls="promptControlsPanel"
+          onclick="toggleComposerDrawer()"
+          title="Show/hide conversation controls" data-i18n-title="composerDrawerTitle"><span class="pf-grip-bars"></span></button>
+  <div class="composer-context-row">
+    <div class="prompt-controls-panel" id="promptControlsPanel">
+      <div class="active-panel-title" data-i18n="conversationControls">Conversation controls</div>
+      <div class="prompt-controls-row">
+        <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode" data-i18n-title="permissionModeTitle"
+                style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
+          <option value="default" data-i18n-permission="permissionDefault">&#x1F512; Default</option>
+          <option value="approve_edits" data-i18n-permission="permissionApproveEdits">&#x270F; Approve edits</option>
+          <option value="read_only" data-i18n-permission="permissionReadOnly">&#x1F4D6; Read-only</option>
+          <option value="auto" data-i18n-permission="permissionAuto">&#x26A1; Auto</option>
+        </select>
+        <button class="speak-toggle-btn" id="speakToggleBtn" onclick="toggleConversationTTS()" oncontextmenu="showConversationTTSServiceDialog(); return false;" aria-label="Speak agent messages live" data-i18n-aria-label="liveSpeechStartTitle" style="display:none">&#x1F50A;</button>
+        <button id="speechInputBtn" onclick="toggleConversationSTT()" oncontextmenu="showConversationSTTServiceDialog(); return false;" aria-label="Dictate and send" data-i18n-aria-label="speechInputStartTitle" style="display:none">&#x1F3A4;</button>
+        <button class="btn-attach" id="voiceModeBtn" onclick="toggleVoiceMode()" oncontextmenu="showVoiceServiceDialog(); return false;" title="Start realtime voice conversation" data-i18n-title="voiceModeStartTitle" style="display:none">&#x1F399;&#xFE0F;</button>
+        <button class="btn-attach" id="grabBtn" onclick="toggleGrab()" title="Type straight into the agent tmux" data-i18n-title="grabTitle" style="display:none">&#x1F5A5;&#xFE0F;</button>
+        <button class="btn-attach" id="refreshConvBtn" onclick="refreshCurrentConversation()" title="Refresh conversation" data-i18n-title="refreshConversationTitle">&#x21BB;</button>
+        <div class="view-menu-wrap" id="viewMenuWrap">
+          <button id="viewMenuToggle" class="tech-group-toggle" type="button" aria-haspopup="true" aria-expanded="false"
+                  aria-label="View options" data-i18n-aria-label="viewMenuTitle"
+                  onclick="toggleViewMenu()">&#x1F441;</button>
+          <div class="view-menu" id="viewMenu" role="menu">
+            <div class="view-menu-section-label" data-i18n="viewMode">View mode</div>
+            <div class="view-menu-item active" id="viewItemClassic" role="menuitemradio" aria-checked="true"
+                 onclick="onViewModeSelect('classic')">
+              <span class="view-menu-radio" aria-hidden="true"></span>
+              <span class="vmi-label" data-i18n="classicView">Classic</span>
+            </div>
+            <div class="view-menu-item" id="viewItemSimplified" role="menuitemradio" aria-checked="false"
+                 onclick="onViewModeSelect('simplified')">
+              <span class="view-menu-radio" aria-hidden="true"></span>
+              <span class="vmi-label" data-i18n="simplifiedView">Simplified</span>
+            </div>
+            <div class="view-menu-item" id="viewItemOpenspace" role="menuitemradio" aria-checked="false"
+                 onclick="onViewModeSelect('openspace')">
+              <span class="view-menu-radio" aria-hidden="true"></span>
+              <span class="vmi-label" data-i18n="openspaceView">Openspace (3D)</span>
+            </div>
+            <div class="view-menu-divider"></div>
+            <div id="viewClassicOptions">
+            <div class="view-menu-section-label" data-i18n="classicOptions">Classic options</div>
+            <div class="view-menu-item" id="viewItemTechnical" role="menuitemcheckbox" aria-checked="false"
+                 onclick="onViewGroupingToggle('technical')">
+              <span class="vmi-label" data-i18n="viewGroupTechnical">Group technical details</span>
+              <span class="vmi-switch" aria-hidden="true"></span>
+            </div>
+            <div class="view-menu-item" id="viewItemTask" role="menuitemcheckbox" aria-checked="false"
+                 onclick="onViewGroupingToggle('task')">
+              <span class="vmi-label" data-i18n="viewGroupTasks">Group task messages</span>
+              <span class="vmi-switch" aria-hidden="true"></span>
+            </div>
+            <div class="view-menu-item" id="viewItemDelegate" role="menuitemcheckbox" aria-checked="false"
+                 onclick="onViewGroupingToggle('delegate')">
+              <span class="vmi-label" data-i18n="viewGroupDelegates">Group delegate messages</span>
+              <span class="vmi-switch" aria-hidden="true"></span>
+            </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="composer-action-mount" id="composerActionMount"></div>
+  </div>

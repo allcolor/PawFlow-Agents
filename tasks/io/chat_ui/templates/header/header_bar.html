@@ -1,0 +1,104 @@
+<button class="pf-grip pf-grip-top" id="headerGrip" type="button" aria-expanded="false"
+        aria-controls="headerBar" onclick="toggleHeaderBar()"
+        title="Show/hide header" data-i18n-title="headerGripTitle"><span class="pf-grip-bars"></span></button>
+<div class="header" id="headerBar">
+  <h1 class="header-logo"><a href="https://pawflow.allcolor.org/" target="_blank" rel="noopener"
+      title="PawFlow" aria-label="PawFlow"><img src="/chat/js/assets/pawflow-logo-32.png" alt="PawFlow"></a></h1>
+  <label class="header-select-control header-dock-item" id="themeSelectControl"
+         aria-label="Global chat theme"
+         data-i18n-aria-label="globalThemeTitle" style="display:none">
+    <span class="header-select-icon ami-icon" aria-hidden="true">&#x1F3A8;</span>
+    <div><div class="ami-label" data-i18n="globalThemeTitle">Global chat theme</div><div class="ami-desc" data-i18n="globalThemeDesc">Choose the interface theme</div></div>
+    <select class="header-icon-select" id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)"
+            aria-label="Global chat theme" data-i18n-aria-label="globalThemeTitle">
+      <option value="global:pawflow_dark">PawFlow Dark</option>
+    </select>
+  </label>
+  <label class="header-select-control header-dock-item" id="languageSelectControl"
+         aria-label="Language"
+         data-i18n-aria-label="languageTitle" style="display:none">
+    <span class="header-select-icon ami-icon" aria-hidden="true">&#x1F310;</span>
+    <div><div class="ami-label" data-i18n="languageTitle">Language</div><div class="ami-desc" data-i18n="languageDesc">Choose the interface language</div></div>
+    <select class="header-icon-select" id="languageSelect" onchange="setLanguage(this.value)"
+            aria-label="Language" data-i18n-aria-label="languageTitle"></select>
+  </label>
+  <span class="hdr-pop-wrap" id="actionStatusWrap">
+    <button class="hdr-icon-btn" id="actionStatusBtn" type="button" aria-expanded="false"
+            aria-controls="actionStatusPop" onclick="toggleHeaderPop('actionStatusPop', this)"
+            title="Pending actions" data-i18n-title="actionStatusBtnTitle">
+      <span class="hdr-action-icon" id="actionStatusIcon">&#x2713;</span>
+    </button>
+    <div class="hdr-pop" id="actionStatusPop">
+      <div class="status" id="status" data-i18n="ready">Ready</div>
+      <span id="actionLoading" class="ui-action-loading" style="display:none"></span>
+    </div>
+  </span>
+  <span class="hdr-pop-wrap" id="ctxGaugeWrap" style="display:none">
+    <button class="hdr-icon-btn" id="ctxGaugeBtn" type="button" aria-expanded="false"
+            aria-controls="ctxGaugePop" onclick="toggleHeaderPop('ctxGaugePop', this)"
+            title="Context usage" data-i18n-title="ctxGaugeBtnTitle">
+      <span class="ctx-gauge-icon" aria-hidden="true"><span class="ctx-gauge-icon-fill" id="ctxGaugeFill"></span></span>
+      <span class="ctx-gauge-pct" id="ctxGaugePct"></span>
+    </button>
+    <div class="hdr-pop" id="ctxGaugePop">
+      <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
+    </div>
+  </span>
+  <span class="usage-cost-badge" id="usageCostBadge" onclick="showUsageCostPanel()" style="display:none"></span>
+  <span class="hdr-pop-wrap" id="activeAgentsWrap">
+    <button class="hdr-icon-btn" id="activeAgentsBtn" type="button" aria-expanded="false"
+            aria-controls="activeAgentsPop" onclick="toggleHeaderPop('activeAgentsPop', this)"
+            title="Active agents" data-i18n-title="activeAgents">
+      <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+        <circle cx="12" cy="8" r="4"></circle>
+        <path d="M4 21c0-4 4-6 8-6s8 2 8 6"></path>
+      </svg>
+      <span class="hdr-count" id="activeAgentsCount" hidden>0</span>
+    </button>
+    <div class="hdr-pop" id="activeAgentsPop"></div>
+  </span>
+  <div class="actions">
+    <button class="btn header-auth-btn header-dock-item" id="updateAvailableBtn" type="button"
+            onclick="openUpdatesDialog()" aria-label="Update available"
+            data-i18n-aria-label="updateAvailable" style="display:none">
+      <svg class="ami-icon" aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+        <circle cx="12" cy="12" r="9"></circle>
+        <path d="M12 16V8 M8.5 11.5 12 8l3.5 3.5"></path>
+      </svg>
+      <div><div class="ami-label" data-i18n="updateAvailable">Update available</div><div class="ami-desc" data-i18n="updateAvailableDesc">Open the Updates screen</div></div>
+    </button>
+    <button class="btn header-auth-btn header-dock-item" id="confirmationsBtn" type="button"
+            onclick="toggleConfirmationsPanel()" aria-label="Confirmations"
+            data-i18n-aria-label="confTitle">
+      <span class="ami-icon" aria-hidden="true">&#x2705;</span>
+      <span class="pf-notif-badge" id="confirmationsBadge" hidden>0</span>
+      <div><div class="ami-label" data-i18n="confTitle">Confirmations</div><div class="ami-desc" data-i18n="confDesc">Pending confirmation requests</div></div>
+    </button>
+    <button class="btn header-auth-btn header-dock-item" id="notificationCenterBtn" type="button"
+            onclick="openNotificationCenter()" aria-label="Notifications"
+            data-i18n-aria-label="notifications">
+      <svg class="ami-icon" aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+        <path d="M10 21h4"></path>
+      </svg>
+      <span class="pf-notif-badge" id="notificationCenterBadge" hidden>0</span>
+      <div><div class="ami-label" data-i18n="notifications">Notifications</div><div class="ami-desc" data-i18n="notificationsDesc">Open runtime notifications</div></div>
+    </button>
+    <button class="btn header-auth-btn header-dock-item" id="linkAccountBtn" type="button"
+            onclick="showLinkedAccountsDialog()" aria-label="Linked accounts"
+            data-i18n-aria-label="linkedAccounts" style="display:none">
+      <span class="ami-icon" aria-hidden="true">&#x1F517;</span>
+      <div><div class="ami-label" data-i18n="linkedAccounts">Linked accounts</div><div class="ami-desc user-info" id="userInfo"></div></div>
+    </button>
+    <button class="btn header-auth-btn header-dock-item" id="logoutBtn" type="button"
+            onclick="doLogout()"
+            aria-label="Logout" data-i18n-aria-label="logout"
+            style="display:none">
+      <svg class="ami-icon" aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+        <path d="M12 2v10 M6.34 4.93a8 8 0 1 0 11.32 0"></path>
+      </svg>
+      <div><div class="ami-label" data-i18n="logout">Logout</div><div class="ami-desc" data-i18n="logoutDesc">End this session</div></div>
+    </button>
+  </div>
+{% include "header/action_dock.html" %}
+</div>

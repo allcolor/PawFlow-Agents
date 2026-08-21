@@ -15,8 +15,9 @@ html = render_chat_page(agent_path="/api/agent", sse_path="/api/agent/events",
 
 - One `jinja2.Environment` per process: `FileSystemLoader(chat_ui/templates)`,
   `autoescape=True`, `undefined=StrictUndefined`, `auto_reload=True`,
-  `trim_blocks` + `lstrip_blocks`. A changed partial is re-read on the next
-  request (hotpatch workflow).
+  `trim_blocks` + `lstrip_blocks`, `keep_trailing_newline` (an include keeps
+  its final newline, so partial boundaries never glue two lines). A changed
+  partial is re-read on the next request (hotpatch workflow).
 - The page is rendered **per request**; the context differs per request
   (theme cookie, installed extensions). The i18n boot block — the only costly
   piece — is cached per i18n file signature.
@@ -43,13 +44,34 @@ html = render_chat_page(agent_path="/api/agent", sse_path="/api/agent/events",
 ## Layout
 
 ```text
-tasks/io/chat_ui/
-  templates/
-    chat.html        # skeleton (WP0: the former template.html; WP1 splits it into partials)
-  css/               # CSS modules (WP2)
+tasks/io/chat_ui/templates/
+  chat.html                         # skeleton: doctype, <head>/<body> structure, includes, extension points
+  head/styles.html                  # the page stylesheet (inline until the CSS modules land) + custom_css
+  head/vendor.html                  # rxjs UMD, highlight.js + its DOMContentLoaded bootstrap
+  sidebar/sidebar.html              # sidebar grip, #sidebar, Conversations section (+ new/import menu)
+  sidebar/resources.html            # #resourcesPanel, resources_collection/resources_panel/sidebar_* slot hosts
+  dialogs/conversation_settings.html# #conversationSettingsDialog (expiry, sharing, controls)
+  header/tab_bar.html               # #tabBar, tab_bar slot host, audio tab buttons
+  header/header_bar.html            # header grip, #headerBar: logo, status, gauges, active agents, user info
+  header/action_dock.html           # #actionMenuWrap: action menu items, action_menu/header_actions/gear_menu hosts
+  chat/panels.html                  # confirmations / plans / scheduled tasks / files panels
+  chat/messages.html                # conversation_stage host, #messages, OpenSpace wrap, scroll nav, active agents panel
+  chat/task_tabs.html               # #taskTabDock, #taskTabPanel
+  composer/controls.html            # composer drawer grip, #promptControlsPanel, view menu, composer action mount
+  composer/input_row.html           # attach button, composer_accessory host, #input, send button
+  ext/hosts.html                    # #pf-ext-modal-host, CSS tooltip portal, #pf-ext-panel-host
+  boot/config.html                  # AGENT_PATH / API / SSE_URL / LOGIN_URL constants (tojson)
+  boot/scripts.html                 # asset-version guard, i18n block, extensions block, <script defer> loop
 ```
 
-The partial map is filled in as the split lands (WP1/WP2 of the plan).
+Rules for partials:
+
+- one region per file, ≤ 300 lines (target ≤ 150); a region that grows is
+  split again, the skeleton never regains markup of its own;
+- partials are plain HTML plus Jinja includes/expressions; they never define
+  blocks or macros that another partial depends on;
+- every element the JS modules address by id stays in exactly one partial
+  (`tests/test_chat_ui_templates.py` pins the id / slot / i18n-key sets).
 
 ## Tests
 

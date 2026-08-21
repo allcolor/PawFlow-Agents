@@ -1,0 +1,24 @@
+<button class="sidebar-toggle pf-grip" id="sidebarToggle" type="button" aria-expanded="false"
+        aria-controls="sidebar" onclick="toggleSidebar()"
+        title="Show/hide menu" data-i18n-title="sidebarGripTitle"><span class="pf-grip-bars-h"></span></button>
+<div class="sidebar collapsed" id="sidebar">
+  <div id="conversationsPanel" class="sidebar-section active" data-sidebar-section="conversations">
+    <div class="sidebar-header sidebar-section-header" data-sidebar-header="conversations"
+         role="button" tabindex="0" aria-controls="conversationsBody" aria-expanded="true"
+         onclick="setSidebarSection('conversations')"
+         onkeydown="sidebarSectionHeaderKey(event, 'conversations')">
+      <h2 data-i18n="conversations">Conversations</h2>
+      <div style="position:relative;display:inline-block;">
+        <button class="btn-new" style="border-radius:6px 0 0 6px" onclick="newChat()" data-i18n="newChat">+ New</button><button class="btn-new" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'" style="border-left:1px solid rgba(255,255,255,0.3);border-radius:0 6px 6px 0;padding:4px 6px;">▼</button>
+        <div style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#1a1a2e;border:1px solid #333;border-radius:6px;min-width:200px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.5);">
+          <div onclick="this.parentElement.style.display='none';newChat()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''" data-i18n="newConversation">New conversation</div>
+          <div onclick="this.parentElement.style.display='none';importConversation()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''" data-i18n="importConversation">Import conversation</div>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar-section-body sidebar-conversations-body" id="conversationsBody" aria-hidden="false">
+      <div class="conv-list" id="convList"></div>
+    </div>
+  </div>
+{% include "sidebar/resources.html" %}
+</div>

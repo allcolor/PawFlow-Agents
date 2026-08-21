@@ -106,7 +106,9 @@ _CSS_MODULES: Tuple[str, ...] = ()
 # One environment per process. auto_reload re-reads a partial whose mtime
 # changed (hotpatch workflow); autoescape + StrictUndefined: the template
 # marks the server-built blocks |safe explicitly, a missing context key is
-# an error. trim/lstrip keep block tags from leaving blank lines.
+# an error. trim/lstrip keep block tags from leaving blank lines;
+# keep_trailing_newline keeps each partial's final newline so an include
+# never glues its last line to the next line of the skeleton.
 _env = Environment(
     loader=FileSystemLoader(str(_TEMPLATES_DIR)),
     autoescape=True,
@@ -114,6 +116,7 @@ _env = Environment(
     auto_reload=True,
     trim_blocks=True,
     lstrip_blocks=True,
+    keep_trailing_newline=True,
 )
 
 _preload_started = False

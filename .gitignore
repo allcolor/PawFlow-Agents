@@ -60,6 +60,9 @@ flows/
 projects/
 checkpoints/
 templates/
+# The chat page is a Jinja template tree (docs/CHAT_UI_TEMPLATES.md): it is
+# source, not generated output, and ships in the release tarball.
+!tasks/io/chat_ui/templates/
 plugins/
 
 # ── Legacy data dirs (pre-migration) ─────────────────────────

@@ -1,0 +1,117 @@
+  <div class="action-menu-wrap action-dock" id="actionMenuWrap" style="display:none">
+      <div class="action-menu action-dock-menu" id="actionMenu">
+        <div class="action-menu-item" onclick="closeActionMenu();cmdTerminal('',[''])">
+          <span class="ami-icon" style="font-family:monospace;font-weight:bold">&gt;_</span>
+          <div><div class="ami-label" data-i18n="terminal">Terminal</div><div class="ami-desc" data-i18n="terminalDesc">Open interactive terminal on relay</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdAgentTmux()">
+          <span class="ami-icon" style="font-family:monospace;font-weight:bold">AI</span>
+          <div><div class="ami-label" data-i18n="ccInteractiveTerminal">Agent Tmux</div><div class="ami-desc" data-i18n="ccInteractiveTerminalDesc">Attach to selected agent tmux</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdCode('',[''])">
+          <span class="ami-icon">&#x2699;</span>
+          <div><div class="ami-label" data-i18n="vsCode">VS Code</div><div class="ami-desc" data-i18n="vsCodeDesc">Open code-server editor on relay</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdDesktop('',[''])">
+          <span class="ami-icon">&#x1F5A5;</span>
+          <div><div class="ami-label" data-i18n="desktop">Desktop</div><div class="ami-desc" data-i18n="desktopDesc">Open virtual desktop (VNC) on relay</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdAudio('',[''])">
+          <span class="ami-icon">&#x1F50A;</span>
+          <div><div class="ami-label" data-i18n="audio">Audio</div><div class="ami-desc" data-i18n="audioDesc">Forward audio from relay (no desktop)</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdVm('',['vm','list'])">
+          <span class="ami-icon">&#x1F433;</span>
+          <div><div class="ami-label" data-i18n="containers">Containers</div><div class="ami-desc" data-i18n="containersDesc">List &amp; manage Docker containers</div></div>
+        </div>
+        <div class="action-menu-sep"></div>
+        <div class="action-menu-item" onclick="closeActionMenu();openExplorer()">
+          <span class="ami-icon">&#128193;</span>
+          <div><div class="ami-label" data-i18n="fileExplorer">File Explorer</div><div class="ami-desc" data-i18n="fileExplorerDesc">Browse relay filesystem</div></div>
+        </div>
+        <div class="action-menu-item" id="plansMenuItem" onclick="closeActionMenu();togglePlansPanel()">
+          <span class="ami-icon">&#x1F4CB;</span>
+          <div><div class="ami-label" data-i18n="plans">Plans</div><div class="ami-desc" data-i18n="plansDesc">View active plans</div></div>
+        </div>
+        <div class="action-menu-item" id="todosMenuItem" onclick="closeActionMenu();showTodosDialog()">
+          <span class="ami-icon">&#x2611;</span>
+          <div><div class="ami-label" data-i18n="todoList">Todo List</div><div class="ami-desc" data-i18n="todoListDesc">View durable agent work items</div></div>
+        </div>
+        <div class="action-menu-item" id="schedsMenuItem" onclick="closeActionMenu();toggleSchedsPanel()">
+          <span class="ami-icon">&#x23F0;</span>
+          <div><div class="ami-label" data-i18n="scheduledTasks">Scheduled Tasks</div><div class="ami-desc" data-i18n="scheduledTasksDesc">View scheduled checks</div></div>
+        </div>
+        <div class="action-menu-item" id="filesMenuItem" onclick="closeActionMenu();toggleFilesPanel()">
+          <span class="ami-icon">&#x1F4C4;</span>
+          <div><div class="ami-label" data-i18n="files">Files</div><div class="ami-desc" data-i18n="filesDesc">Conversation files</div></div>
+        </div>
+        <div class="action-menu-sep"></div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdShowContext()">
+          <span class="ami-icon">&#x1F441;</span>
+          <div><div class="ami-label" data-i18n="context">Context</div><div class="ami-desc" data-i18n="contextDesc">View LLM context window</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdShowMemories()">
+          <span class="ami-icon">&#x1F9E0;</span>
+          <div><div class="ami-label" data-i18n="memories">Memories</div><div class="ami-desc" data-i18n="memoriesDesc">View agent memories</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdShowDiary()">
+          <span class="ami-icon">D</span>
+          <div><div class="ami-label" data-i18n="diary">Diary</div><div class="ami-desc" data-i18n="diaryDesc">View and add agent diary entries</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdShowProjectGraph()">
+          <span class="ami-icon">&#x1F578;</span>
+          <div><div class="ami-label" data-i18n="projectGraph">Project Graph</div><div class="ami-desc" data-i18n="projectGraphDesc">Build / browse the codebase graph</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdShowProjectWiki()">
+          <span class="ami-icon">W</span>
+          <div><div class="ami-label" data-i18n="projectWiki">Project Wiki</div><div class="ami-desc" data-i18n="projectWikiDesc">Search and edit relay project knowledge</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdShowScratchpad()">
+          <span class="ami-icon">S</span>
+          <div><div class="ami-label" data-i18n="scratchpad">Scratchpad</div><div class="ami-desc" data-i18n="scratchpadDesc">Temporary notes for a conversation agent</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();_showToolMcpFilterDialog('', 'conversation')">
+          <span class="ami-icon">&#x1F6E0;</span>
+          <div><div class="ami-label" data-i18n="toolsMcp">Tools / MCP</div><div class="ami-desc" data-i18n="toolsMcpDesc">Conversation tool availability</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();_showAgentHooksDialog()">
+          <span class="ami-icon">&#x2693;</span>
+          <div><div class="ami-label" data-i18n="agentHooks">Agent Hooks</div><div class="ami-desc" data-i18n="agentHooksDesc">Conversation hook bindings</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();showUsageDashboard()">
+          <span class="ami-icon">&#x1F4CA;</span>
+          <div><div class="ami-label" data-i18n="usageDashMenuLabel">Usage &amp; Costs</div><div class="ami-desc" data-i18n="usageDashMenuDesc">Usage/cost dashboard across conversations</div></div>
+        </div>
+        <div class="action-menu-sep"></div>
+        <button class="action-menu-item" id="adminSettingsBtn" onclick="toggleAdminSettingsMenu()" aria-label="Server settings" style="display:none">
+          <span class="ami-icon">&#9881;</span>
+          <div><div class="ami-label">Server settings</div><div class="ami-desc">Administration and updates</div></div>
+        </button>
+        <div data-pf-slot="action_menu_ext"></div>
+        <span data-pf-slot="header_actions_ext"></span>
+      </div>
+      <div class="action-menu" id="adminSettingsMenu">
+        <div class="action-menu-item" onclick="closeAdminSettingsMenu();openAdminUsersDialog()">
+          <span class="ami-icon">U</span>
+          <div><div class="ami-label">User Management</div><div class="ami-desc">Manage local users and linked identities</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeAdminSettingsMenu();openOAuthTokensDialog()">
+          <span class="ami-icon">T</span>
+          <div><div class="ami-label">OAuth Tokens</div><div class="ami-desc">Create temporary external-login onboarding tokens</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeAdminSettingsMenu();openSystemParamsDialog()">
+          <span class="ami-icon">P</span>
+          <div><div class="ami-label">System Parameters</div><div class="ami-desc">Guided global variables and secrets</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeAdminSettingsMenu();openAdminServerRelaysDialog()">
+          <span class="ami-icon">R</span>
+          <div><div class="ami-label">Server Relays</div><div class="ami-desc">Toggle server-local execution for managed relays</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeAdminSettingsMenu();openUpdatesDialog()">
+          <span class="ami-icon">&#x21BB;</span>
+          <div><div class="ami-label">Updates</div><div class="ami-desc">Installed versions and agent CLI image rebuild</div></div>
+        </div>
+        <div data-pf-slot="gear_menu_ext"></div>
+      </div>
+  </div>
+  <!-- /action dock -->

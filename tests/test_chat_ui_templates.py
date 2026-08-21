@@ -93,6 +93,28 @@ def test_asset_signature_covers_every_template_and_css_module():
     assert any(name.startswith("i18n/") for name in names)
 
 
+# The page stylesheet stays one inline partial until the CSS modules land
+# (WP2 of the plan); every other partial is one small region.
+_OVERSIZE_ALLOWED = {"head/styles.html"}
+
+
+def test_skeleton_only_includes_and_partials_stay_small():
+    skeleton = (TEMPLATES_DIR / "chat.html").read_text(encoding="utf-8")
+    assert len(skeleton.splitlines()) <= 60
+    includes = re.findall(r'{% include "([^"]+)" %}', skeleton)
+    assert len(includes) >= 12
+    for name in includes:
+        assert (TEMPLATES_DIR / name).is_file(), name
+    # No element with an id lives in the skeleton itself except the tab
+    # content wrapper whose children are the includes.
+    assert _ids(skeleton) == ["tabContentChat"]
+    for path in TEMPLATES_DIR.rglob("*.html"):
+        rel = path.relative_to(TEMPLATES_DIR).as_posix()
+        if rel == "chat.html" or rel in _OVERSIZE_ALLOWED:
+            continue
+        assert len(path.read_text(encoding="utf-8").splitlines()) <= 300, rel
+
+
 def test_environment_is_strict_and_autoescaping():
     from jinja2 import StrictUndefined
     from tasks.io.serve_chat_ui import _env
@@ -100,3 +122,7 @@ def test_environment_is_strict_and_autoescaping():
     assert _env.autoescape is True
     assert _env.auto_reload is True
     assert _env.trim_blocks is True and _env.lstrip_blocks is True
+    # An include keeps its final newline: the composer's closing tags stay on
+    # their own lines exactly as in the monolithic page.
+    assert _env.keep_trailing_newline is True
+    assert '  </div>\n</div>\n</div><!-- /tab-content chat -->' in rendered_chat_html()

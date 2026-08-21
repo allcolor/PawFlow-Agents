@@ -700,6 +700,20 @@ function _osPointerMove(e) {
   }
 }
 
+function _osSelectAgent(key) {
+  const rec = _osAgents.get(_osKey(key));
+  if (!rec || rec.kind !== 'agent' || rec.guest) return Promise.resolve(false);
+  if (typeof selectedAgent !== 'undefined' && _osKey(selectedAgent) === rec.key) {
+    return Promise.resolve(true);
+  }
+  if (typeof cmdAgentSelect !== 'function') return Promise.resolve(false);
+  const selection = cmdAgentSelect(rec.name);
+  if (selection && typeof selection.catch === 'function') {
+    selection.catch((error) => console.error('openspace: agent selection failed', error));
+  }
+  return selection || Promise.resolve(false);
+}
+
 function _osPointerUp(e) {
   _osTouches.delete(e.pointerId);
   if (_osTouches.size < 2) _osPinchPrev = null;
@@ -731,6 +745,7 @@ function _osPointerUp(e) {
       _osSetCameraView('resources'); _osOpenPoster(ud.osvPoster); return;
     }
     if (ud && ud.osvAgent) {
+      _osSelectAgent(ud.osvAgent);
       _osFocusAgent(ud.osvAgent);
       openspaceOpenAgentDialog(ud.osvAgent);
       return;

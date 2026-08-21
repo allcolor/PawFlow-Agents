@@ -126,6 +126,20 @@ def test_pc_click_opens_stacked_activity_dialog():
     assert "osv-block" in openspace          # stacked detail blocks
 
 
+def test_agent_click_selects_canonical_conversation_agent():
+    openspace = _openspace_text()
+    assert "function _osSelectAgent(key)" in openspace
+    assert "rec.kind !== 'agent' || rec.guest" in openspace
+    assert "_osKey(selectedAgent) === rec.key" in openspace
+    assert "cmdAgentSelect(rec.name)" in openspace
+
+    hit = openspace.index("if (ud && ud.osvAgent)")
+    select = openspace.index("_osSelectAgent(ud.osvAgent)", hit)
+    focus = openspace.index("_osFocusAgent(ud.osvAgent)", hit)
+    dialog = openspace.index("openspaceOpenAgentDialog(ud.osvAgent)", hit)
+    assert hit < select < focus < dialog
+
+
 def test_openspace_i18n_keys_exist_in_all_locales():
     keys = (
         "openspaceView", "osvActivity", "osvNoActivity", "osvLoadError",

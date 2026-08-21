@@ -56,7 +56,7 @@ PawFlow gives agents a real operating surface without handing your workspace to 
 - **Service Tunnels**: reach a relay-approved TCP service from another relay through a loopback-only listener, with owner-scoped records, short-lived signed grants, and FRPS Login/NewProxy authorization.
 - **Purpose-built context**: conversations, memory, knowledge graphs, agent
   diaries, relay-scoped project graphs and wikis, durable todo state, expiring
-  scratchpads, files, and buckets each keep their own scope and lifetime across
+  scratchpads, relay-backed ScratchDirs, files, and buckets each keep their own scope and lifetime across
   restarts.
 - **Skill learning loop**: agents crystallize hard-won procedures into skills, update skills that proved wrong during use, and get conservative skill drafts proposed from compaction summaries; skill usage is tracked and a `skillCurator` flow task produces review-first maintenance reports — nothing is archived or promoted without your confirmation.
 - **Encryption at rest (opt-in)**: per-conversation passphrase encryption of message content, thinking, and tool I/O (and conv-scoped relay workspaces via CryFS); keys live in RAM only, so a stopped server leaves only ciphertext on disk. Off by default and transparent to conversations that don't use it.

@@ -81,6 +81,7 @@ def build_connection_params(url, root_dir, readonly, allow_exec,
         "allow_local_screen": allow_local_screen,
         "allow_local": allow_local,
         "allow_service_tunnels": bool(allow_service_tunnels),
+        "capabilities": ["scratchdir_v1"],
     }
     return ConnectionParams(host=host, port=port, path=path,
                             use_ssl=use_ssl, info=info)

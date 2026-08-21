@@ -54,10 +54,14 @@ from pawflow_relay._relay_actions import (
     update_scripts as _act_update_scripts,
 )
 from pawflow_relay import service_tunnels as _service_tunnels
+from pawflow_relay import scratchdir as _scratchdir
 
 # Actions refused in readonly mode (mirrors the relay HTTP write set).
 _WRITE_ACTIONS = frozenset({
-    "write_file", "copy_file", "delete_file", "mkdir", "find_replace", "edit", "exec",
+    "write_file", "write_file_chunked", "copy_file", "delete_file", "mkdir",
+    "find_replace", "edit", "batch_edit", "apply_patch", "edit_notebook",
+    "exec", "exec_stream",
+    "scratchdir_ensure", "scratchdir_renew", "scratchdir_clear",
 })
 
 # Host-level actions forwarded to the host helper when running in Docker.
@@ -276,6 +280,15 @@ def _h_service_tunnel(ctx, msg, on_output=None):
         return {"ok": False, "error": str(exc)}
 
 
+def _h_scratchdir(ctx, msg, on_output=None):
+    try:
+        return {"ok": True, "data": _scratchdir.handle(
+            str(msg.get("action") or ""), msg,
+            workspace_root=ctx.root_dir)}
+    except _scratchdir.ScratchDirRelayError as exc:
+        return {"ok": False, "error": f"[{exc.code}]: {exc}"}
+
+
 _DISPATCH = {
     "open_terminal": _h_open_terminal,
     "close_terminal": _h_close_terminal,
@@ -306,6 +319,11 @@ _DISPATCH = {
     "service_tunnel_apply": _h_service_tunnel,
     "service_tunnel_stop": _h_service_tunnel,
     "service_tunnel_status": _h_service_tunnel,
+    "scratchdir_ensure": _h_scratchdir,
+    "scratchdir_status": _h_scratchdir,
+    "scratchdir_renew": _h_scratchdir,
+    "scratchdir_clear": _h_scratchdir,
+    "scratchdir_reconcile": _h_scratchdir,
 }
 
 
@@ -350,6 +368,15 @@ def execute_command(ctx, msg, on_output=None):
     if ctx.readonly and action in _WRITE_ACTIONS:
         return {"ok": False, "error": "Operation not allowed in readonly mode"}
 
+    scratch_ticket = msg.get("scratchdir")
+    if scratch_ticket and msg.get("local", False):
+        return {
+            "ok": False,
+            "error": (
+                "[scratchdir_scope_bypass]: local=true cannot be used "
+                "with ScratchDir"),
+        }
+
     # Encryption ops (phase 5b/6) -- opt-in: only when the server sends one
     # of these new actions. A relay that never receives them is unaffected.
     try:
@@ -375,9 +402,19 @@ def execute_command(ctx, msg, on_output=None):
             return {"ok": False, "error": "Local execution requested but host helper is unavailable"}
         return _forward(ctx, msg)
 
-    abs_path = ctx.resolve(rel_path)
-    if abs_path is None:
-        return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}
+    operation_root = ctx.root_dir
+    scratch_root = ""
+    if scratch_ticket:
+        try:
+            operation_root, abs_path = _scratchdir.resolve_operation(
+                action, msg, workspace_root=ctx.root_dir)
+            scratch_root = operation_root
+        except _scratchdir.ScratchDirRelayError as exc:
+            return {"ok": False, "error": f"[{exc.code}]: {exc}"}
+    else:
+        abs_path = ctx.resolve(rel_path)
+        if abs_path is None:
+            return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}
 
     # Host-level action: per-CLI auth login (claude / codex / gemini).
     if action in ("claude_auth_login", "codex_auth_login", "gemini_auth_login"):
@@ -444,7 +481,7 @@ def execute_command(ctx, msg, on_output=None):
 
     try:
         if action in ("exec", "exec_stream"):
-            result = handler_func(ctx.root_dir, abs_path, msg,
+            result = handler_func(operation_root, abs_path, msg,
                                    allow_exec=ctx.allow_exec,
                                    **({"on_output": on_output} if action == "exec_stream" and on_output else {}))
         elif action == "http_fetch":
@@ -454,12 +491,18 @@ def execute_command(ctx, msg, on_output=None):
             if on_output:
                 def _on_chunk(kind, data):
                     on_output(kind, data)
-                result = handler_func(ctx.root_dir, abs_path, msg,
+                result = handler_func(operation_root, abs_path, msg,
                                        on_chunk=_on_chunk)
             else:
-                result = handler_func(ctx.root_dir, abs_path, msg)
+                result = handler_func(operation_root, abs_path, msg)
         else:
-            result = handler_func(ctx.root_dir, abs_path, msg)
+            result = handler_func(operation_root, abs_path, msg)
+        if scratch_ticket and action in _WRITE_ACTIONS:
+            _scratchdir.validate_operation(msg, workspace_root=ctx.root_dir)
+        if scratch_root:
+            result = _scratchdir.redact_result(result, scratch_root)
         return {"ok": True, "data": result}
+    except _scratchdir.ScratchDirRelayError as exc:
+        return {"ok": False, "error": f"[{exc.code}]: {exc}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}

@@ -42,6 +42,7 @@ _USER_ID = os.environ.get("PAWFLOW_USER_ID", "")
 _CONV_ID = os.environ.get("PAWFLOW_CONVERSATION_ID", "")
 _AGENT_NAME = os.environ.get("PAWFLOW_AGENT_NAME", "")
 _FS_SERVICE = os.environ.get("PAWFLOW_FS_SERVICE", "")
+_PFP_OUTPUT_DIR = os.environ.get("PAWFLOW_PFP_OUTPUT_DIR", "").strip()
 
 _sock = None
 _lock = None
@@ -413,11 +414,13 @@ class _PfpRuntime:
         return self._host_call("service", service_name, operation=operation, arguments=arguments)
 
     def flowfile(self, content=b"", attributes=None) -> dict:
+        if not _PFP_OUTPUT_DIR:
+            raise RuntimeError("PAWFLOW_PFP_OUTPUT_DIR is required")
         if isinstance(content, str):
             content = content.encode("utf-8")
         if content is None:
             content = b""
-        rel_path = f".pawflow/flowfiles/results/result-{uuid.uuid4().hex}.bin"
+        rel_path = f"{_PFP_OUTPUT_DIR}/result-{uuid.uuid4().hex}.bin"
         os.makedirs(os.path.dirname(rel_path), exist_ok=True)
         with open(rel_path, "wb") as handle:
             handle.write(bytes(content))

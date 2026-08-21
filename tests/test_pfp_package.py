@@ -692,6 +692,161 @@ def test_pfp_runtime_uses_relay_bridge_for_verified_tool_envelope(tmp_path, monk
     assert calls[0]["payload"] == {"arguments": {"path": "in.txt"}}
 
 
+def test_pfp_relay_bridge_runs_entirely_in_scoped_scratchdir(
+        tmp_path, monkeypatch):
+    from core import pfp_runtime
+
+    content_dir = tmp_path / "content"
+    content_dir.mkdir()
+    (content_dir / "main.py").write_text("pass\n", encoding="utf-8")
+
+    class _ScratchDir:
+        def __init__(self):
+            self.paths = []
+            self.exec_calls = []
+            self.deleted = []
+
+        def exists(self, path):
+            self.paths.append(path)
+            return False
+
+        def mkdir(self, path):
+            self.paths.append(path)
+
+        def write_file(self, path, _content):
+            self.paths.append(path)
+
+        def exec(self, path, command, **kwargs):
+            self.paths.append(path)
+            self.exec_calls.append((path, command, kwargs))
+            envelope = {
+                "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+                "ok": True,
+                "result": "ok",
+            }
+            return {
+                "stdout": json.dumps(envelope) + "\n",
+                "stderr": "",
+                "returncode": 0,
+            }
+
+        def delete_file(self, path):
+            self.paths.append(path)
+            self.deleted.append(path)
+
+    scratchdir = _ScratchDir()
+    bridge = pfp_runtime.RelayPackageRuntimeBridge()
+    monkeypatch.setattr(bridge, "_resolve_relay", lambda _request: object())
+    monkeypatch.setattr(
+        bridge, "_bind_scratchdir",
+        lambda _request, _relay: scratchdir)
+    result = bridge.invoke({
+        "format": pfp_runtime.RUNTIME_INVOKE_FORMAT,
+        "kind": "tool",
+        "package": {
+            "package": "community.example",
+            "version": "1.0.0",
+            "runtime": "python",
+            "runner": "python",
+            "hash": "sha256:" + "a" * 64,
+            "content_dir": str(content_dir),
+            "entrypoint": "main.py",
+        },
+        "context": {
+            "user_id": "alice",
+            "conversation_id": "conv1",
+            "agent_name": "agentA",
+        },
+        "payload": {"arguments": {}},
+    })
+
+    assert result["result"] == "ok"
+    assert scratchdir.paths
+    assert all(path.startswith("pfp/") for path in scratchdir.paths)
+    assert all(".pawflow" not in path for path in scratchdir.paths)
+    run_root, command, kwargs = scratchdir.exec_calls[0]
+    assert run_root.startswith("pfp/runs/")
+    assert "../../packages/community.example@1.0.0-" in command
+    assert kwargs["env"]["PAWFLOW_PFP_OUTPUT_DIR"] == "outputs/flowfiles"
+    assert scratchdir.deleted == [run_root]
+
+
+def test_pfp_relay_bridge_requires_full_scratchdir_scope():
+    from core import pfp_runtime
+
+    try:
+        pfp_runtime.RelayPackageRuntimeBridge()._bind_scratchdir(
+            {"context": {
+                "user_id": "alice",
+                "conversation_id": "conv1",
+                "agent_name": "",
+            }},
+            object(),
+        )
+    except pfp_runtime.PackageRuntimeError as exc:
+        assert "user_id, conversation_id and agent_name" in str(exc)
+    else:
+        raise AssertionError("PFP ScratchDir scope must be explicit")
+
+
+def test_pfp_relay_bridge_retains_failed_run(monkeypatch):
+    from core import pfp_runtime
+
+    class _ScratchDir:
+        def __init__(self):
+            self.deleted = []
+
+        def mkdir(self, _path):
+            pass
+
+        def write_file(self, _path, _content):
+            pass
+
+        def exec(self, _path, _command, **_kwargs):
+            envelope = {
+                "format": pfp_runtime.RUNTIME_RESULT_FORMAT,
+                "ok": False,
+                "error": "package failed",
+            }
+            return {
+                "stdout": json.dumps(envelope) + "\n",
+                "stderr": "",
+                "returncode": 0,
+            }
+
+        def delete_file(self, path):
+            self.deleted.append(path)
+
+    scratchdir = _ScratchDir()
+    bridge = pfp_runtime.RelayPackageRuntimeBridge()
+    monkeypatch.setattr(bridge, "_resolve_relay", lambda _request: object())
+    monkeypatch.setattr(
+        bridge, "_bind_scratchdir", lambda _request, _relay: scratchdir)
+    monkeypatch.setattr(bridge, "_deploy_package", lambda *_args: None)
+    monkeypatch.setattr(bridge, "_prepare_run", lambda *_args: None)
+    result = bridge.invoke({
+        "format": pfp_runtime.RUNTIME_INVOKE_FORMAT,
+        "kind": "tool",
+        "package": {
+            "package": "community.example",
+            "version": "1.0.0",
+            "runtime": "python",
+            "runner": "python",
+            "hash": "sha256:" + "a" * 64,
+            "entrypoint": "main.py",
+        },
+        "context": {
+            "user_id": "alice",
+            "conversation_id": "conv1",
+            "agent_name": "agentA",
+        },
+        "payload": {"arguments": {}},
+    })
+
+    assert result["ok"] is False
+    assert scratchdir.deleted == []
+
+
 def test_pfp_tool_proxy_passes_runtime_context(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     keypair = pfp_package.create_signing_key()
@@ -765,11 +920,11 @@ def test_pfp_runtime_task_envelope_carries_flowfile_content(tmp_path, monkeypatc
 
     relay = _Relay()
     staged = pfp_runtime.RelayPackageRuntimeBridge()._relay_request(
-        request, relay, ".pawflow/pfp/root")
+        request, relay, "pfp/runs/run-1")
     staged_flowfile = staged["payload"]["flowfile"]
     assert "_content_bytes" not in staged_flowfile
-    assert staged_flowfile["content_path"].startswith(".pawflow/flowfiles/input-")
-    assert relay.files[f".pawflow/pfp/root/{staged_flowfile['content_path']}"] == b"image-bytes"
+    assert staged_flowfile["content_path"].startswith("inputs/flowfiles/input-")
+    assert relay.files[f"pfp/runs/run-1/{staged_flowfile['content_path']}"] == b"image-bytes"
 
 
 def test_pfp_runtime_task_stages_spilled_flowfile_without_materializing(tmp_path, monkeypatch):
@@ -812,10 +967,10 @@ def test_pfp_runtime_task_stages_spilled_flowfile_without_materializing(tmp_path
 
     relay = _Relay()
     staged = pfp_runtime.RelayPackageRuntimeBridge()._relay_request(
-        request, relay, ".pawflow/pfp/root")
+        request, relay, "pfp/runs/run-1")
     staged_flowfile = staged["payload"]["flowfile"]
     assert "_content_path" not in staged_flowfile
-    assert staged_flowfile["content_path"].startswith(".pawflow/flowfiles/input-")
+    assert staged_flowfile["content_path"].startswith("inputs/flowfiles/input-")
     assert relay.calls
     assert relay.calls[-1][0] == "write_file_chunked"
     assert relay.calls[-1][2]["done"] is True
@@ -2064,6 +2219,7 @@ def test_pfp_sdk_flowfile_writes_relay_local_content_path(tmp_path, monkeypatch)
     import importlib.util
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAWFLOW_PFP_OUTPUT_DIR", "runtime/results")
     sdk_path = Path(__file__).resolve().parents[1] / "docker" / "pawflow_sdk" / "pawflow.py"
     spec = importlib.util.spec_from_file_location("pawflow_sdk_under_test", sdk_path)
     module = importlib.util.module_from_spec(spec)
@@ -2073,9 +2229,28 @@ def test_pfp_sdk_flowfile_writes_relay_local_content_path(tmp_path, monkeypatch)
     descriptor = module.pfp.flowfile("hello", {"mime.type": "text/plain"})
 
     assert "content_b64" not in descriptor
-    assert descriptor["content_path"].startswith(".pawflow/flowfiles/results/result-")
+    assert descriptor["content_path"].startswith("runtime/results/result-")
     assert (tmp_path / descriptor["content_path"]).read_bytes() == b"hello"
     assert descriptor["attributes"] == {"mime.type": "text/plain"}
+
+
+def test_pfp_sdk_flowfile_fails_closed_without_output_dir(tmp_path, monkeypatch):
+    import importlib.util
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PAWFLOW_PFP_OUTPUT_DIR", raising=False)
+    sdk_path = Path(__file__).resolve().parents[1] / "docker" / "pawflow_sdk" / "pawflow.py"
+    spec = importlib.util.spec_from_file_location("pawflow_sdk_without_output", sdk_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    try:
+        module.pfp.flowfile("hello")
+    except RuntimeError as exc:
+        assert str(exc) == "PAWFLOW_PFP_OUTPUT_DIR is required"
+    else:
+        raise AssertionError("flowfile must fail without a ScratchDir output path")
 
 
 def test_pfp_relay_runner_reports_crash_after_success_result(tmp_path):
@@ -2114,6 +2289,29 @@ def test_pfp_relay_runner_reports_crash_after_success_result(tmp_path):
     assert envelope["ok"] is False
     assert "exited with code 1" in envelope["error"]
     assert "boom after result" in envelope["error"]
+
+
+def test_pfp_relay_runner_requires_staged_sdk_path(tmp_path):
+    from core import pfp_runtime
+
+    runner = tmp_path / "pfp_relay_runner.py"
+    runner.write_text(pfp_runtime._RELAY_RUNNER, encoding="utf-8")
+    request = tmp_path / "request.json"
+    request.write_text(json.dumps({
+        "format": pfp_runtime.RUNTIME_INVOKE_FORMAT,
+        "kind": "tool", "package": {}, "context": {}, "payload": {},
+    }), encoding="utf-8")
+    entrypoint = tmp_path / "entry.py"
+    entrypoint.write_text("pass\n", encoding="utf-8")
+    env = dict(os.environ)
+    env.pop("PAWFLOW_PFP_SDK_PATH", None)
+
+    proc = subprocess.run(
+        [sys.executable, str(runner), str(request), str(entrypoint)],
+        cwd=tmp_path, text=True, capture_output=True, env=env, check=False)
+
+    assert proc.returncode != 0
+    assert "PAWFLOW_PFP_SDK_PATH is required" in proc.stderr
 
 
 
@@ -3738,14 +3936,16 @@ def test_pfp_media_artifact_copy_uses_relay_chunk_copy(tmp_path, monkeypatch):
     pfp_runtime.RelayPackageRuntimeBridge()._copy_result_artifacts(
         relay,
         {"context": {
-            "output_dir": ".pawflow/pfp/out",
+            "output_dir": "outputs/artifacts-1",
             "server_output_dir": str(output_dir),
         }},
         result,
-        ".pawflow/pfp/root",
+        "pfp/runs/run-1",
     )
 
-    assert relay.copied == [(".pawflow/pfp/out/image.png", str(output_dir / "image.png"))]
+    assert relay.copied == [(
+        "pfp/runs/run-1/outputs/artifacts-1/image.png",
+        str(output_dir / "image.png"))]
     assert (output_dir / "image.png").read_bytes() == b"artifact-bytes"
 
 
@@ -3776,9 +3976,9 @@ def test_pfp_task_flowfile_result_content_path_uses_relay_chunk_copy(tmp_path, m
     }
 
     pfp_runtime.RelayPackageRuntimeBridge()._copy_result_artifacts(
-        relay, {"context": {}}, result, ".pawflow/pfp/root")
+        relay, {"context": {}}, result, "pfp/runs/run-1")
 
-    assert relay.copied[0][0] == ".pawflow/pfp/root/out/result.bin"
+    assert relay.copied[0][0] == "pfp/runs/run-1/out/result.bin"
     copied_path = Path(result["flowfiles"][0]["content_path"])
     assert copied_path.exists()
     flowfiles = pfp_runtime._normalize_task_result(result)

@@ -68,6 +68,7 @@ class RelayService(_RelayConnMixin, _RelayFsOpsMixin, BaseService):
         "read_file(path, encoding='utf-8')",
         "write_file(path, content, encoding='utf-8')",
         "exists(path), list_dir(path), mkdir(path), delete(path), stat(path), grep(path, pattern)",
+        "scratchdir_ensure/status/renew/clear/reconcile(**scope_metadata)",
     ]
 
     def __init__(self, config: Dict[str, Any]):

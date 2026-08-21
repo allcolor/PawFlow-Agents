@@ -147,6 +147,9 @@ TODOLISTS_DIR = RUNTIME_DIR / "todolists"
 # Ephemeral per-agent scratchpads
 SCRATCHPADS_DIR = RUNTIME_DIR / "scratchpads"
 
+# Ephemeral per-agent filesystem roots (metadata; bytes live on relays)
+SCRATCHDIRS_DIR = RUNTIME_DIR / "scratchdirs"
+
 # Claude Code sessions
 CLAUDE_SESSIONS_DIR = RUNTIME_DIR / "sessions" / "claude"
 

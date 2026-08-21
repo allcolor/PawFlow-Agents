@@ -80,6 +80,13 @@ Rules:
 
 ## SDK Surface For PFP Entrypoints
 
+PawFlow stages the signed package cache and each invocation under the scoped
+ScratchDir (`pfp/packages/<hash>` and `pfp/runs/<invocation-id>`). Successful
+runs are removed after their FlowFiles and artifacts cross the boundary;
+failed runs remain until expiry for diagnostics. The runtime fails closed when
+the relay lacks `scratchdir_v1` or when the staged SDK path is absent, and it
+never falls back to `.pawflow`, `/tmp`, or the project workspace.
+
 The `pawflow` SDK module shipped with package runtimes exposes three symbols: `pfp`, `tools`, and `fs`. Only `pfp` is available to PFP entrypoints. The `tools` and `fs` surfaces are reserved for non-PFP container scripts (PawCode SDK, ad-hoc relay scripts) and are blocked at runtime when called from a PFP package.
 
 | Symbol | Available in a PFP entrypoint? | How a PFP must reach the same capability |

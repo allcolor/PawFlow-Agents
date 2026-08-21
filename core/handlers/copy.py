@@ -88,6 +88,12 @@ class CopyHandler(BaseFsHandler):
 
         src_name = str(arguments.get("source_service") or "")
         dst_name = str(arguments.get("dest_service") or "")
+        src_url_service, source_path = self._parse_fs_url(source_path)
+        if src_url_service:
+            src_name = src_url_service
+        dst_url_service, dest_path = self._parse_fs_url(dest_path)
+        if dst_url_service:
+            dst_name = dst_url_service
         src_svc, src_workdir = self._resolve(src_name)
         dst_svc, dst_workdir = self._resolve(dst_name)
         if src_svc is None and src_workdir is None:

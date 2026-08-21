@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- ScratchDir: managed relay-backed temporary files scoped by user,
+  conversation, agent, and relay, with `fs://scratchdir/` and `/scratch`
+  routing, TTL and quotas, fenced cleanup, PFP runtime migration, a cognitive
+  UI for usage/tree/renew/clear, and explicit FileStore promotion.
+
+### Changed
+
+- PFP package caches, invocation inputs/outputs, and runtime SDK staging now
+  use ScratchDir and fail closed when ScratchDir or the SDK path is missing;
+  package execution no longer creates repository-local `.pawflow` state.
+
 ## [1.0.0-beta.228] — 2026-08-21
 
 ### Added

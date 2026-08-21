@@ -79,6 +79,20 @@ class BatchEditHandler(BaseFsHandler):
             return "Error: 'edits' array is required"
         fs = arguments.get("filesystem", "")
 
+        normalized_edits = []
+        path_services = set()
+        for edit in edits:
+            item = dict(edit)
+            path_service, item["path"] = self._parse_fs_url(item.get("path", ""))
+            if path_service:
+                path_services.add(path_service)
+            normalized_edits.append(item)
+        if len(path_services) > 1:
+            return "Error: batch_edit paths must use one filesystem service"
+        if path_services:
+            fs = path_services.pop()
+        edits = normalized_edits
+
         svc, workdir = self._resolve(fs)
 
         if svc == "filestore":

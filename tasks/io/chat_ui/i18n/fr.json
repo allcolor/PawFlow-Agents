@@ -1199,6 +1199,8 @@
   "selectAgentConfigure": "Sélectionnez un agent à configurer",
   "scratchpad": "Bloc-notes",
   "scratchpadDesc": "Notes temporaires pour un agent de la conversation",
+  "scratchdir": "ScratchDir",
+  "scratchdirDesc": "Fichiers temporaires pour un agent de la conversation",
   "selectAgentDetails": "Sélectionnez un agent pour voir les détails",
   "selectAgentOverride": "Sélectionnez un agent pour configurer les overrides.",
   "selectDefinitionAddAgents": "Sélectionnez une définition pour ajouter des agents",

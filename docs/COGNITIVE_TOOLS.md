@@ -16,6 +16,7 @@ rules.
 | **Project Wiki** | LLM-maintained Markdown with source-hash provenance | `data/runtime/project_wikis/{safe_user}/{safe_relay}/` |
 | **Todo List** | Authoritative unfinished work for one conversation agent | `data/runtime/todolists/todos.sqlite3` |
 | **Scratchpad** | Expiring working evidence and resume notes for one conversation agent | `data/runtime/scratchpads/scratchpads.sqlite3` |
+| **ScratchDir** | Relay-backed temporary files scoped to one conversation agent | `data/runtime/scratchdirs/scratchdirs.sqlite3` + relay runtime root |
 
 A procedural layer — the **skill loop** — closes learning into reusable artifacts: agents are instructed (via a `## Skill loop` system-prompt block) to crystallize novel multi-step procedures into skills with `manage_resource` and to fix skills that proved wrong during use; each completed compaction bucket or rollup can produce a structured `skill-draft` memory; recurrence in a different conversation automatically promotes the procedure to a user skill; the Memories UI still exposes pending drafts for reviewed promotion or deletion; `load_skill` tracks usage and suggests scope promotion; and the `skillCurator` flow task produces review-first maintenance reports. See [LEARNING_LOOP_PLAN.md](LEARNING_LOOP_PLAN.md).
 
@@ -27,6 +28,11 @@ They are interconnected:
 - When a memory is stored, the system cross-checks the **knowledge graph** for contradictions and warns the agent.
 - **Auto-extraction** triggers periodically pull facts from conversation text into both memory and KG.
 - The **project graph** and **project wiki** are relay-scoped, refreshed asynchronously for the active relay, and shared by every conversation and agent using that project.
+- **ScratchDir** is the file counterpart of Scratchpad. Use
+  `fs://scratchdir/` (or `/scratch` in shell execution) for temporary files
+  that must survive one tool call. Its UI shows bounded file metadata, quotas,
+  expiry, renewal, exact clear, and explicit promotion to FileStore; it never
+  exposes the relay's physical root.
 
 ---
 

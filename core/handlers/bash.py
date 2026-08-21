@@ -278,6 +278,10 @@ class BashHandler(BaseFsHandler):
 
         relay = (arguments.get("relay", "") or arguments.get("source", "")
                  or arguments.get("filesystem", "") or arguments.get("service", ""))
+        path = arguments.get("path", ".")
+        path_service, path = self._parse_fs_url(path)
+        if path_service:
+            relay = path_service
         svc, workdir = self._resolve(relay)
 
         # Workdir fallback (Claude Code container — exec local)
@@ -296,7 +300,6 @@ class BashHandler(BaseFsHandler):
                     f"Service '{relay}' is type '{_svc_type}' (storage only).")
 
         try:
-            path = arguments.get("path", ".")
             shell = arguments.get("shell", "")
             _bash_default = 30000
             _bash_max = 150000
@@ -341,6 +344,10 @@ class BashHandler(BaseFsHandler):
         bg_id = f"bg_{uuid.uuid4().hex[:8]}"
         relay = (arguments.get("relay", "") or arguments.get("source", "")
                  or arguments.get("filesystem", "") or arguments.get("service", ""))
+        path = arguments.get("path", ".")
+        path_service, path = self._parse_fs_url(path)
+        if path_service:
+            relay = path_service
         svc, workdir = self._resolve(relay)
 
         out_path = ""
@@ -385,7 +392,6 @@ class BashHandler(BaseFsHandler):
                 if workdir:
                     result = self._exec_local_raw(command, arguments)
                 elif svc and svc != "filestore":
-                    path = arguments.get("path", ".")
                     shell = arguments.get("shell", "")
                     timeout = self._resolve_timeout(arguments)
                     exec_command = self._maybe_rewrite_with_rtk(

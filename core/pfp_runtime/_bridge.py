@@ -36,26 +36,33 @@ class RelayPackageRuntimeBridge:
             raise PackageRuntimeError(f"unsupported PFP runtime runner: {runner}")
 
         relay = self._resolve_relay(request)
+        scratchdir = self._bind_scratchdir(request, relay)
         relay_root = self._relay_package_root(package)
-        self._deploy_package(relay, package, relay_root)
-        relay_request = self._relay_request(request, relay, relay_root)
+        run_root = f"pfp/runs/{uuid.uuid4().hex}"
+        self._deploy_package(scratchdir, package, relay_root)
+        self._prepare_run(scratchdir, run_root)
+        relay_request = self._relay_request(
+            request, scratchdir, run_root)
         output_dir = str((relay_request.get("context") or {}).get("output_dir") or "")
         if output_dir:
-            relay.mkdir(output_dir)
-        request_file = f".pawflow/request-{uuid.uuid4().hex}.json"
-        relay.write_file(
-            f"{relay_root}/{request_file}",
+            scratchdir.mkdir(f"{run_root}/{output_dir}")
+        request_file = "inputs/request.json"
+        scratchdir.write_file(
+            f"{run_root}/{request_file}",
             (json.dumps(relay_request, ensure_ascii=False) + "\n").encode("utf-8"),
         )
-        controller = ".pawflow/pfp_relay_runner.py"
-        entrypoint = package["entrypoint"]
+        controller = "runtime/pfp_relay_runner.py"
+        entrypoint = (
+            f"../../{relay_root.removeprefix('pfp/')}/"
+            f"{package['entrypoint']}")
         command = " ".join([
             "python3",
             shlex.quote(controller),
             shlex.quote(request_file),
             shlex.quote(entrypoint),
         ])
-        result = relay.exec(relay_root, command, env=self._controller_env(request))
+        result = scratchdir.exec(
+            run_root, command, env=self._controller_env(request))
         stdout = str((result or {}).get("stdout") or "")
         stderr = str((result or {}).get("stderr") or "")
         code = int((result or {}).get("returncode") or 0)
@@ -71,8 +78,28 @@ class RelayPackageRuntimeBridge:
             raise PackageRuntimeError("PFP relay runner did not return JSON") from exc
         if not isinstance(result, dict) or result.get("format") != RUNTIME_RESULT_FORMAT:
             raise PackageRuntimeError("PFP relay runner returned an invalid result envelope")
-        self._copy_result_artifacts(relay, relay_request, result, relay_root)
+        self._copy_result_artifacts(
+            scratchdir, relay_request, result, run_root)
+        if result.get("ok") is True:
+            scratchdir.delete_file(run_root)
         return result
+
+    @staticmethod
+    def _bind_scratchdir(request: Dict[str, Any], relay: Any) -> Any:
+        context = request.get("context") or {}
+        user_id = str(context.get("user_id") or "")
+        conversation_id = str(context.get("conversation_id") or "")
+        agent_name = str(context.get("agent_name") or "")
+        if not all((user_id, conversation_id, agent_name)):
+            raise PackageRuntimeError(
+                "PFP ScratchDir requires user_id, conversation_id and agent_name")
+        from core.scratchdir_manager import ScratchDirManager
+        try:
+            return ScratchDirManager(relay).bind(
+                user_id, conversation_id, agent_name)
+        except Exception as exc:
+            code = getattr(exc, "code", "scratchdir_unavailable")
+            raise PackageRuntimeError(f"{code}: {exc}") from exc
 
     def _resolve_relay(self, request: Dict[str, Any]) -> Any:
         context = request.get("context") or {}
@@ -109,34 +136,50 @@ class RelayPackageRuntimeBridge:
         package_id = _safe_cache_name(str(package.get("package") or "package"))
         version = _safe_cache_name(str(package.get("version") or "0"))
         digest = str(package.get("hash") or "").replace("sha256:", "")[:16] or "dev"
-        return f".pawflow/pfp/packages/{package_id}@{version}-{digest}"
+        return f"pfp/packages/{package_id}@{version}-{digest}"
 
     def _deploy_package(self, relay: Any, package: Dict[str, Any], relay_root: str) -> None:
         content_dir = Path(str(package.get("content_dir") or "")).resolve()
         if not content_dir.is_dir():
             raise PackageRuntimeError("PFP package content directory is missing")
-        relay.mkdir(f"{relay_root}/.pawflow")
-        relay.write_file(f"{relay_root}/.pawflow/pfp_relay_runner.py", _RELAY_RUNNER.encode("utf-8"))
-        sdk_source = Path(__file__).resolve().parents[1] / "docker" / "pawflow_sdk" / "pawflow.py"
-        relay.mkdir(f"{relay_root}/.pawflow/sdk")
-        relay.write_file(f"{relay_root}/.pawflow/sdk/pawflow.py", sdk_source.read_bytes())
+        marker = f"{relay_root}/.complete"
+        if relay.exists(marker):
+            return
+        relay.mkdir(relay_root)
         for path in sorted(content_dir.rglob("*")):
             if not path.is_file():
                 continue
             rel = path.relative_to(content_dir).as_posix()
             relay.write_file(f"{relay_root}/{rel}", path.read_bytes())
+        relay.write_file(
+            marker, (str(package.get("hash") or "dev") + "\n").encode("utf-8"))
 
-    def _relay_request(self, request: Dict[str, Any], relay: Any, relay_root: str) -> Dict[str, Any]:
+    @staticmethod
+    def _prepare_run(relay: Any, run_root: str) -> None:
+        relay.mkdir(f"{run_root}/inputs")
+        relay.mkdir(f"{run_root}/outputs")
+        relay.mkdir(f"{run_root}/runtime/sdk")
+        relay.write_file(
+            f"{run_root}/runtime/pfp_relay_runner.py",
+            _RELAY_RUNNER.encode("utf-8"))
+        sdk_source = (
+            Path(__file__).resolve().parents[2]
+            / "docker" / "pawflow_sdk" / "pawflow.py")
+        relay.write_file(
+            f"{run_root}/runtime/sdk/pawflow.py", sdk_source.read_bytes())
+
+    def _relay_request(self, request: Dict[str, Any], relay: Any,
+                       run_root: str) -> Dict[str, Any]:
         copied = copy.deepcopy(request)
         context = copied.setdefault("context", {})
         if context.get("output_dir"):
             context["server_output_dir"] = context["output_dir"]
-            context["output_dir"] = f"{relay_root}/.pawflow/artifacts/{uuid.uuid4().hex}"
-        self._stage_flowfile_payload(copied, relay, relay_root)
+            context["output_dir"] = f"outputs/artifacts-{uuid.uuid4().hex}"
+        self._stage_flowfile_payload(copied, relay, run_root)
         return copied
 
     def _stage_flowfile_payload(self, request: Dict[str, Any], relay: Any,
-                                relay_root: str) -> None:
+                                run_root: str) -> None:
         if request.get("kind") != "flow_task":
             return
         payload = request.get("payload") or {}
@@ -147,10 +190,10 @@ class RelayPackageRuntimeBridge:
         local_content_path = flowfile.pop("_content_path", "")
         if content is None and not local_content_path:
             return
-        content_dir = f"{relay_root}/.pawflow/flowfiles"
+        content_dir = f"{run_root}/inputs/flowfiles"
         relay.mkdir(content_dir)
-        rel_path = f".pawflow/flowfiles/input-{uuid.uuid4().hex}.bin"
-        target_path = f"{relay_root}/{rel_path}"
+        rel_path = f"inputs/flowfiles/input-{uuid.uuid4().hex}.bin"
+        target_path = f"{run_root}/{rel_path}"
         if local_content_path:
             self._write_relay_file_from_path(relay, target_path, Path(str(local_content_path)))
         else:
@@ -194,8 +237,9 @@ class RelayPackageRuntimeBridge:
         from core.handlers._fs_base import get_tool_relay_env
         env.update(get_tool_relay_env())
         env["PAWFLOW_PFP_RELAY_RUNNER"] = "1"
-        env["PYTHONPATH"] = ".pawflow/sdk"
-        env["PAWFLOW_PFP_SDK_PATH"] = ".pawflow/sdk"
+        env["PYTHONPATH"] = "runtime/sdk"
+        env["PAWFLOW_PFP_SDK_PATH"] = "runtime/sdk"
+        env["PAWFLOW_PFP_OUTPUT_DIR"] = "outputs/flowfiles"
         context = request.get("context") or {}
         env["PAWFLOW_USER_ID"] = str(context.get("user_id") or "")
         env["PAWFLOW_CONVERSATION_ID"] = str(context.get("conversation_id") or "")
@@ -203,8 +247,8 @@ class RelayPackageRuntimeBridge:
         return env
 
     def _copy_result_artifacts(self, relay: Any, request: Dict[str, Any],
-                               result: Dict[str, Any], relay_root: str) -> None:
-        self._copy_result_flowfiles(relay, result, relay_root)
+                               result: Dict[str, Any], run_root: str) -> None:
+        self._copy_result_flowfiles(relay, result, run_root)
         context = request.get("context") or {}
         relay_output_dir = str(context.get("output_dir") or "")
         server_output_dir = str(context.get("server_output_dir") or "")
@@ -224,10 +268,10 @@ class RelayPackageRuntimeBridge:
         if not callable(copier):
             raise PackageRuntimeError(
                 "PFP media artifact relay must support chunked copy_file_to_local")
-        copier(f"{relay_output_dir}/{rel}", str(target))
+        copier(f"{run_root}/{relay_output_dir}/{rel}", str(target))
 
     def _copy_result_flowfiles(self, relay: Any, result: Dict[str, Any],
-                               relay_root: str) -> None:
+                               run_root: str) -> None:
         flowfiles = result.get("flowfiles") if isinstance(result, dict) else None
         if not isinstance(flowfiles, list):
             return
@@ -242,7 +286,7 @@ class RelayPackageRuntimeBridge:
             copied = tempfile.NamedTemporaryFile(prefix="pawflow-pfp-flowfile-", delete=False)
             copied_path = Path(copied.name)
             copied.close()
-            copier(f"{relay_root}/{rel}", str(copied_path))
+            copier(f"{run_root}/{rel}", str(copied_path))
             item["content_path"] = str(copied_path)
             item["content_root"] = str(copied_path.parent)
             item["_delete_content_path"] = True
@@ -275,7 +319,10 @@ def _child_env():
     }
     env = {k: v for k, v in os.environ.items() if k not in blocked}
     env["PYTHONIOENCODING"] = "utf-8"
-    env["PYTHONPATH"] = os.environ.get("PAWFLOW_PFP_SDK_PATH", ".pawflow/sdk")
+    sdk_path = os.environ.get("PAWFLOW_PFP_SDK_PATH", "").strip()
+    if not sdk_path:
+        raise RuntimeError("PAWFLOW_PFP_SDK_PATH is required")
+    env["PYTHONPATH"] = sdk_path
     return env
 
 

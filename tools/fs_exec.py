@@ -35,6 +35,21 @@ def _powershell_command(executable: str, command: str):
     return [executable, "-NoProfile", "-NonInteractive", "-Command", command]
 
 
+def _scratch_command_paths(command: str, root_abs: str) -> str:
+    command = re.sub(
+        r"fs://scratchdir/(\S*)",
+        lambda match: str(
+            Path(root_abs) / (match.group(1) or ".")
+        ).replace("\\", "/"),
+        command,
+    )
+    return re.sub(
+        r"(?<![A-Za-z0-9_.-])/scratch(?=/|\s|$)",
+        root_abs.replace("\\", "/"),
+        command,
+    )
+
+
 def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
                 allow_exec: bool = False) -> Any:
     """Execute a shell command in the sandbox directory."""
@@ -47,9 +62,14 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         raise ValueError("Missing 'command' parameter")
     # Resolve fs:// URLs in the command to real local paths
     root_abs = str(Path(root_dir).resolve())
-    _fs_url_pattern = re.compile(r'fs://[^/\s]+/(\S+)')
-    command = _fs_url_pattern.sub(
-        lambda m: str(Path(root_abs) / m.group(1)).replace("\\", "/"), command)
+    run_cwd = str(Path(path).resolve())
+    is_scratchdir = isinstance(req.get("scratchdir"), dict)
+    if is_scratchdir:
+        command = _scratch_command_paths(command, root_abs)
+    else:
+        _fs_url_pattern = re.compile(r'fs://[^/\s]+/(\S+)')
+        command = _fs_url_pattern.sub(
+            lambda m: str(Path(root_abs) / m.group(1)).replace("\\", "/"), command)
     # Force UTF-8 output from child process (Windows defaults to cp850/cp1252)
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -65,6 +85,10 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         _containers = globals().get('_DOCKER_CONTAINERS', {})
         _relay_container = _containers.get(root_abs) or globals().get('_DOCKER_EXEC_CONTAINER')
     if _relay_container and not (shell_name and shell_name.startswith("docker-")):
+        if is_scratchdir:
+            raise RuntimeError(
+                "scratchdir_unavailable: persistent execution container "
+                "does not expose the scoped /scratch mount")
         # Determine shell/interpreter for the container
         if shell_name in ("python", "python3"):
             _container_shell = ["python3", "-c", command]
@@ -114,11 +138,16 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         if not _image or not _exec_cmd:
             raise ValueError(f"Unknown docker shell '{shell_name}'. "
                              f"Use docker-python, docker-node, or docker-bash.")
+        mount_target = "/scratch" if is_scratchdir else "/workspace"
+        relative_cwd = os.path.relpath(run_cwd, root_abs).replace(os.sep, "/")
+        container_cwd = mount_target
+        if relative_cwd != ".":
+            container_cwd += "/" + relative_cwd
         docker_run_args = [
             "--rm",
             "--init",
-            "-v", f"{_translate_path(_to_host_path(root_abs))}:/workspace",
-            "-w", "/workspace",
+            "-v", f"{_translate_path(_to_host_path(root_abs))}:{mount_target}",
+            "-w", container_cwd,
             "-e", "PYTHONIOENCODING=utf-8",
             "--cpus", "2",
             "--memory", "1g",
@@ -145,7 +174,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
                                  f"Available: {', '.join(detect_available_shells().keys())}")
         if executable and os.name == "nt" and _is_powershell_shell(shell_name, executable):
             command, run_cwd = windows_shell_cwd(
-                command, root_dir, shell_name=shell_name,
+                command, run_cwd, shell_name=shell_name,
                 executable=executable)
             result = _run_cancellable(
                 req.get("request_id", ""),
@@ -162,7 +191,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
                 # Default: cmd.exe with UTF-8 codepage
                 command = f"chcp 65001 >nul 2>&1 & {command}"
             command, run_cwd = windows_shell_cwd(
-                command, root_dir, shell_name=shell_name, executable=executable or "")
+                command, run_cwd, shell_name=shell_name, executable=executable or "")
             result = _run_cancellable(
                 req.get("request_id", ""),
                 command, shell=True,  # nosec B604 - relay exec tool intentionally runs shell commands.
@@ -206,9 +235,14 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
         raise ValueError("Missing 'command' parameter")
 
     root_abs = str(Path(root_dir).resolve())
-    _fs_url_pattern = re.compile(r'fs://[^/\s]+/(\S+)')
-    command = _fs_url_pattern.sub(
-        lambda m: str(Path(root_abs) / m.group(1)).replace("\\", "/"), command)
+    run_cwd = str(Path(path).resolve())
+    is_scratchdir = isinstance(req.get("scratchdir"), dict)
+    if is_scratchdir:
+        command = _scratch_command_paths(command, root_abs)
+    else:
+        _fs_url_pattern = re.compile(r'fs://[^/\s]+/(\S+)')
+        command = _fs_url_pattern.sub(
+            lambda m: str(Path(root_abs) / m.group(1)).replace("\\", "/"), command)
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -226,6 +260,10 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
         _relay_container = _containers.get(root_abs) or globals().get('_DOCKER_EXEC_CONTAINER')
 
     if _relay_container and not (shell_name and shell_name.startswith("docker-")):
+        if is_scratchdir:
+            raise RuntimeError(
+                "scratchdir_unavailable: persistent execution container "
+                "does not expose the scoped /scratch mount")
         if shell_name in ("python", "python3"):
             _container_shell = ["python3", "-c", command]
         elif shell_name == "node":
@@ -248,7 +286,7 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
             if not executable:
                 raise ValueError(f"Shell '{shell_name}' not found.")
         command, run_cwd = windows_shell_cwd(
-            command, root_dir, shell_name=shell_name, executable=executable or "")
+            command, run_cwd, shell_name=shell_name, executable=executable or "")
         if executable and os.name == "nt" and _is_powershell_shell(shell_name, executable):
             cmd = _powershell_command(executable, command)
             popen_kwargs["shell"] = False

@@ -18,7 +18,9 @@ def test_cognitive_panel_modules_load_after_shared_ui_helpers():
     graph = source.index('"project_graph.js"')
     wiki = source.index('"project_wiki.js"')
     scratchpad = source.index('"scratchpad.js"')
+    scratchdir = source.index('"scratchdir.js"')
     assert source.index('"messages_markdown.js"') < graph < wiki < scratchpad
+    assert scratchpad < scratchdir
 
 
 def test_action_menu_and_commands_expose_all_cognitive_panels():
@@ -27,10 +29,12 @@ def test_action_menu_and_commands_expose_all_cognitive_panels():
     assert "cmdShowProjectGraph()" in template
     assert "cmdShowProjectWiki()" in template
     assert "cmdShowScratchpad()" in template
+    assert "cmdShowScratchDir()" in template
     assert "cmdShowDiary()" in template
     assert "'/graph'" in commands
     assert "'/wiki'" in commands
     assert "'/scratchpad'" in commands
+    assert "'/scratchdir'" in commands
 
 
 def test_project_graph_panel_has_build_report_search_and_node_navigation():
@@ -96,6 +100,19 @@ def test_scratchpad_panel_has_search_crud_ttl_and_clear_actions():
     assert source.count("agent_name: _spState.agent") == 5
 
 
+def test_scratchdir_panel_has_status_tree_lifecycle_and_promotion_actions():
+    source = _text("tasks/io/chat_ui/scratchdir.js")
+    for action in (
+        "scratchdir_tree", "scratchdir_ensure", "scratchdir_renew",
+        "scratchdir_clear", "scratchdir_promote",
+    ):
+        assert action in source
+    assert "max_entries: 200" in source
+    assert "Copy to FileStore" in source
+    assert "event.key === 'Escape'" in source
+    assert "cog-close" in source
+
+
 def test_diary_and_memory_panels_use_conversation_agent_selectors():
     diary = _text("tasks/io/chat_ui/diary.js")
     memories = _text("tasks/io/chat_ui/memories.js")
@@ -122,6 +139,7 @@ def test_panel_dialogs_use_mobile_safe_header_chrome():
         "tasks/io/chat_ui/knowledge_graph.js",
         "tasks/io/chat_ui/project_wiki.js",
         "tasks/io/chat_ui/scratchpad.js",
+        "tasks/io/chat_ui/scratchdir.js",
         "tasks/io/chat_ui/diary.js",
         "tasks/io/chat_ui/memories.js",
         "tasks/io/chat_ui/context_editor.js",
@@ -154,6 +172,7 @@ def test_cognitive_panel_files_stay_below_split_limit():
         "tasks/io/chat_ui/project_graph.js",
         "tasks/io/chat_ui/project_wiki.js",
         "tasks/io/chat_ui/scratchpad.js",
+        "tasks/io/chat_ui/scratchdir.js",
         "tasks/io/chat_ui/cognitive_panel_helpers.js",
         "tasks/ai/_agentctx_p3.py",
     ):

@@ -51,7 +51,7 @@ const _LOCAL_COMMANDS = new Set([
   '/new', '/conv', '/clear', '/clear-files',
   '/upload', '/copy', '/paste', '/watch',
   '/export', '/encrypt', '/delete-msg', '/restart_from', '/plan',
-  '/files', '/flows', '/tasks', '/confirmations', '/graph', '/wiki', '/scratchpad', '/kg',
+  '/files', '/flows', '/tasks', '/confirmations', '/graph', '/wiki', '/scratchpad', '/scratchdir', '/kg',
   '/login',
   '/claude-login-server', '/cls',
   '/claude-login-relay', '/clr',
@@ -157,6 +157,7 @@ const _CMD_HANDLERS = {
   '/graph':         (text, parts, cmd) => cmdGraph(text, parts),
   '/wiki':          (text, parts, cmd) => cmdWiki(text, parts),
   '/scratchpad':    (text, parts, cmd) => cmdScratchpad(text, parts),
+  '/scratchdir':    (text, parts, cmd) => cmdScratchDir(text, parts),
   '/kg':            (text, parts, cmd) => cmdKg(text, parts),
 
   // Terminal / code-server (terminal.js)

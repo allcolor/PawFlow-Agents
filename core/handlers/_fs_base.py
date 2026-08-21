@@ -56,6 +56,7 @@ class BaseFsHandler(ToolHandler):
         self._workdir = ""
         self._is_claude_code = False
         self._default_local = None  # None=ask, True=local, False=docker
+        self._scratchdir_service = None
 
     # ── Setters (called by tool_relay_service and agent_tool_config) ──
 
@@ -114,6 +115,32 @@ class BaseFsHandler(ToolHandler):
         """
         # fs:// URL → extract service name
         # (path parsing is the caller's responsibility)
+
+        if fs_param and fs_param.lower() == "scratchdir":
+            if not all((
+                    self._user_id, self._conversation_id, self._agent_name)):
+                from core.scratchdir_models import ScratchDirError
+                raise ScratchDirError(
+                    "scratchdir_context_missing",
+                    "ScratchDir requires user, conversation and agent context")
+            relay = self._find_service("")
+            if relay is None:
+                from core.scratchdir_models import ScratchDirError
+                raise ScratchDirError(
+                    "scratchdir_relay_required",
+                    "ScratchDir requires the conversation's default relay")
+            relay_id = str(
+                getattr(relay, "_service_id", "")
+                or getattr(relay, "service_id", "")
+                or "")
+            cached = self._scratchdir_service
+            if (cached is not None
+                    and getattr(cached, "_service_id", "") == relay_id):
+                return (cached, None)
+            from core.scratchdir_manager import ScratchDirManager
+            self._scratchdir_service = ScratchDirManager(relay).bind(
+                self._user_id, self._conversation_id, self._agent_name)
+            return (self._scratchdir_service, None)
 
         # FileStore aliases
         if fs_param and fs_param.lower() in _FS_ALIASES:
@@ -323,6 +350,8 @@ class BaseFsHandler(ToolHandler):
     def _checkpoint_before(self, svc, path: str, content_after: bytes = None,
                            is_delete: bool = False, service_name: str = ""):
         """Capture file state for /rewind support."""
+        if getattr(svc, "is_scratchdir", False) is True:
+            return
         if not self._conversation_id or not self._checkpoint_id:
             return
         try:
@@ -342,7 +371,8 @@ class BaseFsHandler(ToolHandler):
     def _schedule_project_refresh(self, service, path: str,
                                   local: bool = False) -> None:
         """Debounce automatic graph/wiki maintenance for a relay mutation."""
-        if service is None or service == "filestore":
+        if (service is None or service == "filestore"
+                or getattr(service, "is_scratchdir", False) is True):
             return
         relay_id = str(getattr(service, "_service_id", "") or "")
         if not relay_id:

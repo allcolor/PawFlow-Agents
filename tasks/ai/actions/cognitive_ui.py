@@ -355,6 +355,47 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(exc)}).encode())
         return [flowfile]
 
+    # ── ScratchDir ──────────────────────────────────────────────────
+
+    if action.startswith("scratchdir_"):
+        conv_id = str(body.get("conversation_id") or "")
+        agent = str(body.get("agent_name") or "")
+        if not conv_id or not agent:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id and agent_name are required",
+            }).encode())
+            return [flowfile]
+        try:
+            _graph, service, _local, relay_id = _resolve_project_graph(user_id, body)
+            if service is None:
+                raise ValueError(f"Relay '{relay_id}' is not connected")
+            from core.scratchdir_manager import ScratchDirManager
+            manager = ScratchDirManager(service)
+            subaction = action.removeprefix("scratchdir_")
+            if subaction in {"status", "ensure", "renew", "clear"}:
+                result = manager.execute(
+                    action=subaction, user_id=user_id,
+                    conversation_id=conv_id, agent_name=agent,
+                    ttl_hours=body.get("ttl_hours"))
+            elif subaction == "tree":
+                result = manager.tree(
+                    user_id, conv_id, agent, relay_id,
+                    max_entries=int(body.get("max_entries", 200) or 200))
+            elif subaction == "promote":
+                result = manager.promote(
+                    user_id, conv_id, agent, relay_id,
+                    path=str(body.get("path") or ""))
+            else:
+                raise ValueError(f"Unknown ScratchDir UI action: {subaction}")
+            flowfile.set_content(json.dumps(
+                result, ensure_ascii=False).encode())
+        except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            flowfile.set_content(json.dumps({
+                "error": str(exc),
+                "code": getattr(exc, "code", "scratchdir_unavailable"),
+            }).encode())
+        return [flowfile]
+
     # ── Learn ──────────────────────────────────────────────────────
 
     if action == "learn":

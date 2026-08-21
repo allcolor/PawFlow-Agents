@@ -89,3 +89,32 @@ def test_schedule_marks_running_job_for_one_rerun():
     assert job.rerun is True
     assert job.changed_paths == {"core/main.py", "core/other.py"}
     assert job.timer is None
+
+
+def test_worker_runs_scoped_scratchdir_expiry_cleanup(monkeypatch):
+    manager = MagicMock()
+    manager.cleanup_expired.return_value = True
+    manager_type = MagicMock(return_value=manager)
+    monkeypatch.setattr(
+        "core.scratchdir_manager.ScratchDirManager", manager_type)
+    graph = MagicMock(nodes=[])
+    graph.build_from_relay.return_value = {"status": "built"}
+    wiki = MagicMock()
+    wiki.scan_from_relay.return_value = {"status": "refreshed"}
+    wiki.auto_update.return_value = {"status": "idle"}
+    monkeypatch.setattr(
+        "core.project_graph.ProjectGraph.for_relay", lambda *_args: graph)
+    monkeypatch.setattr(
+        "core.project_wiki.ProjectWiki.for_relay", lambda *_args: wiki)
+    monkeypatch.setattr(
+        "core.summarizer_bindings.resolve_service",
+        lambda *_args: (None, None, False))
+    service = MagicMock()
+
+    ProjectMaintenanceScheduler()._run(_MaintenanceJob(
+        user_id="alice", relay_id="relay-a", service=service,
+        conversation_id="conv-a", agent_name="assistant"))
+
+    manager_type.assert_called_once_with(service)
+    manager.cleanup_expired.assert_called_once_with(
+        "alice", "conv-a", "assistant", "relay-a")

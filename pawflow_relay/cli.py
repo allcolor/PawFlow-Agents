@@ -279,6 +279,19 @@ def worker_main():
             "--name", _docker_container,
             "-v", f"{translate_path(to_host_path(root_dir))}:/workspace",
         ]
+        _scratch_host_root = Path(
+            os.environ.get("PAWFLOW_SCRATCHDIR_ROOT", "")
+            or Path.home() / ".pawflow" / "runtime" / "scratchdirs"
+        ).expanduser().resolve()
+        _scratch_host_root.mkdir(parents=True, exist_ok=True)
+        docker_run_args += [
+            "-v",
+            (
+                f"{translate_path(to_host_path(str(_scratch_host_root)))}:"
+                "/var/lib/pawflow/scratchdirs"
+            ),
+            "-e", "PAWFLOW_SCRATCHDIR_ROOT=/var/lib/pawflow/scratchdirs",
+        ]
         _runtime_root = _relay_runtime_root()
         _pkg_src = str(_runtime_root / "pawflow_relay")
         _tools_src = str(_runtime_root / "tools")

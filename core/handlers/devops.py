@@ -77,6 +77,10 @@ class RunTestsHandler(BaseFsHandler):
                     "type": "integer",
                     "description": "Max output characters (default: 3000, max: 150000).",
                 },
+                "path": {
+                    "type": "string",
+                    "description": "Working directory, including fs://scratchdir/<subdir>.",
+                },
                 "service": {
                     "type": "string",
                     "description": "Filesystem service name (optional)",
@@ -174,6 +178,10 @@ class RunTestsHandler(BaseFsHandler):
         service_name = (arguments.get("relay", "") or arguments.get("source", "")
                         or arguments.get("filesystem", "")
                         or arguments.get("service", ""))
+        work_path = str(arguments.get("path") or ".")
+        path_service, work_path = self._parse_fs_url(work_path)
+        if path_service:
+            service_name = path_service
         try:
             max_output = int(arguments.get("max_output", 3000) or 3000)
         except (TypeError, ValueError):
@@ -183,8 +191,8 @@ class RunTestsHandler(BaseFsHandler):
         if not test_files:
             return "Error: no test files specified"
 
-        svc = self._find_service(service_name)
-        if not svc:
+        svc, workdir = self._resolve(service_name)
+        if not svc or workdir:
             return "Error: no filesystem service available to run tests"
 
         # Build pytest command
@@ -197,10 +205,13 @@ class RunTestsHandler(BaseFsHandler):
         cmd = self._maybe_rewrite_with_rtk(svc, cmd, arguments, timeout)
 
         try:
+            exec_args = [work_path, cmd]
             if "timeout" in arguments:
-                result = svc.exec(".", cmd, timeout)
-            else:
-                result = svc.exec(".", cmd)
+                exec_args.append(timeout)
+            exec_kwargs = {}
+            if self._resolve_local(arguments):
+                exec_kwargs["local"] = True
+            result = svc.exec(*exec_args, **exec_kwargs)
             stdout = result.get("stdout", "")
             stderr = result.get("stderr", "")
             rc = result.get("returncode", -1)
@@ -280,7 +291,7 @@ class ReadParentContextHandler(ToolHandler):
             return f"Error reading parent context: {e}"
 
 
-class SecurityScanHandler(ToolHandler):
+class SecurityScanHandler(BaseFsHandler):
     """Run security scans on code via bandit or semgrep."""
 
     _user_id: str = ""
@@ -309,6 +320,9 @@ class SecurityScanHandler(ToolHandler):
                 "path": {"type": "string", "description": "File or directory to scan"},
                 "tool": {"type": "string", "description": "'bandit' (default) or 'semgrep'"},
                 "service": {"type": "string", "description": "Filesystem service"},
+                "relay": {"type": "string", "description": "Alias for service"},
+                "source": {"type": "string", "description": "Alias for service"},
+                "filesystem": {"type": "string", "description": "Alias for service"},
             },
             "required": ["path"],
         }
@@ -319,19 +333,29 @@ class SecurityScanHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         path = arguments.get("path", ".")
         tool = arguments.get("tool", "bandit")
-        service_name = arguments.get("service", "")
+        service_name = (
+            arguments.get("relay", "") or arguments.get("source", "")
+            or arguments.get("filesystem", "") or arguments.get("service", "")
+        )
+        path_service, path = self._parse_fs_url(path)
+        if path_service:
+            service_name = path_service
 
-        from core.handlers._fs_base import find_fs_service
-        svc = find_fs_service(self._user_id, service_name,
-                              getattr(self, "_conversation_id", "") or "")
-        if not svc:
+        svc, workdir = self._resolve(service_name)
+        if not svc or workdir:
             return "Error: no filesystem service available"
 
         try:
+            local = self._resolve_local(arguments)
+            quoted_path = shlex.quote(path)
             if tool == "semgrep":
-                result = svc.exec(".", f"semgrep scan --json {path}", 120)
+                result = svc.exec(
+                    ".", f"semgrep scan --json {quoted_path}",
+                    timeout=120, local=local)
             else:
-                result = svc.exec(".", f"python -m bandit -r -f json {path}", 60)
+                result = svc.exec(
+                    ".", f"python -m bandit -r -f json {quoted_path}",
+                    timeout=60, local=local)
             stdout = result.get("stdout", "")
             stderr = result.get("stderr", "")
             rc = result.get("returncode", -1)

@@ -150,6 +150,21 @@ class ProjectMaintenanceScheduler:
         return client
 
     def _run(self, job: _MaintenanceJob) -> None:
+        if job.conversation_id and job.agent_name:
+            try:
+                from core.scratchdir_manager import ScratchDirManager
+                cleaned = ScratchDirManager(job.service).cleanup_expired(
+                    job.user_id, job.conversation_id,
+                    job.agent_name, job.relay_id)
+                if cleaned:
+                    logger.info(
+                        "Expired ScratchDir cleared relay=%s conversation=%s agent=%s",
+                        job.relay_id, job.conversation_id[:8], job.agent_name)
+            except Exception:
+                logger.warning(
+                    "ScratchDir expiry cleanup failed relay=%s conversation=%s agent=%s",
+                    job.relay_id, job.conversation_id[:8], job.agent_name,
+                    exc_info=True)
         from core.project_graph import ProjectGraph
         from core.project_wiki import ProjectWiki
 

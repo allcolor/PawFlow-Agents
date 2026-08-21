@@ -1199,6 +1199,8 @@
   "selectAgentConfigure": "Select an agent to configure",
   "scratchpad": "Scratchpad",
   "scratchpadDesc": "Temporary notes for a conversation agent",
+  "scratchdir": "ScratchDir",
+  "scratchdirDesc": "Temporary files for a conversation agent",
   "selectAgentDetails": "Select an agent to see details",
   "selectAgentOverride": "Select an agent to configure overrides.",
   "selectDefinitionAddAgents": "Select a definition to add agents",

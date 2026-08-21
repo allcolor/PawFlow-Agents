@@ -27,6 +27,26 @@ logger = logging.getLogger(__name__)
 class _RelayFsOpsMixin:
     """Request transport + filesystem/git/exec/http operations for RelayService."""
 
+    def supports_capability(self, capability: str) -> bool:
+        """Return whether the connected relay advertised one exact capability."""
+        capabilities = self._relay_info.get("capabilities", [])
+        return str(capability or "") in capabilities
+
+    def scratchdir_ensure(self, **kwargs):
+        return self._request("scratchdir_ensure", ".", **kwargs)
+
+    def scratchdir_status(self, **kwargs):
+        return self._request("scratchdir_status", ".", **kwargs)
+
+    def scratchdir_renew(self, **kwargs):
+        return self._request("scratchdir_renew", ".", **kwargs)
+
+    def scratchdir_clear(self, **kwargs):
+        return self._request("scratchdir_clear", ".", **kwargs)
+
+    def scratchdir_reconcile(self, **kwargs):
+        return self._request("scratchdir_reconcile", ".", **kwargs)
+
     def _server_local_requested(self, kwargs: Dict[str, Any]) -> bool:
         return bool(kwargs.get("local") and self.config.get("server_managed"))
 

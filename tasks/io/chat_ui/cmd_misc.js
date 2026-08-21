@@ -658,6 +658,11 @@ function cmdScratchpad(text, parts) {
   return true;
 }
 
+function cmdScratchDir(text, parts) {
+  showScratchDirOverlay();
+  return true;
+}
+
 function cmdRelay(text, parts) {
   var sub = (parts[1] || '').toLowerCase();
   if (!sub || sub === 'status') {

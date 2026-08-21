@@ -660,6 +660,8 @@ def create_default_registry() -> ToolRegistry:
     registry.register(TodoListHandler())
     from core.handlers.scratchpad import ScratchpadHandler
     registry.register(ScratchpadHandler())
+    from core.handlers.scratchdir import ScratchDirHandler
+    registry.register(ScratchDirHandler())
     from core.handlers.learn import LearnHandler
     registry.register(LearnHandler())
     from core.handlers.conversation_search import ConversationSearchHandler

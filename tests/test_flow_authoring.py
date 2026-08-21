@@ -378,3 +378,34 @@ def test_relation_queue_configuration_is_validated():
         assert report["ok"] is False
         assert any(p["code"] == "invalid_relation_setting"
                    and p["field"] == field for p in report["problems"])
+
+
+# ── version deletion ──────────────────────────────────────────────
+
+def test_delete_version_refuses_the_last_one_and_repoints_latest(svc):
+    _seed(svc)
+    with pytest.raises(ValueError):  # the version is mandatory
+        svc.delete_version("my_flows.demo", "user", "alice")
+    with pytest.raises(ValueError):  # the only version: delete the flow instead
+        svc.delete_version("my_flows.demo:1.0.0", "user", "alice")
+    with pytest.raises(KeyError):
+        svc.delete_version("my_flows.demo:9.9.9", "user", "alice")
+    assert svc.versions("my_flows.demo", "user", "alice")["versions"] == ["1.0.0"]
+
+    for version in ("2.0.0", "3.0.0"):
+        draft = svc.create_draft("my_flows.demo", "user", "alice")
+        svc.publish(draft["draft_id"], "alice", version, parse=False)
+    assert svc.versions("my_flows.demo", "user", "alice")["latest"] == "3.0.0"
+
+    # A non-latest version goes; latest is untouched.
+    result = svc.delete_version("my_flows.demo:2.0.0", "user", "alice")
+    assert result["versions"] == ["1.0.0", "3.0.0"] and result["latest"] == "3.0.0"
+    # The latest goes; latest.json re-points to the highest remaining one.
+    result = svc.delete_version("my_flows.demo:3.0.0", "user", "alice")
+    assert result["versions"] == ["1.0.0"] and result["latest"] == "1.0.0"
+    listed = svc.versions("my_flows.demo", "user", "alice")
+    assert listed["versions"] == ["1.0.0"] and listed["latest"] == "1.0.0"
+    assert svc.load("my_flows.demo", "user", "alice")["version"] == "1.0.0"
+    # Other users' scopes are never reachable.
+    with pytest.raises(KeyError):
+        svc.delete_version("my_flows.demo:1.0.0", "user", "bob")

@@ -21,6 +21,10 @@ hot-swap editing.
   `versions/1.0.0.json`: it opens a draft, and publishing creates `1.1.0`
   through `ScopedRepository.publish_flow_version()` (or `create_flow()` for
   a brand-new flow). The repository refuses an existing version.
+  A version is only ever *added* (publish) or *deleted* (the Versions
+  dialog 🗑 / `delete_version`), never modified; the last remaining version
+  cannot be deleted (delete the flow instead) and deleting the latest
+  re-points `latest.json` to the highest remaining version.
 - **Drafts live outside the repository**, in
   `data/runtime/flow_editor_drafts/<user_id>/<draft_id>.json`:
 
@@ -56,6 +60,7 @@ CLI ---------/
 | Method | Purpose |
 | ------ | ------- |
 | `load(fqn, scope)` / `versions(fqn, scope)` | read a published version (latest when unversioned) / list versions |
+| `delete_version(fqn, scope, user_id)` | delete one published version (`package.name:version`); refuses the last one, re-points `latest` when the latest goes |
 | `new(package, name, version, scope, user_id)` | draft of a flow that does not exist yet (nothing published until `publish`) |
 | `fork(source_fqn, source_scope, package, name, version, scope, user_id)` | copy a read-only flow (global/package) into a draft the user owns (`forked_from` recorded) |
 | `create_draft(fqn, scope, user_id, reuse_existing=True)` | open a draft of a published version; an existing draft of the same flow/scope/conversation is reused (`reused: true`) |
@@ -114,12 +119,13 @@ they never require a hot-swap of a running instance.
 
 All actions require a session user. `scope` accepts `global`, `user`,
 `conversation`/`conv` (+ `conversation_id`). Global writes (`new`, `fork`,
-`create_draft`, `publish`) require the admin role.
+`create_draft`, `publish`, `delete_version`) require the admin role.
 
 | Action | Body | Answer |
 | ------ | ---- | ------ |
 | `flow_editor_get` | `fqn`, `scope` | `{flow, scope}` |
 | `flow_editor_versions` | `fqn`, `scope` | `{flow, scope, versions, latest}` |
+| `flow_editor_delete_version` | `fqn` (with version), `scope` | `{ok, fqn, flow, version, scope, latest, versions}`; **400** for the last remaining version |
 | `flow_editor_new` | `package`, `name`, `version`, `scope`, `description` | `{draft}` |
 | `flow_editor_fork` | `source_fqn`, `source_scope`, `package`, `name`, `version`, `scope` | `{draft}` |
 | `flow_editor_create_draft` | `fqn`, `scope`, `reuse_existing` | `{draft}` (`draft.reused`) |
@@ -151,6 +157,13 @@ system next to `ScopedRepository`, validation belongs to
 repository menu entry **Edit (draft)** calls `flow_editor_create_draft` then
 opens the tab) switches the same canvas into edit mode:
 
+- Autosave (800 ms after an edit, undo and redo included) only ever writes
+  the draft file; no published version is created or modified until
+  **Publish**. **Discard draft** (status bar) deletes the working copy through
+  `flow_editor_discard_draft` and locks the canvas. The repository dialogs
+  (Versions, Diff, New, Fork) always close through ✕, Escape or Close, and the
+  Versions/Diff dialogs close themselves when they open the graph or the
+  editor.
 - `draftRef` holds the definition; `flowToReactFlow()` projects it into
   nodes/edges (edge id = `connection_id`). Interactions patch the document
   (`patchLayoutNode`, `removeFromDraft` — removing a task atomically drops

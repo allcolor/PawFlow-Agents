@@ -21,6 +21,10 @@ def test_one_canvas_switches_to_edit_mode_by_draft_id():
     assert "d.error === 'draft_changed_elsewhere'" in source
     assert "action: 'flow_editor_publish'" in source
     assert "action: 'flow_editor_validate'" in source
+    # Autosave writes the draft only; Discard draft deletes it and locks the canvas.
+    assert "action: 'flow_editor_discard_draft'" in source
+    assert "editBtn('\\u{1F5D1} Discard draft', discardDraft" in source
+    assert "setSaveState('discarded');" in source
     # One drag = one history entry (recorded on drop), undo/redo, autosave.
     assert "onNodeDragStop: editing ? onNodeDragStop : undefined" in source
     assert "h.past.push(draftRef.current);" in source
@@ -87,8 +91,21 @@ def test_repository_ui_exposes_the_complete_authoring_loop():
     assert "action$('flow_editor_create_draft'" in menu
     assert "action$('flow_editor_diff'" in menu
     assert "_openFlowEditorTab(d.draft.draft_id)" in menu
+    # No authoring dialog is ever stuck open: a close ✕, Escape and a Close
+    # footer; opening the graph/editor from the Versions dialog closes it.
+    assert "function _flowAuthoringDialog(title, bodyHtml)" in menu
+    assert "<button data-close-dialog title=" in menu
+    assert "if (ev.key === 'Escape')" in menu
+    assert "function _flowDialogCloseFooter()" in menu
+    assert "'<div data-content>' + escapeHtml(t('loading')) + '</div>' + _flowDialogCloseFooter()" in menu
+    assert "overlay.remove(); _editFlowTemplate(button.dataset.edit, { scope })" in menu
+    assert "overlay.remove(); _openFlowTemplateGraphTab(button.dataset.view)" in menu
+    # Published versions can be deleted (never edited) from the Versions dialog.
+    assert "action$('flow_editor_delete_version'" in menu
+    assert "canAuthor && versions.length > 1" in menu
     assert 'createOnclick: "_showNewFlowDialog()"' in renderer
-    for key in ("flowNew", "flowFork", "flowVersions", "flowDiff"):
+    for key in ("flowNew", "flowFork", "flowVersions", "flowDiff",
+                "flowDeleteVersion", "flowDeleteVersionConfirm", "flowVersionDeleted"):
         for lang in ("en", "fr", "es"):
             assert key in json.load(open(f"tasks/io/chat_ui/i18n/{lang}.json", encoding="utf-8"))
 

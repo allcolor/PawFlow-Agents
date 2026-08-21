@@ -222,6 +222,22 @@ class FlowAuthoringService:
         return {"flow": flow, "scope": scope, "versions": listed,
                 "latest": latest.get("version", "")}
 
+    def delete_version(self, fqn: str, scope: str, user_id: str = "",
+                       conv_id: str = "") -> Dict[str, Any]:
+        """Delete one published version (``package.name:version``).
+
+        Versions are never edited, only added or deleted. The repository
+        refuses the last remaining version and re-points ``latest`` when the
+        latest one goes.
+        """
+        scope = normalize_scope(scope)
+        flow, version = split_fqn(fqn)
+        if not version:
+            raise ValueError("Flow name must include the version to delete: "
+                             "package.name:version")
+        return self.repo.delete_flow_version(
+            f"{flow}:{version}", scope, user_id=user_id, conv_id=conv_id)
+
     def new(self, package: str, name: str, version: str, scope: str,
             user_id: str, conv_id: str = "", description: str = "") -> Dict[str, Any]:
         """A draft for a flow that does not exist yet (nothing is published)."""

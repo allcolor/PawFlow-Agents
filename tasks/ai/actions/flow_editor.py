@@ -27,7 +27,8 @@ from core.flow_authoring import (
 logger = logging.getLogger(__name__)
 
 _ACTIONS = {
-    "flow_editor_get", "flow_editor_versions", "flow_editor_new",
+    "flow_editor_get", "flow_editor_versions", "flow_editor_delete_version",
+    "flow_editor_new",
     "flow_editor_fork", "flow_editor_create_draft", "flow_editor_load_draft",
     "flow_editor_list_drafts", "flow_editor_save_draft",
     "flow_editor_discard_draft", "flow_editor_validate", "flow_editor_diff",
@@ -103,6 +104,19 @@ def _handle_flow_editor(self, action, body, store, user_id, flowfile):
                                                     conv_id=conv_id),
                                "scope": scope})
             return _reply(service.versions(fqn, scope, user_id=user_id, conv_id=conv_id))
+
+        if action == "flow_editor_delete_version":
+            fqn = str(body.get("fqn", "") or "")
+            scope = normalize_scope(body.get("scope", "user"))
+            if not fqn:
+                return _reply({"error": "fqn is required"}, "400")
+            denied = _scope_gate(scope, conv_id, flowfile, write=True)
+            if denied:
+                return _reply({"error": denied}, "403")
+            result = service.delete_version(fqn, scope, user_id=user_id, conv_id=conv_id)
+            from tasks.ai.actions.agent_resource import invalidate_flow_templates_cache
+            invalidate_flow_templates_cache(user_id)
+            return _reply({"ok": True, **result})
 
         if action in ("flow_editor_new", "flow_editor_fork"):
             scope = normalize_scope(body.get("scope", "user"))

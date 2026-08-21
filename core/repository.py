@@ -528,6 +528,39 @@ class ScopedRepository(_RepositorySerdeMixin):
             key=lambda v: [int(x) if x.isdigit() else x
                            for x in v.replace("-", ".").split(".")])
 
+    def delete_flow_version(self, fqn: str, scope: str,
+                            user_id: str = "",
+                            conv_id: str = "") -> Dict[str, Any]:
+        """Delete one published version (versions are immutable, never edited).
+
+        The last remaining version is refused (delete the flow instead);
+        deleting the latest re-points ``latest.json`` to the highest remaining
+        version.
+        """
+        package, flowname, version = parse_flow_fqn(fqn)
+        if not version:
+            raise ValueError("Flow FQN must include version: package.name:1.0.0")
+        qualified = f"{package}.{flowname}"
+        versions = self.list_flow_versions(
+            qualified, scope, user_id=user_id, conv_id=conv_id)
+        if version not in versions:
+            raise KeyError(f"Flow {fqn} not found in scope {scope}")
+        if len(versions) == 1:
+            raise ValueError(
+                f"{fqn} is the only version of {qualified}; delete the flow instead")
+        flow_version_file(package, flowname, version, scope, user_id, conv_id).unlink()
+        remaining = [v for v in versions if v != version]
+        latest_file = flow_latest_file(package, flowname, scope, user_id, conv_id)
+        latest_version = (self._read_json(latest_file) or {}).get("version", "")
+        if latest_version not in remaining:
+            latest_version = remaining[-1]
+            self._write_json(latest_file, {"version": latest_version})
+        self._invalidate_list_cache()
+        logger.info("Deleted flow version %s (%s); latest is now %s",
+                    fqn, scope, latest_version)
+        return {"fqn": fqn, "flow": qualified, "version": version,
+                "scope": scope, "latest": latest_version, "versions": remaining}
+
     def rollback_flow(self, qualified_name: str, version: str,
                       scope: str,
                       user_id: str = "",

@@ -81,15 +81,30 @@ function _flowScopeOptions(selected) {
   return options.map(([value, label]) => '<option value="' + value + '"' + (value === selected ? ' selected' : '') + '>' + escapeHtml(label) + '</option>').join('');
 }
 
+// Every authoring dialog closes through its \u2715, Escape, or any
+// [data-close-dialog] button in its body: no overlay is ever stuck open.
 function _flowAuthoringDialog(title, bodyHtml) {
   document.getElementById('_flowAuthoringOverlay')?.remove();
   const overlay = document.createElement('div');
   overlay.id = '_flowAuthoringOverlay';
   overlay.className = 'exec-overlay';
   overlay.innerHTML = '<div class="exec-dialog" style="min-width:440px;max-width:min(720px,calc(100vw - 32px));max-height:85vh;overflow:auto;">'
-    + '<h3>' + escapeHtml(title) + '</h3>' + bodyHtml + '</div>';
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;">'
+    + '<h3 style="margin:0;">' + escapeHtml(title) + '</h3>'
+    + '<button data-close-dialog title="' + _pfpAttr(t('close')) + '" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;line-height:1;">&times;</button></div>'
+    + bodyHtml + '</div>';
+  const onKey = (ev) => {
+    if (!overlay.isConnected) { document.removeEventListener('keydown', onKey); return; }
+    if (ev.key === 'Escape') { ev.preventDefault(); overlay.remove(); document.removeEventListener('keydown', onKey); }
+  };
+  overlay.querySelectorAll('[data-close-dialog]').forEach(button => button.onclick = () => { overlay.remove(); document.removeEventListener('keydown', onKey); });
+  document.addEventListener('keydown', onKey);
   document.body.appendChild(overlay);
   return overlay;
+}
+
+function _flowDialogCloseFooter() {
+  return '<div class="exec-btns"><button class="exec-deny" data-close-dialog>' + escapeHtml(t('close')) + '</button></div>';
 }
 
 function _flowDialogField(label, id, value, textarea) {
@@ -173,26 +188,51 @@ function _showForkFlowDialog(templateId, tpl) {
 function _showFlowVersionsDialog(templateId, tpl) {
   const fqn = _flowEditorFqn(templateId, tpl);
   const scope = _flowEditorScope(tpl);
-  const overlay = _flowAuthoringDialog(t('flowVersions'), '<div data-content>' + escapeHtml(t('loading')) + '</div>');
-  const payload = Object.assign({ fqn }, _flowDialogPayload(scope));
-  action$('flow_editor_versions', payload, { skipConversationId: scope !== 'conversation' }).subscribe(d => {
-    if (d.error) { overlay.querySelector('[data-content]').textContent = d.error; return; }
-    overlay.querySelector('[data-content]').innerHTML = (d.versions || []).map(version => {
+  const canAuthor = typeof _canEditScope !== 'function' || _canEditScope(scope);
+  const options = { skipConversationId: scope !== 'conversation' };
+  const overlay = _flowAuthoringDialog(t('flowVersions'),
+    '<div data-content>' + escapeHtml(t('loading')) + '</div>' + _flowDialogCloseFooter());
+  const render = () => action$('flow_editor_versions', Object.assign({ fqn }, _flowDialogPayload(scope)), options).subscribe(d => {
+    const content = overlay.querySelector('[data-content]');
+    if (!content) return;
+    if (d.error) { content.textContent = d.error; return; }
+    const versions = d.versions || [];
+    content.innerHTML = versions.map(version => {
       const versionFqn = d.flow + ':' + version;
       return '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
         + '<code style="flex:1;">' + escapeHtml(version) + (version === d.latest ? ' · latest' : '') + '</code>'
         + '<button data-view="' + _pfpAttr(versionFqn) + '">' + escapeHtml(t('flowViewGraph')) + '</button>'
-        + '<button data-edit="' + _pfpAttr(versionFqn) + '">' + escapeHtml(t('flowEditDraft')) + '</button></div>';
+        + '<button data-edit="' + _pfpAttr(versionFqn) + '">' + escapeHtml(t('flowEditDraft')) + '</button>'
+        // Versions are immutable: they are added by publish or deleted here,
+        // never edited. The last one stays (delete the flow instead).
+        + (canAuthor && versions.length > 1
+          ? '<button data-delete="' + _pfpAttr(versionFqn) + '" title="' + _pfpAttr(t('flowDeleteVersion')) + '" style="color:var(--pf-danger);">\u{1F5D1}</button>'
+          : '')
+        + '</div>';
     }).join('') || '<div>' + escapeHtml(t('noFlowTemplates')) + '</div>';
-    overlay.querySelectorAll('[data-view]').forEach(button => button.onclick = () => _openFlowTemplateGraphTab(button.dataset.view));
-    overlay.querySelectorAll('[data-edit]').forEach(button => button.onclick = () => _editFlowTemplate(button.dataset.edit, { scope }));
+    // Opening the graph or the editor closes the dialog: the new tab would
+    // otherwise sit behind a modal overlay.
+    content.querySelectorAll('[data-view]').forEach(button => button.onclick = () => { overlay.remove(); _openFlowTemplateGraphTab(button.dataset.view); });
+    content.querySelectorAll('[data-edit]').forEach(button => button.onclick = () => { overlay.remove(); _editFlowTemplate(button.dataset.edit, { scope }); });
+    content.querySelectorAll('[data-delete]').forEach(button => button.onclick = () => {
+      const versionFqn = button.dataset.delete;
+      if (!confirm(t('flowDeleteVersionConfirm', { fqn: versionFqn }))) return;
+      action$('flow_editor_delete_version', Object.assign({ fqn: versionFqn }, _flowDialogPayload(scope)), options).subscribe(r => {
+        if (r.error) { addMsg('error', r.error); return; }
+        addMsg('system', t('flowVersionDeleted', { fqn: versionFqn }));
+        _refreshResourcesNow();
+        render();
+      });
+    });
   });
+  render();
 }
 
 function _showFlowDiffDialog(templateId, tpl) {
   const fqn = _flowEditorFqn(templateId, tpl);
   const scope = _flowEditorScope(tpl);
-  const overlay = _flowAuthoringDialog(t('flowDiff'), '<div data-content>' + escapeHtml(t('loading')) + '</div>');
+  const overlay = _flowAuthoringDialog(t('flowDiff'),
+    '<div data-content>' + escapeHtml(t('loading')) + '</div>' + _flowDialogCloseFooter());
   const payload = Object.assign({ fqn, reuse_existing: true }, _flowDialogPayload(scope));
   action$('flow_editor_create_draft', payload, { skipConversationId: scope !== 'conversation' }).subscribe(d => {
     if (d.error) { overlay.querySelector('[data-content]').textContent = d.error; return; }

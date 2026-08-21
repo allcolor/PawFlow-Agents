@@ -2231,6 +2231,18 @@ function App() {
     setPublished(d.fqn);
   }, [saveNow, draftMeta]);
 
+  // Autosave only ever writes the draft file; published versions are never
+  // touched. Discarding deletes that working copy and locks the canvas.
+  const discardDraft = useCallback(async () => {
+    if (!IS_EDIT || lockedRef.current) return;
+    if (!window.confirm('Discard this draft?\n\nPublished versions are untouched; every change made in this draft is lost.')) return;
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    const d = await apiCall({ action: 'flow_editor_discard_draft', draft_id: DRAFT_ID });
+    if (d.error) { setError(d.error); return; }
+    lockedRef.current = true;
+    setSaveState('discarded');
+  }, []);
+
   const previewRuntimeUpdate = useCallback(async () => {
     if (!INSTANCE_ID || !published) return;
     const d = await apiCall({ action: 'flow_runtime_update_preview',
@@ -2359,6 +2371,7 @@ function App() {
     saved: `Saved \u00B7 rev ${revisionRef.current}`, error: 'Save failed',
     conflict: 'Draft changed elsewhere', published: `Published as ${published}`,
     applied: `Applied ${published} to ${INSTANCE_ID}`,
+    discarded: 'Draft discarded \u00B7 close this tab',
   }[saveState] || '';
   const editBtn = (label, onClick, opts = {}) => jsx('button', {
     id: opts.id, className: 'rt-x', title: opts.title || label, disabled: !!opts.disabled,
@@ -2394,6 +2407,7 @@ function App() {
             editBtn('\u2713 Validate', validateDraft),
             editBtn('Problems', () => problems ? setShowProblems(true) : validateDraft()),
             editBtn('\u2B06 Publish', publishDraft, { primary: true, disabled: lockedRef.current }),
+            editBtn('\u{1F5D1} Discard draft', discardDraft, { disabled: lockedRef.current, title: 'Delete this draft (published versions are untouched)' }),
             INSTANCE_ID && published && editBtn('Apply to running flow', previewRuntimeUpdate, { primary: true }),
           ] })
         : jsx('span', { children: isRunning ? 'Running' : 'Stopped' }),

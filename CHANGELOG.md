@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Flow editor: a published version can be deleted from the **Versions**
+  dialog (🗑, `flow_editor_delete_version` /
+  `FlowAuthoringService.delete_version` / `ScopedRepository.delete_flow_version`).
+  Versions stay immutable (added by publish or deleted, never edited); the
+  last remaining version is refused (delete the flow instead) and deleting
+  the latest re-points `latest.json` to the highest remaining version. A
+  **Discard draft** button in the canvas deletes the working copy without
+  touching any version.
+
+### Fixed
+
+- Flow editor: the Versions and Diff dialogs had no close control and stayed
+  open behind the canvas after **Edit (draft)** / **View graph**. Every
+  authoring dialog now has a ✕, a Close button and closes on Escape, and the
+  Versions/Diff dialogs close themselves when they open the graph or the
+  editor.
+
 ## [1.0.0-beta.227] — 2026-08-21
 
 ### Added

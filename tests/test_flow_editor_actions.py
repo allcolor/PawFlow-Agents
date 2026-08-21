@@ -130,3 +130,35 @@ def test_catalogs_and_schema_for_current_parameters():
                          {"service_type": service_type,
                           "parameters": {"provider": "configured"}})
     assert status == "200" and data["type"] == service_type
+
+
+def test_delete_version_is_scope_gated_and_repoints_latest():
+    draft = _call("flow_editor_new", {
+        "package": "my_flows", "name": "v", "version": "1.0.0", "scope": "user"})[0]["draft"]
+    definition = draft["definition"]
+    definition["tasks"]["hello"] = {"type": "log", "parameters": {"message": "x"}}
+    definition["entries"] = ["hello"]
+    _call("flow_editor_save_draft", {"draft_id": draft["draft_id"],
+                                     "definition": definition, "base_revision": 0})
+    assert _call("flow_editor_publish", {"draft_id": draft["draft_id"]})[1] == "200"
+    draft = _call("flow_editor_create_draft", {"fqn": "my_flows.v", "scope": "user"})[0]["draft"]
+    assert _call("flow_editor_publish", {"draft_id": draft["draft_id"],
+                                         "version": "2.0.0"})[1] == "200"
+
+    data, status = _call("flow_editor_delete_version", {"scope": "user"})
+    assert status == "400"
+    data, status = _call("flow_editor_delete_version",
+                         {"fqn": "my_flows.v:2.0.0", "scope": "global"})
+    assert status == "403"
+    data, status = _call("flow_editor_delete_version",
+                         {"fqn": "my_flows.v:2.0.0", "scope": "user"}, user_id="bob")
+    assert status == "404"
+    data, status = _call("flow_editor_delete_version",
+                         {"fqn": "my_flows.v:2.0.0", "scope": "user"})
+    assert status == "200" and data["ok"] is True and data["latest"] == "1.0.0", data
+    data, status = _call("flow_editor_versions", {"fqn": "my_flows.v", "scope": "user"})
+    assert data["versions"] == ["1.0.0"] and data["latest"] == "1.0.0"
+    # The last version is refused: the flow itself must be deleted instead.
+    data, status = _call("flow_editor_delete_version",
+                         {"fqn": "my_flows.v:1.0.0", "scope": "user"})
+    assert status == "400" and "delete the flow" in data["error"]

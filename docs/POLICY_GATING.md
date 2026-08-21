@@ -71,6 +71,15 @@ The gate LLM is called tool-free, at temperature 0, in an ephemeral scope,
 and its answer is parsed provider-agnostically (first JSON object, strict
 keys). Interactive CLI providers are refused as gate LLMs.
 
+## Webchat
+
+The resources sidebar shows a **Policy gate** section: bind a gating service
+to the conversation (`+`), see the effective conversation/agent gates, a
+broken binding (red, calls need confirmation), unbind, and open the decision
+log (`gating_decisions` action, last 50 redacted records). Gating services
+are created under Services like any other service; `gating_script`
+resources are managed through the generic resource actions.
+
 ## Interim rule for other runtimes
 
 Sub-agent executor, ToolRelay, external AG-UI and realtime voice are not yet

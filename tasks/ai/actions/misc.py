@@ -679,6 +679,21 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         }, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "gating_decisions":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        from core.tool_authorization import list_decisions
+        try:
+            limit = max(1, min(200, int(body.get("limit") or 50)))
+        except (TypeError, ValueError):
+            limit = 50
+        flowfile.set_content(json.dumps({
+            "decisions": list_decisions(conv_id, limit),
+        }, ensure_ascii=False, default=str).encode())
+        return [flowfile]
+
     if action == "gating_unlink":
         conv_id = body.get("conversation_id", "")
         if not conv_id:

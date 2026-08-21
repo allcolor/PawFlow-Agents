@@ -140,6 +140,40 @@ def test_actions_link_unlink_and_list(env):
     assert data["removed"] is True and data["gating"]["bound"] is False
 
 
+def test_gating_decisions_action_reads_the_audit_log(tmp_path, monkeypatch):
+    from core import tool_authorization as ta
+    from tasks.ai.actions.misc import _handle_misc
+    monkeypatch.setattr(ta, "_audit_dir", lambda: tmp_path / "audit")
+    ta._audit("c9", {"decision_id": "d1", "decision": "ask", "tool": "bash"})
+    ff = FlowFile()
+    _handle_misc(None, "gating_decisions", {"conversation_id": "c9", "limit": "5"}, None, "alice", ff)
+    data = json.loads(ff.content)
+    assert data["decisions"][0]["decision_id"] == "d1"
+    ff = FlowFile()
+    _handle_misc(None, "gating_decisions", {}, None, "alice", ff)
+    assert "error" in json.loads(ff.content)
+
+
+def test_webchat_exposes_policy_gate_binding_and_decisions():
+    with open("tasks/io/chat_ui/resources_render.js", encoding="utf-8") as handle:
+        render = handle.read()
+    with open("tasks/io/chat_ui/resources_flow_templates.js", encoding="utf-8") as handle:
+        dialogs = handle.read()
+    with open("tasks/io/chat_ui/resources.js", encoding="utf-8") as handle:
+        sections = handle.read()
+    assert "data.gating" in render and "_showGatingLinkDialog()" in render
+    assert "_unlinkGating()" in render and "_showGatingDecisions()" in render
+    assert "'_gating'" in sections
+    for action in ("gating_list_available", "gating_link", "gating_unlink", "gating_decisions"):
+        assert "action$('" + action + "'" in dialogs, action
+    for lang in ("en", "fr", "es"):
+        with open(f"tasks/io/chat_ui/i18n/{lang}.json", encoding="utf-8") as handle:
+            catalog = json.load(handle)
+        for key in ("policyGate", "linkPolicyGate", "noPolicyGate", "noPolicyGateServices",
+                    "policyGateBroken", "policyGateDecisions", "policyGateAgent"):
+            assert catalog[key], (lang, key)
+
+
 def test_agent_config_carries_gating_service():
     from core.conv_agent_config import AGENT_CONFIG_DEFAULTS
     assert AGENT_CONFIG_DEFAULTS["gating_service"] == ""

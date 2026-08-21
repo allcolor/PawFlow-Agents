@@ -411,6 +411,38 @@ async function _renderResourcesData(data) {
       }
       liveHtml += _sectionFooter();
     }
+
+    // Policy gate bound to this conversation / agent (docs/POLICY_GATING.md).
+    {
+      var pgCollapsed = _isSectionCollapsed('_gating');
+      var pgArrow = pgCollapsed ? '\u25B6' : '\u25BC';
+      var pgDisplay = pgCollapsed ? 'none' : 'block';
+      liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
+        + '<span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection(\'_gating\')">'
+        + '<span id="res-arrow-_gating">' + pgArrow + '</span> ' + escapeHtml(t('policyGate')) + '</span>'
+        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showGatingLinkDialog()" title="' + escapeHtml(t('linkPolicyGate')) + '">+</span>'
+        + '</div><div id="res-section-_gating" style="display:' + pgDisplay + ';">';
+      var _pg = data.gating || {};
+      var _pgRows = [];
+      [['conversation', _pg.conversation], ['agent', _pg.agent]].forEach(function(pair) {
+        var entry = pair[1] || {};
+        var eff = entry.effective || null;
+        var ref = entry.ref || {};
+        if (!eff && !entry.broken) return;
+        var color = entry.broken ? 'var(--pf-danger)' : 'var(--pf-success)';
+        var label = eff ? eff.service_id : (ref.service_id || '?');
+        _pgRows.push('<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+          + _scopeBadge((eff && eff.scope) || ref.scope || '')
+          + '<span style="color:' + color + ';font-size:12px;flex:1;" title="' + escapeHtml(entry.error || '') + '">' + escapeHtml(label) + (pair[0] === 'agent' ? ' · ' + escapeHtml(t('policyGateAgent')) : '') + '</span>'
+          + (entry.broken ? '<span style="font-size:9px;color:' + color + ';">' + escapeHtml(t('policyGateBroken')) + '</span>' : '')
+          + '<span style="cursor:pointer;font-size:11px;color:var(--pf-accent);padding:0 3px;" title="' + escapeHtml(t('policyGateDecisions')) + '" onclick="_showGatingDecisions()">\u2630</span>'
+          + (pair[0] === 'conversation' ? '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('unlink')) + '" onclick="_unlinkGating()">&times;</span>' : '')
+          + '</div>');
+      });
+      liveHtml += _pgRows.length ? _pgRows.join('')
+        : '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noPolicyGate')) + '</div>';
+      liveHtml += _sectionFooter();
+    }
     }
 
     // ─────────────────────────────────────────────────────────────

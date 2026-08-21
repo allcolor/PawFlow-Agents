@@ -237,7 +237,7 @@ function _targetOwnerValue(selectId) {
 // browser reload restores exactly what was open or closed.
 const _RESOURCE_TREE_STATE_KEY = 'pawflow.resource_tree.collapsed.v1';
 const _ALL_SECTIONS = [
-  'agent','_running','_flow','_svc','_relay','_remote_fs','_summarizer','_param','_secret',
+  'agent','_running','_flow','_svc','_relay','_remote_fs','_summarizer','_gating','_param','_secret',
   '_pfp','_agent_repo','skill','prompt','theme','voice','task_def','_mcp_repo','_tool','_flow_repo'
 ];
 const _collapsedSections = {};

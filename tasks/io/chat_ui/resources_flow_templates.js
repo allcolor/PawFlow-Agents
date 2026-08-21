@@ -527,6 +527,68 @@ function _unlinkSummarizer() {
   });
 }
 
+// ── Policy gate (docs/POLICY_GATING.md) ──────────────────────────────
+
+function _showGatingLinkDialog() {
+  action$('gating_list_available', { conversation_id: conversationId }).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    var services = data.available || [];
+    if (!services.length) { addMsg('system', t('noPolicyGateServices')); return; }
+    window._gatingLinkOptions = services;
+    var options = services.map(function(s, idx) {
+      var detail = (s.llm_service ? ' \u2192 ' + s.llm_service : '') + (s.scripts && s.scripts.length ? ' [' + s.scripts.length + ' scripts]' : '');
+      return '<option value="' + idx + '">' + escapeHtml('[' + (s.scope || 'global') + '] ' + s.service_id + detail) + '</option>';
+    }).join('');
+    var overlay = document.createElement('div');
+    overlay.className = 'exec-overlay';
+    overlay.innerHTML = '<div class="exec-dialog" style="min-width:350px;">'
+      + '<h3>' + escapeHtml(t('linkPolicyGate')) + '</h3>'
+      + '<div style="margin:12px 0;"><select id="_gatingLinkSelect" style="width:100%;padding:8px;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;font-size:13px;">' + options + '</select></div>'
+      + '<div class="exec-btns">'
+      + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('contextCancel')) + '</button>'
+      + '<button class="exec-approve" onclick="_doGatingLink(this)">' + escapeHtml(t('link')) + '</button>'
+      + '</div></div>';
+    document.body.appendChild(overlay);
+  });
+}
+
+function _doGatingLink(btn) {
+  var overlay = btn.closest('.exec-overlay');
+  var sel = overlay.querySelector('#_gatingLinkSelect');
+  var svc = (window._gatingLinkOptions || [])[sel ? Number(sel.value) : -1];
+  overlay.remove();
+  if (!svc) return;
+  action$('gating_link', { conversation_id: conversationId, scope: svc.scope, service_id: svc.service_id }).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    loadResources();
+  });
+}
+
+function _unlinkGating() {
+  action$('gating_unlink', { conversation_id: conversationId }).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    loadResources();
+  });
+}
+
+function _showGatingDecisions() {
+  action$('gating_decisions', { conversation_id: conversationId, limit: 50 }).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    var rows = (data.decisions || []).slice().reverse().map(function(d) {
+      var when = d.created_at ? new Date(d.created_at * 1000).toLocaleTimeString() : '';
+      var verdict = d.outcome ? 'outcome: ' + d.outcome : (d.decision || '');
+      return '<div style="border-bottom:1px solid var(--pf-border);padding:4px 0;font-size:11px;">'
+        + '<code>' + escapeHtml(when) + '</code> <strong>' + escapeHtml(verdict) + '</strong> '
+        + escapeHtml(d.tool || '') + (d.agent_name ? ' (' + escapeHtml(d.agent_name) + ')' : '')
+        + (d.reason ? '<div style="color:var(--pf-muted);">' + escapeHtml(String(d.reason).slice(0, 300)) + '</div>' : '')
+        + '</div>';
+    }).join('') || '<div style="color:var(--pf-muted);">' + escapeHtml(t('noPolicyGate')) + '</div>';
+    var overlay = _flowAuthoringDialog(t('policyGateDecisions'), '<div style="max-height:60vh;overflow:auto;">' + rows + '</div>'
+      + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('close')) + '</button></div>');
+    return overlay;
+  });
+}
+
 function _showSummarizerMenu(e, canUnlink) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');

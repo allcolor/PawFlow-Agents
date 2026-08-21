@@ -1,0 +1,150 @@
+/* ── Mobile layout (narrow viewports) ──
+   Base layout above assumes desktop width: sidebar pushes .main over at a
+   fixed 260px, and .header lays every control out on one row. Neither
+   holds up under ~768px: the header row has no wrap/overflow handling and
+   the sidebar has no overlay mode (sidebar-toggle only shrinks it to 0
+   width, it never becomes a drawer), so content gets squeezed instead of
+   reflowing. This section makes both degrade gracefully instead of
+   redesigning what's shown. */
+@media (max-width: 768px) {
+  /* One line, horizontally scrollable like the action dock — icons keep
+     their size instead of shrinking into unreadability. The scrollbar is
+     hidden; touch/trackpad scrolling remains. */
+  .header { flex-wrap: nowrap; gap: 8px; padding: 8px 10px;
+            overflow-x: auto; scrollbar-width: none; }
+  .header::-webkit-scrollbar { width: 0; height: 0; display: none; }
+  .header > * { flex: 0 0 auto; }
+  .header .actions { margin-left: auto; }
+  /* The popovers escape the header scrollbox (overflow-x would clip them):
+     fixed under the header, full width. */
+  .hdr-pop { position: fixed; top: 52px; left: 8px; right: 8px; max-width: none; }
+  .input-area .composer-context-row { grid-template-columns: minmax(0, 1fr); }
+  .composer-context-row > .prompt-controls-panel,
+  .composer-context-row > .composer-action-mount { justify-self: stretch; }
+  .prompt-controls-panel { max-width: 100%; }
+  /* Conversation-controls row scrolls horizontally like the header/dock. */
+  .prompt-controls-row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .prompt-controls-row::-webkit-scrollbar { width: 0; height: 0; display: none; }
+  .prompt-controls-row > * { flex: 0 0 auto; }
+  /* The view menu escapes the row scrollbox (overflow-x would clip it):
+     fixed at the bottom of the viewport, full width. */
+  .view-menu { position: fixed; left: 8px; right: 8px; bottom: 8px; min-width: 0; z-index: 300; }
+  /* Cognitive-panel two-pane grids stack vertically on phones. */
+  .cog-split { grid-template-columns: 1fr !important; grid-template-rows: minmax(0, 38%) minmax(0, 1fr); }
+  .action-dock-menu { max-width: 100%; }
+  #adminSettingsMenu { left: 8px; right: 8px; transform: none; }
+  .sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 150;
+             box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
+  /* The desktop dock owns a z-index of 200. Lower it only while the mobile
+     drawer is open so it cannot paint over the resource menu. */
+  body:has(.sidebar:not(.collapsed)) .action-dock { z-index: 140; }
+  /* sidebar-toggle's left is also set inline by _syncToggleBtn() (state.js)
+     to '260px' when the sidebar is open, assuming it pushes .main over.
+     On mobile the sidebar overlays instead (fixed, z-index 150), so the
+     toggle must stay above the drawer (z-index 200) and, while the drawer
+     is open, sit just outside its right edge -- otherwise the open menu
+     covers the only button that closes it and the menu cannot be closed. */
+  .sidebar-toggle { left: 0 !important; z-index: 200; }
+  /* The tab rail overlays too, glued to the drawer's right edge — in flow it
+     would sit underneath the fixed drawer and simply disappear. The grip
+     moves past both (260px drawer + ~43px rail). */
+  .tab-bar { position: fixed; top: 0; bottom: 0; left: 260px; z-index: 150;
+             box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
+  body:has(.sidebar:not(.collapsed)) .sidebar-toggle { left: 295px !important; }
+  /* Desktop sizes assume a ~1400px-wide window read at arm's length; the same
+     11-12px on a phone is unreadable. Bump the type scale (roughly +1-2px per
+     step) and let bubbles use the full width, since horizontal space -- not
+     vertical -- is what is scarce here. Sizes stay relative to each other so
+     the visual hierarchy is unchanged. */
+  .msg { font-size: 15px; max-width: 92%; }
+  .msg code { font-size: 14px; }
+  .msg pre, .msg pre code { font-size: 13px; }
+  .msg.tool { font-size: 13px; max-width: 100%; }
+  .msg.system { font-size: 13px; }
+  .msg.system-compact { font-size: 12px; }
+  .msg.agent-result { font-size: 13px; }
+  .msg.error { font-size: 14px; }
+  .technical-group, .delegate-block { max-width: 100%; }
+  .technical-group-header, .delegate-header { font-size: 13px; }
+  .tc-result, .tc-output, .tc-md code, .sub-trace-body { font-size: 12px; }
+  .tc-md, .delegate-message { font-size: 13px; }
+  .sub-trace-header { font-size: 13px; }
+  .input-row textarea, .input-row button { font-size: 16px; }
+}
+@media (max-width: 480px) {
+  .messages { padding: 12px; }
+  .header h1 { font-size: 16px; }
+  .input-area { padding: 10px 12px; }
+}
+.messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; }
+.messages { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px; overscroll-behavior: contain;
+            scrollbar-width: thin; scrollbar-color: #333 transparent; }
+.msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px;
+       white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; min-width: 0; }
+.msg a { color: #4fc3f7; text-decoration: underline; }
+.msg code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; font-size: 13px; }
+.msg pre { background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; overflow-x: auto;
+           margin: 8px 0; max-width: 100%; }
+.msg .code-block { position: relative; margin: 8px 0; max-width: 100%; }
+.msg .code-block pre { margin: 0; padding-right: 40px; }
+.msg .code-block-copy { position: absolute; top: 6px; right: 6px; z-index: 1; width: 26px; height: 24px;
+                        border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; background: rgba(35,38,58,0.92);
+                        color: #d8d8e8; cursor: pointer; font-size: 12px; line-height: 1; display: inline-flex;
+                        align-items: center; justify-content: center; }
+.msg .code-block-copy:hover { background: rgba(78,205,196,0.22); color: #ffffff; }
+.msg pre code { background: none; padding: 0; }
+.msg.user { align-self: flex-end; background: #0f3460; color: white; border-bottom-right-radius: 4px;
+            border-left: 3px solid #4ecdc4; }
+.source-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-right: 4px; vertical-align: middle; font-weight: 600; letter-spacing: 0.3px; }
+.msg-time { float: right; font-size: 10px; color: #555570; margin-left: 8px; font-weight: normal; }
+.msg.assistant { align-self: flex-start; background: #16213e; border: 1px solid #0f3460;
+                  border-left: 3px solid #e94560; border-bottom-left-radius: 4px; }
+.msg.subagent { align-self: flex-start; background: #0d1b2a; border: 1px solid #1a3a5c;
+                border-left: 3px solid #6c5ce7; border-bottom-left-radius: 4px; }
+.msg.error { align-self: center; background: #5c1a1a; color: #ff8a80; font-size: 13px; }
+.msg.system { align-self: center; color: #6c6c8a; font-size: 12px; background: none; }
+.msg.system-compact { align-self: center; color: #555570; font-size: 11px; background: none; padding: 1px 8px; margin: 1px 0; opacity: 0.8; }
+.msg.agent-result { align-self: flex-start; background: #1a1a2e; color: #a0a0c0; font-size: 12px; border-left: 2px solid #6c5ce7; padding: 6px 10px; }
+.msg.tool { align-self: flex-start; background: #0f1629; color: #808090; font-size: 12px;
+            border-left: 2px solid #0f3460; padding: 4px 10px; max-width: 85%; }
+.technical-group { align-self: flex-start; max-width: 90%; background: var(--pf-panel); color: var(--pf-muted);
+                   border: 1px solid var(--pf-border); border-left: 3px solid var(--pf-accent);
+                   border-radius: 8px; padding: 0; margin: 6px 0; }
+.technical-group-header { cursor: pointer; padding: 7px 10px; font-size: 12px; user-select: none;
+                          color: var(--pf-muted); }
+.technical-group-body { padding: 4px 10px 8px; border-top: 1px solid var(--pf-border); }
+.technical-group-body > .msg { max-width: 100%; margin: 4px 0; }
+.tc-bullet { font-size: 14px; margin-right: 4px; }
+.tc-bullet.pending { color: #4ecdc4; animation: tc-pulse 1.5s ease-in-out infinite; }
+@keyframes tc-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+.tc-bullet.done { color: #666; }
+.tc-bullet.bg { color: #f0ad4e; }
+.tc-bg-btn { font-size: 10px; padding: 1px 6px; margin-left: 8px; background: transparent;
+             border: 1px solid #555; color: #888; border-radius: 3px; cursor: pointer; vertical-align: middle; }
+.tc-bg-btn:hover { border-color: #f0ad4e; color: #f0ad4e; }
+.tc-kl-btn { font-size: 10px; padding: 1px 6px; margin-left: 8px; background: transparent;
+             border: 1px solid #e94560; color: #e94560; border-radius: 3px; cursor: pointer; vertical-align: middle; }
+.tc-kl-btn:hover { border-color: #ff6b6b; color: #ff6b6b; }
+.tc-result { margin: 2px 0 0 16px; font-size: 11px; color: #8b949e; white-space: pre-wrap; word-break: break-word; }
+.tc-result details summary { cursor: pointer; }
+.tc-output { font-size: 11px; background: #0d1117; border-radius: 4px; padding: 6px 8px;
+             margin: 4px 0; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+             color: #c9d1d9; line-height: 1.4; border: 1px solid #21262d; }
+.tc-output .ln { color: #484f58; user-select: none; }
+.tc-diff .diff-add { color: #3fb950; background: rgba(46,160,67,0.1); display: block; }
+.tc-diff .diff-del { color: #f85149; background: rgba(248,81,73,0.1); display: block; }
+.tc-diff .diff-hunk { color: #58a6ff; }
+.tc-diff .diff-ctx { color: #8b949e; }
+.tc-json { color: #79c0ff; }
+.tc-code { color: #c9d1d9; }
+.tc-grep .grep-loc { color: #58a6ff; }
+.tc-md { font-size: 12px; color: #c9d1d9; }
+.tc-md pre { background: #0d1117; border-radius: 4px; padding: 6px 8px; margin: 4px 0; }
+.tc-md code { font-size: 11px; }
+.sub-agent-trace { margin: 2px 0; }
+.sub-trace-header { cursor: pointer; color: #c0c0d0; font-size: 12px; }
+.sub-trace-header:hover { color: #fff; }
+.sub-trace-body { margin-left: 16px; font-size: 11px; color: #8b949e; }
+.trace-entry { padding: 1px 0; }
+.trace-entry.done { color: #4ecdc4; }
+.trace-content { margin-top: 4px; }

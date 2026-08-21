@@ -1,0 +1,26 @@
+/* Composer drawer: everything above the prompt (conversation controls +
+   action dock) folds completely behind a small centered grip. CLOSED by
+   default; the choice persists across reloads (localStorage). */
+/* The grip straddles the separation line itself (the input area's top
+   border) instead of stacking above the row, so it adds no height. */
+.composer-drawer-handle { position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
+  z-index: 5; width: 36px; height: 15px; border-radius: 8px; }
+.input-area.composer-drawer-collapsed .composer-context-row { display: none; }
+.composer-context-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+                        align-items: end; gap: 10px; min-width: 0; }
+.prompt-controls-panel { justify-self: start; }
+.composer-action-mount { min-width: 0; justify-self: center; }
+.prompt-controls-panel { display: none; background: rgba(15,22,41,0.9); border: 1px solid #0f3460; border-radius: 8px;
+                         padding: 6px 10px; font-size: 11px; color: #a0a0c0;
+                         flex: 0 0 auto; max-width: 100%; }
+.prompt-controls-panel.visible { display: block; }
+.prompt-controls-row { display: flex; align-items: center; gap: 6px; }
+.prompt-controls-row #permissionMode { max-width: 170px; height: 30px; }
+.prompt-controls-row button { width: 30px; height: 30px; padding: 0; border-radius: 6px;
+                              display: inline-flex; align-items: center; justify-content: center; }
+/* Cognitive-panel dialog chrome: header wraps on narrow screens and the
+   close button is pinned to the dialog's top-right corner so it can never
+   be pushed off-screen by the other header controls. */
+.cog-dialog { position: relative; }
+.cog-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-right: 30px; margin-bottom: 10px; }
+.cog-close { position: absolute; top: 8px; right: 10px; background: none; border: none; color: #aaa; cursor: pointer; font-size: 20px; line-height: 1; padding: 4px 8px; }

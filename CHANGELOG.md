@@ -30,7 +30,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   slot hosts, i18n keys) is pinned by `tests/fixtures/chat_ui_dom_snapshot.json`.
   The skeleton (38 lines) only includes 16 region partials (`head/`,
   `sidebar/`, `dialogs/`, `header/`, `chat/`, `composer/`, `ext/`, `boot/`),
-  each one region, ≤ 300 lines.
+  each one region, ≤ 300 lines. The 1 230-line inline `<style>` became 13
+  CSS modules under `tasks/io/chat_ui/css/`, linked in cascade order
+  (`_CSS_MODULES`) and served by `serveAssets` at `/chat/js/css/<file>?v=…`
+  (cacheable, ~100 KB less per page load); the operator `custom_css` is its
+  own `<style id="custom-css">` after the modules, before the theme.
   Docs: `docs/CHAT_UI_TEMPLATES.md`, plan `docs/CHAT_UI_TEMPLATE_PLAN.md`.
 
 ### Fixed

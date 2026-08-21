@@ -1,0 +1,76 @@
+/* Grab mode: the composer is wired to a terminal, and that has to be
+   unmistakable — anything typed goes to the TUI, Enter included. */
+#grabBtn.on { background: #e94560 !important; }
+.input-area.grab-on textarea { border: 1px solid #e94560 !important; background: #17111a !important; }
+.input-area.grab-on #sendBtn { background: #e94560 !important; }
+.btn-folder { background: #0f3460 !important; padding: 10px 12px !important; font-size: 18px !important; }
+.btn-folder:hover { background: #1a4a8a !important; }
+.btn-folder.active { background: #1a5a2a !important; }
+.btn-folder.active:hover { background: #2a7a3a !important; }
+.files-panel { background: #0f1629; border-bottom: 1px solid #0f3460; padding: 8px 16px;
+               max-height: 320px; overflow-y: auto; }
+.files-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
+                color: #c0c0d0; font-size: 13px; }
+.btn-close-panel { background: none; border: none; color: #c0c0d0; cursor: pointer; font-size: 18px; padding: 0 4px; }
+.btn-close-panel:hover { color: #e94560; }
+.files-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.files-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #c0c0d0; }
+.files-table th { text-align: left; font-weight: 600; padding: 4px 8px; border-bottom: 1px solid #0f3460;
+                  color: #8a8aa0; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+.files-table td { padding: 4px 8px; border-bottom: 1px solid #16213e; vertical-align: middle; }
+.files-table tbody tr:hover { background: #16213e; }
+.files-table tbody tr.file-selected { background: #1a2744; outline: 1px solid #4ecdc4; outline-offset: -1px; }
+.files-table tbody tr.unavailable td { opacity: 0.45; }
+.files-table .col-select { width: 28px; text-align: center; }
+.files-table .col-name a { color: #4ecdc4; text-decoration: none; }
+.files-table .col-name a:hover { text-decoration: underline; }
+.files-table .col-type { font-family: ui-monospace, Menlo, Consolas, monospace; color: #8a8aa0; }
+.files-table .col-size { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.files-table .col-date { white-space: nowrap; color: #8a8aa0; font-variant-numeric: tabular-nums; }
+.file-panel-actions { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 0; width: 100%; }
+.file-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
+             font-size: 12px; background: #1a1a2e; border: 1px solid #0f3460; color: #c0c0d0; }
+.file-chip a { color: #4ecdc4; text-decoration: none; }
+.file-chip a:hover { text-decoration: underline; }
+.file-chip .file-status { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
+.file-chip .file-status.available { background: #4ecdc4; }
+.file-chip .file-status.expired { background: #e94560; }
+.sched-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
+              font-size: 12px; background: #1a1a2e; border: 1px solid #0f3460; color: #c0c0d0; }
+.sched-chip .sched-icon { color: #f9a825; }
+.ctx-menu { position: fixed; z-index: 9999; background: var(--pf-panel, #16213e); border: 1px solid var(--pf-border, #0f3460);
+            border-radius: 6px; padding: 4px 0; min-width: 120px; box-shadow: 0 4px 12px rgba(0,0,0,.5); }
+.ctx-menu-item { padding: 6px 14px; font-size: 13px; color: var(--pf-text, #c0c0d0); cursor: pointer; }
+.ctx-menu-item:hover { background: var(--pf-assistant, #0f3460); color: var(--pf-accent, #e0e0f0); }
+.ctx-menu-item.danger { color: var(--pf-danger, #e94560); }
+.ctx-menu-item.danger:hover { background: color-mix(in srgb, var(--pf-danger, #e94560) 14%, transparent); }
+.attachments-preview { display: flex; flex: 0 0 auto; align-items: center; min-width: 0;
+                       max-width: 148px; height: 44px; padding: 0 5px; overflow: visible; }
+.attachments-preview:empty { display: none; }
+.attachments-preview.expanded { max-width: min(50vw, 480px); overflow-x: auto; padding-top: 5px; }
+.att-item { position: relative; display: flex; flex: 0 0 40px; width: 40px; height: 40px;
+            align-items: center; justify-content: center; background: #1a1a2e;
+            border: 1px solid #0f3460; border-radius: 7px; padding: 2px;
+            box-sizing: border-box; font-size: 12px; color: #c0c0d0; }
+.att-item + .att-item { margin-left: -10px; }
+.attachments-preview.expanded .att-item + .att-item { margin-left: 4px; }
+.att-item:hover { z-index: 2; border-color: #e94560; }
+.att-item img { height: 100%; width: 100%; object-fit: cover; border-radius: 4px; cursor: zoom-in; }
+.att-item .att-icon { font-size: 16px; }
+.att-item .att-name { display: none; }
+.att-upload-progress { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                       border-radius: 6px; background: rgba(10,10,24,.72); color: #fff;
+                       font-size: 10px; font-weight: 700; z-index: 1; }
+.att-item .att-remove { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px;
+                         display: flex; align-items: center; justify-content: center;
+                         background: #e94560; border: 1px solid #fff; border-radius: 50%;
+                         color: #fff; cursor: pointer; font-size: 12px; line-height: 1; padding: 0; }
+.att-item .att-remove:hover { color: #ff6b6b; }
+.attachment-overflow-count { flex: 0 0 34px; width: 34px; height: 34px; margin-left: -8px;
+                             border: 1px solid #e94560; border-radius: 50%; background: #0f3460;
+                             color: #fff; cursor: pointer; font-size: 11px; font-weight: 700;
+                             position: relative; z-index: 3; padding: 0; }
+.msg img.chat-image { max-width: 300px; max-height: 200px; border-radius: 8px; margin: 6px 0;
+                       cursor: pointer; }
+.msg .doc-badge { display: inline-block; background: #0f3460; padding: 2px 8px; border-radius: 4px;
+                   font-size: 11px; color: #8888aa; margin: 2px 0; }

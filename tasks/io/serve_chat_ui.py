@@ -98,10 +98,26 @@ _JS_MODULES = [
     "conversation_livekit.js",
 ]
 
-# CSS modules in cascade order, emitted by the skeleton as
-# <link rel="stylesheet" href="/chat/js/css/<file>?v=..."> before the theme
-# and custom CSS. Empty until the inline <style> block moves out of chat.html.
-_CSS_MODULES: Tuple[str, ...] = ()
+# CSS modules in cascade order (the NN_ prefix mirrors it), emitted by
+# head/styles.html as <link rel="stylesheet" href="/chat/js/css/<file>?v=...">
+# before the operator custom CSS and the theme block. The order is the one
+# the former inline <style> block had: mobile overrides and the theme
+# variable bridge rely on coming after the rules they override.
+_CSS_MODULES: Tuple[str, ...] = (
+    "00_base.css",            # reset, :root, app layout, sidebar, sharing
+    "10_chrome.css",          # collapsible grips, header status widgets
+    "20_messages.css",        # gauges, messages, simplified live view, send
+    "30_mobile.css",          # narrow-viewport overrides
+    "40_delegates.css",       # delegate blocks, cancel, ask_parent
+    "50_composer.css",        # composer drawer, cognitive panel chrome
+    "60_openspace.css",       # OpenSpace 3D view
+    "70_grab.css",            # terminal grab mode
+    "80_dialogs.css",         # exec approval + generic dialogs
+    "85_terminal_files.css",  # terminal output, file explorer
+    "90_tabs.css",            # tab bar, tab panels, desktop/audio tabs
+    "95_action_dock.css",     # action menu + conversation dock
+    "99_theme_bridge.css",    # --pf-* variable bridge (must stay last)
+)
 
 # One environment per process. auto_reload re-reads a partial whose mtime
 # changed (hotpatch workflow); autoescape + StrictUndefined: the template

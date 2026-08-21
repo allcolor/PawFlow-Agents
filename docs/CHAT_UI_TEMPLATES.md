@@ -46,7 +46,7 @@ html = render_chat_page(agent_path="/api/agent", sse_path="/api/agent/events",
 ```text
 tasks/io/chat_ui/templates/
   chat.html                         # skeleton: doctype, <head>/<body> structure, includes, extension points
-  head/styles.html                  # the page stylesheet (inline until the CSS modules land) + custom_css
+  head/styles.html                  # <link> per CSS module (cascade order) + the operator custom_css <style>
   head/vendor.html                  # rxjs UMD, highlight.js + its DOMContentLoaded bootstrap
   sidebar/sidebar.html              # sidebar grip, #sidebar, Conversations section (+ new/import menu)
   sidebar/resources.html            # #resourcesPanel, resources_collection/resources_panel/sidebar_* slot hosts
@@ -62,7 +62,29 @@ tasks/io/chat_ui/templates/
   ext/hosts.html                    # #pf-ext-modal-host, CSS tooltip portal, #pf-ext-panel-host
   boot/config.html                  # AGENT_PATH / API / SSE_URL / LOGIN_URL constants (tojson)
   boot/scripts.html                 # asset-version guard, i18n block, extensions block, <script defer> loop
+tasks/io/chat_ui/css/               # CSS modules, served by serveAssets at /chat/js/css/<file>?v=<asset_version>
+  00_base.css                       # reset, :root, app layout, sidebar, sharing
+  10_chrome.css                     # collapsible grips, header status widgets
+  20_messages.css                   # gauges, messages, simplified live view, send button
+  30_mobile.css                     # narrow-viewport overrides
+  40_delegates.css                  # delegate blocks, cancel, ask_parent
+  50_composer.css                   # composer drawer, cognitive panel chrome
+  60_openspace.css                  # OpenSpace 3D view
+  70_grab.css                       # terminal grab mode
+  80_dialogs.css                    # exec approval + generic dialogs
+  85_terminal_files.css             # terminal output, file explorer
+  90_tabs.css                       # tab bar, tab panels, desktop/audio tabs
+  95_action_dock.css                # action menu + conversation dock
+  99_theme_bridge.css               # --pf-* variable bridge (last)
 ```
+
+CSS cascade: the modules are linked in `_CSS_MODULES` order (the `NN_`
+prefix mirrors it; the list in `serve_chat_ui.py` is authoritative), then
+`<style id="custom-css">` (serveChatUI `custom_css`), then the highlight.js
+theme, then `<style id="custom-theme">` (the user's theme). Adding a module
+means adding the file **and** its entry in `_CSS_MODULES`; the contract test
+checks both. The old single inline `<style>` is gone: a CSS-only change now
+ships one small cacheable file.
 
 Rules for partials:
 

@@ -1,0 +1,89 @@
+/* Exec approval dialog */
+.exec-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7);
+                 z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.exec-dialog { background: #1a1a2e; border: 1px solid #333; border-radius: 12px; padding: 24px;
+                max-width: 720px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+.exec-dialog h3 { margin: 0 0 16px 0; color: #e0e0e0; font-size: 16px; }
+.exec-risk { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px;
+              font-weight: 600; margin-left: 8px; }
+.exec-risk.low { background: #1b4332; color: #52b788; }
+.exec-risk.medium { background: #5a3e00; color: #f4a261; }
+.exec-risk.high { background: #5c1a1a; color: #e94560; }
+.exec-cmd { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px;
+             font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; color: #c9d1d9;
+             margin: 12px 0; white-space: pre-wrap; word-break: break-all; }
+.exec-cmd textarea { width: 100%; min-height: 60px; background: #0d1117; border: 1px solid #30363d;
+                      color: #c9d1d9; font-family: inherit; font-size: inherit; resize: vertical;
+                      border-radius: 4px; padding: 8px; }
+.exec-cwd { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
+.tool-arg { margin-bottom: 6px; }
+.tool-arg-key { color: #f4a261; font-weight: 600; }
+.tool-arg-val { margin: 2px 0 0 0; padding: 4px 8px; background: #161b22; border-radius: 4px;
+                white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
+.exec-btns { display: flex; gap: 12px; justify-content: flex-end; }
+.exec-btns button { padding: 8px 20px; border: none; border-radius: 6px; font-size: 14px;
+                     cursor: pointer; font-weight: 600; }
+.exec-approve { background: #238636; color: white; }
+.exec-approve:hover { background: #2ea043; }
+.exec-deny { background: #da3633; color: white; }
+.exec-deny:hover { background: #e5534b; }
+/* Generic dialog (relay picker, desktop mode, etc.) */
+.dialog-bg { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7);
+             z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.dialog { background: #1a1a2e; border: 1px solid #0f3460; border-radius: 12px; padding: 24px;
+          min-width: 320px; max-width: 420px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+.dialog-title { font-size: 16px; font-weight: 600; color: #e0e0e0; margin: 0 0 16px 0; }
+.dialog-body { margin-bottom: 16px; }
+.dialog-body .btn { display: block; width: 100%; margin-bottom: 8px; text-align: left; padding: 10px 14px;
+                     background: #16213e; color: #c0c0d0; border: 1px solid #0f3460; border-radius: 8px;
+                     cursor: pointer; font-size: 13px; transition: background 0.15s, border-color 0.15s; }
+.dialog-body .btn:hover { background: #1a2744; border-color: #e94560; color: #fff; }
+.dialog-body .btn-primary { background: #0f3460; color: #e0e0e0; }
+.dialog-body .btn-primary:hover { background: #e94560; border-color: #e94560; color: #fff; }
+.dialog-actions { display: flex; justify-content: flex-end; }
+.dialog-actions .btn { width: auto; display: inline-block; padding: 6px 16px; background: none;
+                        color: #6c6c8a; border: 1px solid #333; margin-bottom: 0; }
+.dialog-actions .btn:hover { color: #e94560; border-color: #e94560; }
+.todo-dialog { max-width: 760px; max-height: 82vh; display: flex; flex-direction: column; }
+.todo-dialog-header { display: flex; align-items: baseline; gap: 10px; }
+.todo-dialog-header .dialog-title { flex: 1; }
+.todo-count { color: var(--pf-muted); font-size: 12px; white-space: nowrap; }
+.todo-dialog-body { min-height: 80px; overflow-y: auto; padding-right: 4px; }
+.todo-section + .todo-section { margin-top: 14px; }
+.todo-section-title { margin: 0 0 6px; color: var(--pf-muted); font-size: 11px;
+                      letter-spacing: .06em; text-transform: uppercase; }
+.todo-card { padding: 10px 12px; margin-bottom: 7px; border: 1px solid var(--pf-border);
+             border-radius: 8px; background: var(--pf-sidebar); }
+.todo-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.todo-subject { min-width: 0; color: var(--pf-text); font-size: 13px; overflow-wrap: anywhere; }
+.todo-status { flex: none; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.todo-status-in_progress { background: #1e3a5f; color: #4fc3f7; }
+.todo-status-pending { background: #3a2a1a; color: #f0c040; }
+.todo-status-completed { background: #1b4332; color: #52b788; }
+.todo-description { margin-top: 7px; color: var(--pf-text); font-size: 12px;
+                    line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.todo-detail { display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+               gap: 8px; margin-top: 5px; font-size: 11px; }
+.todo-detail-label { color: var(--pf-muted); }
+.todo-detail-value { color: var(--pf-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.todo-empty, .todo-error { padding: 24px; text-align: center; color: var(--pf-muted); }
+.todo-error { color: #ff6b6b; }
+#linkedAccountsDialog .dialog { max-width: 520px; }
+.linked-account-list { display: flex; flex-direction: column; gap: 8px; }
+.linked-account-me { padding: 0 20px 8px; font-size: 12px; color: var(--pf-muted);
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linked-account-row { display: grid; grid-template-columns: minmax(0, 1fr) auto;
+                      align-items: center; gap: 12px; min-width: 0; padding: 10px 12px;
+                      background: var(--pf-sidebar); border: 1px solid var(--pf-border);
+                      border-radius: 8px; }
+.linked-account-identity { min-width: 0; }
+.linked-account-provider { color: var(--pf-accent); font-size: 12px; font-weight: 700;
+                           line-height: 1.3; text-transform: capitalize; }
+.linked-account-value { color: var(--pf-text); font-size: 12px; line-height: 1.35;
+                        overflow-wrap: anywhere; }
+.dialog-body .linked-account-unlink { width: auto; display: inline-flex; flex: none;
+                                      align-items: center; justify-content: center;
+                                      margin: 0; padding: 7px 11px; text-align: center; }
+#conversationSettingsDialog label { display: block; margin-bottom: 4px; color: var(--pf-muted); font-size: 11px; }
+#conversationSettingsDialog select { width: 100%; padding: 6px 8px; border: 1px solid var(--pf-border);
+                                     border-radius: 5px; background: var(--pf-sidebar); color: var(--pf-text); }

@@ -1,0 +1,95 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --pf-bg: #1a1a2e;
+  --pf-panel: #16213e;
+  --pf-sidebar: #0f1629;
+  --pf-border: #0f3460;
+  --pf-text: #e0e0e0;
+  --pf-muted: #6c6c8a;
+  --pf-accent: #e94560;
+  --pf-accent-2: #4ecdc4;
+  --pf-user: #0f3460;
+  --pf-assistant: #16213e;
+  --pf-danger: #e94560;
+  --pf-warning: #f0a500;
+  --pf-success: #4ecdc4;
+  --pf-code-bg: #0d1117;
+  --pf-shadow: rgba(0,0,0,0.5);
+}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
+/* dvh, not vh: on mobile browsers 100vh is the URL-bar-HIDDEN height, which is
+   taller than what is actually on screen. With `overflow: hidden` the excess
+   cannot be scrolled back, so the top of the layout (.header) ends up above the
+   visible area and is simply unreachable. 100dvh tracks the visible viewport as
+   the URL bar shows/hides. The plain 100vh line stays first as the fallback for
+   engines without dvh. */
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+       background: #1a1a2e; color: #e0e0e0; height: 100vh; height: 100dvh; display: flex; overflow: hidden; }
+.sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
+           display: flex; flex-direction: column; height: 100vh; height: 100dvh; flex-shrink: 0; overflow: hidden;
+           transition: width 0.2s, min-width 0.2s; }
+.sidebar.collapsed { width: 0; min-width: 0; border-right: none; overflow: hidden; }
+.sidebar.collapsed > * { display: none; }
+.sidebar-header { padding: 0 14px 12px; border-bottom: 1px solid #0f3460;
+                   display: flex; align-items: center; justify-content: space-between; }
+.sidebar-header h2 { font-size: 14px; color: #8888aa; font-weight: 600; }
+.sidebar-header .btn-new { background: #e94560; color: white; border: none; border-radius: 6px;
+                            padding: 4px 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.sidebar-header .btn-new:hover { background: #c73a52; }
+.sidebar-section { flex: 0 0 auto; min-height: 0; display: flex; flex-direction: column;
+                   overflow: hidden; transition: flex-grow 0.22s ease; }
+.sidebar-section.active { flex: 1 1 0; }
+.sidebar-section-header { flex: 0 0 auto; min-height: 42px; cursor: pointer; user-select: none; }
+.sidebar-section-header:focus-visible { outline: 2px solid #e94560; outline-offset: -2px; }
+.sidebar-section-body { flex: 0 0 0; min-height: 0; opacity: 0; overflow: hidden;
+                        transition: flex-grow 0.22s ease, opacity 0.16s ease; }
+.sidebar-section.active > .sidebar-section-body { flex: 1 1 0; opacity: 1; }
+.sidebar-conversations-body { display: flex; flex-direction: column; }
+.sidebar-resource-header { padding: 8px 14px; border-top: 1px solid #0f3460;
+                           border-bottom: 1px solid transparent; display: flex;
+                           align-items: center; gap: 5px; color: #8888aa; font-size: 11px; }
+.sidebar-section.active > .sidebar-resource-header { border-bottom-color: #0f3460; }
+.sidebar-section-chevron { width: 10px; flex: 0 0 10px; font-size: 10px; }
+.sidebar-resources-body { padding: 8px 14px; overflow-y: auto !important;
+                          scrollbar-width: thin; scrollbar-color: #333 transparent; }
+.conv-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
+.conv-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 4px;
+             border: 1px solid transparent; position: relative; }
+.conv-item:hover { background: #16213e; border-color: #0f3460; }
+.conv-item.active { background: #16213e; border-color: #e94560; }
+.conv-item .conv-preview { font-size: 13px; color: #c0c0d0; display: flex; align-items: center; overflow: hidden; }
+.conv-item .conv-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.conv-item .conv-meta { font-size: 11px; color: #6c6c8a; margin-top: 3px; }
+.conv-item .conv-delete { position: absolute; right: 8px; top: 8px; background: none;
+                           border: none; color: #6c6c8a; cursor: pointer; font-size: 14px;
+                           display: none; padding: 2px 4px; }
+.conv-item:hover .conv-delete { display: block; }
+.conv-item .conv-delete:hover { color: #e94560; }
+.conv-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+               margin-right: 6px; vertical-align: middle; }
+.conv-status.active { background: #4ecdc4; animation: pulse 1.5s ease-in-out infinite; }
+.conv-status.blocked { background: #f0a500; }
+.conv-branch { font-size: 10px; color: #6c5ce7; margin-left: 6px; white-space: nowrap; }
+/* Sharing: sidebar group headings, pending invites, shared conversations. */
+.conv-group { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+              color: #6c6c8a; padding: 10px 4px 4px; display: flex;
+              align-items: center; justify-content: space-between; }
+.conv-group-count { color: #4a4a68; }
+.conv-item.conv-invite { border-color: #6c5ce7; }
+.conv-invite-actions { display: flex; gap: 6px; margin-top: 6px; }
+.conv-invite-actions button { flex: 1; padding: 4px 8px; border: none; border-radius: 4px;
+                             font-size: 11px; cursor: pointer; }
+.conv-invite-accept { background: #6c5ce7; color: #fff; }
+.conv-invite-decline { background: #2a2a4a; color: #c0c0d0; }
+.conv-role-badge { font-size: 10px; margin-left: 6px; opacity: 0.7; }
+.msg-author { display: inline-block; font-size: 10px; color: #6c5ce7;
+              margin-right: 6px; vertical-align: baseline; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.sidebar-settings { padding: 8px 14px; border-top: 1px solid #0f3460; flex-shrink: 0; }
+.sidebar-settings label { font-size: 11px; color: #6c6c8a; display: block; margin-bottom: 3px; }
+.sidebar-settings select { width: 100%; background: #1a1a2e; color: #c0c0d0; border: 1px solid #0f3460;
+                            border-radius: 4px; padding: 4px 6px; font-size: 12px; cursor: pointer; }
+.sidebar-settings select:focus { outline: none; border-color: #e94560; }

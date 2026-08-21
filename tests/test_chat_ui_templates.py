@@ -10,7 +10,7 @@ import json
 import re
 from pathlib import Path
 
-from chat_ui_testing import CHAT_UI_DIR, TEMPLATES_DIR, rendered_chat_html
+from chat_ui_testing import CHAT_UI_DIR, CSS_DIR, TEMPLATES_DIR, chat_ui_css, rendered_chat_html
 
 SNAPSHOT = json.loads(
     (Path(__file__).parent / "fixtures" / "chat_ui_dom_snapshot.json").read_text(encoding="utf-8"))
@@ -69,9 +69,32 @@ def test_server_values_are_json_encoded_and_blocks_land_where_they_did():
     # Theme block just before </head>; extension manifest before the modules.
     assert '<style id="custom-theme">a{}</style>\n</head>' in html
     assert html.index("window.PAWFLOW_EXTENSIONS=[]") < html.index('<script defer src="/chat/js/i18n.js')
-    # Custom CSS inside the main <style>, with </style> neutralised.
-    assert "/* Custom theme */\n.c{color:red}<\\/style><script>x()</script>\n</style>" in html
-    assert html.index("/* Custom theme */") < html.index("</style>")
+    # Custom CSS in its own <style> after the CSS modules, </style> neutralised.
+    assert ('<style id="custom-css">\n/* Custom theme */\n'
+            '.c{color:red}<\\/style><script>x()</script>\n</style>') in html
+    # (the helper inlined the modules: the last one precedes the custom CSS)
+    assert html.rindex('data-css-module=') < html.index('id="custom-css"') < html.index('id="custom-theme"')
+    assert 'id="custom-css"' not in rendered_chat_html()
+
+
+def test_css_modules_are_linked_in_cascade_order_then_custom_css_then_theme():
+    from tasks.io.serve_chat_ui import _CSS_MODULES
+    html = rendered_chat_html(inline_css=False, theme_block='<style id="custom-theme">a{}</style>')
+    links = re.findall(r'<link rel="stylesheet" href="/chat/js/css/([^"?]+)\?v=([0-9a-f]{8})">', html)
+    assert [name for name, _ in links] == list(_CSS_MODULES)
+    assert len({version for _, version in links}) == 1
+    assert _CSS_MODULES[-1] == "99_theme_bridge.css" and "30_mobile.css" in _CSS_MODULES
+    # Served page carries no inline stylesheet of its own any more; the
+    # highlight.js theme and the custom theme come after the modules.
+    assert "<style>" not in html
+    assert html.rindex('href="/chat/js/css/') < html.index("github-dark.min.css") < html.index('id="custom-theme"')
+    for module in _CSS_MODULES:
+        assert (CSS_DIR / module).is_file(), module
+        assert len(chat_ui_css(module).splitlines()) <= 300, module
+    # The test helper inlines the modules where their <link> stood.
+    inlined = rendered_chat_html()
+    assert '<style data-css-module="00_base.css">' in inlined
+    assert "--pf-bg" in inlined and "/* Theme variable bridge" in inlined
 
 
 def test_extensions_manifest_defaults_to_the_empty_boot_block():
@@ -93,9 +116,20 @@ def test_asset_signature_covers_every_template_and_css_module():
     assert any(name.startswith("i18n/") for name in names)
 
 
-# The page stylesheet stays one inline partial until the CSS modules land
-# (WP2 of the plan); every other partial is one small region.
-_OVERSIZE_ALLOWED = {"head/styles.html"}
+def test_css_modules_are_served_by_serve_assets_as_text_css():
+    from tasks import register_all_tasks
+    register_all_tasks()
+    from core import FlowFile
+    from tasks.io.serve_assets import ServeAssetsTask
+    from tasks.io.serve_chat_ui import _CSS_MODULES
+    task = ServeAssetsTask({"assets_prefix": "chat_ui"})
+    for module in _CSS_MODULES:
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.path.path", "css/" + module)
+        out = task.execute(ff)[0]
+        assert out.get_attribute("http.response.status") == "200", module
+        assert out.get_attribute("http.response.header.Content-Type") == "text/css"
+        assert out.get_content().decode("utf-8") == chat_ui_css(module)
 
 
 def test_skeleton_only_includes_and_partials_stay_small():
@@ -110,7 +144,7 @@ def test_skeleton_only_includes_and_partials_stay_small():
     assert _ids(skeleton) == ["tabContentChat"]
     for path in TEMPLATES_DIR.rglob("*.html"):
         rel = path.relative_to(TEMPLATES_DIR).as_posix()
-        if rel == "chat.html" or rel in _OVERSIZE_ALLOWED:
+        if rel == "chat.html":
             continue
         assert len(path.read_text(encoding="utf-8").splitlines()) <= 300, rel
 

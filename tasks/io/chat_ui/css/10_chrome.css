@@ -1,0 +1,83 @@
+/* Collapsible chrome grips: one visual for the three panel handles (header,
+   left menu, composer drawer) — a small square showing 3 vertical lines. */
+.pf-grip { display: flex; align-items: center; justify-content: center; padding: 0;
+           background: var(--pf-panel, #16213e); border: 1px solid var(--pf-border, #0f3460);
+           color: var(--pf-muted, #8a8fa3); cursor: pointer; }
+.pf-grip { transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+                       background 0.15s ease, color 0.15s ease; }
+.pf-grip:hover { color: var(--pf-text, #e0e0e0); background: var(--pf-user, #0f3460); }
+/* Same hover zoom as the header/dock icons; each grip composes the zoom with
+   its own centering translation so it stays glued to its separation line. */
+.pf-grip-top:hover { transform: translateX(-50%) scale(1.4); }
+.sidebar-toggle:hover { transform: translateY(-50%) scale(1.4); }
+.composer-drawer-handle:hover { transform: translateX(-50%) scale(1.4); }
+.pf-grip-bars { display: block; width: 12px; height: 11px;
+                background: repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 5px); }
+/* Vertical menu -> horizontal bars; horizontal menu -> vertical bars. */
+.pf-grip-bars-h { display: block; width: 11px; height: 12px;
+                  background: repeating-linear-gradient(180deg, currentColor 0 2px, transparent 2px 5px); }
+.sidebar-toggle { position: fixed; top: 50%; left: 0; transform: translateY(-50%); z-index: 100;
+                   width: 15px; height: 36px; border-left: none; border-radius: 0 8px 8px 0;
+                   transition: left 0.2s; }
+.pf-grip-top { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 210;
+               width: 36px; height: 15px; border-top: none; border-radius: 0 0 8px 8px; }
+/* Open state: JS moves the grip down so it rides the header's bottom line. */
+#headerGrip[aria-expanded="true"] { border: 1px solid var(--pf-border, #0f3460); border-radius: 8px; }
+.header.collapsed { display: none; }
+.header-logo { display: flex; align-items: center; line-height: 0; font-size: 0; }
+.header-logo a { display: inline-flex; align-items: center; }
+.header-logo img { display: block; width: 28px; height: 28px; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
+           display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.header h1 { font-size: 18px; color: #e94560; }
+.header .status { font-size: 12px; color: #6c6c8a; }
+.ui-action-loading { align-items: center; gap: 7px; max-width: min(360px, 38vw); padding: 4px 9px;
+                     border: 1px solid rgba(78,205,196,0.45); border-radius: 999px;
+                     background: rgba(15,52,96,0.72); color: #d7fffb; font-size: 12px;
+                     box-shadow: 0 0 0 1px rgba(78,205,196,0.12), 0 0 14px rgba(78,205,196,0.16);
+                     white-space: nowrap; overflow: hidden; }
+.ui-action-loading .ual-spinner { flex: 0 0 auto; color: #4ecdc4; animation: spin 1.1s linear infinite; }
+.ui-action-loading .ual-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ui-action-loading .ual-dots::after { content: ''; animation: uiActionDots 1.2s steps(4, end) infinite; }
+.ui-action-loading .ual-bar { position: relative; flex: 0 0 54px; height: 4px; border-radius: 999px;
+                              background: rgba(0,0,0,0.35); overflow: hidden; }
+.ui-action-loading .ual-bar::before { content: ''; position: absolute; inset: 0; width: 38%; border-radius: inherit;
+                                      background: linear-gradient(90deg, #4ecdc4, #e94560);
+                                      animation: uiActionSlide 1.05s ease-in-out infinite; }
+@keyframes uiActionDots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75%, 100% { content: '...'; } }
+@keyframes uiActionSlide { 0% { transform: translateX(-120%); } 100% { transform: translateX(270%); } }
+.active-agent-badge { font-size: 11px; padding: 2px 10px; border-radius: 12px; cursor: pointer; margin-left: 8px; font-weight: 600; white-space: nowrap; }
+.active-agent-badge:hover { filter: brightness(1.3); }
+.usage-cost-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; cursor: pointer; margin-left: 6px; background: #1d3557; color: #a8dadc; white-space: nowrap; }
+.usage-cost-badge:hover { filter: brightness(1.3); }
+/* Header status widgets: compact icon buttons whose full content lives in a
+   click-toggled popover (click shows, click again hides). */
+.hdr-pop-wrap { position: relative; display: inline-flex; }
+.hdr-icon-btn { position: relative; width: 28px; height: 28px; border-radius: 6px;
+                border: 1px solid var(--pf-border); background: var(--pf-panel); color: var(--pf-muted);
+                cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.hdr-icon-btn:hover { color: var(--pf-text); background: var(--pf-user); }
+/* Same hover zoom as the dock/header icon controls. */
+.hdr-icon-btn, .header-logo a { transform-origin: center bottom;
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+              background 0.15s ease, border-color 0.15s ease, box-shadow 0.18s ease; }
+.hdr-icon-btn:hover, .header-logo a:hover { transform: scale(1.4); z-index: 3;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4); }
+.hdr-icon-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2;
+                    stroke-linecap: round; stroke-linejoin: round; }
+.hdr-icon-btn .hdr-action-icon { font-size: 14px; line-height: 1; }
+.hdr-icon-btn.working { color: var(--pf-accent-2); border-color: var(--pf-accent-2); }
+.hdr-icon-btn.working .hdr-action-icon { animation: spin 1.1s linear infinite; display: inline-block; }
+.hdr-count { position: absolute; top: -5px; right: -5px; min-width: 14px; height: 14px;
+             border-radius: 7px; background: var(--pf-accent); color: #fff; font-size: 9px;
+             font-weight: 700; line-height: 14px; padding: 0 3px; text-align: center; }
+.hdr-pop { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 5000;
+           background: var(--pf-panel); border: 1px solid var(--pf-border); border-radius: 8px;
+           padding: 8px 10px; box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+           min-width: 230px; max-width: min(480px, 92vw); }
+.hdr-pop.open { display: block; }
+/* Inside its popover the active-agents box is always laid out; the popover
+   itself is the only show/hide switch the reader interacts with. */
+.hdr-pop .active-panel { display: block; position: static; max-width: 440px;
+                         max-height: 300px; overflow-y: auto; backdrop-filter: none; }

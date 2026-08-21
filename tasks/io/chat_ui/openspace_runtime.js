@@ -268,9 +268,10 @@ function openspaceWireSSE(es) {
     if (!rec) return;
     const activity = d.activity || {};
     const content = activity && typeof activity.content === 'object' ? activity.content : {};
+    const pick = (vals) => vals.find((v) => typeof v === 'string' && v) || '';
     const label = typeof activity === 'string' ? activity
-      : (content.message || content.label || content.name || activity.activityType
-        || activity.message || activity.label || activity.name || d.event_type || 'AG-UI');
+      : pick([content.message, content.label, content.name, activity.activityType,
+        activity.message, activity.label, activity.name, d.event_type, 'AG-UI']);
     _osLog(rec, 'activity', 'AG-UI', String(label));
     _osSetState(rec, 'tool', String(label));
   });

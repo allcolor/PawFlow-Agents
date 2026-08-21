@@ -130,13 +130,15 @@ therefore share one pipeline. Runs are serialized per conversation member and
 never fall back to a local LLM.
 
 The preferred configuration references a scoped `aguiConnection` service from
-the instance's `agui_service`; direct `agui_url` fields remain supported for
-compatibility. A connection stores the endpoint, `agui_auth_secret` (a
-SecretStore key, not a token), private/relay policy, timeout, and maximum tool
-rounds. Agent-level direct configuration accepts the equivalent
-`agui_allow_private`, `agui_timeout`, and `agui_max_tool_rounds` fields.
-Redirects are disabled and the URL passes through PawFlow's relay-aware SSRF
-validation. Inline/URL attachments are translated into current AG-UI
+the instance's `agui_service`. A connection binds its endpoint to its
+`auth_secret` (a SecretStore key, not a token), private/relay policy, timeout,
+and maximum tool rounds. A direct agent-level `agui_url` is always public and
+unauthenticated: conversation members with write access can edit the instance
+configuration, so the Bearer secret and `allow_private` policy are honoured
+only through a service whose owner fixed the endpoint they apply to. Agent-level
+configuration accepts `agui_timeout` and `agui_max_tool_rounds`; with zero
+tool rounds no tool schema is advertised. Redirects are disabled and the URL
+passes through PawFlow's relay-aware SSRF validation. Inline/URL attachments are translated into current AG-UI
 `image`/`audio`/`video`/`document` parts with `mimeType` sources.
 
 The names in the instance's `tools` list are the hard AG-UI exposure allowlist.
@@ -145,6 +147,9 @@ are unwrapped and checked against the same allowlist, and PawFlow's normal
 conversation/agent permission mode plus `ToolApprovalGate` runs before the
 prepared call executes. Tool calls/results are durable conversation rows and
 results are returned as `role: "tool"` messages in a bounded follow-up run.
+History replay rebuilds assistant `toolCalls` from the persisted rows and drops
+tool rows whose call is no longer present, so strict agents never receive an
+orphan tool message; list-shaped user content is flattened to its text parts.
 
 Each external member has a durable protocol document containing its stable
 thread id, shared state, activity/steps, bounded remote message snapshot, usage,
@@ -153,7 +158,9 @@ outcomes surface through the normal user-question UI and the next user answer is
 sent in `RunAgentInput.resume`. Modern `REASONING_*`, legacy `THINKING_*`,
 activity, step, raw/custom, usage, tool and message events are mapped into the
 WebChat/OpenSpace event stream. Force-stop closes the active SSE response and
-discards queued runs. PawFlow's canonical transcript is never replaced by a
+discards queued runs; text that already streamed is persisted even when a run
+ends in an error or a force-stop, each turn is settled exactly once, and the
+protocol document is saved once per run rather than per event. PawFlow's canonical transcript is never replaced by a
 remote `MESSAGES_SNAPSHOT`.
 
 Modern activity snapshots are retained per `messageId` with their

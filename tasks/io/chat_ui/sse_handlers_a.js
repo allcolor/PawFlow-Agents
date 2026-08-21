@@ -182,10 +182,12 @@ function _sseWireA() {
     const data = JSON.parse(e.data || '{}');
     const activity = data.activity || {};
     const content = activity && typeof activity.content === 'object' ? activity.content : {};
+    // Only string candidates: an object here would render as [object Object].
+    const pick = (vals) => vals.find((v) => typeof v === 'string' && v) || '';
     const label = typeof activity === 'string' ? activity
-      : (content.message || content.label || content.name || activity.activityType
-        || activity.message || activity.label || activity.name
-        || data.event_type || 'AG-UI activity');
+      : pick([content.message, content.label, content.name, activity.activityType,
+        activity.message, activity.label, activity.name,
+        data.event_type, 'AG-UI activity']);
     document.getElementById('status').textContent = label;
   });
 

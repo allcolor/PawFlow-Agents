@@ -126,20 +126,59 @@ def _current_content(text: str, attachments: list) -> Any:
     return parts if len(parts) > 1 or (parts and parts[0].get("type") != "text") else text
 
 
+def _text_content(content: Any) -> str | None:
+    """Flatten a persisted row body to text; None when nothing is replayable."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = [str(part.get("text") or "") for part in content
+                 if isinstance(part, dict) and part.get("type") == "text"]
+        return "\n".join(text for text in texts if text) or None
+    return None
+
+
+def _replay_tool_calls(row: dict) -> list:
+    calls = []
+    for call in row.get("tool_calls") or []:
+        if not isinstance(call, dict) or not call.get("id"):
+            continue
+        arguments = call.get("arguments")
+        if not isinstance(arguments, str):
+            arguments = json.dumps(
+                arguments if isinstance(arguments, dict) else {},
+                ensure_ascii=False)
+        calls.append({"id": str(call["id"]), "type": "function",
+                      "function": {"name": str(call.get("name") or ""),
+                                   "arguments": arguments}})
+    return calls
+
+
 def _messages(conversation_id: str, user_id: str, current: dict) -> list:
     from core.conversation_store import ConversationStore
     rows = ConversationStore.instance().load(
         conversation_id, user_id=user_id) or []
     result = []
+    known_calls: set[str] = set()
     for row in rows[-200:]:
         role = str(row.get("role") or "")
-        content = row.get("content")
-        if role not in {"user", "assistant", "system", "tool"} or not isinstance(content, str):
+        if role not in {"user", "assistant", "system", "tool"}:
+            continue
+        content = _text_content(row.get("content"))
+        tool_calls = _replay_tool_calls(row) if role == "assistant" else []
+        if content is None and not tool_calls:
             continue
         item = {"id": str(row.get("msg_id") or uuid.uuid4().hex),
-                "role": role, "content": content}
-        if role == "tool" and row.get("tool_call_id"):
-            item["toolCallId"] = str(row["tool_call_id"])
+                "role": role, "content": content or ""}
+        if role == "tool":
+            call_id = str(row.get("tool_call_id") or "")
+            # A tool message must answer a replayed assistant toolCall; strict
+            # agents reject orphan tool rows for the whole run.
+            if call_id not in known_calls:
+                continue
+            item["toolCallId"] = call_id
+        if tool_calls:
+            item["toolCalls"] = tool_calls
+            known_calls.update(call["id"] for call in tool_calls)
         result.append(item)
     current_id = str(current.get("id") or "")
     if current_id and not any(item.get("id") == current_id for item in result):
@@ -162,6 +201,11 @@ def _connection_config(job: dict) -> dict:
     config = dict(job["config"])
     service_id = str(config.get("agui_service") or "").strip()
     if not service_id:
+        # A direct endpoint is public and unauthenticated: the Bearer secret
+        # and private-target policy live only on an aguiConnection service,
+        # whose endpoint and secret are bound together by its owner.
+        config["agui_auth_secret"] = ""
+        config["agui_allow_private"] = False
         return config
     from core.service_registry import ServiceRegistry
     service = ServiceRegistry.get_instance().resolve(
@@ -225,7 +269,14 @@ def _finish(job: dict, content: str, error: str = "", message_id: str = "",
             thinking: str = "", metadata: dict | None = None,
             reasoning_metadata: dict | None = None,
             run_metadata: dict | None = None) -> None:
-    if (content.strip() or thinking.strip()) and not error:
+    # One settlement per turn: cancel() and the worker may both reach here.
+    with _LOCK:
+        if job.get("_settled"):
+            return
+        job["_settled"] = True
+    # Text that already streamed to the UI stays durable even when the run
+    # ends in an error; otherwise it would vanish on the next reload.
+    if content.strip() or thinking.strip():
         _persist_block(job, content, message_id, final=True, thinking=thinking,
                        metadata=metadata, reasoning_metadata=reasoning_metadata,
                        run_metadata=run_metadata)
@@ -414,11 +465,8 @@ def _apply_protocol_state(job: dict, doc: dict, event: dict) -> None:
         doc["usage"] = event.get("usage") or event
         _publish(job["conversation_id"], "agui_usage", {
             "usage": doc["usage"], "agent_name": job["agent_name"]})
-    if kind in {"STATE_SNAPSHOT", "STATE_DELTA", "MESSAGES_SNAPSHOT",
-                "ACTIVITY_SNAPSHOT", "ACTIVITY_DELTA", "USAGE", "RUN_USAGE",
-                "REASONING_ENCRYPTED_VALUE"} \
-            or kind.startswith("STEP_"):
-        _save_doc(job["conversation_id"], job["agent_name"], doc)
+    # The protocol document is saved once per run by _run(); a per-event
+    # write would hit the conversation store on every STATE_DELTA/STEP.
 
 
 def _one_run(job: dict, endpoint: str, headers: dict, payload: dict,
@@ -433,13 +481,17 @@ def _one_run(job: dict, endpoint: str, headers: dict, payload: dict,
         response.close()
         raise ValueError(f"AG-UI endpoint returned HTTP {response.status_code}")
     active_key = _key(cid, agent)
+    text_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    current_msg = "agui_" + uuid.uuid4().hex
+    # Shared with cancel() so a force-stop can persist what already streamed.
+    partial = {"text": text_parts, "thinking": reasoning_parts,
+               "message_id": current_msg}
     with _LOCK:
         active = _ACTIVE.get(active_key)
         if active is not None:
             active["response"] = response
-    text_parts: list[str] = []
-    reasoning_parts: list[str] = []
-    current_msg = "agui_" + uuid.uuid4().hex
+            active["partial"] = partial
     current_tool_call = ""
     calls: dict[str, dict] = {}
     error = ""
@@ -478,9 +530,11 @@ def _one_run(job: dict, endpoint: str, headers: dict, payload: dict,
             _apply_protocol_state(job, doc, event)
             if kind == "TEXT_MESSAGE_START":
                 current_msg = str(event.get("messageId") or current_msg)
+                partial["message_id"] = current_msg
             elif kind in {"TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_CHUNK"}:
                 if kind == "TEXT_MESSAGE_CHUNK" and event.get("messageId"):
                     current_msg = str(event["messageId"])
+                    partial["message_id"] = current_msg
                 delta = str(event.get("delta") or event.get("text") or "")
                 if delta:
                     text_parts.append(delta)
@@ -584,9 +638,14 @@ def _one_run(job: dict, endpoint: str, headers: dict, payload: dict,
 def _run(job: dict) -> None:
     cid, agent = job["conversation_id"], job["agent_name"]
     active_key = _key(cid, agent)
+    # Register before any setup work so a force-stop issued while the tool
+    # registry is still loading marks this run cancelled instead of leaking it.
+    with _LOCK:
+        _ACTIVE[active_key] = {"cancel": False,
+                               "request_id": job["message_id"], "job": job}
     try:
         cfg = _connection_config(job)
-        job = {**job, "config": cfg}
+        job["config"] = cfg
         endpoint = resolve_relay_aware_url(
             str(cfg.get("agui_url") or ""), user_id=job["user_id"],
             conversation_id=cid, agent_name=agent,
@@ -603,15 +662,15 @@ def _run(job: dict) -> None:
             "id": job["message_id"],
             "content": _current_content(job["content"], job.get("attachments") or [])})
         registry = _registry(job)
-        tool_defs = _tool_definitions(registry, cfg.get("tools") or [])
         rounds_value = cfg.get("agui_max_tool_rounds")
         max_rounds = max(0, min(32, int(
             8 if rounds_value in (None, "") else rounds_value)))
+        # With zero follow-up rounds no call could ever be answered, so do not
+        # advertise tools the remote agent would then be refused to use.
+        tool_defs = (_tool_definitions(registry, cfg.get("tools") or [])
+                     if max_rounds > 0 else [])
         _publish(cid, "thinking", {"agent_name": agent,
             "turn_id": job["message_id"], "source": _source(agent)})
-        with _LOCK:
-            _ACTIVE[active_key] = {"cancel": False,
-                                   "request_id": job["message_id"], "job": job}
         for round_index in range(max_rounds + 1):
             payload = {"threadId": doc["thread_id"],
                 "runId": "run_" + uuid.uuid4().hex, "state": doc.get("state"),
@@ -623,8 +682,14 @@ def _run(job: dict) -> None:
                 resume = []
             result = _one_run(job, endpoint, headers, payload, doc)
             _save_doc(cid, agent, doc)
+            with _LOCK:
+                cancelled = bool((_ACTIVE.get(active_key) or {}).get("cancel"))
+            if cancelled:
+                return  # cancel() already settled this turn
             if result["error"]:
-                _finish(job, "", error=result["error"])
+                _finish(job, result["content"], error=result["error"],
+                        message_id=result["message_id"],
+                        thinking=result["thinking"])
                 return
             calls = result["calls"]
             outcome = result["outcome"]
@@ -739,8 +804,9 @@ def cancel(conversation_id: str, agent_name: str) -> bool:
         if active is not None:
             active["cancel"] = True
             response = active.get("response")
+            partial = active.get("partial") or {}
             if isinstance(active.get("job"), dict):
-                cancelled_jobs.append(active["job"])
+                cancelled_jobs.append((active["job"], partial))
             found = True
         else:
             response = None
@@ -750,7 +816,7 @@ def cancel(conversation_id: str, agent_name: str) -> bool:
                 try:
                     queued_job = jobs.get_nowait()
                     if isinstance(queued_job, dict):
-                        cancelled_jobs.append(queued_job)
+                        cancelled_jobs.append((queued_job, {}))
                     jobs.task_done()
                     found = True
                 except queue.Empty:
@@ -761,11 +827,14 @@ def cancel(conversation_id: str, agent_name: str) -> bool:
         except Exception:
             logger.debug("AG-UI response close during cancel failed", exc_info=True)
     seen = set()
-    for job in cancelled_jobs:
+    for job, partial in cancelled_jobs:
         request_id = str(job.get("message_id") or "")
         if request_id and request_id not in seen:
             seen.add(request_id)
-            _finish(job, "", error="AG-UI run cancelled")
+            _finish(job, "".join(partial.get("text") or []),
+                    error="AG-UI run cancelled",
+                    message_id=str(partial.get("message_id") or ""),
+                    thinking="".join(partial.get("thinking") or []))
     return found
 
 

@@ -34,8 +34,6 @@ AGENT_CONFIG_DEFAULTS = {
     "runtime_kind": "llm",
     "agui_url": "",
     "agui_service": "",
-    "agui_auth_secret": "",  # nosec B105 - empty means no authentication
-    "agui_allow_private": False,
     "agui_timeout": 300,
     "agui_max_tool_rounds": 8,
     "llm_service": "",
@@ -155,8 +153,6 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
                       flash_delegate_llm_service: str = "",
                       runtime_kind: str = "llm",
                       agui_url: str = "", agui_service: str = "",
-                      agui_auth_secret: str = "",  # nosec B107 - optional secret
-                      agui_allow_private: bool = False,
                       agui_timeout: int = 300,
                       agui_max_tool_rounds: int = 8) -> Dict[str, Any]:
     """Add an agent instance to a conversation.
@@ -165,6 +161,8 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
     definition: the repository .md template name (required).
     params: dict of values injected into the definition prompt as ${agent.key}.
     llm_service is required for llm agents. External agents do not require one.
+    A direct agui_url is public and unauthenticated; a Bearer secret or a
+    private endpoint must come from an aguiConnection service (agui_service).
     flash_delegate_llm_service optionally overrides the service used by
     flash_delegate; when empty, flash agents inherit llm_service.
     """
@@ -188,8 +186,6 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
         "runtime_kind": runtime_kind,
         "agui_url": str(agui_url or "").strip(),
         "agui_service": str(agui_service or "").strip(),
-        "agui_auth_secret": str(agui_auth_secret or "").strip(),
-        "agui_allow_private": bool(agui_allow_private),
         "agui_timeout": max(1, int(agui_timeout or 300)),
         "agui_max_tool_rounds": max(
             0, min(32, int(8 if agui_max_tool_rounds in (None, "")

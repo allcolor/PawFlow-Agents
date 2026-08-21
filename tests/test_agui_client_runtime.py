@@ -7,10 +7,13 @@ from unittest.mock import MagicMock, patch
 
 from core import FlowFile
 from core.agui_client_runtime import (
+    _apply_protocol_state,
     _connection_config,
     _current_content,
     _events,
     _execute_tool,
+    _finish,
+    _messages,
     _one_run,
     _resume_entries,
     _run,
@@ -386,3 +389,162 @@ def test_webchat_and_openspace_expose_external_agui_runtime():
     for event in ("agui_activity", "agui_step", "agui_state_snapshot",
                   "agui_state_delta", "agui_usage", "agui_custom"):
         assert "on('" + event + "'" in runtime
+    # Secrets and private targets are service-only; the dialogs must not
+    # offer them for a direct endpoint.
+    assert "_addAguiSecret" not in create and "acc-agui-secret" not in configure
+    assert "t('aguiEndpointUrl')" in create and "t('aguiEndpointUrl')" in configure
+
+
+def test_direct_endpoint_never_carries_secret_or_private_policy():
+    job = {"conversation_id": "conv", "user_id": "user", "config": {
+        "agui_url": "https://example/agui", "agui_service": "",
+        "agui_auth_secret": "owner_token", "agui_allow_private": True}}
+    resolved = _connection_config(job)
+    assert resolved["agui_url"] == "https://example/agui"
+    assert resolved["agui_auth_secret"] == ""
+    assert resolved["agui_allow_private"] is False
+
+
+def test_messages_replays_tool_calls_and_drops_orphan_tool_rows():
+    rows = [
+        {"role": "user", "msg_id": "u1", "content": [
+            {"type": "text", "text": "look"}, {"type": "image", "source": {}}]},
+        {"role": "assistant", "msg_id": "a1", "content": "",
+         "tool_calls": [{"id": "tc1", "name": "search", "arguments": {"q": "x"}}]},
+        {"role": "tool", "msg_id": "t1", "tool_call_id": "tc1", "content": "found"},
+        {"role": "tool", "msg_id": "t2", "tool_call_id": "gone", "content": "orphan"},
+        {"role": "assistant", "msg_id": "a2", "content": "done"},
+        {"role": "user", "msg_id": "u2", "content": {"unexpected": True}},
+    ]
+    store = MagicMock()
+    store.load.return_value = rows
+    with patch("core.conversation_store.ConversationStore.instance", return_value=store):
+        messages = _messages("conv", "user", {"id": "q1", "content": "next"})
+    assert [m["id"] for m in messages] == ["u1", "a1", "t1", "a2", "q1"]
+    assert messages[0]["content"] == "look"
+    assert messages[1]["toolCalls"] == [{
+        "id": "tc1", "type": "function",
+        "function": {"name": "search", "arguments": "{\"q\": \"x\"}"}}]
+    assert messages[2]["toolCallId"] == "tc1"
+
+
+def test_finish_persists_streamed_text_on_error_and_settles_once():
+    job = {"conversation_id": "conv", "agent_name": "Remote",
+           "message_id": "q1", "user_id": "user"}
+    with patch("core.agui_client_runtime._persist_block") as persist, \
+         patch("services.mcp_terminal_router.complete_published_terminal_turn") as complete:
+        _finish(job, "partial answer", error="AG-UI run failed", message_id="m1")
+        _finish(job, "partial answer", error="AG-UI run failed", message_id="m1")
+    persist.assert_called_once()
+    assert persist.call_args.args[1] == "partial answer"
+    assert persist.call_args.kwargs["final"] is True
+    complete.assert_called_once()
+    assert complete.call_args.kwargs["error"] == "AG-UI run failed"
+
+
+def test_cancel_persists_text_that_already_streamed():
+    import core.agui_client_runtime as runtime
+    job = {"conversation_id": "conv", "agent_name": "Remote",
+           "message_id": "q1", "user_id": "user"}
+    key = "conv:remote"
+    with runtime._LOCK:
+        runtime._ACTIVE[key] = {"cancel": False, "job": job, "partial": {
+            "text": ["par", "tial"], "thinking": ["why"], "message_id": "m1"}}
+    try:
+        with patch("core.agui_client_runtime._finish") as finish:
+            assert cancel("conv", "Remote") is True
+        finish.assert_called_once_with(
+            job, "partial", error="AG-UI run cancelled", message_id="m1",
+            thinking="why")
+    finally:
+        with runtime._LOCK:
+            runtime._ACTIVE.pop(key, None)
+
+
+def test_run_registers_active_before_setup_and_hides_tools_without_rounds():
+    import core.agui_client_runtime as runtime
+    job = {"conversation_id": "conv", "agent_name": "Remote",
+           "message_id": "q1", "content": "hi", "attachments": [],
+           "user_id": "u", "config": {"agui_url": "https://example/agui",
+               "tools": ["search"], "agui_max_tool_rounds": 0}}
+    seen = {}
+
+    def fake_registry(_job):
+        with runtime._LOCK:
+            seen["active"] = dict(runtime._ACTIVE.get("conv:remote") or {})
+        return object()
+    payloads = []
+
+    def fake_run(_job, _endpoint, _headers, payload, _doc):
+        payloads.append(payload)
+        return {"content": "ok", "thinking": "", "message_id": "a1",
+                "error": "", "outcome": {}, "calls": []}
+    with patch("core.agui_client_runtime.resolve_relay_aware_url", return_value="https://example/agui"), \
+         patch("core.agui_client_runtime._load_doc", return_value={"thread_id": "t", "state": {}, "pending_interrupts": []}), \
+         patch("core.agui_client_runtime._save_doc"), \
+         patch("core.agui_client_runtime._messages", return_value=[]), \
+         patch("core.agui_client_runtime._registry", side_effect=fake_registry), \
+         patch("core.agui_client_runtime._tool_definitions", return_value=[{"name": "search"}]), \
+         patch("core.agui_client_runtime._one_run", side_effect=fake_run), \
+         patch("core.agui_client_runtime._publish"), \
+         patch("core.agui_client_runtime._finish") as finish:
+        _run(job)
+    assert seen["active"]["job"] is job
+    assert payloads[0]["tools"] == []
+    finish.assert_called_once_with(job, "ok", message_id="a1", thinking="")
+
+
+def test_run_error_result_keeps_streamed_content():
+    job = {"conversation_id": "conv", "agent_name": "Remote",
+           "message_id": "q1", "content": "hi", "attachments": [],
+           "user_id": "u", "config": {"agui_url": "https://example/agui"}}
+    with patch("core.agui_client_runtime.resolve_relay_aware_url", return_value="https://example/agui"), \
+         patch("core.agui_client_runtime._load_doc", return_value={"thread_id": "t", "state": {}, "pending_interrupts": []}), \
+         patch("core.agui_client_runtime._save_doc"), \
+         patch("core.agui_client_runtime._messages", return_value=[]), \
+         patch("core.agui_client_runtime._registry", return_value=object()), \
+         patch("core.agui_client_runtime._tool_definitions", return_value=[]), \
+         patch("core.agui_client_runtime._one_run", return_value={
+             "content": "half", "thinking": "t", "message_id": "a1",
+             "error": "AG-UI stream ended without RUN_FINISHED",
+             "outcome": {}, "calls": []}), \
+         patch("core.agui_client_runtime._publish"), \
+         patch("core.agui_client_runtime._finish") as finish:
+        _run(job)
+    finish.assert_called_once_with(
+        job, "half", error="AG-UI stream ended without RUN_FINISHED",
+        message_id="a1", thinking="t")
+
+
+def test_protocol_state_is_not_saved_per_event():
+    job = {"conversation_id": "conv", "agent_name": "Remote"}
+    doc = {"state": {}}
+    with patch("core.agui_client_runtime._save_doc") as save, \
+         patch("core.agui_client_runtime._publish"):
+        _apply_protocol_state(job, doc, {"type": "STATE_SNAPSHOT", "snapshot": {"a": 1}})
+        _apply_protocol_state(job, doc, {"type": "STEP_STARTED", "stepName": "s"})
+    assert doc["state"] == {"a": 1}
+    save.assert_not_called()
+
+
+def test_execute_tool_honours_read_only_mode_and_approval_gate():
+    prepared = SimpleNamespace(name="bash", arguments={"command": "ls"})
+    registry = SimpleNamespace(
+        get=lambda _name: object(),
+        prepare=lambda _name, _args: prepared,
+        execute_prepared=lambda _prepared: "ran")
+    job = {"conversation_id": "c", "user_id": "u", "agent_name": "Remote",
+           "config": {"tools": ["bash"]}}
+    call = {"name": "bash", "arguments": {"command": "ls"}, "id": "tc"}
+    store = MagicMock()
+    with patch("core.llm_client.unwrap_mcp_tool", return_value=("bash", {"command": "ls"})), \
+         patch("core.conversation_store.ConversationStore.instance", return_value=store), \
+         patch("core.tool_approval.ToolApprovalGate.is_read_only_allowed", return_value=False), \
+         patch("core.tool_approval.ToolApprovalGate.check", return_value="denied") as check:
+        store.get_extra.return_value = "read_only"
+        assert "blocked in read-only mode" in _execute_tool(job, registry, call)
+        store.get_extra.return_value = "default"
+        assert "denied by the user" in _execute_tool(job, registry, call)
+        check.return_value = "approved"
+        assert _execute_tool(job, registry, call) == "ran"
+    assert check.call_args.kwargs["agent_name"] == "Remote"

@@ -202,21 +202,20 @@ async function showAddAgentToConvDialog(presetDefinition) {
       // Instance name
       html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('instanceNameRequired')) + '</label>'
         + '<input id="_addInstName" value="' + escapeHtml(selectedDef) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
-      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Runtime</label>'
+      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('agentRuntime')) + '</label>'
         + '<select id="_addRuntime" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
-        + '<option value="llm">PawFlow LLM</option><option value="external_agui">External AG-UI</option>'
+        + '<option value="llm">' + escapeHtml(t('agentRuntimeLlm')) + '</option><option value="external_agui">' + escapeHtml(t('agentRuntimeAgui')) + '</option>'
         + '</select></div>';
       // LLM Service
       html += '<div id="_addLlmWrap" style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
         + '<select id="_addLlm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
         + svcOpts + '</select></div>';
       html += '<div id="_addAguiWrap" style="display:none;padding:8px;margin-bottom:8px;border:1px solid var(--pf-border);border-radius:4px;">'
-        + '<label style="color:var(--pf-muted);font-size:11px;">AG-UI connection</label><select id="_addAguiService" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;"><option value="">Direct endpoint</option>'
+        + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiConnection')) + '</label><select id="_addAguiService" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;"><option value="">' + escapeHtml(t('aguiDirectEndpoint')) + '</option>'
         + aguiServices.map(function(s) { return '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + '</option>'; }).join('') + '</select>'
-        + '<label style="color:var(--pf-muted);font-size:11px;">Direct AG-UI endpoint</label><input id="_addAguiUrl" placeholder="https://agent.example/agui" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
-        + '<label style="color:var(--pf-muted);font-size:11px;">Bearer secret name</label><input id="_addAguiSecret" placeholder="optional SecretStore key" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
-        + '<label style="color:var(--pf-muted);font-size:11px;">Maximum tool rounds</label><input id="_addAguiRounds" type="number" min="0" max="32" value="8" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
-        + '<label style="color:var(--pf-muted);font-size:11px;"><input id="_addAguiPrivate" type="checkbox"> Allow private/relay endpoint</label></div>';
+        + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiEndpointUrl')) + '</label><input id="_addAguiUrl" placeholder="https://agent.example/agui" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+        + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('aguiMaxToolRounds')) + '</label><input id="_addAguiRounds" type="number" min="0" max="32" value="8" style="width:100%;box-sizing:border-box;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:2px 0 6px;">'
+        + '</div>';
       // Params from schema — skip 'name' (always synced from instance_name)
       var visibleParamKeys = paramKeys.filter(function(k) { return k !== 'name'; });
       if (visibleParamKeys.length) {
@@ -274,7 +273,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
       if (runtime === 'llm' && !llm) { alert(t('llmServiceRequiredMessage')); return; }
       var aguiUrl = ((document.getElementById('_addAguiUrl') || {}).value || '').trim();
       var aguiService = ((document.getElementById('_addAguiService') || {}).value || '').trim();
-      if (runtime === 'external_agui' && !aguiUrl && !aguiService) { alert('AG-UI connection or endpoint is required'); return; }
+      if (runtime === 'external_agui' && !aguiUrl && !aguiService) { alert(t('aguiEndpointRequiredMessage')); return; }
       var params = { name: instName.trim() };
       formArea.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
@@ -288,8 +287,6 @@ async function showAddAgentToConvDialog(presetDefinition) {
         runtime_kind: runtime,
         agui_url: aguiUrl,
         agui_service: aguiService,
-        agui_auth_secret: ((document.getElementById('_addAguiSecret') || {}).value || '').trim(),
-        agui_allow_private: !!((document.getElementById('_addAguiPrivate') || {}).checked),
         agui_max_tool_rounds: (function(v) { v = parseInt(v); return isNaN(v) ? 8 : v; })((document.getElementById('_addAguiRounds') || {}).value),
         conversation_id: conversationId,
       });

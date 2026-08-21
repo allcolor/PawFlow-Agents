@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- External AG-UI agents: the Bearer secret and private-endpoint policy are now
+  carried only by an `aguiConnection` service. Agent-level
+  `agui_auth_secret`/`agui_allow_private` were removed because a conversation
+  member with write access could point a direct `agui_url` at their own server
+  and receive the conversation owner's secret.
+
+### Fixed
+
+- External AG-UI agents: history replay emits assistant `toolCalls` and drops
+  orphan `tool` rows (strict agents rejected the whole run), streamed text is
+  persisted when a run errors or is force-stopped, a force-stop issued during
+  setup is no longer lost, each turn is settled exactly once, no tool schema is
+  advertised when `agui_max_tool_rounds` is 0, the protocol document is saved
+  once per run instead of per event, and the runtime dialog labels are
+  localized (en/fr/es).
+
 ## [1.0.0-beta.225] — 2026-08-20
 
 ### Added

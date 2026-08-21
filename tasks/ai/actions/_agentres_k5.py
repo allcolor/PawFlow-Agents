@@ -162,8 +162,6 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
              runtime_kind=runtime_kind,
              agui_url=str(body.get("agui_url") or "").strip(),
              agui_service=str(body.get("agui_service") or "").strip(),
-             agui_auth_secret=str(body.get("agui_auth_secret") or "").strip(),
-             agui_allow_private=bool(body.get("agui_allow_private")),
              agui_timeout=max(1, int(body.get("agui_timeout") or 300)),
              agui_max_tool_rounds=max(
                  0, min(32, int(
@@ -246,9 +244,8 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         # assign/unassign actions so notifications and locking stay consistent.
         _allowed = {"llm_service", "model", "tools", "max_depth", "params",
                     "realtime_voice_service", "flash_delegate_llm_service",
-                    "runtime_kind", "agui_url", "agui_service", "agui_auth_secret",
-                    "agui_allow_private", "agui_timeout"}
-        _allowed.add("agui_max_tool_rounds")
+                    "runtime_kind", "agui_url", "agui_service", "agui_timeout",
+                    "agui_max_tool_rounds"}
         effective_url = cfg.get("agui_url", configs[aname].get("agui_url", ""))
         effective_service = cfg.get(
             "agui_service", configs[aname].get("agui_service", ""))

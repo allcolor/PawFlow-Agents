@@ -86,11 +86,12 @@ class TestAddAgentToConv:
             cfg = add_agent_to_conv(
                 "conv1", "Remote", llm_service="", definition="external",
                 runtime_kind="external_agui",
-                agui_url="https://agent.example/agui",
-                agui_auth_secret="remote_agent_token")
+                agui_url="https://agent.example/agui")
         assert cfg["runtime_kind"] == "external_agui"
         assert cfg["agui_url"] == "https://agent.example/agui"
-        assert cfg["agui_auth_secret"] == "remote_agent_token"
+        # Direct endpoints are public: secrets live on aguiConnection services.
+        assert "agui_auth_secret" not in cfg
+        assert "agui_allow_private" not in cfg
         assert _stored["conv_agents"]["Remote"]["llm_service"] == ""
 
     def test_external_agui_rejects_missing_endpoint(self):

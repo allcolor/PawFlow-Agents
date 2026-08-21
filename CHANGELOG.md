@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.232] — 2026-08-21
+
 ### Fixed
 
 - OpenSpace: the big screen no longer clips the ceiling lamp. The DOM panel

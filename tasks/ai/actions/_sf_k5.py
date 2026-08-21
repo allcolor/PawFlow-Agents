@@ -131,8 +131,17 @@ def _handle_sf_k5(self, action, body, store, user_id, flowfile, _helpers):
             )
             inst = dr.get(iid)
             if inst:
-                inst.flow_fqn = flow_config.get("fqn") or template_id
-                inst.flow_scope = flow_scope
+                # flow_fqn/flow_scope say WHERE the flow is published
+                # (repository FQN + conv|user|global) — the Flow Editor and
+                # the Runtime Console resolve the published version with
+                # them. They are NOT the runtime dependency scope declared
+                # by the template (independent|user|conversation), which
+                # stays in parameters as _flow_scope.
+                storage = _flow_template_storage_info(tpath, uid, conv_id)
+                inst.flow_fqn = flow_config.get("fqn") or (
+                    f"{storage['package']}.{storage['flow_name']}"
+                    f":{storage['version']}")
+                inst.flow_scope = storage["repo_scope"]
                 dr._save_instance(inst)
             flowfile.set_content(json.dumps(
                 {"ok": True, "instance_id": iid, "scope": deploy_scope,

@@ -622,6 +622,84 @@ def test_route_registration_is_idempotent():
     assert len(listener.routes) == 1
 
 
+# ── Repository scope of a deployed instance ──────────────────────
+
+class _ScopedInst:
+    instance_id = "inst9"
+    owner = "u1"
+    conversation_id = "conv1"
+    flow_fqn = "default.hot:1.0.0"
+    flow_scope = "independent"
+
+
+def _fake_repo(monkeypatch, published):
+    from core.repository import ScopedRepository
+
+    class _Repo:
+        def get_flow(self, fqn, scope, user_id="", conv_id=""):
+            return published.get(scope)
+    monkeypatch.setattr(ScopedRepository, "instance",
+                        classmethod(lambda cls: _Repo()))
+
+
+def test_repo_scope_ignores_a_dependency_scope_stored_in_flow_scope(monkeypatch):
+    """The UI deployment path used to store the template's runtime dependency
+    scope (independent|user|conversation) in flow_scope. Only a scope that
+    really publishes the FQN is trusted."""
+    from tasks.ai.actions.flow_runtime import _repo_scope
+    _fake_repo(monkeypatch, {"user": {"id": "hot"}})
+    assert _repo_scope(_ScopedInst()) == "user"
+
+
+def test_repo_scope_prefers_the_stored_scope_when_it_publishes_the_flow(monkeypatch):
+    from tasks.ai.actions.flow_runtime import _repo_scope
+    _fake_repo(monkeypatch, {"conv": {"id": "hot"}, "user": {"id": "hot"}})
+
+    class _Inst(_ScopedInst):
+        flow_scope = "conv"
+    assert _repo_scope(_Inst()) == "conv"
+
+
+def test_repo_scope_refuses_a_flow_no_reachable_scope_publishes(monkeypatch):
+    from tasks.ai.actions.flow_runtime import _repo_scope
+    _fake_repo(monkeypatch, {})
+    with pytest.raises(KeyError):
+        _repo_scope(_ScopedInst())
+
+
+def test_create_draft_opens_the_published_version_of_the_running_flow(monkeypatch):
+    """Regression: 'Edit running flow...' answered 400 Invalid scope
+    'independent' for every instance deployed from the UI."""
+    from core.deployment_registry import DeploymentRegistry
+    from core.executor_registry import ExecutorRegistry
+    from core.flow_authoring import FlowAuthoringService
+
+    _fake_repo(monkeypatch, {"user": {"id": "hot"}})
+    monkeypatch.setattr(ExecutorRegistry, "get_instance", classmethod(
+        lambda cls: type("R", (), {
+            "get": lambda s, i: type("E", (), {"is_running": True})()})()))
+    monkeypatch.setattr(DeploymentRegistry, "get_instance", classmethod(
+        lambda cls: type("D", (), {"get": lambda s, i: _ScopedInst()})()))
+    seen = {}
+
+    class _Authoring:
+        def create_draft(self, fqn, scope, user_id, conv_id="",
+                         reuse_existing=True):
+            seen.update(fqn=fqn, scope=scope, user_id=user_id,
+                        conv_id=conv_id, reuse_existing=reuse_existing)
+            return {"draft_id": "d_0123456789ab"}
+    monkeypatch.setattr(FlowAuthoringService, "instance",
+                        classmethod(lambda cls: _Authoring()))
+
+    data, ff = _call("flow_runtime_create_draft", {"instance_id": "inst9"})
+    assert data["draft"]["draft_id"] == "d_0123456789ab"
+    assert not ff.get_attribute("http.response.status")
+    # A user-scoped flow is NOT stored under the conversation: passing the
+    # deployment's conversation would open a second draft of the same flow.
+    assert seen == {"fqn": "default.hot:1.0.0", "scope": "user",
+                    "user_id": "u1", "conv_id": "", "reuse_existing": True}
+
+
 # ── UI source invariants ─────────────────────────────────────────
 
 def _text(relative):
@@ -652,6 +730,9 @@ def test_viewer_has_runtime_console_surfaces():
     assert "FlowFile is no longer queued." in source
     # Runtime ops only on a RUNNING root instance (never templates).
     assert "graphStack.length === 1 && !!rootGraph.instance_id && isRunning" in source
+    # They have no button of their own, so the status bar says where they are.
+    assert "Right-click a task: Start / Stop / Configuration" in source
+    assert "click a queue to inspect, pause or empty it" in source
 
 
 def test_published_runtime_update_is_previewed_and_explicit_in_the_same_canvas():

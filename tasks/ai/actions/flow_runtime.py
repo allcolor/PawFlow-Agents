@@ -95,10 +95,55 @@ def _checkpoint_now(executor) -> None:
         logger.debug("post-mutation checkpoint failed", exc_info=True)
 
 
+def _repo_scope(inst) -> str:
+    """Repository scope (``conv|user|global``) the deployed flow lives in.
+
+    ``flow_scope`` is only a hint: deployments made before the vocabulary was
+    fixed stored the template's runtime dependency scope (``independent``,
+    ``user``, ``conversation``) instead of the repository scope. It is used
+    only when that scope really publishes this FQN; otherwise the deployment's
+    own conv -> user -> global chain decides.
+    """
+    from core.flow_authoring import normalize_scope
+    from core.repository import ScopedRepository
+
+    fqn = str(getattr(inst, "flow_fqn", "") or "")
+    if not fqn:
+        raise ValueError("Runtime editing requires a repository-backed flow")
+    owner = str(getattr(inst, "owner", "") or "")
+    conv_id = str(getattr(inst, "conversation_id", "") or "")
+    chain = []
+    try:
+        chain.append(normalize_scope(getattr(inst, "flow_scope", "") or ""))
+    except ValueError:
+        pass
+    if conv_id:
+        chain.append("conv")
+    if owner:
+        chain.append("user")
+    chain.append("global")
+    repo = ScopedRepository.instance()
+    seen = set()
+    for scope in chain:
+        if scope in seen:
+            continue
+        seen.add(scope)
+        if (scope == "conv" and not conv_id) or (scope == "user" and not owner):
+            continue
+        try:
+            if repo.get_flow(fqn, scope, user_id=owner,
+                             conv_id=conv_id) is not None:
+                return scope
+        except (ValueError, KeyError, OSError):
+            logger.debug("scope probe failed for %s in %s", fqn, scope,
+                         exc_info=True)
+    raise KeyError(f"Flow {fqn} is not published in any scope reachable "
+                   "from this deployment")
+
+
 def _prepare_runtime_update(inst, fqn):
     """Load one immutable candidate version and parse it for this deployment."""
-    from core.flow_authoring import (FlowAuthoringService, normalize_scope,
-                                      split_fqn)
+    from core.flow_authoring import FlowAuthoringService, split_fqn
 
     current_fqn = str(getattr(inst, "flow_fqn", "") or "")
     if not current_fqn:
@@ -110,7 +155,7 @@ def _prepare_runtime_update(inst, fqn):
     if candidate_flow != current_flow:
         raise ValueError("Candidate version must belong to the deployed flow")
 
-    scope = normalize_scope(getattr(inst, "flow_scope", "") or "user")
+    scope = _repo_scope(inst)
     user_id = str(getattr(inst, "owner", "") or "")
     conv_id = str(getattr(inst, "conversation_id", "") or "")
     service = FlowAuthoringService.instance()
@@ -244,12 +289,19 @@ def _handle_flow_runtime(self, action, body, store, user_id, flowfile):
         if inst is None or not getattr(inst, "flow_fqn", ""):
             return _reply({"error": "Runtime editing requires a repository-backed flow"}, "400")
         try:
-            from core.flow_authoring import FlowAuthoringService, normalize_scope
+            from core.flow_authoring import FlowAuthoringService
+            scope = _repo_scope(inst)
+            # Only a conv-scoped flow is stored under a conversation; passing
+            # the deployment's conversation for a user/global flow would open
+            # a SECOND draft of the same flow instead of reusing the one the
+            # repository editor opens.
+            conv_id = (str(getattr(inst, "conversation_id", "") or "")
+                       if scope == "conv" else "")
             draft = FlowAuthoringService.instance().create_draft(
                 inst.flow_fqn,
-                normalize_scope(getattr(inst, "flow_scope", "") or "user"),
+                scope,
                 user_id,
-                conv_id=str(getattr(inst, "conversation_id", "") or ""),
+                conv_id=conv_id,
                 reuse_existing=True,
             )
             return _reply({"draft": draft, "instance_id": instance_id})

@@ -2410,7 +2410,13 @@ function App() {
             editBtn('\u{1F5D1} Discard draft', discardDraft, { disabled: lockedRef.current, title: 'Delete this draft (published versions are untouched)' }),
             INSTANCE_ID && published && editBtn('Apply to running flow', previewRuntimeUpdate, { primary: true }),
           ] })
-        : jsx('span', { children: isRunning ? 'Running' : 'Stopped' }),
+        : jsxs(Fragment, { children: [
+            jsx('span', { children: isRunning ? 'Running' : 'Stopped' }),
+            // The runtime operations have no button of their own: say where
+            // they live, otherwise the console reads as a plain viewer.
+            canOperate && jsx('span', { style: { color: '#8a93b8' },
+              children: '\u2139 Right-click a task: Start / Stop / Configuration \u00B7 click a queue to inspect, pause or empty it' }),
+          ] }),
       error && jsx('span', { style: { color: '#e94560' }, children: error }),
     ] }),
     jsx(ReactFlow, {

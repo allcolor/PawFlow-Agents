@@ -1826,11 +1826,15 @@ def test_service_flow_deploy_and_start_preserve_pfp_runtime_identity(tmp_path, m
 
     assert deployed["ok"] is True
     assert inst.flow_fqn == "community.pkg.service:1.0.0"
-    assert inst.flow_scope == "conversation"
+    # flow_scope is the REPOSITORY scope the version was resolved from (the
+    # flow is published under the user), never the template's runtime
+    # dependency declaration ("scope": "conversation") — the Flow Editor and
+    # the Runtime Console reopen the published version with it.
+    assert inst.flow_scope == "user"
     assert inst.agent_name == "agentA"
     assert started == {"ok": True, "status": "running"}
     assert captured["flow_fqn"] == "community.pkg.service:1.0.0"
-    assert captured["flow_scope"] == "conversation"
+    assert captured["flow_scope"] == "user"
     assert captured["owner"] == "alice"
     assert captured["conversation_id"] == "conv1"
     assert captured["agent_name"] == "agentA"
@@ -1882,7 +1886,8 @@ def test_service_flow_discovers_and_deploys_conversation_scoped_pfp_flow(tmp_pat
     assert schema["template_id"] == "conv-flow"
     assert deployed["ok"] is True
     assert inst.flow_fqn == "community.pkg.convflow:1.0.0"
-    assert inst.flow_scope == "conversation"
+    # Repository scope vocabulary: conv (not the UI/template "conversation").
+    assert inst.flow_scope == "conv"
     assert inst.conversation_id == "conv1"
     assert inst.agent_name == "agentA"
 

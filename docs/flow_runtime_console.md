@@ -36,6 +36,15 @@ running (409 otherwise).
 | `flow_runtime_queue_item` | attributes + content preview (UTF-8 ≤ 32 KB; binary/large → metadata) ; a consumed item answers `no_longer_queued` (normal, not an error) |
 | `flow_runtime_flowfile_drop` | remove one FlowFile by `process_id`, checkpoint immediately |
 
+`flow_runtime_create_draft` / `_update_preview` / `_update_apply` reopen the
+deployed version in the repository, so a deployment records WHERE its flow is
+published: `flow_fqn` = `package.name:version` and `flow_scope` = the
+repository scope `conv|user|global`. That is never the template's runtime
+dependency declaration (`"scope": independent|user|conversation`, kept in the
+instance parameters as `_flow_scope`). A deployment whose `flow_scope` does not
+publish its FQN (older deployments stored the dependency scope there) is
+resolved through the usual conv → user → global chain instead of failing.
+
 Content download is a dedicated streaming route (session-authenticated,
 ownership re-checked):
 
@@ -66,6 +75,8 @@ Edges now carry `connection_id`, `queue_bytes`, `max_queue_bytes`,
 - Edges read as queues: `relationship · N · size` always; grey when empty,
   green/orange/red as they fill; `⏸` + dashed grey + NO animated current
   when paused; `🔴 (n/max)` under backpressure.
+- The status bar of a running instance states where the operations are
+  (right-click a task, click a queue): they have no toolbar button.
 - Right-click on a task: Start / Stop / Restart (on error) /
   ⚙ Configuration (read-only drawer: state, stats, raw parameters).
 - Click on an edge: the Queue Inspector drawer — stats, Pause/Resume,

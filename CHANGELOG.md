@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenSpace: the big screen no longer clips the ceiling lamp. The DOM panel
+  has no WebGL depth buffer, so an occlusion pass now redraws the fragments in
+  front of the screen plane over it. Clicking an agent only selects it:
+  opening the Activity panel is reserved for the PC and for a user, each
+  clickable having its own raycast marker.
+- Flow Runtime Console: "Edit running flow..." works again on instances
+  deployed from the UI. That path stored the template's runtime dependency
+  scope (`independent`/`conversation`) in the deployment's `flow_scope` and the
+  flow's directory id in `flow_fqn`, so opening a runtime draft answered
+  `Invalid scope`. Deployments now record the repository FQN and the repository
+  scope (`conv|user|global`), and the runtime actions resolve the published
+  version through the conv → user → global chain when a stored scope does not
+  publish the flow, which also repairs existing deployments. The status bar of
+  a running instance now states where the runtime operations live (right-click
+  a task for Start/Stop/Configuration, click a queue to inspect, pause or empty
+  it).
+
 ## [1.0.0-beta.231] — 2026-08-21
 
 ### Fixed

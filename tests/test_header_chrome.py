@@ -12,8 +12,9 @@ a click-toggled popover (click shows, click again hides):
   mounts inside its popover (it left the composer entirely).
 - Pending actions: animated glyph while actions run, idle checkmark
   otherwise; label + progress bar in the popover.
-- Context gauge: battery-style icon whose fill mirrors the percentage; the
-  full agent badge (label + gauge) in the popover.
+- Context gauge: battery-style icon whose fill mirrors the percentage LEFT
+  (100 - used %, display only); the full agent badge (label + gauge) in the
+  popover.
 """
 
 import json
@@ -167,9 +168,31 @@ def test_context_gauge_is_a_battery_icon_with_the_badge_in_its_popover():
                    TEMPLATE.index('id="usageCostBadge"')]
     assert 'id="activeAgentBadge"' in pop
     # updateActiveAgentBadge mirrors the gauge onto the battery fill.
-    assert "gaugeFill.style.height = pctInt + '%'" in CMD_AGENT_JS
-    assert "gaugePct.textContent = pctInt + '%'" in CMD_AGENT_JS
+    assert "gaugeFill.style.height = leftInt + '%'" in CMD_AGENT_JS
+    assert "gaugePct.textContent = leftInt + '%'" in CMD_AGENT_JS
     assert "gaugeWrap.style.display = ''" in CMD_AGENT_JS
+
+
+def test_every_gauge_displays_the_remaining_percentage():
+    # Batteries drain: every gauge SHOWS 100 - used %, orange once less than
+    # 20% is left. Display only — the cached usage values stay "used".
+    assert "const leftInt = 100 - pctInt;" in CMD_AGENT_JS
+    assert "pct >= 0.80 ? '#f0ad4e' : '#4ecdc4'" in CMD_AGENT_JS
+    assert "const leftInt = 100 - pctInt;" in ACTIVE_JS
+    assert "Math.round((1 - pct) * width)" in ACTIVE_JS
+    assert "pct: leftInt" in ACTIVE_JS
+    assert "leftInt + '%</span>'" in ACTIVE_JS
+    scene = Path("tasks/io/chat_ui/openspace_scene.js").read_text(encoding="utf-8")
+    assert "const leftInt = 100 - Math.round(pct * 100);" in scene
+    assert "rec.battFill.style.width = leftInt + '%'" in scene
+    assert "(100 - Math.round(pct * 100)) + '%'" in scene
+    editor = Path("tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
+    assert "Math.round((1 - pct) * 1000) / 10" in editor
+    assert "t('contextRemainingPct', { pct: leftTxt })" in editor
+    for lang in ("en", "fr", "es"):
+        catalog = json.loads(Path(f"tasks/io/chat_ui/i18n/{lang}.json").read_text(encoding="utf-8"))
+        assert "{pct}" in catalog["contextRemainingPct"]
+        assert "{pct}" in catalog["contextGaugeTitle"]
 
 
 def test_update_available_icon_opens_the_updates_screen():

@@ -20,22 +20,26 @@ window._contextUsageHydrating = window._contextUsageHydrating || false;
 
 // Unified gauge renderer — used by active-agents panel, header badge, and
 // Resource Panel Agents section. `usage` is {used, max, pct} from the server.
+// DISPLAY ONLY: the gauge is a battery, so it shows what is LEFT (100 − used
+// %), draining from full to empty; orange once less than 20% remains. The
+// cached usage values themselves stay "used".
 function renderCtxGauge(usage, opts) {
   if (!usage || !usage.max) return '';
   opts = opts || {};
   const width = opts.width || 60;
   const pct = Math.max(0, Math.min(1, usage.pct || (usage.used / usage.max)));
   const pctInt = Math.round(pct * 100);
+  const leftInt = 100 - pctInt;
   const usedK = Math.round((usage.used || 0) / 1000);
   const maxK = Math.round(usage.max / 1000);
   const color = (pct >= 0.80) ? '#f0ad4e' : '#4ecdc4';
-  const barPx = Math.round(pct * width);
-  const title = t('contextGaugeTitle', { used: usedK, max: maxK, pct: pctInt });
+  const barPx = Math.round((1 - pct) * width);
+  const title = t('contextGaugeTitle', { used: usedK, max: maxK, pct: leftInt });
   return '<span class="ctx-gauge" title="' + escapeAttr(title) + '" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
     + '<span style="display:inline-block;width:' + width + 'px;height:6px;background:#222;border-radius:3px;overflow:hidden;">'
     + '<span style="display:block;width:' + barPx + 'px;height:100%;background:' + color + ';"></span>'
     + '</span>'
-    + '<span style="font-size:10px;color:' + color + ';">' + pctInt + '%</span>'
+    + '<span style="font-size:10px;color:' + color + ';">' + leftInt + '%</span>'
     + '</span>';
 }
 

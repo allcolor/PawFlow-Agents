@@ -239,9 +239,9 @@ function _osProjectPanel(el, corners, w, h) {
   el.style.zIndex = String(Math.max(1, Math.round((1 - zsum / 4) * 2500)));
 }
 
-// Battery above each agent's head: context USED, mirroring the header
-// gauge exactly (same source, same percentage, same colors) so the two
-// never disagree. Hidden until the first reading exists.
+// Battery above each agent's head: context LEFT (100 − used %), mirroring
+// the header gauge exactly (same source, same percentage, same colors) so
+// the two never disagree. Hidden until the first reading exists.
 function _osRefreshBatteries(now) {
   if (now - _osBattAt < 1000) return;
   _osBattAt = now;
@@ -252,10 +252,11 @@ function _osRefreshBatteries(now) {
     const entry = usage[_osKey(rec.name)];
     if (!entry || !entry.max) { rec.battEl.style.display = 'none'; return; }
     const pct = Math.max(0, Math.min(1, entry.pct || 0));
+    const leftInt = 100 - Math.round(pct * 100);
     rec.battEl.style.display = 'block';
-    rec.battFill.style.width = (pct * 100).toFixed(0) + '%';
+    rec.battFill.style.width = leftInt + '%';
     rec.battFill.style.background = pct >= 0.80 ? '#f0ad4e' : '#4ecdc4';
-    rec.battEl.title = Math.round(pct * 100) + '%';
+    rec.battEl.title = leftInt + '%';
   });
 }
 
@@ -286,7 +287,7 @@ function _osUpdateBoard(now) {
         ? ' ' + it.lastTool : '')
       : (it.lastTool || it.status || '');
     return { name: it.name, taskId: it.taskId || '', doing: doing,
-             batt: pct ? '\u{1F50B}' + Math.round(pct * 100) + '%' : '' };
+             batt: pct ? '\u{1F50B}' + (100 - Math.round(pct * 100)) + '%' : '' };
   });
   const sig = JSON.stringify(model);
   if (sig === _osBoardText) return;

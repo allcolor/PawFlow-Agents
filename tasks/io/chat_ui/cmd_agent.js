@@ -227,7 +227,8 @@ function updateActiveAgentBadge() {
   badge.innerHTML = escapeHtml(label) + gaugeHtml;
   badge.style.display = '';
   // Battery-style header icon mirrors the badge's context gauge; the full
-  // badge itself lives in the icon's popover.
+  // badge itself lives in the icon's popover. Display only: the battery
+  // shows what is LEFT (100 − used %), orange under 20% remaining.
   const gaugeWrap = document.getElementById('ctxGaugeWrap');
   const gaugeFill = document.getElementById('ctxGaugeFill');
   if (gaugeWrap && gaugeFill) {
@@ -237,12 +238,13 @@ function updateActiveAgentBadge() {
       ? Math.max(0, Math.min(1, ctxUsage.pct || (ctxUsage.used / ctxUsage.max)))
       : 0;
     const pctInt = Math.round(pct * 100);
+    const leftInt = 100 - pctInt;
     const gaugeColor = pct >= 0.80 ? '#f0ad4e' : '#4ecdc4';
-    gaugeFill.style.height = pctInt + '%';
+    gaugeFill.style.height = leftInt + '%';
     gaugeFill.style.background = gaugeColor;
     const gaugePct = document.getElementById('ctxGaugePct');
     if (gaugePct) {
-      gaugePct.textContent = pctInt + '%';
+      gaugePct.textContent = leftInt + '%';
       gaugePct.style.color = gaugeColor;
     }
     gaugeWrap.style.display = '';

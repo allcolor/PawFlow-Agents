@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Context gauges (header battery, active-agents rows, resource panel agents,
+  OpenSpace batteries and roster, context editor line) now display the
+  percentage **remaining** (100 − used), draining like a battery, and turn
+  orange once less than 20% is left. Display only — stored usage values and
+  thresholds are unchanged.
 - A2A panel: every publication now also shows its AG-UI URL (`/agui/...`)
   with a copy button, and a hint explains the two directions — export through
   a publication, import through the "External AG-UI" agent runtime.

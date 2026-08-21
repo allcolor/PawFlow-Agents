@@ -12,9 +12,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 
+from core._llm_types import LLMCallError
 from core.llm_providers.cli_shared import is_anthropic_messages_endpoint
 from core.tool_json import parse_tool_arguments, tool_argument_parse_error
 from tools.cc_interactive_filters import (
@@ -446,9 +448,22 @@ class _CCITurnCoordinator:
                     if not self._stop_seen_at:
                         self._stop_seen_at = time.time()
                 elif hook_name == "StopFailure":
+                    # The CLI ended the turn on an error it could not recover
+                    # from (it already retried the API itself). Terminal for
+                    # PawFlow too: the prompt is consumed, so the failure must
+                    # reach the user instead of a driver retry.
                     info = event.get("input") or {}
-                    detail = info.get("error") or "Claude Code interactive turn failed"
-                    raise RuntimeError(str(detail))
+                    detail = str(info.get("error") or info.get("reason")
+                                 or "Claude Code interactive turn failed")
+                    lowered = detail.lower()
+                    rate_limited = bool(
+                        re.search(r"\b429\b", detail)
+                        or "rate limit" in lowered or "rate_limit" in lowered
+                        or "usage limit" in lowered)
+                    raise LLMCallError(
+                        f"Claude Code interactive turn failed: {detail}",
+                        category="rate_limited" if rate_limited else "unknown",
+                        retryable=False, provider="claude-code-interactive")
                 continue
             if etype != "sse":
                 continue

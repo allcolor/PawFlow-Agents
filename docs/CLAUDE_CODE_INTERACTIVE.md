@@ -456,6 +456,13 @@ The provider assembles responses from those events:
   interactive turn, because Claude Code can issue intermediate model requests
   before the tmux turn is complete. Response content still comes only from
   MITM-observed response events.
+- A `StopFailure` hook (the CLI gave up on an API error, e.g. an upstream
+  `429` usage limit) ends the turn as a **non-retryable** `LLMCallError`
+  carrying the CLI's error text. Interactive CLI providers are never re-run by
+  the driver or agent-level retry loops: the prompt is already consumed by the
+  live session and the CLI performed its own API retries, so a PawFlow retry
+  would paste the prompt again or trip the cold/delta context guard. The
+  failure is surfaced to the webchat and the agent stops.
 
 ## Prompt Input
 

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code interactive: a `StopFailure` (for example an upstream `429`
+  usage limit on a subscription backend) now ends the turn with a
+  non-retryable error that shows the CLI's message in the webchat. The driver
+  and agent-level retry loops no longer re-run interactive CLI turns, which
+  re-pasted the prompt into the live tmux session (or tripped the cold/delta
+  context guard with `DeltaContextRequired`) and left the agent shown as
+  working after the CLI had already failed.
+
 ## [1.0.0-beta.226] — 2026-08-21
 
 ### Changed

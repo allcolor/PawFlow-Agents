@@ -330,6 +330,17 @@ class LLMResponse:
 
 
 
+#: Providers that drive a live interactive CLI session (tmux). A turn is a
+#: prompt pasted into that session: once pasted it is consumed, the CLI runs
+#: its own API retries, and re-running the turn from PawFlow would paste the
+#: prompt a second time (or trip the cold/delta context guard on the same
+#: client). Failures of these providers are therefore surfaced, never retried
+#: by the generic driver or agent-level retry loops.
+INTERACTIVE_CLI_PROVIDERS = frozenset({
+    "claude-code-interactive", "codex-interactive", "antigravity-interactive",
+})
+
+
 class LLMClientError(Exception):
     """Error from LLM client."""
     pass

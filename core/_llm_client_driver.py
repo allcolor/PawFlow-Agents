@@ -14,6 +14,7 @@ from typing import List, Optional
 
 from core.token_counter import count_messages_tokens, truncate_tokens
 from core._llm_types import (
+    INTERACTIVE_CLI_PROVIDERS,
     AgentSuperseded,
     CCCompactDetected,
     ColdStartRequired,
@@ -252,6 +253,11 @@ class _LLMClientDriverMixin:
             try:
                 return _do_complete(model)
             except (LLMClientError, Exception) as e:
+                if self.provider in INTERACTIVE_CLI_PROVIDERS:
+                    # The prompt is already consumed by the live CLI session,
+                    # which did its own API retries; calling the provider
+                    # again would paste it twice or trip the cold/delta guard.
+                    raise
                 last_error = e
                 err_str = str(e)
 
@@ -596,6 +602,13 @@ class _LLMClientDriverMixin:
                 from tasks.ai.agent_exceptions import AgentCancelled as _AC
                 if isinstance(e, (_AC, AgentSuperseded, CCCompactDetected, ColdStartRequired,
                                   DeltaContextRequired)):
+                    raise
+                if self.provider in INTERACTIVE_CLI_PROVIDERS:
+                    # Same rule as complete(): an interactive CLI turn is never
+                    # re-run from here. A StopFailure (e.g. an upstream 429)
+                    # matched the 429 branch below and re-pasted the prompt
+                    # into the live tmux, leaving the agent "working" while the
+                    # CLI had already shown the error.
                     raise
                 last_error = e
                 err_str = str(e)

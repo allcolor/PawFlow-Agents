@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.228] — 2026-08-21
+
 ### Added
 
 - Flow editor: a published version can be deleted from the **Versions**
@@ -45,6 +47,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (cacheable, ~100 KB less per page load); the operator `custom_css` is its
   own `<style id="custom-css">` after the modules, before the theme.
   Docs: `docs/CHAT_UI_TEMPLATES.md`, plan `docs/CHAT_UI_TEMPLATE_PLAN.md`.
+- Roadmap, README, project summary, and website now describe what has
+  shipped: the manual flow editor and package-backed media providers move to
+  *Recently Completed*, mobile work is now iOS + PWA (the Android app ships
+  with every release), and the shipped list gains the flow editor and runtime
+  console, OpenSpace and the simplified live turn view, policy gating V0,
+  AG-UI, A2A, durable confirmations, external secret providers, and
+  encryption at rest. `PROJECT_SUMMARY.md` no longer lists shipped items as
+  upcoming, and the docs hub links the flow editor, runtime console,
+  confirmations, and policy gating references.
 
 ### Fixed
 

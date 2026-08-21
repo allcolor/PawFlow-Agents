@@ -5,6 +5,8 @@ and the bridge against a scripted fake adapter over a socketpair.
 """
 
 import base64
+
+from chat_ui_testing import rendered_chat_html
 import json
 import os
 import queue
@@ -1145,7 +1147,7 @@ def test_ws_handler_rejects_foreign_conversation(monkeypatch):
 # ── UI wiring (static introspection, house pattern) ─────────────────
 
 def test_chat_ui_voice_mode_is_wired():
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     assert 'id="voiceModeBtn"' in template
     assert 'onclick="toggleVoiceMode()"' in template
 

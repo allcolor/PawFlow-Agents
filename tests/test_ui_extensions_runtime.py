@@ -7,6 +7,8 @@ asset serving, server handlers) lands in phase 2.
 """
 
 import shutil
+
+from chat_ui_testing import rendered_chat_html
 import subprocess
 from pathlib import Path
 
@@ -27,7 +29,7 @@ def serve_chat_ui_src():
 
 @pytest.fixture(scope="module")
 def template_src():
-    return (_CHAT_UI / "template.html").read_text(encoding="utf-8")
+    return rendered_chat_html()
 
 
 # ── ext_runtime.js public surface ────────────────────────────────────────────────

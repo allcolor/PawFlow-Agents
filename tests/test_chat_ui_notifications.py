@@ -1,11 +1,13 @@
 """Runtime notification-center contracts for the web chat."""
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 from pathlib import Path
 
 
 CHAT_UI = Path("tasks/io/chat_ui")
-TEMPLATE = (CHAT_UI / "template.html").read_text(encoding="utf-8")
+TEMPLATE = rendered_chat_html()
 NOTIFICATIONS = (CHAT_UI / "notifications.js").read_text(encoding="utf-8")
 MESSAGES = (CHAT_UI / "messages_render.js").read_text(encoding="utf-8")
 TYPING = (CHAT_UI / "typing.js").read_text(encoding="utf-8")

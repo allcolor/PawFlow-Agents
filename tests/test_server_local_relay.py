@@ -1,6 +1,8 @@
 """Admin-gated server-local execution for managed relay services."""
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -293,7 +295,7 @@ def test_generic_service_update_cannot_set_server_relay_permissions(
 
 
 def test_admin_ui_exposes_server_relay_toggle():
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     admin_js = Path("tasks/io/chat_ui/admin_settings.js").read_text(encoding="utf-8")
 
     assert "openAdminServerRelaysDialog()" in template

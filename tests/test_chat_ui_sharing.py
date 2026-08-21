@@ -8,6 +8,8 @@ module is actually served.
 """
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 from pathlib import Path
 
 UI = Path("tasks/io/chat_ui")
@@ -15,7 +17,7 @@ SHARE_JS = (UI / "conversations_share.js").read_text(encoding="utf-8")
 CONVERSATIONS_JS = (UI / "conversations.js").read_text(encoding="utf-8")
 MENU_JS = (UI / "conversations_menu.js").read_text(encoding="utf-8")
 MESSAGES_RENDER_JS = (UI / "messages_render.js").read_text(encoding="utf-8")
-TEMPLATE_HTML = (UI / "template.html").read_text(encoding="utf-8")
+TEMPLATE_HTML = rendered_chat_html()
 SERVE = Path("tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
 
 

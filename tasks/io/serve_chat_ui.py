@@ -1,7 +1,10 @@
 """ServeChatUI Task — Serve the chat HTML page.
 
-The HTML template is in tasks/io/chat_ui/template.html.
-JS modules are served separately by serveAssets task via /chat/js/{path}.
+The page is rendered from the Jinja2 template tree under
+``tasks/io/chat_ui/templates/`` (see docs/CHAT_UI_TEMPLATES.md): ``chat.html``
+is the skeleton, it includes the region partials and exposes the extension
+points. JS modules are served separately by serveAssets via /chat/js/{path};
+CSS modules (``_CSS_MODULES``) the same way under /chat/js/css/{file}.
 
 Flow pattern:
     httpReceiver (GET /chat)           → serveChatUI  → handleHTTPResponse
@@ -13,10 +16,11 @@ import json
 import logging
 import re
 import threading
-import time
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import unquote
+
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
@@ -24,6 +28,8 @@ from core.base_task import BaseTask
 logger = logging.getLogger(__name__)
 
 _CHAT_UI_DIR = Path(__file__).parent / "chat_ui"
+_TEMPLATES_DIR = _CHAT_UI_DIR / "templates"
+_CSS_DIR = _CHAT_UI_DIR / "css"
 
 # JS modules in load order (each file must be standalone)
 # ext_runtime.js must load early so other modules can fire hooks safely.
@@ -92,30 +98,51 @@ _JS_MODULES = [
     "conversation_livekit.js",
 ]
 
-_html_cache: str = ""
-_html_cache_sig = None
-_html_cache_version = ""
-_html_cache_lock = threading.Lock()
-_html_preload_started = False
-_html_cache_checked_at = 0.0
-_HTML_SIG_CHECK_INTERVAL = 5.0
+# CSS modules in cascade order, emitted by the skeleton as
+# <link rel="stylesheet" href="/chat/js/css/<file>?v=..."> before the theme
+# and custom CSS. Empty until the inline <style> block moves out of chat.html.
+_CSS_MODULES: Tuple[str, ...] = ()
+
+# One environment per process. auto_reload re-reads a partial whose mtime
+# changed (hotpatch workflow); autoescape + StrictUndefined: the template
+# marks the server-built blocks |safe explicitly, a missing context key is
+# an error. trim/lstrip keep block tags from leaving blank lines.
+_env = Environment(
+    loader=FileSystemLoader(str(_TEMPLATES_DIR)),
+    autoescape=True,
+    undefined=StrictUndefined,
+    auto_reload=True,
+    trim_blocks=True,
+    lstrip_blocks=True,
+)
+
+_preload_started = False
+_preload_lock = threading.Lock()
+_i18n_block_cache: Tuple[tuple, str] = ((), "")
+_i18n_block_lock = threading.Lock()
+
+
+def _stat_items(base: Path, pattern: str, prefix: str) -> list:
+    items = []
+    if not base.exists():
+        return items
+    for p in sorted(base.glob(pattern)):
+        if not p.is_file():
+            continue
+        st = p.stat()
+        items.append((prefix + p.relative_to(base).as_posix(), st.st_mtime_ns, st.st_size))
+    return items
 
 
 def _asset_signature():
-    items = []
-    # template.html carries the whole inline <style> block: a CSS-only change
-    # (dock zoom, theme, layout) must invalidate the served HTML. Before this
-    # was included, editing template.html changed nothing on a running server
-    # -- the signature stayed identical, the cached template was served
-    # forever, and a browser hard-reload (shift-ctrl-r) showed the old CSS
-    # because the server itself never re-read the file.
-    for _tpl in ("template.html",):
-        p = _CHAT_UI_DIR / _tpl
-        try:
-            st = p.stat()
-            items.append((_tpl, st.st_mtime_ns, st.st_size))
-        except FileNotFoundError:
-            items.append((_tpl, 0, 0))
+    """mtime/size of everything that shapes the served page.
+
+    Templates and CSS modules are included so that editing any partial or
+    stylesheet changes the ``?v=`` asset version (browser cache busting); the
+    Jinja environment re-reads changed templates on its own.
+    """
+    items = _stat_items(_TEMPLATES_DIR, "**/*.html", "templates/")
+    items += _stat_items(_CSS_DIR, "*.css", "css/")
     for mod in _JS_MODULES:
         p = _CHAT_UI_DIR / mod
         try:
@@ -123,18 +150,12 @@ def _asset_signature():
             items.append((mod, st.st_mtime_ns, st.st_size))
         except FileNotFoundError:
             items.append((mod, 0, 0))
-    i18n_dir = _CHAT_UI_DIR / "i18n"
-    try:
-        i18n_paths = sorted(i18n_dir.glob("*.json"))
-    except Exception:
-        i18n_paths = []
-    for p in i18n_paths:
-        try:
-            st = p.stat()
-            items.append(("i18n/" + p.name, st.st_mtime_ns, st.st_size))
-        except FileNotFoundError:
-            items.append(("i18n/" + p.name, 0, 0))
+    items += _i18n_signature()
     return tuple(items)
+
+
+def _i18n_signature() -> list:
+    return _stat_items(_CHAT_UI_DIR / "i18n", "*.json", "i18n/")
 
 
 def _cookie_value(cookie_header: str, name: str) -> str:
@@ -177,7 +198,17 @@ def _initial_theme_block(flowfile: FlowFile) -> str:
 
 
 def _initial_i18n_block() -> str:
-    """Embed boot i18n catalogs so the UI does not depend on nested JSON assets."""
+    """Embed boot i18n catalogs so the UI does not depend on nested JSON assets.
+
+    Serialising the three catalogs is the only costly part of a render; the
+    block is cached per i18n file signature.
+    """
+    global _i18n_block_cache
+    sig = tuple(_i18n_signature())
+    with _i18n_block_lock:
+        cached_sig, cached_html = _i18n_block_cache
+        if cached_html and cached_sig == sig:
+            return cached_html
     i18n_dir = _CHAT_UI_DIR / "i18n"
     languages = []
     catalogs = {}
@@ -190,13 +221,16 @@ def _initial_i18n_block() -> str:
             catalogs[code] = json.loads((i18n_dir / f"{code}.json").read_text(encoding="utf-8"))
         except Exception:
             catalogs[code] = {}
-    return (
+    html = (
         "<script>window.PAWFLOW_I18N_LANGUAGES="
         + json.dumps(languages, ensure_ascii=False)
         + ";window.PAWFLOW_I18N_CATALOGS="
         + json.dumps(catalogs, ensure_ascii=False)
         + ";</script>\n"
     )
+    with _i18n_block_lock:
+        _i18n_block_cache = (sig, html)
+    return html
 
 
 def _initial_extensions_block(user_id: str = "", conversation_id: str = "") -> str:
@@ -283,9 +317,6 @@ def _compute_js_version(sig=None) -> str:
     return h.hexdigest()[:8]
 
 
-_EXTENSIONS_PLACEHOLDER = "<!--__PAWFLOW_EXTENSIONS_PLACEHOLDER__-->"
-
-
 def _safe_package_component(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.@+-]", "_", str(value or "")) or "default"
 
@@ -309,68 +340,47 @@ def _has_pfp_install_records(user_id: str, conversation_id: str = "") -> bool:
     return False
 
 
-def _load_html() -> str:
-    global _html_cache, _html_cache_sig, _html_cache_version, _html_cache_checked_at
-    with _html_cache_lock:
-        now = time.monotonic()
-        if _html_cache and now - _html_cache_checked_at < _HTML_SIG_CHECK_INTERVAL:
-            return _html_cache
-        sig = _asset_signature()
-        if _html_cache and _html_cache_sig == sig:
-            _html_cache_checked_at = now
-            return _html_cache
+def render_chat_page(*, agent_path: str = "/api/agent",
+                     sse_path: str = "/api/agent/events", login_url: str = "",
+                     theme_block: str = "", extensions_block: Optional[str] = None,
+                     custom_css: str = "") -> str:
+    """Render ``templates/chat.html`` for one request.
 
-        v = _compute_js_version(sig)
-        template = (_CHAT_UI_DIR / "template.html").read_text(encoding="utf-8")
-
-        # Build <script defer> tags — all load in parallel, execute in order,
-        # only AFTER HTML is fully parsed (no HTTP slot contention). During an
-        # update a page can arrive just before the server restarts, then receive
-        # a transient 502 for one module. Browsers do not retry failed scripts;
-        # reload the whole ordered module set once the server is back instead of
-        # leaving a permanently half-initialized page.
-        script_tags = []
-        for mod in _JS_MODULES:
-            if (_CHAT_UI_DIR / mod).exists():
-                script_tags.append(
-                    f'<script defer src="/chat/js/{mod}?v={v}" '
-                    'onerror="window.__pawflowAssetLoadFailed()"></script>')
-        scripts_html = (
-            f'<script>window.PAWFLOW_ASSET_VERSION={json.dumps(v)};'
-            'window.__pawflowAssetReloadScheduled=false;'
-            'window.__pawflowAssetLoadFailed=function(){'
-            'if(window.__pawflowAssetReloadScheduled)return;'
-            'window.__pawflowAssetReloadScheduled=true;'
-            'setTimeout(function(){window.location.reload();},1500);'
-            '};</script>\n'
-            + _initial_i18n_block()
-            + _EXTENSIONS_PLACEHOLDER
-            + "\n".join(script_tags)
-        )
-
-        # Replace placeholder with script tags
-        html = template.replace("/* JS_PLACEHOLDER */", "")
-        html = html.replace("</body>", f"{scripts_html}\n</body>")
-
-        _html_cache = html
-        _html_cache_sig = sig
-        _html_cache_version = v
-        _html_cache_checked_at = now
-        logger.info("Chat UI loaded: %d chars template, %d JS modules, version=%s",
-                    len(template), len(_JS_MODULES), v)
-        return html
+    ``theme_block``, ``extensions_block`` (the empty boot manifest when
+    omitted) and the i18n block are HTML built by this module that the
+    template inserts with ``|safe``; ``custom_css`` is operator configuration
+    inserted inside the main ``<style>``; every other value is autoescaped by
+    the template (paths go through ``tojson`` in scripts).
+    """
+    sig = _asset_signature()
+    if extensions_block is None:
+        extensions_block = _initial_extensions_block()
+    return _env.get_template("chat.html").render(
+        asset_version=_compute_js_version(sig),
+        js_modules=[mod for mod in _JS_MODULES if (_CHAT_UI_DIR / mod).exists()],
+        css_modules=list(_CSS_MODULES),
+        i18n_block=_initial_i18n_block(),
+        theme_block=theme_block or "",
+        extensions_block=extensions_block,
+        agent_path=agent_path,
+        sse_path=sse_path,
+        login_url=login_url,
+        custom_css=_safe_style_text(custom_css),
+    )
 
 
-def _start_html_preload_once() -> None:
-    global _html_preload_started
-    with _html_cache_lock:
-        if _html_preload_started or _html_cache:
+def _start_preload_once() -> None:
+    """Compile the template tree and the i18n block off the init path."""
+    global _preload_started
+    with _preload_lock:
+        if _preload_started:
             return
-        _html_preload_started = True
+        _preload_started = True
 
     def _preload() -> None:
         try:
-            _load_html()
+            _env.get_template("chat.html")
+            _initial_i18n_block()
         except Exception:
             logger.debug("Chat UI preload failed", exc_info=True)
 
@@ -393,7 +403,7 @@ class ServeChatUITask(BaseTask):
     ICON = "chat"
 
     def initialize(self):
-        _start_html_preload_once()
+        _start_preload_once()
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -430,20 +440,8 @@ class ServeChatUITask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        agent_path = self.config.get("agent_path", "/api/agent")
-        login_url = self.config.get("login_url", "")
-        sse_path = self.config.get("sse_path", "/api/agent/events")
-        html = _load_html()
-        initial_theme = _initial_theme_block(flowfile)
-        if initial_theme:
-            html = html.replace("</head>", initial_theme + "</head>", 1)
         user_id = (flowfile.get_attribute("http.auth.principal") or "").strip()
         conversation_id = (flowfile.get_attribute("http.cookie.pawflow_conv") or "").strip()
-        ext_block = _initial_extensions_block(user_id, conversation_id)
-        html = html.replace(_EXTENSIONS_PLACEHOLDER, ext_block, 1)
-        html = html.replace("{{AGENT_PATH}}", agent_path)
-        html = html.replace("{{LOGIN_URL}}", login_url)
-        html = html.replace("{{SSE_PATH}}", sse_path)
 
         custom_css = self.config.get("custom_css", "")
         custom_css_file = self.config.get("custom_css_file", "")
@@ -453,10 +451,16 @@ class ServeChatUITask(BaseTask):
                 if css_path.is_file():
                     custom_css += "\n" + css_path.read_text(encoding="utf-8")
             except Exception:
-                logging.getLogger(__name__).debug("Ignored exception", exc_info=True)
-        if custom_css:
-            html = html.replace("</style>",
-                                f"\n/* Custom theme */\n{custom_css}\n</style>", 1)
+                logger.debug("Ignored exception", exc_info=True)
+
+        html = render_chat_page(
+            agent_path=self.config.get("agent_path", "/api/agent"),
+            sse_path=self.config.get("sse_path", "/api/agent/events"),
+            login_url=self.config.get("login_url", ""),
+            theme_block=_initial_theme_block(flowfile),
+            extensions_block=_initial_extensions_block(user_id, conversation_id),
+            custom_css=custom_css,
+        )
 
         flowfile.set_content(html.encode("utf-8"))
         flowfile.set_attribute("http.response.status", "200")

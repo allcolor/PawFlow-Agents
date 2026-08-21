@@ -1,6 +1,8 @@
 """Source invariants for cognitive webchat panels."""
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 from pathlib import Path
 
 
@@ -20,7 +22,7 @@ def test_cognitive_panel_modules_load_after_shared_ui_helpers():
 
 
 def test_action_menu_and_commands_expose_all_cognitive_panels():
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     commands = _text("tasks/io/chat_ui/commands.js")
     assert "cmdShowProjectGraph()" in template
     assert "cmdShowProjectWiki()" in template
@@ -132,14 +134,14 @@ def test_panel_dialogs_use_mobile_safe_header_chrome():
     for relative in ("tasks/io/chat_ui/project_wiki.js",
                      "tasks/io/chat_ui/scratchpad.js"):
         assert 'class="cog-split"' in _text(relative), relative
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".cog-dialog { position: relative; }" in template
     assert "flex-wrap: wrap" in template.split(".cog-head")[1].split("}")[0]
     assert "position: absolute" in template.split(".cog-close")[1].split("}")[0]
 
 
 def test_conversation_controls_row_scrolls_on_mobile():
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     mobile = template.split("@media (max-width: 768px)")[1].split("@media")[0]
     row = mobile.split(".prompt-controls-row {")[1].split("}")[0]
     assert "overflow-x: auto" in row

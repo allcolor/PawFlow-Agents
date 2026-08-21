@@ -1,6 +1,8 @@
 """Chat theme repository and action invariants."""
 
 import base64
+
+from chat_ui_testing import rendered_chat_html
 import io
 import json
 import re
@@ -232,7 +234,7 @@ def test_apply_global_theme_without_conversation():
 
 
 def test_theme_ui_selector_and_repository_entries_exist():
-    template = open("tasks/io/chat_ui/template.html", encoding="utf-8").read()
+    template = rendered_chat_html()
     serve = open("tasks/io/serve_chat_ui.py", encoding="utf-8").read()
     resources = "".join(
         p.read_text(encoding="utf-8")

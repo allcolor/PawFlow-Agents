@@ -1,5 +1,7 @@
 """Contract tests for the conversation-scoped simplified live chat view."""
 from pathlib import Path
+
+from chat_ui_testing import rendered_chat_html
 import json
 import logging
 
@@ -363,7 +365,7 @@ def test_show_file_artifact_parser_is_strict_and_dedupes_by_file_id():
 
 
 def test_view_mode_selector_and_locale_key_parity():
-    template = (CHAT_UI / "template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     conversations = (CHAT_UI / "conversations.js").read_text(encoding="utf-8")
     assert 'id="viewItemClassic"' in template
     assert 'id="viewItemSimplified"' in template
@@ -405,7 +407,7 @@ def test_turn_block_cannot_be_squeezed_by_the_message_column():
     # is not visible loses its automatic minimum size, so an overflowing
     # transcript shrinks this block to its padding: a bare bar with no readable
     # header and no reachable click target. It must opt out of shrinking.
-    template = (CHAT_UI / "template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     columns = [chunk.split("}", 1)[0] for chunk in template.split(".messages {")[1:]]
     assert any("display: flex; flex-direction: column" in rule for rule in columns)
     rule = template.split(".msg.simple-turn-block {", 1)[1].split("}", 1)[0]

@@ -1241,6 +1241,10 @@ textarea, input, select, .input-row textarea, .sidebar-settings select, .fe-tool
 .msg.error, .exec-risk.high { background: color-mix(in srgb, var(--pf-danger) 18%, var(--pf-panel)) !important; color: var(--pf-danger) !important; }
 .ctx-menu, .action-menu, .dialog, .exec-dialog, .fe-panel, .fe-ctx, .fe-preview-pane, .scroll-nav button { box-shadow: 0 4px 16px var(--pf-shadow) !important; }
 ::-webkit-scrollbar-thumb { background: var(--pf-border) !important; }
+{% if custom_css %}
+/* Custom theme */
+{{ custom_css|safe }}
+{% endif %}
 </style>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -1252,6 +1256,7 @@ if (typeof hljs !== 'undefined') {
   });
 }
 </script>
+{{ theme_block|safe }}
 </head>
 <body>
 <button class="sidebar-toggle pf-grip" id="sidebarToggle" type="button" aria-expanded="false"
@@ -1679,12 +1684,20 @@ if (typeof hljs !== 'undefined') {
 <div id="pf-ext-panel-host" style="display:none;position:fixed;top:0;right:0;bottom:0;width:380px;background:var(--pf-panel,#16213e);border-left:1px solid var(--pf-border,#0f3460);z-index:50;overflow-y:auto;"></div>
 <script>
 // Config injected by server
-const AGENT_PATH = '{{AGENT_PATH}}';
-const API = window.location.origin + '{{AGENT_PATH}}';
-const SSE_URL = window.location.origin + '{{SSE_PATH}}';
-const LOGIN_URL = '{{LOGIN_URL}}';
+const AGENT_PATH = {{ agent_path|tojson }};
+const API = window.location.origin + {{ agent_path|tojson }};
+const SSE_URL = window.location.origin + {{ sse_path|tojson }};
+const LOGIN_URL = {{ login_url|tojson }};
 </script>
-<!-- JS modules loaded individually for caching -->
-/* JS_PLACEHOLDER */
+<!-- JS modules loaded individually for caching: <script defer> tags load in
+     parallel and execute in _JS_MODULES order once the HTML is parsed. A
+     failed module (transient 502 during an update) reloads the page once
+     instead of leaving it half-initialized. -->
+<script>window.PAWFLOW_ASSET_VERSION={{ asset_version|tojson }};window.__pawflowAssetReloadScheduled=false;window.__pawflowAssetLoadFailed=function(){if(window.__pawflowAssetReloadScheduled)return;window.__pawflowAssetReloadScheduled=true;setTimeout(function(){window.location.reload();},1500);};</script>
+{{ i18n_block|safe }}
+{{ extensions_block|safe }}
+{% for module in js_modules %}
+<script defer src="/chat/js/{{ module }}?v={{ asset_version }}" onerror="window.__pawflowAssetLoadFailed()"></script>
+{% endfor %}
 </body>
 </html>

@@ -1,6 +1,8 @@
 """Source invariants for the webchat Openspace 3D view."""
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 import re
 from pathlib import Path
 
@@ -71,7 +73,7 @@ def test_environment_module_supports_restart_free_hotpatch_loading():
 
 
 def test_view_menu_offers_openspace_mode():
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert 'id="viewItemOpenspace"' in template
     assert "onViewModeSelect('openspace')" in template
     assert 'id="openspaceWrap"' in template
@@ -184,7 +186,7 @@ def test_last_bubble_is_persistent_and_seeded_from_history():
     assert "_osSeededIds" in openspace
     conversations = _text("tasks/io/chat_ui/conversations.js")
     assert "openspaceSeedHistory(data.messages || [], conversationId)" in conversations
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-stale" in template
 
 
@@ -207,7 +209,7 @@ def test_users_get_visitor_avatars_with_bubbles():
     # Shared conversations: one avatar per distinct human author.
     assert "src.type === 'user' && src.name" in openspace
     assert "'user:' + _osKey" in openspace
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert "osv-label-user" in template
 
 
@@ -251,7 +253,7 @@ def test_busy_agents_visibly_move():
     assert "rotation.y = Math.sin" not in openspace
     assert "rec.avatar.rotation.z = !walking && sway" in openspace
     assert "emissiveIntensity" in openspace  # PC screen flickers while busy
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     # Thought bubbles read as thoughts: cloud tail + pulsing status chip.
     assert ".osv-thought::before" in template
     assert "osvStatusPulse" in template
@@ -272,7 +274,7 @@ def test_wall_screen_projects_the_live_simplified_view():
     # onDone callbacks may chain a new walk: finished tweens run their
     # callbacks only after _osTweens has been reassigned.
     assert "finished.forEach((tw) => { if (tw.onDone) tw.onDone(); });" in openspace
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-bigscreen" in template
     # The projected transcript stays scrollable (pointer-events on).
     assert "pointer-events: auto" in template
@@ -327,7 +329,7 @@ def test_wall_fixtures_stay_on_the_room_side():
 
 def test_camera_has_frontal_surface_presets_and_level_side_views():
     source = _openspace_text()
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert "function _osSetCameraView(kind)" in source
     for kind in ("conversation", "board", "tv", "resources"):
         assert kind + ": {" in source
@@ -361,7 +363,7 @@ def test_agents_are_chibi_mascots_with_batteries_and_a_roster_board():
     # Blackboard roster of active agents, projected like the wall screen.
     assert "function _osUpdateBoard" in openspace
     assert "_osProjectPanel(_osBoardEl, _osBoardCorners" in openspace
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-batt" in template
     assert ".osv-board" in template
 
@@ -382,7 +384,7 @@ def test_bubble_streams_survive_expiry_and_layout_resizes():
     assert "new ResizeObserver(() => _osResize())" in openspace
     # Controls are discoverable in-scene.
     assert "osv-help" in openspace
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-help" in template
 
 
@@ -406,7 +408,7 @@ def test_bubbles_are_fully_readable_and_anchored():
     # Ctrl+drag lifts the camera target above the floor plane.
     assert "lift: e.ctrlKey" in openspace
     assert "_osCamPan.y" in openspace
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-bubble-body { max-height" in template
     # Bubble tails are centered so they point at the avatar underneath.
     assert ".osv-thought::before { content: ''; position: absolute; left: 50%;" in template
@@ -449,7 +451,7 @@ def test_flows_dialog_projects_a_live_3d_flow():
     assert "function _osFlowUp" in src
     assert "subflow_ref" in src
     assert "osvFlowUp" in src
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-flow-close" in template
 
 
@@ -457,7 +459,7 @@ def test_roster_board_has_per_agent_stop_controls():
     src = _openspace_text()
     assert "interruptSingle" in src
     assert "stopSingle" in src
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     # The projected board must opt back into clicks (overlay default is
     # pointer-events: none).
     assert ".osv-board { pointer-events: auto; }" in template
@@ -486,7 +488,7 @@ def test_resources_poster_pops_boards_that_open_submenu_dialogs():
     assert "_toggleSection" in src
     # The wall of permanently projected clones is gone.
     assert "_osSyncResScreens" not in src
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-resdialog-body" in template
     assert ".osv-resscreen" not in template
 
@@ -501,7 +503,7 @@ def test_door_opens_conversation_picker_and_rooms_are_seeded():
     assert "_osHashSeed(cid)" in src
     # Conversation title framed above the wall screen.
     assert "_osTitleCorners" in src
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-convtitle" in template
 
 
@@ -512,7 +514,7 @@ def test_flow_stage_close_is_robust():
     # DOM overlay eating pointer events).
     assert "'Escape'" in src
     assert "osvFlowClose" in src
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     seg = template.split(".osv-flow-close")[1][:400]
     assert "z-index: 9999" in seg
     assert "pointer-events: auto" in seg
@@ -559,7 +561,7 @@ def test_mobile_touch_controls_and_calm_resize():
     # pointers, and keyboard-driven resize storms must not blink.
     assert "function _osPinchState" in src
     assert "_osResizeTimer" in src
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-mobile-ctl" in template
     assert "pointer: coarse" in template
 
@@ -586,7 +588,7 @@ def test_bubbles_flush_before_reset_and_are_dismissable():
     # Every bubble carries a ✕ so it can be dismissed when it spoils the
     # view; the next message shows it again.
     assert "osv-bubble-close" in src
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-bubble-close" in template
 
 
@@ -687,7 +689,7 @@ def test_filestore_tv_plays_conversation_files():
     assert "'/files/' + encodeURIComponent(f.file_id)" in source
     # Media stops on room switch and on view deactivation (no ghost audio).
     assert source.count("openspaceTvStop()") >= 3
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert ".osv-tv " in template and ".osv-tv-body" in template
 
 

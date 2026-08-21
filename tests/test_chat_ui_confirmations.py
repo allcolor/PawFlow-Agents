@@ -1,6 +1,8 @@
 """Chat UI surfaces for durable confirmation requests."""
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +40,7 @@ def test_blocks_are_actionable_and_durable():
 
 
 def test_header_button_badge_panel_and_command():
-    template = _text("tasks/io/chat_ui/template.html")
+    template = rendered_chat_html()
     assert 'id="confirmationsBtn"' in template
     assert 'id="confirmationsBadge"' in template
     assert 'id="confirmationsPanel"' in template

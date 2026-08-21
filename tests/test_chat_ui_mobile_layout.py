@@ -1,10 +1,12 @@
 """Structural assertions for the chat UI's mobile (narrow viewport) layout."""
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 import re
 from pathlib import Path
 
-TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+TEMPLATE_HTML = rendered_chat_html()
 ATTACHMENTS_JS = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")
 GRAB_JS = Path("tasks/io/chat_ui/grab.js").read_text(encoding="utf-8")
 I18N_JS = Path("tasks/io/chat_ui/i18n.js").read_text(encoding="utf-8")

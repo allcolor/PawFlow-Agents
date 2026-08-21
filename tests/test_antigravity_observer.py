@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from chat_ui_testing import rendered_chat_html
+
 import threading
 
 from pathlib import Path
@@ -1149,7 +1151,7 @@ def test_chat_ui_exposes_single_agent_tmux_action_for_antigravity():
     # Command handlers (cmdAgentTmux + antigravity tmux) moved from terminal.js
     # into terminal_commands.js (<=800 split); engine stays in terminal.js.
     terminal = Path("tasks/io/chat_ui/terminal_commands.js").read_text(encoding="utf-8")
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     commands = Path("tasks/io/chat_ui/commands.js").read_text(encoding="utf-8")
     service_flow = "".join(
     Path(f"tasks/ai/actions/{_sf}").read_text(encoding="utf-8")

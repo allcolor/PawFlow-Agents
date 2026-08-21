@@ -18,9 +18,11 @@ a click-toggled popover (click shows, click again hides):
 """
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 from pathlib import Path
 
-TEMPLATE = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+TEMPLATE = rendered_chat_html()
 STATE_JS = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
 ACTIVE_JS = Path("tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
 CMD_AGENT_JS = Path("tasks/io/chat_ui/cmd_agent.js").read_text(encoding="utf-8")

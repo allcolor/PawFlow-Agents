@@ -8,6 +8,8 @@ when available.
 
 from __future__ import annotations
 
+from chat_ui_testing import rendered_chat_html
+
 import json
 import re
 import threading
@@ -559,7 +561,7 @@ def test_webchat_live_display_window_trims_only_autoscroll():
 
 
 def test_conversation_controls_have_fast_conversation_refresh_button():
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     controls = template[
         template.index('<div class="prompt-controls-panel"'):
         template.index('<div class="composer-action-mount"')
@@ -847,7 +849,7 @@ def test_audio_frontend_never_opens_stream_without_token():
 
 
 def test_view_menu_has_three_grouping_toggles():
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     convs = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
     messages = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
     sse = _SSE_JS  # combined split source (state + handler wires + shell)

@@ -1,6 +1,8 @@
 """Regression tests for chat UI message ordering."""
 
 from pathlib import Path
+
+from chat_ui_testing import rendered_chat_html
 from tests._agent_core_src import agent_core_src
 
 
@@ -19,7 +21,7 @@ SSE_JS = "".join(
     for _m in ("sse_state.js", "sse_handlers_a.js", "sse_handlers_b.js", "sse.js"))
 CONVERSATION_TTS_JS = Path("tasks/io/chat_ui/conversation_tts.js").read_text(encoding="utf-8")
 STATE_JS = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
-TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+TEMPLATE_HTML = rendered_chat_html()
 FILE_EXPLORER_JS = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
 AGENT_CORE = agent_core_src()
 TASK_MANAGEMENT = Path("core/handlers/task_management.py").read_text(encoding="utf-8")

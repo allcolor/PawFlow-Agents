@@ -1,4 +1,6 @@
 import shutil
+
+from chat_ui_testing import rendered_chat_html
 import subprocess
 from pathlib import Path
 
@@ -33,7 +35,7 @@ def test_file_explorer_template_evaluates_i18n_labels():
 
 def test_file_explorer_streams_uploads_and_keeps_mobile_toolbar_visible():
     src = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
 
     upload = src[src.index("async function _feUploadFiles(files)"):src.index("\nfunction _feCopyToStore")]
     assert "uploadFileToRelay(" in upload

@@ -1,4 +1,6 @@
 import json
+
+from chat_ui_testing import rendered_chat_html
 import re
 import subprocess
 from pathlib import Path
@@ -844,7 +846,7 @@ def test_relay_rebuild_worker_restarts_relays_then_pawflow(monkeypatch):
 
 def test_updates_dialog_is_wired_into_the_gear_menu_and_sse():
     ui = ROOT / "tasks" / "io" / "chat_ui"
-    template = (ui / "template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     admin_js = (ui / "admin_settings.js").read_text(encoding="utf-8")
     sse_js = (ui / "sse_handlers_b.js").read_text(encoding="utf-8")
 

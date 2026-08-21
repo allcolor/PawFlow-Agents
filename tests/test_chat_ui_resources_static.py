@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from chat_ui_testing import rendered_chat_html
+
 
 def test_modal_overlays_do_not_close_from_background_clicks():
     ui_files = list(Path("tasks/io/chat_ui").glob("*.js"))
@@ -27,7 +29,7 @@ def test_modal_overlays_do_not_close_from_background_clicks():
 def test_service_parameter_fill_helper_is_wired_in_chat_ui():
     src = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     src += Path("tasks/io/chat_ui/schema_form.js").read_text(encoding="utf-8")
-    html = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    html = rendered_chat_html()
 
     assert "get_service_parameter_helper" in src
     assert "_renderParamFillHelper" in src
@@ -77,7 +79,7 @@ def test_agent_llm_pickers_list_all_llm_capable_services():
 
 
 def test_admin_settings_menu_exposes_oauth_onboarding_tokens():
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     admin_js = Path("tasks/io/chat_ui/admin_settings.js").read_text(encoding="utf-8")
 
     assert "openOAuthTokensDialog()" in template
@@ -98,7 +100,7 @@ def test_admin_user_management_can_edit_identity_links():
 
 
 def test_chat_ui_exposes_oauth_link_account_button():
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     state_js = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
 
     assert "linkAccountBtn" in template
@@ -230,7 +232,7 @@ def test_skill_draft_ui_labels_exist_in_every_locale():
 
 def test_typing_and_context_progress_use_their_dedicated_surfaces():
     js = Path("tasks/io/chat_ui/typing.js").read_text(encoding="utf-8")
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
 
     assert "function typingSweepText" in js
     assert "const TYPING_SWEEP_MS = 250" in js
@@ -414,7 +416,7 @@ def test_resource_panel_renders_with_no_conversation_selected():
     resources_js = "".join(p.read_text(encoding="utf-8") for p in sorted(Path("tasks/io/chat_ui").glob("resources*.js")))
     file_explorer_js = Path("tasks/io/chat_ui/file_explorer.js").read_text(encoding="utf-8")
     conversations_js = Path("tasks/io/chat_ui/conversations.js").read_text(encoding="utf-8")
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
 
     # The early hide-and-return on no conversation must be gone.
     assert "style.display = 'none'; return; }" not in resources_js
@@ -441,7 +443,7 @@ def test_resource_panel_renders_with_no_conversation_selected():
 
 
 def test_pfp_depot_is_a_permanent_left_sidebar_panel():
-    template = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+    template = rendered_chat_html()
     js = Path("tasks/io/chat_ui/resources_pfp.js").read_text(encoding="utf-8")
     render_js = Path("tasks/io/chat_ui/resources_render.js").read_text(encoding="utf-8")
 

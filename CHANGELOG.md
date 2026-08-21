@@ -17,6 +17,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **Discard draft** button in the canvas deletes the working copy without
   touching any version.
 
+### Changed
+
+- Chat UI page: `tasks/io/chat_ui/template.html` is replaced by a Jinja2
+  template tree under `tasks/io/chat_ui/templates/` (`chat.html` skeleton),
+  rendered per request by `serve_chat_ui.render_chat_page()` with autoescape
+  and `StrictUndefined`. The string-replace markers (`/* JS_PLACEHOLDER */`,
+  `{{AGENT_PATH}}`, the extensions placeholder) and the served-HTML string
+  cache are gone; the asset version hash now covers templates and CSS
+  modules. Tests read the rendered page through
+  `tests/chat_ui_testing.rendered_chat_html()`; the DOM contract (ids, PFP
+  slot hosts, i18n keys) is pinned by `tests/fixtures/chat_ui_dom_snapshot.json`.
+  Docs: `docs/CHAT_UI_TEMPLATES.md`, plan `docs/CHAT_UI_TEMPLATE_PLAN.md`.
+
 ### Fixed
 
 - Flow editor: the Versions and Diff dialogs had no close control and stayed

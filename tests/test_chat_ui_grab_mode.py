@@ -7,6 +7,8 @@ happens to a multiline prompt.
 """
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 import re
 from pathlib import Path
 
@@ -29,7 +31,7 @@ def test_grab_module_registered_after_terminal_js():
 
 
 def test_grab_button_lives_with_reload_in_conversation_controls():
-    html = (CHAT_UI / "template.html").read_text(encoding="utf-8")
+    html = rendered_chat_html()
     controls = html[
         html.index('<div class="prompt-controls-panel"'):
         html.index('<div class="composer-action-mount"')

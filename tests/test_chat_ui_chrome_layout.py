@@ -1,10 +1,12 @@
 """Structural assertions for the simplified chat chrome."""
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 from pathlib import Path
 
 
-TEMPLATE_HTML = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+TEMPLATE_HTML = rendered_chat_html()
 TOOLTIPS_JS = Path("tasks/io/chat_ui/tooltips.js").read_text(encoding="utf-8")
 TODOS_JS = Path("tasks/io/chat_ui/todos.js").read_text(encoding="utf-8")
 ATTACHMENTS_JS = Path("tasks/io/chat_ui/attachments.js").read_text(encoding="utf-8")

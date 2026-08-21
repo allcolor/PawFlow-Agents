@@ -1,6 +1,8 @@
 """Structural contract for the two-section left sidebar accordion."""
 
 from pathlib import Path
+
+from chat_ui_testing import rendered_chat_html
 import shutil
 import subprocess
 
@@ -8,7 +10,7 @@ import pytest
 
 
 UI = Path("tasks/io/chat_ui")
-TEMPLATE = (UI / "template.html").read_text(encoding="utf-8")
+TEMPLATE = rendered_chat_html()
 RESOURCES = (UI / "resources.js").read_text(encoding="utf-8")
 RESOURCE_RENDER = (UI / "resources_render.js").read_text(encoding="utf-8")
 AVATAR_HELPER = Path(

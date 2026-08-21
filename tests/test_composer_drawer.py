@@ -7,9 +7,11 @@ the Active Agents panel is the only stop surface.
 """
 
 import json
+
+from chat_ui_testing import rendered_chat_html
 from pathlib import Path
 
-TEMPLATE = Path("tasks/io/chat_ui/template.html").read_text(encoding="utf-8")
+TEMPLATE = rendered_chat_html()
 STATE_JS = Path("tasks/io/chat_ui/state.js").read_text(encoding="utf-8")
 
 

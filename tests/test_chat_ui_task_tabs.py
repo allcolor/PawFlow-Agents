@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from chat_ui_testing import rendered_chat_html
+
 CHAT_UI = Path("tasks/io/chat_ui")
 
 
@@ -19,7 +21,7 @@ def test_task_tabs_module_registered_and_loads_after_its_deps():
 
 
 def test_task_tabs_panel_and_dock_present_in_template():
-    html = (CHAT_UI / "template.html").read_text(encoding="utf-8")
+    html = rendered_chat_html()
     assert 'id="taskTabDock"' in html
     assert 'id="taskTabPanel"' in html
     assert 'id="taskTabPanelTitle"' in html

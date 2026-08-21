@@ -1021,9 +1021,15 @@ def test_antigravity_tmux_submit_aborts_if_session_invalidated_after_paste(monke
 
     monkeypatch.setattr(pool, "_paste_buffer", paste_and_invalidate)
 
+    # subprocess.run is shared process-wide, so unrelated background calls may
+    # be observed while this module-level monkeypatch is active.
+    calls.append((["git", "-c", "gc.auto=0", "ls-files", "-z"], {}))
     assert pool.send_text(state, "hello") is False
     assert state.last_error == "Container container was invalidated during tmux submit"
-    flat = [cmd for cmd, _kw in calls]
+    flat = [
+        cmd for cmd, _kw in calls
+        if cmd[:2] == ["docker", "exec"]
+    ]
     assert flat[0][-6:] == ["tmux", "send-keys", "-t", "pawflow-agy:0.0", "-X", "cancel"]
     assert flat[1][-3:] == ["tmux", "load-buffer", "-"]
     assert flat[2][-4:] == ["paste-buffer", "-p", "-t", "pawflow-agy:0.0"]

@@ -9,8 +9,8 @@ rationale: [CHAT_UI_TEMPLATE_PLAN.md](CHAT_UI_TEMPLATE_PLAN.md).
 ```python
 from tasks.io.serve_chat_ui import render_chat_page
 html = render_chat_page(agent_path="/api/agent", sse_path="/api/agent/events",
-                        login_url="", theme_block="", extensions_block="",
-                        custom_css="")
+                        login_url="", theme_block="", extensions_block=None,
+                        template_slots=None, custom_css="")
 ```
 
 - One `jinja2.Environment` per process: `FileSystemLoader(chat_ui/templates)`,
@@ -33,7 +33,7 @@ html = render_chat_page(agent_path="/api/agent", sse_path="/api/agent/events",
   | `extensions_block` | str, `|safe` | `PAWFLOW_EXTENSION_CONTEXT` / `PAWFLOW_EXTENSIONS` boot manifest (the empty manifest when the caller passes none) |
   | `template_slots` | dict | `{slot: [fragment html, ...]}` — the enabled PFP packages' server-rendered fragments (see below) |
   | `agent_path`, `sse_path`, `login_url` | str | serveChatUI task parameters, emitted with `tojson` inside `<script>` |
-  | `custom_css` | str | serveChatUI `custom_css` (+ `custom_css_file`), inserted inside the main `<style>` with `|safe` after `</style` neutralisation |
+  | `custom_css` | str | serveChatUI `custom_css` (+ `custom_css_file`), emitted as `<style id="custom-css">` after the CSS modules, `</style` neutralised |
 
   Only the server-built blocks are inserted with `|safe`, visibly in the
   skeleton; every other value is autoescaped. `StrictUndefined` turns a
@@ -134,6 +134,21 @@ Tests never read a template file: `tests/chat_ui_testing.py` exposes
 `render_chat_page`) and `chat_ui_partial(name)` (raw source of one partial
 for region-specific invariants). Assert on the rendered page unless the
 invariant is about a partial's own source.
+
+## How to
+
+- **Add a partial**: create the file under its region directory, `{% include
+  "region/file.html" %}` it from the skeleton (or from the region partial it
+  belongs to), and move the markup verbatim. Nothing else to register — the
+  asset signature globs `templates/**`.
+- **Add a CSS module**: create `css/NN_name.css` **and** add its name to
+  `_CSS_MODULES` in `serve_chat_ui.py` at the right position; the `NN_`
+  prefix must mirror that position. The contract test fails on a file that
+  is not listed, or a listed name with no file.
+- **Add a JS module**: unchanged — append to `_JS_MODULES` in load order.
+- **Add an extension slot**: see the last bullet of the section above.
+- **Never** reintroduce a string-replace marker: everything the server
+  injects is a named context key.
 
 ## Hotpatching a running server
 

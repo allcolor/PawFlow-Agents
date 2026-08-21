@@ -81,7 +81,7 @@ code duplication.
 | `scraplingFetch` | Fetch web pages with anti-bot handling, JS rendering, and CSS selectors |
 | `sendEmail` | Send an email via SMTP (password or OAuth2 for Gmail/Microsoft) |
 | `serveAssets` | Serve static assets (JS, CSS, images) from the flow directory |
-| `serveChatUI` | Serve an HTML chat interface for the agent |
+| `serveChatUI` | Serve an HTML chat interface for the agent (Jinja template tree + CSS modules, see [Chat UI templates](CHAT_UI_TEMPLATES.md)) |
 | `serveFile` | Serve a file from the temporary file store |
 | `serveLogin` | Dynamic login page with multi-provider support |
 | `servePfpExtensionAssets` | Serve hash-verified assets for installed PFP UI extensions and scoped extension-repository resources via `/chat/ext/<package>/<hash>/<file>` |

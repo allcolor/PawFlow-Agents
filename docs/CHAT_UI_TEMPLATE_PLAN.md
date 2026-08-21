@@ -1,9 +1,12 @@
 # Chat UI Template Modularisation Plan
 
-Status: **approved for implementation** (reviewed 2026-08-21). Answers to
-the review questions of section 9: Q1 external `<link>` CSS modules; Q2 the
-12 template slots of decision 6; Q3 the `rendered_chat_html()` test helper;
-Q4 all work packages, in order.
+Status: **implemented** (2026-08-21). Answers to the review questions of
+section 9: Q1 external `<link>` CSS modules; Q2 the 12 template slots of
+decision 6; Q3 the `rendered_chat_html()` test helper; Q4 all work packages,
+in order. Delivered as WP0 `46bc89b1`, WP1 `8d022883`, WP2 `f96b96b5`,
+WP3 `3fc543aa`, WP4 (docs). The living reference is
+[CHAT_UI_TEMPLATES.md](CHAT_UI_TEMPLATES.md); this document is kept for the
+rationale and the measurements that justified the change.
 
 ## 1. Outcome
 

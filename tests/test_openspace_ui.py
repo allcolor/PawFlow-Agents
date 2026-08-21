@@ -627,6 +627,28 @@ def test_state_orbiters_circle_the_agent_ring():
     assert "_osClearOrbit(rec)" in retire
 
 
+def test_running_agents_never_drift_to_idle_while_tracked():
+    src = _openspace_text()
+    # The active-agents tracker (server poll + SSE hints) is the liveness
+    # reference: a flash delegate running a 30s bash, or thinking without a
+    # streamed preview, stayed quiet longer than the linger window and was
+    # put to sleep (Zzz) while it was actually working.
+    assert "function _osLiveAgents()" in src
+    live = src.split("function _osLiveAgents()")[1].split("\nfunction ")[0]
+    assert "Object.values(activeInteractions)" in live
+    expire = src.split("function _osExpireBubbles(now)")[1].split("\nfunction ")[0]
+    assert "const live = _osLiveAgents();" in expire
+    assert "const it = live.get(rec.key);" in expire
+    # Tracked → never auto-idled; an idle avatar still reported by a fresher
+    # tracker entry wakes up (tool if one is in flight, thinking otherwise).
+    assert "if (rec.state === 'idle' && (it.updatedAt || 0) > rec.stateSince)" in expire
+    assert "_osSetState(rec, busyTool ? 'tool' : 'thinking', busyTool)" in expire
+    tracked, untracked = expire.split("const it = live.get(rec.key);")[1].split("return;\n    }")
+    assert "OSV_IDLE_AFTER_MS" not in tracked
+    # The quiet-timeout fallback only applies to agents the tracker omits.
+    assert "now - rec.stateSince > OSV_BUBBLE_LINGER_MS + OSV_IDLE_AFTER_MS" in untracked
+
+
 def test_filestore_tv_plays_conversation_files():
     source = _openspace_text()
     # A clickable TV mesh opens the FileStore picker...

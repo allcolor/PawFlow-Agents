@@ -26,6 +26,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- OpenSpace: flash delegates (and any agent whose provider stays quiet
+  for more than a few seconds — a long tool run, an unstreamed thinking
+  pass) no longer drift back to Zzz while they are working. The
+  active-agents tracker (server `list_active` poll + SSE hints) is now the
+  liveness reference: a tracked agent is never auto-idled, and an idle avatar
+  the tracker still reports wakes back up; the quiet timeout only applies to
+  agents the tracker omits.
 - Claude Code interactive: a `StopFailure` (for example an upstream `429`
   usage limit on a subscription backend) now ends the turn with a
   non-retryable error that shows the CLI's message in the webchat. The driver

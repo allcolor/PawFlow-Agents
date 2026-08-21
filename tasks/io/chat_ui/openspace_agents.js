@@ -429,7 +429,23 @@ function _osFlushBubbles(rec) {
   if (rec.thoughtText) _osShowBubble(rec, 'thought', rec.thoughtText);
 }
 
+// Liveness reference: the active-agents tracker (server poll `list_active`,
+// SSE hints in between) knows which agents are really running. Keyed by
+// avatar key; when one agent runs several tasks the freshest entry wins.
+function _osLiveAgents() {
+  const live = new Map();
+  if (typeof activeInteractions === 'undefined' || !activeInteractions) return live;
+  Object.values(activeInteractions).forEach((it) => {
+    if (!it || !it.name) return;
+    const key = _osKey(it.name);
+    const prev = live.get(key);
+    if (!prev || (it.updatedAt || 0) > (prev.updatedAt || 0)) live.set(key, it);
+  });
+  return live;
+}
+
 function _osExpireBubbles(now) {
+  const live = _osLiveAgents();
   _osAgents.forEach((rec) => {
     // The last bubble never disappears: the scene always shows each
     // participant's most recent message or thought. Linger only dims it
@@ -457,9 +473,23 @@ function _osExpireBubbles(now) {
         rec.thoughtEl.style.display = 'none';
       }
     }
+    if (rec.kind === 'user') return;
+    // An agent the tracker lists as running never drifts to Zzz because
+    // its provider stayed quiet: a long tool run or an unstreamed thinking
+    // pass (flash delegates only forward tool_call/tool_result/thinking_
+    // content) easily outlasts the linger window. One that went idle but
+    // is still reported after that (fresh poll or SSE hint) wakes back up.
+    const it = live.get(rec.key);
+    if (it) {
+      if (rec.state === 'idle' && (it.updatedAt || 0) > rec.stateSince) {
+        const busyTool = it.activeTools && it.activeTools.length ? it.lastTool : '';
+        _osSetState(rec, busyTool ? 'tool' : 'thinking', busyTool);
+      }
+      return;
+    }
     // Agents whose turn ended drift back to idle without an explicit
-    // done event for them (delegates, providers that only emit done for
-    // the primary).
+    // done event for them (providers that only emit done for the
+    // primary) — only once the tracker no longer lists them.
     if (rec.state !== 'idle' && rec.state !== 'waiting'
         && now - rec.stateSince > OSV_BUBBLE_LINGER_MS + OSV_IDLE_AFTER_MS) {
       _osSetState(rec, 'idle');

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The bundled ComfyUI operator artifact and catalog are rebuilt from the 1.1.0
+  package sources, so release reproducibility checks include its flow tasks,
+  durable flows, and official Comfy MCP connection instead of the previous
+  1.0.0 bundle.
+
 ## [1.0.0-beta.234] — 2026-08-22
 
 ### Added

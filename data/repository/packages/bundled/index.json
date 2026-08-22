@@ -88,12 +88,12 @@
     },
     {
       "package": "pawflow.comfyui-operator",
-      "version": "1.0.0",
-      "description": "Operational skill for installing, configuring, running, validating, and troubleshooting self-hosted ComfyUI through PawFlow relays and media services.",
+      "version": "1.1.0",
+      "description": "All-in-one self-hosted ComfyUI operator with an orchestration skill, durable flows, deterministic flow tasks, and the official Comfy MCP connection.",
       "category": "Media & AI",
-      "artifact": "pawflow.comfyui-operator-1.0.0.pfp",
-      "sha256": "sha256:f71d581a879f8a2fc73939c1ad0486f12d47695a4c7a2cff649b9e60f78e5406",
-      "package_size": 7460,
+      "artifact": "pawflow.comfyui-operator-1.1.0.pfp",
+      "sha256": "sha256:359ea7056b01b378702e38bfa0432a6d3c40fe3b26dba6649acfe0432fe9ffde",
+      "package_size": 21863,
       "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
       "tags": [
         "comfyui",
@@ -104,7 +104,15 @@
         "audio"
       ],
       "objects": [
-        "skill:operate-comfyui"
+        "skill:operate-comfyui",
+        "flow_task:normalize",
+        "flow_task:probe",
+        "flow_task:validate",
+        "flow:ensure-ready",
+        "flow:provision-assets",
+        "flow:generate-video",
+        "flow:validate-video",
+        "mcp_server:comfy-mcp"
       ]
     },
     {

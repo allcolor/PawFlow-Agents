@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.234] — 2026-08-22
+
 ### Added
 
 - OAuth for every LLM provider, not just the CLI ones. Authentication was

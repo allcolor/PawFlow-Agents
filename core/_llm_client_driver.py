@@ -464,7 +464,7 @@ class _LLMClientDriverMixin:
                 turn_callback(visible, tool_calls)
 
         def _do_stream(mdl):
-            nonlocal streamed_visible
+            nonlocal streamed_raw, streamed_visible
             self._circuit_before_call(mdl)
             start = time.time()
             if self.provider in OPENAI_WIRE_PROVIDERS:
@@ -478,12 +478,20 @@ class _LLMClientDriverMixin:
                     err = f"{type(exc).__name__}: {exc}"
                     is_relay_proxy = "/relay-proxy/" in base_url
                     is_broken_pipe = self._is_broken_pipe_error(exc)
-                    if not (is_relay_proxy and is_broken_pipe):
+                    is_truncated_stream = (
+                        isinstance(exc, LLMCallError)
+                        and exc.category in TRUNCATED_STREAM_CATEGORIES)
+                    if not ((is_relay_proxy and is_broken_pipe)
+                            or is_truncated_stream):
                         raise
+                    streamed_raw = ""
+                    streamed_visible = ""
+                    fallback_reason = exc.category if is_truncated_stream else "broken_pipe"
                     logger.warning(
-                        "OpenAI relay streaming failed with broken pipe; retrying non-streaming fallback "
-                        "model=%s base_url=%s error=%s",
-                        mdl, self._redact_relay_proxy_url(base_url), err,
+                        "OpenAI streaming failed (%s); retrying the same request "
+                        "without streaming model=%s base_url=%s error=%s",
+                        fallback_reason, mdl,
+                        self._redact_relay_proxy_url(base_url), err,
                     )
                     result = self._complete_openai(
                         messages, mdl, temperature, wire_max_tokens, None, tools,
@@ -495,7 +503,7 @@ class _LLMClientDriverMixin:
                     if result.content:
                         _visible_callback(result.content)
                     logger.info(
-                        "OpenAI relay non-streaming fallback succeeded model=%s base_url=%s tokens_out=%s",
+                        "OpenAI non-streaming fallback succeeded model=%s base_url=%s tokens_out=%s",
                         result.model or mdl, self._redact_relay_proxy_url(base_url), result.tokens_out,
                     )
             elif self.provider in RESPONSES_WIRE_PROVIDERS:

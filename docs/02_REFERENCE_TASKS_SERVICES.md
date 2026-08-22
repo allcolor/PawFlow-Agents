@@ -684,6 +684,13 @@ conflicting keys.
 OpenAI and GitHub Copilot send OpenAI chat-completions bodies, so they reuse
 the whole OpenAI path. Only the envelope differs.
 
+OpenAI-compatible SSE responses must end with a specified `finish_reason` or
+the `data: [DONE]` sentinel. If a gateway closes a successful HTTP response
+before either signal, or reports a non-standard error finish reason, PawFlow
+does not commit the partial answer. It immediately retries the same completion
+without streaming; if that request also fails, the normal bounded retry and
+configured fallback-model policy still applies.
+
 *OpenAI Responses* (`openai-responses`, `core/llm_providers/openai_responses.py`)
 is NOT a dialect: it is a different wire format on a different endpoint
 (`/responses`), with typed `input` items instead of `messages`, `instructions`

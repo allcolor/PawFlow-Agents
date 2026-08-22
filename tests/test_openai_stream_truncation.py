@@ -13,6 +13,7 @@ from core._llm_types import (
     LLMCallError,
     LLMClientError,
     LLMMessage,
+    LLMResponse,
 )
 from core.llm_client import LLMClient
 from core.llm_providers.openai import VALID_FINISH_REASONS
@@ -63,6 +64,15 @@ def _client(monkeypatch, chunks_per_attempt, *, max_retries=1):
         "default_model": "test-model",
         "max_retries": max_retries,
     })
+
+    def fail_non_streaming_fallback(*_args, **_kwargs):
+        raise LLMCallError(
+            "Truncated LLM stream: non-streaming fallback failed",
+            category="stream_truncated",
+        )
+
+    monkeypatch.setattr(
+        client, "_complete_openai", fail_non_streaming_fallback)
     return client, attempts
 
 
@@ -108,8 +118,14 @@ class TestInBandProviderError:
 
     def test_network_error_finish_reason_raises(self, monkeypatch):
         client, _ = _client(monkeypatch, [_sse(NETWORK_ERROR, DONE)])
-        with pytest.raises(LLMClientError) as excinfo:
-            client.complete_stream([LLMMessage("user", "ping", conversation_id="conv1")])
+        from core.llm_providers.openai import LLMOpenaiMixin
+
+        with pytest.raises(LLMCallError) as excinfo:
+            LLMOpenaiMixin._stream_openai(
+                client,
+                [LLMMessage("user", "ping", conversation_id="conv1")],
+                "test-model", 0.0, 0, None, None,
+            )
         assert "network_error" in str(excinfo.value)
 
     def test_network_error_is_not_a_valid_finish_reason(self):
@@ -140,9 +156,60 @@ class TestWellFormedStreamsAreUntouched:
 
 
 class TestRetry:
-    """A truncated stream is transient: ask again rather than give up."""
+    """Recover through non-streaming first, then the bounded replay loop."""
+
+    def test_truncation_falls_back_to_non_streaming(self, monkeypatch):
+        client, attempts = _client(
+            monkeypatch, [_sse(DELTA_THINK)], max_retries=3)
+        streamed = []
+        thinking = []
+        fallback_calls = []
+
+        def complete_fallback(*args, **kwargs):
+            fallback_calls.append((args, kwargs))
+            return LLMResponse(
+                content="fallback answer",
+                thinking="finished reasoning",
+                model="test-model",
+                finish_reason="stop",
+                tokens_out=4,
+            )
+
+        monkeypatch.setattr(client, "_complete_openai", complete_fallback)
+        resp = client.complete_stream(
+            [LLMMessage("user", "ping", conversation_id="conv1")],
+            callback=streamed.append,
+            thinking_callback=thinking.append,
+        )
+
+        assert len(attempts) == 1
+        assert len(fallback_calls) == 1
+        assert resp.content == "fallback answer"
+        assert streamed == ["fallback answer"]
+        assert thinking == ["hmm", "finished reasoning"]
+
+    def test_in_band_network_error_uses_non_streaming_fallback(
+            self, monkeypatch):
+        client, attempts = _client(
+            monkeypatch, [_sse(NETWORK_ERROR, DONE)], max_retries=2)
+        monkeypatch.setattr(
+            client,
+            "_complete_openai",
+            lambda *_args, **_kwargs: LLMResponse(
+                content="recovered",
+                model="test-model",
+                finish_reason="stop",
+            ),
+        )
+
+        resp = client.complete_stream(
+            [LLMMessage("user", "ping", conversation_id="conv1")])
+
+        assert len(attempts) == 1
+        assert resp.content == "recovered"
 
     def test_truncation_is_retried_and_the_retry_wins(self, monkeypatch):
+        """A failed non-streaming fallback returns to the bounded SSE retry."""
         client, attempts = _client(
             monkeypatch,
             [_sse(DELTA_THINK), _sse(DELTA, STOP, DONE)],

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Truncated OpenAI-compatible SSE responses now fall back immediately to the
+  same completion in non-streaming mode. This recovers gateways such as
+  opencode zen that can repeatedly close a stream after reasoning but before a
+  terminal event, instead of replaying the same failing stream until the agent
+  turn stops.
+
 ## [1.0.0-beta.236] — 2026-08-22
 
 ### Fixed

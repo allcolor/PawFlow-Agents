@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.238] — 2026-08-22
+
 ### Fixed
 
 - OpenAI-compatible completion recovery now stops reading immediately after

@@ -105,18 +105,20 @@ class LLMConnectionService(BaseService):
             if not str(self.default_model or "").strip():
                 raise ServiceError("omniroute requires default_model")
             try:
-                auth_headers(self.api_key, self.config.get("auth_mode", ""))
+                auth_headers(
+                    self.api_key, self.config.get("omniroute_auth_mode", ""))
                 request_headers(self.config)
             except ValueError as exc:
                 raise ServiceError(str(exc)) from exc
-        elif self.provider in ("claude-code", "claude-code-interactive", "antigravity-interactive", "codex-app-server", "codex-interactive", "gemini"):
-            # CLI providers — binary auto-detected at runtime, OAuth pool is
-            # the default credential source, api_key is an optional fallback.
-            pass
-        else:
-            # API-based providers (openai, anthropic) need an api_key.
-            if not self.api_key:
-                raise ServiceError("api_key is required")
+        # One credential rule for every provider. It used to fork on provider
+        # family -- CLI providers could use an OAuth pool, everything else had
+        # to carry an api_key -- but that is not a property of the provider:
+        # an API endpoint can sit behind an identity provider, and a CLI can
+        # point at an unauthenticated local gateway.
+        from core.llm_auth_modes import validation_error
+        _auth_problem = validation_error(self.provider, self.config)
+        if _auth_problem:
+            raise ServiceError(_auth_problem)
         # compact_target_tokens > 40% of max_context_size leaves no room for
         # the post-compact context to grow before re-triggering compact, which
         # would loop. Reject at install time when both are set; if max_context
@@ -424,6 +426,23 @@ class LLMConnectionService(BaseService):
                 "type": "string", "sensitive": True,
                 "description": "API key for the provider",
             },
+            "auth_mode": {
+                "type": "select", "default": "",
+                "options": ["", "none", "api_key", "oauth"],
+                "description": (
+                    "How this service authenticates. Empty infers it from "
+                    "what is filled in, which is how services behaved before "
+                    "this field existed. "
+                    "none: the endpoint takes no credential (a local gateway) "
+                    "— an explicit choice, so a forgotten key cannot pass for "
+                    "one. "
+                    "api_key: use api_key or api_keys_pool. "
+                    "oauth: use the credential pool named by "
+                    "credential_service_id, refreshing the access token as "
+                    "needed. Available for every provider, not just the CLI "
+                    "ones."
+                ),
+            },
             "credential_service_id": {
                 "type": "service_ref",
                 "service_type": "llmCredentialOAuthProvider",
@@ -434,7 +453,10 @@ class LLMConnectionService(BaseService):
                     "codex-interactive": "codex-app-server",
                 },
                 "default": "",
-                "description": "OAuth credential provider service used when api_key is empty",
+                "description": (
+                    "OAuth credential pool backing auth_mode=oauth. A pool "
+                    "whose provider is 'generic' is accepted by any provider."
+                ),
             },
             "base_url": {
                 "type": "string", "default": "",
@@ -476,7 +498,7 @@ class LLMConnectionService(BaseService):
                     "without one."
                 ),
             },
-            "auth_mode": {
+            "omniroute_auth_mode": {
                 "type": "select", "default": "bearer",
                 "options": ["bearer", "none"],
                 "description": "OmniRoute gateway authentication mode",
@@ -779,7 +801,7 @@ class LLMConnectionService(BaseService):
                 "set": {
                     "azure_deployment":  {"visible": False},
                     "azure_api_version": {"visible": False},
-                    "auth_mode": {"visible": False},
+                    "omniroute_auth_mode": {"visible": False},
                     "omniroute_mode": {"visible": False},
                     "omniroute_budget_usd": {"visible": False},
                     "omniroute_budget_fallback": {"visible": False},
@@ -875,7 +897,7 @@ class LLMConnectionService(BaseService):
                                  "description": "Explicit OmniRoute gateway URL, normally ending in /v1"},
                     "default_model": {"visible": True, "required": True,
                                       "description": "OmniRoute model or virtual route, for example auto"},
-                    "auth_mode": {"visible": True, "required": True},
+                    "omniroute_auth_mode": {"visible": True, "required": True},
                     "omniroute_mode": {"visible": True},
                     "omniroute_budget_usd": {"visible": True},
                     "omniroute_budget_fallback": {"visible": True},

@@ -240,6 +240,57 @@ class LLMClient(
             return _active
         return self._cfg("api_key", "")
 
+    def bearer_credential(self) -> str:
+        """The credential to authenticate with, whatever the mode.
+
+        One resolution point for every provider: a static key in `api_key`
+        mode, a live access token from the credential pool in `oauth` mode,
+        nothing in `none` mode. Providers keep deciding the *shape* of their
+        auth header; only the value's source changes, so this never has to be
+        taught about individual dialects.
+        """
+        from core.llm_auth_modes import NONE, OAUTH, resolve_mode
+
+        config = self._config_ref or {}
+        mode = resolve_mode(getattr(self, "provider", ""), config)
+        if mode == NONE:
+            return ""
+        if mode != OAUTH:
+            return self.api_key
+        service_id = str(self._cfg("credential_service_id", "") or "").strip()
+        if not service_id:
+            return self.api_key
+        try:
+            from core.llm_oauth_credential import access_token
+            from services.llm_credential_oauth import get_service_def
+            sdef = get_service_def(
+                service_id,
+                user_id=getattr(self, "_user_id", "") or "",
+                conv_id=getattr(self, "_conversation_id", "") or "")
+            pool_config = (getattr(sdef, "config", {}) or {}) if sdef else {}
+            endpoints = {
+                "authorize_url": pool_config.get("authorize_url", ""),
+                "token_url": pool_config.get("token_url", ""),
+                "scope": pool_config.get("scope", ""),
+            }
+            if sdef is not None and not endpoints["token_url"]:
+                # Resolve the identity-provider preset the same way the
+                # credential service does, placeholders included.
+                from core import ServiceFactory
+                try:
+                    service = ServiceFactory.create(sdef)
+                    endpoints = service._generic_endpoints()
+                except Exception:
+                    logger.debug("[oauth-cred] preset resolution failed",
+                                 exc_info=True)
+            token = access_token(service_id, pool_config, endpoints)
+        except Exception:
+            logger.warning(
+                "[oauth-cred] could not read the credential pool '%s'",
+                service_id, exc_info=True)
+            return self.api_key
+        return token or self.api_key
+
     @property
     def base_url(self):
         # Read the raw template (LazyResolveDict's auto-resolve doesn't have

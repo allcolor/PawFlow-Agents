@@ -44,7 +44,8 @@ def auth_headers(api_key: str, auth_mode: str) -> Dict[str, str]:
     if mode == "none":
         return {}
     if mode != "bearer":
-        raise ValueError("omniroute auth_mode must be 'bearer' or 'none'")
+        raise ValueError(
+            "omniroute_auth_mode must be 'bearer' or 'none'")
     if not api_key:
         raise ValueError("omniroute bearer auth requires api_key")
     return {"Authorization": f"Bearer {api_key}"}

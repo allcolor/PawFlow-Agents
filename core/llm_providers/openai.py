@@ -56,12 +56,21 @@ class LLMOpenaiMixin:
         """Authentication headers for this provider's dialect."""
         from core.llm_providers.openai_dialects import DIALECTS, auth_headers
         provider = getattr(self, "provider", "openai")
+        # The credential's SOURCE (static key, OAuth pool, or nothing) is
+        # resolved once in bearer_credential; the header SHAPE stays each
+        # dialect's business.
+        credential = self.bearer_credential()
         if provider == "omniroute":
             from core.llm_providers.omniroute import auth_headers
-            return auth_headers(self.api_key, self._cfg("auth_mode", ""))
+            return auth_headers(
+                credential, self._cfg("omniroute_auth_mode", ""))
         if provider in DIALECTS:
-            return auth_headers(provider, self.api_key)
-        return {"Authorization": f"Bearer {self.api_key}"}
+            return auth_headers(provider, credential)
+        if not credential:
+            # auth_mode=none: send no Authorization header at all rather than
+            # an empty bearer, which some gateways reject outright.
+            return {}
+        return {"Authorization": f"Bearer {credential}"}
 
     def _openai_provider_headers(self) -> Dict[str, str]:
         """Return provider-specific Chat Completions request headers."""

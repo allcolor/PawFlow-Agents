@@ -125,7 +125,7 @@ class LLMAnthropicMixin:
             self._active_http_conn = conn
             json_body = json.dumps(body).encode("utf-8")
             headers = {
-                "x-api-key": self.api_key,
+                "x-api-key": self.bearer_credential(),
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json",
                 "Content-Length": str(len(json_body)),
@@ -680,7 +680,7 @@ class LLMAnthropicMixin:
             "/v1/messages",
             body,
             headers={
-                "x-api-key": self.api_key,
+                "x-api-key": self.bearer_credential(),
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json",
             },

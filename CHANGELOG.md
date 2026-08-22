@@ -8,6 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- OAuth for every LLM provider, not just the CLI ones. Authentication was
+  decided by provider family — CLI providers could use an OAuth credential
+  pool, everything else had to carry an `api_key` — which is not a property of
+  the provider: an API endpoint can sit behind an identity provider, and a CLI
+  can be pointed at an unauthenticated local gateway. Every provider now has
+  the same three modes via `auth_mode`:
+  - `none`: the endpoint takes no credential. Explicit on purpose, so a
+    forgotten key cannot pass for a deliberate choice; no `Authorization`
+    header is sent at all.
+  - `api_key`: the existing key or key pool.
+  - `oauth`: an access token from the pool named by `credential_service_id`,
+    refreshed automatically before it expires.
+  - Leaving `auth_mode` empty infers the mode from what is filled in, so every
+    service keeps working untouched with nothing to edit.
+- A `generic` OAuth credential pool, configured with an identity provider
+  (Keycloak, Okta, Auth0, GitLab, or explicit endpoints) plus client
+  id/secret. It is accepted by every LLM provider **including the three
+  CLIs**, which can be pointed at another OAuth-authenticated backend. The
+  identity-provider presets and the token exchange are reused from the
+  existing OAuth code rather than duplicated.
+  - Token refresh is serialised per pool: identity providers that rotate
+    refresh tokens revoke the previous one, so two agents refreshing the same
+    pool at once would leave the slower writer storing an already-revoked
+    token and kill the pool until someone logged in again.
+
 - Tool exposure modes for agents. How an agent's tools are advertised was
   hardcoded to one surface — `get_tool_schema` + `use_tool`, everything else
   reached through them — while MCP publications already offered four. The
@@ -37,6 +62,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   prompt-assembly paths (API turns and CLI cold starts) and, unlike the
   Scratchpad hint, is unconditional: it has to land before the first write,
   not once a ScratchDir already exists.
+
+### Changed
+
+- **Breaking:** OmniRoute's `auth_mode` service field is renamed
+  `omniroute_auth_mode`. `auth_mode` now names the general credential mode
+  described above. Update any OmniRoute service configuration that sets it;
+  there is no dual read.
 
 ### Fixed
 

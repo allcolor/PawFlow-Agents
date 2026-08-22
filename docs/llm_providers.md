@@ -10,7 +10,7 @@ For new CLI-backed agent services, use `claude-code-interactive` for Claude Code
 |---|---|---|---|
 | `openai` | Direct API | OpenAI and OpenAI-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. This is the generic OpenAI-compatible API surface. |
 | `openai-responses` | Direct API | Endpoints speaking OpenAI's **Responses API** | Same fields as `openai`, different wire format and a different endpoint (`/responses`). See [Responses API](#responses-api). |
-| `omniroute` | Explicit gateway API | OmniRoute Chat Completions and virtual routes such as `auto` | Requires an explicit `base_url`, `auth_mode`, and `default_model`. Supports bounded routing controls, sanitized gateway metadata, and model discovery. |
+| `omniroute` | Explicit gateway API | OmniRoute Chat Completions and virtual routes such as `auto` | Requires an explicit `base_url`, `omniroute_auth_mode`, and `default_model`. Supports bounded routing controls, sanitized gateway metadata, and model discovery. |
 | `anthropic` | Direct API | Claude API and Anthropic-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
 | `claude-code-interactive` | Interactive CLI container with observed provider stream | **Preferred** Claude subscription and Claude Code agent sessions | Uses the Claude Code OAuth pool by default. API-key mode can also set `api_key` and `base_url` for Anthropic-compatible endpoints. |
 | `antigravity-interactive` | Interactive `agy` CLI in tmux with observed provider stream | Default Gemini subscription provider | Uses the Gemini OAuth credential pool, starts the real `agy` CLI, and routes tools through PawFlow MCP. |
@@ -35,7 +35,7 @@ contract is pinned to OmniRoute commit
 `c6c134300bd9d1c7a54448de1e5d5009b7143f3f`.
 
 Required configuration is explicit: `base_url`, `default_model`, and
-`auth_mode`. `auth_mode=bearer` also requires `api_key`; `auth_mode=none` is the
+`omniroute_auth_mode`. `omniroute_auth_mode=bearer` also requires `api_key`; `omniroute_auth_mode=none` is the
 only way to select an unauthenticated private gateway. PawFlow never infers
 no-auth mode from an empty key. Optional request controls are
 `omniroute_mode`, `omniroute_budget_usd`, and

@@ -24,6 +24,88 @@ def _handle_sf_k4(self, action, body, store, user_id, flowfile, _helpers):
     """service_flow cluster _sf_k4. Returns result or _UNHANDLED."""
     (_find_relay_svc, _audio_lookup_token, _get_server_relay_container_ip,
      _get_relay_published_port, _server_relay_proxy_target, _private_gateway_for_body) = _helpers
+    if action == "generic_oauth_login_url":
+        """Instructions for a generic (non-CLI) OAuth credential pool.
+
+        The pool carries its own identity provider, so the authorize URL is
+        built from its configuration rather than a vendor preset.
+        """
+        service_id = body.get("service_id", "")
+        authorize_url = ""
+        try:
+            from core import ServiceFactory
+            from services.llm_credential_oauth import get_service_def
+            sdef = get_service_def(
+                service_id, user_id=user_id,
+                conv_id=body.get("conversation_id", ""))
+            if sdef is not None:
+                authorize_url = ServiceFactory.create(
+                    sdef)._generic_endpoints().get("authorize_url", "")
+        except Exception:
+            logger.debug("generic oauth authorize URL unavailable",
+                         exc_info=True)
+        message = (
+            "Obtain an access token from your identity provider, then paste "
+            "the token document below as JSON:\n\n"
+            '  {"access_token": "...", "refresh_token": "...", '
+            '"expires_at": 1234567890}\n\n'
+            "refresh_token and expires_at are optional; with both set, "
+            "PawFlow refreshes the access token on its own before it "
+            "expires.")
+        if authorize_url:
+            message = ("Authorization endpoint for this pool:\n\n  "
+                       + authorize_url + "\n\n" + message)
+        flowfile.set_content(json.dumps({
+            "flow": "paste_credentials",
+            "message": message,
+        }).encode())
+        return [flowfile]
+
+    if action == "generic_oauth_login_code":
+        service_id = body.get("service_id", "")
+        credentials_json = body.get("credentials", "").strip()
+        if not service_id or not credentials_json:
+            flowfile.set_content(json.dumps({
+                "error": "Missing service_id or credentials"}).encode())
+            return [flowfile]
+        if _credential_provider_for_service(service_id, user_id) != "generic":
+            flowfile.set_content(json.dumps({
+                "error": (f"Service '{service_id}' is not a generic "
+                          "credential provider")}).encode())
+            return [flowfile]
+        try:
+            parsed = json.loads(credentials_json)
+        except json.JSONDecodeError as exc:
+            flowfile.set_content(json.dumps({
+                "error": f"Credentials must be JSON: {exc}"}).encode())
+            return [flowfile]
+        access_token = str(parsed.get("access_token") or "").strip()
+        if not access_token:
+            flowfile.set_content(json.dumps({
+                "error": ("Invalid credentials: no access_token found. "
+                          'Expected {"access_token": "...", '
+                          '"refresh_token": "...", "expires_at": ...}')
+            }).encode())
+            return [flowfile]
+        try:
+            expires_at = float(parsed.get("expires_at") or 0)
+        except (TypeError, ValueError):
+            expires_at = 0.0
+        from core.llm_oauth_credential import load_pool, pool_lock, save_pool
+        with pool_lock(service_id):
+            pool = load_pool(service_id)
+            pool.append({
+                "access_token": access_token,
+                "refresh_token": str(parsed.get("refresh_token") or ""),
+                "expires_at": expires_at,
+                "account": str(parsed.get("account") or ""),
+                "added_at": time.time(),
+            })
+            save_pool(service_id, pool)
+        flowfile.set_content(json.dumps({
+            "ok": True, "count": len(pool)}).encode())
+        return [flowfile]
+
     if action == "gemini_login_url":
         flowfile.set_content(json.dumps({
             "flow": "paste_credentials",

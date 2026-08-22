@@ -14,6 +14,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+#: Endpoint templates per identity provider. Exported as ``PRESETS`` so the
+#: LLM credential pool reuses these instead of keeping a second copy that
+#: would drift.
 _PRESETS = {
     "keycloak": {
         "display_name": "Sign in with Keycloak",
@@ -48,6 +51,8 @@ _PRESETS = {
         "userinfo_url": "https://gitlab.com/oauth/userinfo",
     },
 }
+
+PRESETS = _PRESETS
 
 
 class GenericOAuthProvider(OAuthBaseProvider):

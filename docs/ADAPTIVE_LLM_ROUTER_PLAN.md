@@ -1061,7 +1061,7 @@ controller-service type.
 {
   "provider": "omniroute",
   "base_url": "http://omniroute:20128/v1",
-  "auth_mode": "bearer",
+  "omniroute_auth_mode": "bearer",
   "api_key": "configured-secret-reference",
   "default_model": "auto",
   "omniroute_mode": "balanced",
@@ -1075,14 +1075,14 @@ Parameters:
 | Name | Required | Rules |
 |---|---:|---|
 | <code>base_url</code> | yes | Explicit HTTP(S) URL; no public default |
-| <code>auth_mode</code> | yes | <code>bearer</code> or explicit <code>none</code> |
+| <code>omniroute_auth_mode</code> | yes | <code>bearer</code> or explicit <code>none</code> |
 | <code>api_key</code> | conditional | Required for bearer mode |
 | <code>default_model</code> | yes | No silent model fallback |
 | <code>omniroute_mode</code> | no | balanced, fast, quality, cheap, reliable, offline |
 | <code>omniroute_budget_usd</code> | no | Zero disables request budget header |
 | <code>omniroute_budget_fallback</code> | conditional | Required when budget is positive |
 
-PawFlow must never infer <code>auth_mode=none</code> from an empty API key.
+PawFlow must never infer <code>omniroute_auth_mode=none</code> from an empty API key.
 
 ### 17.3 Wire implementation
 

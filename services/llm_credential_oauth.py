@@ -1,8 +1,14 @@
-"""OAuth credential provider service for CLI-backed LLM providers.
+"""OAuth credential provider service for LLM providers.
 
-This service owns the encrypted credential pool used by Claude Code, Codex,
-and Gemini CLI providers. LLM services reference it through
+This service owns the encrypted credential pool an LLM service reaches through
 `credential_service_id` instead of storing login actions directly.
+
+Four provider values. Three name a CLI vendor and carry that vendor's login
+flows (Claude Code, Codex, Gemini). The fourth, `generic`, carries an identity
+provider plus client id/secret instead of a vendor preset, which is what lets
+an API provider use OAuth at all -- and lets one of the three CLIs be pointed
+at a different OAuth-authenticated backend, since a CLI is not bound to its
+vendor's identity provider either.
 """
 
 from __future__ import annotations
@@ -17,8 +23,12 @@ logger = logging.getLogger(__name__)
 
 SERVICE_TYPE = "llmCredentialOAuthProvider"
 
+#: Provider value for a pool that is not tied to a CLI vendor. Accepted by
+#: every LLM provider, CLI included.
+GENERIC = "generic"
+
 # Canonical provider values used by the matching LLM services.
-PROVIDERS = ("claude-code", "codex-app-server", "gemini")
+PROVIDERS = ("claude-code", "codex-app-server", "gemini", GENERIC)
 _SHORT_PROVIDER = {
     "claude-code": "cc",
     "claude-code-interactive": "cc",
@@ -31,16 +41,19 @@ _SHORT_PROVIDER = {
     "antigravity-interactive": "gemini",
     "antigravity": "gemini",
     "agy": "gemini",
+    GENERIC: GENERIC,
 }
 _PROVIDER_BY_SHORT = {
     "cc": "claude-code",
     "codex": "codex-app-server",
     "gemini": "gemini",
+    GENERIC: GENERIC,
 }
 _DEFAULT_CREDENTIAL_SERVICE_IDS = {
     "claude-code": "claude_code_oauth_credentials",
     "codex-app-server": "codex_oauth_credentials",
     "gemini": "gemini_oauth_credentials",
+    GENERIC: "generic_oauth_credentials",
 }
 
 
@@ -90,7 +103,13 @@ def is_credential_service_def(sdef: Any, provider: str = "") -> bool:
     if not provider:
         return True
     cfg = getattr(sdef, "config", {}) or {}
-    return normalize_provider(cfg.get("provider", "")) == normalize_provider(provider)
+    pool_provider = normalize_provider(cfg.get("provider", ""))
+    # A generic pool carries its own identity provider, so it is not bound to
+    # any one LLM provider: a CLI pointed at another OAuth backend uses it the
+    # same way an API provider does.
+    if pool_provider == GENERIC:
+        return True
+    return pool_provider == normalize_provider(provider)
 
 
 def resolve_credential_service_id(provider: str, service_id: str = "",
@@ -139,7 +158,9 @@ class LLMCredentialOAuthProviderService(BaseService):
     TYPE = SERVICE_TYPE
     VERSION = "1.0.0"
     NAME = "LLM OAuth Credential Provider"
-    DESCRIPTION = "Encrypted OAuth credential pools for Claude Code, Codex, and Gemini CLI providers"
+    DESCRIPTION = (
+        "Encrypted OAuth credential pools for LLM providers: the Claude Code, "
+        "Codex and Gemini CLIs, or any identity provider via 'generic'")
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -153,19 +174,113 @@ class LLMCredentialOAuthProviderService(BaseService):
             raise ServiceError(
                 f"Unknown credential provider '{self.config.get('provider', '')}'. "
                 f"Supported: {', '.join(PROVIDERS)}")
+        if self.provider == GENERIC:
+            # A vendor pool inherits its endpoints from the CLI it belongs to.
+            # A generic pool has none to inherit, so refuse an unusable one at
+            # install time rather than at the first token exchange.
+            missing = [
+                key for key in ("client_id", "client_secret")
+                if not str(self.config.get(key) or "").strip()
+            ]
+            if missing:
+                raise ServiceError(
+                    "generic credential provider requires "
+                    + " and ".join(missing))
+            if not self._generic_endpoints().get("token_url"):
+                raise ServiceError(
+                    "generic credential provider requires a token_url, "
+                    "either from identity_provider or set explicitly")
         return {"provider": self.provider, "ready": True}
+
+    def _generic_endpoints(self) -> Dict[str, str]:
+        """Resolve authorize/token URLs from the preset, honouring overrides.
+
+        Presets come from services/auth_providers/generic_oauth.py so the two
+        OAuth surfaces cannot describe the same identity provider differently.
+        Placeholders such as {domain} are filled from ``preset_vars``.
+        """
+        from services.auth_providers.generic_oauth import PRESETS
+        preset = PRESETS.get(
+            str(self.config.get("identity_provider") or "").strip().lower(), {})
+        variables = self.config.get("preset_vars") or {}
+        resolved: Dict[str, str] = {}
+        for key in ("authorize_url", "token_url", "scope"):
+            value = str(self.config.get(key) or "").strip() or preset.get(key, "")
+            if value and isinstance(variables, dict):
+                for name, replacement in variables.items():
+                    value = value.replace(
+                        "{" + str(name) + "}", str(replacement))
+            resolved[key] = value
+        return resolved
 
     def _close_connection(self):
         pass
 
     def get_parameter_schema(self) -> Dict[str, Any]:
+        from services.auth_providers.generic_oauth import PRESETS
         return {
             "provider": {
                 "type": "select",
                 "required": True,
                 "default": "claude-code",
                 "options": list(PROVIDERS),
-                "description": "CLI provider whose OAuth credentials are stored here",
+                "description": (
+                    "Which credentials this pool holds. The three CLI values "
+                    "carry that vendor's login flows; 'generic' carries its "
+                    "own identity provider and is accepted by every LLM "
+                    "provider, CLI included."
+                ),
+            },
+            "identity_provider": {
+                "type": "select",
+                "default": "",
+                "options": [""] + sorted(PRESETS) + ["custom"],
+                "description": (
+                    "generic only: identity provider preset. Fills the "
+                    "authorize and token URLs; 'custom' means set them by "
+                    "hand."
+                ),
+            },
+            "client_id": {
+                "type": "string", "default": "",
+                "description": "generic only: OAuth2 client ID",
+            },
+            "client_secret": {
+                "type": "string", "default": "", "sensitive": True,
+                "description": "generic only: OAuth2 client secret",
+            },
+            "authorize_url": {
+                "type": "string", "default": "",
+                "description": (
+                    "generic only: authorization endpoint. Empty uses the "
+                    "identity_provider preset."
+                ),
+            },
+            "token_url": {
+                "type": "string", "default": "",
+                "description": (
+                    "generic only: token endpoint. Empty uses the "
+                    "identity_provider preset."
+                ),
+            },
+            "scope": {
+                "type": "string", "default": "",
+                "description": "generic only: OAuth2 scopes",
+            },
+            "audience": {
+                "type": "string", "default": "",
+                "description": (
+                    "generic only: audience claim. Several identity "
+                    "providers need it to mint an API-usable token."
+                ),
+            },
+            "preset_vars": {
+                "type": "object", "default": {},
+                "description": (
+                    "generic only: values for preset placeholders, e.g. "
+                    "{\"domain\": \"acme.okta.com\"} or {\"host\": ..., "
+                    "\"realm\": ...} for Keycloak."
+                ),
             },
             "label": {
                 "type": "string",
@@ -179,6 +294,17 @@ class LLMCredentialOAuthProviderService(BaseService):
 
     def get_service_actions(self) -> list:
         return [
+            {
+                "id": "generic_oauth_login",
+                "label": "Set credentials",
+                "icon": "",
+                "when": {"provider": [GENERIC]},
+                # The UI's oauth_code flow shows the instructions this action
+                # returns, then posts the pasted document to the same name
+                # with _url swapped for _code.
+                "server_action": "generic_oauth_login_url",
+                "flow": "oauth_code",
+            },
             {
                 "id": "credential_pool_manage",
                 "label": "Manage credentials",

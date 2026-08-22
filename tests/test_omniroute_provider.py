@@ -105,7 +105,7 @@ def _client(base_url, **overrides):
     config = {
         "base_url": base_url,
         "api_key": "gateway-key",
-        "auth_mode": "bearer",
+        "omniroute_auth_mode": "bearer",
         "default_model": "auto",
         "omniroute_mode": "balanced",
         "omniroute_budget_usd": 0.5,
@@ -198,7 +198,7 @@ def test_model_discovery_uses_same_auth_and_never_changes_default(gateway):
     service = LLMConnectionService({
         "provider": "omniroute",
         "base_url": base_url,
-        "auth_mode": "bearer",
+        "omniroute_auth_mode": "bearer",
         "api_key": "gateway-key",
         "default_model": "auto",
     })
@@ -216,9 +216,9 @@ def test_model_discovery_uses_same_auth_and_never_changes_default(gateway):
 
 
 @pytest.mark.parametrize("config, message", [
-    ({"provider": "omniroute", "default_model": "auto", "auth_mode": "none"}, "base_url"),
-    ({"provider": "omniroute", "base_url": "http://localhost/v1", "auth_mode": "none"}, "default_model"),
-    ({"provider": "omniroute", "base_url": "http://localhost/v1", "default_model": "auto", "auth_mode": "bearer"}, "api_key"),
+    ({"provider": "omniroute", "default_model": "auto", "omniroute_auth_mode": "none"}, "base_url"),
+    ({"provider": "omniroute", "base_url": "http://localhost/v1", "omniroute_auth_mode": "none"}, "default_model"),
+    ({"provider": "omniroute", "base_url": "http://localhost/v1", "default_model": "auto", "omniroute_auth_mode": "bearer"}, "api_key"),
 ])
 def test_service_rejects_ambiguous_or_missing_required_config(config, message):
     with pytest.raises(ServiceError, match=message):

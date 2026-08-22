@@ -17,6 +17,7 @@ from fs_common import (
     _to_host_path,
     detect_available_shells,
     run_cancellable as _run_cancellable,
+    user_bin_path,
     windows_shell_cwd,
 )
 from pawflow_relay.proc_registry import (
@@ -74,6 +75,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PAWFLOW_FS_ROOT"] = root_abs
+    env["PATH"] = user_bin_path(env)
     # Inject server-side secrets as environment variables
     _extra_env = req.get("env")
     if isinstance(_extra_env, dict):
@@ -247,6 +249,7 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PAWFLOW_FS_ROOT"] = root_abs
+    env["PATH"] = user_bin_path(env)
 
     # Build Popen args (same logic as action_exec for shell resolution)
     popen_kwargs = dict(

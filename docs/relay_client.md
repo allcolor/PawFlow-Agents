@@ -121,6 +121,25 @@ The legacy direct mode remains available for low-level scripting:
 python -m pawflow_relay --server https://pawflow.example:PORT --dir ~/src/project
 ```
 
+## Shell PATH
+
+The shells the relay spawns for `bash` and friends are non-login and
+non-interactive, so `.profile`, `.bashrc` and `/etc/environment` are never
+read. To keep a tool the relay account installed for itself reachable, every
+exec prepends the account's own bin directories to `PATH`:
+
+1. `~/bin`
+2. `~/.local/bin` (where pip/pipx put user installs)
+
+Only directories that exist are added, and never twice — an environment that
+already exports one of them keeps its own ordering. A `PATH` passed
+explicitly in the request's `env` overrides this entirely: an explicit value
+is an instruction, not a suggestion.
+
+This is the only PATH manipulation the relay performs. Anything else must be
+exported by whatever launches the relay process, since the exec environment
+is inherited from it (`os.environ.copy()` in `tools/fs_exec.py`).
+
 ## Local State
 
 The relay client stores server and workspace profiles outside the project tree:

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Relay shell: a tool the relay account installed for itself is now on `PATH`.
+  The shells spawned for `bash` are non-login and non-interactive, so no
+  profile file is ever read and `~/bin` / `~/.local/bin` were invisible — a
+  binary plainly visible in the home directory answered "command not found"
+  on every call, and the only workaround was to re-export `PATH` inside each
+  one-shot command. Both exec paths now prepend those two directories when
+  they exist, without duplicating an entry the environment already has. A
+  `PATH` supplied explicitly in the request's `env` still wins.
+
 ## [1.0.0-beta.233] — 2026-08-22
 
 ### Fixed

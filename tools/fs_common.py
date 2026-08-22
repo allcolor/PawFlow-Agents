@@ -27,6 +27,41 @@ from pawflow_relay.utils import (  # noqa: F401
 )
 
 
+# Per-user bin directories, in the order Debian's /etc/skel/.profile uses.
+# Relative to the home directory of the account the relay runs as.
+USER_BIN_DIRS = ("bin", os.path.join(".local", "bin"))
+
+
+def user_bin_path(env: Dict[str, str]) -> str:
+    """Return ``env``'s PATH with the user's own bin directories in front.
+
+    A relay runs as an ordinary account, and whatever that account installed
+    for itself lands in ``~/.local/bin`` (pip/pipx) or ``~/bin`` (a manually
+    unpacked tarball). Neither is on the default PATH, and the shells the
+    relay spawns are non-login and non-interactive, so ``.profile`` and
+    ``.bashrc`` never run either -- a binary the user can see sitting in
+    their home directory answers "command not found" on every single call.
+
+    Only directories that actually exist are prepended, and never twice, so
+    an environment that already exports them keeps its own ordering.
+    """
+    current = env.get("PATH", "")
+    home = env.get("HOME") or env.get("USERPROFILE") or os.path.expanduser("~")
+    if not home:
+        return current
+    entries = current.split(os.pathsep) if current else []
+    prefix = []
+    for name in USER_BIN_DIRS:
+        candidate = os.path.join(home, name)
+        if candidate in entries or candidate in prefix:
+            continue
+        if os.path.isdir(candidate):
+            prefix.append(candidate)
+    if not prefix:
+        return current
+    return os.pathsep.join(prefix + entries)
+
+
 def detect_available_shells() -> Dict[str, str]:
     """Detect available shells on this system. Returns {name: path}."""
     shells: Dict[str, str] = {}

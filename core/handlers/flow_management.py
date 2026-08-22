@@ -37,6 +37,7 @@ class FlowManagerHandler(ToolHandler):
             "- list_all: List all your flow instances across conversations\n"
             "- create: Create a new flow from a JSON definition\n"
             "- start: Start a stopped flow instance\n"
+            "- invoke: Inject one FlowFile into a running flow instance\n"
             "- stop: Stop a running flow instance\n"
             "- status: Get flow instance status\n"
             "- logs: Get task states, queue stats, and recent errors\n"
@@ -97,7 +98,7 @@ class FlowManagerHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": ["catalog", "deploy", "list", "list_all", "create",
-                             "start", "stop", "status", "logs", "update",
+                             "start", "invoke", "stop", "status", "logs", "update",
                              "update_definition", "delete", "run"],
                     "description": (
                         "Action to perform. 'run' loads a template by FQN, "
@@ -144,7 +145,17 @@ class FlowManagerHandler(ToolHandler):
                     "type": "string",
                     "description": (
                         "Optional FlowFile content to feed into the flow "
-                        "(action='run' only). UTF-8 string."),
+                        "(action='run' or 'invoke'). UTF-8 string."),
+                },
+                "attributes": {
+                    "type": "object",
+                    "description": "FlowFile string attributes for invoke.",
+                },
+                "entry_task_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional target task for invoke. The running flow's "
+                        "first root task is used when omitted."),
                 },
             },
             "required": ["action"],
@@ -179,6 +190,13 @@ class FlowManagerHandler(ToolHandler):
         elif action == "start":
             params = arguments.get("parameters", {})
             return self._start_flow(flow_id, params)
+        elif action == "invoke":
+            return self._invoke_flow(
+                flow_id,
+                arguments.get("input", ""),
+                arguments.get("attributes", {}),
+                arguments.get("entry_task_id", ""),
+            )
         elif action == "stop":
             return self._stop_flow(flow_id)
         elif action == "status":
@@ -597,6 +615,52 @@ class FlowManagerHandler(ToolHandler):
             return f"Flow '{flow_id}' stopped."
         except Exception as e:
             return f"Flow '{flow_id}' marked stopped but error: {e}"
+
+    def _invoke_flow(self, flow_id: str, input_text: str = "",
+                     attributes: Dict = None, entry_task_id: str = "") -> str:
+        """Inject one FlowFile into an owned, running continuous flow."""
+        if not flow_id:
+            return "Error: flow_id is required"
+        dep_reg = self._get_deployment_registry()
+        inst = dep_reg.get(flow_id)
+        if inst is None:
+            return f"Error: flow '{flow_id}' not found"
+        if inst.owner != self._owner_tag():
+            return f"Error: flow '{flow_id}' belongs to another user"
+        if not isinstance(input_text, str):
+            return "Error: input must be a UTF-8 string"
+        if attributes is None:
+            attributes = {}
+        if not isinstance(attributes, dict):
+            return "Error: attributes must be an object"
+
+        try:
+            from core import FlowFile
+            from core.executor_registry import ExecutorRegistry
+            executor = ExecutorRegistry.get_instance().get(flow_id)
+            if executor is None or not executor.is_running:
+                return f"Error: flow '{flow_id}' is not running"
+            entry = str(entry_task_id or "").strip()
+            valid_tasks = getattr(executor, "_tasks", {})
+            if entry and entry not in valid_tasks:
+                choices = ", ".join(sorted(valid_tasks)) or "none"
+                return (f"Error: entry task '{entry}' not found in flow "
+                        f"'{flow_id}'. Valid tasks: {choices}")
+            flowfile = FlowFile(
+                content=input_text.encode("utf-8"),
+                attributes={str(k): str(v) for k, v in attributes.items()},
+            )
+            accepted = executor.inject(flowfile, entry_task_id=entry or None)
+            if not accepted:
+                return f"Error: flow '{flow_id}' rejected input due to backpressure"
+            return json.dumps({
+                "flow_id": flow_id,
+                "accepted": True,
+                "entry_task_id": entry or None,
+                "flowfile_id": flowfile.process_id,
+            }, ensure_ascii=False, sort_keys=True)
+        except Exception as e:
+            return f"Error invoking flow '{flow_id}': {e}"
 
     def _flow_status(self, flow_id: str) -> str:
         if not flow_id:

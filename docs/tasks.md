@@ -352,7 +352,7 @@ For a fuller agent-facing catalog, including internal/control tools, see
 | `tool.ask_user` | Ask the user a question and wait for a reply |
 | `tool.delegate` | Spawn or delegate work to another agent |
 | `tool.show_file` | Display a file to the user |
-| `tool.manage_flow` | Manage flows (create, start, stop, status, logs, update parameters, update definitions) |
+| `tool.manage_flow` | Manage flows (create, start, invoke, stop, status, logs, update parameters, update definitions) |
 | `tool.store_secret` | Store a secret securely |
 | `tool.list_secrets` | List stored secrets |
 | `tool.read_history` | Read conversation history |

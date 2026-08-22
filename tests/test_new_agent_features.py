@@ -622,6 +622,53 @@ class TestFlowManagerHandler(unittest.TestCase):
         inst = DeploymentRegistry.get_instance().get("flow1")
         self.assertEqual(inst.parameters.get("key1"), "val1")
 
+    def test_invoke_running_flow_injects_content_attributes_and_entry(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+        executor = MagicMock()
+        executor.is_running = True
+        executor._tasks = {"t1": object()}
+        executor.inject.return_value = True
+        registry = MagicMock()
+        registry.get.return_value = executor
+
+        with patch("core.executor_registry.ExecutorRegistry.get_instance",
+                   return_value=registry):
+            result = json.loads(h.execute({
+                "action": "invoke",
+                "flow_id": "flow1",
+                "input": "hello",
+                "attributes": {"request.kind": "ensure", "attempt": 2},
+                "entry_task_id": "t1",
+            }))
+
+        self.assertTrue(result["accepted"])
+        flowfile = executor.inject.call_args.args[0]
+        self.assertEqual(flowfile.get_content(), b"hello")
+        self.assertEqual(flowfile.attributes, {
+            "request.kind": "ensure", "attempt": "2"})
+        self.assertEqual(executor.inject.call_args.kwargs["entry_task_id"], "t1")
+
+    def test_invoke_rejects_stopped_and_unknown_entry(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+        registry = MagicMock()
+        registry.get.return_value = None
+        with patch("core.executor_registry.ExecutorRegistry.get_instance",
+                   return_value=registry):
+            self.assertIn("not running", h.execute({
+                "action": "invoke", "flow_id": "flow1"}))
+
+        executor = MagicMock()
+        executor.is_running = True
+        executor._tasks = {"t1": object()}
+        registry.get.return_value = executor
+        with patch("core.executor_registry.ExecutorRegistry.get_instance",
+                   return_value=registry):
+            self.assertIn("Valid tasks: t1", h.execute({
+                "action": "invoke", "flow_id": "flow1",
+                "entry_task_id": "missing"}))
+
     def test_delete_nonexistent(self):
         h = self._make_handler()
         result = h.execute({"action": "delete", "flow_id": "nope"})

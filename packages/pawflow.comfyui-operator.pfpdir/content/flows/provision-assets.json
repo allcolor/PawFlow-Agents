@@ -1,0 +1,103 @@
+{
+  "id": "pawflow-comfyui-provision-assets",
+  "name": "PawFlow ComfyUI Provision Assets",
+  "version": "1.0.0",
+  "description": "Validate an asset provisioning plan and durably obtain approval before execution.",
+  "scope": "conversation",
+  "parameters": {},
+  "tasks": {
+    "input": {
+      "type": "inputPort",
+      "parameters": {"port_name": "request"}
+    },
+    "normalize": {
+      "type": "pawflowComfyuiNormalize",
+      "parameters": {"operation": "provision_assets"}
+    },
+    "validate": {
+      "type": "pawflowComfyuiValidate",
+      "parameters": {"mode": "plan"}
+    },
+    "route_validation": {
+      "type": "routeOnAttribute",
+      "parameters": {
+        "routes": {
+          "valid": {
+            "attribute": "comfyui.valid",
+            "operator": "equals",
+            "value": "true"
+          },
+          "invalid": {
+            "attribute": "comfyui.valid",
+            "operator": "equals",
+            "value": "false"
+          }
+        }
+      }
+    },
+    "request_approval": {
+      "type": "requestConfirmation",
+      "parameters": {
+        "title": "Approve ComfyUI provisioning",
+        "message": "The plan passed deterministic checks. Review sources, licenses, downloads, and changes, then approve or cancel.",
+        "mode": "choice",
+        "options": "approve,cancel",
+        "requester_label": "ComfyUI provision-assets"
+      }
+    },
+    "wait_approval": {
+      "type": "durableWait",
+      "parameters": {}
+    },
+    "normalize_choice": {
+      "type": "pawflowComfyuiNormalize",
+      "parameters": {"operation": "provision_assets"}
+    },
+    "route_approval": {
+      "type": "routeOnAttribute",
+      "parameters": {
+        "routes": {
+          "approved": {
+            "attribute": "comfyui.choice",
+            "operator": "equals",
+            "value": "approve"
+          },
+          "cancelled": {
+            "attribute": "comfyui.choice",
+            "operator": "equals",
+            "value": "cancel"
+          }
+        }
+      }
+    },
+    "approved": {
+      "type": "outputPort",
+      "parameters": {"port_name": "approved"}
+    },
+    "invalid": {
+      "type": "outputPort",
+      "parameters": {"port_name": "invalid"}
+    },
+    "cancelled": {
+      "type": "outputPort",
+      "parameters": {"port_name": "cancelled"}
+    }
+  },
+  "relations": [
+    {"from": "input", "to": "normalize", "type": "success"},
+    {"from": "normalize", "to": "validate", "type": "success"},
+    {"from": "validate", "to": "route_validation", "type": "success"},
+    {"from": "route_validation", "to": "request_approval", "type": "valid"},
+    {"from": "route_validation", "to": "invalid", "type": "invalid"},
+    {"from": "request_approval", "to": "wait_approval", "type": "success"},
+    {"from": "wait_approval", "to": "normalize_choice", "type": "success"},
+    {"from": "normalize_choice", "to": "route_approval", "type": "success"},
+    {"from": "route_approval", "to": "approved", "type": "approved"},
+    {"from": "route_approval", "to": "cancelled", "type": "cancelled"},
+    {"from": "route_approval", "to": "cancelled", "type": "unmatched"}
+  ],
+  "entries": ["input"],
+  "exits": ["approved", "invalid", "cancelled"],
+  "fqn": "pawflow.comfyui.provision-assets:1.0.0",
+  "package": "pawflow.comfyui-operator"
+}

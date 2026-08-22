@@ -18,6 +18,103 @@ name: operate-comfyui
 
 Use this skill for every self-hosted ComfyUI task: installation, relay setup, models, custom nodes, API workflows, reference-driven image/video/audio generation, authorized voice continuity, monitoring, QA, troubleshooting, and delivery.
 
+## Package orchestration contract
+
+This skill is the intelligent entry point for the package. Keep user-facing
+requests simple: infer the operation, bootstrap missing preferences, select the
+versioned flow, and translate the final result. Users do not need to know
+ComfyUI nodes, graph formats, model folders, relay routing, or PawFlow flow IDs.
+
+The package provides these flow templates:
+
+- `pawflow.comfyui.ensure-ready:1.0.0` probes the selected target and durably
+  asks for automatic, manual, or cancelled recovery when it is not ready.
+- `pawflow.comfyui.provision-assets:1.0.0` validates a model, LoRA, or custom
+  node plan and durably waits for explicit approval.
+- `pawflow.comfyui.generate-video:1.0.0` normalizes and validates a video
+  request, gates estimated partner cost, calls the active video service, and
+  checks that a result reference exists.
+- `pawflow.comfyui.validate-video:1.0.0` is the reusable structural validation
+  stage. It does not replace the technical and visual QA required below.
+
+Flows containing `durableWait` must be deployed, started, and invoked through
+`manage_flow.invoke`; never run them with the synchronous batch action. Reuse
+an existing compatible running instance when possible. Persist its instance ID
+and the invocation/job correlation in working state. If it parks for a user
+answer or a long job, schedule a passive continuation and end the turn; never
+poll in a loop.
+
+### First-use bootstrap
+
+Run this idempotently whenever the skill is first used in a conversation:
+
+1. Resolve the relay in this order: agent binding, conversation binding,
+   user variable `comfyui.default_relay`, then ask the user.
+2. Verify that the relay exists and is connected before storing it.
+3. Read `comfyui.config_version` and the target entry in
+   `comfyui.targets`. Ask only for values that are missing for the requested
+   operation.
+4. Store durable preferences with `manage_variable` at user scope. Store
+   conversation-only choices at conversation scope. Never put secrets in
+   variables.
+5. Deploy the selected flow on that relay, start it, and invoke its `input`
+   port with one UTF-8 JSON object.
+
+Supported user variables:
+
+- `comfyui.config_version`
+- `comfyui.default_relay`
+- `comfyui.targets` (object keyed by relay ID)
+- `comfyui.install_mode` (`automatic`, `manual`, or `ask`)
+- `comfyui.default_video_preset`
+- `comfyui.video_service`
+- `comfyui.allow_partner_api`
+- `comfyui.max_partner_cost_usd`
+- `comfyui.qa_enabled`
+
+Target entries may contain `workspace`, `base_url`, `output_dir`, and
+`install_mode`. The relay passed to the installed package is authoritative;
+do not copy `MyWorkspace` or `MyWorkspace` into a variable as live
+state. Keep `COMFY_API_KEY`, `HF_TOKEN`, and `CIVITAI_TOKEN` in
+SecretStore.
+
+### Official Comfy MCP
+
+The package installs the official `Comfy-Org/comfy-mcp` stdio resource as
+`comfy-mcp`. It is deliberately not enabled for a conversation or agent by
+package installation. Explain the elevated stdio risk and enable it only after
+the user opts in.
+
+The selected relay host must provide `comfy-mcp` 0.10.0 and
+`comfy-cli>=1.14.0` on PATH. Configure `COMFY_BIN` when the `comfy`
+executable is outside the MCP process PATH. Use `COMFYUI_URL` only for a
+deliberate remote target. Never set `COMFY_MCP_ASSUME_CONSENT` on the user's
+behalf; MCP elicitation and PawFlow durable confirmations must remain effective.
+
+Use the MCP for live discovery, lifecycle operations, reviewed workflow
+execution, unusual diagnosis, and asset provisioning. Use the versioned flows
+for durable state, deterministic validation, cost/approval policy, retries, and
+result correlation. Do not duplicate all of `comfy-cli` in package flow tasks.
+
+### Flow hand-off rules
+
+- `ensure-ready`: on `ready`, continue. On `automatic`, construct a
+  bounded JSON plan, validate it with `provision-assets` when it changes the
+  host, execute approved steps through the official MCP or PawFlow tools, then
+  invoke `ensure-ready` again. On `manual`, give host-specific instructions
+  and resume only after the user says they are done. On `cancelled`, stop.
+- `provision-assets`: plans contain declarative actions only. Never include
+  shell, command, script, secrets, passwords, or tokens. Model/LoRA downloads
+  require HTTPS source, license, and SHA-256. Custom nodes require HTTPS source
+  and a pinned revision. Execute only the exact approved plan.
+- `generate-video`: pass prompt, negative prompt, dimensions, duration, seed,
+  model/preset, references, destination, service override, and any partner cost
+  estimate as JSON. A cost above the configured cap fails closed; any positive
+  estimate requires durable approval.
+- A structurally valid generation result is not delivery-ready. Perform the
+  full video/audio/image QA in this skill, copy the exact history-declared
+  artifact to FileStore, and show it to the user.
+
 ## Non-negotiable operating rules
 
 - Use PawFlow tools for project and host actions. To run on a relay host, select the relay and pass local=true. On Windows use shell=powershell.

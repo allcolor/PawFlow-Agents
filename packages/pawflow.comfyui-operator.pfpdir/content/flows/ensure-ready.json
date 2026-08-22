@@ -1,0 +1,131 @@
+{
+  "id": "pawflow-comfyui-ensure-ready",
+  "name": "PawFlow ComfyUI Ensure Ready",
+  "version": "1.0.0",
+  "description": "Probe a relay-host ComfyUI and durably ask how to proceed when it is not ready.",
+  "scope": "conversation",
+  "parameters": {
+    "base_url": "http://127.0.0.1:8188",
+    "allow_remote": false,
+    "include_object_info": true
+  },
+  "tasks": {
+    "input": {
+      "type": "inputPort",
+      "parameters": {"port_name": "request"}
+    },
+    "normalize": {
+      "type": "pawflowComfyuiNormalize",
+      "parameters": {
+        "operation": "ensure_ready",
+        "base_url": "${base_url}"
+      }
+    },
+    "probe": {
+      "type": "pawflowComfyuiProbe",
+      "parameters": {
+        "base_url": "${base_url}",
+        "allow_remote": "${allow_remote}",
+        "include_object_info": "${include_object_info}"
+      }
+    },
+    "route_probe": {
+      "type": "routeOnAttribute",
+      "parameters": {
+        "routes": {
+          "ready": {
+            "attribute": "comfyui.ready",
+            "operator": "equals",
+            "value": "true"
+          },
+          "not_ready": {
+            "attribute": "comfyui.ready",
+            "operator": "equals",
+            "value": "false"
+          }
+        }
+      }
+    },
+    "request_mode": {
+      "type": "requestConfirmation",
+      "parameters": {
+        "title": "ComfyUI is not ready",
+        "message": "Choose how PawFlow should continue on the selected relay.",
+        "mode": "choice",
+        "options": "automatic,manual,cancel",
+        "requester_label": "ComfyUI ensure-ready"
+      }
+    },
+    "wait_mode": {
+      "type": "durableWait",
+      "parameters": {}
+    },
+    "normalize_choice": {
+      "type": "pawflowComfyuiNormalize",
+      "parameters": {
+        "operation": "ensure_ready",
+        "base_url": "${base_url}"
+      }
+    },
+    "route_choice": {
+      "type": "routeOnAttribute",
+      "parameters": {
+        "routes": {
+          "automatic": {
+            "attribute": "comfyui.choice",
+            "operator": "equals",
+            "value": "automatic"
+          },
+          "manual": {
+            "attribute": "comfyui.choice",
+            "operator": "equals",
+            "value": "manual"
+          },
+          "cancelled": {
+            "attribute": "comfyui.choice",
+            "operator": "equals",
+            "value": "cancel"
+          }
+        }
+      }
+    },
+    "ready": {
+      "type": "outputPort",
+      "parameters": {"port_name": "ready"}
+    },
+    "automatic": {
+      "type": "outputPort",
+      "parameters": {"port_name": "automatic"}
+    },
+    "manual": {
+      "type": "outputPort",
+      "parameters": {"port_name": "manual"}
+    },
+    "cancelled": {
+      "type": "outputPort",
+      "parameters": {"port_name": "cancelled"}
+    },
+    "invalid_choice": {
+      "type": "outputPort",
+      "parameters": {"port_name": "invalid_choice"}
+    }
+  },
+  "relations": [
+    {"from": "input", "to": "normalize", "type": "success"},
+    {"from": "normalize", "to": "probe", "type": "success"},
+    {"from": "probe", "to": "route_probe", "type": "success"},
+    {"from": "route_probe", "to": "ready", "type": "ready"},
+    {"from": "route_probe", "to": "request_mode", "type": "not_ready"},
+    {"from": "request_mode", "to": "wait_mode", "type": "success"},
+    {"from": "wait_mode", "to": "normalize_choice", "type": "success"},
+    {"from": "normalize_choice", "to": "route_choice", "type": "success"},
+    {"from": "route_choice", "to": "automatic", "type": "automatic"},
+    {"from": "route_choice", "to": "manual", "type": "manual"},
+    {"from": "route_choice", "to": "cancelled", "type": "cancelled"},
+    {"from": "route_choice", "to": "invalid_choice", "type": "unmatched"}
+  ],
+  "entries": ["input"],
+  "exits": ["ready", "automatic", "manual", "cancelled", "invalid_choice"],
+  "fqn": "pawflow.comfyui.ensure-ready:1.0.0",
+  "package": "pawflow.comfyui-operator"
+}

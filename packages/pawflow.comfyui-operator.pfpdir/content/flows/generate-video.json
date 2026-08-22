@@ -1,0 +1,137 @@
+{
+  "id": "pawflow-comfyui-generate-video",
+  "name": "PawFlow ComfyUI Generate Video",
+  "version": "1.0.0",
+  "description": "Normalize and validate a video request, gate partner cost, execute the active video service, and structurally validate its result.",
+  "scope": "conversation",
+  "parameters": {
+    "video_service": "",
+    "allow_partner_api": false,
+    "max_partner_cost_usd": 0,
+    "qa_enabled": true
+  },
+  "tasks": {
+    "input": {
+      "type": "inputPort",
+      "parameters": {"port_name": "request"}
+    },
+    "normalize": {
+      "type": "pawflowComfyuiNormalize",
+      "parameters": {
+        "operation": "generate_video",
+        "video_service": "${video_service}",
+        "allow_partner_api": "${allow_partner_api}",
+        "max_partner_cost_usd": "${max_partner_cost_usd}",
+        "qa_enabled": "${qa_enabled}"
+      }
+    },
+    "validate_request": {
+      "type": "pawflowComfyuiValidate",
+      "parameters": {
+        "mode": "video_request",
+        "allow_partner_api": "${allow_partner_api}",
+        "max_partner_cost_usd": "${max_partner_cost_usd}"
+      }
+    },
+    "route_request": {
+      "type": "routeOnAttribute",
+      "parameters": {
+        "routes": {
+          "invalid": {
+            "attribute": "comfyui.valid",
+            "operator": "equals",
+            "value": "false"
+          },
+          "approval_required": {
+            "attribute": "comfyui.needs_confirmation",
+            "operator": "equals",
+            "value": "true"
+          },
+          "execute": {
+            "attribute": "comfyui.valid",
+            "operator": "equals",
+            "value": "true"
+          }
+        }
+      }
+    },
+    "request_cost_approval": {
+      "type": "requestConfirmation",
+      "parameters": {
+        "title": "Approve partner generation cost",
+        "message": "This ComfyUI request may spend partner credits. Approve or cancel after reviewing the estimate and configured cap.",
+        "mode": "choice",
+        "options": "approve,cancel",
+        "requester_label": "ComfyUI generate-video"
+      }
+    },
+    "wait_cost_approval": {
+      "type": "durableWait",
+      "parameters": {}
+    },
+    "normalize_choice": {
+      "type": "pawflowComfyuiNormalize",
+      "parameters": {"operation": "generate_video"}
+    },
+    "route_approval": {
+      "type": "routeOnAttribute",
+      "parameters": {
+        "routes": {
+          "approved": {
+            "attribute": "comfyui.choice",
+            "operator": "equals",
+            "value": "approve"
+          },
+          "cancelled": {
+            "attribute": "comfyui.choice",
+            "operator": "equals",
+            "value": "cancel"
+          }
+        }
+      }
+    },
+    "generate": {
+      "type": "tool.generate_video",
+      "parameters": {
+        "video_service": "${video_service}"
+      }
+    },
+    "validate_result": {
+      "type": "pawflowComfyuiValidate",
+      "parameters": {"mode": "result"}
+    },
+    "complete": {
+      "type": "outputPort",
+      "parameters": {"port_name": "complete"}
+    },
+    "invalid": {
+      "type": "outputPort",
+      "parameters": {"port_name": "invalid"}
+    },
+    "cancelled": {
+      "type": "outputPort",
+      "parameters": {"port_name": "cancelled"}
+    }
+  },
+  "relations": [
+    {"from": "input", "to": "normalize", "type": "success"},
+    {"from": "normalize", "to": "validate_request", "type": "success"},
+    {"from": "validate_request", "to": "route_request", "type": "success"},
+    {"from": "route_request", "to": "invalid", "type": "invalid"},
+    {"from": "route_request", "to": "request_cost_approval", "type": "approval_required"},
+    {"from": "route_request", "to": "generate", "type": "execute"},
+    {"from": "request_cost_approval", "to": "wait_cost_approval", "type": "success"},
+    {"from": "wait_cost_approval", "to": "normalize_choice", "type": "success"},
+    {"from": "normalize_choice", "to": "route_approval", "type": "success"},
+    {"from": "route_approval", "to": "generate", "type": "approved"},
+    {"from": "route_approval", "to": "cancelled", "type": "cancelled"},
+    {"from": "route_approval", "to": "cancelled", "type": "unmatched"},
+    {"from": "generate", "to": "validate_result", "type": "success"},
+    {"from": "generate", "to": "invalid", "type": "failure"},
+    {"from": "validate_result", "to": "complete", "type": "success"}
+  ],
+  "entries": ["input"],
+  "exits": ["complete", "invalid", "cancelled"],
+  "fqn": "pawflow.comfyui.generate-video:1.0.0",
+  "package": "pawflow.comfyui-operator"
+}

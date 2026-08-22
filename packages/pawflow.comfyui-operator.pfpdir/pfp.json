@@ -1,8 +1,9 @@
 {
   "format": "pawflow.package.v1",
   "package": "pawflow.comfyui-operator",
-  "version": "1.0.0",
-  "description": "Operational skill for installing, configuring, running, validating, and troubleshooting self-hosted ComfyUI through PawFlow relays and media services.",
+  "version": "1.1.0",
+  "category": "Media & AI",
+  "description": "All-in-one self-hosted ComfyUI operator with an orchestration skill, durable flows, deterministic flow tasks, and the official Comfy MCP connection.",
   "developer": {
     "email": "quentin.anciaux@allcolor.org",
     "public_key": ""
@@ -16,6 +17,93 @@
       "type": "skill",
       "name": "operate-comfyui",
       "path": "content/skills/operate-comfyui/SKILL.md"
+    },
+    {
+      "id": "flow_task:normalize",
+      "type": "flow_task",
+      "name": "pawflowComfyuiNormalize",
+      "task_type": "pawflowComfyuiNormalize",
+      "version": "1.0.0",
+      "path": "content/flow-tasks/normalize/task.py",
+      "runner": "python",
+      "description": "Normalize a ComfyUI operation request and durable confirmation answer.",
+      "parameters": {
+        "operation": {"type": "string"},
+        "base_url": {"type": "string"},
+        "video_service": {"type": "string"},
+        "allow_partner_api": {"type": "boolean"},
+        "max_partner_cost_usd": {"type": "number"},
+        "qa_enabled": {"type": "boolean"}
+      },
+      "allowed_tools": []
+    },
+    {
+      "id": "flow_task:probe",
+      "type": "flow_task",
+      "name": "pawflowComfyuiProbe",
+      "task_type": "pawflowComfyuiProbe",
+      "version": "1.0.0",
+      "path": "content/flow-tasks/probe/task.py",
+      "runner": "python",
+      "description": "Probe ComfyUI system, queue, and node endpoints from the selected relay host.",
+      "parameters": {
+        "base_url": {"type": "string"},
+        "allow_remote": {"type": "boolean"},
+        "include_object_info": {"type": "boolean"},
+        "timeout_seconds": {"type": "number"}
+      },
+      "allowed_tools": [{"name": "bash"}]
+    },
+    {
+      "id": "flow_task:validate",
+      "type": "flow_task",
+      "name": "pawflowComfyuiValidate",
+      "task_type": "pawflowComfyuiValidate",
+      "version": "1.0.0",
+      "path": "content/flow-tasks/validate/task.py",
+      "runner": "python",
+      "description": "Validate provisioning plans, API workflows, video requests, and structural results.",
+      "parameters": {
+        "mode": {"type": "string"},
+        "allow_partner_api": {"type": "boolean"},
+        "max_partner_cost_usd": {"type": "number"}
+      },
+      "allowed_tools": []
+    },
+    {
+      "id": "flow:ensure-ready",
+      "type": "flow",
+      "name": "pawflow.comfyui.ensure-ready:1.0.0",
+      "fqn": "pawflow.comfyui.ensure-ready:1.0.0",
+      "path": "content/flows/ensure-ready.json"
+    },
+    {
+      "id": "flow:provision-assets",
+      "type": "flow",
+      "name": "pawflow.comfyui.provision-assets:1.0.0",
+      "fqn": "pawflow.comfyui.provision-assets:1.0.0",
+      "path": "content/flows/provision-assets.json"
+    },
+    {
+      "id": "flow:generate-video",
+      "type": "flow",
+      "name": "pawflow.comfyui.generate-video:1.0.0",
+      "fqn": "pawflow.comfyui.generate-video:1.0.0",
+      "path": "content/flows/generate-video.json"
+    },
+    {
+      "id": "flow:validate-video",
+      "type": "flow",
+      "name": "pawflow.comfyui.validate-video:1.0.0",
+      "fqn": "pawflow.comfyui.validate-video:1.0.0",
+      "path": "content/flows/validate-video.json"
+    },
+    {
+      "id": "mcp_server:comfy-mcp",
+      "type": "mcp_server",
+      "name": "comfy-mcp",
+      "path": "content/mcp/comfy-mcp.json",
+      "description": "Official Comfy-Org/comfy-mcp 0.10.0 stdio server. Runs on the selected relay host and remains conversation opt-in."
     }
   ]
 }

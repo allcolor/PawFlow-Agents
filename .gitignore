@@ -58,6 +58,8 @@ flows/
 !data/repository/flows/global/default/pawflow_installer/versions/
 !data/repository/flows/global/default/pawflow_installer/versions/assets/
 !data/repository/flows/global/default/pawflow_installer/versions/assets/install.html
+!packages/pawflow.comfyui-operator.pfpdir/content/flows/
+!packages/pawflow.comfyui-operator.pfpdir/content/flows/*.json
 projects/
 checkpoints/
 templates/

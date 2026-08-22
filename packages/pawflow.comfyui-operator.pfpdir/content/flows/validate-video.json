@@ -1,0 +1,53 @@
+{
+  "id": "pawflow-comfyui-validate-video",
+  "name": "PawFlow ComfyUI Validate Video",
+  "version": "1.0.0",
+  "description": "Structurally validate a generated media result before the operate-comfyui skill performs full technical and visual QA.",
+  "scope": "conversation",
+  "parameters": {},
+  "tasks": {
+    "input": {
+      "type": "inputPort",
+      "parameters": {"port_name": "result"}
+    },
+    "validate": {
+      "type": "pawflowComfyuiValidate",
+      "parameters": {"mode": "result"}
+    },
+    "route": {
+      "type": "routeOnAttribute",
+      "parameters": {
+        "routes": {
+          "valid": {
+            "attribute": "comfyui.valid",
+            "operator": "equals",
+            "value": "true"
+          },
+          "invalid": {
+            "attribute": "comfyui.valid",
+            "operator": "equals",
+            "value": "false"
+          }
+        }
+      }
+    },
+    "valid": {
+      "type": "outputPort",
+      "parameters": {"port_name": "valid"}
+    },
+    "invalid": {
+      "type": "outputPort",
+      "parameters": {"port_name": "invalid"}
+    }
+  },
+  "relations": [
+    {"from": "input", "to": "validate", "type": "success"},
+    {"from": "validate", "to": "route", "type": "success"},
+    {"from": "route", "to": "valid", "type": "valid"},
+    {"from": "route", "to": "invalid", "type": "invalid"}
+  ],
+  "entries": ["input"],
+  "exits": ["valid", "invalid"],
+  "fqn": "pawflow.comfyui.validate-video:1.0.0",
+  "package": "pawflow.comfyui-operator"
+}

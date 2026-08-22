@@ -1,0 +1,6 @@
+{
+  "transport": "stdio",
+  "command": "comfy-mcp",
+  "local": true,
+  "description": "Official Comfy-Org/comfy-mcp stdio server for a self-hosted ComfyUI. Install comfy-mcp 0.10.0 and comfy-cli 1.14 or newer on the selected relay host before enabling this MCP."
+}

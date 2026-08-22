@@ -180,5 +180,5 @@ def test_agent_config_carries_gating_service():
     with open("tasks/ai/actions/_agentres_k5.py", encoding="utf-8") as handle:
         src = handle.read()
     assert 'gating_service=body.get("gating_service") or ""' in src
-    assert '"agui_max_tool_rounds", "gating_service"}' in src
+    assert '"agui_max_tool_rounds", "gating_service", "tool_exposure"}' in src
     assert "validate_binding(_gref.get(" in src

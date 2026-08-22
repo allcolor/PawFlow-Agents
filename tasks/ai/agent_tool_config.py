@@ -45,7 +45,7 @@ class AgentToolConfigMixin:
             RecallHandler, RememberHandler,
             SemanticRecallHandler,
             AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler,
-            ListSecretsHandler,
+            ListSecretsHandler, ManageVariableHandler,
             ScheduleWakeupHandler, ShowFileHandler, SpawnAgentsHandler,
             StoreSecretHandler, UpdatePlanHandler,
             VerifyPlanStepHandler,
@@ -316,6 +316,11 @@ class AgentToolConfigMixin:
             elif isinstance(h, ListSecretsHandler):
                 if user_id:
                     h.set_user_id(user_id)
+            elif isinstance(h, ManageVariableHandler):
+                if user_id:
+                    h.set_user_id(user_id)
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
             elif isinstance(h, ManageResourceHandler):
                 h.set_user_id(user_id)
                 h.set_conversation_id(conversation_id)

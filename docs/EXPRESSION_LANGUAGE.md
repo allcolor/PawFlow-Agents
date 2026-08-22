@@ -73,8 +73,8 @@ If the key is not found in the specified scope, the expression remains unresolve
 | Global secrets | `config/global_secrets.json` | Runtime UI |
 | Global parameters | `config/global_parameters.json` | Runtime UI |
 | User secrets | `config/users/{user}/secrets.json` | `/add-secret name value` or `store_secret` tool |
-| User parameters | `config/users/{user}/parameters.json` | `/add-variable name value` |
-| Conversation parameters | conversation metadata | API / agent tools |
+| User parameters | `config/users/{user}/parameters.json` | `/add-variable name value` or `manage_variable` tool |
+| Conversation parameters | conversation metadata | `manage_variable` tool or API |
 | Conversation secrets | conversation metadata (encrypted) | API / agent tools |
 | Flow parameters | flow JSON `parameters` section | flow definition |
 | FlowFile attributes | set by tasks at runtime | `updateAttribute` task |

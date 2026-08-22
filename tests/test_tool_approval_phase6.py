@@ -28,7 +28,7 @@ def test_read_only_allows_listed_read_tools():
 def test_read_only_denies_write_tools():
     for t in ("write", "edit", "batch_edit", "apply_patch", "find_replace",
               "delete", "mkdir", "bash", "notebook_edit",
-              "execute_script", "remote_exec", "store_secret",
+              "execute_script", "remote_exec", "store_secret", "manage_variable",
               "create_tool", "manage_resource"):
         assert not ToolApprovalGate.is_read_only_allowed(t), (
             f"{t} must NOT be allowed in read_only mode")

@@ -87,6 +87,7 @@ from core.handlers.help_secrets import (  # noqa: F401
     PawFlowHelpHandler,
     StoreSecretHandler,
 )
+from core.handlers.variables import ManageVariableHandler  # noqa: F401
 from core.handlers.media import (  # noqa: F401
     AudioGenerationHandler,
     EditImageHandler,
@@ -702,6 +703,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(PawFlowHelpHandler())
     registry.register(StoreSecretHandler())
     registry.register(ListSecretsHandler())
+    registry.register(ManageVariableHandler())
     registry.register(ManageResourceHandler())
     registry.register(ManagePackageHandler())
     registry.register(SpawnAgentsHandler())

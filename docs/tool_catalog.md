@@ -373,6 +373,7 @@ someone else.
 | `ask_user` | Ask the user a blocking question. |
 | `request_confirmation` | Durable confirmation request (yes/no, single/multi choice); the user answers whenever and the agent is woken with the answer |
 | `notify_user` | Notify the user. |
+| `manage_variable` | Get, list, set, or delete plaintext user/conversation variables; sensitive values belong in `store_secret`. |
 | `PushNotification` | Send a runtime-only notification event. Web clients accumulate it in their tab-local notification center; it is not persisted in the transcript or agent context. |
 | `ScheduleWakeup` | Schedule an agent wakeup. |
 | `schedule_continuation` | Persist a delayed continuation wake-up for the current conversation. |

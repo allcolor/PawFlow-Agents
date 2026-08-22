@@ -62,8 +62,8 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             before_launch=None if _ephemeral else (
                 lambda: self._cli_require_cold_context(
                     "claude-code-interactive")))
+        pool.begin_turn(state)
         try:
-            pool.touch(state)
             # Case 2, told by the pool: the live process already holds the
             # PawFlow initial context, so this turn is a delta.
             if (not _ephemeral
@@ -131,6 +131,7 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             response.model = response.model or model or self.default_model
             return response
         finally:
+            pool.end_turn(state)
             if _ephemeral:
                 pool.destroy_ephemeral(state)
 
@@ -159,39 +160,44 @@ class LLMClaudeCodeInteractiveMixin(ClaudeCodeSessionMixin):
             return LLMResponse(content="", model=model or self.default_model)
 
         pool = InteractiveClaudeCodePool.instance()
-        pool.touch(state)
-        _, _, event_service = get_or_create_cc_interactive_event_service()
-        consumer_epoch = event_service.claim_consumer(state.session_token)
-        event_service.drain_session(state.session_token)
-        if not pool.send_interrupt(state, text):
-            # Same as the send path: no coordinator will poll this claim.
-            event_service.release_consumer(state.session_token, consumer_epoch)
-            detail = getattr(state, "last_error", "") or "unknown tmux error"
-            raise LLMClientError(
-                "Failed to send interrupt to Claude Code interactive tmux session: "
-                f"{detail}")
-
+        pool.begin_turn(state)
         try:
-            coord = _CCITurnCoordinator(
-                event_service, state.session_token, callback=callback,
-                thinking_callback=thinking_callback,
-                block_callback=block_callback,
-                turn_callback=turn_callback,
-                touch_callback=lambda: pool.touch(state),
-                usage_callback=self._cci_usage_observer(
-                    conversation_id, agent_name),
-                emitted_tool_use_ids=state.emitted_tool_use_ids,
-                emitted_tool_result_ids=state.emitted_tool_result_ids,
-                consumer_epoch=consumer_epoch,
-                liveness_callback=lambda: pool.session_is_live(state.name))
-            response = coord.run(getattr(self, "_abort", None))
+            _, _, event_service = get_or_create_cc_interactive_event_service()
+            consumer_epoch = event_service.claim_consumer(state.session_token)
+            event_service.drain_session(state.session_token)
+            if not pool.send_interrupt(state, text):
+                # Same as the send path: no coordinator will poll this claim.
+                event_service.release_consumer(
+                    state.session_token, consumer_epoch)
+                detail = getattr(state, "last_error", "") or "unknown tmux error"
+                raise LLMClientError(
+                    "Failed to send interrupt to Claude Code interactive tmux "
+                    f"session: {detail}")
+
+            try:
+                coord = _CCITurnCoordinator(
+                    event_service, state.session_token, callback=callback,
+                    thinking_callback=thinking_callback,
+                    block_callback=block_callback,
+                    turn_callback=turn_callback,
+                    touch_callback=lambda: pool.touch(state),
+                    usage_callback=self._cci_usage_observer(
+                        conversation_id, agent_name),
+                    emitted_tool_use_ids=state.emitted_tool_use_ids,
+                    emitted_tool_result_ids=state.emitted_tool_result_ids,
+                    consumer_epoch=consumer_epoch,
+                    liveness_callback=lambda: pool.session_is_live(state.name))
+                response = coord.run(getattr(self, "_abort", None))
+            finally:
+                event_service.release_consumer(
+                    state.session_token, consumer_epoch)
+            self._cci_record_observed_context(coord, conversation_id, agent_name)
+            # Prefer the model resolved on the wire (message_start); fall back
+            # to the configured alias (e.g. "best") then the provider default.
+            response.model = response.model or model or self.default_model
+            return response
         finally:
-            event_service.release_consumer(state.session_token, consumer_epoch)
-        self._cci_record_observed_context(coord, conversation_id, agent_name)
-        # Prefer the model resolved on the wire (message_start); fall back to
-        # the configured alias (e.g. "best") then the provider default.
-        response.model = response.model or model or self.default_model
-        return response
+            pool.end_turn(state)
 
     def _cci_record_observed_context(self, coord, conversation_id: str,
                                      agent_name: str) -> None:

@@ -67,6 +67,7 @@ def test_ephemeral_interactive_stream_is_isolated_and_destroyed_on_send_error(
 
     pool = SimpleNamespace(
         ensure_started=ensure_started, touch=lambda _state: None,
+        begin_turn=lambda _state: None, end_turn=lambda _state: None,
         send_text=lambda _state, _prompt: False,
         destroy_ephemeral=lambda item: destroyed.append(item))
     monkeypatch.setattr(
@@ -104,6 +105,7 @@ def test_claude_provider_releases_request_lease_when_coordinator_raises(
     pool = SimpleNamespace(
         ensure_started=lambda *_args, **_kwargs: state,
         touch=lambda _state: None,
+        begin_turn=lambda _state: None, end_turn=lambda _state: None,
         send_text=lambda _state, _prompt: True,
         send_interrupt=lambda _state, _text: True,
         destroy_ephemeral=lambda _state: None)
@@ -2663,6 +2665,153 @@ def test_interactive_pool_client_timeout_only_extends_idle_ttl(monkeypatch):
     pool._sweeper_stop.set()
 
 
+def _cci_state(name="container", token="sess", **kw):
+    from core.claude_code_interactive_pool import InteractiveContainer
+
+    return InteractiveContainer(
+        key=("u", "c", name, "svc"),
+        name=name,
+        workdir="/host",
+        container_workdir="/cc_sessions/u/c/a",
+        session_token=token,
+        event_service_id="events",
+        internal_token="internal",
+        **kw,
+    )
+
+
+def test_interactive_pool_has_no_default_idle_ttl(monkeypatch):
+    """Reaping a live agent must be asked for, never inherited from a default.
+
+    The 1800s fallback killed a container 65s after an active turn and took
+    its pending background work with it (the agent then went silent).
+    """
+    monkeypatch.delenv("PAWFLOW_CCI_IDLE_TTL_SECONDS", raising=False)
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    pool = InteractiveClaudeCodePool()
+    assert pool._idle_ttl == 0
+
+    state = _cci_state(last_used=0)
+    pool._sessions[state.key] = state
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    monkeypatch.setattr(pool, "_kill_container", lambda name: pytest.fail(
+        "an unconfigured pool must never evict"))
+
+    assert pool.sweep_idle() == 0
+    assert state.key in pool._sessions
+
+
+def test_interactive_pool_zero_timeout_disables_eviction(monkeypatch):
+    """`timeout: 0` means no timeout — it must not read as "unset"."""
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    pool = InteractiveClaudeCodePool()
+    pool._idle_ttl = 1800
+    pool.ensure_sweeper(idle_ttl_seconds=0)
+    pool._sweeper_stop.set()
+    assert pool._idle_ttl == 0
+
+    state = _cci_state(last_used=0)
+    pool._sessions[state.key] = state
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    monkeypatch.setattr(pool, "_kill_container", lambda name: pytest.fail(
+        "timeout=0 must disable idle eviction"))
+
+    assert pool.sweep_idle() == 0
+
+
+def test_interactive_pool_never_evicts_a_turn_in_flight(monkeypatch):
+    """A turn doing slow local work emits no event; it is still not idle."""
+    from core.claude_code_interactive_pool import InteractiveClaudeCodePool
+
+    pool = InteractiveClaudeCodePool()
+    killed = []
+    state = _cci_state(last_used=0)
+    pool._sessions[state.key] = state
+    monkeypatch.setattr("core.claude_code_interactive_pool.time.time",
+                        lambda: 100000)
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    monkeypatch.setattr(pool, "_kill_container", lambda name: killed.append(name))
+    monkeypatch.setattr(pool, "_activity_at", lambda s: s.last_used)
+
+    pool.begin_turn(state)
+    state.last_used = 0
+    assert pool.sweep_idle(1800) == 0, "a running turn was evicted"
+    assert killed == []
+
+    pool.end_turn(state)
+    state.last_used = 0
+    assert pool.sweep_idle(1800) == 1
+    assert killed == ["container"]
+
+
+def test_interactive_pool_idle_measured_from_observed_proxy_events(monkeypatch):
+    """Claude Code resumes on its own (a backgrounded task reporting back).
+
+    Those turns carry no PawFlow coordinator, so `last_used` stays frozen
+    while the session is demonstrably working. Idleness must come from the
+    proxy's own last observed event.
+    """
+    import core.claude_code_interactive_pool as cci
+
+    pool = cci.InteractiveClaudeCodePool()
+    state = _cci_state(last_used=0, token="tok")
+    pool._sessions[state.key] = state
+
+    class _Sess:
+        last_event_at = 99990
+
+    class _Events:
+        def session_state(self, token):
+            assert token == "tok"
+            return _Sess()
+
+    monkeypatch.setattr(
+        "services.cc_interactive_event_service."
+        "get_or_create_cc_interactive_event_service",
+        lambda *a, **k: (None, None, _Events()))
+    monkeypatch.setattr(cci.time, "time", lambda: 100000)
+    monkeypatch.setattr(pool, "_is_alive", lambda name: True)
+    monkeypatch.setattr(pool, "_kill_container", lambda name: pytest.fail(
+        "a session with recent proxy events was evicted as idle"))
+
+    assert pool.sweep_idle(1800) == 0
+    assert pool._activity_at(state) == 99990
+
+
+def test_cci_provider_brackets_every_turn_as_in_flight():
+    """Both turn paths must mark the session busy for their whole duration."""
+    import inspect
+
+    from core.llm_providers.claude_code_interactive import (
+        LLMClaudeCodeInteractiveMixin)
+
+    for fn in (LLMClaudeCodeInteractiveMixin._stream_claude_code_interactive,
+               LLMClaudeCodeInteractiveMixin.interrupt_claude_code_interactive):
+        src = inspect.getsource(fn)
+        assert "pool.begin_turn(state)" in src, fn.__name__
+        assert "pool.end_turn(state)" in src, fn.__name__
+        begin = src.index("pool.begin_turn(state)")
+        assert "finally:" in src[begin:], (
+            f"{fn.__name__} must release the turn in a finally")
+
+
+def test_llm_client_idle_ttl_seconds_separates_zero_from_unset():
+    from core.llm_client import LLMClient
+
+    client = LLMClient.__new__(LLMClient)
+    client._config_ref = {"timeout": 0}
+    assert client.timeout is None, "timeout still means no request timeout"
+    assert client.idle_ttl_seconds == 0, "an explicit 0 must survive"
+
+    client._config_ref = {}
+    assert client.idle_ttl_seconds is None, "unset must stay unset"
+
+    client._config_ref = {"timeout": 600}
+    assert client.idle_ttl_seconds == 600
+
+
 def test_interactive_pool_checks_liveness_outside_sweep_lock(monkeypatch):
     import threading
 
@@ -2727,6 +2876,7 @@ def test_interactive_pool_passes_client_timeout_for_idle_ttl(monkeypatch):
 
     class _Client:
         timeout = 7200
+        idle_ttl_seconds = 7200
         _agent_service = "svc"
 
     pool = InteractiveClaudeCodePool()
@@ -2974,7 +3124,8 @@ def test_cc_interactive_timing_env_is_documented():
     ):
         assert name in doc
     assert "seconds variable wins" in doc
-    assert "can only extend" in doc
+    assert "can only extend an already-enabled TTL" in doc
+    assert "There is\n  no default" in doc
 
 
 def test_cc_interactive_event_route_bypasses_gateway_but_stays_private(monkeypatch):

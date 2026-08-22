@@ -86,7 +86,12 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         self._sweeper_started = False
         self._sweeper_stop = threading.Event()
         self._tick_seconds = 60
-        self._idle_ttl = float(os.environ.get("PAWFLOW_CCI_IDLE_TTL_SECONDS", "1800"))
+        # No default TTL: a reaper that nobody asked for is exactly the kind
+        # of silent fallback this project forbids. Eviction is opt-in through
+        # PAWFLOW_CCI_IDLE_TTL_SECONDS or a service `timeout`; 0 or unset
+        # means containers are never evicted for being idle.
+        self._idle_ttl = float(
+            os.environ.get("PAWFLOW_CCI_IDLE_TTL_SECONDS", "0") or 0)
         self._shutdown_once = False
         # Run the in-container CLI as the host launcher's uid/gid (the same
         # PAWFLOW_RUN_UID/GID the batch claude_code_pool honours) instead of a
@@ -175,8 +180,12 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
         process, so do not start a fresh one with it" -- see
         ``_cli_require_cold_context``. It is never called on the reuse path.
         """
-        idle_ttl = getattr(client, "timeout", None)
-        self.ensure_sweeper(idle_ttl_seconds=int(idle_ttl) if idle_ttl else None)
+        # `client.timeout` collapses an explicit 0 into None, which made
+        # "no timeout configured" indistinguishable from "unset" and left the
+        # reaper running. `idle_ttl_seconds` keeps the two apart.
+        idle_ttl = getattr(client, "idle_ttl_seconds", None)
+        self.ensure_sweeper(
+            idle_ttl_seconds=int(idle_ttl) if idle_ttl is not None else None)
         service_id = getattr(client, "_agent_service", "") or ""
         key = (user_id, conversation_id, agent_name, service_id)
         with self._lock:
@@ -257,6 +266,18 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
 
     def touch(self, state: InteractiveContainer) -> None:
         with self._lock:
+            state.last_used = time.time()
+
+    def begin_turn(self, state: InteractiveContainer) -> None:
+        """Mark a turn as running against this session (never idle-evicted)."""
+        with self._lock:
+            state.in_flight += 1
+            state.last_used = time.time()
+
+    def end_turn(self, state: InteractiveContainer) -> None:
+        """Release the turn taken by ``begin_turn`` and restart the idle clock."""
+        with self._lock:
+            state.in_flight = max(0, state.in_flight - 1)
             state.last_used = time.time()
 
     def _credentials_pool_size(self, service_id: str, user_id: str,
@@ -1200,8 +1221,14 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
 
     def ensure_sweeper(self, tick_seconds: int = 60,
                        idle_ttl_seconds: Optional[int] = None) -> None:
-        if idle_ttl_seconds and idle_ttl_seconds > 0:
-            self._idle_ttl = max(self._idle_ttl, float(idle_ttl_seconds))
+        # 0 is a VALUE, not "unset": the service asked for no timeout, so
+        # nothing may reap its containers. Only None means "no opinion --
+        # keep whatever the pool already has".
+        if idle_ttl_seconds is not None:
+            if idle_ttl_seconds <= 0:
+                self._idle_ttl = 0.0
+            elif self._idle_ttl > 0:
+                self._idle_ttl = max(self._idle_ttl, float(idle_ttl_seconds))
         self._tick_seconds = max(1, int(tick_seconds or 60))
         if self._sweeper_started:
             return
@@ -1216,15 +1243,46 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
 
         threading.Thread(target=_loop, daemon=True, name="cci-live-sweeper").start()
 
+    def _activity_at(self, state: InteractiveContainer) -> float:
+        """Most recent evidence that this session is alive and working.
+
+        ``last_used`` only moves when a PawFlow streaming worker drives the
+        turn and calls ``touch``. Claude Code also resumes on its own -- a
+        backgrounded task reporting back, a queued message -- and those turns
+        go through the MITM proxy without any PawFlow coordinator attached,
+        so ``last_used`` froze while the session was demonstrably working and
+        the sweeper evicted it mid-flight. The proxy's ``last_event_at`` is
+        the signal that does not depend on PawFlow's turn bookkeeping.
+        """
+        last = float(getattr(state, "last_used", 0.0) or 0.0)
+        try:
+            from services.cc_interactive_event_service import (
+                get_or_create_cc_interactive_event_service)
+            events = get_or_create_cc_interactive_event_service()[2]
+            sess = events.session_state(state.session_token)
+        except Exception:
+            logger.debug("[cci-live] event-service probe failed for %s",
+                         state.name, exc_info=True)
+            return last
+        if sess is None:
+            return last
+        return max(last, float(getattr(sess, "last_event_at", 0.0) or 0.0))
+
     def sweep_idle(self, idle_ttl_seconds: Optional[float] = None) -> int:
         ttl = float(idle_ttl_seconds if idle_ttl_seconds is not None else self._idle_ttl)
-        cutoff = time.time() - ttl
+        # ttl <= 0 disables idle eviction entirely; a dead container is still
+        # evicted, because that is bookkeeping, not reaping.
+        cutoff = (time.time() - ttl) if ttl > 0 else None
         to_kill: list[tuple[InteractiveContainer, str]] = []
         with self._lock:
             snapshot = list(self._sessions.items())
         dead: Dict[tuple[str, str, str, str], bool] = {}
+        activity: Dict[tuple[str, str, str, str], float] = {}
+        # Both probes are round trips (docker, then the event service's own
+        # lock) — keep them OUTSIDE the pool lock, like the liveness probe.
         for key, state in snapshot:
             dead[key] = not self._is_alive(state.name)
+            activity[key] = self._activity_at(state)
         with self._lock:
             for key, state in snapshot:
                 current = self._sessions.get(key)
@@ -1233,7 +1291,12 @@ class InteractiveClaudeCodePool(_InteractiveContainerSpawnMixin):
                 reason = ""
                 if dead.get(key):
                     reason = "dead_container"
-                elif current.last_used < cutoff:
+                elif current.in_flight > 0:
+                    # A turn is running: the CLI may be busy with a local
+                    # tool and emitting nothing for minutes. Never idle.
+                    reason = ""
+                elif cutoff is not None and activity.get(
+                        key, current.last_used) < cutoff:
                     reason = f"idle>{int(ttl)}s"
                 if reason:
                     self._sessions.pop(key, None)

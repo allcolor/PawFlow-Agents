@@ -625,16 +625,18 @@ class CodexInteractivePool(_CodexInteractiveSpawnMixin,
 
     def __init__(self):
         super().__init__()
+        # Same rule as the Claude Code interactive pool: idle eviction is
+        # opt-in, never a silent default (see that pool for the incident).
         self._idle_ttl = float(os.environ.get(
-            "PAWFLOW_CODEX_INTERACTIVE_IDLE_TTL_SECONDS", "1800"))
+            "PAWFLOW_CODEX_INTERACTIVE_IDLE_TTL_SECONDS", "0") or 0)
 
     def ensure_started(self, client, model: str, user_id: str,
                        conversation_id: str, agent_name: str,
                        before_launch=None) -> InteractiveContainer:
         """Reuse or launch a TUI session without reserving its OAuth slot."""
-        idle_ttl = getattr(client, "timeout", None)
+        idle_ttl = getattr(client, "idle_ttl_seconds", None)
         self.ensure_sweeper(
-            idle_ttl_seconds=int(idle_ttl) if idle_ttl else None)
+            idle_ttl_seconds=int(idle_ttl) if idle_ttl is not None else None)
         service_id = getattr(client, "_agent_service", "") or ""
         key = (user_id, conversation_id, agent_name, service_id)
         with self._lock:

@@ -400,9 +400,18 @@ Timing controls are read once when the provider modules are imported:
   sequence `Escape`, `Escape`, paste, 200ms, `Enter`, 200ms, `Enter`.
   Codex submission verification is observation-only and never appends another
   key after this sequence.
-- `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls idle container eviction. Default:
-  `1800` seconds. A service request timeout can only extend this process-wide
-  TTL, never shorten an explicitly configured or already larger value.
+- `PAWFLOW_CCI_IDLE_TTL_SECONDS` controls idle container eviction. **There is
+  no default**: unset, or `0`, means containers are never evicted for being
+  idle. Reaping a live agent is destructive, so it must be asked for
+  explicitly rather than inherited from a silent fallback. A service request
+  `timeout` of `0` means "no timeout" and disables eviction outright; a
+  positive one can only extend an already-enabled TTL, never enable or
+  shorten one.
+- Eviction only ever considers a session that is doing nothing. A turn in
+  flight is never evicted, and idleness is measured from the last event the
+  MITM proxy observed — not from PawFlow's own turn bookkeeping, which stays
+  frozen while Claude Code resumes on its own (a backgrounded task reporting
+  back, a queued message) outside any streaming worker.
 
 The provider assembles responses from those events:
 

@@ -56,6 +56,12 @@ class InteractiveContainer:
     internal_token: str
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
+    # Turns currently running against this session. The idle sweeper only
+    # sees `last_used`, which is bumped by observed proxy events; a turn
+    # where the CLI works locally for a long time (a slow tool, a long
+    # command) emits none, so an ACTIVE session used to look idle and was
+    # evicted mid-turn. A turn in flight is never idle, whatever the TTL.
+    in_flight: int = 0
     initial_context_loaded: bool = False
     proxy_started: bool = False
     claude_started: bool = False

@@ -313,6 +313,21 @@ class LLMClient(
         return int(raw)
 
     @property
+    def idle_ttl_seconds(self):
+        """Idle eviction TTL for warm-container pools, from the service config.
+
+        ``timeout`` maps both "unset" and an explicit ``0`` to ``None``, so a
+        pool reading it could not tell "no timeout configured -- never evict"
+        from "nothing said -- use your own policy", and kept reaping live
+        containers. This keeps them apart: ``None`` means unset, ``0`` means
+        the service explicitly asked for no timeout.
+        """
+        raw = self._cfg("timeout", None)
+        if raw is None or raw == "":
+            return None
+        return max(0, int(raw))
+
+    @property
     def max_retries(self):
         return int(self._cfg("max_retries", 5))
 

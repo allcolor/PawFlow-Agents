@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code interactive: a live agent is no longer killed while it works.
+  Three defects stacked into one silent disappearance — a container evicted
+  65 seconds after an active turn, taking its pending background work with
+  it, after which the agent never spoke again.
+  - Idle eviction had a hardcoded 1800s default. Reaping a live agent is
+    destructive and must be asked for: `PAWFLOW_CCI_IDLE_TTL_SECONDS` (and
+    its Codex counterpart) now has **no default** — unset means containers
+    are never evicted for being idle.
+  - A service configured with `timeout: 0` (no timeout) was reaped anyway:
+    `LLMClient.timeout` maps both an explicit `0` and an unset value to
+    `None`, and the pools tested that value for truth. The new
+    `idle_ttl_seconds` property keeps the two apart — `0` disables eviction,
+    and a positive `timeout` can only extend an already-enabled TTL, never
+    enable one.
+  - Idleness was measured from `last_used`, which only moves when a PawFlow
+    streaming worker drives the turn. Claude Code also resumes on its own —
+    a backgrounded task reporting back, a queued message — through the MITM
+    proxy with no coordinator attached, so `last_used` froze while the
+    session was demonstrably working. The sweeper now measures idleness from
+    the last event the proxy actually observed, and never evicts a session
+    with a turn in flight.
+
 ## [1.0.0-beta.232] — 2026-08-21
 
 ### Fixed

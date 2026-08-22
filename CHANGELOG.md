@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.236] — 2026-08-22
+
 ### Fixed
 
 - PFP builds now exclude generated `graphify-out` analysis caches, preventing

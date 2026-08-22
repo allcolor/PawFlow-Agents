@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.239] — 2026-08-22
+
+### Added
+
+- The web chat now has an Appearance panel with 75–150% UI scaling,
+  global or conversation-scoped image/video backgrounds, overlay, blur,
+  saturation, opacity, and motion controls. Background media is stored locally
+  per authenticated user, respects reduced-motion and page visibility, and
+  continues behind the lower chat chrome.
+- Conversation search is available from the composer, `Ctrl`/`Cmd`+`K`, and
+  `/search`, while `/` commands and `@` agent mentions use filtered,
+  keyboard-navigable pickers backed by the live conversation state.
+
+### Changed
+
+- The chat input is now one responsive composer containing attachment, search,
+  command, mention, dictation, terminal grab, and Send actions. Its dock and
+  message surfaces become translucent when appearance media is active.
+- Fenced code blocks expose an accessible language/copy header, and the memory
+  panel uses themed cards while preserving conversation-agent selection for
+  filtering, creation, and editing.
+
 ## [1.0.0-beta.238] — 2026-08-22
 
 ### Fixed

@@ -2224,6 +2224,14 @@ class TestRandomThought(unittest.TestCase):
         task._last_thought_watchdog = time.time()
         task._active_lock = threading.RLock()
         task._active_conversations = {cid: 1}
+        task._active_contexts_lock = threading.RLock()
+        task._active_turns = {
+            f"{cid}:assistant": {
+                "conversation_id": cid,
+                "agent_name": "assistant",
+            },
+        }
+        task._active_contexts = {}
         task._active_thoughts = set()
 
         scheduler.schedule(
@@ -2244,6 +2252,59 @@ class TestRandomThought(unittest.TestCase):
         assert len(remaining) == 1
         assert remaining[0]["reason"] == "check an external job"
         assert "::pending::" in remaining[0]["key"]
+
+    def test_other_active_agent_does_not_consume_continuation(self):
+        """A concurrent agent cannot satisfy another agent's continuation."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        import threading
+        import time
+
+        scheduler = PollScheduler.instance()
+        store = ConversationStore.instance()
+        cid = "cross_agent_continuation"
+        store.save(
+            cid, [{"role": "assistant", "content": "working"}],
+            user_id="testuser")
+
+        task = self._make_task()
+        task._last_task_watchdog = time.time()
+        task._last_thought_watchdog = time.time()
+        task._active_lock = threading.RLock()
+        task._active_conversations = {cid: 1}
+        task._active_contexts_lock = threading.RLock()
+        task._active_turns = {
+            f"{cid}:claude": {
+                "conversation_id": cid,
+                "agent_name": "claude",
+            },
+        }
+        task._active_contexts = {}
+        task._active_thoughts = set()
+        task._conv_gen_lock = threading.RLock()
+        task._conv_generation = {}
+        task._redirect_external_mcp_wake = MagicMock(return_value=False)
+        task._build_poll_context = MagicMock(return_value={
+            "active_agent_name": "assistant",
+        })
+
+        scheduler.schedule(
+            cid, time.time() - 1,
+            key=f"{cid}::continuation::deadbeef",
+            reason="[scheduled:assistant] [continuation] finish the fix")
+
+        with patch("tasks.ai.agent_poller.threading.Thread") as thread_cls:
+            task._poll_once()
+
+        poll_threads = [
+            call for call in thread_cls.call_args_list
+            if call.kwargs.get("name") == f"agent-poll-{cid[:8]}"
+        ]
+        assert len(poll_threads) == 1
+        task._build_poll_context.assert_called_once()
+        reasons = task._build_poll_context.call_args.kwargs["scheduled_reasons"]
+        assert reasons == ["[scheduled:assistant] [continuation] finish the fix"]
+        assert scheduler.get(f"{cid}::continuation::deadbeef") is None
 
     def test_task_poll_resumes_private_compacted_context(self):
         """Task wakes resume from private context.jsonl when it exists."""

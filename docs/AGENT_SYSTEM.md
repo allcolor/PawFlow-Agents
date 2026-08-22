@@ -968,13 +968,14 @@ If a user sends a message while the agent is already running:
 - For Claude Code providers: the message is injected directly into the active session (preemption).
 - For API providers: the message is queued in memory (`_pending_user_msgs`). After the current turn completes, a `PollScheduler` delay triggers processing of queued messages.
 
-`schedule_continuation` wake-ups are one-shot handoffs. If one becomes due while
-the conversation is already running, the active turn has already satisfied the
-handoff and the poller acknowledges the entry without creating a
-`::pending::<hash>` retry. Other due work remains deferred normally. This keeps
-a continuation from recreating itself every ten seconds while preserving the
-safety net for queued user messages, tasks, plans, thoughts, and external
-wake-ups.
+`schedule_continuation` wake-ups are agent-qualified one-shot handoffs. If one
+becomes due while its target agent is already running, that agent's active turn
+has satisfied the handoff and the poller acknowledges the entry without creating
+a `::pending::<hash>` retry. A different agent running in the same conversation
+does not satisfy or consume the continuation; the target agent is started
+concurrently. Other due work remains deferred normally. This keeps a continuation
+from recreating itself every ten seconds while preserving the safety net for
+queued user messages, tasks, plans, thoughts, and external wake-ups.
 
 Scheduled wakes use the same agent-qualified generation key as user turns and
 active runtime markers (`conversation_id:agent_name`). The poller allocates that

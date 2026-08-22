@@ -288,21 +288,37 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                 if conversation_id in self._active_conversations:
                     entries = scheduled_entries.get(conversation_id, [])
                     deferred_reasons = []
+                    runnable_continuations = []
                     for entry in entries:
                         entry_key = entry.get("key", "") or ""
                         reason = entry.get("reason", "") or ""
                         if ("::continuation::" in entry_key
                                 or "[continuation]" in reason):
+                            target_agent = self._extract_agent_from_reasons([reason])
+                            target_key = (
+                                f"{conversation_id}:{target_agent}"
+                                if target_agent else conversation_id
+                            )
+                            with self._active_contexts_lock:
+                                target_is_active = (
+                                    target_key in self._active_turns
+                                    or target_key in self._active_contexts
+                                )
+                            if target_agent and not target_is_active:
+                                runnable_continuations.append(entry)
+                                continue
                             # schedule_continuation is a one-shot handoff after
-                            # the current response.  If another turn is already
-                            # active when it fires, that turn *is* the resumed
-                            # work.  Re-keying it as ::pending:: created an
-                            # immortal 10-second loop and duplicated two log
-                            # lines on every poll pass.
+                            # the current response. If its target agent is still
+                            # active when it fires, that turn is the resumed work.
+                            # Re-keying it as ::pending:: created an immortal
+                            # 10-second loop and duplicated two log lines on every
+                            # poll pass. An active different agent does not satisfy
+                            # this handoff and must not consume it.
                             logger.info(
                                 "[poller] Continuation already satisfied by "
-                                "active conversation %s; acknowledging %s",
-                                conversation_id[:8], entry_key)
+                                "active agent %s/%s; acknowledging %s",
+                                conversation_id[:8], target_agent or "default",
+                                entry_key)
                             continue
                         deferred_reasons.append(reason or "[pending] active retry")
                     if not entries:
@@ -323,7 +339,13 @@ class AgentPollerMixin(_AgentPollCheckinMixin):
                             key = f"{conversation_id}::pending::{digest}"
                         scheduler.schedule_delay(
                             conversation_id, 10, key=key, reason=r)
-                    continue
+                    if not runnable_continuations:
+                        continue
+                    scheduled_entries[conversation_id] = runnable_continuations
+                    scheduled_reasons[conversation_id] = [
+                        entry.get("reason", "scheduled recheck")
+                        for entry in runnable_continuations
+                    ]
 
             # Load conversation history
             messages_data = store.load(conversation_id)

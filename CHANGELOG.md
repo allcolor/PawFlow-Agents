@@ -86,6 +86,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Scheduled continuations are no longer lost when another agent is active in
+  the same conversation. The poller now acknowledges a one-shot continuation
+  only when its own target agent is already running; activity from a different
+  agent no longer consumes the wake-up, and the target agent resumes
+  concurrently.
+
 - Skill assignment offered agents that are not in the conversation. A skill is
   assigned to an agent *instance* — it lands in that instance's
   `assigned_skills` inside the conversation — and the server refuses any name

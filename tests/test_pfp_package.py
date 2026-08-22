@@ -264,6 +264,19 @@ def test_pfp_build_inspect_and_selective_install(tmp_path, monkeypatch):
     assert listed["packages"][0]["package"] == "community.wavespeed"
 
 
+def test_pfp_build_excludes_graphify_output(tmp_path):
+    keypair = pfp_package.create_signing_key()
+    pkgdir = _write_package_dir(tmp_path, keypair)
+    generated = pkgdir / "content" / "tools" / "reader" / "graphify-out" / "cache"
+    generated.mkdir(parents=True)
+    (generated / "graph.json").write_text('{"generated": true}', encoding="utf-8")
+
+    built = pfp_package.build_pfp(str(pkgdir), private_key=keypair["private_key"])
+
+    with zipfile.ZipFile(built["path"], "r") as archive:
+        assert all("graphify-out" not in Path(name).parts for name in archive.namelist())
+
+
 def test_pfp_update_with_different_developer_key_is_rejected(tmp_path, monkeypatch):
     _reset_repo(tmp_path, monkeypatch)
     # First install pins the original developer key.

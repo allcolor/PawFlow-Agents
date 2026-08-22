@@ -92,8 +92,8 @@
       "description": "All-in-one self-hosted ComfyUI operator with an orchestration skill, durable flows, deterministic flow tasks, and the official Comfy MCP connection.",
       "category": "Media & AI",
       "artifact": "pawflow.comfyui-operator-1.1.0.pfp",
-      "sha256": "sha256:359ea7056b01b378702e38bfa0432a6d3c40fe3b26dba6649acfe0432fe9ffde",
-      "package_size": 21863,
+      "sha256": "sha256:b7ccd7b63d3fbd2cc6853f2ec228f291c0a6a1eef8d2e4bca06501d5cbdb0d34",
+      "package_size": 19857,
       "developer_key": "ed25519:daeIaoLYzPhkxegiPfCY+yN6bDE1aRgMdS+iYo25tBQ=",
       "tags": [
         "comfyui",

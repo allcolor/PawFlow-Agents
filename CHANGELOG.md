@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- PFP builds now exclude generated `graphify-out` analysis caches, preventing
+  local ignored files from making signed bundled artifacts differ from clean CI
+  checkout builds.
+
 ## [1.0.0-beta.235] — 2026-08-22
 
 ### Fixed

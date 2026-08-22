@@ -308,6 +308,7 @@ def _collect_source_files(root: Path) -> Dict[str, bytes]:
         if (rel in {MANIFEST_FILE, LOCK_FILE, SIGNATURE_FILE}
                 or rel.startswith("dist/")
                 or "__pycache__" in parts
+                or "graphify-out" in parts
                 or path.suffix in {".pyc", ".pyo"}):
             continue
         data = path.read_bytes()

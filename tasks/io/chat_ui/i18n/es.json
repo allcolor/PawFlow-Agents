@@ -948,6 +948,7 @@
   "noAgentSelectedSelectFirst": "Ningún agente seleccionado. Seleccione primero un agente.",
   "noAgents": "No hay agentes en esta conversación.",
   "noAgentsAvailable": "No hay agentes disponibles.",
+  "noConvAgentsForSkill": "Ningún agente en esta conversación. Añada uno antes de asignar una skill.",
   "noAgentsDefinedUsage": "No hay agentes definidos. Use /agent create para agregar uno.",
   "noAudioTabOpen": "No hay pestaña de audio abierta.",
   "noBranchesToDelete": "No hay ramas para eliminar (solo existe la rama actual).",

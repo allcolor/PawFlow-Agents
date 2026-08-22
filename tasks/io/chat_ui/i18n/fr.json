@@ -948,6 +948,7 @@
   "noAgentSelectedSelectFirst": "Aucun agent sélectionné. Sélectionnez d’abord un agent.",
   "noAgents": "Aucun agent dans cette conversation.",
   "noAgentsAvailable": "Aucun agent disponible.",
+  "noConvAgentsForSkill": "Aucun agent dans cette conversation. Ajoutez-en un avant d'assigner un skill.",
   "noAgentsDefinedUsage": "Aucun agent défini. Utilisez /agent create pour en ajouter un.",
   "noAudioTabOpen": "Aucun onglet audio ouvert.",
   "noBranchesToDelete": "Aucune branche à supprimer (seule la branche courante existe).",

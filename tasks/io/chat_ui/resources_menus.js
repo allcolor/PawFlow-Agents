@@ -490,8 +490,12 @@ function showAgentMenu(e, name, scope, autoconv) {
 
 function _showSkillAssignDialog(skillName) {
   action$('list_resources', {}).subscribe(data => {
-    var agents = (data.agents || []).concat((data.repo_agents || []).filter(a => !a.in_conversation));
-    if (!agents.length) { addMsg('system', t('noAgentsAvailable')); return; }
+    // Conversation agent INSTANCES only. A skill is assigned to an instance
+    // (it lands in that instance's assigned_skills), so the server rejects
+    // any name that is not in this conversation -- offering repository
+    // definitions here only produced choices guaranteed to fail.
+    var agents = data.agents || [];
+    if (!agents.length) { addMsg('system', t('noConvAgentsForSkill')); return; }
     var overlay = document.createElement('div');
     overlay.className = 'exec-overlay';
     var options = agents.map(a => '<option value="' + escapeHtml(a.name) + '">' + escapeHtml(a.name) + '</option>').join('');

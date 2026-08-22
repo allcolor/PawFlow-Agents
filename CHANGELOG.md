@@ -40,6 +40,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Skill assignment offered agents that are not in the conversation. A skill is
+  assigned to an agent *instance* — it lands in that instance's
+  `assigned_skills` inside the conversation — and the server refuses any name
+  that is not on the conversation roster. The dialog nonetheless listed every
+  repository agent definition on top of the roster, so most entries in the
+  dropdown were choices guaranteed to fail. It now offers the conversation's
+  agents only, and says so plainly when there are none.
+
 - OpenAI-compatible streams: a provider that cuts the connection is retried
   instead of being taken for a finished answer. A clean EOF is
   indistinguishable from a normal end — `read()` returns empty and the loop

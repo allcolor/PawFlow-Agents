@@ -246,7 +246,21 @@ def _handle_agentres_k5(self, action, body, store, user_id, flowfile):
         _allowed = {"llm_service", "model", "tools", "max_depth", "params",
                     "realtime_voice_service", "flash_delegate_llm_service",
                     "runtime_kind", "agui_url", "agui_service", "agui_timeout",
-                    "agui_max_tool_rounds", "gating_service"}
+                    "agui_max_tool_rounds", "gating_service", "tool_exposure"}
+        if "tool_exposure" in cfg:
+            from core.tool_exposure import MODES
+            _exposure = str(cfg.get("tool_exposure") or "").strip().lower()
+            # "" is the inherit sentinel; anything else must be a real mode
+            # rather than being quietly normalised away, or the dialog would
+            # report a setting the agent never gets.
+            if _exposure and _exposure not in MODES:
+                flowfile.set_content(json.dumps({
+                    "error": ("tool_exposure must be empty (inherit) or one of: "
+                              + ", ".join(sorted(MODES))),
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            cfg["tool_exposure"] = _exposure
         if cfg.get("gating_service"):
             from core.gating_bindings import _normalize_ref, validate_binding
             _gref = _normalize_ref(cfg.get("gating_service"))

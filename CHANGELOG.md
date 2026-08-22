@@ -8,6 +8,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Tool exposure modes for agents. How an agent's tools are advertised was
+  hardcoded to one surface — `get_tool_schema` + `use_tool`, everything else
+  reached through them — while MCP publications already offered four. The
+  same four modes are now selectable, defaulting to today's behaviour:
+  - `api` (default): the two meta tools; smallest prompt, one discovery round
+    trip per unknown tool.
+  - `full`: every tool declared directly; no round trip, but every schema
+    sits in the prompt, so it suits narrow tool sets.
+  - `api_readonly` / `full_readonly`: the same two surfaces restricted to
+    read-only tools, using the same predicate as an MCP publication.
+  - Settable on the LLM service (default for all its agents) and overridable
+    per agent in the conversation; an override replaces, it never merges.
+  - The vocabulary now lives in one place (`core/tool_exposure.py`) shared
+    with MCP publications, so the two surfaces cannot drift apart.
+  - *Which* tools exist is unchanged — that stays with the existing
+    conversation and per-agent tool filters. CLI providers reach their tools
+    through the MCP bridge rather than tool declarations, so they stay on
+    `api` and log a warning naming any other configured mode instead of
+    silently ignoring it.
+
 - Agent prompts carry a ScratchDir hint. The `scratchdir` tool documents
   itself well — including that it never falls back to `/tmp` — but nothing
   pushed that into the prompt, so an agent only learned it existed by looking

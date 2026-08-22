@@ -46,6 +46,12 @@ AGENT_CONFIG_DEFAULTS = {
     "flash_delegate_llm_service": "",
     "model": "",
     "tools": [],
+    # How this agent's tools are advertised to the model: one of
+    # core.tool_exposure.MODES, or "" to inherit the llmConnection setting.
+    # It chooses the SHAPE of the tool surface; which tools exist is still
+    # core/tool_mcp_filters.py (conversation disabled_tools + this agent's
+    # custom selection).
+    "tool_exposure": "",
     "assigned_skills": [],
     "max_depth": 1000,
     # Optional realtimeVoiceConnection service id. When set the agent is

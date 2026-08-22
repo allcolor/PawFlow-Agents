@@ -444,6 +444,22 @@ class LLMConnectionService(BaseService):
                     "free-tier API key from https://ollama.com/settings/keys."
                 ),
             },
+            "tool_exposure": {
+                "type": "select", "default": "api",
+                "options": ["api", "full", "api_readonly", "full_readonly"],
+                "description": (
+                    "How tools are advertised to the model, for every agent "
+                    "on this service unless the agent overrides it. "
+                    "api: only get_tool_schema + use_tool, everything else "
+                    "reached through them (default, smallest prompt). "
+                    "full: every tool declared directly — no discovery round "
+                    "trip, but every schema sits in the prompt, so keep it "
+                    "for narrow tool sets. "
+                    "api_readonly / full_readonly: the same two surfaces "
+                    "restricted to read-only tools. Same modes as an MCP "
+                    "publication."
+                ),
+            },
             "azure_deployment": {
                 "type": "string", "default": "",
                 "description": (

@@ -36,7 +36,10 @@ _IMAGE_OUTPUTS = frozenset({"native", "describe"})
 #            are neither advertised nor executable: some clients (ChatGPT)
 #            disable the whole connector for a conversation as soon as the
 #            model merely attempts a write tool, killing reads too.
-_MODES = frozenset({"api", "full", "api_readonly", "full_readonly"})
+# Canonical in core/tool_exposure.py: agents advertise their tools with the
+# same four modes, and one shared definition is what stops the two surfaces
+# from drifting apart.
+from core.tool_exposure import MODES as _MODES  # noqa: E402
 _KEY_KINDS = frozenset({"bearer", "connector"})
 _KEY_PREFIXES = {"bearer": "pfmcp_", "connector": "pfmcc_"}
 

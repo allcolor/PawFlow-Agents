@@ -414,22 +414,23 @@ _WRITE_META = frozenset({"send_user_message", "send_agent_message"})
 
 
 def _publication_mode(server: Dict[str, Any]) -> str:
-    mode = str(server.get("mode") or "api").strip().lower()
-    return mode if mode in {
-        "api", "full", "api_readonly", "full_readonly"} else "api"
+    from core.tool_exposure import normalize_mode
+    return normalize_mode(server.get("mode"))
 
 
 def _is_full_mode(server: Dict[str, Any]) -> bool:
-    return _publication_mode(server).startswith("full")
+    from core.tool_exposure import is_full_mode
+    return is_full_mode(_publication_mode(server))
 
 
 def _is_readonly_mode(server: Dict[str, Any]) -> bool:
-    return _publication_mode(server).endswith("_readonly")
+    from core.tool_exposure import is_readonly_mode
+    return is_readonly_mode(_publication_mode(server))
 
 
 def _is_readonly_tool(tool_name: str) -> bool:
-    from core.tool_approval import ToolApprovalGate
-    return ToolApprovalGate.is_read_only_allowed(tool_name)
+    from core.tool_exposure import is_read_only_tool
+    return is_read_only_tool(tool_name)
 
 
 def _readonly_error(tool_name: str) -> str:

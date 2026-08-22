@@ -592,6 +592,15 @@ function _showAgentConvConfigDialog(agentName) {
       + '<input id="acc-model" value="' + escapeHtml(cfg.model || '') + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>'
       + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('toolsCommaSeparated')) + '</label>'
       + '<input id="acc-tools" value="' + escapeHtml(toolsStr) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>'
+      + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('toolExposure')) + '</label>'
+      + '<select id="acc-tool-exposure" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
+      + ['', 'api', 'full', 'api_readonly', 'full_readonly'].map(function(m) {
+          var labels = { '': 'toolExposureInherit', 'api': 'toolExposureApi', 'full': 'toolExposureFull',
+                         'api_readonly': 'toolExposureApiReadonly', 'full_readonly': 'toolExposureFullReadonly' };
+          var sel = (cfg.tool_exposure || '') === m ? ' selected' : '';
+          return '<option value="' + m + '"' + sel + '>' + escapeHtml(t(labels[m])) + '</option>';
+        }).join('')
+      + '</select></div>'
       + '<div style="margin-bottom:8px;">'
       + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('maxIterationsAgentLoop')) + '</label>'
       + '<input id="acc-depth" type="number" value="' + (cfg.max_depth || 1000) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/>'
@@ -641,6 +650,7 @@ function _showAgentConvConfigDialog(agentName) {
                      agui_url: document.getElementById('acc-agui-url').value.trim(),
                      agui_max_tool_rounds: (function(v) { v = parseInt(v); return isNaN(v) ? 8 : v; })(document.getElementById('acc-agui-rounds').value),
                      model: model, tools: tools,
+                     tool_exposure: document.getElementById('acc-tool-exposure').value,
                      max_depth: depth, params: params };
       if (rtSel) newCfg.realtime_voice_service = rtSel.value;
       action$('update_agent_conv_config', {

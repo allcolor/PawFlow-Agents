@@ -447,23 +447,78 @@ class _PACPhase3Mixin:
                 + st._fs_services_info
             )
 
-        # Always expose only 2 meta-tools: get_tool_schema + use_tool.
-        # The LLM discovers available tools via get_tool_schema().
+        # How the tools are advertised: the agent's own setting wins, else the
+        # llmConnection default, else `api` -- the historical behaviour, and
+        # still the default. The mode decides the SHAPE of the surface only;
+        # which tools exist was already settled by core/tool_mcp_filters.py.
+        from core.tool_exposure import (
+            is_full_mode, is_read_only_tool, is_readonly_mode, resolve_mode)
+        st._agent_tool_exposure = ""
+        try:
+            from core.conv_agent_config import get_agent_config
+            st._agent_tool_exposure = (get_agent_config(
+                st.conversation_id or "",
+                st._active_agent_name or "") or {}).get("tool_exposure", "")
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Failed to read the agent tool_exposure override", exc_info=True)
+        st._tool_exposure = resolve_mode(
+            st._agent_tool_exposure, st._svc_cfg.get("tool_exposure"))
+        # CLI providers do not reach their tools through `tool_defs` at all:
+        # they go through the stdio MCP bridge, which advertises exactly
+        # get_tool_schema + use_tool (tools/mcp_bridge.py). Honouring another
+        # mode there means changing the bridge, so refuse it loudly here
+        # rather than letting the setting look applied while nothing changes.
+        if getattr(st, "_is_cli_provider", False) and st._tool_exposure != "api":
+            logger.warning(
+                "[context:%s] tool_exposure=%s ignored: CLI providers reach "
+                "tools through the MCP bridge, which only advertises "
+                "get_tool_schema + use_tool",
+                (st.conversation_id or "")[:8], st._tool_exposure)
+            st._tool_exposure = "api"
+
         from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
         st._gts = GetToolSchemaHandler(st.registry)
         st._ut = UseToolHandler(st.registry)
         st.registry.register(st._gts)
         st.registry.register(st._ut)
-        st.tool_defs = [
-            LLMToolDefinition(
-                name=st._gts.name, description=st._gts.description,
-                parameters=st._gts.parameters_schema,
-            ),
-            LLMToolDefinition(
-                name=st._ut.name, description=st._ut.description,
-                parameters=st._ut.parameters_schema,
-            ),
-        ]
+        if not is_full_mode(st._tool_exposure):
+            # api / api_readonly: the two meta tools, everything reached
+            # through them. UseToolHandler enforces the read-only restriction
+            # at execution time, the same way the MCP gateway does.
+            st.tool_defs = [
+                LLMToolDefinition(
+                    name=st._gts.name, description=st._gts.description,
+                    parameters=st._gts.parameters_schema,
+                ),
+                LLMToolDefinition(
+                    name=st._ut.name, description=st._ut.description,
+                    parameters=st._ut.parameters_schema,
+                ),
+            ]
+        else:
+            # full / full_readonly: declare every tool the agent may use, so
+            # there is no discovery round trip. Every schema then sits in the
+            # prompt on every request -- that cost is the reason `api` is the
+            # default.
+            st._meta_names = {st._gts.name, st._ut.name}
+            st.tool_defs = []
+            for _definition in st.registry.get_tool_definitions():
+                _name = str(_definition.get("name") or "").strip()
+                if not _name or _name in st._meta_names:
+                    continue
+                if is_readonly_mode(st._tool_exposure) and not is_read_only_tool(_name):
+                    continue
+                st.tool_defs.append(LLMToolDefinition(
+                    name=_name,
+                    description=str(_definition.get("description") or ""),
+                    parameters=_definition.get("parameters") or {},
+                ))
+        logger.info(
+            "[context:%s] tool exposure=%s (agent=%r service=%r) → %d tool(s)",
+            (st.conversation_id or "")[:8], st._tool_exposure,
+            st._agent_tool_exposure, st._svc_cfg.get("tool_exposure", ""),
+            len(st.tool_defs))
 
         # Volatile context merged into the last user message rather than the
         # system prompt. API providers only: on a CLI provider the same text

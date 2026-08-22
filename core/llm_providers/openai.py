@@ -20,6 +20,29 @@ VALID_FINISH_REASONS = frozenset({
     "stop", "length", "tool_calls", "content_filter", "function_call",
 })
 
+# A few OpenAI-compatible gateways use their own labels for standard safety
+# stops, or put an upstream transport failure in finish_reason despite the HTTP
+# response itself being 200. Keep this list deliberately narrow: unknown
+# non-streaming finish reasons remain untouched for compatibility.
+_CONTENT_FILTER_FINISH_REASONS = frozenset({"sensitive", "safety"})
+_PROVIDER_ERROR_FINISH_REASONS = frozenset({
+    "network_error", "server_error", "api_error", "timeout",
+})
+
+
+def _finish_reason_key(value: Any) -> str:
+    """Return a comparison key without changing an unknown provider value."""
+    if not isinstance(value, str):
+        return ""
+    return value.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _normalize_finish_reason(value: Any) -> Any:
+    """Map known safety aliases to the standard OpenAI finish reason."""
+    if _finish_reason_key(value) in _CONTENT_FILTER_FINISH_REASONS:
+        return "content_filter"
+    return value or ""
+
 
 class LLMOpenaiMixin:
     """OpenAI provider methods: complete, stream, message building."""
@@ -270,7 +293,7 @@ class LLMOpenaiMixin:
                             delta = choice0.get("delta", {})
                             fr = choice0.get("finish_reason")
                             if fr:
-                                finish_reason = fr
+                                finish_reason = _normalize_finish_reason(fr)
                             if data.get("model"):
                                 resp_model = data["model"]
 
@@ -306,6 +329,12 @@ class LLMOpenaiMixin:
 
                         except (json.JSONDecodeError, IndexError, KeyError):
                             pass
+
+                # [DONE] is the protocol terminator. Do not wait for the peer
+                # to close an already-complete HTTP response: some relays keep
+                # that connection alive for reuse.
+                if saw_done:
+                    break
 
             # Build tool calls
             tool_calls = []
@@ -762,6 +791,22 @@ class LLMOpenaiMixin:
         choice = data.get("choices", [{}])[0]
         usage = data.get("usage", {})
         message = choice.get("message", {})
+        finish_reason = _normalize_finish_reason(choice.get("finish_reason", ""))
+
+        # A successful HTTP envelope can still carry an upstream failure. This
+        # is the non-streaming equivalent of the in-band stream error handled
+        # above. Reject only known transport labels so compatible providers'
+        # custom successful reasons continue to behave exactly as before.
+        if _finish_reason_key(finish_reason) in _PROVIDER_ERROR_FINISH_REASONS:
+            from core._llm_types import LLMCallError
+            raise LLMCallError(
+                "Provider returned an unsuccessful completion: "
+                f"finish_reason={finish_reason!r}",
+                category="provider_stream_error", origin="provider",
+                provider_status=0, retryable=True, retry_after_seconds=0,
+                provider=getattr(self, "provider", ""),
+                model=data.get("model", model),
+            )
 
         # Parse tool calls if present
         tool_calls = []
@@ -821,7 +866,7 @@ class LLMOpenaiMixin:
             tokens_in=_input_miss_tokens,
             tokens_out=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
-            finish_reason=choice.get("finish_reason", ""),
+            finish_reason=finish_reason,
             tool_calls=tool_calls,
             thinking=reasoning,
             raw=data,

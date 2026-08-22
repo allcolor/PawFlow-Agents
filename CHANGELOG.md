@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenAI-compatible completion recovery now stops reading immediately after
+  the SSE `[DONE]` sentinel, treats known gateway safety labels as
+  `content_filter`, and rejects known transport-error finish reasons returned
+  by the non-streaming recovery request. Healthy streams and unknown custom
+  non-streaming finish reasons remain unchanged.
+
 ## [1.0.0-beta.237] — 2026-08-22
 
 ### Fixed

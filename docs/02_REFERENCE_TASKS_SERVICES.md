@@ -689,7 +689,12 @@ the `data: [DONE]` sentinel. If a gateway closes a successful HTTP response
 before either signal, or reports a non-standard error finish reason, PawFlow
 does not commit the partial answer. It immediately retries the same completion
 without streaming; if that request also fails, the normal bounded retry and
-configured fallback-model policy still applies.
+configured fallback-model policy still applies. PawFlow stops reading as soon
+as `[DONE]` arrives, recognizes gateway safety aliases such as `sensitive` as
+`content_filter`, and rejects known in-band transport failures from the
+non-streaming recovery response as retryable errors. Successful streams and
+unknown provider-specific non-streaming finish reasons retain their existing
+behavior.
 
 *OpenAI Responses* (`openai-responses`, `core/llm_providers/openai_responses.py`)
 is NOT a dialect: it is a different wire format on a different endpoint

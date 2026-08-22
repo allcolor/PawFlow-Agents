@@ -38,7 +38,8 @@ class _Response:
         return []
 
 
-def _client(monkeypatch, chunks_per_attempt, *, max_retries=1):
+def _client(monkeypatch, chunks_per_attempt, *, max_retries=1,
+            response_class=_Response):
     """An LLMClient whose transport replays one canned stream per attempt."""
     attempts = []
 
@@ -51,7 +52,7 @@ def _client(monkeypatch, chunks_per_attempt, *, max_retries=1):
 
         def getresponse(self):
             idx = min(len(attempts) - 1, len(chunks_per_attempt) - 1)
-            return _Response(chunks_per_attempt[idx])
+            return response_class(chunks_per_attempt[idx])
 
         def close(self):
             pass
@@ -80,6 +81,7 @@ DELTA = 'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
 DELTA_THINK = 'data: {"choices":[{"delta":{"reasoning_content":"hmm"}}]}\n\n'
 STOP = 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
 NETWORK_ERROR = 'data: {"choices":[{"delta":{},"finish_reason":"network_error"}]}\n\n'
+SENSITIVE = 'data: {"choices":[{"delta":{},"finish_reason":"sensitive"}]}\n\n'
 DONE = 'data: [DONE]\n\n'
 
 
@@ -138,9 +140,14 @@ class TestWellFormedStreamsAreUntouched:
 
     def test_normal_stop_is_accepted(self, monkeypatch):
         client, _ = _client(monkeypatch, [_sse(DELTA, STOP, DONE)])
-        resp = client.complete_stream([LLMMessage("user", "ping", conversation_id="conv1")])
+        streamed = []
+        resp = client.complete_stream(
+            [LLMMessage("user", "ping", conversation_id="conv1")],
+            callback=streamed.append,
+        )
         assert resp.content == "hello"
         assert resp.finish_reason == "stop"
+        assert streamed == ["hello"]
 
     def test_done_without_finish_reason_is_an_empty_answer_not_an_error(
             self, monkeypatch):
@@ -153,6 +160,65 @@ class TestWellFormedStreamsAreUntouched:
         resp = client.complete_stream([LLMMessage("user", "ping", conversation_id="conv1")])
         assert resp.content == ""
         assert resp.finish_reason == ""
+
+    def test_done_stops_reading_without_waiting_for_socket_close(self, monkeypatch):
+        class _KeepAliveResponse(_Response):
+            def read(self, size):
+                if not self._chunks:
+                    raise AssertionError("read() called after data: [DONE]")
+                return super().read(size)
+
+        client, _ = _client(
+            monkeypatch, [[DONE.encode()]], response_class=_KeepAliveResponse)
+        resp = client.complete_stream(
+            [LLMMessage("user", "ping", conversation_id="conv1")])
+        assert resp.finish_reason == ""
+
+    def test_safety_alias_is_a_terminal_content_filter(self, monkeypatch):
+        client, attempts = _client(monkeypatch, [_sse(SENSITIVE, DONE)])
+        resp = client.complete_stream(
+            [LLMMessage("user", "ping", conversation_id="conv1")])
+        assert len(attempts) == 1
+        assert resp.finish_reason == "content_filter"
+
+
+class TestNonStreamingFinishReasons:
+    """The recovery request must not accept an in-band transport failure."""
+
+    @staticmethod
+    def _completion(client, monkeypatch, finish_reason):
+        from core.llm_providers.openai import LLMOpenaiMixin
+
+        monkeypatch.setattr(client, "_http_post", lambda *_args, **_kwargs: {
+            "model": "test-model",
+            "choices": [{
+                "message": {"content": "answer"},
+                "finish_reason": finish_reason,
+            }],
+            "usage": {},
+        })
+        return LLMOpenaiMixin._complete_openai(
+            client,
+            [LLMMessage("user", "ping", conversation_id="conv1")],
+            "test-model", 0.0, 0, None,
+        )
+
+    def test_network_error_is_retryable_not_a_success(self, monkeypatch):
+        client, _ = _client(monkeypatch, [_sse(DONE)])
+        with pytest.raises(LLMCallError) as excinfo:
+            self._completion(client, monkeypatch, "network_error")
+        assert excinfo.value.category == "provider_stream_error"
+        assert excinfo.value.retryable is True
+
+    def test_safety_alias_is_normalized(self, monkeypatch):
+        client, _ = _client(monkeypatch, [_sse(DONE)])
+        resp = self._completion(client, monkeypatch, "sensitive")
+        assert resp.finish_reason == "content_filter"
+
+    def test_unknown_success_reason_remains_compatible(self, monkeypatch):
+        client, _ = _client(monkeypatch, [_sse(DONE)])
+        resp = self._completion(client, monkeypatch, "gateway_custom_success")
+        assert resp.finish_reason == "gateway_custom_success"
 
 
 class TestRetry:

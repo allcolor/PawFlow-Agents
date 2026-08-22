@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.235] — 2026-08-22
+
 ### Fixed
 
 - The bundled ComfyUI operator artifact and catalog are rebuilt from the 1.1.0

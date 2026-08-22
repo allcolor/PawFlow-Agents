@@ -594,6 +594,11 @@ class LLMCliSharedMixin(NativeContextObservationMixin):
             user_id, conversation_id, agent_name)
         if scratchpad_hint:
             body.extend(["## Scratchpad Hint", "", scratchpad_hint, ""])
+        # Unconditional, unlike the Scratchpad hint: a cold-started CLI has no
+        # other way to learn that fs://scratchdir/ exists, and it will reach
+        # for /tmp on the relay or the server container instead.
+        from core.scratchdir_models import context_hint as scratchdir_hint
+        body.extend(["## ScratchDir Hint", "", scratchdir_hint(), ""])
         body.extend([
             "## Bootstrap Contract",
             "",

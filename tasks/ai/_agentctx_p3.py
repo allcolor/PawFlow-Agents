@@ -488,11 +488,15 @@ class _PACPhase3Mixin:
             try:
                 from core.todo_store import TodoStore
                 from core.scratchpad_store import ScratchpadStore
+                from core.scratchdir_models import context_hint as scratchdir_hint
                 _scope = (st.user_id, st.conversation_id, st._active_agent_name)
                 _add_digest("Durable Todo List",
                             TodoStore.instance().context_text(*_scope))
                 _add_digest("Scratchpad Hint",
                             ScratchpadStore.instance().context_hint(*_scope))
+                # Unconditional, unlike the Scratchpad hint: it must land
+                # before the agent writes anything, or it reaches for /tmp.
+                _add_digest("ScratchDir Hint", scratchdir_hint())
             except Exception:
                 logging.getLogger(__name__).debug(
                     "Failed to build transient work context", exc_info=True)

@@ -93,6 +93,29 @@ def validate_ttl(value: Any) -> int:
     return ttl
 
 
+def context_hint() -> str:
+    """Steer for the agent prompt: temporary files go to the ScratchDir.
+
+    Unlike the Scratchpad hint, this one does not report state -- it has to be
+    present *before* anything is written, because the failure it prevents is an
+    agent reaching for /tmp on the relay or the server. That path looks like it
+    works and then loses the file on the next container restart, with nothing
+    scoped to the user, the conversation or the agent.
+
+    Kept free of any relay round trip so it can be built on every turn.
+    """
+    return (
+        "Temporary files belong in the ScratchDir, never in /tmp, /var/tmp or a "
+        "hidden directory inside the project. Address it as `fs://scratchdir/` "
+        "from any filesystem tool (read, write, edit, bash, glob, grep): it is "
+        "scoped to this user + conversation + agent, survives tool calls, "
+        "compaction and provider restarts, and expires on its own. Manage its "
+        "lifecycle with the `scratchdir` tool (status, ensure, renew, clear). "
+        "Use FileStore for durable deliverables and the workspace for source "
+        "changes."
+    )
+
+
 def validate_quotas(quota_bytes: Any = None,
                     quota_files: Any = None) -> tuple[int, int]:
     """Return explicit bounded byte and file quotas."""

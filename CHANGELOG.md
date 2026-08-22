@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Agent prompts carry a ScratchDir hint. The `scratchdir` tool documents
+  itself well — including that it never falls back to `/tmp` — but nothing
+  pushed that into the prompt, so an agent only learned it existed by looking
+  the tool up, and reached for `/tmp` on the relay or the server container
+  instead. That path works right until the container restarts, and nothing in
+  it is scoped to the user, conversation or agent. The hint now goes to both
+  prompt-assembly paths (API turns and CLI cold starts) and, unlike the
+  Scratchpad hint, is unconditional: it has to land before the first write,
+  not once a ScratchDir already exists.
+
 ### Fixed
 
 - OpenAI-compatible streams: a provider that cuts the connection is retried

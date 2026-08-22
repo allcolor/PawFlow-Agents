@@ -4,6 +4,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 from core import pfp_package
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -266,3 +268,78 @@ def test_workflow_validator_accepts_api_graph_and_rejects_ui_export(
         {"mode": "workflow"},
     )
     assert json.loads(ui_output["content"])["valid"] is False
+
+
+def test_probe_refuses_a_remote_target_chosen_by_the_request(
+        monkeypatch, tmp_path):
+    """allow_remote widens where the OPERATOR may point the probe.
+
+    It must not also let FlowFile content pick the target: the probe runs on
+    the relay host, so an arbitrary URL from the request would make it an SSRF
+    primitive. A remote target has to be pinned in task_config.
+    """
+    with pytest.raises(AssertionError, match="must come from task_config"):
+        run_task(
+            monkeypatch, tmp_path, "probe",
+            {"base_url": "http://169.254.169.254/latest/meta-data"},
+            {"allow_remote": True},
+            context={"relay_id": "MyWorkspace"},
+        )
+
+
+def test_probe_still_accepts_a_remote_target_pinned_by_the_operator(
+        monkeypatch, tmp_path):
+    fake, _ = run_task(
+        monkeypatch, tmp_path, "probe", {},
+        {"base_url": "https://comfy.internal:8188", "allow_remote": True},
+        context={"relay_id": "MyWorkspace"},
+        tool_result=json.dumps({"ready": True, "endpoints": {}}),
+    )
+    assert "comfy.internal" in fake.tool_calls[0][1]["command"]
+
+
+def test_probe_accepts_a_loopback_target_from_the_request(
+        monkeypatch, tmp_path):
+    """The common case stays open: the flow may name a local port."""
+    fake, _ = run_task(
+        monkeypatch, tmp_path, "probe",
+        {"base_url": "http://127.0.0.1:9999"},
+        context={"relay_id": "MyWorkspace"},
+        tool_result=json.dumps({"ready": True, "endpoints": {}}),
+    )
+    assert "127.0.0.1:9999" in fake.tool_calls[0][1]["command"]
+
+
+def test_probe_reports_a_missing_flowfile_body_cleanly(monkeypatch, tmp_path):
+    """A missing content_path used to raise KeyError instead of pfp.error."""
+    fake = FakePfp({"task_config": {}, "flowfile": {"attributes": {}}})
+    module = types.ModuleType("pawflow")
+    module.pfp = fake
+    monkeypatch.setitem(sys.modules, "pawflow", module)
+    with pytest.raises(AssertionError, match="without content"):
+        runpy.run_path(str(TASKS / "probe" / "task.py"), run_name="__main__")
+
+
+def test_plan_validator_catches_suffixed_secret_fields(monkeypatch, tmp_path):
+    """An exact-match denylist was defeated by any suffix."""
+    _, output = run_task(
+        monkeypatch, tmp_path, "validate",
+        {"plan": [{"action": "inspect", "api_key_ref": "vault://x"}]},
+        {"mode": "plan"},
+    )
+    report = json.loads(output["content"])
+    assert report["valid"] is False
+    assert any("api_key_ref" in str(err) for err in report["errors"])
+
+
+def test_plan_validator_still_accepts_ordinary_fields(monkeypatch, tmp_path):
+    """Substring matching must not swallow legitimate keys."""
+    _, output = run_task(
+        monkeypatch, tmp_path, "validate",
+        {"plan": [{"action": "inspect", "reason": "check nodes"}]},
+        {"mode": "plan"},
+    )
+    # A valid document is passed through untouched; the verdict rides in the
+    # attributes so the next node still receives the original request.
+    assert output["attributes"]["comfyui.valid"] == "true"
+    assert json.loads(output["content"])["plan"][0]["reason"] == "check nodes"

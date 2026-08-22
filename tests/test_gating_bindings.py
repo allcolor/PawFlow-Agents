@@ -180,5 +180,14 @@ def test_agent_config_carries_gating_service():
     with open("tasks/ai/actions/_agentres_k5.py", encoding="utf-8") as handle:
         src = handle.read()
     assert 'gating_service=body.get("gating_service") or ""' in src
-    assert '"agui_max_tool_rounds", "gating_service", "tool_exposure"}' in src
+    # Match membership, not the exact set literal: asserting the literal made
+    # this break every time an unrelated runtime field was appended, pointing
+    # at the wrong change each time.
+    allowed_literal = src.split("_allowed = {", 1)[1].split("}", 1)[0]
+    allowed_fields = {
+        part.strip().strip('"').strip("'")
+        for part in allowed_literal.replace("\n", " ").split(",")
+        if part.strip()
+    }
+    assert "gating_service" in allowed_fields
     assert "validate_binding(_gref.get(" in src

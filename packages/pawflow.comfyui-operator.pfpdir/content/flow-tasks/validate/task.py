@@ -29,21 +29,30 @@ def as_bool(value):
 
 
 def walk_forbidden(value, path="$"):
-    forbidden = {
+    # Substring, not equality: an exact-match denylist is defeated by any
+    # suffix (api_key_ref, my_token, shell_cmd all slipped through), which
+    # made this read like a control while being trivial to walk past. The
+    # real guarantee is still the action allowlist below; this is defence in
+    # depth over it.
+    forbidden = (
         "api_key",
+        "apikey",
         "password",
+        "passwd",
         "secret",
+        "credential",
         "shell",
         "script",
         "sudo",
         "token",
         "command",
-    }
+    )
     if isinstance(value, dict):
         for key, child in value.items():
             key_text = str(key).lower()
-            if key_text in forbidden:
-                errors.append(f"{path}.{key}: forbidden field")
+            hit = next((word for word in forbidden if word in key_text), "")
+            if hit:
+                errors.append(f"{path}.{key}: forbidden field (matches '{hit}')")
             walk_forbidden(child, f"{path}.{key}")
     elif isinstance(value, list):
         for index, child in enumerate(value):

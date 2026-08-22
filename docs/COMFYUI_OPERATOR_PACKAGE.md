@@ -41,6 +41,14 @@ only to `pawflowComfyuiProbe`; its entrypoint submits a fixed Python HTTP probe
 through the selected relay host with `local=true`. It rejects non-loopback
 targets unless `allow_remote=true`.
 
+`allow_remote` widens where the *operator* may point the probe, and only that.
+A non-loopback `base_url` must come from the task's own configuration: one
+arriving in the FlowFile payload is refused even when `allow_remote=true`.
+The probe runs on the relay host, so accepting a target chosen by flow content
+would turn it into a server-side request forgery primitive against whatever
+that host can reach. A loopback URL from the payload stays allowed, since that
+is the ordinary case of a flow naming its local ComfyUI port.
+
 The relay host must provide:
 
 - Python 3.10 or newer;

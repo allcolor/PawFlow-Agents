@@ -641,11 +641,21 @@ class FlowManagerHandler(ToolHandler):
             if executor is None or not executor.is_running:
                 return f"Error: flow '{flow_id}' is not running"
             entry = str(entry_task_id or "").strip()
-            valid_tasks = getattr(executor, "_tasks", {})
-            if entry and entry not in valid_tasks:
-                choices = ", ".join(sorted(valid_tasks)) or "none"
-                return (f"Error: entry task '{entry}' not found in flow "
-                        f"'{flow_id}'. Valid tasks: {choices}")
+            # Prefer the task map so the error can name the valid choices, and
+            # fall back to the public get_task accessor when it is absent.
+            # Defaulting a missing map to {} would reject every explicit entry
+            # with "Valid tasks: none", blaming the caller for our own rename.
+            valid_tasks = getattr(executor, "_tasks", None)
+            if entry:
+                if isinstance(valid_tasks, dict):
+                    known = entry in valid_tasks
+                    choices = ", ".join(sorted(valid_tasks)) or "none"
+                else:
+                    known = executor.get_task(entry) is not None
+                    choices = "unknown"
+                if not known:
+                    return (f"Error: entry task '{entry}' not found in flow "
+                            f"'{flow_id}'. Valid tasks: {choices}")
             flowfile = FlowFile(
                 content=input_text.encode("utf-8"),
                 attributes={str(k): str(v) for k, v in attributes.items()},

@@ -58,8 +58,12 @@ flows/
 !data/repository/flows/global/default/pawflow_installer/versions/
 !data/repository/flows/global/default/pawflow_installer/versions/assets/
 !data/repository/flows/global/default/pawflow_installer/versions/assets/install.html
-!packages/pawflow.comfyui-operator.pfpdir/content/flows/
-!packages/pawflow.comfyui-operator.pfpdir/content/flows/*.json
+# PFP bundles ship versioned flow definitions. The generic `flows/` rule above
+# targets runtime directories and hid them, so a package's flows vanished from
+# the commit while every local test stayed green. Keep this pattern-based: a
+# per-package exception re-creates that silent loss for the next bundle.
+!packages/*.pfpdir/content/flows/
+!packages/*.pfpdir/content/flows/*.json
 projects/
 checkpoints/
 templates/

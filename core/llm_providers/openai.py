@@ -12,6 +12,14 @@ from core.token_counter import count_messages_tokens
 
 logger = logging.getLogger(__name__)
 
+# The only finish_reason values the chat-completions spec defines. A stream
+# that ends on anything else did not end on a model decision: gateways report
+# their own upstream failures in this field (opencode zen sends
+# "network_error"), and an empty value means the connection simply stopped.
+VALID_FINISH_REASONS = frozenset({
+    "stop", "length", "tool_calls", "content_filter", "function_call",
+})
+
 
 class LLMOpenaiMixin:
     """OpenAI provider methods: complete, stream, message building."""
@@ -205,6 +213,7 @@ class LLMOpenaiMixin:
             response_headers = tuple(getheaders()) if callable(getheaders) else ()
 
             buffer = ""
+            saw_done = False
             while True:
                 if getattr(self, "_abort", None) and self._abort.is_set():
                     raise AgentCancelled()
@@ -233,6 +242,7 @@ class LLMOpenaiMixin:
                         provider_comments.append(line)
                         continue
                     if line == "data: [DONE]":
+                        saw_done = True
                         break
                     if line.startswith("data: "):
                         if getattr(self, "_abort", None) and self._abort.is_set():
@@ -313,6 +323,49 @@ class LLMOpenaiMixin:
                 "OpenAI stream completed model=%s finish_reason=%s text_chars=%d thinking_chars=%d tool_calls=%d base_url=%s",
                 resp_model, finish_reason, len(content), len(thinking), len(tool_calls), safe_base_url,
             )
+
+            # Two ways an OpenAI-compatible stream fails behind a 200, both of
+            # which used to be accepted as a finished answer.
+            #
+            # 1. Silence. A clean EOF is indistinguishable from a normal end:
+            #    read() just returns b"" and the loop exits with no exception.
+            #    SSE has two legitimate end-of-stream signals -- a finish_reason
+            #    on choice 0 and the `data: [DONE]` sentinel -- and a gateway
+            #    that drops the connection mid-answer sends neither. The turn
+            #    was then released on a response the user never saw.
+            # 2. An in-band error. opencode's zen gateway reports its own
+            #    upstream death as finish_reason="network_error" on an
+            #    otherwise well-formed stream. A finish_reason the spec does
+            #    not define is a provider failure, not a model decision.
+            #
+            # A stream that sent [DONE] with no finish_reason is NEITHER: it is
+            # well formed and the provider simply had nothing to say. That is an
+            # empty answer, not a transport failure, and it is left alone here.
+            #
+            # Both real cases are retryable: there is no status code to key off
+            # because the response was a 200 that stopped early.
+            truncated = not finish_reason and not saw_done
+            bad_finish = bool(finish_reason) and finish_reason not in VALID_FINISH_REASONS
+            if truncated or bad_finish:
+                if truncated:
+                    category = "stream_truncated"
+                    detail = "stream ended with neither finish_reason nor [DONE]"
+                else:
+                    category = "provider_stream_error"
+                    detail = f"provider ended the stream with finish_reason={finish_reason!r}"
+                logger.warning(
+                    "OpenAI stream did not terminate cleanly model=%s %s "
+                    "(text_chars=%d thinking_chars=%d tool_calls=%d) base_url=%s",
+                    resp_model, detail, len(content), len(thinking),
+                    len(tool_calls), safe_base_url,
+                )
+                from core._llm_types import LLMCallError
+                raise LLMCallError(
+                    f"Truncated LLM stream: {detail}",
+                    category=category, origin="provider", provider_status=0,
+                    retryable=True, retry_after_seconds=0,
+                    provider=getattr(self, "provider", ""), model=resp_model,
+                )
 
             # Use real usage from API if available, else estimate
             input_usage_native = "prompt_tokens" in usage_data

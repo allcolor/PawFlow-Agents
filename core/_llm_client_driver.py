@@ -24,6 +24,7 @@ from core._llm_types import (
     LLMMessage,
     LLMResponse,
     LLMToolDefinition,
+    TRUNCATED_STREAM_CATEGORIES,
 )
 
 logger = logging.getLogger(__name__)
@@ -300,8 +301,15 @@ class _LLMClientDriverMixin:
                     r'\b(503|502|reset|timeout|api_error|server_error)\b',
                     re.IGNORECASE)
                 is_transport_drop = self._is_transient_transport_error(err_str)
+                # A 200 that stopped: no status code to match on, so the
+                # category is the only signal. See VALID_FINISH_REASONS in
+                # core/llm_providers/openai.py.
+                is_truncated_stream = (
+                    isinstance(e, LLMCallError)
+                    and e.category in TRUNCATED_STREAM_CATEGORIES)
                 retryable = (
                     (is_429 or is_529 or is_500 or is_transport_drop
+                     or is_truncated_stream
                      or bool(_other_code_re.search(err_str)))
                     and not _is_cc_our_exit)
                 if retryable and attempt < self.max_retries:
@@ -653,9 +661,13 @@ class _LLMClientDriverMixin:
                     r'\b(503|502|reset|timeout|api_error|server_error)\b',
                     re.IGNORECASE)
                 is_transport_drop = self._is_transient_transport_error(err_str)
+                is_truncated_stream = (
+                    isinstance(e, LLMCallError)
+                    and e.category in TRUNCATED_STREAM_CATEGORIES)
                 retryable = (
                     (is_429 or is_529 or is_500 or is_compact_stall
                      or is_tool_stall or is_transport_drop
+                     or is_truncated_stream
                      or bool(_other_code_re.search(err_str)))
                     and not _is_cc_our_exit)
 
@@ -686,6 +698,20 @@ class _LLMClientDriverMixin:
                     logger.warning(
                         "[stream] %s stall detected — retrying immediately "
                         "(attempt %d/%d)", _kind, attempt, self.max_retries)
+                    continue
+
+                if is_truncated_stream and attempt < self.max_retries:
+                    # The provider cut the stream. Anything it already streamed
+                    # is half an answer that must not be prefixed onto the
+                    # retry's output, so drop the visible accounting before
+                    # re-asking. Retry immediately: this is a transport drop,
+                    # not a rate limit, and backing off only widens the silence.
+                    logger.warning(
+                        "[stream] truncated stream (%s) after %d streamed chars "
+                        "— retrying immediately (attempt %d/%d)",
+                        e.category, len(streamed_raw), attempt, self.max_retries)
+                    streamed_raw = ""
+                    streamed_visible = ""
                     continue
 
                 if retryable and attempt < self.max_retries:

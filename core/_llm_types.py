@@ -366,6 +366,16 @@ class LLMCallError(LLMClientError):
         self.caused_by_local_timeout = bool(caused_by_local_timeout)
 
 
+#: Categories for a stream that returned HTTP 200 and then stopped without a
+#: valid end-of-stream signal. There is no status code to key a retry off --
+#: the failure is only visible in how the stream ended -- so the category is
+#: the signal. Always transient: the request was never answered.
+TRUNCATED_STREAM_CATEGORIES = frozenset({
+    "stream_truncated",        # no finish_reason and no [DONE]: connection died
+    "provider_stream_error",   # gateway reported its own failure in-band
+})
+
+
 class AgentSuperseded(Exception):
     """Internal control flow: a newer worker owns this agent turn now.
 

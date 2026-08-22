@@ -8,6 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- OpenAI-compatible streams: a provider that cuts the connection is retried
+  instead of being taken for a finished answer. A clean EOF is
+  indistinguishable from a normal end — `read()` returns empty and the loop
+  exits with no exception — so a gateway dropping the connection mid-answer
+  produced a response the agent accepted and released the turn on, with
+  nothing shown to the user and no error anywhere. Measured against opencode
+  zen (`ox-alpha-free`): 17 of 63 calls ended without a valid end-of-stream
+  signal, 5 of them after partial text that was then delivered as if
+  complete.
+  - A stream ending with neither `finish_reason` nor `data: [DONE]` is a
+    transport truncation (`stream_truncated`).
+  - A `finish_reason` the chat-completions spec does not define is the same
+    failure announced in-band: opencode's gateway reports its own upstream
+    death as `finish_reason="network_error"` (`provider_stream_error`).
+  - Both are retryable — there is no status code to key off, the response was
+    a 200 that stopped — and the retry drops whatever the aborted attempt had
+    streamed so it is not prefixed onto the answer.
+  - A stream that sent `[DONE]` with no `finish_reason` is well formed and
+    still returns an empty response: that is a provider with nothing to say,
+    not a transport failure.
+
 - Relay shell: a tool the relay account installed for itself is now on `PATH`.
   The shells spawned for `bash` are non-login and non-interactive, so no
   profile file is ever read and `~/bin` / `~/.local/bin` were invisible — a

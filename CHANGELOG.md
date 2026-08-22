@@ -33,6 +33,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     pool at once would leave the slower writer storing an already-revoked
     token and kill the pool until someone logged in again.
 
+- An all-in-one `pawflow.comfyui-operator` PFP combines an idempotent bootstrap
+  skill, durable versioned flows for readiness, asset provisioning and video
+  generation, three deterministic relay tasks, and an explicitly enabled
+  stdio connection for the official Comfy MCP. User-scoped `comfyui.*`
+  variables retain non-secret preferences; credentials remain in SecretStore.
+- Agents can manage plaintext user or conversation variables through
+  `manage_variable` (`get`, `list`, `set`, and `delete`), with strict scope and
+  name validation. The tool deliberately rejects read-only tool policies and
+  directs credentials to `store_secret`.
+- Running continuous flows can accept new work through
+  `manage_flow(action="invoke")`, including FlowFile content, string attributes,
+  and an optional entry task. This preserves the live executor and durable-wait
+  state instead of replacing it with a one-shot flow run.
+
 - Tool exposure modes for agents. How an agent's tools are advertised was
   hardcoded to one surface — `get_tool_schema` + `use_tool`, everything else
   reached through them — while MCP publications already offered four. The
